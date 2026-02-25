@@ -1,0 +1,26 @@
+# Environment
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Output files (generated docs)
+output/*.docx
+output/*.pdf
+output/*.txt
+!output/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/

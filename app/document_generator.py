@@ -1,0 +1,240 @@
+"""
+Document generator: inserts AI-extracted scope into the real RRH MSAPO template.
+
+Template Structure (preserved as-is):
+  Header:  "MSAPO AGREEMENT" / "ATTACHMENT A – SCOPE OF WORK"
+  Section I:  "ADDITIONAL MSAPO DOCUMENTS" – checkbox exhibit table (untouched)
+  Section II: "MSAPO SCOPE OF WORK"
+              "Subcontractor shall execute the following Scope of Work
+               in strict accordance with this MSAPO:"
+              >>> scope content is inserted HERE, after the colon <<<
+
+The exhibit table, header, and all formatting above the scope line are
+left completely untouched.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import date
+from pathlib import Path
+from typing import Optional
+
+from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from copy import deepcopy
+
+from app.config import TEMPLATE_PATH, OUTPUT_DIR
+from app.quote_analyzer import QuoteAnalysis
+
+# The sentinel text that marks where scope content begins
+SCOPE_SENTINEL = "Subcontractor shall execute the following Scope of Work in strict accordance with this MSAPO:"
+
+
+def _add_bullet_paragraph(doc: Document, text: str) -> "Paragraph":
+    """Add a bullet-style paragraph that works even without a 'List Bullet' style."""
+    try:
+        para = doc.add_paragraph(style="List Bullet")
+    except KeyError:
+        # Template doesn't define 'List Bullet' — fake it with a dash prefix
+        para = doc.add_paragraph()
+        text = f"•  {text}"
+    return para, text
+
+
+def _filter_items(items: list[str], approved_assumptions: list[str] | None) -> list[str]:
+    """
+    Filter a list of inclusion/exclusion items for the final document.
+    - Explicit (non-AI) items: always kept
+    - AI items that were approved: kept, with [AI ESTIMATE:] wrapper stripped
+    - AI items that were NOT approved: dropped entirely
+    """
+    result = []
+    for item in items:
+        if "[AI ESTIMATE:" not in item:
+            # Explicit item from the quote — always include
+            result.append(item)
+        else:
+            # AI-estimated item — only include if user approved it
+            inner = re.search(r"\[AI ESTIMATE:\s*(.+?)\]", item)
+            if inner and approved_assumptions is not None:
+                clean_text = inner.group(1)
+                if clean_text in approved_assumptions:
+                    result.append(clean_text)  # stripped of wrapper
+            # If not approved, it's simply dropped
+    return result
+
+
+def _add_bullet(doc, item_text: str, is_ai: bool = False):
+    """Add a single bullet item, highlighted if AI-estimated."""
+    try:
+        para = doc.add_paragraph(style="List Bullet")
+    except KeyError:
+        para = doc.add_paragraph()
+        item_text = f"•  {item_text}"
+    run = para.add_run(item_text)
+    if is_ai:
+        run.font.color.rgb = RGBColor(0xCC, 0x66, 0x00)
+        run.bold = True
+    return para
+
+
+def _find_scope_paragraph_index(doc: Document) -> int:
+    """Find the paragraph index containing the scope sentinel text."""
+    for i, para in enumerate(doc.paragraphs):
+        if SCOPE_SENTINEL in para.text:
+            return i
+    raise ValueError(
+        f"Could not find the scope sentinel paragraph in the template. "
+        f"Expected to find: '{SCOPE_SENTINEL}'"
+    )
+
+
+def _insert_paragraph_after(paragraph, text: str, style=None):
+    """Insert a new paragraph directly after the given paragraph element."""
+    new_p = OxmlElement("w:p")
+    paragraph._element.addnext(new_p)
+    new_para = type(paragraph).__new__(type(paragraph))
+    # Manually wire up the new paragraph to the document
+    from docx.text.paragraph import Paragraph
+    new_para = Paragraph(new_p, paragraph._element.getparent())
+    if style:
+        new_para.style = style
+    if text:
+        new_para.add_run(text)
+    return new_para
+
+
+def _append_scope_content(
+    doc: Document,
+    analysis: QuoteAnalysis,
+    approved_assumptions: list[str] | None = None,
+) -> None:
+    """
+    Append scope content after the sentinel paragraph.
+    Uses doc.add_paragraph() which appends to the end of the document body.
+    Since the sentinel paragraph is near the end of the template, this works
+    perfectly — content appears right after it.
+    """
+    # -- Facility --
+    if analysis.facility_name:
+        p = doc.add_paragraph()
+        run = p.add_run(f"Facility: {analysis.facility_name}")
+        run.bold = True
+        run.font.size = Pt(11)
+        doc.add_paragraph(analysis.facility_address or "")
+
+    # -- Vendor --
+    p = doc.add_paragraph()
+    run = p.add_run(f"Vendor: {analysis.vendor_name}")
+    run.bold = True
+    run.font.size = Pt(11)
+
+    doc.add_paragraph("")  # spacer
+
+    # -- Project Description --
+    p = doc.add_paragraph()
+    run = p.add_run("Project Description")
+    run.bold = True
+    run.font.size = Pt(11)
+    doc.add_paragraph(analysis.project_description)
+
+    doc.add_paragraph("")  # spacer
+
+    # -- Detailed Scope --
+    p = doc.add_paragraph()
+    run = p.add_run("Detailed Scope of Work")
+    run.bold = True
+    run.font.size = Pt(11)
+
+    for para_text in analysis.scope_of_work.split("\n"):
+        stripped = para_text.strip()
+        if stripped:
+            doc.add_paragraph(stripped)
+
+    doc.add_paragraph("")  # spacer
+
+    # -- Inclusions --
+    # Filter: keep explicit items always; keep AI items only if approved
+    incl_items = _filter_items(analysis.inclusions, approved_assumptions)
+    if incl_items:
+        p = doc.add_paragraph()
+        run = p.add_run("Inclusions")
+        run.bold = True
+        run.font.size = Pt(11)
+        for item in incl_items:
+            _add_bullet(doc, item)
+
+    # -- Exclusions --
+    excl_items = _filter_items(analysis.exclusions, approved_assumptions)
+    if excl_items:
+        p = doc.add_paragraph()
+        run = p.add_run("Exclusions")
+        run.bold = True
+        run.font.size = Pt(11)
+        for item in excl_items:
+            _add_bullet(doc, item)
+
+    doc.add_paragraph("")  # spacer
+
+    # -- Tax Warning --
+    if analysis.tax_warning:
+        para = doc.add_paragraph()
+        run = para.add_run(f"⚠ TAX WARNING: {analysis.tax_warning}")
+        run.bold = True
+        run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
+        run.font.size = Pt(11)
+    elif analysis.tax_status == "included":
+        para = doc.add_paragraph()
+        run = para.add_run("Tax Status: Sales tax is included per the vendor quote.")
+        run.font.size = Pt(10)
+        run.italic = True
+
+
+def generate_docx(
+    analysis: QuoteAnalysis,
+    output_name: str | None = None,
+    approved_assumptions: list[str] | None = None,
+) -> Path:
+    """
+    Open the MSAPO template, preserve everything at the top, and insert
+    the scope content after the sentinel line.
+
+    Args:
+        analysis: The structured quote analysis from the AI.
+        output_name: Optional filename stem (without extension).
+        approved_assumptions: List of AI assumption strings the user approved
+                              via the checkbox UI. Approved items get their
+                              [AI ESTIMATE:] wrapper removed in the final doc.
+
+    Returns the path to the generated .docx file.
+    """
+    if not TEMPLATE_PATH.exists():
+        raise FileNotFoundError(
+            f"Template not found at {TEMPLATE_PATH}. "
+            "Place your Master_MSAPO_Template.docx in the templates/ folder."
+        )
+
+    doc = Document(str(TEMPLATE_PATH))
+
+    # Verify the template has the expected structure
+    _find_scope_paragraph_index(doc)
+
+    # Append all scope content after the existing template content
+    _append_scope_content(doc, analysis, approved_assumptions)
+
+    # ── Build output filename ─────────────────────────────────────────
+    if not output_name:
+        # Pattern: "RRH {Site} {Title} MSAPO"
+        site = "UMMC" if analysis.facility_name and "United Memorial" in analysis.facility_name else "St. Marys"
+        safe_desc = re.sub(r"[^\w\s\-]", "", analysis.project_description or "SOW")[:50].strip()
+        output_name = f"RRH {site} {safe_desc} MSAPO"
+
+    # Clean up filename
+    output_name = re.sub(r'[<>:"/\\|?*]', "_", output_name)
+
+    docx_path = OUTPUT_DIR / f"{output_name}.docx"
+    doc.save(str(docx_path))
+    return docx_path

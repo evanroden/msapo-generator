@@ -1,0 +1,26 @@
+# Core
+anthropic>=0.39.0
+python-dotenv>=1.0.0
+
+# Document generation
+python-docx>=1.1.0
+
+# PDF text extraction
+PyMuPDF>=1.24.0
+
+# Web UI
+streamlit>=1.38.0
+
+# API / webhook
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# Email
+sendgrid>=6.11.0
+
+# HTTP (for Gotenberg backend)
+requests>=2.32.0
+
+# Optional: Windows/macOS PDF conversion (requires MS Word installed)
+# docx2pdf>=0.10

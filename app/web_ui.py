@@ -1,0 +1,850 @@
+"""
+Streamlit web interface for the MSAPO Generator.
+
+Mobile-responsive portal where users can:
+  1. Upload a vendor quote (PDF, image, or text file)
+  2. Optionally paste quote text directly
+  3. View the extracted analysis
+  4. Review and approve/reject AI assumptions via checkboxes
+  5. Download the generated .docx and .pdf
+"""
+
+from __future__ import annotations
+
+import streamlit as st
+from pathlib import Path
+
+from app.ocr import extract_text
+from app.quote_analyzer import analyze_quote, QuoteAnalysis
+from app.document_generator import generate_docx
+from app.pdf_converter import convert_to_pdf, PDFConversionError
+
+# ── Design System ────────────────────────────────────────────────────
+# Navy: #1B3A5C   Orange: #E8792F   Slate: #1E293B   Surface: #F7F9FC
+
+CUSTOM_CSS = """
+<style>
+    /* ── Typography ────────────────────────────────────── */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    .stApp {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        background: #F1F5F9;
+    }
+
+    /* Hide default Streamlit chrome */
+    #MainMenu, footer, header {visibility: hidden;}
+
+    /* Subtle dot pattern on background */
+    .stApp::before {
+        content: '';
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-image: radial-gradient(#CBD5E1 0.5px, transparent 0.5px);
+        background-size: 24px 24px;
+        opacity: 0.4;
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    /* Main content wrapper */
+    .block-container {
+        position: relative;
+        z-index: 1;
+        max-width: 720px !important;
+        padding-top: 2rem !important;
+    }
+
+    /* ── Hero Header ───────────────────────────────────── */
+    .hero {
+        background: linear-gradient(135deg, #0F2942 0%, #1B3A5C 40%, #254B73 100%);
+        padding: 2rem 2.25rem 1.75rem;
+        border-radius: 16px;
+        margin-bottom: 1.75rem;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 8px 32px rgba(15,41,66,0.25), 0 2px 8px rgba(0,0,0,0.1);
+    }
+    .hero::before {
+        content: '';
+        position: absolute;
+        top: -50%; right: -20%;
+        width: 300px; height: 300px;
+        background: radial-gradient(circle, rgba(232,121,47,0.15) 0%, transparent 70%);
+        border-radius: 50%;
+    }
+    .hero::after {
+        content: '';
+        position: absolute;
+        bottom: -30%; left: -10%;
+        width: 200px; height: 200px;
+        background: radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%);
+        border-radius: 50%;
+    }
+    .hero h1 {
+        color: #FFFFFF;
+        font-size: 1.65rem;
+        font-weight: 800;
+        margin: 0 0 0.35rem 0;
+        letter-spacing: -0.03em;
+        line-height: 1.2;
+        position: relative;
+    }
+    .hero-subtitle {
+        color: rgba(255,255,255,0.6);
+        font-size: 0.85rem;
+        margin: 0;
+        position: relative;
+    }
+    .hero-accent {
+        color: #E8792F;
+        font-weight: 700;
+    }
+    .hero-badge {
+        position: absolute;
+        top: 1.5rem; right: 1.75rem;
+        background: rgba(232,121,47,0.12);
+        border: 1px solid rgba(232,121,47,0.25);
+        color: #F5A66B;
+        padding: 0.3rem 0.85rem;
+        border-radius: 20px;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+    }
+
+    /* ── Intro Text ────────────────────────────────────── */
+    .intro-text {
+        background: white;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 1rem 1.5rem;
+        margin-bottom: 1.5rem;
+        font-size: 0.9rem;
+        color: #475569;
+        line-height: 1.6;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .intro-text strong {
+        color: #1E293B;
+    }
+
+    /* ── Step Headers ──────────────────────────────────── */
+    .step-header {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        margin-bottom: 0.75rem;
+        margin-top: 0.5rem;
+    }
+    .step-num {
+        width: 36px; height: 36px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.85rem;
+        font-weight: 800;
+        flex-shrink: 0;
+        transition: all 0.3s ease;
+    }
+    .step-num.navy { background: #1B3A5C; color: white; }
+    .step-num.orange { background: #E8792F; color: white; }
+    .step-num.green { background: #16A34A; color: white; }
+    .step-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #0F172A;
+        margin: 0;
+        letter-spacing: -0.01em;
+    }
+
+    /* ── Cards ─────────────────────────────────────────── */
+    .content-card {
+        background: white;
+        border: 1px solid #E2E8F0;
+        border-radius: 14px;
+        padding: 1.5rem;
+        margin-bottom: 0.75rem;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
+
+    /* ── Metric Cards ──────────────────────────────────── */
+    .metric-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.85rem;
+        margin-bottom: 1rem;
+    }
+    .metric-card {
+        background: white;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 1.15rem 1.35rem;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.07);
+    }
+    .metric-icon {
+        font-size: 1.25rem;
+        margin-bottom: 0.4rem;
+    }
+    .metric-label {
+        font-size: 0.68rem;
+        font-weight: 700;
+        color: #94A3B8;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.3rem;
+    }
+    .metric-value {
+        font-size: 1.15rem;
+        font-weight: 800;
+        color: #0F172A;
+    }
+
+    /* ── Facility Banner ───────────────────────────────── */
+    .facility-banner {
+        background: linear-gradient(135deg, #EFF6FF 0%, #F0F9FF 100%);
+        border: 1px solid #BFDBFE;
+        border-left: 4px solid #1B3A5C;
+        border-radius: 10px;
+        padding: 1.1rem 1.35rem;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+    }
+    .facility-icon {
+        font-size: 1.5rem;
+        flex-shrink: 0;
+    }
+    .facility-name {
+        font-weight: 800;
+        color: #0F172A;
+        font-size: 0.95rem;
+    }
+    .facility-address {
+        color: #64748B;
+        font-size: 0.82rem;
+        margin-top: 0.1rem;
+    }
+
+    /* ── Tax Badges ────────────────────────────────────── */
+    .tax-included { color: #16A34A; }
+    .tax-excluded { color: #E8792F; }
+    .tax-unclear { color: #DC2626; }
+
+    /* ── Alert Boxes ───────────────────────────────────── */
+    .alert-box {
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 0.75rem;
+        font-size: 0.88rem;
+        line-height: 1.5;
+        display: flex;
+        align-items: flex-start;
+        gap: 0.65rem;
+    }
+    .alert-box .alert-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 0.05rem; }
+    .alert-warning {
+        background: #FFFBEB;
+        border: 1px solid #FDE68A;
+        color: #92400E;
+    }
+    .alert-danger {
+        background: #FEF2F2;
+        border: 1px solid #FECACA;
+        color: #991B1B;
+    }
+    .alert-success {
+        background: #F0FDF4;
+        border: 1px solid #BBF7D0;
+        color: #166534;
+    }
+
+    /* ── Scope Preview ─────────────────────────────────── */
+    .scope-section {
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-radius: 10px;
+        padding: 1.25rem 1.35rem;
+        margin-bottom: 0.85rem;
+    }
+    .scope-label {
+        font-size: 0.68rem;
+        font-weight: 800;
+        color: #1B3A5C;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.6rem;
+        padding-bottom: 0.45rem;
+        border-bottom: 2px solid #E8792F;
+        display: inline-block;
+    }
+    .scope-text {
+        color: #334155;
+        font-size: 0.88rem;
+        line-height: 1.65;
+        margin: 0;
+    }
+
+    /* ── List Items ────────────────────────────────────── */
+    .list-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.5rem;
+        padding: 0.45rem 0.75rem;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        margin-bottom: 0.3rem;
+        line-height: 1.4;
+    }
+    .list-item-explicit {
+        background: #F1F5F9;
+        color: #334155;
+    }
+    .list-item-ai {
+        background: #FFF7ED;
+        color: #9A3412;
+        border: 1px dashed #FDBA74;
+    }
+    .list-bullet {
+        color: #94A3B8;
+        flex-shrink: 0;
+        margin-top: 0.1rem;
+    }
+
+    /* ── Section Tags ──────────────────────────────────── */
+    .section-tag {
+        display: inline-block;
+        font-size: 0.65rem;
+        font-weight: 800;
+        padding: 0.2rem 0.55rem;
+        border-radius: 5px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .tag-inclusion { background: #DCFCE7; color: #166534; }
+    .tag-exclusion { background: #FEE2E2; color: #991B1B; }
+    .tag-scope { background: #DBEAFE; color: #1E40AF; }
+
+    /* ── Download Section ──────────────────────────────── */
+    .download-section {
+        background: linear-gradient(135deg, #0F2942 0%, #1B3A5C 100%);
+        border-radius: 14px;
+        padding: 1.5rem;
+        text-align: center;
+        margin: 1rem 0;
+        position: relative;
+        overflow: hidden;
+    }
+    .download-section::before {
+        content: '';
+        position: absolute;
+        top: -50%; right: -30%;
+        width: 200px; height: 200px;
+        background: radial-gradient(circle, rgba(232,121,47,0.1) 0%, transparent 70%);
+        border-radius: 50%;
+    }
+    .download-title {
+        color: rgba(255,255,255,0.9);
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-bottom: 1rem;
+        position: relative;
+    }
+    .download-title .dl-icon {
+        font-size: 1.5rem;
+        display: block;
+        margin-bottom: 0.35rem;
+    }
+
+    /* ── Footer ────────────────────────────────────────── */
+    .app-footer {
+        text-align: center;
+        padding: 1.75rem 1rem 1rem;
+        margin-top: 2rem;
+        color: #94A3B8;
+        font-size: 0.78rem;
+    }
+    .app-footer a {
+        color: #E8792F;
+        text-decoration: none;
+        font-weight: 600;
+    }
+    .app-footer a:hover {
+        text-decoration: underline;
+    }
+    .footer-divider {
+        width: 40px;
+        height: 3px;
+        background: linear-gradient(90deg, #E8792F, #1B3A5C);
+        border-radius: 2px;
+        margin: 0 auto 0.85rem;
+    }
+
+    /* ── Streamlit Overrides ───────────────────────────── */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #E8792F 0%, #D4691A 100%);
+        border: none;
+        border-radius: 10px;
+        font-weight: 700;
+        font-size: 0.95rem;
+        padding: 0.65rem 1.5rem;
+        letter-spacing: 0.01em;
+        transition: all 0.25s ease;
+        box-shadow: 0 2px 8px rgba(232,121,47,0.2);
+    }
+    .stButton > button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #D4691A 0%, #C05E15 100%);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(232,121,47,0.35);
+    }
+    .stButton > button[kind="primary"]:active {
+        transform: translateY(0);
+    }
+
+    div[data-testid="stDownloadButton"] > button {
+        border-radius: 10px;
+        font-weight: 700;
+        font-size: 0.9rem;
+        transition: all 0.2s ease;
+        border: 2px solid #1B3A5C;
+        color: #1B3A5C;
+        background: white;
+    }
+    div[data-testid="stDownloadButton"] > button:hover {
+        background: #1B3A5C;
+        color: white;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(27,58,92,0.2);
+    }
+
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0;
+        background: #F1F5F9;
+        border-radius: 10px;
+        padding: 3px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+
+    div[data-testid="stFileUploader"] {
+        border-radius: 12px;
+    }
+    div[data-testid="stFileUploader"] section {
+        border-radius: 12px;
+        border: 2px dashed #CBD5E1;
+        background: #FAFBFC;
+        transition: border-color 0.2s;
+    }
+    div[data-testid="stFileUploader"] section:hover {
+        border-color: #E8792F;
+    }
+
+    div[data-testid="stExpander"] {
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        background: white;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
+
+    /* Checkbox styling */
+    .stCheckbox label {
+        font-weight: 500;
+        font-size: 0.9rem;
+    }
+
+    /* Divider */
+    hr {
+        border: none;
+        border-top: 1px solid #E2E8F0;
+        margin: 1.25rem 0;
+    }
+
+    /* Spinner styling */
+    .stSpinner > div {
+        border-color: #E8792F transparent transparent transparent !important;
+    }
+</style>
+"""
+
+
+def main():
+    st.set_page_config(
+        page_title="MSAPO Generator",
+        page_icon="📋",
+        layout="centered",
+        initial_sidebar_state="collapsed",
+    )
+
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+    # ── Hero Header ─────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="hero">
+        <div class="hero-badge">RRH Network</div>
+        <h1>MSAPO Scope of Work<br>Generator</h1>
+        <p class="hero-subtitle">
+            Built by <span class="hero-accent">Evan Roden</span>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div class="intro-text">
+        Upload a vendor quote and instantly generate a standards-compliant
+        <strong>MSAPO agreement</strong> (.docx and .pdf) — ready for review and submission.
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ════════════════════════════════════════════════════════════════════
+    # STEP 1 — Upload
+    # ════════════════════════════════════════════════════════════════════
+    st.markdown("""
+    <div class="step-header">
+        <div class="step-num navy">1</div>
+        <p class="step-title">Provide the Vendor Quote</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    tab_upload, tab_paste = st.tabs(["📁 Upload File", "📝 Paste Text"])
+
+    quote_text = ""
+
+    with tab_upload:
+        uploaded = st.file_uploader(
+            "Upload quote (PDF, image, or text)",
+            type=["pdf", "png", "jpg", "jpeg", "tiff", "bmp", "txt", "webp"],
+            label_visibility="collapsed",
+        )
+        if uploaded is not None:
+            file_bytes = uploaded.read()
+            with st.spinner("Extracting text from file..."):
+                try:
+                    quote_text = extract_text(file_bytes, uploaded.name)
+                except Exception as e:
+                    st.error(f"Failed to extract text: {e}")
+                    quote_text = ""
+
+            if quote_text:
+                with st.expander("Preview extracted text", expanded=False):
+                    st.text_area(
+                        "Raw text",
+                        quote_text,
+                        height=180,
+                        disabled=True,
+                        label_visibility="collapsed",
+                    )
+
+    with tab_paste:
+        pasted = st.text_area(
+            "Paste the full vendor quote text below",
+            height=220,
+            placeholder="Paste the vendor quote here...",
+            label_visibility="collapsed",
+        )
+        if pasted.strip():
+            quote_text = pasted.strip()
+
+    # ════════════════════════════════════════════════════════════════════
+    # STEP 2 — Analyze
+    # ════════════════════════════════════════════════════════════════════
+    st.markdown("---")
+    st.markdown("""
+    <div class="step-header">
+        <div class="step-num navy">2</div>
+        <p class="step-title">Analyze Quote</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("Analyze Quote", type="primary", use_container_width=True):
+        if not quote_text.strip():
+            st.error("Please upload a file or paste quote text first.")
+            st.stop()
+
+        with st.spinner("Analyzing quote — this may take up to 30 seconds..."):
+            try:
+                analysis = analyze_quote(quote_text)
+            except Exception as e:
+                error_msg = str(e)
+                if "overloaded" in error_msg.lower() or "529" in error_msg:
+                    st.error(
+                        "The AI service is temporarily overloaded. "
+                        "Please wait a moment and try again."
+                    )
+                elif "401" in error_msg or "authentication" in error_msg.lower():
+                    st.error("API authentication failed. Please check your API key.")
+                else:
+                    st.error(f"Analysis failed: {e}")
+                st.stop()
+
+        st.session_state["analysis"] = analysis
+        st.session_state.pop("docx_path", None)
+        st.session_state.pop("pdf_path", None)
+
+    # ════════════════════════════════════════════════════════════════════
+    # STEP 3 — Review Analysis
+    # ════════════════════════════════════════════════════════════════════
+    analysis: QuoteAnalysis | None = st.session_state.get("analysis")
+
+    if analysis is not None:
+        st.markdown("---")
+        st.markdown("""
+        <div class="step-header">
+            <div class="step-num green">3</div>
+            <p class="step-title">Review Analysis</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Summary Metrics ──────────────────────────────────────────
+        tax_display = analysis.tax_status.upper()
+        tax_class = ""
+        tax_icon = ""
+        if analysis.tax_status == "included":
+            tax_display = "INCLUDED"
+            tax_class = "tax-included"
+            tax_icon = "✅"
+        elif analysis.tax_status == "excluded":
+            tax_display = "EXCLUDED"
+            tax_class = "tax-excluded"
+            tax_icon = "⚠️"
+        elif analysis.tax_status == "unclear":
+            tax_display = "UNCLEAR"
+            tax_class = "tax-unclear"
+            tax_icon = "❌"
+
+        st.markdown(f"""
+        <div class="metric-grid">
+            <div class="metric-card">
+                <div class="metric-icon">🏢</div>
+                <div class="metric-label">Vendor</div>
+                <div class="metric-value">{analysis.vendor_name or "N/A"}</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-icon">{tax_icon}</div>
+                <div class="metric-label">Tax Status</div>
+                <div class="metric-value {tax_class}">{tax_display}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Facility ─────────────────────────────────────────────────
+        if analysis.facility_name:
+            st.markdown(f"""
+            <div class="facility-banner">
+                <div class="facility-icon">🏥</div>
+                <div>
+                    <div class="facility-name">{analysis.facility_name}</div>
+                    <div class="facility-address">{analysis.facility_address or ''}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── Tax Alerts ───────────────────────────────────────────────
+        if analysis.tax_warning:
+            st.markdown(f"""
+            <div class="alert-box alert-danger">
+                <span class="alert-icon">🚨</span>
+                <div><strong>Tax Warning:</strong> {analysis.tax_warning}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        if analysis.tax_note:
+            st.markdown(f"""
+            <div class="alert-box alert-warning">
+                <span class="alert-icon">📝</span>
+                <div><strong>Tax Note:</strong> {analysis.tax_note}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── Scope Preview ────────────────────────────────────────────
+        with st.expander("Scope of Work Preview", expanded=True):
+            st.markdown(f"""
+            <div class="scope-section">
+                <div class="scope-label">Project Description</div>
+                <p class="scope-text">{analysis.project_description}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown(f"""
+            <div class="scope-section">
+                <div class="scope-label">Detailed Scope</div>
+                <p class="scope-text" style="white-space:pre-line;">{analysis.scope_of_work}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if analysis.inclusions:
+                inc_html = '<div class="scope-section"><div class="scope-label">Inclusions</div>'
+                for item in analysis.inclusions:
+                    if "[AI ESTIMATE:" in item:
+                        inc_html += f'<div class="list-item list-item-ai"><span class="list-bullet">◆</span> {item}</div>'
+                    else:
+                        inc_html += f'<div class="list-item list-item-explicit"><span class="list-bullet">●</span> {item}</div>'
+                inc_html += '</div>'
+                st.markdown(inc_html, unsafe_allow_html=True)
+
+            if analysis.exclusions:
+                exc_html = '<div class="scope-section"><div class="scope-label">Exclusions</div>'
+                for item in analysis.exclusions:
+                    if "[AI ESTIMATE:" in item:
+                        exc_html += f'<div class="list-item list-item-ai"><span class="list-bullet">◆</span> {item}</div>'
+                    else:
+                        exc_html += f'<div class="list-item list-item-explicit"><span class="list-bullet">●</span> {item}</div>'
+                exc_html += '</div>'
+                st.markdown(exc_html, unsafe_allow_html=True)
+
+        # ════════════════════════════════════════════════════════════════
+        # STEP 4 — AI Assumption Checkboxes (only if assumptions exist)
+        # ════════════════════════════════════════════════════════════════
+        step_offset = 0
+        if analysis.ai_assumptions:
+            step_offset = 1
+            st.markdown("---")
+            st.markdown("""
+            <div class="step-header">
+                <div class="step-num orange">4</div>
+                <p class="step-title">Review Inferred Items</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown(
+                "The following items were **inferred** because they weren't "
+                "explicitly stated in the vendor quote. Each tag shows where "
+                "the item would appear in the final document."
+            )
+            st.caption(
+                "**Check** items to include them. "
+                "**Unchecked** items will be excluded entirely."
+            )
+
+            SECTION_LABELS = {
+                "inclusion": ("Inclusion", "tag-inclusion"),
+                "exclusion": ("Exclusion", "tag-exclusion"),
+                "scope": ("Scope", "tag-scope"),
+            }
+
+            approved = []
+            for i, assumption in enumerate(analysis.ai_assumptions):
+                label_text, tag_class = SECTION_LABELS.get(
+                    assumption.section, (assumption.section, "tag-scope")
+                )
+                st.markdown(f"""
+                <span class="section-tag {tag_class}">{label_text}</span>
+                """, unsafe_allow_html=True)
+                checked = st.checkbox(
+                    assumption.text,
+                    key=f"assumption_{i}",
+                    value=False,
+                )
+                if checked:
+                    approved.append(assumption.text)
+
+            st.session_state["approved_assumptions"] = approved
+        else:
+            st.session_state["approved_assumptions"] = []
+
+        # ════════════════════════════════════════════════════════════════
+        # STEP 5 (or 4) — Generate
+        # ════════════════════════════════════════════════════════════════
+        gen_step = 4 + step_offset
+        st.markdown("---")
+        st.markdown(f"""
+        <div class="step-header">
+            <div class="step-num navy">{gen_step}</div>
+            <p class="step-title">Generate MSAPO Document</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.button(
+            "Generate MSAPO Files",
+            type="primary",
+            use_container_width=True,
+        ):
+            approved = st.session_state.get("approved_assumptions", [])
+
+            with st.spinner("Generating MSAPO document..."):
+                try:
+                    docx_path = generate_docx(
+                        analysis,
+                        approved_assumptions=approved,
+                    )
+                    st.session_state["docx_path"] = docx_path
+                except Exception as e:
+                    st.error(f"Document generation failed: {e}")
+                    st.stop()
+
+            with st.spinner("Converting to PDF..."):
+                try:
+                    pdf_path = convert_to_pdf(docx_path)
+                    st.session_state["pdf_path"] = pdf_path
+                except PDFConversionError as e:
+                    st.warning(
+                        f"PDF conversion unavailable: {e}. "
+                        "The .docx file is still ready for download."
+                    )
+                    st.session_state["pdf_path"] = None
+
+            st.markdown("""
+            <div class="alert-box alert-success">
+                <span class="alert-icon">🎉</span>
+                <div><strong>Success!</strong> Your MSAPO document is ready for download.</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── Download Area ────────────────────────────────────────────
+        docx_path: Path | None = st.session_state.get("docx_path")
+        pdf_path: Path | None = st.session_state.get("pdf_path")
+
+        if docx_path or pdf_path:
+            st.markdown("""
+            <div class="download-section">
+                <div class="download-title">
+                    <span class="dl-icon">📥</span>
+                    Download your generated files
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            dl_col1, dl_col2 = st.columns(2)
+
+            if docx_path and docx_path.exists():
+                with dl_col1:
+                    st.download_button(
+                        label="📄  Download .docx",
+                        data=docx_path.read_bytes(),
+                        file_name=docx_path.name,
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True,
+                    )
+
+            if pdf_path and pdf_path.exists():
+                with dl_col2:
+                    st.download_button(
+                        label="📕  Download .pdf",
+                        data=pdf_path.read_bytes(),
+                        file_name=pdf_path.name,
+                        mime="application/pdf",
+                        use_container_width=True,
+                    )
+
+    # ── Footer ──────────────────────────────────────────────────────
+    st.markdown("""
+    <div class="app-footer">
+        <div class="footer-divider"></div>
+        Built by <a href="mailto:evan.roden@ENFRAsolutions.com">Evan Roden</a>
+        &nbsp;&bull;&nbsp; evan.roden@ENFRAsolutions.com
+    </div>
+    """, unsafe_allow_html=True)
+
+
+if __name__ == "__main__":
+    main()
