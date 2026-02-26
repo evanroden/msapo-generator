@@ -111,12 +111,15 @@ def _append_scope_content(
     doc: Document,
     analysis: QuoteAnalysis,
     approved_assumptions: list[str] | None = None,
+    final_inclusions: list[str] | None = None,
+    final_exclusions: list[str] | None = None,
 ) -> None:
     """
     Append scope content after the sentinel paragraph.
-    Uses doc.add_paragraph() which appends to the end of the document body.
-    Since the sentinel paragraph is near the end of the template, this works
-    perfectly — content appears right after it.
+
+    If final_inclusions / final_exclusions are provided (from the web UI),
+    they are used as-is.  Otherwise falls back to _filter_items() with
+    approved_assumptions (backward compat for the webhook path).
     """
     # -- Facility --
     if analysis.facility_name:
@@ -157,8 +160,10 @@ def _append_scope_content(
     doc.add_paragraph("")  # spacer
 
     # -- Inclusions --
-    # Filter: keep explicit items always; keep AI items only if approved
-    incl_items = _filter_items(analysis.inclusions, approved_assumptions)
+    if final_inclusions is not None:
+        incl_items = final_inclusions
+    else:
+        incl_items = _filter_items(analysis.inclusions, approved_assumptions)
     if incl_items:
         p = doc.add_paragraph()
         run = p.add_run("Inclusions")
@@ -168,7 +173,10 @@ def _append_scope_content(
             _add_bullet(doc, item)
 
     # -- Exclusions --
-    excl_items = _filter_items(analysis.exclusions, approved_assumptions)
+    if final_exclusions is not None:
+        excl_items = final_exclusions
+    else:
+        excl_items = _filter_items(analysis.exclusions, approved_assumptions)
     if excl_items:
         p = doc.add_paragraph()
         run = p.add_run("Exclusions")
@@ -197,6 +205,8 @@ def generate_docx(
     analysis: QuoteAnalysis,
     output_name: str | None = None,
     approved_assumptions: list[str] | None = None,
+    final_inclusions: list[str] | None = None,
+    final_exclusions: list[str] | None = None,
 ) -> Path:
     """
     Open the MSAPO template, preserve everything at the top, and insert
@@ -205,9 +215,10 @@ def generate_docx(
     Args:
         analysis: The structured quote analysis from the AI.
         output_name: Optional filename stem (without extension).
-        approved_assumptions: List of AI assumption strings the user approved
-                              via the checkbox UI. Approved items get their
-                              [AI ESTIMATE:] wrapper removed in the final doc.
+        approved_assumptions: (Legacy) List of AI assumption strings the user
+                              approved. Used by the webhook path.
+        final_inclusions: Pre-filtered inclusion list from the web UI.
+        final_exclusions: Pre-filtered exclusion list from the web UI.
 
     Returns the path to the generated .docx file.
     """
@@ -223,7 +234,11 @@ def generate_docx(
     _find_scope_paragraph_index(doc)
 
     # Append all scope content after the existing template content
-    _append_scope_content(doc, analysis, approved_assumptions)
+    _append_scope_content(
+        doc, analysis, approved_assumptions,
+        final_inclusions=final_inclusions,
+        final_exclusions=final_exclusions,
+    )
 
     # ── Build output filename ─────────────────────────────────────────
     if not output_name:

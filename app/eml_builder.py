@@ -39,6 +39,7 @@ def build_eml(
     msg["To"] = to
     msg["Subject"] = subject
     msg["From"] = ""  # Left blank — Outlook fills in the sender
+    msg["X-Unsent"] = "1"  # Opens in Outlook compose mode with Send button
 
     body = (
         f"Good afternoon, Debbie. Please see below.\n"

@@ -11,6 +11,7 @@ Mobile-responsive portal where users can:
 
 from __future__ import annotations
 
+import re
 import streamlit as st
 from pathlib import Path
 
@@ -487,6 +488,42 @@ CUSTOM_CSS = """
 """
 
 
+def _strip_ai_wrapper(text: str) -> str:
+    """Strip [AI ESTIMATE: ...] wrapper, returning just the inner text."""
+    m = re.search(r"\[AI ESTIMATE:\s*(.+?)\]", text)
+    return m.group(1) if m else text
+
+
+def _build_unified_lists(
+    analysis: QuoteAnalysis,
+) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """Build unified (text, is_ai) lists for inclusions and exclusions.
+
+    Merges items from analysis.inclusions/exclusions with any extra
+    ai_assumptions that aren't already present.  Returns two lists of
+    (clean_text, is_ai_generated) tuples.
+    """
+    def _process(raw_items: list[str], section_key: str) -> list[tuple[str, bool]]:
+        seen: set[str] = set()
+        result: list[tuple[str, bool]] = []
+        for item in raw_items:
+            is_ai = "[AI ESTIMATE:" in item
+            clean = _strip_ai_wrapper(item)
+            if clean not in seen:
+                seen.add(clean)
+                result.append((clean, is_ai))
+        # Merge any ai_assumptions for this section not already present
+        for assumption in analysis.ai_assumptions:
+            if assumption.section == section_key and assumption.text not in seen:
+                seen.add(assumption.text)
+                result.append((assumption.text, True))
+        return result
+
+    inclusions = _process(analysis.inclusions, "inclusion")
+    exclusions = _process(analysis.exclusions, "exclusion")
+    return inclusions, exclusions
+
+
 def _build_test_analysis() -> QuoteAnalysis:
     """Return a realistic hardcoded QuoteAnalysis for UI testing."""
     return QuoteAnalysis(
@@ -731,7 +768,7 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-        # ── Scope Preview ────────────────────────────────────────────
+        # ── Scope Preview (read-only) ─────────────────────────────────
         with st.expander("Scope of Work Preview", expanded=True):
             st.markdown(f"""
             <div class="scope-section">
@@ -747,84 +784,47 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            if analysis.inclusions:
-                inc_html = '<div class="scope-section"><div class="scope-label">Inclusions</div>'
-                for item in analysis.inclusions:
-                    if "[AI ESTIMATE:" in item:
-                        inc_html += f'<div class="list-item list-item-ai"><span class="list-bullet">◆</span> {item}</div>'
-                    else:
-                        inc_html += f'<div class="list-item list-item-explicit"><span class="list-bullet">●</span> {item}</div>'
-                inc_html += '</div>'
-                st.markdown(inc_html, unsafe_allow_html=True)
+        # ── Editable Inclusions & Exclusions ──────────────────────────
+        unified_inc, unified_exc = _build_unified_lists(analysis)
 
-            if analysis.exclusions:
-                exc_html = '<div class="scope-section"><div class="scope-label">Exclusions</div>'
-                for item in analysis.exclusions:
-                    if "[AI ESTIMATE:" in item:
-                        exc_html += f'<div class="list-item list-item-ai"><span class="list-bullet">◆</span> {item}</div>'
-                    else:
-                        exc_html += f'<div class="list-item list-item-explicit"><span class="list-bullet">●</span> {item}</div>'
-                exc_html += '</div>'
-                st.markdown(exc_html, unsafe_allow_html=True)
+        st.markdown("""
+        <div class="scope-section" style="margin-top:0.5rem;">
+            <div class="scope-label">Inclusions</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.caption("Uncheck any item to remove it from the final document.")
 
-        # ════════════════════════════════════════════════════════════════
-        # STEP 4 — AI Assumption Checkboxes (only if assumptions exist)
-        # ════════════════════════════════════════════════════════════════
-        step_offset = 0
-        if analysis.ai_assumptions:
-            step_offset = 1
-            st.markdown("---")
-            st.markdown("""
-            <div class="step-header">
-                <div class="step-num orange">4</div>
-                <p class="step-title">Review Inferred Items</p>
-            </div>
-            """, unsafe_allow_html=True)
+        final_inclusions: list[str] = []
+        for i, (text, is_ai) in enumerate(unified_inc):
+            label = f"{'🤖 ' if is_ai else ''}{text}"
+            checked = st.checkbox(label, key=f"inc_{i}", value=True)
+            if checked:
+                final_inclusions.append(text)
 
-            st.markdown(
-                "The following items were **inferred** because they weren't "
-                "explicitly stated in the vendor quote. Each tag shows where "
-                "the item would appear in the final document."
-            )
-            st.caption(
-                "**Check** items to include them. "
-                "**Unchecked** items will be excluded entirely."
-            )
+        st.markdown("""
+        <div class="scope-section" style="margin-top:1rem;">
+            <div class="scope-label">Exclusions</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.caption("Uncheck any item to remove it from the final document.")
 
-            SECTION_LABELS = {
-                "inclusion": ("Inclusion", "tag-inclusion"),
-                "exclusion": ("Exclusion", "tag-exclusion"),
-                "scope": ("Scope", "tag-scope"),
-            }
+        final_exclusions: list[str] = []
+        for i, (text, is_ai) in enumerate(unified_exc):
+            label = f"{'🤖 ' if is_ai else ''}{text}"
+            checked = st.checkbox(label, key=f"exc_{i}", value=True)
+            if checked:
+                final_exclusions.append(text)
 
-            approved = []
-            for i, assumption in enumerate(analysis.ai_assumptions):
-                label_text, tag_class = SECTION_LABELS.get(
-                    assumption.section, (assumption.section, "tag-scope")
-                )
-                st.markdown(f"""
-                <span class="section-tag {tag_class}">{label_text}</span>
-                """, unsafe_allow_html=True)
-                checked = st.checkbox(
-                    assumption.text,
-                    key=f"assumption_{i}",
-                    value=False,
-                )
-                if checked:
-                    approved.append(assumption.text)
-
-            st.session_state["approved_assumptions"] = approved
-        else:
-            st.session_state["approved_assumptions"] = []
+        if any(is_ai for _, is_ai in unified_inc + unified_exc):
+            st.caption("🤖 = AI-inferred item (not explicitly stated in the quote)")
 
         # ════════════════════════════════════════════════════════════════
-        # STEP 5 (or 4) — Generate
+        # STEP 4 — Generate
         # ════════════════════════════════════════════════════════════════
-        gen_step = 4 + step_offset
         st.markdown("---")
-        st.markdown(f"""
+        st.markdown("""
         <div class="step-header">
-            <div class="step-num navy">{gen_step}</div>
+            <div class="step-num navy">4</div>
             <p class="step-title">Generate MSAPO Document</p>
         </div>
         """, unsafe_allow_html=True)
@@ -834,13 +834,12 @@ def main():
             type="primary",
             use_container_width=True,
         ):
-            approved = st.session_state.get("approved_assumptions", [])
-
             with st.spinner("Generating MSAPO document..."):
                 try:
                     docx_path = generate_docx(
                         analysis,
-                        approved_assumptions=approved,
+                        final_inclusions=final_inclusions,
+                        final_exclusions=final_exclusions,
                     )
                     st.session_state["docx_path"] = docx_path
                 except Exception as e:
@@ -905,11 +904,10 @@ def main():
         # STEP — Email to Debbie
         # ════════════════════════════════════════════════════════════════
         if docx_path and docx_path.exists():
-            email_step = gen_step + 1
             st.markdown("---")
-            st.markdown(f"""
+            st.markdown("""
             <div class="step-header">
-                <div class="step-num orange">{email_step}</div>
+                <div class="step-num orange">5</div>
                 <p class="step-title">Email to Debbie</p>
             </div>
             """, unsafe_allow_html=True)
@@ -992,42 +990,38 @@ def main():
                 st.markdown(f"**To:** dpagnottelli@enfrasolutions.com")
                 st.markdown(f"**Subject:** {subject}")
                 st.markdown("---")
-                preview_body = (
+                st.text(
                     f"Good afternoon, Debbie. Please see below.\n"
-                    f"* **Site Location:**\n"
+                    f"* Site Location:\n"
                     f"   * RRH {email_site}\n"
-                    f"* **Job cost code:**\n"
+                    f"* Job cost code:\n"
                     f"   * {cost_code}\n"
-                    f"* **Subcontractor name:**\n"
+                    f"* Subcontractor name:\n"
                     f"   * {analysis.vendor_name or ''}\n"
-                    f"* **Contact Name:**\n"
+                    f"* Contact Name:\n"
                     f"   * {email_contact}\n"
-                    f"* **Contact Email:**\n"
+                    f"* Contact Email:\n"
                     f"   * {email_contact_email}\n"
-                    f"* **Description:**\n"
+                    f"* Description:\n"
                     f"   * {email_desc}\n"
-                    f"* **Amount:**\n"
+                    f"* Amount:\n"
                     f"   * {email_amount}\n"
                     f"Best,\n"
                     f"Evan"
                 )
-                st.markdown(preview_body)
 
             # ── Collect attachments ───────────────────────────────
             attachments: list[tuple[str, bytes]] = []
-
             uploaded_bytes = st.session_state.get("uploaded_file_bytes")
             uploaded_name = st.session_state.get("uploaded_file_name")
             if uploaded_bytes and uploaded_name:
                 attachments.append((uploaded_name, uploaded_bytes))
-
             if docx_path and docx_path.exists():
                 attachments.append((docx_path.name, docx_path.read_bytes()))
-
             if pdf_path and pdf_path.exists():
                 attachments.append((pdf_path.name, pdf_path.read_bytes()))
 
-            # ── Download .eml button ──────────────────────────────
+            # ── Download .eml (opens as draft in Outlook) ─────────
             eml_bytes = build_eml(
                 subject=subject,
                 site_short_name=email_site,
@@ -1041,44 +1035,14 @@ def main():
             )
 
             st.download_button(
-                label="📧  Download Email (.eml) — Open in Outlook",
+                label="📧  Download Email — Open in Outlook & Hit Send",
                 data=eml_bytes,
                 file_name=f"{subject}.eml",
                 mime="message/rfc822",
                 use_container_width=True,
             )
-
-            # ── Fallback: individual attachment downloads ─────────
-            with st.expander("Manual attachments (if .eml doesn't work)", expanded=False):
-                st.caption("Download each file individually and attach them to the email yourself.")
-                fb1, fb2, fb3 = st.columns(3)
-                if uploaded_bytes and uploaded_name:
-                    with fb1:
-                        st.download_button(
-                            "Original Quote",
-                            data=uploaded_bytes,
-                            file_name=uploaded_name,
-                            use_container_width=True,
-                            key="fb_quote",
-                        )
-                if docx_path and docx_path.exists():
-                    with fb2:
-                        st.download_button(
-                            "MSAPO .docx",
-                            data=docx_path.read_bytes(),
-                            file_name=docx_path.name,
-                            use_container_width=True,
-                            key="fb_docx",
-                        )
-                if pdf_path and pdf_path.exists():
-                    with fb3:
-                        st.download_button(
-                            "MSAPO .pdf",
-                            data=pdf_path.read_bytes(),
-                            file_name=pdf_path.name,
-                            use_container_width=True,
-                            key="fb_pdf",
-                        )
+            st.caption("Double-click the downloaded .eml to open it in Outlook as a **draft** "
+                       "with the Send button ready. All 3 attachments are already included.")
 
     # ── Footer ──────────────────────────────────────────────────────
     st.markdown("""
