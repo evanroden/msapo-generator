@@ -37,7 +37,7 @@ def _convert_libreoffice(docx_path: Path) -> Path:
             lo_bin,
             "--headless",
             "--convert-to",
-            "pdf",
+            "pdf:writer_pdf_Export",
             "--outdir",
             str(OUTPUT_DIR),
             str(docx_path),
@@ -53,6 +53,16 @@ def _convert_libreoffice(docx_path: Path) -> Path:
         )
 
     pdf_path = OUTPUT_DIR / f"{docx_path.stem}.pdf"
+
+    # LibreOffice sometimes outputs .htm instead of .pdf — detect and clean up
+    htm_path = OUTPUT_DIR / f"{docx_path.stem}.htm"
+    if not pdf_path.exists() and htm_path.exists():
+        htm_path.unlink()
+        raise PDFConversionError(
+            "LibreOffice produced HTML instead of PDF. "
+            "The .docx file is still available for download."
+        )
+
     if not pdf_path.exists():
         raise PDFConversionError(
             "LibreOffice ran but the PDF was not found at the expected path."

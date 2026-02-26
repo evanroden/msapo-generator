@@ -956,12 +956,19 @@ def main():
                     )
                     selected_cat_key = valid_cats[cat_display.index(selected_cat_display)]
                     cost_code = lookup_cost_code(fac_key, selected_cat_key) or ""
-                    st.text_input(
-                        "Job Cost Code",
-                        value=cost_code,
-                        key="email_cost_code",
-                        disabled=True,
-                    )
+                    st.markdown(f"""
+                    <div style="margin-bottom:1rem;">
+                        <label style="font-size:0.85rem; font-weight:600; color:#0F172A;">
+                            Job Cost Code
+                        </label>
+                        <div style="
+                            background:#F1F5F9; border:1px solid #E2E8F0;
+                            border-radius:8px; padding:0.5rem 0.85rem;
+                            font-size:1rem; font-weight:700; color:#1B3A5C;
+                            margin-top:0.25rem;
+                        ">{cost_code or '—'}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
                 else:
                     selected_cat_key = None
                     cost_code = st.text_input(
@@ -990,24 +997,23 @@ def main():
                 st.markdown(f"**To:** dpagnottelli@enfrasolutions.com")
                 st.markdown(f"**Subject:** {subject}")
                 st.markdown("---")
-                st.text(
-                    f"Good afternoon, Debbie. Please see below.\n"
-                    f"* Site Location:\n"
-                    f"   * RRH {email_site}\n"
-                    f"* Job cost code:\n"
-                    f"   * {cost_code}\n"
-                    f"* Subcontractor name:\n"
-                    f"   * {analysis.vendor_name or ''}\n"
-                    f"* Contact Name:\n"
-                    f"   * {email_contact}\n"
-                    f"* Contact Email:\n"
-                    f"   * {email_contact_email}\n"
-                    f"* Description:\n"
-                    f"   * {email_desc}\n"
-                    f"* Amount:\n"
-                    f"   * {email_amount}\n"
-                    f"Best,\n"
-                    f"Evan"
+                st.markdown(
+                    f"Good afternoon, Debbie. Please see below.\n\n"
+                    f"- **Site Location:**\n"
+                    f"   - RRH {email_site}\n"
+                    f"- **Job cost code:**\n"
+                    f"   - {cost_code}\n"
+                    f"- **Subcontractor name:**\n"
+                    f"   - {analysis.vendor_name or ''}\n"
+                    f"- **Contact Name:**\n"
+                    f"   - {email_contact}\n"
+                    f"- **Contact Email:**\n"
+                    f"   - {email_contact_email}\n"
+                    f"- **Description:**\n"
+                    f"   - {email_desc}\n"
+                    f"- **Amount:**\n"
+                    f"   - {email_amount}\n\n"
+                    f"*Your Outlook signature will be added automatically.*"
                 )
 
             # ── Collect attachments ───────────────────────────────

@@ -1,6 +1,9 @@
 """
 Build RFC 2822 .eml files with attachments using Python stdlib.
 
+Uses HTML body so Outlook places the signature AFTER the email content
+(plain-text .eml bodies cause Outlook to insert the signature first).
+
 The user downloads the .eml, double-clicks to open in Outlook,
 reviews the pre-filled email, and hits Send.
 """
@@ -41,26 +44,40 @@ def build_eml(
     msg["From"] = ""  # Left blank — Outlook fills in the sender
     msg["X-Unsent"] = "1"  # Opens in Outlook compose mode with Send button
 
-    body = (
-        f"Good afternoon, Debbie. Please see below.\n"
-        f"* Site Location:\n"
-        f"   * RRH {site_short_name}\n"
-        f"* Job cost code:\n"
-        f"   * {cost_code}\n"
-        f"* Subcontractor name:\n"
-        f"   * {vendor_name}\n"
-        f"* Contact Name:\n"
-        f"   * {contact_name}\n"
-        f"* Contact Email:\n"
-        f"   * {contact_email}\n"
-        f"* Description:\n"
-        f"   * {description}\n"
-        f"* Amount:\n"
-        f"   * {amount}\n"
-        f"Best,\n"
-        f"Evan"
-    )
-    msg.set_content(body)
+    # HTML body — Outlook places its auto-signature after this content.
+    # Headings are bold; no "Best, Evan" since the Outlook signature covers it.
+    html_body = f"""\
+<html>
+<body style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">
+<p>Good afternoon, Debbie. Please see below.</p>
+<ul style="list-style-type: disc; padding-left: 20px;">
+  <li><b>Site Location:</b>
+    <ul style="list-style-type: disc;"><li>RRH {_esc(site_short_name)}</li></ul>
+  </li>
+  <li><b>Job cost code:</b>
+    <ul style="list-style-type: disc;"><li>{_esc(cost_code)}</li></ul>
+  </li>
+  <li><b>Subcontractor name:</b>
+    <ul style="list-style-type: disc;"><li>{_esc(vendor_name)}</li></ul>
+  </li>
+  <li><b>Contact Name:</b>
+    <ul style="list-style-type: disc;"><li>{_esc(contact_name)}</li></ul>
+  </li>
+  <li><b>Contact Email:</b>
+    <ul style="list-style-type: disc;"><li>{_esc(contact_email)}</li></ul>
+  </li>
+  <li><b>Description:</b>
+    <ul style="list-style-type: disc;"><li>{_esc(description)}</li></ul>
+  </li>
+  <li><b>Amount:</b>
+    <ul style="list-style-type: disc;"><li>{_esc(amount)}</li></ul>
+  </li>
+</ul>
+</body>
+</html>"""
+
+    # Set as HTML content so Outlook handles signature placement correctly
+    msg.set_content(html_body, subtype="html")
 
     for filename, data in attachments:
         maintype, subtype = _guess_mime(filename)
@@ -72,6 +89,16 @@ def build_eml(
         )
 
     return msg.as_bytes()
+
+
+def _esc(text: str) -> str:
+    """Escape HTML special characters."""
+    return (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 def _guess_mime(filename: str) -> tuple[str, str]:
