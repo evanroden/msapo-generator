@@ -87,3 +87,95 @@ FACILITIES = {
         "aliases": ["clifton springs", "coulter rd", "14432"],
     },
 }
+
+# ── Cost Code Mappings ─────────────────────────────────────────────
+# Format: "01" + site letter + work suffix  →  e.g. "01CEABA"
+
+SITE_COST_CODE_LETTERS: dict[str, str] = {
+    "rochester_general": "B",
+    "united_memorial": "C",
+    "newark_wayne": "D",
+    "clifton_springs": "E",
+    "unity": "F",
+    "st_marys": "G",
+    "canton_potsdam": "H",
+    "massena": "I",
+    "gouverneur": "J",
+}
+
+WORK_CATEGORY_SUFFIXES: dict[str, str] = {
+    "chemical_treatment": "CHEM",
+    "building_automation": "EABA",
+    "electrical_pm": "EAEPM",
+    "preventive_maintenance": "EAPM",
+    "repairs": "EAR",
+    "repair_cap": "EARC",       # Newark Wayne only
+    "steam_trap": "STSRC",
+    "water_softener": "WS",
+}
+
+WORK_CATEGORY_DISPLAY: dict[str, str] = {
+    "chemical_treatment": "Chemical Treatment",
+    "building_automation": "Building Automation",
+    "electrical_pm": "Electrical PM",
+    "preventive_maintenance": "Preventive Maintenance",
+    "repairs": "Repairs",
+    "repair_cap": "Repair Cap",
+    "steam_trap": "Steam Trap Survey & Repair",
+    "water_softener": "Water Softener",
+}
+
+FACILITY_SHORT_NAMES: dict[str, str] = {
+    "rochester_general": "RGH",
+    "united_memorial": "UMMC",
+    "newark_wayne": "Newark Wayne",
+    "clifton_springs": "Clifton Springs",
+    "unity": "Unity",
+    "st_marys": "St. Mary's",
+    "canton_potsdam": "Canton Potsdam",
+    "massena": "Massena",
+    "gouverneur": "Gouverneur",
+}
+
+
+def facility_key_from_name(display_name: str) -> str | None:
+    """Reverse-lookup: given a display name like 'United Memorial Medical Center',
+    return the config key like 'united_memorial'.  Returns None if no match."""
+    if not display_name:
+        return None
+    lower = display_name.lower()
+    # Pass 1: exact full-name match (avoids substring false positives)
+    for key, fac in FACILITIES.items():
+        if fac["name"].lower() == lower:
+            return key
+    # Pass 2: alias substring match
+    for key, fac in FACILITIES.items():
+        aliases = [a.lower() for a in fac.get("aliases", [])]
+        if any(a in lower for a in aliases):
+            return key
+    return None
+
+
+def lookup_cost_code(facility_key: str | None, work_category: str | None) -> str | None:
+    """Build a cost code like '01CEABA' from facility key + work category.
+    Returns None if either piece is missing or invalid."""
+    if not facility_key or not work_category:
+        return None
+    letter = SITE_COST_CODE_LETTERS.get(facility_key)
+    suffix = WORK_CATEGORY_SUFFIXES.get(work_category)
+    if not letter or not suffix:
+        return None
+    # repair_cap is only valid for Newark Wayne
+    if work_category == "repair_cap" and facility_key != "newark_wayne":
+        return None
+    return f"01{letter}{suffix}"
+
+
+def valid_categories_for_site(facility_key: str | None) -> list[str]:
+    """Return the list of work-category keys valid for a given site."""
+    if not facility_key or facility_key not in SITE_COST_CODE_LETTERS:
+        return list(WORK_CATEGORY_SUFFIXES.keys())
+    cats = [k for k in WORK_CATEGORY_SUFFIXES if k != "repair_cap"]
+    if facility_key == "newark_wayne":
+        cats.append("repair_cap")
+    return cats

@@ -30,8 +30,10 @@ data so that a Scope of Work (MSAPO agreement) can be generated.
 STRICT RULES:
 
 1. **NEVER include any dollar amounts, hourly rates, unit prices, line-item \
-   costs, totals, or any financial figures in your output.** Strip every \
-   price completely. Do not mention specific costs or totals anywhere.
+   costs, totals, or any financial figures in scope_of_work, inclusions, \
+   exclusions, or project_description.** Strip every price from those fields. \
+   HOWEVER, you MUST extract the final total (after tax/fees) into \
+   "total_amount" — keep that one dollar figure intact.
 
 2. If standard inclusions or exclusions are missing from the quote, infer \
    the most reasonable ones based on the type of work described. Wrap every \
@@ -62,12 +64,19 @@ STRICT RULES:
    If status is "included" but there's a clarification about estimated vs \
    actual tax, include that note in tax_note.
 
-4. Match the facility location to one of these known sites if mentioned:
-   - "RRH St. Mary's Medical Center, 89 Genesee St, Rochester, NY 14611"
-   - "United Memorial Medical Center, 127 North Street, Batavia, NY 14020"
-   Also look for abbreviations like "UMMC" (United Memorial Medical Center) \
-   or "St. Mary's". If neither matches, use whatever facility/location the \
-   quote references. If no location is given, set facility to null.
+4. Match the facility location to one of these known RRH sites if mentioned:
+   - Rochester General Hospital, 1425 Portland Ave, Rochester, NY 14621 (aliases: RGH)
+   - United Memorial Medical Center, 127 North St, Batavia, NY 14020 (aliases: UMMC)
+   - Newark-Wayne Community Hospital, 1200 Driving Park Ave, Newark, NY 14513
+   - Clifton Springs Hospital & Clinic, 2 Coulter Rd, Clifton Springs, NY 14432
+   - Unity Hospital, 1555 Long Pond Rd, Rochester, NY 14626
+   - St. Mary's Medical Campus, 89 Genesee St, Rochester, NY 14611
+   - Canton-Potsdam Hospital, 50 Leroy St, Potsdam, NY 13676
+   - Gouverneur Hospital, 77 W Barney St, Gouverneur, NY 13642
+   - Massena Hospital, 1 Hospital Dr, Massena, NY 13662
+   - Clifton Springs Hospital & Clinic, 2 Coulter Rd, Clifton Springs, NY 14432
+   If none match, use whatever facility/location the quote references. \
+   If no location is given, set facility fields to null.
 
 5. For scope_of_work, write a thorough and detailed description of ALL work \
    items. Organize by numbered task if the quote has numbered sections. \
@@ -81,6 +90,30 @@ STRICT RULES:
    This tells the user exactly WHERE each assumption would appear in the \
    final document.
 
+7. **CONTACT & EMAIL FIELDS:**
+   - "contact_name": the name of the vendor contact / sales rep / account \
+     manager mentioned in the quote. null if not found.
+   - "contact_email": their email address. null if not found.
+
+8. **SHORT DESCRIPTION:**
+   - "short_description": a very brief label for this work — 20 characters \
+     or fewer including spaces and special characters. Examples: "Water \
+     Softener Salt", "BAS Reprogramming", "Fire Alarm PM". This is used \
+     as a cost-code description, so keep it tight.
+
+9. **WORK CATEGORY:**
+   - "work_category": classify the type of work into exactly one of these \
+     categories (use the key, not the label):
+     "chemical_treatment" — Chemical treatment / water chemistry
+     "building_automation" — BAS / BMS / controls / HVAC automation
+     "electrical_pm" — Electrical preventive maintenance
+     "preventive_maintenance" — General / mechanical PM
+     "repairs" — General repairs
+     "repair_cap" — Capital repair projects
+     "steam_trap" — Steam trap survey / repair
+     "water_softener" — Water softener service / salt delivery
+   Pick the single best match. If truly ambiguous, default to "repairs".
+
 Return your answer as a JSON object with exactly these keys:
 {
   "vendor_name": "string",
@@ -93,7 +126,12 @@ Return your answer as a JSON object with exactly these keys:
   "tax_status": "included | excluded | unclear",
   "tax_warning": "string or null",
   "tax_note": "string or null — any clarifications about tax from the quote",
-  "ai_assumptions": [{"text": "string", "section": "inclusion|exclusion|scope"}, ...]
+  "ai_assumptions": [{"text": "string", "section": "inclusion|exclusion|scope"}, ...],
+  "contact_name": "string or null",
+  "contact_email": "string or null",
+  "total_amount": "string or null — final dollar total after tax, e.g. '$1,234.56'",
+  "short_description": "string or null — 20 chars max",
+  "work_category": "string — one of the category keys above"
 }
 
 Return ONLY the JSON object, no markdown fences, no extra text.
@@ -120,6 +158,11 @@ class QuoteAnalysis:
     tax_warning: Optional[str] = None
     tax_note: Optional[str] = None
     ai_assumptions: list[AIAssumption] = field(default_factory=list)
+    contact_name: Optional[str] = None
+    contact_email: Optional[str] = None
+    total_amount: Optional[str] = None
+    short_description: Optional[str] = None
+    work_category: Optional[str] = None
 
 
 def _match_facility(name: Optional[str], address: Optional[str]) -> tuple[Optional[str], Optional[str]]:
@@ -227,6 +270,12 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
     # Default tax_note if not provided
     if "tax_note" not in data:
         data["tax_note"] = None
+
+    # Defaults for email / cost-code fields
+    for key in ("contact_name", "contact_email", "total_amount",
+                "short_description", "work_category"):
+        if key not in data:
+            data[key] = None
 
     # Convert raw JSON dicts to AIAssumption objects
     raw_assumptions = data.get("ai_assumptions", [])

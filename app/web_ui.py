@@ -15,9 +15,18 @@ import streamlit as st
 from pathlib import Path
 
 from app.ocr import extract_text
-from app.quote_analyzer import analyze_quote, QuoteAnalysis
+from app.quote_analyzer import analyze_quote, QuoteAnalysis, AIAssumption
 from app.document_generator import generate_docx
 from app.pdf_converter import convert_to_pdf, PDFConversionError
+from app.eml_builder import build_eml
+from app.config import (
+    FACILITY_SHORT_NAMES,
+    WORK_CATEGORY_DISPLAY,
+    WORK_CATEGORY_SUFFIXES,
+    facility_key_from_name,
+    lookup_cost_code,
+    valid_categories_for_site,
+)
 
 # ── Design System ────────────────────────────────────────────────────
 # Navy: #1B3A5C   Orange: #E8792F   Slate: #1E293B   Surface: #F7F9FC
@@ -478,6 +487,49 @@ CUSTOM_CSS = """
 """
 
 
+def _build_test_analysis() -> QuoteAnalysis:
+    """Return a realistic hardcoded QuoteAnalysis for UI testing."""
+    return QuoteAnalysis(
+        vendor_name="Culligan Water",
+        project_description="Monthly water softener salt delivery and system service for UMMC.",
+        facility_name="United Memorial Medical Center",
+        facility_address="127 North St, Batavia, NY 14020",
+        scope_of_work=(
+            "1. Deliver and install water softener salt (40 bags) to the mechanical "
+            "room at United Memorial Medical Center.\n\n"
+            "2. Inspect the existing Culligan water softener system, verify brine "
+            "tank levels, and confirm proper regeneration cycles.\n\n"
+            "3. Test water hardness at three sample points (incoming supply, post-softener, "
+            "and hot water return) and document results."
+        ),
+        inclusions=[
+            "Water softener salt — 40 bags delivered and stacked in mechanical room",
+            "System inspection and regeneration cycle verification",
+            "Water hardness testing at three sample points",
+            "Written service report with test results",
+        ],
+        exclusions=[
+            "Repair or replacement of softener components",
+            "Plumbing modifications or new piping",
+            "[AI ESTIMATE: Disposal of used salt bags or packaging materials]",
+            "[AI ESTIMATE: After-hours or emergency service calls]",
+        ],
+        tax_status="included",
+        tax_warning=None,
+        tax_note="Estimated sales tax is included in the total. Actual invoice amount may differ.",
+        ai_assumptions=[
+            AIAssumption(text="Disposal of used salt bags or packaging materials", section="exclusion"),
+            AIAssumption(text="After-hours or emergency service calls", section="exclusion"),
+            AIAssumption(text="Access to mechanical room provided by facility staff during business hours", section="inclusion"),
+        ],
+        contact_name="Liz Davidson",
+        contact_email="britt@wnyculligan.com",
+        total_amount="$577.47",
+        short_description="Water Softener Salt",
+        work_category="water_softener",
+    )
+
+
 def main():
     st.set_page_config(
         page_title="MSAPO Generator",
@@ -489,15 +541,25 @@ def main():
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
     # ── Hero Header ─────────────────────────────────────────────────────
-    st.markdown("""
-    <div class="hero">
-        <div class="hero-badge">RRH Network</div>
-        <h1>MSAPO Scope of Work<br>Generator</h1>
-        <p class="hero-subtitle">
-            Built by <span class="hero-accent">Evan Roden</span>
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    hero_col, test_col = st.columns([5, 1])
+    with hero_col:
+        st.markdown("""
+        <div class="hero">
+            <div class="hero-badge">RRH Network</div>
+            <h1>MSAPO Scope of Work<br>Generator</h1>
+            <p class="hero-subtitle">
+                Built by <span class="hero-accent">Evan Roden</span>
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    with test_col:
+        if st.button("Test", help="Load sample data to test later stages"):
+            st.session_state["analysis"] = _build_test_analysis()
+            st.session_state["uploaded_file_bytes"] = b"(test quote file)"
+            st.session_state["uploaded_file_name"] = "Test_Quote.pdf"
+            st.session_state.pop("docx_path", None)
+            st.session_state.pop("pdf_path", None)
+            st.rerun()
 
     st.markdown("""
     <div class="intro-text">
@@ -528,6 +590,9 @@ def main():
         )
         if uploaded is not None:
             file_bytes = uploaded.read()
+            # Persist for email attachment later
+            st.session_state["uploaded_file_bytes"] = file_bytes
+            st.session_state["uploaded_file_name"] = uploaded.name
             with st.spinner("Extracting text from file..."):
                 try:
                     quote_text = extract_text(file_bytes, uploaded.name)
@@ -835,6 +900,185 @@ def main():
                         mime="application/pdf",
                         use_container_width=True,
                     )
+
+        # ════════════════════════════════════════════════════════════════
+        # STEP — Email to Debbie
+        # ════════════════════════════════════════════════════════════════
+        if docx_path and docx_path.exists():
+            email_step = gen_step + 1
+            st.markdown("---")
+            st.markdown(f"""
+            <div class="step-header">
+                <div class="step-num orange">{email_step}</div>
+                <p class="step-title">Email to Debbie</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ── Resolve facility key and default short name ───────
+            fac_key = facility_key_from_name(analysis.facility_name)
+            default_short = FACILITY_SHORT_NAMES.get(fac_key, "") if fac_key else ""
+
+            # ── Work categories valid for this site ───────────────
+            valid_cats = valid_categories_for_site(fac_key)
+            cat_display = [WORK_CATEGORY_DISPLAY.get(c, c) for c in valid_cats]
+
+            # Default work_category index
+            default_cat_idx = 0
+            if analysis.work_category and analysis.work_category in valid_cats:
+                default_cat_idx = valid_cats.index(analysis.work_category)
+
+            # ── Editable fields ──────────────────────────────────
+            ecol1, ecol2 = st.columns(2)
+            with ecol1:
+                email_site = st.text_input(
+                    "Site Short Name",
+                    value=default_short,
+                    key="email_site",
+                    placeholder="e.g. UMMC",
+                )
+                email_desc = st.text_input(
+                    "Description (max 20 chars)",
+                    value=(analysis.short_description or "")[:20],
+                    max_chars=20,
+                    key="email_desc",
+                )
+                email_contact = st.text_input(
+                    "Contact Name",
+                    value=analysis.contact_name or "",
+                    key="email_contact",
+                )
+
+            with ecol2:
+                if fac_key and fac_key in FACILITY_SHORT_NAMES:
+                    selected_cat_display = st.selectbox(
+                        "Work Category",
+                        cat_display,
+                        index=default_cat_idx,
+                        key="email_cat",
+                    )
+                    selected_cat_key = valid_cats[cat_display.index(selected_cat_display)]
+                    cost_code = lookup_cost_code(fac_key, selected_cat_key) or ""
+                    st.text_input(
+                        "Job Cost Code",
+                        value=cost_code,
+                        key="email_cost_code",
+                        disabled=True,
+                    )
+                else:
+                    selected_cat_key = None
+                    cost_code = st.text_input(
+                        "Job Cost Code",
+                        value="",
+                        key="email_cost_code_manual",
+                        placeholder="e.g. 01CEABA",
+                    )
+
+                email_amount = st.text_input(
+                    "Total Amount",
+                    value=analysis.total_amount or "",
+                    key="email_amount",
+                )
+                email_contact_email = st.text_input(
+                    "Contact Email",
+                    value=analysis.contact_email or "",
+                    key="email_contact_email",
+                )
+
+            # ── Build subject line ────────────────────────────────
+            subject = f"{analysis.vendor_name or 'Vendor'} {email_desc} at {email_site} MSA PO".strip()
+
+            # ── Email preview ─────────────────────────────────────
+            with st.expander("Preview email", expanded=False):
+                st.markdown(f"**To:** dpagnottelli@enfrasolutions.com")
+                st.markdown(f"**Subject:** {subject}")
+                st.markdown("---")
+                preview_body = (
+                    f"Good afternoon, Debbie. Please see below.\n"
+                    f"* **Site Location:**\n"
+                    f"   * RRH {email_site}\n"
+                    f"* **Job cost code:**\n"
+                    f"   * {cost_code}\n"
+                    f"* **Subcontractor name:**\n"
+                    f"   * {analysis.vendor_name or ''}\n"
+                    f"* **Contact Name:**\n"
+                    f"   * {email_contact}\n"
+                    f"* **Contact Email:**\n"
+                    f"   * {email_contact_email}\n"
+                    f"* **Description:**\n"
+                    f"   * {email_desc}\n"
+                    f"* **Amount:**\n"
+                    f"   * {email_amount}\n"
+                    f"Best,\n"
+                    f"Evan"
+                )
+                st.markdown(preview_body)
+
+            # ── Collect attachments ───────────────────────────────
+            attachments: list[tuple[str, bytes]] = []
+
+            uploaded_bytes = st.session_state.get("uploaded_file_bytes")
+            uploaded_name = st.session_state.get("uploaded_file_name")
+            if uploaded_bytes and uploaded_name:
+                attachments.append((uploaded_name, uploaded_bytes))
+
+            if docx_path and docx_path.exists():
+                attachments.append((docx_path.name, docx_path.read_bytes()))
+
+            if pdf_path and pdf_path.exists():
+                attachments.append((pdf_path.name, pdf_path.read_bytes()))
+
+            # ── Download .eml button ──────────────────────────────
+            eml_bytes = build_eml(
+                subject=subject,
+                site_short_name=email_site,
+                cost_code=cost_code,
+                vendor_name=analysis.vendor_name or "",
+                contact_name=email_contact,
+                contact_email=email_contact_email,
+                description=email_desc,
+                amount=email_amount,
+                attachments=attachments,
+            )
+
+            st.download_button(
+                label="📧  Download Email (.eml) — Open in Outlook",
+                data=eml_bytes,
+                file_name=f"{subject}.eml",
+                mime="message/rfc822",
+                use_container_width=True,
+            )
+
+            # ── Fallback: individual attachment downloads ─────────
+            with st.expander("Manual attachments (if .eml doesn't work)", expanded=False):
+                st.caption("Download each file individually and attach them to the email yourself.")
+                fb1, fb2, fb3 = st.columns(3)
+                if uploaded_bytes and uploaded_name:
+                    with fb1:
+                        st.download_button(
+                            "Original Quote",
+                            data=uploaded_bytes,
+                            file_name=uploaded_name,
+                            use_container_width=True,
+                            key="fb_quote",
+                        )
+                if docx_path and docx_path.exists():
+                    with fb2:
+                        st.download_button(
+                            "MSAPO .docx",
+                            data=docx_path.read_bytes(),
+                            file_name=docx_path.name,
+                            use_container_width=True,
+                            key="fb_docx",
+                        )
+                if pdf_path and pdf_path.exists():
+                    with fb3:
+                        st.download_button(
+                            "MSAPO .pdf",
+                            data=pdf_path.read_bytes(),
+                            file_name=pdf_path.name,
+                            use_container_width=True,
+                            key="fb_pdf",
+                        )
 
     # ── Footer ──────────────────────────────────────────────────────
     st.markdown("""
