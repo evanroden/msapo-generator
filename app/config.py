@@ -19,7 +19,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # When a new Sonnet version is released, update this default or set the
 # ANTHROPIC_MODEL environment variable (e.g. in .env or Render dashboard).
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
 # ── Email (SendGrid / SMTP) ───────────────────────────────────────────
 SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "")
