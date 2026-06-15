@@ -10,4 +10,4 @@ services:
       - key: PDF_BACKEND
         value: libreoffice
       - key: ANTHROPIC_MODEL
-        value: claude-sonnet-4-20250514
+        value: claude-sonnet-4-6
