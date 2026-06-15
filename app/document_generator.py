@@ -81,6 +81,51 @@ def _add_bullet(doc, item_text: str, is_ai: bool = False):
     return para
 
 
+def _set_cell_text(cell, text: str) -> None:
+    """Replace a table cell's text, preserving the first run's formatting."""
+    paragraphs = cell.paragraphs
+    first_para = paragraphs[0]
+    # Drop any extra paragraphs in the cell
+    for p in paragraphs[1:]:
+        p._element.getparent().remove(p._element)
+    runs = first_para.runs
+    if runs:
+        runs[0].text = text
+        for r in runs[1:]:
+            r._element.getparent().remove(r._element)
+    else:
+        first_para.add_run(text)
+
+
+def _clear_first_exhibit_row(doc: Document) -> None:
+    """
+    In the Section I "ADDITIONAL MSAPO DOCUMENTS" exhibit table, the first data
+    row (Attachment A – Prime Contract) ships pre-filled with an "X" in the
+    Included column and a date.  Clear both so the row matches every other row
+    in the template (unchecked, blank date).  The table is otherwise untouched.
+    """
+    for table in doc.tables:
+        if not table.rows:
+            continue
+        header = [c.text.strip().lower() for c in table.rows[0].cells]
+        if "included" not in header or "attachment" not in header:
+            continue
+        if len(table.rows) < 2:
+            return
+        included_idx = header.index("included")
+        first_row = table.rows[1]
+        # Uncheck the "Included" box
+        _set_cell_text(first_row.cells[included_idx], "")
+        # Blank the date, copying the empty placeholder used by the other rows
+        if "date" in header:
+            date_idx = header.index("date")
+            blank_date = ""
+            if len(table.rows) > 2:
+                blank_date = table.rows[2].cells[date_idx].text
+            _set_cell_text(first_row.cells[date_idx], blank_date)
+        return
+
+
 def _find_scope_paragraph_index(doc: Document) -> int:
     """Find the paragraph index containing the scope sentinel text."""
     for i, para in enumerate(doc.paragraphs):
@@ -232,6 +277,9 @@ def generate_docx(
 
     # Verify the template has the expected structure
     _find_scope_paragraph_index(doc)
+
+    # Ensure the first exhibit row isn't pre-checked / pre-dated
+    _clear_first_exhibit_row(doc)
 
     # Append all scope content after the existing template content
     _append_scope_content(
