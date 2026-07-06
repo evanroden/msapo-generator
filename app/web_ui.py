@@ -901,14 +901,14 @@ def main():
                     )
 
         # ════════════════════════════════════════════════════════════════
-        # STEP — Email to Debbie
+        # STEP — Email to David
         # ════════════════════════════════════════════════════════════════
         if docx_path and docx_path.exists():
             st.markdown("---")
             st.markdown("""
             <div class="step-header">
                 <div class="step-num orange">5</div>
-                <p class="step-title">Email to Debbie</p>
+                <p class="step-title">Email to David</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -994,11 +994,11 @@ def main():
 
             # ── Email preview ─────────────────────────────────────
             with st.expander("Preview email", expanded=False):
-                st.markdown(f"**To:** dpagnottelli@enfrasolutions.com")
+                st.markdown(f"**To:** david.siegal@enfrasolutions.com")
                 st.markdown(f"**Subject:** {subject}")
                 st.markdown("---")
                 st.markdown(
-                    f"Good afternoon, Debbie. Please see below.\n\n"
+                    f"Good afternoon, David. Please see below.\n\n"
                     f"- **Site Location:**\n"
                     f"   - RRH {email_site}\n"
                     f"- **Job cost code:**\n"
