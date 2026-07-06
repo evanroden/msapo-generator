@@ -15,12 +15,12 @@ from email.message import EmailMessage
 from pathlib import Path
 
 
-DEBBIE_EMAIL = "dpagnottelli@enfrasolutions.com"
+DAVID_EMAIL = "david.siegal@enfrasolutions.com"
 
 
 def build_eml(
     *,
-    to: str = DEBBIE_EMAIL,
+    to: str = DAVID_EMAIL,
     subject: str,
     site_short_name: str,
     cost_code: str,
@@ -31,7 +31,7 @@ def build_eml(
     amount: str,
     attachments: list[tuple[str, bytes]],  # [(filename, data), ...]
 ) -> bytes:
-    """Return raw .eml bytes for an email to Debbie with all attachments.
+    """Return raw .eml bytes for an email to David with all attachments.
 
     Parameters
     ----------
@@ -49,7 +49,7 @@ def build_eml(
     html_body = f"""\
 <html>
 <body style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000000;">
-<p>Good afternoon, Debbie. Please see below.</p>
+<p>Good afternoon, David. Please see below.</p>
 <ul style="list-style-type: disc; padding-left: 20px;">
   <li><b>Site Location:</b>
     <ul style="list-style-type: disc;"><li>RRH {_esc(site_short_name)}</li></ul>
