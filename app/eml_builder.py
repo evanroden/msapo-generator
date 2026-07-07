@@ -13,6 +13,7 @@ from __future__ import annotations
 import mimetypes
 from email.message import EmailMessage
 from pathlib import Path
+from urllib.parse import quote
 
 
 DAVID_EMAIL = "david.siegal@enfrasolutions.com"
@@ -89,6 +90,39 @@ def build_eml(
         )
 
     return msg.as_bytes()
+
+
+def build_plain_body(
+    *,
+    site_short_name: str,
+    cost_code: str,
+    vendor_name: str,
+    contact_name: str,
+    contact_email: str,
+    description: str,
+    amount: str,
+) -> str:
+    """Plain-text version of the email body, for mailto: links and the
+    iOS share sheet (Apple Mail can't take HTML from either)."""
+    return (
+        "Good afternoon, David. Please see below.\n\n"
+        f"- Site Location: RRH {site_short_name}\n"
+        f"- Job cost code: {cost_code}\n"
+        f"- Subcontractor name: {vendor_name}\n"
+        f"- Contact Name: {contact_name}\n"
+        f"- Contact Email: {contact_email}\n"
+        f"- Description: {description}\n"
+        f"- Amount: {amount}\n"
+    )
+
+
+def build_mailto_url(*, to: str = DAVID_EMAIL, subject: str, body: str) -> str:
+    """mailto: URL that opens a pre-filled draft in the default mail app.
+
+    Attachments cannot be passed through mailto: — on iOS they are shared
+    to Mail separately via the share sheet.
+    """
+    return f"mailto:{quote(to, safe='@')}?subject={quote(subject)}&body={quote(body)}"
 
 
 def _esc(text: str) -> str:

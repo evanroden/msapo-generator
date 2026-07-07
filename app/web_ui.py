@@ -11,15 +11,19 @@ Mobile-responsive portal where users can:
 
 from __future__ import annotations
 
+import base64
+import json
+import mimetypes
 import re
 import streamlit as st
+import streamlit.components.v1 as components
 from pathlib import Path
 
 from app.ocr import extract_text
 from app.quote_analyzer import analyze_quote, QuoteAnalysis, AIAssumption
 from app.document_generator import generate_docx
 from app.pdf_converter import convert_to_pdf, PDFConversionError
-from app.eml_builder import build_eml
+from app.eml_builder import build_eml, build_plain_body, build_mailto_url, DAVID_EMAIL
 from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
@@ -567,6 +571,78 @@ def _build_test_analysis() -> QuoteAnalysis:
     )
 
 
+def _detect_apple_mobile() -> bool:
+    """True when the request comes from an iPhone or iPad.
+
+    iPad Safari reports itself as a Mac by default ("Request Desktop
+    Website"), so user-agent sniffing alone misses many iPads — the UI
+    pairs this with a manual toggle that defaults to the detected value.
+    """
+    try:
+        ua = st.context.headers.get("User-Agent") or ""
+    except Exception:
+        return False
+    return "iPhone" in ua or "iPad" in ua
+
+
+def _render_apple_mail_share(
+    subject: str, body: str, attachments: list[tuple[str, bytes]]
+) -> None:
+    """Render a share-sheet button that hands the attachments (and body
+    text) straight to Apple Mail via the Web Share API.
+
+    mailto: links can't carry attachments and .eml files don't open as
+    drafts in iOS Mail, so the share sheet is the only way to get the
+    files into a compose window in one tap.
+    """
+    payload = json.dumps({
+        "subject": subject,
+        "body": body,
+        "files": [
+            {
+                "name": name,
+                "mime": mimetypes.guess_type(name)[0] or "application/octet-stream",
+                "b64": base64.b64encode(data).decode("ascii"),
+            }
+            for name, data in attachments
+        ],
+    }).replace("<", "\\u003c")  # keep user text from closing the <script> tag
+    html = """
+<div style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;">
+  <button id="share-btn" style="width:100%; background:#E8792F; color:#ffffff; border:none;
+      border-radius:10px; padding:14px 0; font-size:16px; font-weight:600; cursor:pointer;">
+    &#128228;&nbsp; Share to Apple Mail &mdash; attachments included
+  </button>
+  <p id="share-hint" style="color:#64748B; font-size:13px; margin:8px 2px 0;">
+    Choose <b>Mail</b> in the share sheet, then paste the subject and address it to David.
+  </p>
+</div>
+<script>
+  const DATA = __PAYLOAD__;
+  const btn = document.getElementById("share-btn");
+  const hint = document.getElementById("share-hint");
+  const files = DATA.files.map(f => new File(
+    [Uint8Array.from(atob(f.b64), c => c.charCodeAt(0))],
+    f.name, {type: f.mime}
+  ));
+  if (!(navigator.canShare && navigator.canShare({files: files}))) {
+    btn.disabled = true;
+    btn.style.opacity = "0.5";
+    hint.innerHTML = "This browser can't share files directly &mdash; use the " +
+      "<b>pre-filled draft</b> link below and add the downloaded files by hand, " +
+      "or switch to the Outlook option.";
+  } else {
+    btn.addEventListener("click", async () => {
+      try {
+        await navigator.share({files: files, title: DATA.subject, text: DATA.body});
+      } catch (err) { /* user closed the share sheet — nothing to do */ }
+    });
+  }
+</script>
+"""
+    components.html(html.replace("__PAYLOAD__", payload), height=140)
+
+
 def main():
     st.set_page_config(
         page_title="MSAPO Generator",
@@ -1027,7 +1103,7 @@ def main():
             if pdf_path and pdf_path.exists():
                 attachments.append((pdf_path.name, pdf_path.read_bytes()))
 
-            # ── Download .eml (opens as draft in Outlook) ─────────
+            # ── Build the .eml (opens as draft in desktop Outlook) ─
             eml_bytes = build_eml(
                 subject=subject,
                 site_short_name=email_site,
@@ -1040,15 +1116,59 @@ def main():
                 attachments=attachments,
             )
 
-            st.download_button(
-                label="📧  Download Email — Open in Outlook & Hit Send",
-                data=eml_bytes,
-                file_name=f"{subject}.eml",
-                mime="message/rfc822",
-                use_container_width=True,
+            # ── Device-appropriate send flow ──────────────────────
+            apple_mobile = st.toggle(
+                "📱 I'm on an iPhone or iPad",
+                value=_detect_apple_mobile(),
+                key="apple_mobile",
+                help="iPad Safari often identifies itself as a Mac — turn this "
+                     "on manually if the Apple Mail flow doesn't appear.",
             )
-            st.caption("Double-click the downloaded .eml to open it in Outlook as a **draft** "
-                       "with the Send button ready. All 3 attachments are already included.")
+
+            if apple_mobile:
+                plain_body = build_plain_body(
+                    site_short_name=email_site,
+                    cost_code=cost_code,
+                    vendor_name=analysis.vendor_name or "",
+                    contact_name=email_contact,
+                    contact_email=email_contact_email,
+                    description=email_desc,
+                    amount=email_amount,
+                )
+                mailto_url = build_mailto_url(subject=subject, body=plain_body)
+
+                st.markdown("**Subject** — tap the copy icon, you'll paste it in Mail:")
+                st.code(subject, language=None)
+                st.markdown("**To:**")
+                st.code(DAVID_EMAIL, language=None)
+
+                _render_apple_mail_share(subject, plain_body, attachments)
+
+                st.markdown(
+                    f'<a href="{mailto_url}" style="display:block; text-align:center; '
+                    f'color:#1B3A5C; font-size:14px; margin-top:4px;">'
+                    f'✉️ Or open a pre-filled draft in Apple Mail (without attachments)</a>',
+                    unsafe_allow_html=True,
+                )
+
+                with st.expander("Using Outlook on this device instead?"):
+                    st.download_button(
+                        label="📧  Download Email (.eml for Outlook)",
+                        data=eml_bytes,
+                        file_name=f"{subject}.eml",
+                        mime="message/rfc822",
+                        use_container_width=True,
+                    )
+            else:
+                st.download_button(
+                    label="📧  Download Email — Open in Outlook & Hit Send",
+                    data=eml_bytes,
+                    file_name=f"{subject}.eml",
+                    mime="message/rfc822",
+                    use_container_width=True,
+                )
+                st.caption("Double-click the downloaded .eml to open it in Outlook as a **draft** "
+                           "with the Send button ready. All 3 attachments are already included.")
 
     # ── Footer ──────────────────────────────────────────────────────
     st.markdown("""
