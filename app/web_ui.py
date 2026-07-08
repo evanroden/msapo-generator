@@ -1,17 +1,17 @@
 """
-Streamlit web interface for the MSAPO Generator.
+Streamlit web interface for Email Process Control.
 
-Mobile-responsive portal where users can:
-  1. Upload a vendor quote (PDF, image, or text file)
-  2. Optionally paste quote text directly
-  3. View the extracted analysis
-  4. Review and approve/reject AI assumptions via checkboxes
-  5. Download the generated .docx and .pdf
+Drop in a vendor quote and the app extracts the details, builds the MSAPO
+document (or skips it for equipment-only POs), and hands you a ready-to-send
+email to David — pre-filled for Outlook on desktop and Apple Mail on an
+iPhone/iPad, detected automatically.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
+import html
 import json
 import mimetypes
 import re
@@ -24,489 +24,193 @@ from app.quote_analyzer import analyze_quote, QuoteAnalysis, AIAssumption
 from app.document_generator import generate_docx
 from app.pdf_converter import convert_to_pdf, PDFConversionError
 from app.eml_builder import build_eml, build_plain_body, build_mailto_url, DAVID_EMAIL
+from app.assets import asset_uids_for_facility, guess_asset_id
 from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
-    WORK_CATEGORY_SUFFIXES,
     facility_key_from_name,
     lookup_cost_code,
     valid_categories_for_site,
 )
 
-# ── Design System ────────────────────────────────────────────────────
-# Navy: #1B3A5C   Orange: #E8792F   Slate: #1E293B   Surface: #F7F9FC
+SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
+SITE_LABELS = list(FACILITY_SHORT_NAMES.values())
 
+# ── Design System ────────────────────────────────────────────────────
+# Navy #12314F · Orange #F0803C · Grape #6D5AE6 · Mint #16A34A
 CUSTOM_CSS = """
 <style>
-    /* ── Typography ────────────────────────────────────── */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&display=swap');
 
     .stApp {
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-        background: #F1F5F9;
+        background:
+            radial-gradient(1200px 500px at 15% -10%, #FFE9D6 0%, transparent 55%),
+            radial-gradient(1000px 460px at 100% 0%, #E7E1FF 0%, transparent 50%),
+            #F6F7FB;
     }
-
-    /* Hide default Streamlit chrome */
     #MainMenu, footer, header {visibility: hidden;}
 
-    /* Subtle dot pattern on background */
-    .stApp::before {
-        content: '';
-        position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background-image: radial-gradient(#CBD5E1 0.5px, transparent 0.5px);
-        background-size: 24px 24px;
-        opacity: 0.4;
-        pointer-events: none;
-        z-index: 0;
-    }
-
-    /* Main content wrapper */
     .block-container {
-        position: relative;
-        z-index: 1;
-        max-width: 720px !important;
-        padding-top: 2rem !important;
+        max-width: 1000px !important;
+        padding-top: 1.4rem !important;
+        padding-bottom: 3rem !important;
     }
 
-    /* ── Hero Header ───────────────────────────────────── */
+    /* ── Hero ─────────────────────────────────────────────── */
     .hero {
-        background: linear-gradient(135deg, #0F2942 0%, #1B3A5C 40%, #254B73 100%);
-        padding: 2rem 2.25rem 1.75rem;
-        border-radius: 16px;
-        margin-bottom: 1.75rem;
+        background: linear-gradient(130deg, #12314F 0%, #1C4A73 55%, #2E6AA0 100%);
+        padding: 2.1rem 2.4rem;
+        border-radius: 22px;
+        margin-bottom: 0.4rem;
         position: relative;
         overflow: hidden;
-        box-shadow: 0 8px 32px rgba(15,41,66,0.25), 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .hero::before {
-        content: '';
-        position: absolute;
-        top: -50%; right: -20%;
-        width: 300px; height: 300px;
-        background: radial-gradient(circle, rgba(232,121,47,0.15) 0%, transparent 70%);
-        border-radius: 50%;
+        box-shadow: 0 18px 40px rgba(18,49,79,0.28);
     }
     .hero::after {
         content: '';
-        position: absolute;
-        bottom: -30%; left: -10%;
-        width: 200px; height: 200px;
-        background: radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%);
-        border-radius: 50%;
+        position: absolute; inset: 0;
+        background-image: radial-gradient(rgba(255,255,255,0.10) 1px, transparent 1px);
+        background-size: 22px 22px;
+        opacity: 0.5;
+        pointer-events: none;
     }
+    .hero-emoji {
+        font-size: 2.6rem;
+        display: inline-block;
+        animation: bob 3.2s ease-in-out infinite;
+        filter: drop-shadow(0 6px 10px rgba(0,0,0,0.25));
+    }
+    @keyframes bob { 0%,100%{transform: translateY(0) rotate(-4deg);} 50%{transform: translateY(-9px) rotate(4deg);} }
     .hero h1 {
+        font-family: 'Fraunces', Georgia, serif;
         color: #FFFFFF;
-        font-size: 1.65rem;
-        font-weight: 800;
-        margin: 0 0 0.35rem 0;
-        letter-spacing: -0.03em;
-        line-height: 1.2;
+        font-size: 2.35rem;
+        font-weight: 700;
+        margin: 0.4rem 0 0.3rem 0;
+        letter-spacing: -0.02em;
+        line-height: 1.05;
         position: relative;
     }
+    .hero h1 .zing { color: #FFC79A; }
     .hero-subtitle {
-        color: rgba(255,255,255,0.6);
-        font-size: 0.85rem;
+        color: rgba(255,255,255,0.78);
+        font-size: 0.98rem;
         margin: 0;
         position: relative;
+        max-width: 34rem;
     }
-    .hero-accent {
-        color: #E8792F;
+
+    /* ── Byline / secret test trigger ─────────────────────── */
+    div[data-testid="stButton"] > button[kind="secondary"] {
+        background: transparent;
+        border: none;
+        color: #B0447A;
         font-weight: 700;
-    }
-    .hero-badge {
-        position: absolute;
-        top: 1.5rem; right: 1.75rem;
-        background: rgba(232,121,47,0.12);
-        border: 1px solid rgba(232,121,47,0.25);
-        color: #F5A66B;
-        padding: 0.3rem 0.85rem;
-        border-radius: 20px;
-        font-size: 0.7rem;
-        font-weight: 700;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-    }
-
-    /* ── Intro Text ────────────────────────────────────── */
-    .intro-text {
-        background: white;
-        border: 1px solid #E2E8F0;
-        border-radius: 12px;
-        padding: 1rem 1.5rem;
-        margin-bottom: 1.5rem;
-        font-size: 0.9rem;
-        color: #475569;
-        line-height: 1.6;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-    }
-    .intro-text strong {
-        color: #1E293B;
-    }
-
-    /* ── Step Headers ──────────────────────────────────── */
-    .step-header {
-        display: flex;
-        align-items: center;
-        gap: 0.85rem;
-        margin-bottom: 0.75rem;
-        margin-top: 0.5rem;
-    }
-    .step-num {
-        width: 36px; height: 36px;
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 0.85rem;
-        font-weight: 800;
-        flex-shrink: 0;
-        transition: all 0.3s ease;
-    }
-    .step-num.navy { background: #1B3A5C; color: white; }
-    .step-num.orange { background: #E8792F; color: white; }
-    .step-num.green { background: #16A34A; color: white; }
-    .step-title {
-        font-size: 1.15rem;
-        font-weight: 700;
-        color: #0F172A;
-        margin: 0;
-        letter-spacing: -0.01em;
-    }
-
-    /* ── Cards ─────────────────────────────────────────── */
-    .content-card {
-        background: white;
-        border: 1px solid #E2E8F0;
-        border-radius: 14px;
-        padding: 1.5rem;
-        margin-bottom: 0.75rem;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    }
-
-    /* ── Metric Cards ──────────────────────────────────── */
-    .metric-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.85rem;
-        margin-bottom: 1rem;
-    }
-    .metric-card {
-        background: white;
-        border: 1px solid #E2E8F0;
-        border-radius: 12px;
-        padding: 1.15rem 1.35rem;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }
-    .metric-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(0,0,0,0.07);
-    }
-    .metric-icon {
-        font-size: 1.25rem;
-        margin-bottom: 0.4rem;
-    }
-    .metric-label {
-        font-size: 0.68rem;
-        font-weight: 700;
-        color: #94A3B8;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        margin-bottom: 0.3rem;
-    }
-    .metric-value {
-        font-size: 1.15rem;
-        font-weight: 800;
-        color: #0F172A;
-    }
-
-    /* ── Facility Banner ───────────────────────────────── */
-    .facility-banner {
-        background: linear-gradient(135deg, #EFF6FF 0%, #F0F9FF 100%);
-        border: 1px solid #BFDBFE;
-        border-left: 4px solid #1B3A5C;
-        border-radius: 10px;
-        padding: 1.1rem 1.35rem;
-        margin-bottom: 1rem;
-        display: flex;
-        align-items: center;
-        gap: 0.85rem;
-    }
-    .facility-icon {
-        font-size: 1.5rem;
-        flex-shrink: 0;
-    }
-    .facility-name {
-        font-weight: 800;
-        color: #0F172A;
-        font-size: 0.95rem;
-    }
-    .facility-address {
-        color: #64748B;
         font-size: 0.82rem;
-        margin-top: 0.1rem;
-    }
-
-    /* ── Tax Badges ────────────────────────────────────── */
-    .tax-included { color: #16A34A; }
-    .tax-excluded { color: #E8792F; }
-    .tax-unclear { color: #DC2626; }
-
-    /* ── Alert Boxes ───────────────────────────────────── */
-    .alert-box {
-        border-radius: 10px;
-        padding: 1rem 1.25rem;
-        margin-bottom: 0.75rem;
-        font-size: 0.88rem;
-        line-height: 1.5;
-        display: flex;
-        align-items: flex-start;
-        gap: 0.65rem;
-    }
-    .alert-box .alert-icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 0.05rem; }
-    .alert-warning {
-        background: #FFFBEB;
-        border: 1px solid #FDE68A;
-        color: #92400E;
-    }
-    .alert-danger {
-        background: #FEF2F2;
-        border: 1px solid #FECACA;
-        color: #991B1B;
-    }
-    .alert-success {
-        background: #F0FDF4;
-        border: 1px solid #BBF7D0;
-        color: #166534;
-    }
-
-    /* ── Scope Preview ─────────────────────────────────── */
-    .scope-section {
-        background: #F8FAFC;
-        border: 1px solid #E2E8F0;
-        border-radius: 10px;
-        padding: 1.25rem 1.35rem;
-        margin-bottom: 0.85rem;
-    }
-    .scope-label {
-        font-size: 0.68rem;
-        font-weight: 800;
-        color: #1B3A5C;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        margin-bottom: 0.6rem;
-        padding-bottom: 0.45rem;
-        border-bottom: 2px solid #E8792F;
-        display: inline-block;
-    }
-    .scope-text {
-        color: #334155;
-        font-size: 0.88rem;
-        line-height: 1.65;
-        margin: 0;
-    }
-
-    /* ── List Items ────────────────────────────────────── */
-    .list-item {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.5rem;
-        padding: 0.45rem 0.75rem;
-        border-radius: 8px;
-        font-size: 0.85rem;
-        margin-bottom: 0.3rem;
-        line-height: 1.4;
-    }
-    .list-item-explicit {
-        background: #F1F5F9;
-        color: #334155;
-    }
-    .list-item-ai {
-        background: #FFF7ED;
-        color: #9A3412;
-        border: 1px dashed #FDBA74;
-    }
-    .list-bullet {
-        color: #94A3B8;
-        flex-shrink: 0;
-        margin-top: 0.1rem;
-    }
-
-    /* ── Section Tags ──────────────────────────────────── */
-    .section-tag {
-        display: inline-block;
-        font-size: 0.65rem;
-        font-weight: 800;
-        padding: 0.2rem 0.55rem;
-        border-radius: 5px;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-    }
-    .tag-inclusion { background: #DCFCE7; color: #166534; }
-    .tag-exclusion { background: #FEE2E2; color: #991B1B; }
-    .tag-scope { background: #DBEAFE; color: #1E40AF; }
-
-    /* ── Download Section ──────────────────────────────── */
-    .download-section {
-        background: linear-gradient(135deg, #0F2942 0%, #1B3A5C 100%);
-        border-radius: 14px;
-        padding: 1.5rem;
-        text-align: center;
-        margin: 1rem 0;
-        position: relative;
-        overflow: hidden;
-    }
-    .download-section::before {
-        content: '';
-        position: absolute;
-        top: -50%; right: -30%;
-        width: 200px; height: 200px;
-        background: radial-gradient(circle, rgba(232,121,47,0.1) 0%, transparent 70%);
-        border-radius: 50%;
-    }
-    .download-title {
-        color: rgba(255,255,255,0.9);
-        font-size: 0.85rem;
-        font-weight: 600;
-        margin-bottom: 1rem;
-        position: relative;
-    }
-    .download-title .dl-icon {
-        font-size: 1.5rem;
-        display: block;
-        margin-bottom: 0.35rem;
-    }
-
-    /* ── Footer ────────────────────────────────────────── */
-    .app-footer {
-        text-align: center;
-        padding: 1.75rem 1rem 1rem;
-        margin-top: 2rem;
-        color: #94A3B8;
-        font-size: 0.78rem;
-    }
-    .app-footer a {
-        color: #E8792F;
-        text-decoration: none;
-        font-weight: 600;
-    }
-    .app-footer a:hover {
-        text-decoration: underline;
-    }
-    .footer-divider {
-        width: 40px;
-        height: 3px;
-        background: linear-gradient(90deg, #E8792F, #1B3A5C);
-        border-radius: 2px;
-        margin: 0 auto 0.85rem;
-    }
-
-    /* ── Streamlit Overrides ───────────────────────────── */
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #E8792F 0%, #D4691A 100%);
-        border: none;
-        border-radius: 10px;
-        font-weight: 700;
-        font-size: 0.95rem;
-        padding: 0.65rem 1.5rem;
+        padding: 0.25rem 0.5rem;
+        box-shadow: none;
         letter-spacing: 0.01em;
-        transition: all 0.25s ease;
-        box-shadow: 0 2px 8px rgba(232,121,47,0.2);
     }
-    .stButton > button[kind="primary"]:hover {
-        background: linear-gradient(135deg, #D4691A 0%, #C05E15 100%);
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(232,121,47,0.35);
-    }
-    .stButton > button[kind="primary"]:active {
-        transform: translateY(0);
+    div[data-testid="stButton"] > button[kind="secondary"]:hover {
+        background: transparent;
+        color: #F0803C;
+        text-decoration: underline;
+        transform: none;
+        box-shadow: none;
     }
 
-    div[data-testid="stDownloadButton"] > button {
-        border-radius: 10px;
-        font-weight: 700;
-        font-size: 0.9rem;
-        transition: all 0.2s ease;
-        border: 2px solid #1B3A5C;
-        color: #1B3A5C;
-        background: white;
+    /* ── Section headers ──────────────────────────────────── */
+    .step-header { display:flex; align-items:center; gap:0.7rem; margin: 1.4rem 0 0.7rem; }
+    .step-num {
+        width: 30px; height: 30px; border-radius: 9px;
+        display:flex; align-items:center; justify-content:center;
+        font-size: 0.85rem; font-weight: 800; color:#fff; flex-shrink:0;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.12);
     }
-    div[data-testid="stDownloadButton"] > button:hover {
-        background: #1B3A5C;
-        color: white;
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(27,58,92,0.2);
-    }
+    .step-num.navy   { background:#12314F; }
+    .step-num.orange { background:#F0803C; }
+    .step-num.grape  { background:#6D5AE6; }
+    .step-num.mint   { background:#16A34A; }
+    .step-title { font-family:'Fraunces', Georgia, serif; font-size:1.3rem; font-weight:700; color:#12233B; margin:0; }
 
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0;
-        background: #F1F5F9;
-        border-radius: 10px;
-        padding: 3px;
+    /* ── Cards / metrics ──────────────────────────────────── */
+    .metric-card {
+        background: #fff; border: 1px solid #ECE7F5; border-radius: 16px;
+        padding: 1rem 1.15rem; box-shadow: 0 6px 16px rgba(20,20,50,0.05);
+        transition: transform .18s ease, box-shadow .18s ease; height: 100%;
     }
-    .stTabs [data-baseweb="tab"] {
-        border-radius: 8px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
+    .metric-card:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(20,20,50,0.10); }
+    .metric-icon { font-size: 1.35rem; margin-bottom: 0.3rem; }
+    .metric-label { font-size: 0.64rem; font-weight: 800; color:#9AA0B4; text-transform: uppercase; letter-spacing: 0.09em; }
+    .metric-value { font-size: 1.05rem; font-weight: 800; color:#111827; margin-top:0.15rem; line-height:1.25; }
+    .tax-included { color:#16A34A; } .tax-excluded { color:#F0803C; } .tax-unclear { color:#DC2626; }
 
-    div[data-testid="stFileUploader"] {
-        border-radius: 12px;
+    .facility-banner {
+        background: linear-gradient(120deg,#F1F6FF,#F6F1FF);
+        border: 1px solid #DDE4F5; border-left: 5px solid #2E6AA0;
+        border-radius: 14px; padding: 0.95rem 1.2rem; margin: 0.4rem 0 0.2rem;
+        display:flex; align-items:center; gap:0.8rem;
     }
+    .facility-icon { font-size: 1.5rem; }
+    .facility-name { font-weight: 800; color:#12233B; font-size:0.98rem; }
+    .facility-address { color:#64748B; font-size:0.82rem; margin-top:0.1rem; }
+
+    .alert-box { border-radius:12px; padding:0.85rem 1.1rem; margin:0.5rem 0; font-size:0.87rem; line-height:1.5; display:flex; gap:0.6rem; }
+    .alert-warning { background:#FFFBEB; border:1px solid #FDE68A; color:#92400E; }
+    .alert-danger  { background:#FEF2F2; border:1px solid #FECACA; color:#991B1B; }
+    .alert-success { background:#F0FDF4; border:1px solid #BBF7D0; color:#166534; }
+
+    .scope-section { background:#FBFAFF; border:1px solid #ECE7F5; border-radius:12px; padding:1.05rem 1.2rem; margin-bottom:0.7rem; }
+    .scope-label { font-size:0.66rem; font-weight:800; color:#12314F; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.5rem; padding-bottom:0.35rem; border-bottom:2px solid #F0803C; display:inline-block; }
+    .scope-text { color:#334155; font-size:0.88rem; line-height:1.6; margin:0; }
+
+    .cost-code-pill {
+        background:#12314F; color:#fff; border-radius:10px; padding:0.55rem 0.9rem;
+        font-size:1.05rem; font-weight:800; letter-spacing:0.02em; margin-top:0.25rem;
+        display:flex; align-items:center; gap:0.5rem; box-shadow:0 6px 14px rgba(18,49,79,0.22);
+    }
+    .field-label { font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:0.15rem; }
+
+    /* ── Buttons ──────────────────────────────────────────── */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg,#F0803C 0%,#E5661C 100%);
+        border:none; border-radius:12px; font-weight:800; font-size:0.98rem;
+        padding:0.7rem 1.5rem; box-shadow:0 8px 20px rgba(240,128,60,0.30);
+        transition: all .2s ease;
+    }
+    .stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow:0 12px 26px rgba(240,128,60,0.42); }
+
     div[data-testid="stFileUploader"] section {
-        border-radius: 12px;
-        border: 2px dashed #CBD5E1;
-        background: #FAFBFC;
-        transition: border-color 0.2s;
+        border-radius:16px; border:2px dashed #C8BEE8; background:#FBFAFF;
     }
-    div[data-testid="stFileUploader"] section:hover {
-        border-color: #E8792F;
-    }
+    div[data-testid="stFileUploader"] section:hover { border-color:#F0803C; }
+    div[data-testid="stExpander"] { border-radius:14px; border:1px solid #ECE7F5; background:#fff; }
 
-    div[data-testid="stExpander"] {
-        border-radius: 12px;
-        border: 1px solid #E2E8F0;
-        background: white;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    }
-
-    /* Checkbox styling */
-    .stCheckbox label {
-        font-weight: 500;
-        font-size: 0.9rem;
-    }
-
-    /* Divider */
-    hr {
-        border: none;
-        border-top: 1px solid #E2E8F0;
-        margin: 1.25rem 0;
-    }
-
-    /* Spinner styling */
-    .stSpinner > div {
-        border-color: #E8792F transparent transparent transparent !important;
-    }
+    .app-footer { text-align:center; padding:2rem 1rem 0.5rem; color:#9AA0B4; font-size:0.78rem; }
+    .app-footer a { color:#F0803C; text-decoration:none; font-weight:700; }
+    .footer-divider { width:44px; height:3px; background:linear-gradient(90deg,#F0803C,#6D5AE6); border-radius:2px; margin:0 auto 0.8rem; }
+    hr { border:none; border-top:1px solid #ECE7F5; margin:1.1rem 0; }
 </style>
 """
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Helpers
+# ══════════════════════════════════════════════════════════════════════
+def _h(value) -> str:
+    """HTML-escape a model/user-derived value before it goes into an
+    unsafe_allow_html markdown block (the quote is authored by the vendor)."""
+    return html.escape(str(value)) if value is not None else ""
+
+
 def _strip_ai_wrapper(text: str) -> str:
-    """Strip [AI ESTIMATE: ...] wrapper, returning just the inner text."""
     m = re.search(r"\[AI ESTIMATE:\s*(.+?)\]", text)
     return m.group(1) if m else text
 
 
-def _build_unified_lists(
-    analysis: QuoteAnalysis,
-) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
-    """Build unified (text, is_ai) lists for inclusions and exclusions.
-
-    Merges items from analysis.inclusions/exclusions with any extra
-    ai_assumptions that aren't already present.  Returns two lists of
-    (clean_text, is_ai_generated) tuples.
-    """
+def _build_unified_lists(analysis: QuoteAnalysis):
+    """Return (inclusions, exclusions) as lists of (clean_text, is_ai)."""
     def _process(raw_items: list[str], section_key: str) -> list[tuple[str, bool]]:
         seen: set[str] = set()
         result: list[tuple[str, bool]] = []
@@ -516,88 +220,92 @@ def _build_unified_lists(
             if clean not in seen:
                 seen.add(clean)
                 result.append((clean, is_ai))
-        # Merge any ai_assumptions for this section not already present
         for assumption in analysis.ai_assumptions:
             if assumption.section == section_key and assumption.text not in seen:
                 seen.add(assumption.text)
                 result.append((assumption.text, True))
         return result
 
-    inclusions = _process(analysis.inclusions, "inclusion")
-    exclusions = _process(analysis.exclusions, "exclusion")
-    return inclusions, exclusions
+    return _process(analysis.inclusions, "inclusion"), _process(analysis.exclusions, "exclusion")
+
+
+def _has_breakdown(subtotal: str, tax: str) -> bool:
+    """Show subtotal + tax bullets only when the quote itemized both."""
+    return bool(subtotal and subtotal.strip()) and bool(tax and tax.strip())
 
 
 def _build_test_analysis() -> QuoteAnalysis:
-    """Return a realistic hardcoded QuoteAnalysis for UI testing."""
+    """A realistic sample that exercises every downstream feature: a site with
+    assets, an itemized subtotal + tax, and a guessable asset tag (CH-1)."""
     return QuoteAnalysis(
-        vendor_name="Culligan Water",
-        project_description="Monthly water softener salt delivery and system service for UMMC.",
-        facility_name="United Memorial Medical Center",
-        facility_address="127 North St, Batavia, NY 14020",
+        vendor_name="Northeast Mechanical Services",
+        project_description="Absorption chiller CH-1 teardown, inspection, and seasonal repair at Clifton Springs Hospital.",
+        facility_name="Clifton Springs Hospital & Clinic",
+        facility_address="2 Coulter Rd, Clifton Springs, NY 14432",
         scope_of_work=(
-            "1. Deliver and install water softener salt (40 bags) to the mechanical "
-            "room at United Memorial Medical Center.\n\n"
-            "2. Inspect the existing Culligan water softener system, verify brine "
-            "tank levels, and confirm proper regeneration cycles.\n\n"
-            "3. Test water hardness at three sample points (incoming supply, post-softener, "
-            "and hot water return) and document results."
+            "1. Isolate and drain absorption chiller CH-1 in the Central Plant.\n\n"
+            "2. Inspect the CH-1 solution pump, purge unit, and tube bundle; replace "
+            "worn gaskets and the purge valve.\n\n"
+            "3. Verify cooling tower CT-1 interlocks and refill CH-1 with lithium "
+            "bromide to spec, then run a full commissioning cycle."
         ),
         inclusions=[
-            "Water softener salt — 40 bags delivered and stacked in mechanical room",
-            "System inspection and regeneration cycle verification",
-            "Water hardness testing at three sample points",
-            "Written service report with test results",
+            "Absorption chiller CH-1 teardown and reassembly",
+            "Gasket and purge valve replacement",
+            "Lithium bromide charge to manufacturer spec",
+            "Full commissioning cycle and written report",
         ],
         exclusions=[
-            "Repair or replacement of softener components",
-            "Plumbing modifications or new piping",
-            "[AI ESTIMATE: Disposal of used salt bags or packaging materials]",
+            "Replacement of the CH-1 tube bundle",
+            "Refrigerant reclamation beyond the purge unit",
             "[AI ESTIMATE: After-hours or emergency service calls]",
+            "[AI ESTIMATE: Crane or rigging for major component removal]",
         ],
         tax_status="included",
         tax_warning=None,
         tax_note="Estimated sales tax is included in the total. Actual invoice amount may differ.",
         ai_assumptions=[
-            AIAssumption(text="Disposal of used salt bags or packaging materials", section="exclusion"),
             AIAssumption(text="After-hours or emergency service calls", section="exclusion"),
-            AIAssumption(text="Access to mechanical room provided by facility staff during business hours", section="inclusion"),
+            AIAssumption(text="Crane or rigging for major component removal", section="exclusion"),
+            AIAssumption(text="Facility provides access to the Central Plant during business hours", section="inclusion"),
         ],
-        contact_name="Liz Davidson",
-        contact_email="britt@wnyculligan.com",
-        total_amount="$577.47",
-        short_description="Water Softener Salt",
-        work_category="water_softener",
+        contact_name="Marcus Bell",
+        contact_email="mbell@nemechanical.com",
+        subtotal_amount="$4,200.00",
+        tax_amount="$346.50",
+        total_amount="$4,546.50",
+        short_description="Chiller CH-1 Repair",
+        work_category="repairs",
     )
 
 
-def _detect_apple_mobile() -> bool:
-    """True when the request comes from an iPhone or iPad.
-
-    iPad Safari reports itself as a Mac by default ("Request Desktop
-    Website"), so user-agent sniffing alone misses many iPads — the UI
-    pairs this with a manual toggle that defaults to the detected value.
-    """
-    try:
-        ua = st.context.headers.get("User-Agent") or ""
-    except Exception:
-        return False
-    return "iPhone" in ua or "iPad" in ua
+def _load_test_into_state() -> None:
+    analysis = _build_test_analysis()
+    st.session_state["analysis"] = analysis
+    st.session_state["analysis_token"] = "TEST"
+    st.session_state["quote_text"] = analysis.scope_of_work
+    st.session_state["last_sig"] = "TEST"
+    st.session_state["uploaded_file_bytes"] = b"(sample quote placeholder)"
+    st.session_state["uploaded_file_name"] = "Sample_Quote.pdf"
+    st.session_state.pop("docx_path", None)
+    st.session_state.pop("pdf_path", None)
 
 
-def _render_apple_mail_share(
-    subject: str, body: str, attachments: list[tuple[str, bytes]]
-) -> None:
-    """Render a share-sheet button that hands the attachments (and body
-    text) straight to Apple Mail via the Web Share API.
+def _render_send_section(*, subject: str, body: str, eml_bytes: bytes,
+                         attachments: list[tuple[str, bytes]]) -> None:
+    """One self-contained, client-side send panel.
 
-    mailto: links can't carry attachments and .eml files don't open as
-    drafts in iOS Mail, so the share sheet is the only way to get the
-    files into a compose window in one tap.
+    Detects iPhone/iPad vs. desktop in the browser (using navigator.maxTouchPoints,
+    which is the only reliable way to catch an iPad that reports itself as a Mac)
+    and shows the matching flow — Apple Mail share sheet or Outlook .eml download —
+    with a manual switch for edge cases.  No server round-trip, no toggle to babysit.
     """
     payload = json.dumps({
         "subject": subject,
         "body": body,
+        "to": DAVID_EMAIL,
+        "emlName": f"{subject}.eml",
+        "emlB64": base64.b64encode(eml_bytes).decode("ascii"),
         "files": [
             {
                 "name": name,
@@ -606,93 +314,168 @@ def _render_apple_mail_share(
             }
             for name, data in attachments
         ],
-    }).replace("<", "\\u003c")  # keep user text from closing the <script> tag
-    html = """
-<div style="font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;">
-  <button id="share-btn" style="width:100%; background:#E8792F; color:#ffffff; border:none;
-      border-radius:10px; padding:14px 0; font-size:16px; font-weight:600; cursor:pointer;">
-    &#128228;&nbsp; Share to Apple Mail &mdash; attachments included
-  </button>
-  <p id="share-hint" style="color:#64748B; font-size:13px; margin:8px 2px 0;">
-    Choose <b>Mail</b> in the share sheet, then paste the subject and address it to David.
-  </p>
+    }).replace("<", "\\u003c")
+
+    html = r"""
+<div id="send-root" style="font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;color:#12233B;">
+  <div id="dev-chip" style="font-size:12px;font-weight:700;color:#6D5AE6;margin-bottom:8px;"></div>
+
+  <!-- APPLE PANEL -->
+  <div id="apple-panel" style="display:none;">
+    <button id="share-btn" style="width:100%;background:linear-gradient(135deg,#F0803C,#E5661C);color:#fff;border:none;border-radius:12px;padding:15px 0;font-size:16px;font-weight:800;cursor:pointer;box-shadow:0 8px 20px rgba(240,128,60,.3);">
+      &#128228;&nbsp; Share to Apple Mail &mdash; attachments attached
+    </button>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <div style="flex:1;">
+        <div style="font-size:11px;font-weight:800;color:#9AA0B4;text-transform:uppercase;letter-spacing:.06em;">To</div>
+        <div id="to-val" style="font-size:13px;font-weight:600;word-break:break-all;"></div>
+      </div>
+      <button class="copy-btn" data-target="to-val" style="align-self:flex-end;">Copy</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:11px;font-weight:800;color:#9AA0B4;text-transform:uppercase;letter-spacing:.06em;">Subject</div>
+        <div id="subj-val" style="font-size:13px;font-weight:600;overflow-wrap:anywhere;"></div>
+      </div>
+      <button class="copy-btn" data-target="subj-val" style="align-self:flex-end;">Copy</button>
+    </div>
+    <p style="color:#64748B;font-size:12.5px;margin:12px 2px 0;">
+      Tap <b>Share to Apple Mail</b>, choose <b>Mail</b>, then paste the subject and address it to David.
+      &nbsp;<a id="mailto-link" href="#" style="color:#12314F;font-weight:700;">Prefer a pre-filled draft?</a> (no attachments)
+    </p>
+  </div>
+
+  <!-- DESKTOP PANEL -->
+  <div id="desktop-panel" style="display:none;">
+    <a id="eml-link" download="email.eml" href="#" style="display:block;text-align:center;text-decoration:none;background:linear-gradient(135deg,#12314F,#1C4A73);color:#fff;border-radius:12px;padding:15px 0;font-size:16px;font-weight:800;box-shadow:0 8px 20px rgba(18,49,79,.25);">
+      &#128231;&nbsp; Download email for Outlook &mdash; then hit Send
+    </a>
+    <p style="color:#64748B;font-size:12.5px;margin:12px 2px 0;">
+      Open the downloaded <b>.eml</b> in Outlook: it opens as a ready-to-send draft with every attachment already included.
+    </p>
+  </div>
+
+  <div style="margin-top:12px;">
+    <a id="switch-link" href="#" style="color:#9AA0B4;font-size:12px;text-decoration:underline;cursor:pointer;"></a>
+  </div>
 </div>
 <script>
-  const DATA = __PAYLOAD__;
-  const btn = document.getElementById("share-btn");
-  const hint = document.getElementById("share-hint");
-  const files = DATA.files.map(f => new File(
-    [Uint8Array.from(atob(f.b64), c => c.charCodeAt(0))],
-    f.name, {type: f.mime}
-  ));
-  if (!(navigator.canShare && navigator.canShare({files: files}))) {
-    btn.disabled = true;
-    btn.style.opacity = "0.5";
-    hint.innerHTML = "This browser can't share files directly &mdash; use the " +
-      "<b>pre-filled draft</b> link below and add the downloaded files by hand, " +
-      "or switch to the Outlook option.";
+  const D = __PAYLOAD__;
+  const b2blob = (b64, mime) => {
+    const bin = atob(b64); const arr = new Uint8Array(bin.length);
+    for (let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], {type: mime});
+  };
+  const files = D.files.map(f => new File([b2blob(f.b64, f.mime)], f.name, {type: f.mime}));
+  const ua = navigator.userAgent || "";
+  const isApple = /iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Mac/.test(ua));
+
+  const applePanel = document.getElementById("apple-panel");
+  const desktopPanel = document.getElementById("desktop-panel");
+  const chip = document.getElementById("dev-chip");
+  const switchLink = document.getElementById("switch-link");
+  let showingApple = isApple;
+
+  function paint() {
+    applePanel.style.display = showingApple ? "block" : "none";
+    desktopPanel.style.display = showingApple ? "none" : "block";
+    chip.textContent = showingApple ? "📱  iPhone / iPad detected" : "💻  Desktop detected";
+    switchLink.textContent = showingApple ? "On a computer instead? Show the Outlook option" : "On an iPhone or iPad instead? Show the Apple Mail option";
+  }
+  switchLink.addEventListener("click", (e) => { e.preventDefault(); showingApple = !showingApple; paint(); });
+  paint();
+
+  // Apple: subject/to + share + mailto
+  document.getElementById("to-val").textContent = D.to;
+  document.getElementById("subj-val").textContent = D.subject;
+  document.getElementById("mailto-link").href =
+    "mailto:" + encodeURIComponent(D.to) + "?subject=" + encodeURIComponent(D.subject) + "&body=" + encodeURIComponent(D.body);
+
+  const shareBtn = document.getElementById("share-btn");
+  if (!(navigator.canShare && navigator.canShare({files}))) {
+    shareBtn.style.opacity = "0.55";
+    shareBtn.addEventListener("click", () => alert("This browser can't share files directly. Use the pre-filled draft link, or switch to the Outlook option below."));
   } else {
-    btn.addEventListener("click", async () => {
-      try {
-        await navigator.share({files: files, title: DATA.subject, text: DATA.body});
-      } catch (err) { /* user closed the share sheet — nothing to do */ }
+    shareBtn.addEventListener("click", async () => {
+      try { await navigator.share({files, title: D.subject, text: D.body}); } catch (err) {}
     });
   }
+
+  // Desktop: eml object URL
+  const emlUrl = URL.createObjectURL(b2blob(D.emlB64, "message/rfc822"));
+  const emlLink = document.getElementById("eml-link");
+  emlLink.href = emlUrl;
+  emlLink.setAttribute("download", D.emlName);
+
+  // Copy buttons
+  document.querySelectorAll(".copy-btn").forEach(btn => {
+    btn.style.cssText += "background:#F1EEFB;border:1px solid #DDD6F3;color:#6D5AE6;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;";
+    btn.addEventListener("click", async () => {
+      const txt = document.getElementById(btn.dataset.target).textContent;
+      try { await navigator.clipboard.writeText(txt); btn.textContent = "Copied!"; setTimeout(() => btn.textContent = "Copy", 1400); }
+      catch (e) { btn.textContent = "Copy failed"; }
+    });
+  });
 </script>
 """
-    components.html(html.replace("__PAYLOAD__", payload), height=140)
+    components.html(html.replace("__PAYLOAD__", payload), height=340, scrolling=True)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Main
+# ══════════════════════════════════════════════════════════════════════
 def main():
     st.set_page_config(
-        page_title="MSAPO Generator",
-        page_icon="📋",
-        layout="centered",
+        page_title="Email Process Control",
+        page_icon="📮",
+        layout="wide",
         initial_sidebar_state="collapsed",
     )
-
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-    # ── Hero Header ─────────────────────────────────────────────────────
-    hero_col, test_col = st.columns([5, 1])
-    with hero_col:
-        st.markdown("""
-        <div class="hero">
-            <div class="hero-badge">RRH Network</div>
-            <h1>MSAPO Scope of Work<br>Generator</h1>
-            <p class="hero-subtitle">
-                Built by <span class="hero-accent">Evan Roden</span>
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-    with test_col:
-        if st.button("Test", help="Load sample data to test later stages"):
-            st.session_state["analysis"] = _build_test_analysis()
-            st.session_state["uploaded_file_bytes"] = b"(test quote file)"
-            st.session_state["uploaded_file_name"] = "Test_Quote.pdf"
-            st.session_state.pop("docx_path", None)
-            st.session_state.pop("pdf_path", None)
-            st.rerun()
-
+    # ── Hero ────────────────────────────────────────────────────────
     st.markdown("""
-    <div class="intro-text">
-        Upload a vendor quote and instantly generate a standards-compliant
-        <strong>MSAPO agreement</strong> (.docx and .pdf) — ready for review and submission.
+    <div class="hero">
+        <span class="hero-emoji">📮</span>
+        <h1>Email <span class="zing">Process Control</span></h1>
+        <p class="hero-subtitle">
+            Drop in a vendor quote and get a tidy, ready-to-send email to David —
+            MSAPO paperwork built, pricing tallied, the right cost code picked.
+            No fuss. ✨
+        </p>
     </div>
     """, unsafe_allow_html=True)
 
-    # ════════════════════════════════════════════════════════════════════
-    # STEP 1 — Upload
-    # ════════════════════════════════════════════════════════════════════
+    # Byline that doubles as the secret sample-loader (click the name)
+    bl, bc, br = st.columns([2, 3, 2])
+    with bc:
+        if st.button("✨ crafted with care by Evan Roden ✨", key="name_test",
+                     use_container_width=True,
+                     help="psst… click me to load a sample and try the whole flow"):
+            _load_test_into_state()
+            # Reset the uploader so a lingering file can't re-trigger auto-analysis
+            # and clobber the sample on the next rerun.
+            st.session_state["uploader_nonce"] = st.session_state.get("uploader_nonce", 0) + 1
+            st.rerun()
+
+    # ── Order type ──────────────────────────────────────────────────
+    epo_mode = st.checkbox(
+        "📦  Equipment-only PO — delivered by a third party, no vendor visit "
+        "(skips the MSAPO document; sends the quote + details only)",
+        key="epo_mode",
+    )
+
+    # ════════════════════════════════════════════════════════════════
+    # STEP 1 — Provide the quote (auto-analyzes on upload)
+    # ════════════════════════════════════════════════════════════════
     st.markdown("""
     <div class="step-header">
         <div class="step-num navy">1</div>
-        <p class="step-title">Provide the Vendor Quote</p>
+        <p class="step-title">Provide the vendor quote</p>
     </div>
     """, unsafe_allow_html=True)
 
-    tab_upload, tab_paste = st.tabs(["📁 Upload File", "📝 Paste Text"])
-
+    tab_upload, tab_paste = st.tabs(["📁 Upload file", "📝 Paste text"])
     quote_text = ""
 
     with tab_upload:
@@ -700,217 +483,157 @@ def main():
             "Upload quote (PDF, image, or text)",
             type=["pdf", "png", "jpg", "jpeg", "tiff", "bmp", "txt", "webp"],
             label_visibility="collapsed",
+            key=f"uploader_{st.session_state.get('uploader_nonce', 0)}",
         )
         if uploaded is not None:
             file_bytes = uploaded.read()
-            # Persist for email attachment later
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
-            with st.spinner("Extracting text from file..."):
+            with st.spinner("Reading your file…"):
                 try:
                     quote_text = extract_text(file_bytes, uploaded.name)
                 except Exception as e:
-                    st.error(f"Failed to extract text: {e}")
+                    st.error(f"Couldn't read that file: {e}")
                     quote_text = ""
-
             if quote_text:
                 with st.expander("Preview extracted text", expanded=False):
-                    st.text_area(
-                        "Raw text",
-                        quote_text,
-                        height=180,
-                        disabled=True,
-                        label_visibility="collapsed",
-                    )
+                    st.text_area("Raw text", quote_text, height=170,
+                                 disabled=True, label_visibility="collapsed")
 
     with tab_paste:
         pasted = st.text_area(
-            "Paste the full vendor quote text below",
-            height=220,
-            placeholder="Paste the vendor quote here...",
+            "Paste the full vendor quote text",
+            height=200, placeholder="Paste the vendor quote here…",
             label_visibility="collapsed",
         )
         if pasted.strip():
             quote_text = pasted.strip()
 
-    # ════════════════════════════════════════════════════════════════════
-    # STEP 2 — Analyze
-    # ════════════════════════════════════════════════════════════════════
-    st.markdown("---")
-    st.markdown("""
+    # ── Auto-analyze whenever the input changes ─────────────────────
+    if quote_text.strip():
+        sig = hashlib.sha256(quote_text.encode("utf-8", "ignore")).hexdigest()
+        if st.session_state.get("last_sig") != sig:
+            with st.spinner("✨ Reading the quote and pulling out the details…"):
+                try:
+                    analysis = analyze_quote(quote_text)
+                except Exception as e:
+                    msg = str(e)
+                    if "overloaded" in msg.lower() or "529" in msg:
+                        st.error("The AI service is briefly overloaded — give it a moment and re-upload.")
+                    elif "401" in msg or "authentication" in msg.lower():
+                        st.error("API authentication failed. Please check the API key.")
+                    else:
+                        st.error(f"Analysis failed: {e}")
+                    st.stop()
+            st.session_state["analysis"] = analysis
+            st.session_state["analysis_token"] = sig[:12]
+            st.session_state["last_sig"] = sig
+            st.session_state["quote_text"] = quote_text
+            st.session_state.pop("docx_path", None)
+            st.session_state.pop("pdf_path", None)
+
+    analysis: QuoteAnalysis | None = st.session_state.get("analysis")
+    if analysis is None:
+        st.info("Upload or paste a quote above and I'll take it from there. "
+                "Or click the byline to try a sample. 👆")
+        _render_footer()
+        return
+
+    tok = st.session_state.get("analysis_token", "x")
+    quote_text_cached = st.session_state.get("quote_text", "")
+
+    # ════════════════════════════════════════════════════════════════
+    # STEP 2 — Review
+    # ════════════════════════════════════════════════════════════════
+    st.markdown(f"""
     <div class="step-header">
-        <div class="step-num navy">2</div>
-        <p class="step-title">Analyze Quote</p>
+        <div class="step-num mint">2</div>
+        <p class="step-title">Here's what I found</p>
     </div>
     """, unsafe_allow_html=True)
 
-    if st.button("Analyze Quote", type="primary", use_container_width=True):
-        if not quote_text.strip():
-            st.error("Please upload a file or paste quote text first.")
-            st.stop()
+    tax_map = {
+        "included": ("INCLUDED", "tax-included", "✅"),
+        "excluded": ("EXCLUDED", "tax-excluded", "⚠️"),
+        "unclear": ("UNCLEAR", "tax-unclear", "❓"),
+    }
+    ts = analysis.tax_status or "unclear"
+    tax_display, tax_class, tax_icon = tax_map.get(ts, (ts.upper(), "", "•"))
 
-        with st.spinner("Analyzing quote — this may take up to 30 seconds..."):
-            try:
-                analysis = analyze_quote(quote_text)
-            except Exception as e:
-                error_msg = str(e)
-                if "overloaded" in error_msg.lower() or "529" in error_msg:
-                    st.error(
-                        "The AI service is temporarily overloaded. "
-                        "Please wait a moment and try again."
-                    )
-                elif "401" in error_msg or "authentication" in error_msg.lower():
-                    st.error("API authentication failed. Please check your API key.")
-                else:
-                    st.error(f"Analysis failed: {e}")
-                st.stop()
+    m1, m2, m3 = st.columns(3)
+    with m1:
+        st.markdown(f"""<div class="metric-card"><div class="metric-icon">🏢</div>
+            <div class="metric-label">Vendor</div>
+            <div class="metric-value">{_h(analysis.vendor_name or "—")}</div></div>""", unsafe_allow_html=True)
+    with m2:
+        st.markdown(f"""<div class="metric-card"><div class="metric-icon">{tax_icon}</div>
+            <div class="metric-label">Tax Status</div>
+            <div class="metric-value {tax_class}">{_h(tax_display)}</div></div>""", unsafe_allow_html=True)
+    with m3:
+        st.markdown(f"""<div class="metric-card"><div class="metric-icon">💵</div>
+            <div class="metric-label">Total</div>
+            <div class="metric-value">{_h(analysis.total_amount or "—")}</div></div>""", unsafe_allow_html=True)
 
-        st.session_state["analysis"] = analysis
-        st.session_state.pop("docx_path", None)
-        st.session_state.pop("pdf_path", None)
+    if analysis.facility_name:
+        st.markdown(f"""<div class="facility-banner"><div class="facility-icon">🏥</div>
+            <div><div class="facility-name">{_h(analysis.facility_name)}</div>
+            <div class="facility-address">{_h(analysis.facility_address or '')}</div></div></div>""",
+            unsafe_allow_html=True)
 
-    # ════════════════════════════════════════════════════════════════════
-    # STEP 3 — Review Analysis
-    # ════════════════════════════════════════════════════════════════════
-    analysis: QuoteAnalysis | None = st.session_state.get("analysis")
+    if analysis.tax_warning:
+        st.markdown(f"""<div class="alert-box alert-danger"><span>🚨</span>
+            <div><strong>Tax warning:</strong> {_h(analysis.tax_warning)}</div></div>""", unsafe_allow_html=True)
+    if analysis.tax_note:
+        st.markdown(f"""<div class="alert-box alert-warning"><span>📝</span>
+            <div><strong>Tax note:</strong> {_h(analysis.tax_note)}</div></div>""", unsafe_allow_html=True)
 
-    if analysis is not None:
-        st.markdown("---")
-        st.markdown("""
-        <div class="step-header">
-            <div class="step-num green">3</div>
-            <p class="step-title">Review Analysis</p>
-        </div>
-        """, unsafe_allow_html=True)
+    final_inclusions: list[str] = []
+    final_exclusions: list[str] = []
 
-        # ── Summary Metrics ──────────────────────────────────────────
-        tax_display = analysis.tax_status.upper()
-        tax_class = ""
-        tax_icon = ""
-        if analysis.tax_status == "included":
-            tax_display = "INCLUDED"
-            tax_class = "tax-included"
-            tax_icon = "✅"
-        elif analysis.tax_status == "excluded":
-            tax_display = "EXCLUDED"
-            tax_class = "tax-excluded"
-            tax_icon = "⚠️"
-        elif analysis.tax_status == "unclear":
-            tax_display = "UNCLEAR"
-            tax_class = "tax-unclear"
-            tax_icon = "❌"
-
-        st.markdown(f"""
-        <div class="metric-grid">
-            <div class="metric-card">
-                <div class="metric-icon">🏢</div>
-                <div class="metric-label">Vendor</div>
-                <div class="metric-value">{analysis.vendor_name or "N/A"}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-icon">{tax_icon}</div>
-                <div class="metric-label">Tax Status</div>
-                <div class="metric-value {tax_class}">{tax_display}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # ── Facility ─────────────────────────────────────────────────
-        if analysis.facility_name:
-            st.markdown(f"""
-            <div class="facility-banner">
-                <div class="facility-icon">🏥</div>
-                <div>
-                    <div class="facility-name">{analysis.facility_name}</div>
-                    <div class="facility-address">{analysis.facility_address or ''}</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # ── Tax Alerts ───────────────────────────────────────────────
-        if analysis.tax_warning:
-            st.markdown(f"""
-            <div class="alert-box alert-danger">
-                <span class="alert-icon">🚨</span>
-                <div><strong>Tax Warning:</strong> {analysis.tax_warning}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        if analysis.tax_note:
-            st.markdown(f"""
-            <div class="alert-box alert-warning">
-                <span class="alert-icon">📝</span>
-                <div><strong>Tax Note:</strong> {analysis.tax_note}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # ── Scope Preview (read-only) ─────────────────────────────────
-        with st.expander("Scope of Work Preview", expanded=True):
-            st.markdown(f"""
-            <div class="scope-section">
+    if not epo_mode:
+        # Scope preview — collapsed by default
+        with st.expander("📄 Scope of Work preview", expanded=False):
+            st.markdown(f"""<div class="scope-section">
                 <div class="scope-label">Project Description</div>
-                <p class="scope-text">{analysis.project_description}</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-            st.markdown(f"""
-            <div class="scope-section">
+                <p class="scope-text">{_h(analysis.project_description)}</p></div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="scope-section">
                 <div class="scope-label">Detailed Scope</div>
-                <p class="scope-text" style="white-space:pre-line;">{analysis.scope_of_work}</p>
-            </div>
-            """, unsafe_allow_html=True)
+                <p class="scope-text" style="white-space:pre-line;">{_h(analysis.scope_of_work)}</p></div>""",
+                unsafe_allow_html=True)
 
-        # ── Editable Inclusions & Exclusions ──────────────────────────
         unified_inc, unified_exc = _build_unified_lists(analysis)
-
-        st.markdown("""
-        <div class="scope-section" style="margin-top:0.5rem;">
-            <div class="scope-label">Inclusions</div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.caption("Uncheck any item to remove it from the final document.")
-
-        final_inclusions: list[str] = []
-        for i, (text, is_ai) in enumerate(unified_inc):
-            label = f"{'🤖 ' if is_ai else ''}{text}"
-            checked = st.checkbox(label, key=f"inc_{i}", value=True)
-            if checked:
-                final_inclusions.append(text)
-
-        st.markdown("""
-        <div class="scope-section" style="margin-top:1rem;">
-            <div class="scope-label">Exclusions</div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.caption("Uncheck any item to remove it from the final document.")
-
-        final_exclusions: list[str] = []
-        for i, (text, is_ai) in enumerate(unified_exc):
-            label = f"{'🤖 ' if is_ai else ''}{text}"
-            checked = st.checkbox(label, key=f"exc_{i}", value=True)
-            if checked:
-                final_exclusions.append(text)
-
+        inc_col, exc_col = st.columns(2)
+        with inc_col:
+            st.markdown('<div class="scope-label">Inclusions</div>', unsafe_allow_html=True)
+            st.caption("Uncheck to drop from the document.")
+            for i, (text, is_ai) in enumerate(unified_inc):
+                if st.checkbox(f"{'🤖 ' if is_ai else ''}{text}", key=f"inc_{tok}_{i}", value=True):
+                    final_inclusions.append(text)
+        with exc_col:
+            st.markdown('<div class="scope-label">Exclusions</div>', unsafe_allow_html=True)
+            st.caption("Uncheck to drop from the document.")
+            for i, (text, is_ai) in enumerate(unified_exc):
+                if st.checkbox(f"{'🤖 ' if is_ai else ''}{text}", key=f"exc_{tok}_{i}", value=True):
+                    final_exclusions.append(text)
         if any(is_ai for _, is_ai in unified_inc + unified_exc):
-            st.caption("🤖 = AI-inferred item (not explicitly stated in the quote)")
+            st.caption("🤖 = AI-inferred (not explicitly stated in the quote)")
 
-        # ════════════════════════════════════════════════════════════════
-        # STEP 4 — Generate
-        # ════════════════════════════════════════════════════════════════
-        st.markdown("---")
+    # ════════════════════════════════════════════════════════════════
+    # STEP 3 — Generate MSAPO document (skipped for equipment-only POs)
+    # ════════════════════════════════════════════════════════════════
+    docx_path: Path | None = st.session_state.get("docx_path")
+    pdf_path: Path | None = st.session_state.get("pdf_path")
+
+    if not epo_mode:
         st.markdown("""
         <div class="step-header">
-            <div class="step-num navy">4</div>
-            <p class="step-title">Generate MSAPO Document</p>
+            <div class="step-num grape">3</div>
+            <p class="step-title">Build the MSAPO document</p>
         </div>
         """, unsafe_allow_html=True)
 
-        if st.button(
-            "Generate MSAPO Files",
-            type="primary",
-            use_container_width=True,
-        ):
-            with st.spinner("Generating MSAPO document..."):
+        if st.button("🛠️  Generate MSAPO files", type="primary", use_container_width=True):
+            with st.spinner("Assembling the MSAPO document…"):
                 try:
                     docx_path = generate_docx(
                         analysis,
@@ -921,261 +644,173 @@ def main():
                 except Exception as e:
                     st.error(f"Document generation failed: {e}")
                     st.stop()
-
-            with st.spinner("Converting to PDF..."):
+            with st.spinner("Converting to PDF…"):
                 try:
                     pdf_path = convert_to_pdf(docx_path)
                     st.session_state["pdf_path"] = pdf_path
                 except PDFConversionError as e:
-                    st.warning(
-                        f"PDF conversion unavailable: {e}. "
-                        "The .docx file is still ready for download."
-                    )
+                    st.warning(f"PDF conversion unavailable: {e}. The .docx is still ready.")
                     st.session_state["pdf_path"] = None
+            st.markdown("""<div class="alert-box alert-success"><span>🎉</span>
+                <div><strong>Done!</strong> Your MSAPO document is built and attached to the email below.</div></div>""",
+                unsafe_allow_html=True)
+            docx_path = st.session_state.get("docx_path")
+            pdf_path = st.session_state.get("pdf_path")
 
-            st.markdown("""
-            <div class="alert-box alert-success">
-                <span class="alert-icon">🎉</span>
-                <div><strong>Success!</strong> Your MSAPO document is ready for download.</div>
-            </div>
-            """, unsafe_allow_html=True)
+    # ════════════════════════════════════════════════════════════════
+    # STEP 4 — Email to David
+    # ════════════════════════════════════════════════════════════════
+    email_ready = epo_mode or (docx_path and docx_path.exists())
+    if not email_ready:
+        st.caption("Generate the MSAPO files above to unlock the email step. 👆")
+        _render_footer()
+        return
 
-        # ── Download Area ────────────────────────────────────────────
-        docx_path: Path | None = st.session_state.get("docx_path")
-        pdf_path: Path | None = st.session_state.get("pdf_path")
+    step_n = "3" if epo_mode else "4"
+    st.markdown(f"""
+    <div class="step-header">
+        <div class="step-num orange">{step_n}</div>
+        <p class="step-title">Send it to David {'(equipment-only PO)' if epo_mode else ''}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-        if docx_path or pdf_path:
-            st.markdown("""
-            <div class="download-section">
-                <div class="download-title">
-                    <span class="dl-icon">📥</span>
-                    Download your generated files
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+    # Default site from the matched facility
+    fac_key = facility_key_from_name(analysis.facility_name)
+    default_site_label = FACILITY_SHORT_NAMES.get(fac_key) if fac_key else None
+    default_site_idx = SITE_LABELS.index(default_site_label) if default_site_label in SITE_LABELS else 0
 
-            dl_col1, dl_col2 = st.columns(2)
+    row1 = st.columns([1, 1, 1])
+    with row1[0]:
+        site_label = st.selectbox("Site", SITE_LABELS, index=default_site_idx, key=f"site_{tok}")
+    sel_key = SITE_LABEL_TO_KEY[site_label]
 
-            if docx_path and docx_path.exists():
-                with dl_col1:
-                    st.download_button(
-                        label="📄  Download .docx",
-                        data=docx_path.read_bytes(),
-                        file_name=docx_path.name,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        use_container_width=True,
-                    )
+    valid_cats = valid_categories_for_site(sel_key)
+    cat_labels = [WORK_CATEGORY_DISPLAY.get(c, c) for c in valid_cats]
+    default_cat_idx = 0
+    if analysis.work_category in valid_cats:
+        default_cat_idx = valid_cats.index(analysis.work_category)
+    with row1[1]:
+        cat_label = st.selectbox("Work category", cat_labels, index=default_cat_idx, key=f"cat_{tok}_{sel_key}")
+    sel_cat = valid_cats[cat_labels.index(cat_label)]
+    cost_code = lookup_cost_code(sel_key, sel_cat) or ""
+    with row1[2]:
+        st.markdown('<div class="field-label">Job cost code</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="cost-code-pill">🏷️ {cost_code or "—"}</div>', unsafe_allow_html=True)
 
-            if pdf_path and pdf_path.exists():
-                with dl_col2:
-                    st.download_button(
-                        label="📕  Download .pdf",
-                        data=pdf_path.read_bytes(),
-                        file_name=pdf_path.name,
-                        mime="application/pdf",
-                        use_container_width=True,
-                    )
-
-        # ════════════════════════════════════════════════════════════════
-        # STEP — Email to David
-        # ════════════════════════════════════════════════════════════════
-        if docx_path and docx_path.exists():
-            st.markdown("---")
-            st.markdown("""
-            <div class="step-header">
-                <div class="step-num orange">5</div>
-                <p class="step-title">Email to David</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # ── Resolve facility key and default short name ───────
-            fac_key = facility_key_from_name(analysis.facility_name)
-            default_short = FACILITY_SHORT_NAMES.get(fac_key, "") if fac_key else ""
-
-            # ── Work categories valid for this site ───────────────
-            valid_cats = valid_categories_for_site(fac_key)
-            cat_display = [WORK_CATEGORY_DISPLAY.get(c, c) for c in valid_cats]
-
-            # Default work_category index
-            default_cat_idx = 0
-            if analysis.work_category and analysis.work_category in valid_cats:
-                default_cat_idx = valid_cats.index(analysis.work_category)
-
-            # ── Editable fields ──────────────────────────────────
-            ecol1, ecol2 = st.columns(2)
-            with ecol1:
-                email_site = st.text_input(
-                    "Site Short Name",
-                    value=default_short,
-                    key="email_site",
-                    placeholder="e.g. UMMC",
-                )
-                email_desc = st.text_input(
-                    "Description (max 20 chars)",
-                    value=(analysis.short_description or "")[:20],
-                    max_chars=20,
-                    key="email_desc",
-                )
-                email_contact = st.text_input(
-                    "Contact Name",
-                    value=analysis.contact_name or "",
-                    key="email_contact",
-                )
-
-            with ecol2:
-                if fac_key and fac_key in FACILITY_SHORT_NAMES:
-                    selected_cat_display = st.selectbox(
-                        "Work Category",
-                        cat_display,
-                        index=default_cat_idx,
-                        key="email_cat",
-                    )
-                    selected_cat_key = valid_cats[cat_display.index(selected_cat_display)]
-                    cost_code = lookup_cost_code(fac_key, selected_cat_key) or ""
-                    st.markdown(f"""
-                    <div style="margin-bottom:1rem;">
-                        <label style="font-size:0.85rem; font-weight:600; color:#0F172A;">
-                            Job Cost Code
-                        </label>
-                        <div style="
-                            background:#F1F5F9; border:1px solid #E2E8F0;
-                            border-radius:8px; padding:0.5rem 0.85rem;
-                            font-size:1rem; font-weight:700; color:#1B3A5C;
-                            margin-top:0.25rem;
-                        ">{cost_code or '—'}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    selected_cat_key = None
-                    cost_code = st.text_input(
-                        "Job Cost Code",
-                        value="",
-                        key="email_cost_code_manual",
-                        placeholder="e.g. 01CEABA",
-                    )
-
-                email_amount = st.text_input(
-                    "Total Amount",
-                    value=analysis.total_amount or "",
-                    key="email_amount",
-                )
-                email_contact_email = st.text_input(
-                    "Contact Email",
-                    value=analysis.contact_email or "",
-                    key="email_contact_email",
-                )
-
-            # ── Build subject line ────────────────────────────────
-            subject = f"{analysis.vendor_name or 'Vendor'} {email_desc} at {email_site} MSA PO".strip()
-
-            # ── Email preview ─────────────────────────────────────
-            with st.expander("Preview email", expanded=False):
-                st.markdown(f"**To:** david.siegal@enfrasolutions.com")
-                st.markdown(f"**Subject:** {subject}")
-                st.markdown("---")
-                st.markdown(
-                    f"Good afternoon, David. Please see below.\n\n"
-                    f"- **Site Location:**\n"
-                    f"   - RRH {email_site}\n"
-                    f"- **Job cost code:**\n"
-                    f"   - {cost_code}\n"
-                    f"- **Subcontractor name:**\n"
-                    f"   - {analysis.vendor_name or ''}\n"
-                    f"- **Contact Name:**\n"
-                    f"   - {email_contact}\n"
-                    f"- **Contact Email:**\n"
-                    f"   - {email_contact_email}\n"
-                    f"- **Description:**\n"
-                    f"   - {email_desc}\n"
-                    f"- **Amount:**\n"
-                    f"   - {email_amount}\n\n"
-                    f"*Your Outlook signature will be added automatically.*"
-                )
-
-            # ── Collect attachments ───────────────────────────────
-            attachments: list[tuple[str, bytes]] = []
-            uploaded_bytes = st.session_state.get("uploaded_file_bytes")
-            uploaded_name = st.session_state.get("uploaded_file_name")
-            if uploaded_bytes and uploaded_name:
-                attachments.append((uploaded_name, uploaded_bytes))
-            if docx_path and docx_path.exists():
-                attachments.append((docx_path.name, docx_path.read_bytes()))
-            if pdf_path and pdf_path.exists():
-                attachments.append((pdf_path.name, pdf_path.read_bytes()))
-
-            # ── Build the .eml (opens as draft in desktop Outlook) ─
-            eml_bytes = build_eml(
-                subject=subject,
-                site_short_name=email_site,
-                cost_code=cost_code,
-                vendor_name=analysis.vendor_name or "",
-                contact_name=email_contact,
-                contact_email=email_contact_email,
-                description=email_desc,
-                amount=email_amount,
-                attachments=attachments,
-            )
-
-            # ── Device-appropriate send flow ──────────────────────
-            apple_mobile = st.toggle(
-                "📱 I'm on an iPhone or iPad",
-                value=_detect_apple_mobile(),
-                key="apple_mobile",
-                help="iPad Safari often identifies itself as a Mac — turn this "
-                     "on manually if the Apple Mail flow doesn't appear.",
-            )
-
-            if apple_mobile:
-                plain_body = build_plain_body(
-                    site_short_name=email_site,
-                    cost_code=cost_code,
-                    vendor_name=analysis.vendor_name or "",
-                    contact_name=email_contact,
-                    contact_email=email_contact_email,
-                    description=email_desc,
-                    amount=email_amount,
-                )
-                mailto_url = build_mailto_url(subject=subject, body=plain_body)
-
-                st.markdown("**Subject** — tap the copy icon, you'll paste it in Mail:")
-                st.code(subject, language=None)
-                st.markdown("**To:**")
-                st.code(DAVID_EMAIL, language=None)
-
-                _render_apple_mail_share(subject, plain_body, attachments)
-
-                st.markdown(
-                    f'<a href="{mailto_url}" style="display:block; text-align:center; '
-                    f'color:#1B3A5C; font-size:14px; margin-top:4px;">'
-                    f'✉️ Or open a pre-filled draft in Apple Mail (without attachments)</a>',
-                    unsafe_allow_html=True,
-                )
-
-                with st.expander("Using Outlook on this device instead?"):
-                    st.download_button(
-                        label="📧  Download Email (.eml for Outlook)",
-                        data=eml_bytes,
-                        file_name=f"{subject}.eml",
-                        mime="message/rfc822",
-                        use_container_width=True,
-                    )
+    # Applicable Asset ID (site-filtered dropdown + guess + none-applicable).
+    # Equipment-only POs don't carry an asset, so the field is hidden for them.
+    asset_id_value = "None Applicable"
+    if not epo_mode:
+        site_assets = asset_uids_for_facility(sel_key)
+        guess = guess_asset_id(quote_text_cached, sel_key)
+        arow = st.columns([2, 1])
+        with arow[1]:
+            no_asset = st.checkbox("No asset applicable", key=f"noasset_{tok}_{sel_key}",
+                                   value=(len(site_assets) == 0))
+        with arow[0]:
+            if site_assets and not no_asset:
+                default_asset_idx = site_assets.index(guess) if guess in site_assets else 0
+                asset_id_value = st.selectbox("Applicable Asset ID", site_assets,
+                                              index=default_asset_idx, key=f"asset_{tok}_{sel_key}")
             else:
-                st.download_button(
-                    label="📧  Download Email — Open in Outlook & Hit Send",
-                    data=eml_bytes,
-                    file_name=f"{subject}.eml",
-                    mime="message/rfc822",
-                    use_container_width=True,
-                )
-                st.caption("Double-click the downloaded .eml to open it in Outlook as a **draft** "
-                           "with the Send button ready. All 3 attachments are already included.")
+                asset_id_value = "None Applicable"
+                st.markdown('<div class="field-label">Applicable Asset ID</div>', unsafe_allow_html=True)
+                note = "No assets on file for this site." if not site_assets else "Marked not applicable."
+                st.markdown(f'<div class="cost-code-pill" style="background:#64748B;">🚫 None Applicable</div>'
+                            f'<div style="font-size:11px;color:#9AA0B4;margin-top:4px;">{note}</div>',
+                            unsafe_allow_html=True)
 
-    # ── Footer ──────────────────────────────────────────────────────
+    # Contact + description
+    row2 = st.columns([1, 1, 1])
+    with row2[0]:
+        email_contact = st.text_input("Contact name", value=analysis.contact_name or "", key=f"contact_{tok}")
+    with row2[1]:
+        email_contact_email = st.text_input("Contact email", value=analysis.contact_email or "", key=f"cemail_{tok}")
+    with row2[2]:
+        email_desc = st.text_input("Short description (≤20 chars)",
+                                   value=(analysis.short_description or "")[:20],
+                                   max_chars=20, key=f"desc_{tok}")
+
+    # Pricing
+    st.markdown('<div class="field-label" style="margin-top:0.4rem;">Pricing — leave subtotal & tax blank if the quote shows a single all-in total</div>', unsafe_allow_html=True)
+    prow = st.columns(3)
+    with prow[0]:
+        subtotal_val = st.text_input("Subtotal (pre-tax)", value=analysis.subtotal_amount or "", key=f"sub_{tok}")
+    with prow[1]:
+        tax_val = st.text_input("Sales tax", value=analysis.tax_amount or "", key=f"tax_{tok}")
+    with prow[2]:
+        total_val = st.text_input("Total amount", value=analysis.total_amount or "", key=f"total_{tok}")
+
+    vendor = analysis.vendor_name or "Vendor"
+    site_line = f"RRH {site_label}"
+    breakdown = _has_breakdown(subtotal_val, tax_val)
+
+    # ── Assemble bullets + subject per order type ───────────────────
+    if epo_mode:
+        subject = f"{vendor} {email_desc} at {site_label} EPO".strip()
+        bullets = [
+            ("Site Location", site_line),
+            ("Work Category", cat_label),
+            ("Description", email_desc),
+            ("Job cost code", cost_code or "—"),
+            ("Contact Name", email_contact),
+            ("Contact Email", email_contact_email),
+        ]
+    else:
+        subject = f"{vendor} {email_desc} at {site_label} MSA PO".strip()
+        bullets = [
+            ("Site Location", site_line),
+            ("Job cost code", cost_code or "—"),
+            ("Applicable Asset ID", asset_id_value),
+            ("Subcontractor name", vendor),
+            ("Contact Name", email_contact),
+            ("Contact Email", email_contact_email),
+            ("Description", email_desc),
+        ]
+    if breakdown:
+        bullets.append(("Subtotal (pre-tax)", subtotal_val))
+        bullets.append(("Sales Tax", tax_val))
+    bullets.append(("Amount", total_val))
+
+    plain_body = build_plain_body(bullets)
+
+    with st.expander("👀 Preview the email", expanded=False):
+        st.markdown(f"**To:** {DAVID_EMAIL}")
+        st.markdown(f"**Subject:** {subject}")
+        st.markdown("---")
+        st.text(plain_body)
+        st.caption("Your Outlook/Apple Mail signature is added automatically.")
+
+    # ── Attachments ─────────────────────────────────────────────────
+    attachments: list[tuple[str, bytes]] = []
+    up_bytes = st.session_state.get("uploaded_file_bytes")
+    up_name = st.session_state.get("uploaded_file_name")
+    if up_bytes and up_name:
+        attachments.append((up_name, up_bytes))
+    elif quote_text_cached:
+        # Quote was pasted, not uploaded — attach the text so the email
+        # (especially an EPO, which has no other attachment) still carries it.
+        attachments.append(("Vendor Quote.txt", quote_text_cached.encode("utf-8")))
+    if not epo_mode:
+        if docx_path and docx_path.exists():
+            attachments.append((docx_path.name, docx_path.read_bytes()))
+        if pdf_path and pdf_path.exists():
+            attachments.append((pdf_path.name, pdf_path.read_bytes()))
+
+    eml_bytes = build_eml(subject=subject, bullets=bullets, attachments=attachments)
+
+    _render_send_section(subject=subject, body=plain_body,
+                         eml_bytes=eml_bytes, attachments=attachments)
+
+    _render_footer()
+
+
+def _render_footer() -> None:
     st.markdown("""
     <div class="app-footer">
         <div class="footer-divider"></div>
         Built by <a href="mailto:evan.roden@ENFRAsolutions.com">Evan Roden</a>
-        &nbsp;&bull;&nbsp; evan.roden@ENFRAsolutions.com
+        &nbsp;•&nbsp; a friendlier way to push paper 📮
     </div>
     """, unsafe_allow_html=True)
 

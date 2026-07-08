@@ -32,8 +32,20 @@ STRICT RULES:
 1. **NEVER include any dollar amounts, hourly rates, unit prices, line-item \
    costs, totals, or any financial figures in scope_of_work, inclusions, \
    exclusions, or project_description.** Strip every price from those fields. \
-   HOWEVER, you MUST extract the final total (after tax/fees) into \
-   "total_amount" — keep that one dollar figure intact.
+   HOWEVER, you MUST extract the pricing summary into "subtotal_amount", \
+   "tax_amount", and "total_amount" — keep those dollar figures intact.
+
+   PRICING SUMMARY RULES:
+   - "total_amount": the final grand total the customer pays (after tax/fees).
+   - "subtotal_amount": the pre-tax subtotal, but ONLY if the quote breaks \
+     pricing into a separate subtotal line AND a separate tax line. If the \
+     quote shows just one all-in amount (tax already baked in, no separate \
+     subtotal + tax lines), set subtotal_amount to null.
+   - "tax_amount": the sales-tax dollar figure, ONLY if it is stated as its \
+     own line item. If there is no separate tax line, set tax_amount to null.
+   In other words: only populate subtotal_amount and tax_amount together when \
+   the quote genuinely itemizes subtotal + tax. Otherwise leave both null and \
+   provide only total_amount.
 
 2. If standard inclusions or exclusions are missing from the quote, infer \
    the most reasonable ones based on the type of work described. Wrap every \
@@ -129,6 +141,8 @@ Return your answer as a JSON object with exactly these keys:
   "ai_assumptions": [{"text": "string", "section": "inclusion|exclusion|scope"}, ...],
   "contact_name": "string or null",
   "contact_email": "string or null",
+  "subtotal_amount": "string or null — pre-tax subtotal, only if itemized separately",
+  "tax_amount": "string or null — sales tax line item, only if itemized separately",
   "total_amount": "string or null — final dollar total after tax, e.g. '$1,234.56'",
   "short_description": "string or null — 20 chars max",
   "work_category": "string — one of the category keys above"
@@ -160,6 +174,8 @@ class QuoteAnalysis:
     ai_assumptions: list[AIAssumption] = field(default_factory=list)
     contact_name: Optional[str] = None
     contact_email: Optional[str] = None
+    subtotal_amount: Optional[str] = None
+    tax_amount: Optional[str] = None
     total_amount: Optional[str] = None
     short_description: Optional[str] = None
     work_category: Optional[str] = None
@@ -272,8 +288,9 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
         data["tax_note"] = None
 
     # Defaults for email / cost-code fields
-    for key in ("contact_name", "contact_email", "total_amount",
-                "short_description", "work_category"):
+    for key in ("contact_name", "contact_email", "subtotal_amount",
+                "tax_amount", "total_amount", "short_description",
+                "work_category"):
         if key not in data:
             data[key] = None
 
