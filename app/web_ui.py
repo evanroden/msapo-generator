@@ -498,7 +498,7 @@ def main():
             file_bytes = uploaded.getvalue()
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
-            with st.spinner("Reading your file…"):
+            with st.spinner("Reading your file… (scanned PDFs are read with OCR and take a few seconds)"):
                 try:
                     quote_text = extract_text(file_bytes, uploaded.name)
                 except Exception as e:
@@ -508,6 +508,9 @@ def main():
                 with st.expander("Preview extracted text", expanded=False):
                     st.text_area("Raw text", quote_text, height=170,
                                  disabled=True, label_visibility="collapsed")
+            else:
+                st.warning("I couldn't find any readable text in that file. If it's a "
+                           "photo or scan, try a clearer copy — or use the **Paste text** tab.")
 
     with tab_paste:
         pasted = st.text_area(
