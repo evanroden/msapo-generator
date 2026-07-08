@@ -31,6 +31,7 @@ from app.assets import (
     asset_label,
     guess_asset_id,
 )
+from app import contracts
 from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
@@ -297,7 +298,7 @@ def _load_test_into_state() -> None:
     st.session_state.pop("pdf_path", None)
 
 
-def _render_send_section(*, subject: str, body: str, eml_bytes: bytes,
+def _render_send_section(*, recipient: str, subject: str, body: str, eml_bytes: bytes,
                          attachments: list[tuple[str, bytes]]) -> None:
     """One self-contained, client-side send panel.
 
@@ -309,7 +310,7 @@ def _render_send_section(*, subject: str, body: str, eml_bytes: bytes,
     payload = json.dumps({
         "subject": subject,
         "body": body,
-        "to": DAVID_EMAIL,
+        "to": recipient,
         "emlName": f"{subject}.eml",
         "emlB64": base64.b64encode(eml_bytes).decode("ascii"),
         "files": [
@@ -346,7 +347,7 @@ def _render_send_section(*, subject: str, body: str, eml_bytes: bytes,
       <button class="copy-btn" data-target="subj-val" style="align-self:flex-end;">Copy</button>
     </div>
     <p style="color:#64748B;font-size:12.5px;margin:12px 2px 0;">
-      Tap <b>Share to Apple Mail</b>, choose <b>Mail</b>, then paste the subject and address it to David.
+      Tap <b>Share to Apple Mail</b>, choose <b>Mail</b>, then paste the To &amp; Subject above.
       &nbsp;<a id="mailto-link" href="#" style="color:#12314F;font-weight:700;">Prefer a pre-filled draft?</a> (no attachments)
     </p>
   </div>
@@ -367,61 +368,77 @@ def _render_send_section(*, subject: str, body: str, eml_bytes: bytes,
 </div>
 <script>
   const D = __PAYLOAD__;
-  const b2blob = (b64, mime) => {
-    const bin = atob(b64); const arr = new Uint8Array(bin.length);
-    for (let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
-    return new Blob([arr], {type: mime});
-  };
-  const files = D.files.map(f => new File([b2blob(f.b64, f.mime)], f.name, {type: f.mime}));
-  const ua = navigator.userAgent || "";
-  const isApple = /iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Mac/.test(ua));
+  const root = document.getElementById("send-root");
+  try {
+    const b2blob = (b64, mime) => {
+      const bin = atob(b64); const arr = new Uint8Array(bin.length);
+      for (let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], {type: mime});
+    };
+    const ua = navigator.userAgent || "";
+    const isApple = /iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Mac/.test(ua));
 
-  const applePanel = document.getElementById("apple-panel");
-  const desktopPanel = document.getElementById("desktop-panel");
-  const chip = document.getElementById("dev-chip");
-  const switchLink = document.getElementById("switch-link");
-  let showingApple = isApple;
+    const applePanel = document.getElementById("apple-panel");
+    const desktopPanel = document.getElementById("desktop-panel");
+    const chip = document.getElementById("dev-chip");
+    const switchLink = document.getElementById("switch-link");
+    const emlLink = document.getElementById("eml-link");
+    let showingApple = isApple;
 
-  function paint() {
-    applePanel.style.display = showingApple ? "block" : "none";
-    desktopPanel.style.display = showingApple ? "none" : "block";
-    chip.textContent = showingApple ? "📱  iPhone / iPad detected" : "💻  Desktop detected";
-    switchLink.textContent = showingApple ? "On a computer instead? Show the Outlook option" : "On an iPhone or iPad instead? Show the Apple Mail option";
-  }
-  switchLink.addEventListener("click", (e) => { e.preventDefault(); showingApple = !showingApple; paint(); });
-  paint();
+    // Build heavy objects lazily and only for the panel actually shown, and
+    // revoke the object URL so it can't leak across Streamlit reruns (repeated
+    // reruns leaking object URLs can crash a memory-constrained mobile tab).
+    let _files = null, _emlUrl = null;
+    const getFiles = () => {
+      if (!_files) _files = D.files.map(f => new File([b2blob(f.b64, f.mime)], f.name, {type: f.mime}));
+      return _files;
+    };
+    const revokeEml = () => { if (_emlUrl) { URL.revokeObjectURL(_emlUrl); _emlUrl = null; } };
+    const ensureEmlUrl = () => {
+      if (!_emlUrl) {
+        _emlUrl = URL.createObjectURL(b2blob(D.emlB64, "message/rfc822"));
+        emlLink.href = _emlUrl; emlLink.setAttribute("download", D.emlName);
+      }
+    };
 
-  // Apple: subject/to + share + mailto
-  document.getElementById("to-val").textContent = D.to;
-  document.getElementById("subj-val").textContent = D.subject;
-  document.getElementById("mailto-link").href =
-    "mailto:" + encodeURIComponent(D.to) + "?subject=" + encodeURIComponent(D.subject) + "&body=" + encodeURIComponent(D.body);
+    function paint() {
+      applePanel.style.display = showingApple ? "block" : "none";
+      desktopPanel.style.display = showingApple ? "none" : "block";
+      chip.textContent = showingApple ? "📱  iPhone / iPad detected" : "💻  Desktop detected";
+      switchLink.textContent = showingApple ? "On a computer instead? Show the Outlook option" : "On an iPhone or iPad instead? Show the Apple Mail option";
+      if (showingApple) { revokeEml(); } else { ensureEmlUrl(); }
+    }
+    switchLink.addEventListener("click", (e) => { e.preventDefault(); showingApple = !showingApple; paint(); });
 
-  const shareBtn = document.getElementById("share-btn");
-  if (!(navigator.canShare && navigator.canShare({files}))) {
-    shareBtn.style.opacity = "0.55";
-    shareBtn.addEventListener("click", () => alert("This browser can't share files directly. Use the pre-filled draft link, or switch to the Outlook option below."));
-  } else {
+    document.getElementById("to-val").textContent = D.to || "(add recipient above)";
+    document.getElementById("subj-val").textContent = D.subject;
+    document.getElementById("mailto-link").href =
+      "mailto:" + encodeURIComponent(D.to) + "?subject=" + encodeURIComponent(D.subject) + "&body=" + encodeURIComponent(D.body);
+
+    const shareBtn = document.getElementById("share-btn");
     shareBtn.addEventListener("click", async () => {
+      const files = getFiles();
+      if (!(navigator.canShare && navigator.canShare({files}))) {
+        alert("This browser can't share files directly. Use the pre-filled draft link, or switch to the Outlook option below.");
+        return;
+      }
       try { await navigator.share({files, title: D.subject, text: D.body}); } catch (err) {}
     });
-  }
 
-  // Desktop: eml object URL
-  const emlUrl = URL.createObjectURL(b2blob(D.emlB64, "message/rfc822"));
-  const emlLink = document.getElementById("eml-link");
-  emlLink.href = emlUrl;
-  emlLink.setAttribute("download", D.emlName);
+    window.addEventListener("pagehide", revokeEml);
+    paint();
 
-  // Copy buttons
-  document.querySelectorAll(".copy-btn").forEach(btn => {
-    btn.style.cssText += "background:#F1EEFB;border:1px solid #DDD6F3;color:#6D5AE6;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;";
-    btn.addEventListener("click", async () => {
-      const txt = document.getElementById(btn.dataset.target).textContent;
-      try { await navigator.clipboard.writeText(txt); btn.textContent = "Copied!"; setTimeout(() => btn.textContent = "Copy", 1400); }
-      catch (e) { btn.textContent = "Copy failed"; }
+    document.querySelectorAll(".copy-btn").forEach(btn => {
+      btn.style.cssText += "background:#F1EEFB;border:1px solid #DDD6F3;color:#6D5AE6;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;";
+      btn.addEventListener("click", async () => {
+        const txt = document.getElementById(btn.dataset.target).textContent;
+        try { await navigator.clipboard.writeText(txt); btn.textContent = "Copied!"; setTimeout(() => btn.textContent = "Copy", 1400); }
+        catch (e) { btn.textContent = "Copy failed"; }
+      });
     });
-  });
+  } catch (err) {
+    if (root) root.innerHTML = '<div style="padding:12px;border:1px solid #FECACA;background:#FEF2F2;border-radius:10px;color:#991B1B;font-size:13px;">Send panel hit an error: ' + ((err && err.message) ? err.message : err) + '. Please screenshot this — you can still use the email preview above.</div>';
+  }
 </script>
 """
     components.html(html.replace("__PAYLOAD__", payload), height=340, scrolling=True)
@@ -690,70 +707,103 @@ def main():
     st.markdown(f"""
     <div class="step-header">
         <div class="step-num orange">{step_n}</div>
-        <p class="step-title">Send it to David {'(equipment-only PO)' if epo_mode else ''}</p>
+        <p class="step-title">Send the email {'(equipment-only PO)' if epo_mode else ''}</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Default site from the matched facility
-    fac_key = facility_key_from_name(analysis.facility_name)
-    default_site_label = FACILITY_SHORT_NAMES.get(fac_key) if fac_key else None
-    default_site_idx = SITE_LABELS.index(default_site_label) if default_site_label in SITE_LABELS else 0
+    # ── Contract → recipient ────────────────────────────────────────
+    crow = st.columns([1, 1])
+    with crow[0]:
+        contract = st.selectbox("Contract", contracts.contract_names(), index=0, key=f"contract_{tok}")
+    rrh = contracts.is_rrh(contract)
+    with crow[1]:
+        # RRH always goes to David; other contracts get their own administrator.
+        recipient = st.text_input(
+            "Send to (administrator email)",
+            value=(DAVID_EMAIL if rrh else ""),
+            key=f"recip_{tok}_{contract}",
+            placeholder="administrator@company.com",
+        )
 
     row1 = st.columns([1, 1, 1])
-    with row1[0]:
-        site_label = st.selectbox("Site", SITE_LABELS, index=default_site_idx, key=f"site_{tok}")
-    sel_key = SITE_LABEL_TO_KEY[site_label]
+    if rrh:
+        # ── RRH — dedicated flow: short site names + autofilled cost code ──
+        fac_key = facility_key_from_name(analysis.facility_name)
+        default_site_label = FACILITY_SHORT_NAMES.get(fac_key) if fac_key else None
+        default_site_idx = SITE_LABELS.index(default_site_label) if default_site_label in SITE_LABELS else 0
+        with row1[0]:
+            site_label = st.selectbox("Site", SITE_LABELS, index=default_site_idx, key=f"site_{tok}")
+        sel_key = SITE_LABEL_TO_KEY[site_label]
+        valid_cats = valid_categories_for_site(sel_key)
+        cat_labels = [WORK_CATEGORY_DISPLAY.get(c, c) for c in valid_cats]
+        default_cat_idx = valid_cats.index(analysis.work_category) if analysis.work_category in valid_cats else 0
+        with row1[1]:
+            cat_label = st.selectbox("Work category", cat_labels, index=default_cat_idx, key=f"cat_{tok}_{sel_key}")
+        sel_cat = valid_cats[cat_labels.index(cat_label)]
+        cost_code = lookup_cost_code(sel_key, sel_cat) or ""
+        with row1[2]:
+            st.markdown('<div class="field-label">Job cost code</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="cost-code-pill">🏷️ {cost_code or "—"}</div>', unsafe_allow_html=True)
+        site_line = f"RRH {site_label}"
+    else:
+        # ── Generic contract — dependent site dropdown + free-text cost code ──
+        sites = contracts.sites_for_contract(contract)
+        with row1[0]:
+            if sites:
+                site_label = st.selectbox("Site", sites, index=0, key=f"gsite_{tok}_{contract}")
+            else:
+                site_label = st.text_input("Site", value="", key=f"gsitetxt_{tok}_{contract}")
+        with row1[1]:
+            cat_label = st.text_input("Work category", value="",
+                                      key=f"gcat_{tok}_{contract}", placeholder="e.g. Chiller repair")
+        with row1[2]:
+            cost_code = st.text_input("Job cost code", value="",
+                                      key=f"gcost_{tok}_{contract}", placeholder="Paste the cost code")
+        site_line = site_label
 
-    valid_cats = valid_categories_for_site(sel_key)
-    cat_labels = [WORK_CATEGORY_DISPLAY.get(c, c) for c in valid_cats]
-    default_cat_idx = 0
-    if analysis.work_category in valid_cats:
-        default_cat_idx = valid_cats.index(analysis.work_category)
-    with row1[1]:
-        cat_label = st.selectbox("Work category", cat_labels, index=default_cat_idx, key=f"cat_{tok}_{sel_key}")
-    sel_cat = valid_cats[cat_labels.index(cat_label)]
-    cost_code = lookup_cost_code(sel_key, sel_cat) or ""
-    with row1[2]:
-        st.markdown('<div class="field-label">Job cost code</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="cost-code-pill">🏷️ {cost_code or "—"}</div>', unsafe_allow_html=True)
-
-    # Applicable Asset ID (site-filtered dropdown + guess + none-applicable).
-    # Equipment-only POs don't carry an asset, so the field is hidden for them.
+    # ── Applicable Asset ID — hidden for EPO and when the contract/site
+    #    has no asset tags; otherwise a site-filtered dropdown with a guess. ──
     asset_id_value = "None Applicable"
     if not epo_mode:
-        site_assets = assets_for_facility(sel_key)          # list of dicts
+        if rrh:
+            site_assets = assets_for_facility(sel_key)
+            guess = guess_asset_id(quote_text_cached, sel_key)
+        else:
+            site_assets = contracts.assets_for_site(contract, site_label)
+            guess = contracts.guess_uid(quote_text_cached, contract, site_label)
         uids = [a["uid"] for a in site_assets]
-        labels = {a["uid"]: asset_label(a) for a in site_assets}
-        guess = guess_asset_id(quote_text_cached, sel_key)
-        arow = st.columns([2, 1])
-        with arow[1]:
-            no_asset = st.checkbox("No asset applicable", key=f"noasset_{tok}_{sel_key}",
-                                   value=(len(uids) == 0))
-        with arow[0]:
-            if uids and not no_asset:
-                default_asset_idx = uids.index(guess) if guess in uids else 0
-                # Dropdown shows the friendly name and the ID together
-                asset_id_value = st.selectbox(
-                    "Applicable Asset ID", uids, index=default_asset_idx,
-                    format_func=lambda u: f"{labels[u]}  ·  {u}",
-                    key=f"asset_{tok}_{sel_key}",
-                )
-                sel_a = asset_by_uid(asset_id_value)
-                if sel_a:
-                    # Reinforce the choice: name bold, ID smaller/lighter
-                    st.markdown(
-                        f'<div style="margin:-6px 0 4px;">'
-                        f'<span style="font-weight:700;color:#12233B;">{_h(sel_a["asset"])} · {_h(sel_a["equipment"])}</span>'
-                        f'<span style="color:#94A3B8;font-size:0.72rem;"> ({_h(sel_a["serves"])})</span><br>'
-                        f'<span style="color:#94A3B8;font-size:0.75rem;font-weight:500;letter-spacing:0.02em;">{_h(asset_id_value)}</span>'
-                        f'</div>', unsafe_allow_html=True)
-            else:
-                asset_id_value = "None Applicable"
-                st.markdown('<div class="field-label">Applicable Asset ID</div>', unsafe_allow_html=True)
-                note = "No assets on file for this site." if not uids else "Marked not applicable."
-                st.markdown(f'<div class="cost-code-pill" style="background:#64748B;">None Applicable</div>'
-                            f'<div style="font-size:11px;color:#9AA0B4;margin-top:4px;">{note}</div>',
-                            unsafe_allow_html=True)
+        labels = {a["uid"]: contracts.asset_label(a) for a in site_assets}
+        if uids:
+            arow = st.columns([2, 1])
+            with arow[1]:
+                no_asset = st.checkbox("No asset applicable",
+                                       key=f"noasset_{tok}_{contract}_{site_label}", value=False)
+            with arow[0]:
+                if not no_asset:
+                    default_asset_idx = uids.index(guess) if guess in uids else 0
+                    asset_id_value = st.selectbox(
+                        "Applicable Asset ID", uids, index=default_asset_idx,
+                        format_func=lambda u: f"{labels[u]}  ·  {u}",
+                        key=f"asset_{tok}_{contract}_{site_label}",
+                    )
+                    a_show = next((a for a in site_assets if a["uid"] == asset_id_value), None)
+                    if a_show:
+                        name = _h(a_show.get("asset") or a_show["uid"])
+                        if a_show.get("equipment"):
+                            name += f' · {_h(a_show["equipment"])}'
+                        serves = f' ({_h(a_show["serves"])})' if a_show.get("serves") else ""
+                        st.markdown(
+                            f'<div style="margin:-6px 0 4px;">'
+                            f'<span style="font-weight:700;color:#12233B;">{name}</span>'
+                            f'<span style="color:#94A3B8;font-size:0.72rem;">{serves}</span><br>'
+                            f'<span style="color:#94A3B8;font-size:0.75rem;font-weight:500;">{_h(asset_id_value)}</span>'
+                            f'</div>', unsafe_allow_html=True)
+                else:
+                    asset_id_value = "None Applicable"
+                    st.markdown('<div class="field-label">Applicable Asset ID</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="cost-code-pill" style="background:#64748B;">None Applicable</div>',
+                                unsafe_allow_html=True)
+        # else: no asset tags for this contract/site → no asset field shown
 
     # Contact + description
     row2 = st.columns([1, 1, 1])
@@ -777,7 +827,6 @@ def main():
         total_val = st.text_input("Total amount", value=analysis.total_amount or "", key=f"total_{tok}")
 
     vendor = analysis.vendor_name or "Vendor"
-    site_line = f"RRH {site_label}"
     breakdown = _has_breakdown(subtotal_val, tax_val)
 
     # ── Assemble bullets + subject per order type ───────────────────
@@ -809,8 +858,11 @@ def main():
 
     plain_body = build_plain_body(bullets)
 
+    if not recipient.strip():
+        st.caption("⬆︎ Add the administrator's email above before sending.")
+
     with st.expander("Preview the email", expanded=False):
-        st.markdown(f"**To:** {DAVID_EMAIL}")
+        st.markdown(f"**To:** {_h(recipient) or '—'}")
         st.markdown(f"**Subject:** {subject}")
         st.markdown("---")
         st.text(plain_body)
@@ -832,9 +884,9 @@ def main():
         if pdf_path and pdf_path.exists():
             attachments.append((pdf_path.name, pdf_path.read_bytes()))
 
-    eml_bytes = build_eml(subject=subject, bullets=bullets, attachments=attachments)
+    eml_bytes = build_eml(to=recipient, subject=subject, bullets=bullets, attachments=attachments)
 
-    _render_send_section(subject=subject, body=plain_body,
+    _render_send_section(recipient=recipient, subject=subject, body=plain_body,
                          eml_bytes=eml_bytes, attachments=attachments)
 
     _render_footer()
