@@ -24,7 +24,13 @@ from app.quote_analyzer import analyze_quote, QuoteAnalysis, AIAssumption
 from app.document_generator import generate_docx
 from app.pdf_converter import convert_to_pdf, PDFConversionError
 from app.eml_builder import build_eml, build_plain_body, build_mailto_url, DAVID_EMAIL
-from app.assets import asset_uids_for_facility, guess_asset_id
+from app.assets import (
+    assets_for_facility,
+    asset_uids_for_facility,
+    asset_by_uid,
+    asset_label,
+    guess_asset_id,
+)
 from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
@@ -441,7 +447,7 @@ def main():
         <p class="hero-subtitle">
             Drop in a vendor quote and get a tidy, ready-to-send email to David —
             MSAPO paperwork built, pricing tallied, the right cost code picked.
-            No fuss. ✨
+            No fuss.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -449,9 +455,9 @@ def main():
     # Byline that doubles as the secret sample-loader (click the name)
     bl, bc, br = st.columns([2, 3, 2])
     with bc:
-        if st.button("✨ crafted with care by Evan Roden ✨", key="name_test",
+        if st.button("Built by Evan Roden", key="name_test",
                      use_container_width=True,
-                     help="psst… click me to load a sample and try the whole flow"):
+                     help="click to load a sample and try the whole flow"):
             _load_test_into_state()
             # Reset the uploader so a lingering file can't re-trigger auto-analysis
             # and clobber the sample on the next rerun.
@@ -486,7 +492,10 @@ def main():
             key=f"uploader_{st.session_state.get('uploader_nonce', 0)}",
         )
         if uploaded is not None:
-            file_bytes = uploaded.read()
+            # getvalue() is position-independent — read() can return b"" on a
+            # rerun after the buffer's already been consumed, which would blank
+            # the quote and silently skip auto-analysis.
+            file_bytes = uploaded.getvalue()
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
             with st.spinner("Reading your file…"):
@@ -513,7 +522,7 @@ def main():
     if quote_text.strip():
         sig = hashlib.sha256(quote_text.encode("utf-8", "ignore")).hexdigest()
         if st.session_state.get("last_sig") != sig:
-            with st.spinner("✨ Reading the quote and pulling out the details…"):
+            with st.spinner("Reading the quote and pulling out the details…"):
                 try:
                     analysis = analyze_quote(quote_text)
                 except Exception as e:
@@ -534,8 +543,8 @@ def main():
 
     analysis: QuoteAnalysis | None = st.session_state.get("analysis")
     if analysis is None:
-        st.info("Upload or paste a quote above and I'll take it from there. "
-                "Or click the byline to try a sample. 👆")
+        st.info("Upload or paste a quote above and it'll be analyzed automatically. "
+                "Or click the byline to try a sample.")
         _render_footer()
         return
 
@@ -607,16 +616,16 @@ def main():
             st.markdown('<div class="scope-label">Inclusions</div>', unsafe_allow_html=True)
             st.caption("Uncheck to drop from the document.")
             for i, (text, is_ai) in enumerate(unified_inc):
-                if st.checkbox(f"{'🤖 ' if is_ai else ''}{text}", key=f"inc_{tok}_{i}", value=True):
+                if st.checkbox(f"{'✎ ' if is_ai else ''}{text}", key=f"inc_{tok}_{i}", value=True):
                     final_inclusions.append(text)
         with exc_col:
             st.markdown('<div class="scope-label">Exclusions</div>', unsafe_allow_html=True)
             st.caption("Uncheck to drop from the document.")
             for i, (text, is_ai) in enumerate(unified_exc):
-                if st.checkbox(f"{'🤖 ' if is_ai else ''}{text}", key=f"exc_{tok}_{i}", value=True):
+                if st.checkbox(f"{'✎ ' if is_ai else ''}{text}", key=f"exc_{tok}_{i}", value=True):
                     final_exclusions.append(text)
         if any(is_ai for _, is_ai in unified_inc + unified_exc):
-            st.caption("🤖 = AI-inferred (not explicitly stated in the quote)")
+            st.caption("✎ = suggested (not explicitly stated in the quote)")
 
     # ════════════════════════════════════════════════════════════════
     # STEP 3 — Generate MSAPO document (skipped for equipment-only POs)
@@ -651,8 +660,8 @@ def main():
                 except PDFConversionError as e:
                     st.warning(f"PDF conversion unavailable: {e}. The .docx is still ready.")
                     st.session_state["pdf_path"] = None
-            st.markdown("""<div class="alert-box alert-success"><span>🎉</span>
-                <div><strong>Done!</strong> Your MSAPO document is built and attached to the email below.</div></div>""",
+            st.markdown("""<div class="alert-box alert-success"><span>✓</span>
+                <div><strong>Done.</strong> Your MSAPO document is built and attached to the email below.</div></div>""",
                 unsafe_allow_html=True)
             docx_path = st.session_state.get("docx_path")
             pdf_path = st.session_state.get("pdf_path")
@@ -662,7 +671,7 @@ def main():
     # ════════════════════════════════════════════════════════════════
     email_ready = epo_mode or (docx_path and docx_path.exists())
     if not email_ready:
-        st.caption("Generate the MSAPO files above to unlock the email step. 👆")
+        st.caption("Generate the MSAPO files above to unlock the email step.")
         _render_footer()
         return
 
@@ -701,22 +710,37 @@ def main():
     # Equipment-only POs don't carry an asset, so the field is hidden for them.
     asset_id_value = "None Applicable"
     if not epo_mode:
-        site_assets = asset_uids_for_facility(sel_key)
+        site_assets = assets_for_facility(sel_key)          # list of dicts
+        uids = [a["uid"] for a in site_assets]
+        labels = {a["uid"]: asset_label(a) for a in site_assets}
         guess = guess_asset_id(quote_text_cached, sel_key)
         arow = st.columns([2, 1])
         with arow[1]:
             no_asset = st.checkbox("No asset applicable", key=f"noasset_{tok}_{sel_key}",
-                                   value=(len(site_assets) == 0))
+                                   value=(len(uids) == 0))
         with arow[0]:
-            if site_assets and not no_asset:
-                default_asset_idx = site_assets.index(guess) if guess in site_assets else 0
-                asset_id_value = st.selectbox("Applicable Asset ID", site_assets,
-                                              index=default_asset_idx, key=f"asset_{tok}_{sel_key}")
+            if uids and not no_asset:
+                default_asset_idx = uids.index(guess) if guess in uids else 0
+                # Dropdown shows the friendly name and the ID together
+                asset_id_value = st.selectbox(
+                    "Applicable Asset ID", uids, index=default_asset_idx,
+                    format_func=lambda u: f"{labels[u]}  ·  {u}",
+                    key=f"asset_{tok}_{sel_key}",
+                )
+                sel_a = asset_by_uid(asset_id_value)
+                if sel_a:
+                    # Reinforce the choice: name bold, ID smaller/lighter
+                    st.markdown(
+                        f'<div style="margin:-6px 0 4px;">'
+                        f'<span style="font-weight:700;color:#12233B;">{_h(sel_a["asset"])} · {_h(sel_a["equipment"])}</span>'
+                        f'<span style="color:#94A3B8;font-size:0.72rem;"> ({_h(sel_a["serves"])})</span><br>'
+                        f'<span style="color:#94A3B8;font-size:0.75rem;font-weight:500;letter-spacing:0.02em;">{_h(asset_id_value)}</span>'
+                        f'</div>', unsafe_allow_html=True)
             else:
                 asset_id_value = "None Applicable"
                 st.markdown('<div class="field-label">Applicable Asset ID</div>', unsafe_allow_html=True)
-                note = "No assets on file for this site." if not site_assets else "Marked not applicable."
-                st.markdown(f'<div class="cost-code-pill" style="background:#64748B;">🚫 None Applicable</div>'
+                note = "No assets on file for this site." if not uids else "Marked not applicable."
+                st.markdown(f'<div class="cost-code-pill" style="background:#64748B;">None Applicable</div>'
                             f'<div style="font-size:11px;color:#9AA0B4;margin-top:4px;">{note}</div>',
                             unsafe_allow_html=True)
 
@@ -774,7 +798,7 @@ def main():
 
     plain_body = build_plain_body(bullets)
 
-    with st.expander("👀 Preview the email", expanded=False):
+    with st.expander("Preview the email", expanded=False):
         st.markdown(f"**To:** {DAVID_EMAIL}")
         st.markdown(f"**Subject:** {subject}")
         st.markdown("---")
