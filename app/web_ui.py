@@ -498,12 +498,20 @@ def main():
             file_bytes = uploaded.getvalue()
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
-            with st.spinner("Reading your file… (scanned PDFs are read with OCR and take a few seconds)"):
-                try:
-                    quote_text = extract_text(file_bytes, uploaded.name)
-                except Exception as e:
-                    st.error(f"Couldn't read that file: {e}")
-                    quote_text = ""
+            # Extract ONCE per file and cache it. Streamlit reruns the whole
+            # script on every widget interaction; re-extracting each time is slow
+            # and — for OCR — non-deterministic, which made later steps (e.g. a
+            # generated document) reset when you edited a field further down.
+            fhash = hashlib.sha256(file_bytes).hexdigest()
+            if st.session_state.get("extract_hash") != fhash:
+                with st.spinner("Reading your file… (scanned PDFs are read with OCR and take a few seconds)"):
+                    try:
+                        st.session_state["extracted_text"] = extract_text(file_bytes, uploaded.name)
+                    except Exception as e:
+                        st.error(f"Couldn't read that file: {e}")
+                        st.session_state["extracted_text"] = ""
+                st.session_state["extract_hash"] = fhash
+            quote_text = st.session_state.get("extracted_text", "")
             if quote_text:
                 with st.expander("Preview extracted text", expanded=False):
                     st.text_area("Raw text", quote_text, height=170,
