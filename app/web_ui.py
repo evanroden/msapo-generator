@@ -31,6 +31,7 @@ from app.assets import (
     asset_label,
     guess_asset_id,
 )
+from app import contracts
 from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
@@ -297,7 +298,7 @@ def _load_test_into_state() -> None:
     st.session_state.pop("pdf_path", None)
 
 
-def _render_send_section(*, subject: str, body: str, eml_bytes: bytes,
+def _render_send_section(*, recipient: str, subject: str, body: str, eml_bytes: bytes,
                          attachments: list[tuple[str, bytes]]) -> None:
     """One self-contained, client-side send panel.
 
@@ -309,7 +310,7 @@ def _render_send_section(*, subject: str, body: str, eml_bytes: bytes,
     payload = json.dumps({
         "subject": subject,
         "body": body,
-        "to": DAVID_EMAIL,
+        "to": recipient,
         "emlName": f"{subject}.eml",
         "emlB64": base64.b64encode(eml_bytes).decode("ascii"),
         "files": [
@@ -690,70 +691,103 @@ def main():
     st.markdown(f"""
     <div class="step-header">
         <div class="step-num orange">{step_n}</div>
-        <p class="step-title">Send it to David {'(equipment-only PO)' if epo_mode else ''}</p>
+        <p class="step-title">Send the email {'(equipment-only PO)' if epo_mode else ''}</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Default site from the matched facility
-    fac_key = facility_key_from_name(analysis.facility_name)
-    default_site_label = FACILITY_SHORT_NAMES.get(fac_key) if fac_key else None
-    default_site_idx = SITE_LABELS.index(default_site_label) if default_site_label in SITE_LABELS else 0
+    # ── Contract → recipient ────────────────────────────────────────
+    crow = st.columns([1, 1])
+    with crow[0]:
+        contract = st.selectbox("Contract", contracts.contract_names(), index=0, key=f"contract_{tok}")
+    rrh = contracts.is_rrh(contract)
+    with crow[1]:
+        # RRH always goes to David; other contracts get their own administrator.
+        recipient = st.text_input(
+            "Send to (administrator email)",
+            value=(DAVID_EMAIL if rrh else ""),
+            key=f"recip_{tok}_{contract}",
+            placeholder="administrator@company.com",
+        )
 
     row1 = st.columns([1, 1, 1])
-    with row1[0]:
-        site_label = st.selectbox("Site", SITE_LABELS, index=default_site_idx, key=f"site_{tok}")
-    sel_key = SITE_LABEL_TO_KEY[site_label]
+    if rrh:
+        # ── RRH — dedicated flow: short site names + autofilled cost code ──
+        fac_key = facility_key_from_name(analysis.facility_name)
+        default_site_label = FACILITY_SHORT_NAMES.get(fac_key) if fac_key else None
+        default_site_idx = SITE_LABELS.index(default_site_label) if default_site_label in SITE_LABELS else 0
+        with row1[0]:
+            site_label = st.selectbox("Site", SITE_LABELS, index=default_site_idx, key=f"site_{tok}")
+        sel_key = SITE_LABEL_TO_KEY[site_label]
+        valid_cats = valid_categories_for_site(sel_key)
+        cat_labels = [WORK_CATEGORY_DISPLAY.get(c, c) for c in valid_cats]
+        default_cat_idx = valid_cats.index(analysis.work_category) if analysis.work_category in valid_cats else 0
+        with row1[1]:
+            cat_label = st.selectbox("Work category", cat_labels, index=default_cat_idx, key=f"cat_{tok}_{sel_key}")
+        sel_cat = valid_cats[cat_labels.index(cat_label)]
+        cost_code = lookup_cost_code(sel_key, sel_cat) or ""
+        with row1[2]:
+            st.markdown('<div class="field-label">Job cost code</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="cost-code-pill">🏷️ {cost_code or "—"}</div>', unsafe_allow_html=True)
+        site_line = f"RRH {site_label}"
+    else:
+        # ── Generic contract — dependent site dropdown + free-text cost code ──
+        sites = contracts.sites_for_contract(contract)
+        with row1[0]:
+            if sites:
+                site_label = st.selectbox("Site", sites, index=0, key=f"gsite_{tok}_{contract}")
+            else:
+                site_label = st.text_input("Site", value="", key=f"gsitetxt_{tok}_{contract}")
+        with row1[1]:
+            cat_label = st.text_input("Work category", value="",
+                                      key=f"gcat_{tok}_{contract}", placeholder="e.g. Chiller repair")
+        with row1[2]:
+            cost_code = st.text_input("Job cost code", value="",
+                                      key=f"gcost_{tok}_{contract}", placeholder="Paste the cost code")
+        site_line = site_label
 
-    valid_cats = valid_categories_for_site(sel_key)
-    cat_labels = [WORK_CATEGORY_DISPLAY.get(c, c) for c in valid_cats]
-    default_cat_idx = 0
-    if analysis.work_category in valid_cats:
-        default_cat_idx = valid_cats.index(analysis.work_category)
-    with row1[1]:
-        cat_label = st.selectbox("Work category", cat_labels, index=default_cat_idx, key=f"cat_{tok}_{sel_key}")
-    sel_cat = valid_cats[cat_labels.index(cat_label)]
-    cost_code = lookup_cost_code(sel_key, sel_cat) or ""
-    with row1[2]:
-        st.markdown('<div class="field-label">Job cost code</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="cost-code-pill">🏷️ {cost_code or "—"}</div>', unsafe_allow_html=True)
-
-    # Applicable Asset ID (site-filtered dropdown + guess + none-applicable).
-    # Equipment-only POs don't carry an asset, so the field is hidden for them.
+    # ── Applicable Asset ID — hidden for EPO and when the contract/site
+    #    has no asset tags; otherwise a site-filtered dropdown with a guess. ──
     asset_id_value = "None Applicable"
     if not epo_mode:
-        site_assets = assets_for_facility(sel_key)          # list of dicts
+        if rrh:
+            site_assets = assets_for_facility(sel_key)
+            guess = guess_asset_id(quote_text_cached, sel_key)
+        else:
+            site_assets = contracts.assets_for_site(contract, site_label)
+            guess = contracts.guess_uid(quote_text_cached, contract, site_label)
         uids = [a["uid"] for a in site_assets]
-        labels = {a["uid"]: asset_label(a) for a in site_assets}
-        guess = guess_asset_id(quote_text_cached, sel_key)
-        arow = st.columns([2, 1])
-        with arow[1]:
-            no_asset = st.checkbox("No asset applicable", key=f"noasset_{tok}_{sel_key}",
-                                   value=(len(uids) == 0))
-        with arow[0]:
-            if uids and not no_asset:
-                default_asset_idx = uids.index(guess) if guess in uids else 0
-                # Dropdown shows the friendly name and the ID together
-                asset_id_value = st.selectbox(
-                    "Applicable Asset ID", uids, index=default_asset_idx,
-                    format_func=lambda u: f"{labels[u]}  ·  {u}",
-                    key=f"asset_{tok}_{sel_key}",
-                )
-                sel_a = asset_by_uid(asset_id_value)
-                if sel_a:
-                    # Reinforce the choice: name bold, ID smaller/lighter
-                    st.markdown(
-                        f'<div style="margin:-6px 0 4px;">'
-                        f'<span style="font-weight:700;color:#12233B;">{_h(sel_a["asset"])} · {_h(sel_a["equipment"])}</span>'
-                        f'<span style="color:#94A3B8;font-size:0.72rem;"> ({_h(sel_a["serves"])})</span><br>'
-                        f'<span style="color:#94A3B8;font-size:0.75rem;font-weight:500;letter-spacing:0.02em;">{_h(asset_id_value)}</span>'
-                        f'</div>', unsafe_allow_html=True)
-            else:
-                asset_id_value = "None Applicable"
-                st.markdown('<div class="field-label">Applicable Asset ID</div>', unsafe_allow_html=True)
-                note = "No assets on file for this site." if not uids else "Marked not applicable."
-                st.markdown(f'<div class="cost-code-pill" style="background:#64748B;">None Applicable</div>'
-                            f'<div style="font-size:11px;color:#9AA0B4;margin-top:4px;">{note}</div>',
-                            unsafe_allow_html=True)
+        labels = {a["uid"]: contracts.asset_label(a) for a in site_assets}
+        if uids:
+            arow = st.columns([2, 1])
+            with arow[1]:
+                no_asset = st.checkbox("No asset applicable",
+                                       key=f"noasset_{tok}_{contract}_{site_label}", value=False)
+            with arow[0]:
+                if not no_asset:
+                    default_asset_idx = uids.index(guess) if guess in uids else 0
+                    asset_id_value = st.selectbox(
+                        "Applicable Asset ID", uids, index=default_asset_idx,
+                        format_func=lambda u: f"{labels[u]}  ·  {u}",
+                        key=f"asset_{tok}_{contract}_{site_label}",
+                    )
+                    a_show = next((a for a in site_assets if a["uid"] == asset_id_value), None)
+                    if a_show:
+                        name = _h(a_show.get("asset") or a_show["uid"])
+                        if a_show.get("equipment"):
+                            name += f' · {_h(a_show["equipment"])}'
+                        serves = f' ({_h(a_show["serves"])})' if a_show.get("serves") else ""
+                        st.markdown(
+                            f'<div style="margin:-6px 0 4px;">'
+                            f'<span style="font-weight:700;color:#12233B;">{name}</span>'
+                            f'<span style="color:#94A3B8;font-size:0.72rem;">{serves}</span><br>'
+                            f'<span style="color:#94A3B8;font-size:0.75rem;font-weight:500;">{_h(asset_id_value)}</span>'
+                            f'</div>', unsafe_allow_html=True)
+                else:
+                    asset_id_value = "None Applicable"
+                    st.markdown('<div class="field-label">Applicable Asset ID</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="cost-code-pill" style="background:#64748B;">None Applicable</div>',
+                                unsafe_allow_html=True)
+        # else: no asset tags for this contract/site → no asset field shown
 
     # Contact + description
     row2 = st.columns([1, 1, 1])
@@ -777,7 +811,6 @@ def main():
         total_val = st.text_input("Total amount", value=analysis.total_amount or "", key=f"total_{tok}")
 
     vendor = analysis.vendor_name or "Vendor"
-    site_line = f"RRH {site_label}"
     breakdown = _has_breakdown(subtotal_val, tax_val)
 
     # ── Assemble bullets + subject per order type ───────────────────
@@ -809,8 +842,11 @@ def main():
 
     plain_body = build_plain_body(bullets)
 
+    if not recipient.strip():
+        st.caption("⬆︎ Add the administrator's email above before sending.")
+
     with st.expander("Preview the email", expanded=False):
-        st.markdown(f"**To:** {DAVID_EMAIL}")
+        st.markdown(f"**To:** {_h(recipient) or '—'}")
         st.markdown(f"**Subject:** {subject}")
         st.markdown("---")
         st.text(plain_body)
@@ -832,9 +868,9 @@ def main():
         if pdf_path and pdf_path.exists():
             attachments.append((pdf_path.name, pdf_path.read_bytes()))
 
-    eml_bytes = build_eml(subject=subject, bullets=bullets, attachments=attachments)
+    eml_bytes = build_eml(to=recipient, subject=subject, bullets=bullets, attachments=attachments)
 
-    _render_send_section(subject=subject, body=plain_body,
+    _render_send_section(recipient=recipient, subject=subject, body=plain_body,
                          eml_bytes=eml_bytes, attachments=attachments)
 
     _render_footer()
