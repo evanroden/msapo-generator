@@ -347,7 +347,7 @@ def _render_send_section(*, recipient: str, subject: str, body: str, eml_bytes: 
       <button class="copy-btn" data-target="subj-val" style="align-self:flex-end;">Copy</button>
     </div>
     <p style="color:#64748B;font-size:12.5px;margin:12px 2px 0;">
-      Tap <b>Share to Apple Mail</b>, choose <b>Mail</b>, then paste the subject and address it to David.
+      Tap <b>Share to Apple Mail</b>, choose <b>Mail</b>, then paste the To &amp; Subject above.
       &nbsp;<a id="mailto-link" href="#" style="color:#12314F;font-weight:700;">Prefer a pre-filled draft?</a> (no attachments)
     </p>
   </div>
@@ -368,61 +368,77 @@ def _render_send_section(*, recipient: str, subject: str, body: str, eml_bytes: 
 </div>
 <script>
   const D = __PAYLOAD__;
-  const b2blob = (b64, mime) => {
-    const bin = atob(b64); const arr = new Uint8Array(bin.length);
-    for (let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
-    return new Blob([arr], {type: mime});
-  };
-  const files = D.files.map(f => new File([b2blob(f.b64, f.mime)], f.name, {type: f.mime}));
-  const ua = navigator.userAgent || "";
-  const isApple = /iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Mac/.test(ua));
+  const root = document.getElementById("send-root");
+  try {
+    const b2blob = (b64, mime) => {
+      const bin = atob(b64); const arr = new Uint8Array(bin.length);
+      for (let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], {type: mime});
+    };
+    const ua = navigator.userAgent || "";
+    const isApple = /iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Mac/.test(ua));
 
-  const applePanel = document.getElementById("apple-panel");
-  const desktopPanel = document.getElementById("desktop-panel");
-  const chip = document.getElementById("dev-chip");
-  const switchLink = document.getElementById("switch-link");
-  let showingApple = isApple;
+    const applePanel = document.getElementById("apple-panel");
+    const desktopPanel = document.getElementById("desktop-panel");
+    const chip = document.getElementById("dev-chip");
+    const switchLink = document.getElementById("switch-link");
+    const emlLink = document.getElementById("eml-link");
+    let showingApple = isApple;
 
-  function paint() {
-    applePanel.style.display = showingApple ? "block" : "none";
-    desktopPanel.style.display = showingApple ? "none" : "block";
-    chip.textContent = showingApple ? "📱  iPhone / iPad detected" : "💻  Desktop detected";
-    switchLink.textContent = showingApple ? "On a computer instead? Show the Outlook option" : "On an iPhone or iPad instead? Show the Apple Mail option";
-  }
-  switchLink.addEventListener("click", (e) => { e.preventDefault(); showingApple = !showingApple; paint(); });
-  paint();
+    // Build heavy objects lazily and only for the panel actually shown, and
+    // revoke the object URL so it can't leak across Streamlit reruns (repeated
+    // reruns leaking object URLs can crash a memory-constrained mobile tab).
+    let _files = null, _emlUrl = null;
+    const getFiles = () => {
+      if (!_files) _files = D.files.map(f => new File([b2blob(f.b64, f.mime)], f.name, {type: f.mime}));
+      return _files;
+    };
+    const revokeEml = () => { if (_emlUrl) { URL.revokeObjectURL(_emlUrl); _emlUrl = null; } };
+    const ensureEmlUrl = () => {
+      if (!_emlUrl) {
+        _emlUrl = URL.createObjectURL(b2blob(D.emlB64, "message/rfc822"));
+        emlLink.href = _emlUrl; emlLink.setAttribute("download", D.emlName);
+      }
+    };
 
-  // Apple: subject/to + share + mailto
-  document.getElementById("to-val").textContent = D.to;
-  document.getElementById("subj-val").textContent = D.subject;
-  document.getElementById("mailto-link").href =
-    "mailto:" + encodeURIComponent(D.to) + "?subject=" + encodeURIComponent(D.subject) + "&body=" + encodeURIComponent(D.body);
+    function paint() {
+      applePanel.style.display = showingApple ? "block" : "none";
+      desktopPanel.style.display = showingApple ? "none" : "block";
+      chip.textContent = showingApple ? "📱  iPhone / iPad detected" : "💻  Desktop detected";
+      switchLink.textContent = showingApple ? "On a computer instead? Show the Outlook option" : "On an iPhone or iPad instead? Show the Apple Mail option";
+      if (showingApple) { revokeEml(); } else { ensureEmlUrl(); }
+    }
+    switchLink.addEventListener("click", (e) => { e.preventDefault(); showingApple = !showingApple; paint(); });
 
-  const shareBtn = document.getElementById("share-btn");
-  if (!(navigator.canShare && navigator.canShare({files}))) {
-    shareBtn.style.opacity = "0.55";
-    shareBtn.addEventListener("click", () => alert("This browser can't share files directly. Use the pre-filled draft link, or switch to the Outlook option below."));
-  } else {
+    document.getElementById("to-val").textContent = D.to || "(add recipient above)";
+    document.getElementById("subj-val").textContent = D.subject;
+    document.getElementById("mailto-link").href =
+      "mailto:" + encodeURIComponent(D.to) + "?subject=" + encodeURIComponent(D.subject) + "&body=" + encodeURIComponent(D.body);
+
+    const shareBtn = document.getElementById("share-btn");
     shareBtn.addEventListener("click", async () => {
+      const files = getFiles();
+      if (!(navigator.canShare && navigator.canShare({files}))) {
+        alert("This browser can't share files directly. Use the pre-filled draft link, or switch to the Outlook option below.");
+        return;
+      }
       try { await navigator.share({files, title: D.subject, text: D.body}); } catch (err) {}
     });
-  }
 
-  // Desktop: eml object URL
-  const emlUrl = URL.createObjectURL(b2blob(D.emlB64, "message/rfc822"));
-  const emlLink = document.getElementById("eml-link");
-  emlLink.href = emlUrl;
-  emlLink.setAttribute("download", D.emlName);
+    window.addEventListener("pagehide", revokeEml);
+    paint();
 
-  // Copy buttons
-  document.querySelectorAll(".copy-btn").forEach(btn => {
-    btn.style.cssText += "background:#F1EEFB;border:1px solid #DDD6F3;color:#6D5AE6;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;";
-    btn.addEventListener("click", async () => {
-      const txt = document.getElementById(btn.dataset.target).textContent;
-      try { await navigator.clipboard.writeText(txt); btn.textContent = "Copied!"; setTimeout(() => btn.textContent = "Copy", 1400); }
-      catch (e) { btn.textContent = "Copy failed"; }
+    document.querySelectorAll(".copy-btn").forEach(btn => {
+      btn.style.cssText += "background:#F1EEFB;border:1px solid #DDD6F3;color:#6D5AE6;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;";
+      btn.addEventListener("click", async () => {
+        const txt = document.getElementById(btn.dataset.target).textContent;
+        try { await navigator.clipboard.writeText(txt); btn.textContent = "Copied!"; setTimeout(() => btn.textContent = "Copy", 1400); }
+        catch (e) { btn.textContent = "Copy failed"; }
+      });
     });
-  });
+  } catch (err) {
+    if (root) root.innerHTML = '<div style="padding:12px;border:1px solid #FECACA;background:#FEF2F2;border-radius:10px;color:#991B1B;font-size:13px;">Send panel hit an error: ' + ((err && err.message) ? err.message : err) + '. Please screenshot this — you can still use the email preview above.</div>';
+  }
 </script>
 """
     components.html(html.replace("__PAYLOAD__", payload), height=340, scrolling=True)
