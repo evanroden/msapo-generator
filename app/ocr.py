@@ -34,7 +34,18 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     import fitz  # PyMuPDF
 
     text_parts: list[str] = []
+    ocr_bytes = file_bytes
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
+        # Vendors often "lock" a quote (owner password) to stop editing/OCR while
+        # leaving it openable. Those open without a password but stay encrypted;
+        # re-serialize a decrypted copy so the OCR paths get clean bytes. This
+        # only reads/copies for analysis — the vendor's original file is untouched.
+        if pdf.is_encrypted:
+            try:
+                pdf.authenticate("")  # owner-locked files carry an empty user password
+                ocr_bytes = pdf.tobytes(encryption=fitz.PDF_ENCRYPT_NONE)
+            except Exception:
+                ocr_bytes = file_bytes
         for page in pdf:
             text_parts.append(page.get_text())
     text = "\n".join(text_parts).strip()
@@ -44,10 +55,10 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
     # No usable text layer (scanned/image PDF) → OCR via Claude.
     try:
-        return _ocr_pdf_via_document(file_bytes)
+        return _ocr_pdf_via_document(ocr_bytes)
     except Exception:
         # Fallback: rasterize each page and OCR the images.
-        return _ocr_pdf_via_page_images(file_bytes)
+        return _ocr_pdf_via_page_images(ocr_bytes)
 
 
 def _ocr_pdf_via_document(file_bytes: bytes) -> str:
