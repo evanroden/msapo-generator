@@ -137,6 +137,29 @@ FACILITY_SHORT_NAMES: dict[str, str] = {
     "gouverneur": "Gouverneur",
 }
 
+# Which work categories actually have a cost-code line at each site (Appendix A).
+# Water softener exists only where budgeted; repair_cap only at Newark Wayne;
+# Massena & Gouverneur carry steam-trap work only.
+_FULL = [
+    "chemical_treatment", "building_automation", "electrical_pm",
+    "preventive_maintenance", "repairs", "steam_trap", "water_softener",
+]
+_NO_SOFTENER = [c for c in _FULL if c != "water_softener"]
+SITE_VALID_CATEGORIES: dict[str, list[str]] = {
+    "rochester_general": _FULL,
+    "united_memorial": _FULL,
+    "unity": _FULL,
+    "st_marys": _FULL,
+    "newark_wayne": [
+        "chemical_treatment", "building_automation", "electrical_pm",
+        "preventive_maintenance", "repairs", "repair_cap", "steam_trap",
+    ],
+    "clifton_springs": _NO_SOFTENER,
+    "canton_potsdam": _NO_SOFTENER,
+    "massena": ["steam_trap"],
+    "gouverneur": ["steam_trap"],
+}
+
 
 def facility_key_from_name(display_name: str) -> str | None:
     """Reverse-lookup: given a display name like 'United Memorial Medical Center',
@@ -165,17 +188,14 @@ def lookup_cost_code(facility_key: str | None, work_category: str | None) -> str
     suffix = WORK_CATEGORY_SUFFIXES.get(work_category)
     if not letter or not suffix:
         return None
-    # repair_cap is only valid for Newark Wayne
-    if work_category == "repair_cap" and facility_key != "newark_wayne":
+    # Only build a code for categories that actually exist at this site
+    if work_category not in SITE_VALID_CATEGORIES.get(facility_key, []):
         return None
     return f"01{letter}{suffix}"
 
 
 def valid_categories_for_site(facility_key: str | None) -> list[str]:
-    """Return the list of work-category keys valid for a given site."""
-    if not facility_key or facility_key not in SITE_COST_CODE_LETTERS:
+    """Return the list of work-category keys valid for a given site (Appendix A)."""
+    if not facility_key:
         return list(WORK_CATEGORY_SUFFIXES.keys())
-    cats = [k for k in WORK_CATEGORY_SUFFIXES if k != "repair_cap"]
-    if facility_key == "newark_wayne":
-        cats.append("repair_cap")
-    return cats
+    return SITE_VALID_CATEGORIES.get(facility_key, _NO_SOFTENER)
