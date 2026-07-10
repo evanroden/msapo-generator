@@ -32,6 +32,7 @@ from app.assets import (
     guess_asset_id,
 )
 from app import contracts
+from app import memory
 from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
@@ -724,6 +725,24 @@ def main():
             key=f"recip_{tok}_{contract}",
             placeholder="administrator@company.com",
         )
+        # Learned admin emails for THIS contract (>=5 uses). RRH is fixed to
+        # David, so no picker there.
+        if not rrh:
+            admin_sugs = memory.suggest_admin_emails(contract)
+            if admin_sugs:
+                _ph = "— pick a known administrator —"
+
+                def _fill_recipient(tok=tok, contract=contract, ph=_ph):
+                    sel = st.session_state.get(f"recip_pick_{tok}_{contract}")
+                    if sel and sel != ph:
+                        st.session_state[f"recip_{tok}_{contract}"] = sel
+
+                st.selectbox(
+                    "Known administrators for this contract",
+                    [_ph] + admin_sugs,
+                    key=f"recip_pick_{tok}_{contract}",
+                    on_change=_fill_recipient,
+                )
 
     row1 = st.columns([1, 1, 1])
     if rrh:
@@ -804,6 +823,33 @@ def main():
                     st.markdown('<div class="cost-code-pill" style="background:#64748B;">None Applicable</div>',
                                 unsafe_allow_html=True)
         # else: no asset tags for this contract/site → no asset field shown
+
+    # ── Contact suggestions, scoped to THIS contract only ───────────
+    # Learned pairs (entered together >=5 times), plus — when the vendor is
+    # identified but the quote didn't give a clear contact — every rep we've
+    # seen for that vendor on this contract (vendors rarely have many).
+    contact_sugs: list[tuple[str, str]] = list(memory.suggest_contacts(contract))
+    if analysis.vendor_name and not (analysis.contact_name and analysis.contact_email):
+        for pair in memory.vendor_reps(contract, analysis.vendor_name):
+            if pair not in contact_sugs:
+                contact_sugs.append(pair)
+    if contact_sugs:
+        _cph = "— pick a known contact to fill both fields —"
+        _by_label = {f"{n}  <{e}>": (n, e) for n, e in contact_sugs}
+
+        def _fill_contact(tok=tok, contract=contract, ph=_cph, by_label=_by_label):
+            sel = st.session_state.get(f"contact_pick_{tok}_{contract}")
+            if sel and sel != ph:
+                n, e = by_label[sel]
+                st.session_state[f"contact_{tok}"] = n
+                st.session_state[f"cemail_{tok}"] = e
+
+        st.selectbox(
+            f"Known contacts on {contract}",
+            [_cph] + list(_by_label.keys()),
+            key=f"contact_pick_{tok}_{contract}",
+            on_change=_fill_contact,
+        )
 
     # Contact + description
     row2 = st.columns([1, 1, 1])
@@ -888,6 +934,29 @@ def main():
 
     _render_send_section(recipient=recipient, subject=subject, body=plain_body,
                          eml_bytes=eml_bytes, attachments=attachments)
+
+    # ── Learning: remember this send's details for this contract ────
+    # Sending happens client-side (share sheet / .eml), so the app can't see
+    # it — this button is the explicit "I sent it" signal. Once per quote+
+    # contract to keep the >=5-uses counts honest.
+    rec_key = f"recorded_{tok}_{contract}"
+    if st.session_state.get(rec_key):
+        st.caption("✓ Details remembered for this contract — frequently used "
+                   "emails start auto-suggesting after 5 uses.")
+    elif st.button("✓ I sent it — remember these details for next time",
+                   key=f"rec_btn_{tok}_{contract}", use_container_width=True):
+        saved = memory.record_send(
+            contract=contract,
+            admin_email=recipient,
+            vendor=analysis.vendor_name,
+            contact_name=email_contact,
+            contact_email=email_contact_email,
+        )
+        st.session_state[rec_key] = True
+        if saved:
+            st.rerun()
+        else:
+            st.caption("Couldn't reach the memory store — details not saved this time.")
 
     _render_footer()
 

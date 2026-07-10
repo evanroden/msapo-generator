@@ -11,3 +11,7 @@ services:
         value: libreoffice
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-4-6
+      # Persistent disk (created in the Render dashboard, mounted at /test1)
+      # where the per-contract learning database lives.
+      - key: EPC_DATA_DIR
+        value: /test1
