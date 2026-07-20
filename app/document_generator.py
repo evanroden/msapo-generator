@@ -26,7 +26,12 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from copy import deepcopy
 
-from app.config import TEMPLATE_PATH, OUTPUT_DIR
+from app.config import (
+    TEMPLATE_PATH,
+    OUTPUT_DIR,
+    FACILITY_SHORT_NAMES,
+    facility_key_from_name,
+)
 from app.quote_analyzer import QuoteAnalysis
 
 # The sentinel text that marks where scope content begins
@@ -290,10 +295,17 @@ def generate_docx(
 
     # ── Build output filename ─────────────────────────────────────────
     if not output_name:
-        # Pattern: "RRH {Site} {Title} MSAPO"
-        site = "UMMC" if analysis.facility_name and "United Memorial" in analysis.facility_name else "St. Marys"
-        safe_desc = re.sub(r"[^\w\s\-]", "", analysis.project_description or "SOW")[:50].strip()
-        output_name = f"RRH {site} {safe_desc} MSAPO"
+        # Pattern: "RRH {Site} {Title} MSAPO", with the site resolved from the
+        # matched facility (previously any non-UMMC facility was mislabeled
+        # "St. Marys" in the filename).
+        fac_key = facility_key_from_name(analysis.facility_name)
+        site = FACILITY_SHORT_NAMES.get(fac_key, "") if fac_key else ""
+        safe_desc = re.sub(r"[^\w\s\-]", "", analysis.project_description or "SOW")[:50]
+        # Don't cut mid-word ("…seals in t") — trim back to the last full word
+        if len(safe_desc) == 50 and " " in safe_desc:
+            safe_desc = safe_desc.rsplit(" ", 1)[0]
+        parts = ["RRH", site, safe_desc.strip(), "MSAPO"]
+        output_name = " ".join(p for p in parts if p)
 
     # Clean up filename
     output_name = re.sub(r'[<>:"/\\|?*]', "_", output_name)

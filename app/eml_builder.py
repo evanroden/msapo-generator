@@ -73,7 +73,10 @@ def build_eml(
     msg["X-Unsent"] = "1"  # Opens in Outlook compose mode with Send button
 
     # HTML body — Outlook places its auto-signature after this content.
-    msg.set_content(_html_body(bullets, greeting), subtype="html")
+    # base64 (not the default quoted-printable): QP wraps long lines with "="
+    # soft breaks, which Outlook Web fails to re-join when composing from an
+    # imported .eml, corrupting the text ("Walla=e", "$8,4=0.00", "<=ul>").
+    msg.set_content(_html_body(bullets, greeting), subtype="html", cte="base64")
 
     for filename, data in attachments:
         maintype, subtype = _guess_mime(filename)
