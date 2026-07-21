@@ -71,6 +71,51 @@ def asset_label(a: dict[str, str]) -> str:
     return label
 
 
+@lru_cache(maxsize=1)
+def _site_index() -> list[tuple[str, str, str]]:
+    """(matchable_lowercase_phrase, contract, site_label), longest phrase first.
+
+    Covers every non-RRH site plus RRH facilities (names + aliases) so a quote's
+    facility text can be resolved to a contract + site regardless of contract.
+    """
+    from app.config import FACILITIES, FACILITY_SHORT_NAMES  # local import avoids a cycle
+
+    entries: list[tuple[str, str, str]] = []
+    for contract, sites in _data().items():
+        for site in sites:
+            s = site.strip()
+            if s and s.lower() != "(unspecified site)":
+                entries.append((s.lower(), contract, s))
+    for key, fac in FACILITIES.items():
+        short = FACILITY_SHORT_NAMES.get(key)
+        if not short:
+            continue
+        for term in {fac["name"], *fac.get("aliases", [])}:
+            term = term.strip()
+            if len(term) >= 3:
+                entries.append((term.lower(), RRH_CONTRACT, short))
+    # De-dupe, then longest phrase first so the most specific match wins.
+    entries = list(dict.fromkeys(entries))
+    entries.sort(key=lambda e: len(e[0]), reverse=True)
+    return entries
+
+
+def match_facility(facility_name: str | None, quote_text: str | None = None) -> tuple[str | None, str | None]:
+    """Best-effort (contract, site) for a quote, from its extracted facility name
+    (preferred) then the quote text. Whole-phrase, word-boundary matches only;
+    the longest known site name wins. Returns (None, None) when nothing matches
+    — callers then fall back to the default (RRH)."""
+    index = _site_index()
+    for haystack in (facility_name, quote_text):
+        if not haystack:
+            continue
+        h = re.sub(r"\s+", " ", haystack.lower())
+        for phrase, contract, site in index:
+            if re.search(r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])", h):
+                return contract, site
+    return None, None
+
+
 def guess_uid(text: str | None, contract: str | None, site: str | None) -> str | None:
     """Best-guess the ENFRA Unique Identifier a quote refers to within a
     contract+site — same rule as RRH: longest matching standalone asset tag."""

@@ -242,6 +242,27 @@ def _has_breakdown(subtotal: str, tax: str) -> bool:
     return bool(subtotal and subtotal.strip()) and bool(tax and tax.strip())
 
 
+def _doc_basename(contract: str, rrh: bool, site_label: str, description: str) -> str:
+    """Contract-aware MSAPO document filename stem (no extension).
+
+    RRH keeps its established convention exactly — "RRH {short-site} {desc} MSAPO".
+    Every other contract is prefixed with its own name and chosen site instead of
+    a hardcoded "RRH", so a Tulane/NOVANT/etc. administrator never receives a file
+    labeled "RRH …". Built in the email step, where the contract and the user's
+    final site choice are both known (the document itself is contract-neutral).
+    """
+    prefix = "RRH" if rrh else (contract or "").strip()
+    safe_desc = re.sub(r"[^\w\s\-]", "", description or "SOW")[:50]
+    # Don't cut mid-word ("…seals in t") — trim back to the last full word.
+    if len(safe_desc) == 50 and " " in safe_desc:
+        safe_desc = safe_desc.rsplit(" ", 1)[0]
+    parts = [prefix, (site_label or "").strip(), safe_desc.strip(), "MSAPO"]
+    name = " ".join(p for p in parts if p)
+    # Strip characters that are invalid in filenames / attachment names.
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
+    return re.sub(r"\s+", " ", name).strip() or "MSAPO"
+
+
 def _build_test_analysis() -> QuoteAnalysis:
     """A realistic sample that exercises every downstream feature: a site with
     assets, an itemized subtotal + tax, and a guessable asset tag (CH-1)."""
@@ -713,9 +734,16 @@ def main():
     """, unsafe_allow_html=True)
 
     # ── Contract → recipient ────────────────────────────────────────
+    # Recognize the facility from the quote and default the contract/site to it;
+    # falls back to RRH when nothing is recognized (protecting the RRH default).
+    det_contract, det_site = contracts.match_facility(analysis.facility_name, quote_text_cached)
     crow = st.columns([1, 1])
     with crow[0]:
-        contract = st.selectbox("Contract", contracts.contract_names(), index=0, key=f"contract_{tok}")
+        _cnames = contracts.contract_names()
+        _cidx = _cnames.index(det_contract) if det_contract in _cnames else 0
+        contract = st.selectbox("Contract", _cnames, index=_cidx, key=f"contract_{tok}")
+        if det_contract and not contracts.is_rrh(det_contract) and contract == det_contract:
+            st.caption(f"↳ Recognized from the quote: **{det_site or det_contract}**")
     rrh = contracts.is_rrh(contract)
     with crow[1]:
         # RRH always goes to David; other contracts get their own administrator.
@@ -767,9 +795,11 @@ def main():
     else:
         # ── Generic contract — dependent site dropdown + free-text cost code ──
         sites = contracts.sites_for_contract(contract)
+        # Default to the recognized site when it belongs to the chosen contract.
+        _sidx = sites.index(det_site) if (contract == det_contract and det_site in sites) else 0
         with row1[0]:
             if sites:
-                site_label = st.selectbox("Site", sites, index=0, key=f"gsite_{tok}_{contract}")
+                site_label = st.selectbox("Site", sites, index=_sidx, key=f"gsite_{tok}_{contract}")
             else:
                 site_label = st.text_input("Site", value="", key=f"gsitetxt_{tok}_{contract}")
         with row1[1]:
@@ -925,10 +955,14 @@ def main():
         # (especially an EPO, which has no other attachment) still carries it.
         attachments.append(("Vendor Quote.txt", quote_text_cached.encode("utf-8")))
     if not epo_mode:
+        # Name the attachments per the selected contract + site (the on-disk
+        # name from generate_docx is RRH-shaped and set before the contract is
+        # known, so it must not reach the recipient for non-RRH contracts).
+        doc_name = _doc_basename(contract, rrh, site_label, analysis.project_description)
         if docx_path and docx_path.exists():
-            attachments.append((docx_path.name, docx_path.read_bytes()))
+            attachments.append((f"{doc_name}.docx", docx_path.read_bytes()))
         if pdf_path and pdf_path.exists():
-            attachments.append((pdf_path.name, pdf_path.read_bytes()))
+            attachments.append((f"{doc_name}.pdf", pdf_path.read_bytes()))
 
     eml_bytes = build_eml(to=recipient, subject=subject, bullets=bullets, attachments=attachments)
 
