@@ -126,6 +126,17 @@ STRICT RULES:
      "water_softener" — Water softener service / salt delivery
    Pick the single best match. If truly ambiguous, default to "repairs".
 
+10. **ASSET REFERENCE (be conservative):**
+   - "asset_reference": the specific equipment TAG / unit identifier the quote
+     is about, if — and ONLY if — the quote names a specific tagged unit.
+     Normalize it toward "TAG-NUMBER" form, e.g. "Pump #7 (CWP)" → "CWP-7",
+     "Boiler 2" → "B-2", "AHU 3" → "AHU-3", "Chiller CH-01" → "CH-01".
+   - Return null when the quote only describes an equipment TYPE without a
+     specific unit (e.g. "chilled water pump seal", "a cooling tower",
+     "steam traps") or names no equipment at all. Do NOT guess a number.
+     It is much better to return null than to invent a tag — a wrong tag is
+     worse than none.
+
 Return your answer as a JSON object with exactly these keys:
 {
   "vendor_name": "string",
@@ -145,7 +156,8 @@ Return your answer as a JSON object with exactly these keys:
   "tax_amount": "string or null — sales tax line item, only if itemized separately",
   "total_amount": "string or null — final dollar total after tax, e.g. '$1,234.56'",
   "short_description": "string or null — 20 chars max",
-  "work_category": "string — one of the category keys above"
+  "work_category": "string — one of the category keys above",
+  "asset_reference": "string or null — specific equipment tag only, else null"
 }
 
 Return ONLY the JSON object, no markdown fences, no extra text.
@@ -179,6 +191,7 @@ class QuoteAnalysis:
     total_amount: Optional[str] = None
     short_description: Optional[str] = None
     work_category: Optional[str] = None
+    asset_reference: Optional[str] = None
 
 
 def _match_facility(name: Optional[str], address: Optional[str]) -> tuple[Optional[str], Optional[str]]:
@@ -290,7 +303,7 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
     # Defaults for email / cost-code fields
     for key in ("contact_name", "contact_email", "subtotal_amount",
                 "tax_amount", "total_amount", "short_description",
-                "work_category"):
+                "work_category", "asset_reference"):
         if key not in data:
             data[key] = None
 

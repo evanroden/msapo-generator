@@ -692,12 +692,17 @@ def main():
         """, unsafe_allow_html=True)
 
         if st.button("🛠️  Generate MSAPO files", type="primary", use_container_width=True):
+            # Show the recognized (canonical) site in the document for non-RRH
+            # contracts, whose facility names the analyzer doesn't normalize.
+            _dc, _ds = contracts.match_facility(analysis.facility_name, quote_text_cached)
+            facility_display = _ds if (_dc and not contracts.is_rrh(_dc)) else None
             with st.spinner("Assembling the MSAPO document…"):
                 try:
                     docx_path = generate_docx(
                         analysis,
                         final_inclusions=final_inclusions,
                         final_exclusions=final_exclusions,
+                        facility_display=facility_display,
                     )
                     st.session_state["docx_path"] = docx_path
                 except Exception as e:
@@ -814,19 +819,24 @@ def main():
     #    has no asset tags; otherwise a site-filtered dropdown with a guess. ──
     asset_id_value = "None Applicable"
     if not epo_mode:
+        hint = analysis.asset_reference
         if rrh:
             site_assets = assets_for_facility(sel_key)
-            guess = guess_asset_id(quote_text_cached, sel_key)
+            guess = guess_asset_id(quote_text_cached, sel_key, hint=hint)
         else:
             site_assets = contracts.assets_for_site(contract, site_label)
-            guess = contracts.guess_uid(quote_text_cached, contract, site_label)
+            guess = contracts.guess_uid(quote_text_cached, contract, site_label, hint=hint)
         uids = [a["uid"] for a in site_assets]
         labels = {a["uid"]: contracts.asset_label(a) for a in site_assets}
         if uids:
             arow = st.columns([2, 1])
             with arow[1]:
+                # Default to "no asset" unless a specific asset was confidently
+                # identified — never fall back to the first alphabetical asset
+                # (which used to leave e.g. the air separator wrongly selected).
                 no_asset = st.checkbox("No asset applicable",
-                                       key=f"noasset_{tok}_{contract}_{site_label}", value=False)
+                                       key=f"noasset_{tok}_{contract}_{site_label}",
+                                       value=(guess not in uids))
             with arow[0]:
                 if not no_asset:
                     default_asset_idx = uids.index(guess) if guess in uids else 0

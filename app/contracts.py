@@ -116,12 +116,20 @@ def match_facility(facility_name: str | None, quote_text: str | None = None) -> 
     return None, None
 
 
-def guess_uid(text: str | None, contract: str | None, site: str | None) -> str | None:
+def guess_uid(text: str | None, contract: str | None, site: str | None,
+              hint: str | None = None) -> str | None:
     """Best-guess the ENFRA Unique Identifier a quote refers to within a
-    contract+site — same rule as RRH: longest matching standalone asset tag."""
+    contract+site: the AI-extracted asset tag ("hint") if it resolves to a real
+    asset, then the longest standalone asset tag/UID found in the quote text.
+    Returns None when nothing is confidently identified."""
+    from app.assets import match_asset_hint  # shared tag-normalizing matcher
+
+    rows = assets_for_site(contract, site)
+    hinted = match_asset_hint(hint, rows)
+    if hinted:
+        return hinted
     if not text:
         return None
-    rows = assets_for_site(contract, site)
     upper = text.upper()
     for a in rows:
         if a["uid"] and a["uid"].upper() in upper:

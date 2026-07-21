@@ -303,19 +303,46 @@ def asset_by_uid(uid: str | None) -> dict[str, str] | None:
     return None
 
 
-def guess_asset_id(text: str | None, facility_key: str | None) -> str | None:
+def _norm_tag(t: str | None) -> str:
+    """Normalize an asset tag for comparison: upper-case, and drop leading
+    zeros in numeric runs so 'CWP-7' == 'CWP-07' and 'CH-01' == 'CH-1'."""
+    return re.sub(r"0*(\d+)", r"\1", (t or "").upper().strip())
+
+
+def match_asset_hint(hint: str | None, candidates: list[dict[str, str]]) -> str | None:
+    """Resolve an AI-extracted asset tag/UID to a real asset at the site.
+    Returns None if the hint doesn't correspond to an actual asset — a wrong
+    or hallucinated tag is ignored rather than mis-selected."""
+    if not hint:
+        return None
+    hn = _norm_tag(hint)
+    if not hn:
+        return None
+    for a in candidates:
+        if _norm_tag(a["asset"]) == hn or hint.strip().upper() == a["uid"].upper():
+            return a["uid"]
+    return None
+
+
+def guess_asset_id(text: str | None, facility_key: str | None,
+                   hint: str | None = None) -> str | None:
     """Best-guess the ENFRA Unique Identifier a quote refers to.
 
-    Scans the quote text for each of the facility's asset tags (e.g. "CH-1",
-    "ACC-2STR") as a standalone token and returns the UID of the longest tag
-    that matches -- longer tags are more specific, so "CH-01VFD" wins over
-    "CH-01".  Returns None when nothing matches; the caller lets the user
-    correct it via the dropdown.
+    Order of confidence: (1) the AI-extracted asset tag ("hint") if it resolves
+    to a real asset here, then (2) a standalone asset-tag/UID token found in the
+    quote text (longest, most-specific tag wins). Returns None when nothing is
+    confidently identified — the caller then defaults to "No asset applicable"
+    rather than guessing.
     """
-    if not text or not facility_key:
+    if not facility_key:
+        return None
+    candidates = assets_for_facility(facility_key)
+    hinted = match_asset_hint(hint, candidates)
+    if hinted:
+        return hinted
+    if not text:
         return None
     upper = text.upper()
-    candidates = assets_for_facility(facility_key)
     for a in candidates:
         if a["uid"].upper() in upper:
             return a["uid"]

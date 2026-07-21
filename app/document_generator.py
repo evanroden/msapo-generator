@@ -163,6 +163,7 @@ def _append_scope_content(
     approved_assumptions: list[str] | None = None,
     final_inclusions: list[str] | None = None,
     final_exclusions: list[str] | None = None,
+    facility_display: str | None = None,
 ) -> None:
     """
     Append scope content after the sentinel paragraph.
@@ -170,11 +171,16 @@ def _append_scope_content(
     If final_inclusions / final_exclusions are provided (from the web UI),
     they are used as-is.  Otherwise falls back to _filter_items() with
     approved_assumptions (backward compat for the webhook path).
+
+    facility_display, when given, overrides the facility name written into the
+    document — used to show the recognized canonical site for non-RRH contracts
+    (whose facilities the analyzer doesn't otherwise normalize).
     """
     # -- Facility --
-    if analysis.facility_name:
+    facility = facility_display or analysis.facility_name
+    if facility:
         p = doc.add_paragraph()
-        run = p.add_run(f"Facility: {analysis.facility_name}")
+        run = p.add_run(f"Facility: {facility}")
         run.bold = True
         run.font.size = Pt(11)
         doc.add_paragraph(analysis.facility_address or "")
@@ -257,6 +263,7 @@ def generate_docx(
     approved_assumptions: list[str] | None = None,
     final_inclusions: list[str] | None = None,
     final_exclusions: list[str] | None = None,
+    facility_display: str | None = None,
 ) -> Path:
     """
     Open the MSAPO template, preserve everything at the top, and insert
@@ -291,6 +298,7 @@ def generate_docx(
         doc, analysis, approved_assumptions,
         final_inclusions=final_inclusions,
         final_exclusions=final_exclusions,
+        facility_display=facility_display,
     )
 
     # ── Build output filename ─────────────────────────────────────────
