@@ -734,9 +734,16 @@ def main():
     """, unsafe_allow_html=True)
 
     # ── Contract → recipient ────────────────────────────────────────
+    # Recognize the facility from the quote and default the contract/site to it;
+    # falls back to RRH when nothing is recognized (protecting the RRH default).
+    det_contract, det_site = contracts.match_facility(analysis.facility_name, quote_text_cached)
     crow = st.columns([1, 1])
     with crow[0]:
-        contract = st.selectbox("Contract", contracts.contract_names(), index=0, key=f"contract_{tok}")
+        _cnames = contracts.contract_names()
+        _cidx = _cnames.index(det_contract) if det_contract in _cnames else 0
+        contract = st.selectbox("Contract", _cnames, index=_cidx, key=f"contract_{tok}")
+        if det_contract and not contracts.is_rrh(det_contract) and contract == det_contract:
+            st.caption(f"↳ Recognized from the quote: **{det_site or det_contract}**")
     rrh = contracts.is_rrh(contract)
     with crow[1]:
         # RRH always goes to David; other contracts get their own administrator.
@@ -788,9 +795,11 @@ def main():
     else:
         # ── Generic contract — dependent site dropdown + free-text cost code ──
         sites = contracts.sites_for_contract(contract)
+        # Default to the recognized site when it belongs to the chosen contract.
+        _sidx = sites.index(det_site) if (contract == det_contract and det_site in sites) else 0
         with row1[0]:
             if sites:
-                site_label = st.selectbox("Site", sites, index=0, key=f"gsite_{tok}_{contract}")
+                site_label = st.selectbox("Site", sites, index=_sidx, key=f"gsite_{tok}_{contract}")
             else:
                 site_label = st.text_input("Site", value="", key=f"gsitetxt_{tok}_{contract}")
         with row1[1]:
