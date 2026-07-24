@@ -172,14 +172,15 @@ def _create_row(cells: list[dict]) -> dict:
 
 
 def _attach_file(row_id, filename: str, data: bytes) -> None:
+    # Smartsheet's current API expects multipart/form-data for row attachments
+    # (the older raw-body "simple upload" is deprecated). requests builds the
+    # multipart envelope — including the boundary and per-part Content-Type —
+    # from the ``files`` mapping, so we must NOT set Content-Type ourselves.
+    # Limits per the docs: 30 MB per file, 30 attach requests/min per token.
     url = f"{BASE_URL}/sheets/{_sheet_id()}/rows/{row_id}/attachments"
     mime, _ = mimetypes.guess_type(filename)
-    headers = _headers({
-        "Content-Type": mime or "application/octet-stream",
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "Content-Length": str(len(data)),
-    })
-    r = requests.post(url, headers=headers, data=data, timeout=_TIMEOUT)
+    files = {"file": (filename, data, mime or "application/octet-stream")}
+    r = requests.post(url, headers=_headers(), files=files, timeout=_TIMEOUT)
     r.raise_for_status()
 
 
