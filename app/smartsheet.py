@@ -242,17 +242,38 @@ def submit_po(fields: dict, attachments: list[tuple[str, bytes]] | None = None) 
         return {"ok": False, "error": _err_text(e)}
 
 
+# The setup mistakes that actually happen, keyed by status. A bare "HTTP 403"
+# sends someone hunting through code when the real fix is a sharing setting.
+_STATUS_HINTS = {
+    401: "The API token is missing, expired, or invalid — check SMARTSHEET_API_TOKEN.",
+    403: "The token is valid but not allowed to touch this sheet. Share the sheet "
+         "with the token's Smartsheet account as an Editor (a valid token alone "
+         "is not enough).",
+    404: "No sheet with that ID is visible to this token — check SMARTSHEET_SHEET_ID, "
+         "and that the sheet is shared with the token's account.",
+    413: "That file is too large for Smartsheet (30 MB limit per attachment).",
+    429: "Smartsheet is rate-limiting the request (attachments are capped at 30 per "
+         "minute per token). Wait a moment and try again.",
+}
+
+
 def _err_text(e: Exception) -> str:
-    """A concise, user-facing message from a requests/HTTP error, including the
-    Smartsheet API's own message when present."""
+    """A concise, user-facing message from a requests/HTTP error — the Smartsheet
+    API's own message plus, for the common setup failures, what to actually fix."""
     resp = getattr(e, "response", None)
     if resp is not None:
+        status = resp.status_code
+        msg = None
         try:
             j = resp.json()
             msg = j.get("message") or j.get("error", {}).get("message")
-            if msg:
-                return f"{msg} (HTTP {resp.status_code})"
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 — non-JSON error bodies are fine to ignore
             pass
-        return f"HTTP {resp.status_code}"
+        parts = [msg or f"HTTP {status}"]
+        if msg:
+            parts[0] = f"{msg} (HTTP {status})"
+        hint = _STATUS_HINTS.get(status)
+        if hint:
+            parts.append(hint)
+        return " ".join(parts)
     return str(e) or e.__class__.__name__
