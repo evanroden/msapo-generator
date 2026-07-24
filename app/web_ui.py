@@ -33,6 +33,7 @@ from app.assets import (
 )
 from app import contracts
 from app import memory
+from app import smartsheet
 from app.config import (
     FACILITY_SHORT_NAMES,
     WORK_CATEGORY_DISPLAY,
@@ -979,6 +980,29 @@ def main():
     _render_send_section(recipient=recipient, subject=subject, body=plain_body,
                          eml_bytes=eml_bytes, attachments=attachments)
 
+    # ── Optional: push this PO straight to the Smartsheet PO sheet ──
+    # Inert unless SMARTSHEET_API_TOKEN + SMARTSHEET_SHEET_ID are configured,
+    # so this whole block is invisible until ENFRA's PO sheet is live.
+    if smartsheet.is_enabled():
+        _render_smartsheet_section(
+            tok=tok, contract=contract, epo_mode=epo_mode, attachments=attachments,
+            fields={
+                "contract": contract,
+                "site": site_line,
+                "asset_id": asset_id_value,
+                "cost_code": cost_code,
+                "work_category": cat_label,
+                "vendor": vendor,
+                "contact_name": email_contact,
+                "contact_email": email_contact_email,
+                "description": email_desc,
+                "subtotal": subtotal_val if breakdown else "",
+                "tax": tax_val if breakdown else "",
+                "total": total_val,
+                "administrator_email": recipient,
+            },
+        )
+
     # ── Learning: remember this send's details for this contract ────
     # Sending happens client-side (share sheet / .eml), so the app can't see
     # it — this button is the explicit "I sent it" signal. Once per quote+
@@ -1003,6 +1027,41 @@ def main():
             st.caption("Couldn't reach the memory store — details not saved this time.")
 
     _render_footer()
+
+
+def _render_smartsheet_section(*, tok: str, contract: str, epo_mode: bool,
+                               fields: dict, attachments: list[tuple[str, bytes]]) -> None:
+    """One-click push of this PO to the Smartsheet PO sheet — row + attachments.
+
+    Only rendered when smartsheet.is_enabled(); safe no-op otherwise.
+    """
+    st.markdown("---")
+    with st.expander("📤 Also submit this PO to Smartsheet", expanded=False):
+        what = "the quote" + ("" if epo_mode else " and the MSAPO document")
+        st.caption(f"Creates a row on the PO sheet and attaches {what} — no "
+                   "retyping the form by hand.")
+        done_key = f"ss_done_{tok}_{contract}"
+        done = st.session_state.get(done_key)
+        if done:
+            msg = f"✓ Submitted to Smartsheet (row {done.get('row_id')})."
+            if done.get("attached"):
+                msg += f" {done['attached']} file(s) attached."
+            st.success(msg)
+            if done.get("unmapped"):
+                st.caption("No matching sheet column for: "
+                           + ", ".join(done["unmapped"]) + " — those were skipped.")
+            if done.get("skipped_attachments"):
+                st.caption("Could not attach: " + "; ".join(done["skipped_attachments"]))
+            return
+        if st.button("Submit to Smartsheet", key=f"ss_btn_{tok}_{contract}",
+                     use_container_width=True):
+            with st.spinner("Submitting to Smartsheet…"):
+                result = smartsheet.submit_po(fields, attachments)
+            if result.get("ok"):
+                st.session_state[done_key] = result
+                st.rerun()
+            else:
+                st.error(f"Smartsheet submission failed: {result.get('error')}")
 
 
 def _render_footer() -> None:

@@ -15,3 +15,11 @@ services:
       # where the per-contract learning database lives.
       - key: EPC_DATA_DIR
         value: /test1
+      # Smartsheet PO-sheet integration — OFF until BOTH are set in the
+      # dashboard. Leave unset and the app never shows the Smartsheet button.
+      #   SMARTSHEET_API_TOKEN: a Smartsheet API token (use a service account)
+      #   SMARTSHEET_SHEET_ID:  numeric ID of the destination PO sheet
+      - key: SMARTSHEET_API_TOKEN
+        sync: false
+      - key: SMARTSHEET_SHEET_ID
+        sync: false
