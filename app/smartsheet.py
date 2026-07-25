@@ -61,6 +61,60 @@ FIELD_ALIASES: dict[str, list[str]] = {
 # column parses them ("$4,546.50" -> 4546.50).
 _AMOUNT_FIELDS = {"subtotal", "tax", "total"}
 
+# ── Manual handoff (no API, no URL pre-fill) ─────────────────────────
+# The fallback for the likely case where we get neither API credentials nor
+# permission to enable pre-filling on the form: somebody types the PO into the
+# Smartsheet form by hand.  We can't fill another origin's form from here, but
+# we can remove the two things that actually make it slow — hunting for each
+# value, and losing your place going back and forth.  These labels/order drive
+# a copy-each-field-in-form-order panel in the UI.
+FIELD_DISPLAY: dict[str, str] = {
+    "site": "Site Location",
+    "work_category": "Work Category",
+    "cost_code": "Job Cost Code",
+    "asset_id": "Applicable Asset ID",
+    "vendor": "Subcontractor Name",
+    "contact_name": "Contact Name",
+    "contact_email": "Contact Email",
+    "description": "Description",
+    "subtotal": "Subtotal (pre-tax)",
+    "tax": "Sales Tax",
+    "total": "Amount",
+    "contract": "Contract",
+    "administrator_email": "Administrator Email",
+}
+
+# Roughly the order these appear on the MSAPO/PO paperwork, so the panel reads
+# top-to-bottom in step with the form instead of making the user jump around.
+HANDOFF_ORDER: list[str] = [
+    "site", "work_category", "cost_code", "asset_id", "vendor",
+    "contact_name", "contact_email", "description",
+    "subtotal", "tax", "total", "contract", "administrator_email",
+]
+
+
+def form_url() -> str | None:
+    """URL of the Smartsheet PO form, if configured (SMARTSHEET_FORM_URL)."""
+    url = os.environ.get("SMARTSHEET_FORM_URL", "").strip()
+    return url or None
+
+
+def handoff_enabled() -> bool:
+    """True once the PO form's URL is known — the manual fallback needs nothing
+    else, so it works even with no API access and no pre-fill permission."""
+    return bool(form_url())
+
+
+def handoff_rows(fields: dict) -> list[tuple[str, str]]:
+    """[(display label, value), ...] in form order, skipping empty values."""
+    rows: list[tuple[str, str]] = []
+    for key in HANDOFF_ORDER:
+        value = fields.get(key)
+        if value is None or str(value).strip() == "":
+            continue
+        rows.append((FIELD_DISPLAY.get(key, key), str(value).strip()))
+    return rows
+
 
 # ── Configuration ────────────────────────────────────────────────────
 def _api_token() -> str | None:

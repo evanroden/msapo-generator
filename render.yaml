@@ -23,3 +23,9 @@ services:
         sync: false
       - key: SMARTSHEET_SHEET_ID
         sync: false
+      # Fallback for when we get no API credentials and can't enable URL
+      # pre-fill on the form: set just this to the PO form's URL and the app
+      # shows a fast copy-each-field panel for filling it in by hand.
+      # Independent of the two vars above — neither is required.
+      - key: SMARTSHEET_FORM_URL
+        sync: false

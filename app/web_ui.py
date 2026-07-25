@@ -980,28 +980,46 @@ def main():
     _render_send_section(recipient=recipient, subject=subject, body=plain_body,
                          eml_bytes=eml_bytes, attachments=attachments)
 
-    # ── Optional: push this PO straight to the Smartsheet PO sheet ──
-    # Inert unless SMARTSHEET_API_TOKEN + SMARTSHEET_SHEET_ID are configured,
-    # so this whole block is invisible until ENFRA's PO sheet is live.
-    if smartsheet.is_enabled():
+    # ── Optional: get this PO into the Smartsheet PO sheet ──────────
+    # Two independent paths, each inert until its own env vars are set:
+    #   API  (SMARTSHEET_API_TOKEN + SMARTSHEET_SHEET_ID) — one click, attaches
+    #        the files; needs back-end credentials we may never be granted.
+    #   Manual handoff (SMARTSHEET_FORM_URL) — the fallback for exactly that
+    #        case: fast copy-per-field entry into the form, no permissions
+    #        required beyond knowing the form's URL.
+    ss_fields = {
+        "contract": contract,
+        "site": site_line,
+        "asset_id": asset_id_value,
+        "cost_code": cost_code,
+        "work_category": cat_label,
+        "vendor": vendor,
+        "contact_name": email_contact,
+        "contact_email": email_contact_email,
+        "description": email_desc,
+        "subtotal": subtotal_val if breakdown else "",
+        "tax": tax_val if breakdown else "",
+        "total": total_val,
+        "administrator_email": recipient,
+    }
+    api_on = smartsheet.is_enabled()
+    if api_on:
         _render_smartsheet_section(
-            tok=tok, contract=contract, epo_mode=epo_mode, attachments=attachments,
-            fields={
-                "contract": contract,
-                "site": site_line,
-                "asset_id": asset_id_value,
-                "cost_code": cost_code,
-                "work_category": cat_label,
-                "vendor": vendor,
-                "contact_name": email_contact,
-                "contact_email": email_contact_email,
-                "description": email_desc,
-                "subtotal": subtotal_val if breakdown else "",
-                "tax": tax_val if breakdown else "",
-                "total": total_val,
-                "administrator_email": recipient,
-            },
+            tok=tok, contract=contract, epo_mode=epo_mode,
+            fields=ss_fields, attachments=attachments,
         )
+    if smartsheet.handoff_enabled():
+        ho_rows = smartsheet.handoff_rows(ss_fields)
+        if ho_rows:
+            if not api_on:
+                st.markdown("---")
+            # Expanded when it's the only route to the sheet; tucked away when
+            # the API can already do it in one click.
+            with st.expander("📋 Fill the Smartsheet PO form", expanded=not api_on):
+                st.caption("Copy each field in order — the next one lights up as "
+                           "you go, so you never lose your place.")
+                _render_smartsheet_handoff(rows=ho_rows,
+                                           form_url=smartsheet.form_url())
 
     # ── Learning: remember this send's details for this contract ────
     # Sending happens client-side (share sheet / .eml), so the app can't see
@@ -1027,6 +1045,139 @@ def main():
             st.caption("Couldn't reach the memory store — details not saved this time.")
 
     _render_footer()
+
+
+def _render_smartsheet_handoff(*, rows: list[tuple[str, str]], form_url: str) -> None:
+    """Fast manual entry into the Smartsheet PO form.
+
+    The fallback for having neither API access nor permission to enable URL
+    pre-filling: someone types the PO into the form by hand.  A page can't fill
+    a form on another origin, so instead this removes the two things that
+    actually cost time — hunting for each value and losing your place — with
+    one-tap copy per field, in form order, that auto-advances to the next field
+    and remembers what you've already done.
+    """
+    payload = json.dumps({
+        "rows": [{"label": lbl, "value": val} for lbl, val in rows],
+        "formUrl": form_url,
+    }).replace("<", "\\u003c")
+
+    html = r"""
+<div id="ho-root" style="font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;color:#12233B;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+    <a id="ho-open" target="_blank" rel="noopener"
+       style="flex:1;text-align:center;background:linear-gradient(135deg,#6D5AE6,#5A46D6);color:#fff;text-decoration:none;border-radius:12px;padding:13px 0;font-size:15px;font-weight:800;box-shadow:0 8px 20px rgba(109,90,230,.28);">
+      Open the Smartsheet form &#8599;
+    </a>
+    <button id="ho-reset" style="background:#F1F5F9;border:1px solid #E2E8F0;color:#64748B;border-radius:10px;padding:11px 14px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;">Reset</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+    <div style="flex:1;height:7px;background:#EEF2F7;border-radius:99px;overflow:hidden;">
+      <div id="ho-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#16A34A,#22C55E);transition:width .25s;"></div>
+    </div>
+    <div id="ho-count" style="font-size:12px;font-weight:800;color:#64748B;white-space:nowrap;"></div>
+  </div>
+  <div id="ho-list"></div>
+  <button id="ho-all" style="width:100%;margin-top:10px;background:#F1EEFB;border:1px solid #DDD6F3;color:#6D5AE6;border-radius:10px;padding:10px 0;font-size:13px;font-weight:700;cursor:pointer;">
+    Copy all fields as a list
+  </button>
+  <p style="color:#64748B;font-size:12px;margin:10px 2px 0;line-height:1.5;">
+    Tap <b>Copy</b>, paste into the form, come back &mdash; the next field lights up automatically.
+  </p>
+</div>
+<script>
+  const R = document.getElementById("ho-root");
+  try {
+    const D = __PAYLOAD__;
+    const done = new Set();
+    document.getElementById("ho-open").href = D.formUrl;
+
+    const esc = s => String(s).replace(/[&<>"']/g, c =>
+      ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+    // navigator.clipboard is unavailable in some embedded/iframe contexts and
+    // on older iOS; fall back to a hidden textarea + execCommand so Copy is
+    // never the thing that breaks.
+    async function copyText(t) {
+      try {
+        await navigator.clipboard.writeText(t);
+        return true;
+      } catch (e) {
+        try {
+          const ta = document.createElement("textarea");
+          ta.value = t;
+          ta.setAttribute("readonly", "");
+          ta.style.cssText = "position:absolute;left:-9999px;top:0;";
+          document.body.appendChild(ta);
+          ta.select();
+          ta.setSelectionRange(0, ta.value.length);  // iOS needs an explicit range
+          const ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+          return ok;
+        } catch (e2) { return false; }
+      }
+    }
+
+    const list = document.getElementById("ho-list");
+
+    function paint() {
+      const next = D.rows.findIndex((_, i) => !done.has(i));
+      list.innerHTML = D.rows.map((r, i) => {
+        const isDone = done.has(i);
+        const isNext = i === next;
+        const border = isNext ? "2px solid #6D5AE6" : "1px solid #E8EDF3";
+        const bg = isDone ? "#F6FBF7" : (isNext ? "#FCFBFF" : "#FFFFFF");
+        return (
+          '<div style="display:flex;align-items:center;gap:10px;padding:9px 11px;margin-bottom:6px;' +
+          'border:' + border + ';border-radius:10px;background:' + bg + ';opacity:' + (isDone ? ".72" : "1") + ';">' +
+            '<div style="flex:1;min-width:0;">' +
+              '<div style="font-size:10.5px;font-weight:800;color:#9AA0B4;text-transform:uppercase;letter-spacing:.05em;">' +
+                (isDone ? "&#10003; " : "") + esc(r.label) +
+              '</div>' +
+              '<div style="font-size:13.5px;font-weight:600;overflow-wrap:anywhere;">' + esc(r.value) + '</div>' +
+            '</div>' +
+            '<button data-i="' + i + '" class="ho-copy" style="align-self:center;background:' +
+              (isNext ? "#6D5AE6" : "#F1EEFB") + ';color:' + (isNext ? "#fff" : "#6D5AE6") +
+              ';border:1px solid ' + (isNext ? "#6D5AE6" : "#DDD6F3") +
+              ';border-radius:8px;padding:7px 13px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">Copy</button>' +
+          '</div>'
+        );
+      }).join("");
+
+      const pct = D.rows.length ? (done.size / D.rows.length) * 100 : 0;
+      document.getElementById("ho-bar").style.width = pct + "%";
+      document.getElementById("ho-count").textContent = done.size + " / " + D.rows.length;
+
+      list.querySelectorAll(".ho-copy").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const i = parseInt(btn.dataset.i, 10);
+          const ok = await copyText(D.rows[i].value);
+          if (!ok) { btn.textContent = "Select it"; return; }
+          done.add(i);
+          paint();
+        });
+      });
+    }
+    paint();
+
+    document.getElementById("ho-reset").addEventListener("click", () => { done.clear(); paint(); });
+
+    document.getElementById("ho-all").addEventListener("click", async () => {
+      const text = D.rows.map(r => r.label + ": " + r.value).join("\n");
+      const btn = document.getElementById("ho-all");
+      const ok = await copyText(text);
+      btn.textContent = ok ? "Copied all fields" : "Copy failed — select the text above";
+      setTimeout(() => btn.textContent = "Copy all fields as a list", 1600);
+    });
+  } catch (err) {
+    if (R) R.innerHTML = '<div style="padding:12px;border:1px solid #FECACA;background:#FEF2F2;border-radius:10px;color:#991B1B;font-size:13px;">Smartsheet panel hit an error: ' + ((err && err.message) ? err.message : err) + '. You can still copy the values from the email preview above.</div>';
+  }
+</script>
+"""
+    # Measured: ~56px per row over a ~155px base (header, progress, footer);
+    # the small margin avoids an inner scrollbar without leaving dead space.
+    height = 175 + 56 * len(rows)
+    components.html(html.replace("__PAYLOAD__", payload), height=height, scrolling=True)
 
 
 def _render_smartsheet_section(*, tok: str, contract: str, epo_mode: bool,
