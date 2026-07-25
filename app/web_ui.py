@@ -1095,27 +1095,37 @@ def _render_smartsheet_handoff(*, rows: list[tuple[str, str]], form_url: str) ->
     const esc = s => String(s).replace(/[&<>"']/g, c =>
       ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-    // navigator.clipboard is unavailable in some embedded/iframe contexts and
-    // on older iOS; fall back to a hidden textarea + execCommand so Copy is
-    // never the thing that breaks.
+    // Copy must never be the thing that breaks. Try the async Clipboard API
+    // first (called immediately so the user gesture is still fresh), then fall
+    // back to execCommand for older iOS and any context where the API is
+    // unavailable.
     async function copyText(t) {
       try {
         await navigator.clipboard.writeText(t);
         return true;
-      } catch (e) {
-        try {
-          const ta = document.createElement("textarea");
-          ta.value = t;
-          ta.setAttribute("readonly", "");
-          ta.style.cssText = "position:absolute;left:-9999px;top:0;";
-          document.body.appendChild(ta);
-          ta.select();
-          ta.setSelectionRange(0, ta.value.length);  // iOS needs an explicit range
-          const ok = document.execCommand("copy");
-          document.body.removeChild(ta);
-          return ok;
-        } catch (e2) { return false; }
-      }
+      } catch (e) { /* fall through */ }
+      try {
+        // iOS ignores select() on a readonly textarea and will scroll/zoom to a
+        // far off-screen node, so the element must be editable, selected via a
+        // Range, and pinned in the viewport.
+        const ta = document.createElement("textarea");
+        ta.value = t;
+        ta.contentEditable = "true";
+        ta.readOnly = false;
+        ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;" +
+                           "padding:0;border:none;outline:none;opacity:0;";
+        document.body.appendChild(ta);
+        const range = document.createRange();
+        range.selectNodeContents(ta);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        ta.setSelectionRange(0, t.length);
+        const ok = document.execCommand("copy");
+        sel.removeAllRanges();
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e2) { return false; }
     }
 
     const list = document.getElementById("ho-list");
