@@ -105,6 +105,31 @@ def handoff_enabled() -> bool:
     return bool(form_url())
 
 
+def download_names(attachments: list[tuple[str, bytes]],
+                   base: str) -> list[tuple[str, str, bytes]]:
+    """[(button label, download filename, data), ...] for the form's attach field.
+
+    A form attachment field means these files have to exist on disk, and the
+    slow part is then finding three differently-named files among everything
+    else in Downloads.  Giving them one shared prefix and an index makes them
+    land together and sit adjacent in the file picker, so a single shift-click
+    grabs all of them — and they can be dragged straight from the browser's
+    downloads bar into the form's drop zone.
+
+    Attachment order is (quote, MSAPO .docx, MSAPO .pdf); the MSAPO files are
+    absent for an equipment-only PO, which is fine — the numbering just runs
+    over however many there are.
+    """
+    stem = re.sub(r"\s*MSAPO\s*$", "", base or "").strip() or "PO"
+    out: list[tuple[str, str, bytes]] = []
+    for i, (name, data) in enumerate(attachments, 1):
+        ext = os.path.splitext(name)[1].lower()
+        kind = "Quote" if i == 1 else "MSAPO"
+        label = f"{kind} · {ext.lstrip('.').upper()}" if ext else kind
+        out.append((label, f"{stem} {i} {kind}{ext}", data))
+    return out
+
+
 def handoff_rows(fields: dict) -> list[tuple[str, str]]:
     """[(display label, value), ...] in form order, skipping empty values."""
     rows: list[tuple[str, str]] = []

@@ -1016,8 +1016,26 @@ def main():
             # Expanded when it's the only route to the sheet; tucked away when
             # the API can already do it in one click.
             with st.expander("📋 Fill the Smartsheet PO form", expanded=not api_on):
-                st.caption("Copy each field in order — the next one lights up as "
-                           "you go, so you never lose your place.")
+                # Files first — the form's attach field needs them on disk, and
+                # downloading them up front means one trip to the file picker.
+                ss_base = _doc_basename(contract, rrh, site_label,
+                                        analysis.project_description)
+                dls = smartsheet.download_names(attachments, ss_base)
+                if dls:
+                    st.markdown('<div class="field-label">Files to attach</div>',
+                                unsafe_allow_html=True)
+                    for col, (label, fname, data) in zip(st.columns(len(dls)), dls):
+                        col.download_button(
+                            label, data=data, file_name=fname,
+                            mime=mimetypes.guess_type(fname)[0] or "application/octet-stream",
+                            key=f"ssdl_{tok}_{contract}_{fname}",
+                            use_container_width=True,
+                        )
+                    st.caption("They share a name, so they land next to each other "
+                               "in Downloads — attach all of them in one go, or drag "
+                               "them straight from your downloads bar into the form.")
+                st.caption("Then copy each field in order — the next one lights up "
+                           "as you go, so you never lose your place.")
                 _render_smartsheet_handoff(rows=ho_rows,
                                            form_url=smartsheet.form_url())
 
