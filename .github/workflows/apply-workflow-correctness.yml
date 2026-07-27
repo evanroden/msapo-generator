@@ -13,6 +13,7 @@ on:
       - agent/workflow-correctness
     paths:
       - scripts/apply_workflow_correctness.py
+      - scripts/fix_patch_driver.py
       - .github/workflows/apply-workflow-correctness.yml
 
 permissions:
@@ -35,6 +36,7 @@ jobs:
         shell: bash
         run: |
           set +e
+          python scripts/fix_patch_driver.py
           python scripts/apply_workflow_correctness.py > patch-output.txt 2>&1
           status=$?
           cat patch-output.txt
