@@ -7,6 +7,9 @@ services:
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
+      # Required before this branch can deploy: the app fails closed when absent.
+      - key: EPC_ACCESS_PASSWORD
+        sync: false
       - key: PDF_BACKEND
         value: libreoffice
       - key: ANTHROPIC_MODEL

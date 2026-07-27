@@ -35,6 +35,7 @@ from app.assets import (
 )
 from app import contracts
 from app import memory
+from app.access_control import require_access
 from app.config import (
     FACILITIES,
     FACILITY_SHORT_NAMES,
@@ -569,6 +570,7 @@ def main():
         layout="wide",
         initial_sidebar_state="collapsed",
     )
+    require_access()
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
     # ── Hero ────────────────────────────────────────────────────────
