@@ -162,6 +162,7 @@ def _append_scope_content(
     final_inclusions: list[str] | None = None,
     final_exclusions: list[str] | None = None,
     facility_display: str | None = None,
+    facility_address_display: str | None = None,
 ) -> None:
     """
     Append scope content after the sentinel paragraph.
@@ -170,9 +171,9 @@ def _append_scope_content(
     they are used as-is.  Otherwise falls back to _filter_items() with
     approved_assumptions (backward compat for the webhook path).
 
-    facility_display, when given, overrides the facility name written into the
-    document — used to show the recognized canonical site for non-RRH contracts
-    (whose facilities the analyzer doesn't otherwise normalize).
+    facility_display and facility_address_display, when given, override the
+    facility values written into the document. This ensures a user's corrected
+    routing choice is reflected in the attachment rather than only its filename.
     """
     # -- Facility --
     facility = facility_display or analysis.facility_name
@@ -181,7 +182,12 @@ def _append_scope_content(
         run = p.add_run(f"Facility: {facility}")
         run.bold = True
         run.font.size = Pt(11)
-        doc.add_paragraph(analysis.facility_address or "")
+        address = (
+            analysis.facility_address
+            if facility_address_display is None
+            else facility_address_display
+        )
+        doc.add_paragraph(address or "")
 
     # -- Vendor --
     p = doc.add_paragraph()
@@ -282,6 +288,7 @@ def generate_docx(
     final_inclusions: list[str] | None = None,
     final_exclusions: list[str] | None = None,
     facility_display: str | None = None,
+    facility_address_display: str | None = None,
 ) -> Path:
     """
     Open the MSAPO template, preserve everything at the top, and insert
@@ -317,6 +324,7 @@ def generate_docx(
         final_inclusions=final_inclusions,
         final_exclusions=final_exclusions,
         facility_display=facility_display,
+        facility_address_display=facility_address_display,
     )
 
     # ── Build output filename ─────────────────────────────────────────
