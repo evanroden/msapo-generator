@@ -8,7 +8,7 @@ and app/assets.py, and is intentionally NOT stored here.
 Every other ENFRA contract is loaded from app/data/contracts.json
 (generated from the All-ENFRA asset export) and gets the generic flow:
 contract → site → asset dropdowns, a free-text cost code, and a per-contract
-recipient.  Sites/assets that don't exist for a contract simply don't appear,
+recipient. Sites/assets that don't exist for a contract simply don't appear,
 and a site with no asset tags shows no asset dropdown at all.
 """
 
@@ -21,19 +21,59 @@ from pathlib import Path
 
 RRH_CONTRACT = "Rochester Regional Health"
 _DATA_PATH = Path(__file__).parent / "data" / "contracts.json"
+_UNSPECIFIED_SITE = "(unspecified site)"
+
+
+def _preferred_site_name(current: str, candidate: str) -> str:
+    """Choose the more readable spelling for case-only duplicate site names."""
+    if current.isupper() and not candidate.isupper():
+        return candidate
+    return current
 
 
 @lru_cache(maxsize=1)
 def _data() -> dict:
-    """contract -> site -> list of [uid, asset, equipment, serves]."""
+    """Return normalized contract -> site -> asset rows.
+
+    The source export contains at least one case-only duplicate site name
+    (Conway: ``REHAB`` and ``Rehab``). Merge those at load time and de-duplicate
+    rows by UID so users see one site and one coherent asset list.
+    """
     with open(_DATA_PATH, encoding="utf-8") as f:
-        return json.load(f)
+        raw = json.load(f)
+
+    normalized: dict[str, dict[str, list[list[str]]]] = {}
+    for contract, sites in raw.items():
+        merged: dict[str, tuple[str, list[list[str]]]] = {}
+        for site, rows in sites.items():
+            clean_site = " ".join(site.split())
+            key = clean_site.casefold()
+            if key not in merged:
+                merged[key] = (clean_site, list(rows))
+                continue
+
+            current_name, current_rows = merged[key]
+            preferred = _preferred_site_name(current_name, clean_site)
+            seen_uids = {row[0] for row in current_rows if row}
+            for row in rows:
+                if row and row[0] not in seen_uids:
+                    current_rows.append(row)
+                    seen_uids.add(row[0])
+            merged[key] = (preferred, current_rows)
+
+        normalized[contract] = {name: rows for name, rows in merged.values()}
+    return normalized
 
 
 def contract_names() -> list[str]:
-    """All selectable contracts — RRH first, then the rest alphabetically."""
+    """All known contracts — RRH first, then the rest alphabetically."""
     others = sorted(_data().keys())
     return [RRH_CONTRACT] + [c for c in others if c != RRH_CONTRACT]
+
+
+def is_known_contract(contract: str | None) -> bool:
+    """Whether a value is a real configured contract."""
+    return bool(contract) and (contract == RRH_CONTRACT or contract in _data())
 
 
 def is_rrh(contract: str | None) -> bool:
@@ -41,10 +81,17 @@ def is_rrh(contract: str | None) -> bool:
 
 
 def sites_for_contract(contract: str | None) -> list[str]:
-    """Site names available for a (non-RRH) contract, sorted."""
+    """Selectable site names for a non-RRH contract, sorted.
+
+    Export-only ``(unspecified site)`` buckets are retained in the source data
+    but hidden from the user because they are not an actionable facility choice.
+    """
     if not contract:
         return []
-    return sorted(_data().get(contract, {}).keys())
+    return sorted(
+        site for site in _data().get(contract, {})
+        if site.casefold() != _UNSPECIFIED_SITE.casefold()
+    )
 
 
 def assets_for_site(contract: str | None, site: str | None) -> list[dict[str, str]]:
@@ -81,10 +128,10 @@ def _site_index() -> list[tuple[str, str, str]]:
     from app.config import FACILITIES, FACILITY_SHORT_NAMES  # local import avoids a cycle
 
     entries: list[tuple[str, str, str]] = []
-    for contract, sites in _data().items():
-        for site in sites:
+    for contract in _data():
+        for site in sites_for_contract(contract):
             s = site.strip()
-            if s and s.lower() != "(unspecified site)":
+            if s:
                 entries.append((s.lower(), contract, s))
     for key, fac in FACILITIES.items():
         short = FACILITY_SHORT_NAMES.get(key)
@@ -103,8 +150,8 @@ def _site_index() -> list[tuple[str, str, str]]:
 def match_facility(facility_name: str | None, quote_text: str | None = None) -> tuple[str | None, str | None]:
     """Best-effort (contract, site) for a quote, from its extracted facility name
     (preferred) then the quote text. Whole-phrase, word-boundary matches only;
-    the longest known site name wins. Returns (None, None) when nothing matches
-    — callers then fall back to the default (RRH)."""
+    the longest known site name wins. Returns (None, None) when nothing matches.
+    """
     index = _site_index()
     for haystack in (facility_name, quote_text):
         if not haystack:
