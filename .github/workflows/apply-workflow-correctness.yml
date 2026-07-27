@@ -31,7 +31,22 @@ jobs:
         with:
           python-version: "3.12"
       - name: Apply deterministic replacements
-        run: python scripts/apply_workflow_correctness.py
+        id: patch
+        shell: bash
+        run: |
+          set +e
+          python scripts/apply_workflow_correctness.py > patch-output.txt 2>&1
+          status=$?
+          cat patch-output.txt
+          if [ "$status" -ne 0 ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add patch-output.txt
+            git commit -m "Record patch failure [skip apply]"
+            git push origin HEAD:agent/workflow-correctness
+            exit "$status"
+          fi
+          rm -f patch-output.txt
       - name: Compile application
         run: python -m compileall -q app
       - name: Install test dependencies
