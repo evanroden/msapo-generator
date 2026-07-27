@@ -1,177 +1,184 @@
-# MSAPO Scope of Work Generator
+# Email Process Control
 
-Processes vendor quotes and generates standard Scope of Work (MSAPO) documents in `.docx` and `.pdf` formats using the Anthropic Claude API.
+Email Process Control turns a vendor quote into a reviewed MSAPO scope package and a ready-to-send purchase-order email. It is a Streamlit application deployed as a single Docker service on Render.
 
-## Features
+The repository retains its original `msapo-generator` name, but the current product is a quote-to-email workflow rather than a standalone document generator.
 
-- **Web Interface** (Streamlit) — Upload a quote PDF/image/text and download generated files
-- **Email Interface** (FastAPI webhook) — Forward a quote via email, receive MSAPO files back
-- **AI-powered extraction** — Vendor, scope, inclusions/exclusions via Claude
-- **AI assumption flagging** — Missing items are inferred and marked `[AI ESTIMATE: ...]`
-- **Tax verification** — Warns when tax status is unclear
-- **Price stripping** — All dollar amounts are removed from generated documents
-- **Facility auto-fill** — Cross-references RRH St. Mary's and United Memorial Medical Center
-- **Template-driven** — Uses your `Master_MSAPO_Template.docx` with `{{TAG}}` placeholders
+## Current workflow
 
-## Project Structure
+1. Select standard MSAPO or Equipment-only PO mode.
+2. Upload a PDF, image, or text file, or paste quote text.
+3. Extract the quote text. Text-layer PDFs use PyMuPDF; scans and images fall back to Claude vision.
+4. Analyze the quote with Claude to identify the vendor, facility, scope, inclusions, exclusions, tax, pricing, contact, work category, and any specific asset tag.
+5. Review the extracted scope and choose which inclusion and exclusion items belong in the document.
+6. Generate the MSAPO DOCX and, when LibreOffice conversion succeeds, a PDF.
+7. Confirm the ENFRA contract, site, cost code, asset, administrator, contact, description, and pricing.
+8. Open a ready-to-send Outlook draft on desktop or use the Apple Mail share flow on iPhone or iPad.
+9. Explicitly record a completed send so frequently used contract-specific contacts can be suggested later.
 
-```
+Equipment-only POs skip MSAPO generation and attach the original quote only.
+
+## Core behavior
+
+- **All contracts receive MSAPO documents when the order is not equipment-only.** Do not gate document generation to RRH.
+- **RRH retains its dedicated flow:** known sites, site/category cost-code derivation, David as administrator, and the 246-asset RRH registry.
+- **Other ENFRA contracts use the project-agnostic registry:** contract-specific sites and assets, free-text cost codes, and contract-specific administrators.
+- **Contract memory is isolated.** Data learned for one contract is never suggested for another.
+- **Asset matching is conservative.** A specific tag must resolve to a real asset at the selected site; otherwise the interface defaults to `None Applicable`.
+- **The original quote is preserved byte-for-byte** and attached to the outgoing draft.
+- **Prices are excluded from the generated Scope of Work** but retained in the email pricing fields.
+- **Generated files are transient.** Unique internal filenames prevent concurrent sessions from overwriting one another, and files older than 24 hours are removed.
+
+## Project structure
+
+```text
 msapo-generator/
 ├── app/
-│   ├── config.py              # Environment settings & facility data
-│   ├── quote_analyzer.py      # Anthropic API integration
-│   ├── document_generator.py  # python-docx template filling
-│   ├── pdf_converter.py       # DOCX → PDF (LibreOffice/Gotenberg/docx2pdf)
-│   ├── email_handler.py       # SendGrid email with attachments
-│   ├── ocr.py                 # PDF/image text extraction
-│   ├── webhook.py             # FastAPI inbound email endpoint
-│   └── web_ui.py              # Streamlit web portal
+│   ├── web_ui.py              # Streamlit UI and workflow orchestration
+│   ├── quote_analyzer.py      # Claude structured quote extraction
+│   ├── ocr.py                 # PDF/image text extraction and OCR fallback
+│   ├── document_generator.py  # MSAPO template mutation and DOCX generation
+│   ├── pdf_converter.py       # DOCX-to-PDF conversion
+│   ├── eml_builder.py         # Outlook .eml and Apple Mail body construction
+│   ├── config.py              # RRH facilities, cost codes, and environment settings
+│   ├── assets.py              # RRH asset registry
+│   ├── contracts.py           # Non-RRH contract/site/asset access and matching
+│   ├── memory.py              # Per-contract SQLite learning
+│   └── data/
+│       └── contracts.json     # Non-RRH contract registry
 ├── templates/
 │   └── Master_MSAPO_Template.docx
-├── output/                    # Generated files land here
-├── create_template.py         # One-time scaffold template generator
-├── run_web.py                 # Streamlit entry point
-├── run_api.py                 # FastAPI entry point
+├── tests/                     # Pytest regression tests
+├── run_web.py                 # Production entry point
 ├── requirements.txt
+├── requirements-dev.txt
 ├── Dockerfile
-├── docker-compose.yml
-└── .env.example
+└── render.yaml
 ```
 
-## Quick Start (Local)
+`app/webhook.py`, `app/email_handler.py`, and `run_api.py` are legacy inbound-email scaffolding. They are not started by the current Render service and should not be treated as a supported production interface.
 
-### 1. Prerequisites
+## Template behavior
 
-- Python 3.11+
-- An [Anthropic API key](https://console.anthropic.com/)
-- LibreOffice (for PDF conversion on Linux/Mac) **or** MS Word (for `docx2pdf` on Windows)
+The application does **not** use `{{TAG}}` placeholder replacement.
 
-### 2. Install
+`app/document_generator.py` opens `templates/Master_MSAPO_Template.docx`, verifies that it contains the sentinel paragraph:
+
+```text
+Subcontractor shall execute the following Scope of Work in strict accordance with this MSAPO:
+```
+
+It preserves the template and appends the reviewed facility, vendor, project description, detailed scope, inclusions, exclusions, and tax warning/status. It also clears the pre-filled Included mark and date from the first exhibit row.
+
+The legal and branding applicability of the current template across all ENFRA contracts must be confirmed by the business owner before wider rollout.
+
+## Local development
+
+### Prerequisites
+
+- Python 3.12 recommended
+- An Anthropic API key
+- LibreOffice Writer for production-equivalent PDF conversion
+
+### Install
 
 ```bash
-cd msapo-generator
 python -m venv .venv
-# Linux/Mac:
-source .venv/bin/activate
-# Windows:
-.venv\Scripts\activate
-
-pip install -r requirements.txt
+source .venv/bin/activate       # Linux/macOS
+# .venv\Scripts\activate      # Windows
+python -m pip install -r requirements-dev.txt
 ```
 
-### 3. Configure
+### Configure
 
-```bash
-cp .env.example .env
-# Edit .env and fill in your ANTHROPIC_API_KEY (required)
-# Fill in SENDGRID_API_KEY and EMAIL_FROM if using the email interface
+Copy `.env.example` to `.env` and set at least:
+
+```text
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=claude-sonnet-4-6
+PDF_BACKEND=libreoffice
 ```
 
-### 4. Set Up the Template
-
-**Option A — Use the scaffold generator:**
-
-```bash
-python create_template.py
-```
-
-This creates a starter `templates/Master_MSAPO_Template.docx` with placeholder tags and checkbox tables.
-
-**Option B — Use your own template:**
-
-Place your real `Master_MSAPO_Template.docx` in the `templates/` folder. Ensure it contains these placeholder tags where you want data inserted:
-
-| Tag | Replaced With |
-|---|---|
-| `{{DATE}}` | Today's date |
-| `{{VENDOR}}` | Vendor / contractor name |
-| `{{FACILITY_NAME}}` | Matched facility name |
-| `{{FACILITY_ADDRESS}}` | Facility street address |
-| `{{PROJECT_DESCRIPTION}}` | Short project description |
-
-The Scope of Work details (inclusions, exclusions, warnings) are **appended after** your existing template content, so your checkbox tables and approval sections at the top are preserved.
-
-### 5. Run the Web UI
+### Run
 
 ```bash
 streamlit run run_web.py
 ```
 
-Open `http://localhost:8501` in your browser.
+The local application is available on port 8501 by default.
 
-### 6. Run the Email Webhook API
-
-```bash
-python run_api.py
-# or:
-uvicorn app.webhook:app --host 0.0.0.0 --port 8000
-```
-
-The webhook endpoint is: `POST http://your-server:8000/webhook/inbound-email`
-
-## Docker Deployment
+### Test
 
 ```bash
-docker compose up --build
+python -m pytest -q
 ```
 
-This starts both the Streamlit UI (port 8501) and the FastAPI webhook (port 8000).
+Pull requests and pushes to `main` run the same suite through GitHub Actions.
 
-Mount your real template into the container via the `templates/` volume.
+## Deployment
 
-## PDF Conversion Backends
+Render runs the repository as one Docker web service:
 
-Set `PDF_BACKEND` in `.env`:
+- Dockerfile: `./Dockerfile`
+- Port: `8501`
+- Command: `streamlit run run_web.py`
+- PDF backend: LibreOffice
+- Persistent learning directory: `/test1`, configured through `EPC_DATA_DIR`
 
-| Backend | Requirements | Best For |
-|---|---|---|
-| `libreoffice` | LibreOffice installed (`apt install libreoffice-writer`) | Linux servers, Docker |
-| `gotenberg` | [Gotenberg](https://gotenberg.dev/) Docker container running | Containerized deploys |
-| `docx2pdf` | MS Word installed + `pip install docx2pdf` | Windows/macOS dev machines |
+Environment variables represented in `render.yaml`:
 
-The Dockerfile already includes LibreOffice, so `libreoffice` works out of the box with Docker.
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_MODEL`
+- `PDF_BACKEND`
+- `EPC_DATA_DIR`
 
-### Using Gotenberg
+Render dashboard values can override blueprint values. When a model or credential change appears ineffective after deployment, check both `render.yaml` and the service's dashboard environment.
 
-Uncomment the `gotenberg` service in `docker-compose.yml` and set:
+The application currently uses SQLite on the Render persistent disk. This is suitable only for a single application instance. Scaling to multiple instances requires a shared database.
 
-```
-PDF_BACKEND=gotenberg
-GOTENBERG_URL=http://gotenberg:3000
-```
+## PDF conversion
 
-## Email Webhook Setup (SendGrid Inbound Parse)
+The supported converter implementations are:
 
-1. In SendGrid, go to **Settings → Inbound Parse**
-2. Add a host/domain (e.g., `parse.yourdomain.com`)
-3. Point the webhook URL to: `https://your-server/webhook/inbound-email`
-4. Set the MX record for your domain as instructed by SendGrid
-5. Forward vendor quotes to your parse address (e.g., `quote@parse.yourdomain.com`)
-6. The app processes the quote and emails back the `.docx` and `.pdf`
+- `libreoffice` — production/default on Render
+- `gotenberg` — optional HTTP service
+- `docx2pdf` — optional local Windows/macOS path requiring Microsoft Word
 
-Optional: add `?token=YOUR_SECRET` to the webhook URL and set `WEBHOOK_SECRET` in `.env` for authentication.
+A PDF conversion error does not discard the DOCX. The interface warns the user and continues with the DOCX attachment.
 
-## Hardcoded Facilities
+## Input support
 
-The tool auto-matches these facilities from quote text:
+The UI accepts:
 
-- **RRH St. Mary's Medical Center** — 89 Genesee St, Rochester, NY 14611
-- **United Memorial Medical Center** — 127 North Street, Batavia, NY 14020
+- PDF
+- TXT
+- PNG
+- JPG/JPEG
+- WebP
+- TIFF
+- BMP
 
-To add more facilities, edit the `FACILITIES` dict in `app/config.py`.
+Text PDFs are extracted locally. Scanned PDFs and images are sent to Claude vision. TIFF and BMP are accepted by the UI but require additional compatibility validation against the configured model API. HEIC is not currently supported.
 
-## Business Rules
+## Security and operational cautions
 
-- **No prices in SOW**: All dollar amounts, hourly rates, and cost figures are stripped from generated documents. The Anthropic prompt enforces this, and a regex post-processor catches any residuals.
-- **AI assumptions flagged**: Any inferred inclusions/exclusions are wrapped in `[AI ESTIMATE: ...]` and highlighted in orange in the document.
-- **Tax warnings**: If tax status is missing or ambiguous, a red warning appears in both the document and the email/web UI.
+- Vendor quotes may contain pricing, contact, facility, and asset information and are sent to Anthropic for analysis when OCR or extraction is required.
+- The codebase does not currently implement application authentication. Confirm Render access controls before sharing the service broadly.
+- The SQLite memory database stores administrator and vendor-contact email addresses by contract.
+- Do not place API keys or tokens in the repository.
+- The original quote is attached unchanged; generated documents should always be reviewed before sending.
+
+## Smartsheet
+
+Draft PR #15 contains an optional, disabled-by-default Smartsheet submission scaffold. It is not part of `main` and has not been validated against a real Smartsheet sheet. Do not enable or merge it until field mapping, attachments, duplicate prevention, and real-device behavior have been tested against the final form and sheet.
 
 ## Troubleshooting
 
-| Problem | Solution |
+| Problem | Action |
 |---|---|
-| `Template not found` | Place `Master_MSAPO_Template.docx` in `templates/` or run `python create_template.py` |
-| `LibreOffice not on PATH` | Install with `apt install libreoffice-writer` or switch to `gotenberg`/`docx2pdf` |
-| PDF conversion hangs | LibreOffice may have a lock file — kill stale `soffice` processes |
-| Anthropic API error | Check your `ANTHROPIC_API_KEY` in `.env` |
-| Email not sending | Verify `SENDGRID_API_KEY` and `EMAIL_FROM` are set; check SendGrid dashboard for errors |
+| Analysis returns a model-not-found error | Check `ANTHROPIC_MODEL` in both Render dashboard settings and `render.yaml`. |
+| A scanned PDF appears blank | Confirm the API key and model support PDF/image input; try a clearer scan. |
+| PDF conversion fails | Use the DOCX attachment and inspect LibreOffice logs/path availability. |
+| A routing change invalidates the document | Regenerate the MSAPO so the attachment reflects the final contract, site, inclusions, and exclusions. |
+| No asset is selected | Confirm the quote names a specific unit tag and that it exists at the selected site; otherwise keep `None Applicable`. |
+| Learned contacts do not appear | Confirm the Render persistent disk is mounted at `EPC_DATA_DIR` and that the same entry has reached the suggestion threshold. |
