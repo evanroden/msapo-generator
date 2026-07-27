@@ -1,0 +1,43 @@
+name: Apply workflow correctness refactor
+
+on:
+  push:
+    branches:
+      - agent/workflow-correctness
+    paths:
+      - scripts/apply_workflow_correctness.py
+      - .github/workflows/apply-workflow-correctness.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[skip apply]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/workflow-correctness
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply deterministic replacements
+        run: python scripts/apply_workflow_correctness.py
+      - name: Compile application
+        run: python -m compileall -q app
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run tests
+        env:
+          ANTHROPIC_API_KEY: test-key-not-used
+        run: python -m pytest -q
+      - name: Commit refactor
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Fix routing and stale MSAPO state [skip apply]"
+          git push origin HEAD:agent/workflow-correctness
