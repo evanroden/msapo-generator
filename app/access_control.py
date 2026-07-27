@@ -59,7 +59,6 @@ def require_access() -> None:
         "Access password",
         type="password",
         key="epc_access_password_input",
-        autocomplete="current-password",
     )
 
     if st.button("Continue", type="primary", key="epc_access_submit"):
