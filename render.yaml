@@ -12,6 +12,17 @@ services:
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-4-6
       # Persistent disk (created in the Render dashboard, mounted at /test1)
-      # where the per-contract learning database lives.
+      # where per-contract learning and Smartsheet duplicate-prevention state live.
       - key: EPC_DATA_DIR
         value: /test1
+      # Future Smartsheet routes remain inert until configured.
+      - key: SMARTSHEET_URL_PREFILL_ENABLED
+        value: "false"
+      - key: SMARTSHEET_API_MODE
+        value: disabled
+      - key: SMARTSHEET_FORM_URL
+        sync: false
+      - key: SMARTSHEET_API_TOKEN
+        sync: false
+      - key: SMARTSHEET_SHEET_ID
+        sync: false
