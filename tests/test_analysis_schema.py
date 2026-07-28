@@ -81,6 +81,11 @@ def test_extra_text_after_json_is_rejected():
         normalize_analysis_response(raw)
 
 
+def test_non_object_json_is_rejected():
+    with pytest.raises(AnalysisResponseError, match="not a JSON object"):
+        normalize_analysis_response('["not", "an", "object"]')
+
+
 def test_short_description_is_bounded():
     payload = _valid_payload()
     payload["short_description"] = "A description that is too long"
