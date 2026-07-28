@@ -28,6 +28,7 @@ Equipment-only POs skip MSAPO generation and attach the original quote only.
 - **The original quote is preserved byte-for-byte** and attached to the outgoing draft.
 - **Prices are excluded from the generated Scope of Work** but retained in the email pricing fields.
 - **Generated files are transient.** Unique internal filenames prevent concurrent sessions from overwriting one another, and files older than 24 hours are removed.
+- **The app does not send email from the server.** It prepares a client-side Outlook or Apple Mail draft for the user to review and send.
 
 ## Project structure
 
@@ -55,8 +56,6 @@ msapo-generator/
 ├── Dockerfile
 └── render.yaml
 ```
-
-`app/webhook.py`, `app/email_handler.py`, and `run_api.py` are legacy inbound-email scaffolding. They are not started by the current Render service and should not be treated as a supported production interface.
 
 ## Template behavior
 

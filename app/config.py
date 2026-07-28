@@ -1,5 +1,5 @@
 """
-Configuration module for MSAPO Generator.
+Configuration module for Email Process Control.
 Loads settings from environment variables and .env file.
 """
 
@@ -21,18 +21,10 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # ANTHROPIC_MODEL environment variable (e.g. in .env or Render dashboard).
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
-# ── Email (SendGrid / SMTP) ───────────────────────────────────────────
-SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY", "")
-EMAIL_FROM = os.getenv("EMAIL_FROM", "msapo@yourdomain.com")
-REPLY_TO_EMAIL = os.getenv("REPLY_TO_EMAIL", "")
-
 # ── PDF Conversion Backend ────────────────────────────────────────────
 # Options: "libreoffice", "gotenberg", "docx2pdf"
 PDF_BACKEND = os.getenv("PDF_BACKEND", "libreoffice")
 GOTENBERG_URL = os.getenv("GOTENBERG_URL", "http://localhost:3000")
-
-# ── Webhook Auth ──────────────────────────────────────────────────────
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "")
 
 # ── Hardcoded Facilities (RRH Network) ────────────────────────────────
 FACILITIES = {
@@ -167,7 +159,7 @@ SITE_VALID_CATEGORIES: dict[str, list[str]] = {
 
 def facility_key_from_name(display_name: str) -> str | None:
     """Reverse-lookup: given a display name like 'United Memorial Medical Center',
-    return the config key like 'united_memorial'.  Returns None if no match."""
+    return the config key like 'united_memorial'. Returns None if no match."""
     if not display_name:
         return None
     lower = display_name.lower()
@@ -184,8 +176,8 @@ def facility_key_from_name(display_name: str) -> str | None:
 
 
 def lookup_cost_code(facility_key: str | None, work_category: str | None) -> str | None:
-    """Build a cost code like '01CEABA' from facility key + work category.
-    Returns None if either piece is missing or invalid."""
+    """Build a code such as '01CEABA' from facility + work category.
+    Returns None if either piece is missing, invalid, or deliberately unmapped."""
     if not facility_key or not work_category:
         return None
     letter = SITE_COST_CODE_LETTERS.get(facility_key)
@@ -199,7 +191,7 @@ def lookup_cost_code(facility_key: str | None, work_category: str | None) -> str
 
 
 def valid_categories_for_site(facility_key: str | None) -> list[str]:
-    """Return the list of work-category keys valid for a given site (Appendix A)."""
+    """Return the work-category keys valid for a facility (Appendix A)."""
     if not facility_key:
         return list(WORK_CATEGORY_SUFFIXES.keys())
     return SITE_VALID_CATEGORIES.get(facility_key, _NO_SOFTENER)
