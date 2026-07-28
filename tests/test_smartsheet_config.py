@@ -185,7 +185,11 @@ def test_field_and_attachment_preflight_rejects_silent_corruption():
     assert any("4,000-character" in item for item in problems)
 
     attachment_problems = preflight_attachments(
-        [("quote.pdf", b""), ("quote.pdf", b"second")]
+        [
+            ("quote.pdf", b"first"),
+            ("quote.pdf", b"second"),
+            ("empty.pdf", b""),
+        ]
     )
     assert any("empty" in item for item in attachment_problems)
     assert any("duplicated" in item for item in attachment_problems)
