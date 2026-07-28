@@ -12,7 +12,6 @@ Sends quote text to Claude and receives structured extraction with:
 
 from __future__ import annotations
 
-import json
 import re
 import time
 from dataclasses import dataclass, field
@@ -20,6 +19,7 @@ from typing import Optional
 
 import anthropic
 
+from app.analysis_schema import normalize_analysis_response
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES
 
 SYSTEM_PROMPT = """\
@@ -266,12 +266,7 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
 
     raw = _call_api_with_retry(client, quote_text)
 
-    # Handle possible markdown fences
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-
-    data = json.loads(raw)
+    data = normalize_analysis_response(raw)
 
     # Post-process: strip any residual pricing from every string field
     for key in ("project_description", "scope_of_work"):
