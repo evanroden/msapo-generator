@@ -619,7 +619,7 @@ def main():
     with tab_upload:
         uploaded = st.file_uploader(
             "Upload quote (PDF, image, or text)",
-            type=["pdf", "png", "jpg", "jpeg", "tiff", "bmp", "txt", "webp"],
+            type=["pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "heic", "heif", "hif", "txt"],
             label_visibility="collapsed",
             key=f"uploader_{st.session_state.get('uploader_nonce', 0)}",
         )

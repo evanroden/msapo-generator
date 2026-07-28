@@ -154,10 +154,11 @@ The UI accepts:
 - PNG
 - JPG/JPEG
 - WebP
-- TIFF
+- TIFF/TIF
 - BMP
+- HEIC/HEIF/HIF
 
-Text PDFs are extracted locally. Scanned PDFs and images are sent to Claude vision. TIFF and BMP are accepted by the UI but require additional compatibility validation against the configured model API. HEIC is not currently supported.
+Text PDFs are extracted locally. Scanned PDFs and Claude-native image formats are sent directly to vision. TIFF, BMP, and iPhone HEIC/HEIF uploads are decoded in memory and converted to ordered PNG image blocks for analysis; the original uploaded file remains unchanged for attachment.
 
 ## Security and operational cautions
 
