@@ -8,6 +8,10 @@ python-docx>=1.1.0
 # PDF text extraction
 PyMuPDF>=1.24.0
 
+# Image normalization (TIFF/BMP/HEIC -> Claude-compatible PNG)
+Pillow>=11.3.0
+pillow-heif>=1.1.1
+
 # Web UI
 streamlit>=1.38.0
 
