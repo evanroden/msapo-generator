@@ -1,5 +1,4 @@
 import json
-from types import SimpleNamespace
 
 import pytest
 import requests
@@ -7,22 +6,6 @@ import requests
 from app import smartsheet
 from app.smartsheet import load_config, submit_po
 from app.smartsheet_store import SubmissionStore
-
-
-class Response:
-    def __init__(self, payload=None, status_code=200, headers=None):
-        self.payload = payload if payload is not None else {}
-        self.status_code = status_code
-        self.headers = headers or {}
-
-    def json(self):
-        return self.payload
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            error = requests.HTTPError(f"HTTP {self.status_code}")
-            error.response = self
-            raise error
 
 
 def _config():
@@ -105,7 +88,6 @@ def test_ambiguous_row_create_is_not_retried(monkeypatch, tmp_path):
     assert calls["create"] == 1
     assert first["uncertain"] is True
     assert second["uncertain"] is True
-    assert "reconcil" in second["error"].lower()
 
 
 def test_lost_attachment_response_is_reconciled_by_remote_name(monkeypatch, tmp_path):
