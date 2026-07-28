@@ -1,8 +1,9 @@
 """Future ENFRA Smartsheet PO handoff.
 
-This page is intentionally configuration-driven and inert until a form URL or
-verified API configuration exists. It shares Streamlit session state with the
-current quote/email workflow.
+The page shares session state with Email Process Control, but isolates every
+widget and result by a verified PO context ID. Existing workflow values are
+read-only here; corrections that affect the document must be made in the source
+workflow and regenerated before submission.
 """
 
 from __future__ import annotations
@@ -20,9 +21,13 @@ from app.smartsheet import (
     handoff_rows,
     load_config,
     manual_enabled,
+    missing_required_fields,
+    preflight_attachments,
     prefill_enabled,
+    reconcile_submission,
     submit_po,
     validate_column_mapping,
+    validate_submission_fields,
 )
 from app.smartsheet_ui import render_manual_handoff
 
@@ -54,7 +59,7 @@ except Exception:
 st.title("📋 Smartsheet PO Handoff")
 st.caption(
     "Prepared for three possible ENFRA workflows: manual copy/paste, exact-label "
-    "form URL prefilling, or direct API submission."
+    "form URL prefilling, or direct API submission. All routes are off until configured."
 )
 
 try:
@@ -71,152 +76,139 @@ if context is None:
     )
     st.stop()
 
+# A new quote must never inherit another quote's widget values or API result.
+previous_context = st.session_state.get("_smartsheet_context_id")
+if previous_context != context.context_id:
+    for state_key in list(st.session_state.keys()):
+        if state_key.startswith("ssw_"):
+            del st.session_state[state_key]
+    st.session_state["_smartsheet_context_id"] = context.context_id
+prefix = f"ssw_{context.context_id}_"
+
 if context.warnings:
-    st.warning("Review before submission:\n\n- " + "\n- ".join(context.warnings))
+    st.error(
+        "Return to Email Process Control and resolve these source-record problems "
+        "before API submission:\n\n- " + "\n- ".join(context.warnings)
+    )
 
 fields = dict(context.fields)
 
-st.subheader("1. Confirm the submission record")
+
+def locked_text(label: str, field: str) -> str:
+    value = fields.get(field, "")
+    st.text_input(label, value=value, disabled=True, key=f"{prefix}{field}")
+    return value
+
+
+def locked_area(label: str, field: str, height: int) -> str:
+    value = fields.get(field, "")
+    st.text_area(
+        label,
+        value=value,
+        height=height,
+        disabled=True,
+        key=f"{prefix}{field}",
+    )
+    return value
+
+
+st.subheader("1. Verify the source record")
+st.caption(
+    "Fields already reviewed in Email Process Control are locked here. Change them "
+    "there and regenerate the MSAPO so the form and attachments cannot diverge."
+)
 left, right = st.columns(2)
 with left:
     fields["requester_name"] = st.text_input(
         "Name of person completing form",
         value=fields.get("requester_name", ""),
-        key="ss_requester_name",
+        key=f"{prefix}requester_name",
     )
-    fields["order_type"] = st.selectbox(
-        "PO type",
-        ["MSAPO", "Equipment-only PO"],
-        index=1 if fields.get("order_type") == "Equipment-only PO" else 0,
-        key="ss_order_type",
-    )
-    fields["contract"] = st.text_input(
-        "Contract", value=fields.get("contract", ""), key="ss_contract"
-    )
-    fields["site"] = st.text_input(
-        "Site", value=fields.get("site", ""), key="ss_site"
-    )
+    locked_text("PO type", "order_type")
+    locked_text("Contract", "contract")
+    locked_text("Site", "site")
     fields["facility_address"] = st.text_area(
         "Address/location",
         value=fields.get("facility_address", ""),
         height=90,
-        key="ss_facility_address",
+        key=f"{prefix}facility_address",
     )
-    fields["work_category"] = st.text_input(
-        "Work category",
-        value=fields.get("work_category", ""),
-        key="ss_work_category",
-    )
-    fields["cost_code"] = st.text_input(
-        "Job cost code", value=fields.get("cost_code", ""), key="ss_cost_code"
-    )
-    fields["asset_id"] = st.text_input(
-        "ENFRA Unique Identifier",
-        value=fields.get("asset_id", ""),
-        key="ss_asset_id",
-    )
+    locked_text("Work category", "work_category")
+    locked_text("Job cost code", "cost_code")
+    locked_text("ENFRA Unique Identifier", "asset_id")
 
 with right:
-    fields["vendor"] = st.text_input(
-        "Subcontractor/vendor", value=fields.get("vendor", ""), key="ss_vendor"
-    )
-    fields["contact_name"] = st.text_input(
-        "Vendor contact name",
-        value=fields.get("contact_name", ""),
-        key="ss_contact_name",
-    )
-    fields["contact_email"] = st.text_input(
-        "Vendor contact email",
-        value=fields.get("contact_email", ""),
-        key="ss_contact_email",
-    )
-    fields["administrator_email"] = st.text_input(
-        "Contract administrator email",
-        value=fields.get("administrator_email", ""),
-        key="ss_administrator_email",
-    )
-    fields["description"] = st.text_input(
-        "Short description",
-        value=fields.get("description", ""),
-        max_chars=20,
-        key="ss_description",
-    )
-    fields["subtotal"] = st.text_input(
-        "Subtotal", value=fields.get("subtotal", ""), key="ss_subtotal"
-    )
-    fields["tax"] = st.text_input(
-        "Sales tax", value=fields.get("tax", ""), key="ss_tax"
-    )
-    fields["total"] = st.text_input(
-        "Total amount", value=fields.get("total", ""), key="ss_total"
-    )
-    tax_options = ["", "included", "excluded", "unclear"]
-    current_tax = fields.get("tax_status", "")
-    fields["tax_status"] = st.selectbox(
-        "Tax status",
-        tax_options,
-        index=tax_options.index(current_tax) if current_tax in tax_options else 0,
-        key="ss_tax_status",
-    )
+    locked_text("Subcontractor/vendor", "vendor")
+    locked_text("Vendor contact name", "contact_name")
+    locked_text("Vendor contact email", "contact_email")
+    locked_text("Contract administrator email", "administrator_email")
+    locked_text("Short description", "description")
+    locked_text("Subtotal", "subtotal")
+    locked_text("Sales tax", "tax")
+    locked_text("Total amount", "total")
+    locked_text("Tax status", "tax_status")
 
-fields["scope_of_work"] = st.text_area(
-    "Description of work / scope",
-    value=fields.get("scope_of_work", ""),
-    height=190,
-    key="ss_scope_of_work",
-)
+locked_area("Reviewed description of work / scope", "scope_of_work", 220)
 fields["instructions"] = st.text_area(
     "Additional instructions",
     value=fields.get("instructions", ""),
     height=100,
-    key="ss_instructions",
+    key=f"{prefix}instructions",
 )
 
-with st.expander("Fields that depend on the final ENFRA form", expanded=False):
+with st.expander("Fields that depend on the final ENFRA form", expanded=True):
     st.caption(
-        "These are deliberately blank unless a person supplies them. Email Process "
-        "Control does not infer scheduling, billing, customer, or staffing decisions."
+        "These stay blank until a person supplies them. The application does not infer "
+        "billing, scheduling, customer, or staffing decisions."
     )
     future_left, future_right = st.columns(2)
+    yes_no = ["", "Yes", "No"]
     with future_left:
-        yn = ["", "Yes", "No"]
         fields["related_to_om"] = st.selectbox(
             "Related to Asset Management O&M Agreement?",
-            yn,
-            key="ss_related_to_om",
+            yes_no,
+            key=f"{prefix}related_to_om",
         )
         fields["billing_method"] = st.text_input(
-            "Billing method", key="ss_billing_method"
+            "Billing method", key=f"{prefix}billing_method"
         )
         fields["customer_po"] = st.text_input(
-            "Customer purchase order", key="ss_customer_po"
+            "Customer purchase order", key=f"{prefix}customer_po"
         )
         fields["estimated_start_date"] = st.text_input(
-            "Estimated start date (MM/DD/YYYY)", key="ss_start_date"
+            "Estimated start date (MM/DD/YYYY)", key=f"{prefix}start_date"
         )
         fields["estimated_completion_date"] = st.text_input(
-            "Estimated completion date (MM/DD/YYYY)", key="ss_completion_date"
+            "Estimated completion date (MM/DD/YYYY)", key=f"{prefix}completion_date"
         )
     with future_right:
         fields["customer_representative"] = st.text_input(
             "Customer representative requesting service",
-            key="ss_customer_representative",
+            key=f"{prefix}customer_representative",
         )
         fields["service_branch_tech_needed"] = st.selectbox(
             "Service branch technician needed?",
-            yn,
-            key="ss_service_branch_tech_needed",
+            yes_no,
+            key=f"{prefix}service_branch_tech_needed",
         )
         fields["send_copy_email"] = st.selectbox(
             "Send me a copy of my responses?",
-            yn,
-            key="ss_send_copy_email",
+            yes_no,
+            key=f"{prefix}send_copy_email",
         )
+
+field_problems = list(validate_submission_fields(fields))
+attachment_problems = list(preflight_attachments(context.attachments))
+if field_problems or attachment_problems:
+    st.warning(
+        "Current submission preflight:\n\n- "
+        + "\n- ".join(field_problems + attachment_problems)
+    )
 
 st.subheader("2. Files")
 renamed_files = download_names(context.attachments, context.attachment_base)
 if not renamed_files:
-    st.warning("No attachments are available.")
+    st.error("No verified attachments are available.")
 else:
     cols = st.columns(min(3, len(renamed_files)))
     for index, (label, filename, data) in enumerate(renamed_files):
@@ -225,15 +217,15 @@ else:
             data=data,
             file_name=filename,
             mime=mimetypes.guess_type(filename)[0] or "application/octet-stream",
-            key=f"ss_download_{index}_{filename}",
+            key=f"{prefix}download_{index}",
             use_container_width=True,
         )
     st.caption(
-        "The original vendor quote bytes are unchanged. Renamed downloads share a "
-        "prefix so they appear together in the file picker."
+        "The vendor quote bytes are unchanged. The downloads share a safe prefix so "
+        "they appear together in the file picker."
     )
 
-st.subheader("3. Choose the available Smartsheet route")
+st.subheader("3. Use the route ENFRA permits")
 manual_tab, prefill_tab, api_tab = st.tabs(
     ["Manual copy/paste", "URL prefill", "API submission"]
 )
@@ -241,16 +233,21 @@ manual_tab, prefill_tab, api_tab = st.tabs(
 with manual_tab:
     if not manual_enabled(config):
         st.info(
-            "Manual mode will appear after SMARTSHEET_FORM_URL is configured. It "
-            "requires no API access."
+            "Manual mode appears after SMARTSHEET_FORM_URL is configured. It needs no API token."
         )
     else:
+        missing_form = missing_required_fields(fields, config.form_required_fields)
+        if missing_form:
+            st.error(
+                "Complete these confirmed form-required fields first: "
+                + ", ".join(missing_form)
+            )
         rows = handoff_rows(fields, config)
         if rows:
             render_manual_handoff(
                 rows,
                 config.form_url or "",
-                key=f"{context.attachment_base}-manual",
+                key=f"{context.context_id}-manual",
             )
         else:
             st.warning("No populated fields are available to copy.")
@@ -260,26 +257,28 @@ with prefill_tab:
         st.info("Configure SMARTSHEET_FORM_URL first.")
     elif not prefill_enabled(config):
         st.info(
-            "URL prefill stays disabled until the final form is tested and exact "
-            "field labels are configured. Set SMARTSHEET_URL_PREFILL_ENABLED=true "
-            "and SMARTSHEET_FORM_FIELD_MAP_JSON only after verification."
+            "URL prefill remains disabled until the final form is tested and exact "
+            "field labels are configured."
         )
     else:
         try:
             prefilled = build_prefilled_form_url(fields, config)
-            st.link_button(
-                "Open prefilled Smartsheet form ↗",
-                prefilled.url,
-                use_container_width=True,
-            )
-            st.success(f"Prepared {len(prefilled.included)} prefilled field(s).")
-            if prefilled.skipped:
-                st.caption(
-                    "No exact form-label mapping for: " + ", ".join(prefilled.skipped)
+            if prefilled.missing_required:
+                st.error(
+                    "Complete these form-required fields before opening the prefilled form: "
+                    + ", ".join(prefilled.missing_required)
                 )
+            else:
+                st.link_button(
+                    "Open prefilled Smartsheet form ↗",
+                    prefilled.url,
+                    use_container_width=True,
+                )
+                st.success(f"Prepared {len(prefilled.included)} prefilled field(s).")
+            if prefilled.skipped:
+                st.caption("Not included in the URL: " + "; ".join(prefilled.skipped))
             st.warning(
-                "Smartsheet form links cannot carry the quote or MSAPO files. "
-                "Attach the downloads above before submitting."
+                "A form URL cannot carry the quote or MSAPO files. Attach the verified downloads above."
             )
         except SmartsheetConfigurationError as exc:
             st.error(str(exc))
@@ -287,75 +286,81 @@ with prefill_tab:
 with api_tab:
     readiness = api_readiness(config)
     st.markdown(f"**Mode:** `{readiness.mode}`")
-    if readiness.problems:
-        for problem in readiness.problems:
-            st.caption(f"• {problem}")
+    for problem in readiness.problems:
+        st.caption(f"• {problem}")
+
+    mapping_key = f"{prefix}mapping_result"
+    result_key = f"{prefix}submit_result"
 
     if config.api_mode == "disabled":
         st.info(
-            "API submission is disabled by default. The manual and URL routes can "
-            "be used independently."
+            "API submission is disabled by default. Manual and URL modes remain independent."
         )
     else:
-        if st.button("Validate live sheet column IDs", key="ss_validate_mapping"):
-            with st.spinner("Checking the configured sheet…"):
-                mapping_result = validate_column_mapping(config)
-            st.session_state["ss_mapping_result"] = mapping_result
+        if st.button("Validate live sheet configuration", key=f"{prefix}validate_mapping"):
+            with st.spinner("Checking exact column IDs, titles, types, options, and writability…"):
+                st.session_state[mapping_key] = validate_column_mapping(config)
 
-        mapping_result = st.session_state.get("ss_mapping_result")
+        mapping_result = st.session_state.get(mapping_key)
         if mapping_result:
             if mapping_result.get("ok"):
-                st.success("Every configured column ID exists on the live sheet.")
+                st.success("Every configured column matches the live sheet specification.")
                 for logical, column in mapping_result.get("mapped", {}).items():
                     st.caption(
                         f"• {logical}: {column.get('title')} "
                         f"({column.get('type')}, {column.get('id')})"
                     )
             else:
-                problems = mapping_result.get("problems") or mapping_result.get("missing") or []
-                st.error("Column validation failed: " + ", ".join(map(str, problems)))
+                st.error(
+                    "Column validation failed: "
+                    + "; ".join(map(str, mapping_result.get("problems", [])))
+                )
 
         if config.api_mode == "dry_run":
             st.info(
-                "Dry-run mode validates credentials and explicit column IDs but "
-                "cannot create a row."
+                "Dry-run mode validates credentials and schema but cannot create a row."
             )
-        elif readiness.ready:
-            submit_disabled = bool(context.warnings)
-            if submit_disabled:
-                st.warning("Resolve the review warnings above before API submission.")
+        elif config.api_mode == "live":
+            missing_api = list(missing_required_fields(fields, config.required_fields))
+            blockers = list(context.warnings) + field_problems + attachment_problems
+            if missing_api:
+                blockers.append("Required API values are missing: " + ", ".join(missing_api))
+            blockers.extend(readiness.problems)
+            submit_disabled = bool(blockers)
+            if blockers:
+                st.error("API submission is blocked:\n\n- " + "\n- ".join(blockers))
+
             if st.button(
                 "Submit PO to Smartsheet",
                 type="primary",
                 use_container_width=True,
                 disabled=submit_disabled,
-                key="ss_submit_live",
+                key=f"{prefix}submit_live",
             ):
                 with st.spinner("Creating or safely resuming the Smartsheet row…"):
-                    result = submit_po(
+                    st.session_state[result_key] = submit_po(
                         fields,
                         context.attachments,
                         config=config,
                     )
-                st.session_state["ss_submit_result"] = result
 
-            result = st.session_state.get("ss_submit_result")
+            result = st.session_state.get(result_key)
             if result:
                 if result.get("ok"):
                     if result.get("duplicate"):
                         st.success(
-                            f"This PO was already submitted as row {result.get('row_id')}; "
+                            f"This exact PO already exists as row {result.get('row_id')}; "
                             "no duplicate row was created."
                         )
                     elif result.get("partial"):
                         st.warning(
                             f"Row {result.get('row_id')} exists, but one or more "
-                            "attachments need a retry. Re-submit to resume the same row."
+                            "attachments need a safe retry."
                         )
                     else:
                         st.success(
-                            f"Submitted as Smartsheet row {result.get('row_id')} with "
-                            f"{result.get('attached', 0)} attachment(s)."
+                            f"Submitted as row {result.get('row_id')} with "
+                            f"{result.get('attached', 0)} verified attachment(s)."
                         )
                     for skipped in result.get("skipped_attachments", []):
                         st.caption(f"• {skipped}")
@@ -363,10 +368,33 @@ with api_tab:
                     st.error(result.get("error", "Smartsheet submission failed."))
                     for problem in result.get("problems", []):
                         st.caption(f"• {problem}")
+                    if result.get("uncertain"):
+                        st.warning(
+                            "Do not press Submit again. Smartsheet may already contain the row. "
+                            "Use exact-key reconciliation below."
+                        )
+                        if st.button(
+                            "Search Smartsheet for the exact submission key",
+                            key=f"{prefix}reconcile",
+                            use_container_width=True,
+                        ):
+                            with st.spinner("Searching and verifying the submission-key cell…"):
+                                reconciliation = reconcile_submission(
+                                    fields,
+                                    context.attachments,
+                                    config=config,
+                                )
+                            if reconciliation.get("ok"):
+                                st.success(
+                                    f"Reconciled to row {reconciliation.get('row_id')}. "
+                                    "You may now submit again to resume attachments."
+                                )
+                                st.session_state.pop(result_key, None)
+                            else:
+                                st.error(reconciliation.get("error", "Reconciliation failed."))
 
 st.divider()
 st.caption(
-    "All three routes use the same reviewed PO record. Manual and URL modes never "
-    "receive the Smartsheet API token; API mode requires explicit column IDs and "
-    "persistent duplicate-prevention state."
+    "The example ENFRA work-order form informs the field model but is not treated "
+    "as the final PO schema. Activation still requires the final form/sheet and a controlled live test."
 )
