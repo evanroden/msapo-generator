@@ -11,16 +11,6 @@ services:
       - ./output:/app/output
     command: streamlit run run_web.py --server.port=8501 --server.address=0.0.0.0
 
-  api:
-    build: .
-    ports:
-      - "8000:8000"
-    env_file: .env
-    volumes:
-      - ./templates:/app/templates
-      - ./output:/app/output
-    command: uvicorn app.webhook:app --host 0.0.0.0 --port 8000
-
   # Optional: Gotenberg for PDF conversion (set PDF_BACKEND=gotenberg)
   # gotenberg:
   #   image: gotenberg/gotenberg:8

@@ -11,15 +11,7 @@ PyMuPDF>=1.24.0
 # Web UI
 streamlit>=1.38.0
 
-# API / webhook
-fastapi>=0.115.0
-uvicorn[standard]>=0.30.0
-python-multipart>=0.0.9
-
-# Email
-sendgrid>=6.11.0
-
-# HTTP (for Gotenberg backend)
+# HTTP (for Gotenberg backend and optional integrations)
 requests>=2.32.0
 
 # Optional: Windows/macOS PDF conversion (requires MS Word installed)
