@@ -23,8 +23,8 @@ import anthropic
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES
 
 SYSTEM_PROMPT = """\
-You are an expert construction and facilities project analyst working for a \
-healthcare system. Your job is to read a vendor quote and extract structured \
+You are an expert construction and facilities project analyst supporting \
+multiple facilities-management contracts. Your job is to read a vendor quote and extract structured \
 data so that a Scope of Work (MSAPO agreement) can be generated.
 
 STRICT RULES:
@@ -82,11 +82,11 @@ STRICT RULES:
    - Newark-Wayne Community Hospital, 1200 Driving Park Ave, Newark, NY 14513
    - Clifton Springs Hospital & Clinic, 2 Coulter Rd, Clifton Springs, NY 14432
    - Unity Hospital, 1555 Long Pond Rd, Rochester, NY 14626
+   - Unity Specialty Hospital, 89 Genesee St, Rochester, NY 14611
    - St. Mary's Medical Campus, 89 Genesee St, Rochester, NY 14611
    - Canton-Potsdam Hospital, 50 Leroy St, Potsdam, NY 13676
    - Gouverneur Hospital, 77 W Barney St, Gouverneur, NY 13642
    - Massena Hospital, 1 Hospital Dr, Massena, NY 13662
-   - Clifton Springs Hospital & Clinic, 2 Coulter Rd, Clifton Springs, NY 14432
    If none match, use whatever facility/location the quote references. \
    If no location is given, set facility fields to null.
 

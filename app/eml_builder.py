@@ -20,7 +20,9 @@ from email.message import EmailMessage
 from urllib.parse import quote
 
 DAVID_EMAIL = "david.siegal@enfrasolutions.com"
-GREETING = "Good afternoon, David. Please see below."
+# The app now supports many contracts. A neutral default is safe for every
+# administrator and avoids addressing non-RRH recipients as David.
+GREETING = "Good afternoon. Please see below."
 
 # A bullet is a (label, value) pair, e.g. ("Job cost code", "01GCHEM").
 Bullet = tuple[str, str]
@@ -59,7 +61,7 @@ def build_eml(
     attachments: list[tuple[str, bytes]],  # [(filename, data), ...]
     greeting: str = GREETING,
 ) -> bytes:
-    """Return raw .eml bytes for an email to David with all attachments.
+    """Return raw .eml bytes with a ready-to-send body and attachments.
 
     Parameters
     ----------

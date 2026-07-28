@@ -131,6 +131,7 @@ FACILITY_SHORT_NAMES: dict[str, str] = {
     "newark_wayne": "Newark Wayne",
     "clifton_springs": "Clifton Springs",
     "unity": "Unity",
+    "unity_specialty": "Unity Specialty",
     "st_marys": "St. Mary's",
     "canton_potsdam": "Canton Potsdam",
     "massena": "Massena",
@@ -149,6 +150,9 @@ SITE_VALID_CATEGORIES: dict[str, list[str]] = {
     "rochester_general": _FULL,
     "united_memorial": _FULL,
     "unity": _FULL,
+    # The facility is real and selectable, but no automatic cost-code letter is
+    # configured. The UI therefore requires a manual cost code for this site.
+    "unity_specialty": _NO_SOFTENER,
     "st_marys": _FULL,
     "newark_wayne": [
         "chemical_treatment", "building_automation", "electrical_pm",

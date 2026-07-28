@@ -16,15 +16,13 @@ left completely untouched.
 from __future__ import annotations
 
 import re
-from datetime import date
+import time
+import uuid
 from pathlib import Path
-from typing import Optional
 
 from docx import Document
 from docx.shared import Pt, RGBColor
-from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
-from copy import deepcopy
 
 from app.config import (
     TEMPLATE_PATH,
@@ -36,6 +34,7 @@ from app.quote_analyzer import QuoteAnalysis
 
 # The sentinel text that marks where scope content begins
 SCOPE_SENTINEL = "Subcontractor shall execute the following Scope of Work in strict accordance with this MSAPO:"
+_OUTPUT_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 def _add_bullet_paragraph(doc: Document, text: str) -> "Paragraph":
@@ -146,7 +145,6 @@ def _insert_paragraph_after(paragraph, text: str, style=None):
     """Insert a new paragraph directly after the given paragraph element."""
     new_p = OxmlElement("w:p")
     paragraph._element.addnext(new_p)
-    new_para = type(paragraph).__new__(type(paragraph))
     # Manually wire up the new paragraph to the document
     from docx.text.paragraph import Paragraph
     new_para = Paragraph(new_p, paragraph._element.getparent())
@@ -164,6 +162,7 @@ def _append_scope_content(
     final_inclusions: list[str] | None = None,
     final_exclusions: list[str] | None = None,
     facility_display: str | None = None,
+    facility_address_display: str | None = None,
 ) -> None:
     """
     Append scope content after the sentinel paragraph.
@@ -172,9 +171,9 @@ def _append_scope_content(
     they are used as-is.  Otherwise falls back to _filter_items() with
     approved_assumptions (backward compat for the webhook path).
 
-    facility_display, when given, overrides the facility name written into the
-    document — used to show the recognized canonical site for non-RRH contracts
-    (whose facilities the analyzer doesn't otherwise normalize).
+    facility_display and facility_address_display, when given, override the
+    facility values written into the document. This ensures a user's corrected
+    routing choice is reflected in the attachment rather than only its filename.
     """
     # -- Facility --
     facility = facility_display or analysis.facility_name
@@ -183,7 +182,12 @@ def _append_scope_content(
         run = p.add_run(f"Facility: {facility}")
         run.bold = True
         run.font.size = Pt(11)
-        doc.add_paragraph(analysis.facility_address or "")
+        address = (
+            analysis.facility_address
+            if facility_address_display is None
+            else facility_address_display
+        )
+        doc.add_paragraph(address or "")
 
     # -- Vendor --
     p = doc.add_paragraph()
@@ -257,6 +261,26 @@ def _append_scope_content(
         run.italic = True
 
 
+def _cleanup_old_outputs() -> None:
+    """Best-effort cleanup of generated files older than one day.
+
+    Generated files are transient email attachments. Keeping a short window is
+    enough for active sessions while preventing unbounded growth on long-running
+    Render containers.
+    """
+    cutoff = time.time() - _OUTPUT_MAX_AGE_SECONDS
+    try:
+        for path in OUTPUT_DIR.iterdir():
+            if path.is_file() and path.suffix.lower() in {".docx", ".pdf", ".htm"}:
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        path.unlink()
+                except OSError:
+                    continue
+    except OSError:
+        pass
+
+
 def generate_docx(
     analysis: QuoteAnalysis,
     output_name: str | None = None,
@@ -264,6 +288,7 @@ def generate_docx(
     final_inclusions: list[str] | None = None,
     final_exclusions: list[str] | None = None,
     facility_display: str | None = None,
+    facility_address_display: str | None = None,
 ) -> Path:
     """
     Open the MSAPO template, preserve everything at the top, and insert
@@ -299,6 +324,7 @@ def generate_docx(
         final_inclusions=final_inclusions,
         final_exclusions=final_exclusions,
         facility_display=facility_display,
+        facility_address_display=facility_address_display,
     )
 
     # ── Build output filename ─────────────────────────────────────────
@@ -315,9 +341,11 @@ def generate_docx(
         parts = ["RRH", site, safe_desc.strip(), "MSAPO"]
         output_name = " ".join(p for p in parts if p)
 
-    # Clean up filename
+    # Clean up filename. The random suffix prevents two concurrent sessions
+    # with the same contract/site/description from overwriting one another.
     output_name = re.sub(r'[<>:"/\\|?*]', "_", output_name)
-
-    docx_path = OUTPUT_DIR / f"{output_name}.docx"
+    _cleanup_old_outputs()
+    unique = uuid.uuid4().hex[:10]
+    docx_path = OUTPUT_DIR / f"{output_name}-{unique}.docx"
     doc.save(str(docx_path))
     return docx_path
