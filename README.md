@@ -25,8 +25,8 @@ Equipment-only POs skip MSAPO generation and attach the original quote only.
 - **Other ENFRA contracts use the project-agnostic registry:** contract-specific sites and assets, free-text cost codes, and contract-specific administrators.
 - **Contract memory is isolated.** Data learned for one contract is never suggested for another.
 - **Asset matching is conservative.** A specific tag must resolve to a real asset at the selected site; otherwise the interface defaults to `None Applicable`.
-- **The original quote is preserved byte-for-byte** and attached to the outgoing draft.
-- **Prices are excluded from the generated Scope of Work** but retained in the email pricing fields.
+- **The original quote is preserved byte-for-byte** and attached to the outgoing draft or future Smartsheet handoff.
+- **Prices are excluded from the generated Scope of Work** but retained in the email and submission fields.
 - **Generated files are transient.** Unique internal filenames prevent concurrent sessions from overwriting one another, and files older than 24 hours are removed.
 - **The app does not send email from the server.** It prepares a client-side Outlook or Apple Mail draft for the user to review and send.
 
@@ -35,8 +35,9 @@ Equipment-only POs skip MSAPO generation and attach the original quote only.
 ```text
 msapo-generator/
 ├── app/
-│   ├── web_ui.py              # Streamlit UI and workflow orchestration
+│   ├── web_ui.py              # Current Streamlit quote/email workflow
 │   ├── quote_analyzer.py      # Claude structured quote extraction
+│   ├── analysis_schema.py     # Claude response validation
 │   ├── ocr.py                 # PDF/image text extraction and OCR fallback
 │   ├── document_generator.py  # MSAPO template mutation and DOCX generation
 │   ├── pdf_converter.py       # DOCX-to-PDF conversion
@@ -45,8 +46,14 @@ msapo-generator/
 │   ├── assets.py              # RRH asset registry
 │   ├── contracts.py           # Non-RRH contract/site/asset access and matching
 │   ├── memory.py              # Per-contract SQLite learning
+│   ├── po_context.py          # Shared finalized PO snapshot
+│   ├── smartsheet.py          # Manual, URL-prefill, and API Smartsheet routes
+│   ├── smartsheet_store.py    # Persistent API idempotency state
+│   ├── smartsheet_ui.py       # Mobile-friendly manual copy assistant
 │   └── data/
 │       └── contracts.json     # Non-RRH contract registry
+├── pages/
+│   └── 2_Smartsheet_PO.py     # Future Smartsheet handoff page
 ├── templates/
 │   └── Master_MSAPO_Template.docx
 ├── tests/                     # Pytest regression tests
@@ -104,7 +111,7 @@ PDF_BACKEND=libreoffice
 streamlit run run_web.py
 ```
 
-The local application is available on port 8501 by default.
+The local application is available on port 8501 by default. Streamlit exposes the Smartsheet handoff as a second page in the same application, so both pages share session state.
 
 ### Test
 
@@ -122,7 +129,7 @@ Render runs the repository as one Docker web service:
 - Port: `8501`
 - Command: `streamlit run run_web.py`
 - PDF backend: LibreOffice
-- Persistent learning directory: `/test1`, configured through `EPC_DATA_DIR`
+- Persistent state directory: `/test1`, configured through `EPC_DATA_DIR`
 
 Environment variables represented in `render.yaml`:
 
@@ -130,10 +137,15 @@ Environment variables represented in `render.yaml`:
 - `ANTHROPIC_MODEL`
 - `PDF_BACKEND`
 - `EPC_DATA_DIR`
+- `SMARTSHEET_URL_PREFILL_ENABLED` — defaults to `false`
+- `SMARTSHEET_API_MODE` — defaults to `disabled`
+- `SMARTSHEET_FORM_URL` — unset until the final form exists
+- `SMARTSHEET_API_TOKEN` — unset secret
+- `SMARTSHEET_SHEET_ID` — unset until the final sheet exists
 
-Render dashboard values can override blueprint values. When a model or credential change appears ineffective after deployment, check both `render.yaml` and the service's dashboard environment.
+Render dashboard values can override blueprint values. When a model, credential, or Smartsheet change appears ineffective after deployment, check both `render.yaml` and the service's dashboard environment.
 
-The application currently uses SQLite on the Render persistent disk. This is suitable only for a single application instance. Scaling to multiple instances requires a shared database.
+The application currently uses SQLite on the Render persistent disk for learned contacts and Smartsheet duplicate-prevention state. This is suitable only for a single application instance. Scaling to multiple instances requires a shared database.
 
 ## PDF conversion
 
@@ -164,13 +176,43 @@ Text PDFs are extracted locally. Scanned PDFs and Claude-native image formats ar
 
 - Vendor quotes may contain pricing, contact, facility, and asset information and are sent to Anthropic for analysis when OCR or extraction is required.
 - The codebase does not currently implement application authentication. Confirm Render access controls before sharing the service broadly.
-- The SQLite memory database stores administrator and vendor-contact email addresses by contract.
-- Do not place API keys or tokens in the repository.
-- The original quote is attached unchanged; generated documents should always be reviewed before sending.
+- SQLite stores administrator/vendor contacts and Smartsheet submission fingerprints, row IDs, attachment fingerprints, status, and error text.
+- Do not place API keys, Smartsheet tokens, exact production column maps, or real credentials in the repository.
+- The original quote is attached unchanged; generated documents and submission values should always be reviewed.
 
-## Smartsheet
+## Smartsheet transition
 
-Draft PR #15 contains an optional, disabled-by-default Smartsheet submission scaffold. It is not part of `main` and has not been validated against a real Smartsheet sheet. Do not enable or merge it until field mapping, attachments, duplicate prevention, and real-device behavior have been tested against the final form and sheet.
+The future handoff is available as a separate Streamlit page and supports three independently configurable routes. All are inert until configured.
+
+### 1. Manual copy/paste
+
+Set `SMARTSHEET_FORM_URL`. The page opens the form, displays every populated PO value in configurable form order, provides one-tap copy controls with progress tracking, and downloads the quote/DOCX/PDF with adjacent filenames. This route requires no API token.
+
+### 2. Exact-label URL prefill
+
+After testing the final form, set:
+
+- `SMARTSHEET_URL_PREFILL_ENABLED=true`
+- `SMARTSHEET_FORM_FIELD_MAP_JSON` with logical field names mapped to the form's exact visible labels
+- optionally `SMARTSHEET_FORM_VALUE_MAP_JSON` for dropdown/radio option translation
+
+The generated link pre-populates mapped values. Attachments must still be added through the form's file field. Prefill remains disabled until exact labels are supplied; the application never guesses form parameter names.
+
+### 3. Direct API submission
+
+Configure the token, sheet ID, explicit numeric column IDs, and confirmed required fields. Use `SMARTSHEET_API_MODE=dry_run` first to validate credentials and column IDs, then change it to `live` only after a production-like test.
+
+API safety rules:
+
+- no fuzzy title matching;
+- required fields and column IDs must be explicit;
+- submissions use a deterministic field-and-attachment fingerprint;
+- the persistent SQLite store prevents duplicate rows across reruns or reopened browsers;
+- partial attachment failures resume the existing row rather than creating another;
+- API submission fails closed if duplicate-prevention storage is unavailable;
+- files larger than 30 MB are blocked before upload.
+
+The example ENFRA work-order form informs the field model, but its URL, labels, dropdown values, and required fields are not treated as the final PO configuration.
 
 ## Troubleshooting
 
@@ -182,3 +224,6 @@ Draft PR #15 contains an optional, disabled-by-default Smartsheet submission sca
 | A routing change invalidates the document | Regenerate the MSAPO so the attachment reflects the final contract, site, inclusions, and exclusions. |
 | No asset is selected | Confirm the quote names a specific unit tag and that it exists at the selected site; otherwise keep `None Applicable`. |
 | Learned contacts do not appear | Confirm the Render persistent disk is mounted at `EPC_DATA_DIR` and that the same entry has reached the suggestion threshold. |
+| Manual Smartsheet mode is absent | Set `SMARTSHEET_FORM_URL` to the final PO form URL. |
+| URL prefill is absent | Verify the exact form labels, set the field-map JSON, and explicitly enable URL prefilling. |
+| API mode is blocked | Validate token access, sheet ID, explicit column IDs, required fields, and the persistent `/test1` disk. |
