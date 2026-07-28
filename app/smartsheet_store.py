@@ -65,8 +65,6 @@ class SubmissionStore:
                 )
                 """
             )
-            # Migrate databases created by the first draft without destroying
-            # real submission history.
             columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(submissions)").fetchall()
             }
@@ -98,30 +96,6 @@ class SubmissionStore:
                 "Smartsheet attachment history has an invalid shape; submission is blocked."
             )
         return frozenset(value)
-
-    @classmethod
-    def _claim_from_row(
-        cls,
-        row: tuple | None,
-        *,
-        allowed: bool,
-        reason: str,
-        lease_token: str | None = None,
-    ) -> SubmissionClaim:
-        if row is None:
-            return SubmissionClaim(
-                allowed, reason, "pending", None, frozenset(), lease_token
-            )
-        status, row_id, attached_json, last_error = row
-        return SubmissionClaim(
-            allowed,
-            reason,
-            status,
-            row_id,
-            cls._decode_attached(attached_json),
-            lease_token,
-            last_error,
-        )
 
     def claim(
         self,
@@ -296,22 +270,32 @@ class SubmissionStore:
         )
 
     def reconcile_row(self, submission_key: str, row_id: str | int) -> None:
-        """Attach a verified remote row to an uncertain local record."""
+        """Adopt one remotely verified row, even after local-state loss.
+
+        This upsert is safe only because the caller has verified the full
+        submission-key cell on exactly one remote row.
+        """
+        now = time.time()
         try:
             with self._connect() as conn:
-                cur = conn.execute(
-                    "UPDATE submissions SET row_id = ?, status = 'partial', "
-                    "last_error = NULL, updated_at = ?, lease_token = NULL, "
-                    "lease_expires_at = NULL WHERE submission_key = ?",
-                    (str(row_id), time.time(), submission_key),
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute(
+                    """
+                    INSERT INTO submissions (
+                        submission_key, status, row_id, attached_json, last_error,
+                        updated_at, lease_token, lease_expires_at, attempts
+                    ) VALUES (?, 'partial', ?, '[]', NULL, ?, NULL, NULL, 0)
+                    ON CONFLICT(submission_key) DO UPDATE SET
+                        row_id = excluded.row_id,
+                        status = 'partial',
+                        last_error = NULL,
+                        updated_at = excluded.updated_at,
+                        lease_token = NULL,
+                        lease_expires_at = NULL
+                    """,
+                    (submission_key, str(row_id), now),
                 )
-                if cur.rowcount != 1:
-                    raise SubmissionStoreError(
-                        "No local Smartsheet submission exists to reconcile."
-                    )
                 conn.commit()
-        except SubmissionStoreError:
-            raise
         except sqlite3.Error as exc:
             raise SubmissionStoreError(
                 f"Could not reconcile the Smartsheet row: {exc}"

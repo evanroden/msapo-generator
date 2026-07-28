@@ -78,6 +78,16 @@ def test_ambiguous_creation_without_row_is_blocked_until_reconciled(tmp_path):
     assert resumed.row_id == "row-verified"
 
 
+def test_reconciliation_can_recover_after_local_database_loss(tmp_path):
+    store = SubmissionStore(tmp_path / "new-submissions.db")
+    store.reconcile_row("remote-key", "remote-row")
+
+    record = store.get("remote-key")
+    assert record is not None
+    assert record["status"] == "partial"
+    assert record["row_id"] == "remote-row"
+
+
 def test_definite_failed_submission_without_row_can_retry(tmp_path):
     store = SubmissionStore(tmp_path / "submissions.db")
     key = "retry-me"

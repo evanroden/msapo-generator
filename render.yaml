@@ -11,15 +11,19 @@ services:
         value: libreoffice
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-4-6
-      # Persistent disk (created in the Render dashboard, mounted at /test1)
-      # where per-contract learning and Smartsheet duplicate-prevention state live.
+      # Persistent disk is created in the Render dashboard and mounted at /test1.
+      # It stores contract learning and fail-closed Smartsheet idempotency state.
       - key: EPC_DATA_DIR
         value: /test1
-      # Future Smartsheet routes remain inert until configured.
+      # Future Smartsheet routes remain inert until verified configuration exists.
       - key: SMARTSHEET_URL_PREFILL_ENABLED
         value: "false"
+      - key: SMARTSHEET_PREFILL_MAX_URL_LENGTH
+        value: "7000"
       - key: SMARTSHEET_API_MODE
         value: disabled
+      - key: SMARTSHEET_ALLOW_CUSTOM_API_BASE
+        value: "false"
       - key: SMARTSHEET_FORM_URL
         sync: false
       - key: SMARTSHEET_API_TOKEN
