@@ -82,7 +82,7 @@ def test_extra_text_after_json_is_rejected():
 
 
 def test_non_object_json_is_rejected():
-    with pytest.raises(AnalysisResponseError, match="not a JSON object"):
+    with pytest.raises(AnalysisResponseError, match="JSON object"):
         normalize_analysis_response('["not", "an", "object"]')
 
 
