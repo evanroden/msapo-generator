@@ -1,9 +1,9 @@
 """Persistent, fail-closed idempotency state for Smartsheet PO submissions.
 
-A Smartsheet write is not transactionally coupled to local SQLite. The store
-therefore records an ownership lease, the remote row ID, attachment fingerprints,
-and an explicit ``uncertain`` state for writes whose remote outcome is unknown.
-Only the lease owner may mutate a claimed submission.
+The default implementation is SQLite. A trusted deployment may supply a managed
+store with ``EPC_SUBMISSION_STORE_BACKEND=custom`` and
+``EPC_SUBMISSION_STORE_ADAPTER=package.module:factory``. The factory receives the
+environment mapping and must implement the same public methods.
 """
 
 from __future__ import annotations
@@ -13,8 +13,12 @@ import os
 import sqlite3
 import time
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
+
+from app.adapter_loader import AdapterConfigurationError, load_adapter
+from app.runtime import RuntimeSettings
 
 
 class SubmissionStoreError(RuntimeError):
@@ -33,6 +37,16 @@ class SubmissionClaim:
 
 
 _ALLOWED_FINAL_STATUSES = {"complete", "partial", "failed", "uncertain"}
+_REQUIRED_STORE_METHODS = (
+    "claim",
+    "renew",
+    "record_row",
+    "record_attachment",
+    "finish",
+    "reconcile_row",
+    "get",
+    "cleanup",
+)
 
 
 class SubmissionStore:
@@ -40,9 +54,42 @@ class SubmissionStore:
         self.path = path
 
     @classmethod
-    def from_environment(cls) -> "SubmissionStore":
-        root = Path(os.getenv("EPC_DATA_DIR", "./data_store"))
-        return cls(root / "smartsheet_submissions.db")
+    def from_environment(cls, env=None):
+        source = dict(os.environ if env is None else env)
+        backend = (
+            source.get("EPC_SUBMISSION_STORE_BACKEND") or "sqlite"
+        ).strip().lower()
+        if backend == "sqlite":
+            if (
+                source.get("SMARTSHEET_API_MODE") or "disabled"
+            ).lower() == "live" and not (
+                source.get("EPC_DATA_DIR") or ""
+            ).strip():
+                raise SubmissionStoreError(
+                    "SMARTSHEET_API_MODE=live requires an explicit durable "
+                    "EPC_DATA_DIR or a custom durable submission store."
+                )
+            settings = RuntimeSettings.from_environment(source)
+            settings.ensure_directories()
+            return cls(settings.data_dir / "smartsheet_submissions.db")
+        if backend == "custom":
+            try:
+                return load_adapter(
+                    source.get("EPC_SUBMISSION_STORE_ADAPTER", ""),
+                    kind="submission store",
+                    required_methods=_REQUIRED_STORE_METHODS,
+                    env=source,
+                )
+            except AdapterConfigurationError as exc:
+                raise SubmissionStoreError(str(exc)) from exc
+        if backend in {"none", "disabled"}:
+            raise SubmissionStoreError(
+                "Smartsheet live submission requires a durable idempotency store; "
+                "EPC_SUBMISSION_STORE_BACKEND is disabled."
+            )
+        raise SubmissionStoreError(
+            f"Unknown EPC_SUBMISSION_STORE_BACKEND {backend!r}. Use sqlite or custom."
+        )
 
     def _connect(self) -> sqlite3.Connection:
         try:
@@ -66,12 +113,15 @@ class SubmissionStore:
                 """
             )
             columns = {
-                row[1] for row in conn.execute("PRAGMA table_info(submissions)").fetchall()
+                row[1]
+                for row in conn.execute("PRAGMA table_info(submissions)").fetchall()
             }
             if "lease_token" not in columns:
                 conn.execute("ALTER TABLE submissions ADD COLUMN lease_token TEXT")
             if "lease_expires_at" not in columns:
-                conn.execute("ALTER TABLE submissions ADD COLUMN lease_expires_at REAL")
+                conn.execute(
+                    "ALTER TABLE submissions ADD COLUMN lease_expires_at REAL"
+                )
             if "attempts" not in columns:
                 conn.execute(
                     "ALTER TABLE submissions ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0"
@@ -88,31 +138,25 @@ class SubmissionStore:
             value = json.loads(raw or "[]")
         except (TypeError, json.JSONDecodeError) as exc:
             raise SubmissionStoreError(
-                "Smartsheet attachment history is corrupt; submission is blocked to "
-                "avoid duplicate attachments."
+                "Smartsheet attachment history is corrupt; submission is blocked "
+                "to avoid duplicate attachments."
             ) from exc
-        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        if not isinstance(value, list) or not all(
+            isinstance(item, str) for item in value
+        ):
             raise SubmissionStoreError(
                 "Smartsheet attachment history has an invalid shape; submission is blocked."
             )
         return frozenset(value)
 
     def claim(
-        self,
-        submission_key: str,
-        *,
-        lease_seconds: int = 300,
+        self, submission_key: str, *, lease_seconds: int = 300
     ) -> SubmissionClaim:
-        """Reserve one submission attempt with an expiring ownership lease.
-
-        ``uncertain`` without a row ID is never retried automatically: the remote
-        service may have created a row even though the response was lost.
-        """
         now = time.time()
         token = uuid.uuid4().hex
         expires = now + max(30, int(lease_seconds))
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT status, row_id, attached_json, last_error, "
@@ -120,12 +164,11 @@ class SubmissionStore:
                     "WHERE submission_key = ?",
                     (submission_key,),
                 ).fetchone()
-
                 if row is None:
                     conn.execute(
                         "INSERT INTO submissions "
-                        "(submission_key, status, row_id, attached_json, last_error, "
-                        "updated_at, lease_token, lease_expires_at, attempts) "
+                        "(submission_key,status,row_id,attached_json,last_error,updated_at,"
+                        "lease_token,lease_expires_at,attempts) "
                         "VALUES (?, 'pending', NULL, '[]', NULL, ?, ?, ?, 1)",
                         (submission_key, now, token, expires),
                     )
@@ -139,26 +182,42 @@ class SubmissionStore:
                 if status == "complete":
                     conn.commit()
                     return SubmissionClaim(
-                        False, "complete", status, row_id, attached, None, last_error
+                        False,
+                        "complete",
+                        status,
+                        row_id,
+                        attached,
+                        None,
+                        last_error,
                     )
-
                 if status == "uncertain" and not row_id:
                     conn.commit()
                     return SubmissionClaim(
-                        False, "uncertain", status, None, attached, None, last_error
+                        False,
+                        "uncertain",
+                        status,
+                        None,
+                        attached,
+                        None,
+                        last_error,
                     )
-
                 if owner and lease_expires and float(lease_expires) > now:
                     conn.commit()
                     return SubmissionClaim(
-                        False, "in_progress", status, row_id, attached, None, last_error
+                        False,
+                        "in_progress",
+                        status,
+                        row_id,
+                        attached,
+                        None,
+                        last_error,
                     )
 
                 reason = "resume" if row_id else "retry"
                 conn.execute(
-                    "UPDATE submissions SET status = 'pending', last_error = NULL, "
-                    "updated_at = ?, lease_token = ?, lease_expires_at = ?, "
-                    "attempts = attempts + 1 WHERE submission_key = ?",
+                    "UPDATE submissions SET status='pending',last_error=NULL,updated_at=?,"
+                    "lease_token=?,lease_expires_at=?,attempts=attempts+1 "
+                    "WHERE submission_key=?",
                     (now, token, expires, submission_key),
                 )
                 conn.commit()
@@ -180,10 +239,10 @@ class SubmissionStore:
         params: tuple,
     ) -> None:
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 cur = conn.execute(
                     f"UPDATE submissions SET {sql_fragment} "
-                    "WHERE submission_key = ? AND lease_token = ?",
+                    "WHERE submission_key=? AND lease_token=?",
                     (*params, submission_key, lease_token),
                 )
                 if cur.rowcount != 1:
@@ -198,12 +257,14 @@ class SubmissionStore:
                 f"Could not update the Smartsheet submission: {exc}"
             ) from exc
 
-    def renew(self, submission_key: str, lease_token: str, *, lease_seconds: int = 300) -> None:
+    def renew(
+        self, submission_key: str, lease_token: str, *, lease_seconds: int = 300
+    ) -> None:
         now = time.time()
         self._owned_update(
             submission_key,
             lease_token,
-            "updated_at = ?, lease_expires_at = ?",
+            "updated_at=?,lease_expires_at=?",
             (now, now + max(30, int(lease_seconds))),
         )
 
@@ -213,7 +274,7 @@ class SubmissionStore:
         self._owned_update(
             submission_key,
             lease_token,
-            "row_id = ?, status = 'pending', last_error = NULL, updated_at = ?",
+            "row_id=?,status='pending',last_error=NULL,updated_at=?",
             (str(row_id), time.time()),
         )
 
@@ -221,11 +282,11 @@ class SubmissionStore:
         self, submission_key: str, lease_token: str, fingerprint: str
     ) -> None:
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
                     "SELECT attached_json FROM submissions "
-                    "WHERE submission_key = ? AND lease_token = ?",
+                    "WHERE submission_key=? AND lease_token=?",
                     (submission_key, lease_token),
                 ).fetchone()
                 if row is None:
@@ -235,8 +296,8 @@ class SubmissionStore:
                 attached = set(self._decode_attached(row[0]))
                 attached.add(fingerprint)
                 conn.execute(
-                    "UPDATE submissions SET attached_json = ?, updated_at = ? "
-                    "WHERE submission_key = ? AND lease_token = ?",
+                    "UPDATE submissions SET attached_json=?,updated_at=? "
+                    "WHERE submission_key=? AND lease_token=?",
                     (
                         json.dumps(sorted(attached)),
                         time.time(),
@@ -264,34 +325,28 @@ class SubmissionStore:
         self._owned_update(
             submission_key,
             lease_token,
-            "status = ?, last_error = ?, updated_at = ?, lease_token = NULL, "
-            "lease_expires_at = NULL",
+            "status=?,last_error=?,updated_at=?,lease_token=NULL,lease_expires_at=NULL",
             (status, error, time.time()),
         )
 
     def reconcile_row(self, submission_key: str, row_id: str | int) -> None:
-        """Adopt one remotely verified row, even after local-state loss.
-
-        This upsert is safe only because the caller has verified the full
-        submission-key cell on exactly one remote row.
-        """
         now = time.time()
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 conn.execute(
                     """
                     INSERT INTO submissions (
-                        submission_key, status, row_id, attached_json, last_error,
-                        updated_at, lease_token, lease_expires_at, attempts
+                        submission_key,status,row_id,attached_json,last_error,
+                        updated_at,lease_token,lease_expires_at,attempts
                     ) VALUES (?, 'partial', ?, '[]', NULL, ?, NULL, NULL, 0)
                     ON CONFLICT(submission_key) DO UPDATE SET
-                        row_id = excluded.row_id,
-                        status = 'partial',
-                        last_error = NULL,
-                        updated_at = excluded.updated_at,
-                        lease_token = NULL,
-                        lease_expires_at = NULL
+                        row_id=excluded.row_id,
+                        status='partial',
+                        last_error=NULL,
+                        updated_at=excluded.updated_at,
+                        lease_token=NULL,
+                        lease_expires_at=NULL
                     """,
                     (submission_key, str(row_id), now),
                 )
@@ -303,10 +358,10 @@ class SubmissionStore:
 
     def get(self, submission_key: str) -> dict | None:
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 row = conn.execute(
-                    "SELECT status, row_id, attached_json, last_error, updated_at, "
-                    "lease_expires_at, attempts FROM submissions WHERE submission_key = ?",
+                    "SELECT status,row_id,attached_json,last_error,updated_at,"
+                    "lease_expires_at,attempts FROM submissions WHERE submission_key=?",
                     (submission_key,),
                 ).fetchone()
         except sqlite3.Error as exc:
@@ -315,7 +370,15 @@ class SubmissionStore:
             ) from exc
         if row is None:
             return None
-        status, row_id, attached_json, last_error, updated_at, lease_expires, attempts = row
+        (
+            status,
+            row_id,
+            attached_json,
+            last_error,
+            updated_at,
+            lease_expires,
+            attempts,
+        ) = row
         return {
             "status": status,
             "row_id": row_id,
@@ -327,12 +390,11 @@ class SubmissionStore:
         }
 
     def cleanup(self, *, retention_days: int = 365) -> int:
-        """Delete old completed/failed records; retain partial/uncertain records."""
         cutoff = time.time() - max(30, retention_days) * 86400
         try:
-            with self._connect() as conn:
+            with closing(self._connect()) as conn:
                 cur = conn.execute(
-                    "DELETE FROM submissions WHERE status IN ('complete', 'failed') "
+                    "DELETE FROM submissions WHERE status IN ('complete','failed') "
                     "AND updated_at < ?",
                     (cutoff,),
                 )
