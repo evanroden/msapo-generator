@@ -1,32 +1,28 @@
-"""
-Configuration module for Email Process Control.
-Loads settings from environment variables and .env file.
-"""
+"""Business configuration plus host-neutral runtime compatibility constants."""
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
+
+from app.runtime import get_runtime_settings
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-# ── Paths ──────────────────────────────────────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent.parent
-TEMPLATE_PATH = BASE_DIR / "templates" / "Master_MSAPO_Template.docx"
-OUTPUT_DIR = BASE_DIR / "output"
-OUTPUT_DIR.mkdir(exist_ok=True)
+_RUNTIME = get_runtime_settings()
+BASE_DIR = _RUNTIME.project_root
+TEMPLATE_PATH = _RUNTIME.template_path
+OUTPUT_DIR = _RUNTIME.output_dir
 
-# ── Anthropic ──────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-# When a new Sonnet version is released, update this default or set the
-# ANTHROPIC_MODEL environment variable (e.g. in .env or Render dashboard).
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
-
-# ── PDF Conversion Backend ────────────────────────────────────────────
-# Options: "libreoffice", "gotenberg", "docx2pdf"
-PDF_BACKEND = os.getenv("PDF_BACKEND", "libreoffice")
+# Backward-compatible provider variables. New deployments should prefer the
+# provider-neutral EPC_AI_* and EPC_PDF_CONVERTER names.
+ANTHROPIC_API_KEY = os.getenv("EPC_AI_API_KEY", os.getenv("ANTHROPIC_API_KEY", ""))
+ANTHROPIC_MODEL = os.getenv(
+    "EPC_AI_MODEL", os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+)
+PDF_BACKEND = os.getenv("EPC_PDF_CONVERTER", os.getenv("PDF_BACKEND", "libreoffice"))
 GOTENBERG_URL = os.getenv("GOTENBERG_URL", "http://localhost:3000")
 
-# ── Hardcoded Facilities (RRH Network) ────────────────────────────────
 FACILITIES = {
     "rochester_general": {
         "name": "Rochester General Hospital",
@@ -80,9 +76,6 @@ FACILITIES = {
     },
 }
 
-# ── Cost Code Mappings ─────────────────────────────────────────────
-# Format: "01" + site letter + work suffix  →  e.g. "01CEABA"
-
 SITE_COST_CODE_LETTERS: dict[str, str] = {
     "rochester_general": "B",
     "united_memorial": "C",
@@ -101,7 +94,7 @@ WORK_CATEGORY_SUFFIXES: dict[str, str] = {
     "electrical_pm": "EAEPM",
     "preventive_maintenance": "EAPM",
     "repairs": "EAR",
-    "repair_cap": "EARC",       # Newark Wayne only
+    "repair_cap": "EARC",
     "steam_trap": "STSRC",
     "water_softener": "WS",
 }
@@ -130,25 +123,30 @@ FACILITY_SHORT_NAMES: dict[str, str] = {
     "gouverneur": "Gouverneur",
 }
 
-# Which work categories actually have a cost-code line at each site (Appendix A).
-# Water softener exists only where budgeted; repair_cap only at Newark Wayne;
-# Massena & Gouverneur carry steam-trap work only.
 _FULL = [
-    "chemical_treatment", "building_automation", "electrical_pm",
-    "preventive_maintenance", "repairs", "steam_trap", "water_softener",
+    "chemical_treatment",
+    "building_automation",
+    "electrical_pm",
+    "preventive_maintenance",
+    "repairs",
+    "steam_trap",
+    "water_softener",
 ]
-_NO_SOFTENER = [c for c in _FULL if c != "water_softener"]
+_NO_SOFTENER = [category for category in _FULL if category != "water_softener"]
 SITE_VALID_CATEGORIES: dict[str, list[str]] = {
     "rochester_general": _FULL,
     "united_memorial": _FULL,
     "unity": _FULL,
-    # The facility is real and selectable, but no automatic cost-code letter is
-    # configured. The UI therefore requires a manual cost code for this site.
     "unity_specialty": _NO_SOFTENER,
     "st_marys": _FULL,
     "newark_wayne": [
-        "chemical_treatment", "building_automation", "electrical_pm",
-        "preventive_maintenance", "repairs", "repair_cap", "steam_trap",
+        "chemical_treatment",
+        "building_automation",
+        "electrical_pm",
+        "preventive_maintenance",
+        "repairs",
+        "repair_cap",
+        "steam_trap",
     ],
     "clifton_springs": _NO_SOFTENER,
     "canton_potsdam": _NO_SOFTENER,
@@ -158,40 +156,28 @@ SITE_VALID_CATEGORIES: dict[str, list[str]] = {
 
 
 def facility_key_from_name(display_name: str) -> str | None:
-    """Reverse-lookup: given a display name like 'United Memorial Medical Center',
-    return the config key like 'united_memorial'. Returns None if no match."""
     if not display_name:
         return None
     lower = display_name.lower()
-    # Pass 1: exact full-name match (avoids substring false positives)
-    for key, fac in FACILITIES.items():
-        if fac["name"].lower() == lower:
+    for key, facility in FACILITIES.items():
+        if facility["name"].lower() == lower:
             return key
-    # Pass 2: alias substring match
-    for key, fac in FACILITIES.items():
-        aliases = [a.lower() for a in fac.get("aliases", [])]
-        if any(a in lower for a in aliases):
+    for key, facility in FACILITIES.items():
+        aliases = [alias.lower() for alias in facility.get("aliases", [])]
+        if any(alias in lower for alias in aliases):
             return key
     return None
 
 
 def lookup_cost_code(facility_key: str | None, work_category: str | None) -> str | None:
-    """Build a code such as '01CEABA' from facility + work category.
-    Returns None if either piece is missing, invalid, or deliberately unmapped."""
     if not facility_key or not work_category:
         return None
-    letter = SITE_COST_CODE_LETTERS.get(facility_key)
+    site_letter = SITE_COST_CODE_LETTERS.get(facility_key)
     suffix = WORK_CATEGORY_SUFFIXES.get(work_category)
-    if not letter or not suffix:
+    if not site_letter or not suffix:
         return None
-    # Only build a code for categories that actually exist at this site
-    if work_category not in SITE_VALID_CATEGORIES.get(facility_key, []):
-        return None
-    return f"01{letter}{suffix}"
+    return f"01{site_letter}{suffix}"
 
 
 def valid_categories_for_site(facility_key: str | None) -> list[str]:
-    """Return the work-category keys valid for a facility (Appendix A)."""
-    if not facility_key:
-        return list(WORK_CATEGORY_SUFFIXES.keys())
-    return SITE_VALID_CATEGORIES.get(facility_key, _NO_SOFTENER)
+    return list(SITE_VALID_CATEGORIES.get(facility_key or "", []))
