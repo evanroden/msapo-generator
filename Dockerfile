@@ -1,28 +1,27 @@
 FROM python:3.12-slim
 
-# Install LibreOffice for PDF conversion
+ARG EPC_REQUIREMENTS_FILE=requirements.txt
+ARG INSTALL_LIBREOFFICE=true
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libreoffice-writer curl && \
+    if [ "$INSTALL_LIBREOFFICE" = "true" ]; then \
+      apt-get install -y --no-install-recommends libreoffice-writer; \
+    fi && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements*.txt ./
+RUN python -m pip install --no-cache-dir -r "$EPC_REQUIREMENTS_FILE"
 
 COPY . .
 
-# Ensure output directory exists
-RUN mkdir -p output
-
 EXPOSE 8501
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s \
-    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+  CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/_stcore/health' % os.getenv('PORT', os.getenv('EPC_PORT','8501')), timeout=5)" || exit 1
 
-CMD ["streamlit", "run", "run_web.py", \
-     "--server.port=8501", \
-     "--server.address=0.0.0.0", \
-     "--server.headless=true", \
-     "--browser.gatherUsageStats=false"]
+CMD ["python", "-m", "app.entrypoint"]
