@@ -1,18 +1,29 @@
-version: "3.9"
-
 services:
   web:
-    build: .
+    build:
+      context: .
+      args:
+        EPC_REQUIREMENTS_FILE: requirements.txt
+        INSTALL_LIBREOFFICE: "true"
     ports:
-      - "8501:8501"
+      - "${PORT:-8501}:${PORT:-8501}"
     env_file: .env
+    environment:
+      PORT: ${PORT:-8501}
+      EPC_DATA_DIR: /var/lib/epc
+      EPC_WORK_DIR: /var/tmp/epc
     volumes:
-      - ./templates:/app/templates
-      - ./output:/app/output
-    command: streamlit run run_web.py --server.port=8501 --server.address=0.0.0.0
+      - epc-data:/var/lib/epc
+      - epc-work:/var/tmp/epc
+      - ./templates:/app/templates:ro
+    command: python -m app.entrypoint
 
-  # Optional: Gotenberg for PDF conversion (set PDF_BACKEND=gotenberg)
-  # gotenberg:
-  #   image: gotenberg/gotenberg:8
-  #   ports:
-  #     - "3000:3000"
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    profiles: ["gotenberg"]
+    ports:
+      - "3000:3000"
+
+volumes:
+  epc-data:
+  epc-work:
