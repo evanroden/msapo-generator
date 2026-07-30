@@ -1,26 +1,16 @@
-"""
-Quote analysis via the Anthropic API.
-
-Sends quote text to Claude and receives structured extraction with:
-- Vendor name
-- Project description
-- Facility match
-- Inclusions / Exclusions (with AI-estimated flags)
-- Tax status
-- All pricing stripped
-"""
+"""Provider-neutral vendor quote analysis."""
 
 from __future__ import annotations
 
+import os
 import re
-import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Mapping, Optional
 
-import anthropic
-
+from app.ai_provider import AIProvider, AIRequest, CAP_TEXT, get_ai_provider, require_capability
 from app.analysis_schema import normalize_analysis_response
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES
+from app.config import FACILITIES
+
 
 SYSTEM_PROMPT = """\
 You are an expert construction and facilities project analyst supporting \
@@ -43,42 +33,22 @@ STRICT RULES:
      subtotal + tax lines), set subtotal_amount to null.
    - "tax_amount": the sales-tax dollar figure, ONLY if it is stated as its \
      own line item. If there is no separate tax line, set tax_amount to null.
-   In other words: only populate subtotal_amount and tax_amount together when \
-   the quote genuinely itemizes subtotal + tax. Otherwise leave both null and \
-   provide only total_amount.
+   Only populate subtotal_amount and tax_amount together when the quote genuinely \
+   itemizes subtotal + tax. Otherwise leave both null and provide only total_amount.
 
 2. If standard inclusions or exclusions are missing from the quote, infer \
-   the most reasonable ones based on the type of work described. Wrap every \
-   AI-inferred item with the marker [AI ESTIMATE: <item>] so the user can \
-   review it. Only use this marker for items YOU inferred — never flag items \
-   that are explicitly stated in the quote.
+   reasonable ones based on the work. Wrap every inferred item with \
+   [AI ESTIMATE: <item>] so the user can review it. Never flag explicit quote text.
 
-3. **TAX STATUS — READ CAREFULLY:**
-   Search the ENTIRE quote for ANY mention of tax. Look specifically for:
-   - Lines labeled "SALES TAX", "TAX", or "Sales Tax"
-   - Phrases like "tax included", "tax excluded", "plus tax", "tax exempt"
-   - Clarification notes about tax (e.g., "Estimated sales taxes is noted above")
-   - Line items showing a tax amount (even if you strip the dollar value)
+3. **TAX STATUS:** Search the entire quote for tax lines or wording. Use:
+   - "included" for an explicit tax line or statement that tax is included;
+   - "excluded" for excluded, extra, or plus-applicable-tax wording;
+   - "unclear" only when there is no tax reference anywhere.
+   Set tax_warning only when unclear. Preserve estimated-versus-actual tax notes.
 
-   Based on what you find:
-   - "included" — if there is an explicit SALES TAX line item in the pricing \
-     section OR the quote says tax is included in the price. A separate \
-     "SALES TAX" line item with a dollar amount means tax IS included in \
-     the total. Also note any clarifications (like "Estimated sales taxes \
-     is noted above. What is added to the invoice may be different.")
-   - "excluded" — if the quote explicitly says tax is excluded, extra, or \
-     "plus applicable tax"
-   - "unclear" — ONLY if there is truly zero mention of tax anywhere in the \
-     document. If you see ANY tax reference, it is NOT unclear.
-
-   Set tax_warning to null if status is "included" or "excluded".
-   Set tax_warning to a clear warning message if status is "unclear".
-   If status is "included" but there's a clarification about estimated vs \
-   actual tax, include that note in tax_note.
-
-4. Match the facility location to one of these known RRH sites if mentioned:
-   - Rochester General Hospital, 1425 Portland Ave, Rochester, NY 14621 (aliases: RGH)
-   - United Memorial Medical Center, 127 North St, Batavia, NY 14020 (aliases: UMMC)
+4. Match the facility to a known RRH site when explicitly supported:
+   - Rochester General Hospital, 1425 Portland Ave, Rochester, NY 14621 (RGH)
+   - United Memorial Medical Center, 127 North St, Batavia, NY 14020 (UMMC)
    - Newark-Wayne Community Hospital, 1200 Driving Park Ave, Newark, NY 14513
    - Clifton Springs Hospital & Clinic, 2 Coulter Rd, Clifton Springs, NY 14432
    - Unity Hospital, 1555 Long Pond Rd, Rochester, NY 14626
@@ -87,88 +57,56 @@ STRICT RULES:
    - Canton-Potsdam Hospital, 50 Leroy St, Potsdam, NY 13676
    - Gouverneur Hospital, 77 W Barney St, Gouverneur, NY 13642
    - Massena Hospital, 1 Hospital Dr, Massena, NY 13662
-   If none match, use whatever facility/location the quote references. \
-   If no location is given, set facility fields to null.
+   Otherwise preserve the quote's facility/location. If absent, use null.
 
-5. For scope_of_work, write a thorough and detailed description of ALL work \
-   items. Organize by numbered task if the quote has numbered sections. \
-   Include technical details, equipment references, and specific deliverables. \
-   Do NOT summarize — be comprehensive.
+5. scope_of_work must be thorough and detailed, organized by numbered task where \
+appropriate, with technical details, equipment references, and deliverables.
 
-6. For ai_assumptions: each entry must be an object (not a string) with:
-   - "text": the assumption text (e.g., "Structural modifications")
-   - "section": which document section this applies to. Must be one of:
-     "inclusion", "exclusion", or "scope"
-   This tells the user exactly WHERE each assumption would appear in the \
-   final document.
+6. ai_assumptions entries must be objects with "text" and a "section" of \
+"inclusion", "exclusion", or "scope".
 
-7. **CONTACT & EMAIL FIELDS:**
-   - "contact_name": the name of the vendor contact / sales rep / account \
-     manager mentioned in the quote. null if not found.
-   - "contact_email": their email address. null if not found.
+7. contact_name and contact_email are the vendor contact/representative, or null.
 
-8. **SHORT DESCRIPTION:**
-   - "short_description": a very brief label for this work — 20 characters \
-     or fewer including spaces and special characters. Examples: "Water \
-     Softener Salt", "BAS Reprogramming", "Fire Alarm PM". This is used \
-     as a cost-code description, so keep it tight.
+8. short_description is 20 characters or fewer, including spaces.
 
-9. **WORK CATEGORY:**
-   - "work_category": classify the type of work into exactly one of these \
-     categories (use the key, not the label):
-     "chemical_treatment" — Chemical treatment / water chemistry
-     "building_automation" — BAS / BMS / controls / HVAC automation
-     "electrical_pm" — Electrical preventive maintenance
-     "preventive_maintenance" — General / mechanical PM
-     "repairs" — General repairs
-     "repair_cap" — Capital repair projects
-     "steam_trap" — Steam trap survey / repair
-     "water_softener" — Water softener service / salt delivery
-   Pick the single best match. If truly ambiguous, default to "repairs".
+9. work_category must be exactly one key:
+   chemical_treatment, building_automation, electrical_pm,
+   preventive_maintenance, repairs, repair_cap, steam_trap, water_softener.
+   Use repairs only when genuinely ambiguous.
 
-10. **ASSET REFERENCE (be conservative):**
-   - "asset_reference": the specific equipment TAG / unit identifier the quote
-     is about, if — and ONLY if — the quote names a specific tagged unit.
-     Normalize it toward "TAG-NUMBER" form, e.g. "Pump #7 (CWP)" → "CWP-7",
-     "Boiler 2" → "B-2", "AHU 3" → "AHU-3", "Chiller CH-01" → "CH-01".
-   - Return null when the quote only describes an equipment TYPE without a
-     specific unit (e.g. "chilled water pump seal", "a cooling tower",
-     "steam traps") or names no equipment at all. Do NOT guess a number.
-     It is much better to return null than to invent a tag — a wrong tag is
-     worse than none.
+10. asset_reference is a specific equipment tag only. Normalize toward TAG-NUMBER \
+form. Return null for equipment types without a specific unit. A wrong tag is \
+worse than no tag.
 
-Return your answer as a JSON object with exactly these keys:
+Return ONLY a JSON object with exactly these keys:
 {
   "vendor_name": "string",
-  "project_description": "string — a concise 1-2 sentence summary",
+  "project_description": "string",
   "facility_name": "string or null",
   "facility_address": "string or null",
-  "scope_of_work": "string — detailed multi-paragraph scope, NO prices",
-  "inclusions": ["string", ...],
-  "exclusions": ["string", ...],
+  "scope_of_work": "string",
+  "inclusions": ["string"],
+  "exclusions": ["string"],
   "tax_status": "included | excluded | unclear",
   "tax_warning": "string or null",
-  "tax_note": "string or null — any clarifications about tax from the quote",
-  "ai_assumptions": [{"text": "string", "section": "inclusion|exclusion|scope"}, ...],
+  "tax_note": "string or null",
+  "ai_assumptions": [{"text": "string", "section": "inclusion|exclusion|scope"}],
   "contact_name": "string or null",
   "contact_email": "string or null",
-  "subtotal_amount": "string or null — pre-tax subtotal, only if itemized separately",
-  "tax_amount": "string or null — sales tax line item, only if itemized separately",
-  "total_amount": "string or null — final dollar total after tax, e.g. '$1,234.56'",
-  "short_description": "string or null — 20 chars max",
-  "work_category": "string — one of the category keys above",
-  "asset_reference": "string or null — specific equipment tag only, else null"
+  "subtotal_amount": "string or null",
+  "tax_amount": "string or null",
+  "total_amount": "string or null",
+  "short_description": "string or null",
+  "work_category": "string",
+  "asset_reference": "string or null"
 }
-
-Return ONLY the JSON object, no markdown fences, no extra text.
 """
 
 
 @dataclass
 class AIAssumption:
-    """A single AI-inferred assumption with its target section."""
     text: str
-    section: str  # "inclusion", "exclusion", or "scope"
+    section: str
 
 
 @dataclass
@@ -195,119 +133,101 @@ class QuoteAnalysis:
 
 
 def _match_facility(name: Optional[str], address: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    """Cross-reference extracted facility against known RRH sites using aliases."""
     if not name and not address:
         return None, None
-
     combined = f"{name or ''} {address or ''}".lower()
-
-    for _key, fac in FACILITIES.items():
-        aliases = fac.get("aliases", [])
+    for fac in FACILITIES.values():
+        aliases = [str(alias).lower() for alias in fac.get("aliases", [])]
         if any(alias in combined for alias in aliases):
             return fac["name"], fac["address"]
-
     return name, address
 
 
 def _strip_prices(text: str) -> str:
-    """Remove any residual dollar amounts the AI might have missed."""
-    # $1,234.56 or $1234
     text = re.sub(r"\$[\d,]+(?:\.\d{2})?(?:\s*USD)?", "", text)
-    # 1,234.56 USD or 1234 dollars
     text = re.sub(
         r"\b\d+(?:,\d{3})*(?:\.\d{2})?\s*(?:dollars|USD)\b",
         "",
         text,
         flags=re.IGNORECASE,
     )
-    # Clean up leftover artifacts like double spaces or orphaned colons
-    text = re.sub(r"  +", " ", text)
-    return text.strip()
+    return re.sub(r"  +", " ", text).strip()
 
 
-def _call_api_with_retry(client, quote_text: str, max_retries: int = 3) -> str:
-    """Call the Anthropic API with automatic retry for transient errors."""
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            message = client.messages.create(
-                model=ANTHROPIC_MODEL,
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            "Analyze the following vendor quote and return the JSON "
-                            "extraction. Remember: absolutely NO prices in any field.\n\n"
-                            "PAY SPECIAL ATTENTION to any SALES TAX line items in the "
-                            "pricing section — if a 'SALES TAX' line exists with a dollar "
-                            "amount, tax IS included in the quoted total.\n\n"
-                            f"--- BEGIN QUOTE ---\n{quote_text}\n--- END QUOTE ---"
-                        ),
-                    }
-                ],
-            )
-            return message.content[0].text.strip()
-        except anthropic.APIStatusError as e:
-            last_error = e
-            # Retry on overloaded (529), rate limit (429), or server errors (5xx)
-            if e.status_code in (429, 529) or e.status_code >= 500:
-                wait = (attempt + 1) * 5  # 5s, 10s, 15s
-                time.sleep(wait)
-                continue
-            raise  # Non-retryable error
-    raise last_error  # All retries exhausted
+def _analysis_request(quote_text: str) -> AIRequest:
+    return AIRequest(
+        operation="quote_analysis",
+        system=SYSTEM_PROMPT,
+        max_tokens=4096,
+        prompt=(
+            "Analyze the vendor quote and return the JSON extraction. Do not place "
+            "prices in descriptive fields. Pay special attention to tax line items.\n\n"
+            f"--- BEGIN QUOTE ---\n{quote_text}\n--- END QUOTE ---"
+        ),
+    )
 
 
-def analyze_quote(quote_text: str) -> QuoteAnalysis:
-    """Send quote text to the Anthropic API and return structured analysis."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    raw = _call_api_with_retry(client, quote_text)
-
+def analyze_quote(
+    quote_text: str,
+    *,
+    provider: AIProvider | None = None,
+    env: Mapping[str, str] | None = None,
+) -> QuoteAnalysis:
+    """Analyze quote text through the configured provider adapter."""
+    source = os.environ if env is None else env
+    if not quote_text or not quote_text.strip():
+        raise ValueError("Quote text is empty.")
+    try:
+        max_chars = int(source.get("EPC_AI_MAX_INPUT_CHARS", "250000"))
+    except ValueError as exc:
+        raise ValueError("EPC_AI_MAX_INPUT_CHARS must be an integer.") from exc
+    if max_chars < 1000:
+        raise ValueError("EPC_AI_MAX_INPUT_CHARS must be at least 1,000.")
+    if len(quote_text) > max_chars:
+        raise ValueError(
+            f"Quote text contains {len(quote_text):,} characters, above the configured "
+            f"AI input limit of {max_chars:,}. Split or reduce the source document."
+        )
+    active_provider = provider or get_ai_provider(source)
+    require_capability(active_provider, CAP_TEXT)
+    raw = active_provider.complete(_analysis_request(quote_text.strip()))
     data = normalize_analysis_response(raw)
 
-    # Post-process: strip any residual pricing from every string field
     for key in ("project_description", "scope_of_work"):
-        if key in data and data[key]:
+        if data.get(key):
             data[key] = _strip_prices(data[key])
-
-    data["inclusions"] = [_strip_prices(i) for i in data.get("inclusions", []) if _strip_prices(i)]
-    data["exclusions"] = [_strip_prices(e) for e in data.get("exclusions", []) if _strip_prices(e)]
-
-    # Cross-reference facility
-    fac_name, fac_addr = _match_facility(
-        data.get("facility_name"), data.get("facility_address")
-    )
-    data["facility_name"] = fac_name
-    data["facility_address"] = fac_addr
-
-    # Ensure tax warning exists when status is unclear
-    if data.get("tax_status") == "unclear" and not data.get("tax_warning"):
-        data["tax_warning"] = (
-            "WARNING: The vendor quote does not clearly state whether tax is "
-            "included. Please confirm tax status with the vendor before "
-            "finalizing this agreement."
-        )
-
-    # Default tax_note if not provided
-    if "tax_note" not in data:
-        data["tax_note"] = None
-
-    # Defaults for email / cost-code fields
-    for key in ("contact_name", "contact_email", "subtotal_amount",
-                "tax_amount", "total_amount", "short_description",
-                "work_category", "asset_reference"):
-        if key not in data:
-            data[key] = None
-
-    # Convert raw JSON dicts to AIAssumption objects
-    raw_assumptions = data.get("ai_assumptions", [])
-    data["ai_assumptions"] = [
-        AIAssumption(text=a["text"], section=a.get("section", "exclusion"))
-        if isinstance(a, dict) else AIAssumption(text=str(a), section="exclusion")
-        for a in raw_assumptions
+    data["inclusions"] = [
+        clean for item in data.get("inclusions", []) if (clean := _strip_prices(item))
+    ]
+    data["exclusions"] = [
+        clean for item in data.get("exclusions", []) if (clean := _strip_prices(item))
     ]
 
+    data["facility_name"], data["facility_address"] = _match_facility(
+        data.get("facility_name"), data.get("facility_address")
+    )
+    if data.get("tax_status") == "unclear" and not data.get("tax_warning"):
+        data["tax_warning"] = (
+            "WARNING: The vendor quote does not clearly state whether tax is included. "
+            "Confirm tax status with the vendor before finalizing this agreement."
+        )
+    data.setdefault("tax_note", None)
+    for key in (
+        "contact_name",
+        "contact_email",
+        "subtotal_amount",
+        "tax_amount",
+        "total_amount",
+        "short_description",
+        "work_category",
+        "asset_reference",
+    ):
+        data.setdefault(key, None)
+
+    data["ai_assumptions"] = [
+        AIAssumption(text=item["text"], section=item.get("section", "exclusion"))
+        if isinstance(item, dict)
+        else AIAssumption(text=str(item), section="exclusion")
+        for item in data.get("ai_assumptions", [])
+    ]
     return QuoteAnalysis(**data)

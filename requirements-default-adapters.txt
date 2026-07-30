@@ -1,0 +1,4 @@
+# Default adapters used by the current ENFRA deployment
+anthropic>=0.39.0
+PyMuPDF>=1.24.0
+pillow-heif>=1.1.1
