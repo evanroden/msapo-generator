@@ -26,29 +26,36 @@ from app.config import (
 )
 from app.eml_builder import DAVID_EMAIL
 
-
 _CONTRACT_PLACEHOLDER = "— Select a contract —"
 _SITE_PLACEHOLDER = "— Select a site —"
 _SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
 _CATEGORY_LABEL_TO_KEY = {label: key for key, label in WORK_CATEGORY_DISPLAY.items()}
 _LOCKED_FIELDS = (
+    "request_type",
     "order_type",
     "contract",
     "site",
+    "site_location",
     "work_category",
     "cost_code",
+    "object_account",
+    "agreement_type",
     "asset_id",
     "vendor",
     "contact_name",
     "contact_email",
     "description",
+    "description_of_work",
     "scope_of_work",
     "subtotal",
     "tax",
     "total",
     "tax_status",
     "administrator_email",
+    "dispatch_service_center",
 )
+
+RRH_DEFAULT_JOB_NUMBER = "RRH-695400022-O&M"
 
 
 @dataclass(frozen=True)
@@ -332,18 +339,30 @@ def build_po_context(
         document_valid=document_valid,
     )
 
+    asset_id = "" if epo_mode else _asset_value(state, token, contract, site)
+    if asset_id == "None Applicable":
+        asset_id = ""
+    reviewed_scope = _reviewed_scope(analysis, inclusions, exclusions)
     fields = {
         "requester_name": str(source_env.get("EPC_REQUESTER_NAME", "")).strip(),
+        "request_type": "PO",
         "order_type": "Equipment-only PO" if epo_mode else "MSAPO",
         "contract": contract,
         "site": site,
+        "job_number": RRH_DEFAULT_JOB_NUMBER if rrh else "",
+        "site_location": site,
         "facility_address": address,
         "related_to_om": "",
         "billing_method": "",
         "customer_po": "",
         "work_category": category,
         "cost_code": cost_code,
-        "asset_id": "" if epo_mode else _asset_value(state, token, contract, site),
+        "object_account": "5302-EQUIPMENT" if epo_mode else "5511-SUBCONTRACTOR",
+        "agreement_type": (
+            "OR - EQUIPMENT PO" if epo_mode else "03 - MSAPO (SERVICE)"
+        ),
+        "original_po_number": "",
+        "asset_id": asset_id,
         "vendor": vendor,
         "contact_name": _state_text(
             state, f"contact_{token}", str(getattr(analysis, "contact_name", "") or "")
@@ -352,7 +371,8 @@ def build_po_context(
             state, f"cemail_{token}", str(getattr(analysis, "contact_email", "") or "")
         ),
         "description": description,
-        "scope_of_work": _reviewed_scope(analysis, inclusions, exclusions),
+        "description_of_work": reviewed_scope,
+        "scope_of_work": reviewed_scope,
         "estimated_start_date": "",
         "estimated_completion_date": "",
         "customer_representative": "",
@@ -369,6 +389,7 @@ def build_po_context(
         "tax_status": str(getattr(analysis, "tax_status", "") or "").strip(),
         "administrator_email": administrator,
         "instructions": str(getattr(analysis, "tax_note", "") or "").strip(),
+        "dispatch_service_center": "NA",
         "send_copy_email": "",
     }
 

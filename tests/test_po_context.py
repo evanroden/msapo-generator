@@ -75,13 +75,19 @@ def test_generic_context_reuses_finalized_values_and_original_quote_bytes(tmp_pa
 
     assert context is not None and context.ready
     assert context.fields["requester_name"] == "Evan Roden"
+    assert context.fields["request_type"] == "PO"
     assert context.fields["contract"] == "Tulane"
     assert context.fields["site"] == "Tulane"
+    assert context.fields["site_location"] == "Tulane"
+    assert context.fields["job_number"] == ""
     assert context.fields["cost_code"] == "TUL-REPAIR"
+    assert context.fields["object_account"] == "5511-SUBCONTRACTOR"
+    assert context.fields["agreement_type"] == "03 - MSAPO (SERVICE)"
+    assert context.fields["dispatch_service_center"] == "NA"
     assert context.fields["asset_id"] == "EEA-CWP-07"
     assert context.fields["contact_name"] == "Final Contact"
-    assert "Inclusions:" in context.fields["scope_of_work"]
-    assert "Painting" in context.fields["scope_of_work"]
+    assert "Inclusions:" in context.fields["description_of_work"]
+    assert "Painting" in context.fields["description_of_work"]
     assert context.attachments[0] == ("vendor original.pdf", quote_bytes)
     assert context.attachments[1][0].startswith("Tulane Tulane")
     assert context.attachments[1][1] == b"docx bytes"
@@ -136,9 +142,15 @@ def test_rrh_equipment_only_context_omits_asset_field_and_uses_david():
 
     context = build_po_context(state, {})
     assert context is not None and context.ready
+    assert context.fields["request_type"] == "PO"
     assert context.fields["order_type"] == "Equipment-only PO"
     assert context.fields["site"] == "UMMC"
+    assert context.fields["site_location"] == "UMMC"
+    assert context.fields["job_number"] == "RRH-695400022-O&M"
     assert context.fields["cost_code"] == "01CEABA"
+    assert context.fields["object_account"] == "5302-EQUIPMENT"
+    assert context.fields["agreement_type"] == "OR - EQUIPMENT PO"
+    assert context.fields["dispatch_service_center"] == "NA"
     assert context.fields["administrator_email"] == DAVID_EMAIL
     assert context.fields["asset_id"] == ""
     assert context.attachments == (("equipment.pdf", quote_bytes),)

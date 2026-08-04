@@ -1,10 +1,10 @@
-"""Fail-closed three-mode Smartsheet handoff for future ENFRA PO intake.
+"""Fail-closed three-mode Smartsheet handoff for ENFRA PO intake.
 
-The final PO form and sheet are not known yet. Manual copy/paste, URL prefilling,
-and direct API submission are therefore independently configured and inert by
-default. Production API writes require explicit column IDs, exact titles/types,
-a submission-key column, strict cell parsing, persistent leases, and verified
-attachments.
+The live PO form's labels, required inputs, and RRH job choices are represented
+exactly. Manual copy/paste is enabled when the verified form URL is configured;
+URL prefilling and direct API submission remain independently gated. Production
+API writes require explicit column IDs, exact titles/types, a submission-key
+column, strict cell parsing, persistent leases, and verified attachments.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ import requests
 
 from app.smartsheet_store import SubmissionStore, SubmissionStoreError
 
-
 BASE_URL = "https://api.smartsheet.com/2.0"
 REQUEST_TIMEOUT = 60
 MAX_ATTACHMENT_BYTES = 30 * 1024 * 1024
@@ -34,68 +33,93 @@ MAX_CELL_CHARS = 4000
 DEFAULT_PREFILL_MAX_URL_LENGTH = 7000
 
 DISPLAY_LABELS: dict[str, str] = {
-    "requester_name": "Name of Person Completing Form",
-    "order_type": "PO Type",
-    "contract": "Contract",
-    "site": "Site Location",
-    "facility_address": "Address/Location",
-    "related_to_om": "Related to Asset Management O&M Agreement",
-    "billing_method": "Billing Method",
-    "customer_po": "Customer Purchase Order",
-    "work_category": "Work Category",
-    "cost_code": "Job Cost Code",
-    "asset_id": "ENFRA Unique Identifier",
-    "vendor": "Subcontractor Name",
-    "contact_name": "Contact Name",
-    "contact_email": "Contact Email",
-    "description": "Description",
-    "scope_of_work": "Description of Work or Issue Needing Repair",
-    "estimated_start_date": "Estimated Start Date",
-    "estimated_completion_date": "Estimated Completion Date",
-    "customer_representative": "Customer Representative Requesting Service",
-    "service_branch_tech_needed": "Service Branch Tech Needed For Work",
-    "subtotal": "Subtotal (pre-tax)",
-    "tax": "Sales Tax",
-    "total": "Amount",
-    "tax_status": "Tax Status",
-    "administrator_email": "Administrator Email",
-    "instructions": "Additional Instructions",
+    "request_type": "REQUEST TYPE",
+    "requester_name": "REQUESTER",
+    "job_number": "JOB NUMBER",
+    "site_location": "SITE NUMBER / LOCATION",
+    "cost_code": "COST CODE",
+    "object_account": "OBJECT ACCOUNT",
+    "agreement_type": "AGREEMENT TYPE FOR PO",
+    # The live form and destination sheet both contain this spelling.
+    "original_po_number": "ORIGIONAL PO NUMBER",
+    "total": "PO/CO AMOUNT",
+    "vendor": "VENDOR NAME",
+    "contact_name": "VENDOR CONTACT NAME",
+    "contact_email": "VENDOR CONTACT EMAIL",
+    "description_of_work": "DESCRIPTION OF WORK",
+    "asset_id": "ASSET ID",
+    "dispatch_service_center": "DISPATCH WO TO SERVICE CENTER?",
+    "instructions": "ADDITIONAL INFORMATION IF NEEDED",
+    "send_copy_email": "Send me a copy of my responses",
     "submission_key": "Email Process Control Submission Key",
-    "send_copy_email": "Send Me a Copy",
 }
 KNOWN_FIELDS = frozenset(DISPLAY_LABELS)
 
 DEFAULT_FORM_ORDER: tuple[str, ...] = (
+    "request_type",
     "requester_name",
-    "contract",
-    "site",
-    "related_to_om",
-    "billing_method",
-    "customer_po",
+    "job_number",
+    "site_location",
+    "cost_code",
+    "object_account",
+    "agreement_type",
+    "original_po_number",
+    "total",
     "vendor",
     "contact_name",
     "contact_email",
-    "description",
-    "scope_of_work",
-    "facility_address",
-    "estimated_start_date",
-    "estimated_completion_date",
-    "customer_representative",
-    "service_branch_tech_needed",
+    "description_of_work",
     "asset_id",
-    "work_category",
-    "cost_code",
-    "subtotal",
-    "tax",
-    "total",
-    "administrator_email",
+    "dispatch_service_center",
     "instructions",
 )
 
-_AMOUNT_FIELDS = {"subtotal", "tax", "total"}
-_DATE_FIELDS = {"estimated_start_date", "estimated_completion_date"}
-_EMAIL_FIELDS = {"contact_email", "administrator_email"}
-_BOOLEAN_FIELDS = {"related_to_om", "service_branch_tech_needed", "send_copy_email"}
+DEFAULT_FORM_REQUIRED_FIELDS: tuple[str, ...] = (
+    "request_type",
+    "requester_name",
+    "job_number",
+    "site_location",
+    "cost_code",
+    "object_account",
+    "agreement_type",
+    "total",
+    "description_of_work",
+    "dispatch_service_center",
+)
+
+RRH_JOB_NUMBERS: tuple[str, ...] = (
+    "RRH-695400022-O&M",
+    "RRH-695400023-START UP",
+    "RRH-695400030-ISDC",
+    "RRH-695400034-ES JOB CCJ",
+)
+OBJECT_ACCOUNT_OPTIONS: tuple[str, ...] = (
+    "5301-MATERIALS",
+    "5490-OTHER",
+    "5511-SUBCONTRACTOR",
+    "5302-EQUIPMENT",
+    "5411-OUTSIDE RENTALS",
+)
+AGREEMENT_TYPE_OPTIONS: tuple[str, ...] = (
+    "NA",
+    "03 - MSAPO (SERVICE)",
+    "03 - MRAPO (RENTAL)",
+    "03 - CSAPO (CONSTRUCTION)",
+    "ON - STANDARD PO UNDER $25K",
+    "OR - STANDARD PO OVER $25K",
+    "OR - EQUIPMENT PO",
+)
+_EXACT_OPTIONS: dict[str, tuple[str, ...]] = {
+    "request_type": ("PO",),
+    "object_account": OBJECT_ACCOUNT_OPTIONS,
+    "agreement_type": AGREEMENT_TYPE_OPTIONS,
+    "dispatch_service_center": ("NA",),
+}
+
+_AMOUNT_FIELDS = {"total"}
+_DATE_FIELDS: set[str] = set()
+_EMAIL_FIELDS = {"contact_email"}
+_BOOLEAN_FIELDS = {"send_copy_email"}
 _ALLOWED_API_MODES = {"disabled", "dry_run", "live"}
 _ALLOWED_ROW_POSITIONS = {"top", "bottom"}
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -369,7 +393,7 @@ def load_config(env: Mapping[str, str] | None = None) -> SmartsheetConfig:
         form_field_map=field_map,
         form_value_map=value_map,
         form_order=configured_order or DEFAULT_FORM_ORDER,
-        form_required_fields=form_required,
+        form_required_fields=form_required or DEFAULT_FORM_REQUIRED_FIELDS,
         prefill_max_url_length=_integer(
             source,
             "SMARTSHEET_PREFILL_MAX_URL_LENGTH",
@@ -471,6 +495,11 @@ def validate_submission_fields(fields: Mapping[str, Any]) -> tuple[str, ...]:
                 _money_number(text)
             except ValueError:
                 problems.append(f"{DISPLAY_LABELS[field]} is not a valid amount.")
+        options = _EXACT_OPTIONS.get(field)
+        if options and text not in options:
+            problems.append(
+                f"{DISPLAY_LABELS[field]} must exactly match one of: {', '.join(options)}."
+            )
     return tuple(problems)
 
 
@@ -500,6 +529,8 @@ def build_prefilled_form_url(
         if field in seen:
             continue
         seen.add(field)
+        if field not in KNOWN_FIELDS:
+            continue
         value = fields.get(field)
         if not _nonempty(value):
             continue
@@ -537,6 +568,8 @@ def handoff_rows(
         if field in seen:
             continue
         seen.add(field)
+        if field not in KNOWN_FIELDS:
+            continue
         value = fields.get(field)
         if not _nonempty(value):
             continue

@@ -8,6 +8,10 @@ Learns, strictly scoped to one contract at a time:
                                              identified (vendors rarely have
                                              more than a handful of reps)
 
+Separately remembers a requester for one anonymous browser after the same
+normalized name is used on three distinct prepared PO contexts. Browser tokens
+are random and stored only as hashes; Streamlit reruns do not increase counts.
+
 Nothing learned on one contract is ever surfaced on another — the same way
 David is only relevant to RRH.
 
@@ -18,12 +22,14 @@ Falls back to a repo-local ./data_store for local dev, and degrades gracefully
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 import time
 from pathlib import Path
 
 SUGGEST_THRESHOLD = 5
+REQUESTER_SUGGEST_THRESHOLD = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS admin_emails (
@@ -49,6 +55,21 @@ CREATE TABLE IF NOT EXISTS vendor_contacts (
     count    INTEGER NOT NULL DEFAULT 0,
     last_used REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (contract, vendor, name, email)
+);
+CREATE TABLE IF NOT EXISTS device_requesters (
+    device_hash   TEXT NOT NULL,
+    requester_key TEXT NOT NULL,
+    display_name  TEXT NOT NULL,
+    use_count     INTEGER NOT NULL DEFAULT 0,
+    last_used     REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (device_hash, requester_key)
+);
+CREATE TABLE IF NOT EXISTS device_requester_events (
+    device_hash   TEXT NOT NULL,
+    context_id    TEXT NOT NULL,
+    requester_key TEXT NOT NULL,
+    recorded_at   REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (device_hash, context_id)
 );
 """
 
@@ -86,6 +107,17 @@ def _norm_email(email: str | None) -> str:
 
 def _norm_name(name: str | None) -> str:
     return " ".join((name or "").split())
+
+
+def _requester_key(name: str | None) -> str:
+    return _norm_name(name).casefold()
+
+
+def _device_hash(device_token: str | None) -> str:
+    token = (device_token or "").strip()
+    if not token or len(token) > 200:
+        return ""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def _norm_vendor(vendor: str | None) -> str:
@@ -196,5 +228,127 @@ def vendor_reps(contract: str, vendor: str | None) -> list[tuple[str, str]]:
         return [(r[0], r[1]) for r in rows]
     except Exception:
         return []
+    finally:
+        conn.close()
+
+
+def record_device_requester(
+    *, device_token: str | None, requester_name: str | None, context_id: str | None
+) -> int:
+    """Record one requester use for one prepared PO on one browser.
+
+    The opaque browser token is hashed before storage. A PO context can count only
+    once, so Streamlit reruns and repeated page visits do not inflate the threshold.
+    Correcting the requester on the same context moves that one use to the corrected
+    name. Returns the current use count, or 0 when memory is unavailable/invalid.
+    """
+    device = _device_hash(device_token)
+    name = _norm_name(requester_name)
+    requester = _requester_key(name)
+    context = (context_id or "").strip()
+    if not device or not requester or not context or len(name) > 160 or len(context) > 200:
+        return 0
+
+    conn = _connect()
+    if conn is None:
+        return 0
+    now = time.time()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        prior = conn.execute(
+            "SELECT requester_key FROM device_requester_events "
+            "WHERE device_hash=? AND context_id=?",
+            (device, context),
+        ).fetchone()
+        if prior and prior[0] != requester:
+            conn.execute(
+                "UPDATE device_requesters SET use_count=use_count-1 "
+                "WHERE device_hash=? AND requester_key=?",
+                (device, prior[0]),
+            )
+            conn.execute(
+                "DELETE FROM device_requesters WHERE device_hash=? AND requester_key=? "
+                "AND use_count<=0",
+                (device, prior[0]),
+            )
+
+        if not prior or prior[0] != requester:
+            conn.execute(
+                "INSERT INTO device_requester_events "
+                "(device_hash,context_id,requester_key,recorded_at) VALUES (?,?,?,?) "
+                "ON CONFLICT(device_hash,context_id) DO UPDATE SET "
+                "requester_key=excluded.requester_key, recorded_at=excluded.recorded_at",
+                (device, context, requester, now),
+            )
+            conn.execute(
+                "INSERT INTO device_requesters "
+                "(device_hash,requester_key,display_name,use_count,last_used) "
+                "VALUES (?,?,?,1,?) "
+                "ON CONFLICT(device_hash,requester_key) DO UPDATE SET "
+                "display_name=excluded.display_name, use_count=use_count+1, "
+                "last_used=excluded.last_used",
+                (device, requester, name, now),
+            )
+        else:
+            conn.execute(
+                "UPDATE device_requesters SET display_name=?, last_used=? "
+                "WHERE device_hash=? AND requester_key=?",
+                (name, now, device, requester),
+            )
+
+        row = conn.execute(
+            "SELECT use_count FROM device_requesters "
+            "WHERE device_hash=? AND requester_key=?",
+            (device, requester),
+        ).fetchone()
+        conn.commit()
+        return int(row[0]) if row else 0
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        conn.close()
+
+
+def remembered_device_requester(device_token: str | None) -> str:
+    """Most-recent requester with at least three distinct PO contexts."""
+    device = _device_hash(device_token)
+    if not device:
+        return ""
+    conn = _connect()
+    if conn is None:
+        return ""
+    try:
+        row = conn.execute(
+            "SELECT display_name FROM device_requesters "
+            "WHERE device_hash=? AND use_count>=? "
+            "ORDER BY last_used DESC, use_count DESC LIMIT 1",
+            (device, REQUESTER_SUGGEST_THRESHOLD),
+        ).fetchone()
+        return str(row[0]) if row else ""
+    except Exception:
+        return ""
+    finally:
+        conn.close()
+
+
+def forget_device_requester(device_token: str | None) -> bool:
+    """Forget requester learning for this browser without affecting other memory."""
+    device = _device_hash(device_token)
+    if not device:
+        return False
+    conn = _connect()
+    if conn is None:
+        return False
+    try:
+        with conn:
+            conn.execute("DELETE FROM device_requester_events WHERE device_hash=?", (device,))
+            conn.execute("DELETE FROM device_requesters WHERE device_hash=?", (device,))
+        return True
+    except Exception:
+        return False
     finally:
         conn.close()

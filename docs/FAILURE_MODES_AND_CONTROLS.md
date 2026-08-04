@@ -1,8 +1,8 @@
 # Email Process Control and Smartsheet Failure Modes
 
 **Status:** living reliability specification  
-**Scope:** current quote-to-email workflow plus draft Smartsheet transition  
-**Last reviewed:** 2026-07-28  
+**Scope:** current quote-to-email workflow plus live manual Smartsheet PO handoff  
+**Last reviewed:** 2026-08-04  
 **Primary implementation:** draft PR #25
 
 ## 1. Purpose
@@ -11,7 +11,7 @@ This document defines the ways Email Process Control can produce a wrong, incomp
 
 The governing safety rule is: **block or require review rather than silently manufacture a plausible result.** A missing value is recoverable; a wrong cost code, asset, amount, contract, attachment, or duplicate PO may not be.
 
-The Smartsheet example supplied by ENFRA is a work-order form, not the final PO form. It informs the possible field types but is not authoritative for final labels, required fields, options, order, destination columns, or approval behavior.
+The live Smartsheet PO form URL, visible labels, required inputs, RRH job choices, and a historical internal-sheet export have now been supplied. They are authoritative for the manual handoff. Direct-API column IDs/types and non-RRH job/site option catalogs remain unverified.
 
 ## 2. Severity and control states
 
@@ -34,7 +34,7 @@ Control states:
 1. The email workflow remains the source record for contract, site, cost code, asset, vendor, scope, pricing, and attachments.
 2. A deterministic context ID isolates Streamlit widgets and results for each reviewed PO.
 3. Generated MSAPO files are accepted only when their stored document fingerprint matches the current analysis, contract, site, inclusions, and exclusions.
-4. Manual, URL-prefill, and API routes are independent and disabled until configured.
+4. The manual route uses the verified live form; URL-prefill and API routes remain independent and disabled until separately verified.
 5. URL prefill uses exact configured labels and values; it never guesses.
 6. API submission uses exact verified column IDs, titles, types, options, and strict typed values.
 7. Every API submission includes a deterministic submission key in a dedicated sheet column.
@@ -167,7 +167,7 @@ Control states:
 #### FM-C01 — A new quote inherits another quote's Smartsheet widget values
 - **Severity:** Critical
 - **Trigger:** fixed widget keys across multipage Streamlit reruns.
-- **Impact:** old dates, billing method, requester, or customer details can be submitted.
+- **Impact:** an old requester, job number, object account, or additional-information value can be submitted.
 - **Control:** namespace all fields and results with a context ID derived from source fields and attachment hashes; clear prior handoff keys on context change.
 - **State:** Implemented.
 
@@ -184,11 +184,11 @@ Control states:
 - **Control:** immediate Clipboard API attempt, then a hidden editable textarea and `execCommand` fallback; display manual-selection guidance if both fail.
 - **State:** Implemented; real-device Safari test is an external blocker.
 
-#### FM-C04 — User edits a core form value without regenerating the document
+#### FM-C04 — User edits a document-bearing value without regenerating the document
 - **Severity:** Critical
-- **Trigger:** a second editable copy of contract/site/cost/scope exists on the handoff page.
-- **Impact:** submitted row and attached MSAPO disagree.
-- **Control:** source-controlled fields are read-only on the handoff page. Corrections must be made in Email Process Control and regenerate the document.
+- **Trigger:** a second editable copy of contract, source site, cost code, asset, scope, amount, or attachment-bearing data exists on the handoff page.
+- **Impact:** submitted values and the attached MSAPO disagree.
+- **Control:** document-bearing source fields remain read-only. Corrections must be made in Email Process Control and regenerate the document. Smartsheet-only fields (requester, exact job/site option, object account, and additional information) are context-namespaced and explicitly reviewed.
 - **State:** Implemented.
 
 #### FM-C05 — Manual route opens despite an invalid source package
@@ -199,10 +199,18 @@ Control states:
 
 #### FM-C06 — Form field order or labels change
 - **Severity:** Medium
-- **Trigger:** Smartsheet administrator edits the final form.
+- **Trigger:** Smartsheet administrator edits the live form.
 - **Impact:** manual order becomes inconvenient; URL prefill can stop working.
-- **Control:** order and exact labels are environment-driven. URL prefill remains off until retested after a form revision.
-- **State:** Configured later.
+- **Control:** the current exact labels/order are represented in code and configuration. URL prefill remains off until retested after every form revision.
+- **State:** Implemented for the current form; ongoing change control required.
+
+#### FM-C07 — A shared browser prefills the wrong requester
+- **Severity:** Medium
+- **Trigger:** several people use one browser profile, or Streamlit reruns are mistaken for repeated use.
+- **Impact:** a PO can be attributed to the wrong requester.
+- **Detection:** requester counts are tied to distinct verified PO context IDs, not reruns.
+- **Control:** do not prefill until the same normalized requester has been used on three distinct contexts; a newly repeated requester can take over after three uses; expose a per-browser Forget action. The browser cookie contains only a random token, which is hashed before server storage. Blocked/cleared cookies disable convenience without blocking the workflow.
+- **State:** Implemented and regression-tested; real Safari cookie behavior remains an acceptance check.
 
 ### D. URL-prefill route
 
@@ -235,7 +243,7 @@ Control states:
 #### FM-D06 — Required form fields are missing
 - **Severity:** High
 - **Control:** independently configured `SMARTSHEET_FORM_REQUIRED_FIELDS`; block the handoff link until populated.
-- **State:** Implemented, configured later.
+- **State:** Implemented and configured for the current live form.
 
 ### E. API schema and value safety
 
@@ -383,18 +391,18 @@ Control states:
 - **Control:** maintain manual fallback; run acceptance tests on real iPhone, iPad, Outlook Web, New Outlook, and Classic Outlook.
 - **State:** External blocker.
 
-#### FM-G10 — Final PO form differs from the example work-order form
+#### FM-G10 — The live PO form changes after implementation
 - **Severity:** High
-- **Control:** all labels, options, order, required fields, and API specs are configuration; nothing is activated from the example URL.
-- **State:** Implemented/configured later.
+- **Control:** keep manual labels/order under regression coverage, retain editable exact job/site inputs where catalogs are incomplete, and leave URL prefill/API disabled until each changed schema is reverified.
+- **State:** Current manual schema implemented; ongoing Smartsheet change control required.
 
 ## 5. Activation gates
 
 ### Manual route
 
-- Final PO form URL confirmed.
+- Final PO form URL confirmed and configured.
 - URL is HTTPS on a Smartsheet domain.
-- Final field order and required fields configured.
+- Final field order and required fields confirmed from the live form/screenshots and represented in code.
 - One desktop and one real iPad/iPhone test completed.
 - Verified attachment field accepts the required number, types, and sizes of files.
 
@@ -489,7 +497,8 @@ Automated coverage must include:
 - row reconciliation after local-state loss;
 - remote attachment reconciliation after lost response;
 - 4,000-character, 30 MB, empty, duplicate, and unsafe filename preflight;
-- deterministic context and submission fingerprints.
+- deterministic context and submission fingerprints;
+- requester learning threshold, browser isolation, rerun deduplication, correction, takeover, and forgetting.
 
 Manual acceptance must include:
 
@@ -506,8 +515,8 @@ Manual acceptance must include:
 The following cannot be solved safely through code assumptions:
 
 1. Whether Smartsheet replaces email or supplements it.
-2. Final PO form URL, labels, order, option values, and required fields.
-3. Final destination sheet and exact column specifications.
+2. Final destination sheet and exact API column IDs, titles, types, options, and submission-key column.
+3. Exact non-RRH job-number and site/location option catalogs.
 4. Whether one PO may contain multiple assets.
 5. Whether a changed PO updates an existing row or creates an amendment.
 6. Authentication/SSO and approved user population.
@@ -516,4 +525,4 @@ The following cannot be solved safely through code assumptions:
 9. Persistent-disk backup, monitoring, and disaster recovery.
 10. Multi-instance/shared-database strategy.
 
-Until these are resolved, PR #25 should remain draft and every Smartsheet mode should remain disabled by default.
+Until these are resolved, PR #25 should remain draft. The manual route can be tested against the verified form; URL prefill and API submission must remain disabled until their own activation gates pass.

@@ -10,10 +10,23 @@ from app.smartsheet_store import SubmissionStore
 
 def _config():
     specs = {
-        "site": {"id": 1, "title": "Site", "type": "TEXT_NUMBER"},
-        "total": {"id": 2, "title": "Amount", "type": "TEXT_NUMBER"},
-        "estimated_start_date": {"id": 3, "title": "Start", "type": "DATE"},
-        "related_to_om": {"id": 4, "title": "O&M", "type": "CHECKBOX"},
+        "site_location": {
+            "id": 1,
+            "title": "SITE NUMBER / LOCATION",
+            "type": "TEXT_NUMBER",
+        },
+        "total": {"id": 2, "title": "PO/CO AMOUNT", "type": "TEXT_NUMBER"},
+        "request_type": {
+            "id": 3,
+            "title": "REQUEST TYPE",
+            "type": "PICKLIST",
+            "options": ["PO"],
+        },
+        "send_copy_email": {
+            "id": 4,
+            "title": "Send me a copy of my responses",
+            "type": "CHECKBOX",
+        },
         "contact_email": {"id": 5, "title": "Contact", "type": "CONTACT_LIST"},
         "submission_key": {
             "id": 6,
@@ -27,17 +40,21 @@ def _config():
             "SMARTSHEET_API_TOKEN": "token",
             "SMARTSHEET_SHEET_ID": "123",
             "SMARTSHEET_COLUMN_SPECS_JSON": json.dumps(specs),
-            "SMARTSHEET_REQUIRED_FIELDS": "site,total",
+            "SMARTSHEET_REQUIRED_FIELDS": "site_location,total",
         }
     )
 
 
 def _columns():
     return [
-        {"id": 1, "title": "Site", "type": "TEXT_NUMBER"},
-        {"id": 2, "title": "Amount", "type": "TEXT_NUMBER"},
-        {"id": 3, "title": "Start", "type": "DATE"},
-        {"id": 4, "title": "O&M", "type": "CHECKBOX"},
+        {"id": 1, "title": "SITE NUMBER / LOCATION", "type": "TEXT_NUMBER"},
+        {"id": 2, "title": "PO/CO AMOUNT", "type": "TEXT_NUMBER"},
+        {"id": 3, "title": "REQUEST TYPE", "type": "PICKLIST", "options": ["PO"]},
+        {
+            "id": 4,
+            "title": "Send me a copy of my responses",
+            "type": "CHECKBOX",
+        },
         {"id": 5, "title": "Contact", "type": "CONTACT_LIST"},
         {
             "id": 6,
@@ -51,10 +68,10 @@ def test_build_cells_uses_strict_typed_values():
     config = _config()
     cells, problems = smartsheet._build_cells(
         {
-            "site": "UMMC",
+            "site_location": "UMMC",
             "total": "$1,234.56",
-            "estimated_start_date": "07/28/2026",
-            "related_to_om": "Yes",
+            "request_type": "PO",
+            "send_copy_email": "true",
             "contact_email": "person@example.com",
             "submission_key": "key",
         },
@@ -64,7 +81,7 @@ def test_build_cells_uses_strict_typed_values():
     assert not problems
     by_id = {cell["columnId"]: cell for cell in cells}
     assert by_id[2]["value"] == 1234.56
-    assert by_id[3]["value"] == "2026-07-28"
+    assert by_id[3]["value"] == "PO"
     assert by_id[4]["value"] is True
     assert by_id[5]["value"] == "person@example.com"
     assert all(cell["strict"] is True for cell in cells)
@@ -81,7 +98,7 @@ def test_ambiguous_row_create_is_not_retried(monkeypatch, tmp_path):
         raise requests.Timeout("response lost")
 
     monkeypatch.setattr(smartsheet, "_create_row", ambiguous_create)
-    fields = {"site": "UMMC", "total": "$100.00"}
+    fields = {"site_location": "UMMC", "total": "$100.00"}
     first = submit_po(fields, [], config=config, store=store)
     second = submit_po(fields, [], config=config, store=store)
 
@@ -111,7 +128,7 @@ def test_lost_attachment_response_is_reconciled_by_remote_name(monkeypatch, tmp_
     monkeypatch.setattr(smartsheet, "_row_attachment_names", list_remote)
 
     result = submit_po(
-        {"site": "UMMC", "total": "$100.00"},
+        {"site_location": "UMMC", "total": "$100.00"},
         [attachment],
         config=config,
         store=store,
@@ -136,7 +153,7 @@ def test_live_schema_drift_blocks_before_row_write(monkeypatch, tmp_path):
     )
 
     result = submit_po(
-        {"site": "UMMC", "total": "$100.00"},
+        {"site_location": "UMMC", "total": "$100.00"},
         [],
         config=config,
         store=store,

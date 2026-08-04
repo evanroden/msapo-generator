@@ -1,4 +1,4 @@
-"""Future ENFRA Smartsheet PO handoff.
+"""ENFRA Smartsheet PO handoff.
 
 The page shares session state with Email Process Control, but isolates every
 widget and result by a verified PO context ID. Existing workflow values are
@@ -12,8 +12,18 @@ import mimetypes
 
 import streamlit as st
 
+from app import contracts
+from app.device_identity import device_token, ensure_device_cookie
+from app.memory import (
+    REQUESTER_SUGGEST_THRESHOLD,
+    forget_device_requester,
+    record_device_requester,
+    remembered_device_requester,
+)
 from app.po_context import build_po_context
 from app.smartsheet import (
+    OBJECT_ACCOUNT_OPTIONS,
+    RRH_JOB_NUMBERS,
     SmartsheetConfigurationError,
     api_readiness,
     build_prefilled_form_url,
@@ -22,15 +32,14 @@ from app.smartsheet import (
     load_config,
     manual_enabled,
     missing_required_fields,
-    preflight_attachments,
     prefill_enabled,
+    preflight_attachments,
     reconcile_submission,
     submit_po,
     validate_column_mapping,
     validate_submission_fields,
 )
 from app.smartsheet_ui import render_manual_handoff
-
 
 st.set_page_config(
     page_title="Smartsheet PO Handoff",
@@ -46,8 +55,8 @@ except Exception:
 
 st.title("📋 Smartsheet PO Handoff")
 st.caption(
-    "Prepared for manual copy/paste, exact-label URL prefilling, or direct API "
-    "submission. Every route remains disabled until its verified configuration exists."
+    "Prepared for the live PO form through manual copy/paste, with exact-label URL "
+    "prefilling and direct API submission kept behind separate safety gates."
 )
 
 try:
@@ -71,6 +80,12 @@ if st.session_state.get("_smartsheet_context_id") != context.context_id:
     st.session_state["_smartsheet_context_id"] = context.context_id
 prefix = f"ssw_{context.context_id}_"
 fields = dict(context.fields)
+try:
+    browser_token = device_token(st.context.cookies)
+except Exception:
+    browser_token = ""
+if not browser_token:
+    ensure_device_cookie()
 
 if context.warnings:
     st.error(
@@ -100,87 +115,131 @@ def locked_area(label: str, field: str, height: int) -> None:
 
 st.subheader("1. Verify the source record")
 st.caption(
-    "Contract, site, cost code, asset, vendor, reviewed scope, and pricing are "
-    "locked to the source workflow. Change them there and regenerate the MSAPO."
+    "The quote-derived values remain locked to Email Process Control. Request type "
+    "is always PO, and service-center dispatch is always NA for this workflow."
 )
 left, right = st.columns(2)
 with left:
+    requester_key = f"{prefix}requester_name"
+    remembered_requester = (
+        remembered_device_requester(browser_token) if browser_token else ""
+    )
+    if requester_key not in st.session_state:
+        st.session_state[requester_key] = (
+            remembered_requester or fields.get("requester_name", "")
+        )
     fields["requester_name"] = st.text_input(
-        "Name of person completing form",
-        value=fields.get("requester_name", ""),
-        key=f"{prefix}requester_name",
+        "Requester *",
+        key=requester_key,
+        help=(
+            "After the same requester is used for three distinct prepared POs, "
+            "this browser will prefill the name."
+        ),
     )
-    locked_text("PO type", "order_type")
+    requester_memory_status = st.empty()
+    if browser_token and remembered_requester:
+        if st.button("Forget requester on this browser", key=f"{prefix}forget_requester"):
+            forget_device_requester(browser_token)
+            st.session_state[requester_key] = ""
+            st.rerun()
+    elif not browser_token:
+        st.caption("Requester memory is unavailable when this browser blocks cookies.")
+
+    locked_text("Request type", "request_type")
     locked_text("Contract", "contract")
-    locked_text("Site", "site")
-    fields["facility_address"] = st.text_area(
-        "Address/location",
-        value=fields.get("facility_address", ""),
-        height=90,
-        key=f"{prefix}facility_address",
+    locked_text("Source site", "site")
+    if contracts.is_rrh(fields.get("contract")):
+        job_key = f"{prefix}job_number"
+        current_job = fields.get("job_number", "")
+        job_index = (
+            RRH_JOB_NUMBERS.index(current_job)
+            if current_job in RRH_JOB_NUMBERS
+            else 0
+        )
+        fields["job_number"] = st.selectbox(
+            "Job number *",
+            RRH_JOB_NUMBERS,
+            index=job_index,
+            key=job_key,
+        )
+    else:
+        fields["job_number"] = st.text_input(
+            "Job number *",
+            value=fields.get("job_number", ""),
+            key=f"{prefix}job_number",
+            help="Paste the exact Smartsheet job-number option for this contract.",
+        )
+    fields["site_location"] = st.text_input(
+        "Smartsheet site number / location *",
+        value=fields.get("site_location", ""),
+        key=f"{prefix}site_location",
+        help=(
+            "Starts with the reviewed source site. Adjust only when Smartsheet's "
+            "exact dropdown wording differs."
+        ),
     )
-    locked_text("Work category", "work_category")
-    locked_text("Job cost code", "cost_code")
-    locked_text("ENFRA Unique Identifier", "asset_id")
+    locked_text("Cost code", "cost_code")
+
+    default_account = fields.get("object_account", "")
+    account_index = (
+        OBJECT_ACCOUNT_OPTIONS.index(default_account)
+        if default_account in OBJECT_ACCOUNT_OPTIONS
+        else 0
+    )
+    fields["object_account"] = st.selectbox(
+        "Object account *",
+        OBJECT_ACCOUNT_OPTIONS,
+        index=account_index,
+        key=f"{prefix}object_account",
+    )
+    locked_text("Agreement type for PO", "agreement_type")
 
 with right:
-    locked_text("Subcontractor/vendor", "vendor")
+    locked_text("Dispatch WO to service center?", "dispatch_service_center")
+    locked_text("Vendor", "vendor")
     locked_text("Vendor contact name", "contact_name")
     locked_text("Vendor contact email", "contact_email")
-    locked_text("Contract administrator email", "administrator_email")
-    locked_text("Short description", "description")
-    locked_text("Subtotal", "subtotal")
-    locked_text("Sales tax", "tax")
-    locked_text("Total amount", "total")
-    locked_text("Tax status", "tax_status")
+    locked_text("PO/CO amount", "total")
+    locked_text("Asset ID", "asset_id")
+    locked_area("Description of work", "description_of_work", 260)
 
-locked_area("Reviewed description of work / scope", "scope_of_work", 220)
 fields["instructions"] = st.text_area(
-    "Additional instructions",
+    "Additional information if needed",
     value=fields.get("instructions", ""),
     height=100,
     key=f"{prefix}instructions",
 )
-
-with st.expander("Fields that depend on the final ENFRA form", expanded=True):
-    st.caption(
-        "These remain blank until a person supplies them. The application does not "
-        "infer billing, scheduling, customer, or staffing decisions."
+fields["send_copy_email"] = (
+    "true"
+    if st.checkbox(
+        "Send me a copy of my responses",
+        key=f"{prefix}send_copy_email",
     )
-    future_left, future_right = st.columns(2)
-    yes_no = ["", "Yes", "No"]
-    with future_left:
-        fields["related_to_om"] = st.selectbox(
-            "Related to Asset Management O&M Agreement?",
-            yes_no,
-            key=f"{prefix}related_to_om",
+    else ""
+)
+
+missing_for_memory = missing_required_fields(fields, config.form_required_fields)
+if (
+    browser_token
+    and fields.get("requester_name")
+    and not context.warnings
+    and manual_enabled(config)
+    and not missing_for_memory
+):
+    requester_count = record_device_requester(
+        device_token=browser_token,
+        requester_name=fields["requester_name"],
+        context_id=context.context_id,
+    )
+    if requester_count >= REQUESTER_SUGGEST_THRESHOLD:
+        requester_memory_status.caption(
+            "✓ Requester remembered on this browser. Use ‘Forget requester’ on a shared device."
         )
-        fields["billing_method"] = st.text_input(
-            "Billing method", key=f"{prefix}billing_method"
-        )
-        fields["customer_po"] = st.text_input(
-            "Customer purchase order", key=f"{prefix}customer_po"
-        )
-        fields["estimated_start_date"] = st.text_input(
-            "Estimated start date (MM/DD/YYYY)", key=f"{prefix}start_date"
-        )
-        fields["estimated_completion_date"] = st.text_input(
-            "Estimated completion date (MM/DD/YYYY)", key=f"{prefix}completion_date"
-        )
-    with future_right:
-        fields["customer_representative"] = st.text_input(
-            "Customer representative requesting service",
-            key=f"{prefix}customer_representative",
-        )
-        fields["service_branch_tech_needed"] = st.selectbox(
-            "Service branch technician needed?",
-            yes_no,
-            key=f"{prefix}service_branch_tech_needed",
-        )
-        fields["send_copy_email"] = st.selectbox(
-            "Send me a copy of my responses?",
-            yes_no,
-            key=f"{prefix}send_copy_email",
+    elif requester_count:
+        remaining = REQUESTER_SUGGEST_THRESHOLD - requester_count
+        requester_memory_status.caption(
+            f"Requester will be remembered after {remaining} more prepared PO"
+            f"{'s' if remaining != 1 else ''} on this browser."
         )
 
 field_problems = list(validate_submission_fields(fields))
@@ -218,7 +277,7 @@ manual_tab, prefill_tab, api_tab = st.tabs(
 
 with manual_tab:
     if not manual_enabled(config):
-        st.info("Configure the final SMARTSHEET_FORM_URL to enable manual handoff.")
+        st.info("Configure SMARTSHEET_FORM_URL to enable manual handoff.")
     else:
         missing_form = list(
             missing_required_fields(fields, config.form_required_fields)

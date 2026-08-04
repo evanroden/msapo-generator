@@ -4,6 +4,11 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 from app.smartsheet import (
+    AGREEMENT_TYPE_OPTIONS,
+    DEFAULT_FORM_ORDER,
+    DEFAULT_FORM_REQUIRED_FIELDS,
+    OBJECT_ACCOUNT_OPTIONS,
+    RRH_JOB_NUMBERS,
     SmartsheetConfigurationError,
     api_readiness,
     build_prefilled_form_url,
@@ -11,8 +16,8 @@ from app.smartsheet import (
     handoff_rows,
     load_config,
     manual_enabled,
-    preflight_attachments,
     prefill_enabled,
+    preflight_attachments,
     submission_fingerprint,
     validate_submission_fields,
 )
@@ -21,8 +26,16 @@ from app.smartsheet import (
 def _specs() -> str:
     return json.dumps(
         {
-            "site": {"id": 456, "title": "Site", "type": "TEXT_NUMBER"},
-            "total": {"id": 789, "title": "Amount", "type": "TEXT_NUMBER"},
+            "site_location": {
+                "id": 456,
+                "title": "SITE NUMBER / LOCATION",
+                "type": "TEXT_NUMBER",
+            },
+            "total": {
+                "id": 789,
+                "title": "PO/CO AMOUNT",
+                "type": "TEXT_NUMBER",
+            },
             "submission_key": {
                 "id": 999,
                 "title": "Email Process Control Submission Key",
@@ -40,6 +53,49 @@ def test_default_configuration_is_inert():
     assert not api_readiness(config).ready
 
 
+def test_live_form_schema_and_rrh_choices_are_exact():
+    assert DEFAULT_FORM_ORDER == (
+        "request_type",
+        "requester_name",
+        "job_number",
+        "site_location",
+        "cost_code",
+        "object_account",
+        "agreement_type",
+        "original_po_number",
+        "total",
+        "vendor",
+        "contact_name",
+        "contact_email",
+        "description_of_work",
+        "asset_id",
+        "dispatch_service_center",
+        "instructions",
+    )
+    assert DEFAULT_FORM_REQUIRED_FIELDS == (
+        "request_type",
+        "requester_name",
+        "job_number",
+        "site_location",
+        "cost_code",
+        "object_account",
+        "agreement_type",
+        "total",
+        "description_of_work",
+        "dispatch_service_center",
+    )
+    assert RRH_JOB_NUMBERS == (
+        "RRH-695400022-O&M",
+        "RRH-695400023-START UP",
+        "RRH-695400030-ISDC",
+        "RRH-695400034-ES JOB CCJ",
+    )
+    assert "5511-SUBCONTRACTOR" in OBJECT_ACCOUNT_OPTIONS
+    assert "5302-EQUIPMENT" in OBJECT_ACCOUNT_OPTIONS
+    assert "03 - MSAPO (SERVICE)" in AGREEMENT_TYPE_OPTIONS
+    assert "OR - EQUIPMENT PO" in AGREEMENT_TYPE_OPTIONS
+
+
 def test_invalid_or_unsafe_configuration_is_rejected():
     with pytest.raises(SmartsheetConfigurationError, match="invalid JSON"):
         load_config({"SMARTSHEET_COLUMN_SPECS_JSON": "{"})
@@ -52,7 +108,11 @@ def test_invalid_or_unsafe_configuration_is_rejected():
             {
                 "SMARTSHEET_COLUMN_SPECS_JSON": json.dumps(
                     {
-                        "site": {"id": 1, "title": "Site", "type": "TEXT_NUMBER"},
+                        "site_location": {
+                            "id": 1,
+                            "title": "SITE NUMBER / LOCATION",
+                            "type": "TEXT_NUMBER",
+                        },
                         "total": {"id": 1, "title": "Amount", "type": "TEXT_NUMBER"},
                     }
                 )
@@ -70,32 +130,36 @@ def test_invalid_or_unsafe_configuration_is_rejected():
 
 
 def test_prefill_replaces_existing_field_value_and_preserves_unrelated_query():
-    label = "Service Branch or O&M Site Requesting Workorder"
+    label = "SITE NUMBER / LOCATION"
     config = load_config(
         {
             "SMARTSHEET_FORM_URL": (
                 "https://app.smartsheet.com/b/form/example?source=epc&"
-                "Service+Branch+or+O%26M+Site+Requesting+Workorder=OLD"
+                "SITE+NUMBER+%2F+LOCATION=OLD"
             ),
             "SMARTSHEET_URL_PREFILL_ENABLED": "true",
             "SMARTSHEET_FORM_FIELD_MAP_JSON": json.dumps(
                 {
-                    "site": label,
-                    "description": "Description of Work or Issue Needing Repair",
+                    "site_location": label,
+                    "description_of_work": "DESCRIPTION OF WORK",
                 }
             ),
         }
     )
     result = build_prefilled_form_url(
-        {"site": "RRH UMMC", "description": "Pump #7 repair", "instructions": "skip"},
+        {
+            "site_location": "UMMC",
+            "description_of_work": "Pump #7 repair",
+            "instructions": "skip",
+        },
         config,
     )
     query = parse_qs(urlsplit(result.url).query)
 
     assert query["source"] == ["epc"]
-    assert query[label] == ["RRH UMMC"]
-    assert query["Description of Work or Issue Needing Repair"] == ["Pump #7 repair"]
-    assert result.included == ("site", "description")
+    assert query[label] == ["UMMC"]
+    assert query["DESCRIPTION OF WORK"] == ["Pump #7 repair"]
+    assert result.included == ("site_location", "description_of_work")
     assert any(item.startswith("instructions:") for item in result.skipped)
 
 
@@ -106,24 +170,24 @@ def test_prefill_value_translation_required_fields_and_length_limit():
             "SMARTSHEET_URL_PREFILL_ENABLED": "yes",
             "SMARTSHEET_FORM_FIELD_MAP_JSON": json.dumps(
                 {
-                    "related_to_om": "O&M Agreement?",
-                    "scope_of_work": "Description",
+                    "request_type": "REQUEST TYPE",
+                    "description_of_work": "DESCRIPTION OF WORK",
                 }
             ),
             "SMARTSHEET_FORM_VALUE_MAP_JSON": json.dumps(
-                {"related_to_om": {"true": "Yes", "false": "No"}}
+                {"request_type": {"PO": "Purchase Order"}}
             ),
-            "SMARTSHEET_FORM_REQUIRED_FIELDS": "site,related_to_om",
+            "SMARTSHEET_FORM_REQUIRED_FIELDS": "site_location,request_type",
             "SMARTSHEET_PREFILL_MAX_URL_LENGTH": "1000",
         }
     )
     result = build_prefilled_form_url(
-        {"related_to_om": "TRUE", "scope_of_work": "x" * 1500}, config
+        {"request_type": "PO", "description_of_work": "x" * 1500}, config
     )
     query = parse_qs(urlsplit(result.url).query)
 
-    assert query["O&M Agreement?"] == ["Yes"]
-    assert result.missing_required == ("site",)
+    assert query["REQUEST TYPE"] == ["Purchase Order"]
+    assert result.missing_required == ("site_location",)
     assert any("URL length limit" in item for item in result.skipped)
 
 
@@ -131,18 +195,23 @@ def test_manual_rows_follow_configured_order_and_skip_empty_values():
     config = load_config(
         {
             "SMARTSHEET_FORM_URL": "https://app.smartsheet.com/b/form/example",
-            "SMARTSHEET_FORM_ORDER": "vendor,site,total",
+            "SMARTSHEET_FORM_ORDER": "vendor,site_location,total",
             "SMARTSHEET_FORM_FIELD_MAP_JSON": '{"vendor": "Supplier"}',
         }
     )
     rows = handoff_rows(
-        {"site": "UMMC", "vendor": "Vendor Co", "total": "", "cost_code": "01CEABA"},
+        {
+            "site_location": "UMMC",
+            "vendor": "Vendor Co",
+            "total": "",
+            "cost_code": "01CEABA",
+        },
         config,
     )
     assert rows == [
         ("vendor", "Supplier", "Vendor Co"),
-        ("site", "Site Location", "UMMC"),
-        ("cost_code", "Job Cost Code", "01CEABA"),
+        ("site_location", "SITE NUMBER / LOCATION", "UMMC"),
+        ("cost_code", "COST CODE", "01CEABA"),
     ]
 
 
@@ -152,8 +221,10 @@ def test_live_api_requires_exact_specs_submission_key_and_required_fields():
             "SMARTSHEET_API_MODE": "live",
             "SMARTSHEET_API_TOKEN": "token",
             "SMARTSHEET_SHEET_ID": "123",
-            "SMARTSHEET_COLUMN_MAP_JSON": '{"site": 456, "submission_key": 999}',
-            "SMARTSHEET_REQUIRED_FIELDS": "site",
+            "SMARTSHEET_COLUMN_MAP_JSON": (
+                '{"site_location": 456, "submission_key": 999}'
+            ),
+            "SMARTSHEET_REQUIRED_FIELDS": "site_location",
         }
     )
     assert not api_readiness(legacy_only).ready
@@ -165,7 +236,7 @@ def test_live_api_requires_exact_specs_submission_key_and_required_fields():
             "SMARTSHEET_API_TOKEN": "token",
             "SMARTSHEET_SHEET_ID": "123",
             "SMARTSHEET_COLUMN_SPECS_JSON": _specs(),
-            "SMARTSHEET_REQUIRED_FIELDS": "site,total",
+            "SMARTSHEET_REQUIRED_FIELDS": "site_location,total",
         }
     )
     assert api_readiness(complete).ready
@@ -175,14 +246,16 @@ def test_field_and_attachment_preflight_rejects_silent_corruption():
     problems = validate_submission_fields(
         {
             "contact_email": "not-an-email",
-            "estimated_start_date": "July 4th",
             "total": "$1,234.56",
-            "scope_of_work": "x" * 4001,
+            "description_of_work": "x" * 4001,
+            "request_type": "WO",
+            "dispatch_service_center": "DALLAS",
         }
     )
     assert any("valid email" in item for item in problems)
-    assert any("MM/DD/YYYY" in item for item in problems)
     assert any("4,000-character" in item for item in problems)
+    assert any("REQUEST TYPE" in item and "PO" in item for item in problems)
+    assert any("DISPATCH WO" in item and "NA" in item for item in problems)
 
     attachment_problems = preflight_attachments(
         [
@@ -196,8 +269,8 @@ def test_field_and_attachment_preflight_rejects_silent_corruption():
 
 
 def test_submission_fingerprint_is_stable_and_attachment_sensitive():
-    fields_a = {"site": "UMMC", "total": "$100.00"}
-    fields_b = {"total": "$100.00", "site": "UMMC"}
+    fields_a = {"site_location": "UMMC", "total": "$100.00"}
+    fields_b = {"total": "$100.00", "site_location": "UMMC"}
     first = submission_fingerprint(fields_a, [("quote.pdf", b"one")])
     same = submission_fingerprint(fields_b, [("quote.pdf", b"one")])
     changed = submission_fingerprint(fields_b, [("quote.pdf", b"two")])
