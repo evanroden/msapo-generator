@@ -1,184 +1,186 @@
 # Email Process Control
 
-Email Process Control turns a vendor quote into a reviewed MSAPO scope package and a ready-to-send purchase-order email. It is a Streamlit application deployed as a single Docker service on Render.
+Email Process Control turns a vendor quote into a reviewed MSAPO package and a ready-to-send purchase-order email. It is a Dockerized Streamlit application deployed on Render.
 
-The repository retains its original `msapo-generator` name, but the current product is a quote-to-email workflow rather than a standalone document generator.
+The repository retains its original `msapo-generator` name, but the product is a quote-to-email workflow with a Smartsheet PO handoff. The verified manual handoff is active when its form URL is configured; URL-prefill and API writes remain separately gated.
 
 ## Current workflow
 
 1. Select standard MSAPO or Equipment-only PO mode.
-2. Upload a PDF, image, or text file, or paste quote text.
-3. Extract the quote text. Text-layer PDFs use PyMuPDF; scans and images fall back to Claude vision.
-4. Analyze the quote with Claude to identify the vendor, facility, scope, inclusions, exclusions, tax, pricing, contact, work category, and any specific asset tag.
-5. Review the extracted scope and choose which inclusion and exclusion items belong in the document.
-6. Generate the MSAPO DOCX and, when LibreOffice conversion succeeds, a PDF.
-7. Confirm the ENFRA contract, site, cost code, asset, administrator, contact, description, and pricing.
-8. Open a ready-to-send Outlook draft on desktop or use the Apple Mail share flow on iPhone or iPad.
-9. Explicitly record a completed send so frequently used contract-specific contacts can be suggested later.
+2. Upload a PDF/image/text file or paste quote text.
+3. Extract text locally when possible; use Claude vision for scans/images.
+4. Validate Claude's structured quote analysis.
+5. Review scope, inclusions, exclusions, tax, routing, cost code, asset, contact, and pricing.
+6. Generate MSAPO DOCX and, when LibreOffice succeeds, PDF.
+7. Open a ready-to-send Outlook draft or Apple Mail share flow.
+8. Open the Smartsheet PO handoff for ordered copy/paste values and adjacent attachment downloads.
+9. Explicitly record a completed send for contract-isolated contact suggestions.
 
-Equipment-only POs skip MSAPO generation and attach the original quote only.
+Equipment-only POs preserve and attach the original quote but skip MSAPO generation.
 
-## Core behavior
+## Non-negotiable behavior
 
-- **All contracts receive MSAPO documents when the order is not equipment-only.** Do not gate document generation to RRH.
-- **RRH retains its dedicated flow:** known sites, site/category cost-code derivation, David as administrator, and the 246-asset RRH registry.
-- **Other ENFRA contracts use the project-agnostic registry:** contract-specific sites and assets, free-text cost codes, and contract-specific administrators.
-- **Contract memory is isolated.** Data learned for one contract is never suggested for another.
-- **Asset matching is conservative.** A specific tag must resolve to a real asset at the selected site; otherwise the interface defaults to `None Applicable`.
-- **The original quote is preserved byte-for-byte** and attached to the outgoing draft.
-- **Prices are excluded from the generated Scope of Work** but retained in the email pricing fields.
-- **Generated files are transient.** Unique internal filenames prevent concurrent sessions from overwriting one another, and files older than 24 hours are removed.
-- **The app does not send email from the server.** It prepares a client-side Outlook or Apple Mail draft for the user to review and send.
+- Standard MSAPO documents are generated for **all contracts**, not only RRH.
+- RRH retains its dedicated sites, cost-code derivation, fixed administrator, and conservative asset registry.
+- Data learned for one contract never appears on another.
+- An unresolved asset defaults to no applicable asset; the application never selects the first asset by convenience.
+- Unknown contract/site routing must be explicitly confirmed.
+- The original quote bytes are preserved unchanged.
+- Generated documents are accepted only while their contract/site/review fingerprint remains current.
+- Optional integrations remain inert until verified configuration exists.
+- The current handoff always emits `PO` as Request Type and `NA` for service-center dispatch.
 
 ## Project structure
 
 ```text
-msapo-generator/
-├── app/
-│   ├── web_ui.py              # Streamlit UI and workflow orchestration
-│   ├── quote_analyzer.py      # Claude structured quote extraction
-│   ├── ocr.py                 # PDF/image text extraction and OCR fallback
-│   ├── document_generator.py  # MSAPO template mutation and DOCX generation
-│   ├── pdf_converter.py       # DOCX-to-PDF conversion
-│   ├── eml_builder.py         # Outlook .eml and Apple Mail body construction
-│   ├── config.py              # RRH facilities, cost codes, and environment settings
-│   ├── assets.py              # RRH asset registry
-│   ├── contracts.py           # Non-RRH contract/site/asset access and matching
-│   ├── memory.py              # Per-contract SQLite learning
-│   └── data/
-│       └── contracts.json     # Non-RRH contract registry
-├── templates/
-│   └── Master_MSAPO_Template.docx
-├── tests/                     # Pytest regression tests
-├── run_web.py                 # Production entry point
-├── requirements.txt
-├── requirements-dev.txt
-├── Dockerfile
-└── render.yaml
+app/web_ui.py                 Current quote/email workflow
+app/quote_analyzer.py          Claude quote extraction
+app/analysis_schema.py         Claude response validation
+app/ocr.py                     PDF/image extraction and normalization
+app/document_generator.py      MSAPO DOCX generation
+app/pdf_converter.py           LibreOffice/Gotenberg/docx2pdf conversion
+app/eml_builder.py             Outlook and Apple Mail draft content
+app/contracts.py               Non-RRH contract/site/asset registry
+app/assets.py                  RRH asset registry
+app/memory.py                  Contract and anonymous-browser learning
+app/device_identity.py         Opaque first-party browser identity cookie
+app/po_context.py              Verified cross-page PO snapshot
+app/smartsheet.py              Manual, URL-prefill, and API routes
+app/smartsheet_store.py        Leased/idempotent API state
+app/smartsheet_ui.py           Mobile manual-copy assistant
+pages/2_Smartsheet_PO.py       Smartsheet PO handoff page
+docs/FAILURE_MODES_AND_CONTROLS.md
+                               Reliability register and incident runbooks
+tests/                         Pytest regression suite
 ```
 
 ## Template behavior
 
-The application does **not** use `{{TAG}}` placeholder replacement.
+`app/document_generator.py` opens `templates/Master_MSAPO_Template.docx`, verifies the sentinel paragraph, clears the pre-filled first exhibit row, and appends the reviewed facility, vendor, project description, detailed scope, inclusions, exclusions, and tax status.
 
-`app/document_generator.py` opens `templates/Master_MSAPO_Template.docx`, verifies that it contains the sentinel paragraph:
-
-```text
-Subcontractor shall execute the following Scope of Work in strict accordance with this MSAPO:
-```
-
-It preserves the template and appends the reviewed facility, vendor, project description, detailed scope, inclusions, exclusions, and tax warning/status. It also clears the pre-filled Included mark and date from the first exhibit row.
-
-The legal and branding applicability of the current template across all ENFRA contracts must be confirmed by the business owner before wider rollout.
+The template does not use `{{TAG}}` replacement. A text audit found no RRH/facility wording, but legal applicability and non-text branding still require business confirmation before broad rollout.
 
 ## Local development
-
-### Prerequisites
-
-- Python 3.12 recommended
-- An Anthropic API key
-- LibreOffice Writer for production-equivalent PDF conversion
-
-### Install
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate       # Linux/macOS
 # .venv\Scripts\activate      # Windows
 python -m pip install -r requirements-dev.txt
-```
-
-### Configure
-
-Copy `.env.example` to `.env` and set at least:
-
-```text
-ANTHROPIC_API_KEY=...
-ANTHROPIC_MODEL=claude-sonnet-4-6
-PDF_BACKEND=libreoffice
-```
-
-### Run
-
-```bash
+cp .env.example .env
 streamlit run run_web.py
 ```
 
-The local application is available on port 8501 by default.
+Required local secret:
 
-### Test
+```text
+ANTHROPIC_API_KEY=...
+```
+
+Run tests:
 
 ```bash
 python -m pytest -q
 ```
 
-Pull requests and pushes to `main` run the same suite through GitHub Actions.
+Pull requests and pushes to `main` run the same suite in GitHub Actions and retain a seven-day JUnit artifact.
 
 ## Deployment
 
-Render runs the repository as one Docker web service:
+Render runs one Docker web service on port 8501. Production uses LibreOffice and stores contract learning, anonymous-browser requester learning, and Smartsheet idempotency state on the persistent disk at `EPC_DATA_DIR=/test1`.
 
-- Dockerfile: `./Dockerfile`
-- Port: `8501`
-- Command: `streamlit run run_web.py`
-- PDF backend: LibreOffice
-- Persistent learning directory: `/test1`, configured through `EPC_DATA_DIR`
+Render dashboard values can override `render.yaml`; inspect both when a model, credential, form URL, or integration change appears ineffective.
 
-Environment variables represented in `render.yaml`:
-
-- `ANTHROPIC_API_KEY`
-- `ANTHROPIC_MODEL`
-- `PDF_BACKEND`
-- `EPC_DATA_DIR`
-
-Render dashboard values can override blueprint values. When a model or credential change appears ineffective after deployment, check both `render.yaml` and the service's dashboard environment.
-
-The application currently uses SQLite on the Render persistent disk. This is suitable only for a single application instance. Scaling to multiple instances requires a shared database.
-
-## PDF conversion
-
-The supported converter implementations are:
-
-- `libreoffice` — production/default on Render
-- `gotenberg` — optional HTTP service
-- `docx2pdf` — optional local Windows/macOS path requiring Microsoft Word
-
-A PDF conversion error does not discard the DOCX. The interface warns the user and continues with the DOCX attachment.
+SQLite is appropriate only while the service remains single-instance. Migrate learning and idempotency to a shared transactional database before scaling horizontally.
 
 ## Input support
 
-The UI accepts:
+The UI accepts PDF, TXT, PNG, JPEG, WebP, TIFF/TIF, BMP, and HEIC/HEIF/HIF. Text PDFs are extracted locally. TIFF/BMP/HEIC are normalized to Claude-compatible PNG blocks in memory; the original upload remains unchanged for attachment.
 
-- PDF
-- TXT
-- PNG
-- JPG/JPEG
-- WebP
-- TIFF/TIF
-- BMP
-- HEIC/HEIF/HIF
+## Smartsheet PO handoff
 
-Text PDFs are extracted locally. Scanned PDFs and Claude-native image formats are sent directly to vision. TIFF, BMP, and iPhone HEIC/HEIF uploads are decoded in memory and converted to ordered PNG image blocks for analysis; the original uploaded file remains unchanged for attachment.
+The handoff supports three independent routes that reuse the same verified source record. The live form's exact field labels and required inputs are represented in code. Request Type is locked to `PO`; service-center dispatch is locked to `NA` because this workflow does not submit work orders.
 
-## Security and operational cautions
+RRH defaults to `RRH-695400022-O&M` and offers the four confirmed choices:
 
-- Vendor quotes may contain pricing, contact, facility, and asset information and are sent to Anthropic for analysis when OCR or extraction is required.
-- The codebase does not currently implement application authentication. Confirm Render access controls before sharing the service broadly.
-- The SQLite memory database stores administrator and vendor-contact email addresses by contract.
-- Do not place API keys or tokens in the repository.
-- The original quote is attached unchanged; generated documents should always be reviewed before sending.
+- `RRH-695400022-O&M`
+- `RRH-695400023-START UP`
+- `RRH-695400030-ISDC`
+- `RRH-695400034-ES JOB CCJ`
 
-## Smartsheet
+Non-RRH job numbers remain exact-value entry until their Smartsheet option lists are supplied and verified.
 
-Draft PR #15 contains an optional, disabled-by-default Smartsheet submission scaffold. It is not part of `main` and has not been validated against a real Smartsheet sheet. Do not enable or merge it until field mapping, attachments, duplicate prevention, and real-device behavior have been tested against the final form and sheet.
+### Requester memory
+
+The page creates a random, opaque first-party browser cookie. The token is hashed before SQLite storage and contains no requester, quote, vendor, pricing, or PO data. After the same requester is used on three distinct verified PO contexts, that browser prefills the name. Streamlit reruns cannot increase the count, correcting a name moves the one recorded use, and a shared device can forget its requester without deleting contract learning. Clearing browser storage or using another browser/device starts fresh; blocked cookies simply disable this convenience without blocking the PO workflow.
+
+### Manual copy/paste
+
+`SMARTSHEET_FORM_URL` points to the verified live PO form. The page supplies one-tap values in the form's order and safe adjacent attachment downloads. It opens only when the source package and confirmed required fields pass preflight.
+
+### Exact-label URL prefill
+
+URL prefill remains off until the live form is proven to accept query parameters. To test it safely, configure:
+
+- `SMARTSHEET_URL_PREFILL_ENABLED=true`
+- `SMARTSHEET_FORM_FIELD_MAP_JSON` using exact visible labels
+- optional `SMARTSHEET_FORM_VALUE_MAP_JSON` using exact option values
+- `SMARTSHEET_FORM_REQUIRED_FIELDS`
+- optional `SMARTSHEET_PREFILL_MAX_URL_LENGTH` (default 7000)
+
+The application never guesses parameter names. Existing mapped parameters are replaced rather than duplicated. Oversized fields are skipped with reasons. Files must still be attached manually.
+
+### Direct API
+
+Proceed from `disabled` to `dry_run` before `live`. Configure:
+
+- dedicated least-privilege `SMARTSHEET_API_TOKEN`
+- `SMARTSHEET_SHEET_ID`
+- `SMARTSHEET_COLUMN_SPECS_JSON`
+- `SMARTSHEET_REQUIRED_FIELDS`
+- a dedicated writable `submission_key` text column
+
+Each column specification records a numeric ID, exact title, exact type, and optionally expected picklist options. Live validation blocks renamed, retyped, locked, system, formula, or option-drifted columns. Values are sent strictly typed; no `strict:false` coercion is used.
+
+API reliability controls include:
+
+- deterministic field/attachment submission key;
+- expiring single-owner SQLite lease;
+- duplicate rows blocked across reruns and reopened browsers;
+- ambiguous row creation marked `uncertain`, never blindly retried;
+- exact submission-key reconciliation, including recovery after local-state loss;
+- deterministic remote attachment names and remote-list verification after a lost upload response;
+- partial attachment retry resumes the same row;
+- empty, duplicate, unsafe, or over-30-MB attachments blocked;
+- values over 4,000 characters blocked before silent cell truncation;
+- live tokens restricted to `api.smartsheet.com`.
+
+## Reliability and activation
+
+Read [`docs/FAILURE_MODES_AND_CONTROLS.md`](docs/FAILURE_MODES_AND_CONTROLS.md) before enabling URL prefill or API writes. It contains the failure-mode register, activation gates, acceptance matrix, and runbooks for uncertain writes, partial attachments, schema drift, form changes, and idempotency-store failure.
+
+PR #25 should remain draft until the manual handoff receives a real-device Safari pass. API mode must remain disabled until verified column IDs exist and one controlled live row-plus-attachments round trip succeeds.
+
+## Security cautions
+
+- Quotes may contain pricing, contacts, facility, and asset information and may be sent to Anthropic for analysis/OCR.
+- The current production app has no merged application-level authentication. Configure Render protection or merge the fail-closed access gate only after its secret exists; ENFRA SSO is preferable before broad use.
+- Do not commit API keys, tokens, production mappings, or real credentials.
+- Live Smartsheet API use requires a dedicated least-privilege service account.
+- The original quote and generated package must be reviewed before send/submission.
 
 ## Troubleshooting
 
 | Problem | Action |
 |---|---|
-| Analysis returns a model-not-found error | Check `ANTHROPIC_MODEL` in both Render dashboard settings and `render.yaml`. |
-| A scanned PDF appears blank | Confirm the API key and model support PDF/image input; try a clearer scan. |
-| PDF conversion fails | Use the DOCX attachment and inspect LibreOffice logs/path availability. |
-| A routing change invalidates the document | Regenerate the MSAPO so the attachment reflects the final contract, site, inclusions, and exclusions. |
-| No asset is selected | Confirm the quote names a specific unit tag and that it exists at the selected site; otherwise keep `None Applicable`. |
-| Learned contacts do not appear | Confirm the Render persistent disk is mounted at `EPC_DATA_DIR` and that the same entry has reached the suggestion threshold. |
+| Model-not-found or authentication error | Check `ANTHROPIC_MODEL`/key in both Render dashboard and blueprint. |
+| Scanned PDF appears blank | Try a clearer scan and verify the configured model supports document/image input. |
+| PDF conversion fails | Continue with DOCX and inspect LibreOffice availability/logs. |
+| Routing/review edit invalidates document | Regenerate the MSAPO. |
+| No asset selected | Confirm the quote names a real tagged unit; otherwise retain no applicable asset. |
+| Requester is not remembered | Complete three distinct PO contexts in the same browser; check whether cookies are blocked or cleared. |
+| Manual Smartsheet route absent | Check the verified form URL in both `render.yaml` and the Render dashboard. |
+| URL prefill absent | It is intentionally off until exact labels and live query behavior are verified. |
+| API schema blocked | Validate exact ID/title/type/options and writability in dry-run. |
+| API result says outcome uncertain | Do not resubmit; follow exact-key reconciliation in the runbook. |
+| API storage blocked | Restore the persistent disk/database; never use an in-memory fallback. |
