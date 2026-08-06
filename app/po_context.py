@@ -56,6 +56,7 @@ _LOCKED_FIELDS = (
 )
 
 RRH_DEFAULT_JOB_NUMBER = "RRH-695400022-O&M"
+PREPARED_PO_CONTEXT_STATE_KEY = "_prepared_smartsheet_po_context"
 
 
 @dataclass(frozen=True)
