@@ -25,7 +25,7 @@ from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES
 SYSTEM_PROMPT = """\
 You are an expert construction and facilities project analyst supporting \
 multiple facilities-management contracts. Your job is to read a vendor quote and extract structured \
-data so that a Scope of Work (MSAPO agreement) can be generated.
+   data so that a Scope/Inclusions/Exclusions PO attachment can be generated.
 
 STRICT RULES:
 
@@ -36,7 +36,8 @@ STRICT RULES:
    "tax_amount", and "total_amount" — keep those dollar figures intact.
 
    PRICING SUMMARY RULES:
-   - "total_amount": the final grand total the customer pays (after tax/fees).
+   - "total_amount": the final grand total the customer pays, including every \
+     stated tax, freight charge, delivery charge, surcharge, and other fee.
    - "subtotal_amount": the pre-tax subtotal, but ONLY if the quote breaks \
      pricing into a separate subtotal line AND a separate tax line. If the \
      quote shows just one all-in amount (tax already baked in, no separate \
@@ -154,7 +155,7 @@ Return your answer as a JSON object with exactly these keys:
   "contact_email": "string or null",
   "subtotal_amount": "string or null — pre-tax subtotal, only if itemized separately",
   "tax_amount": "string or null — sales tax line item, only if itemized separately",
-  "total_amount": "string or null — final dollar total after tax, e.g. '$1,234.56'",
+  "total_amount": "string or null — final all-in dollar total after every fee and tax, e.g. '$1,234.56'",
   "short_description": "string or null — 20 chars max",
   "work_category": "string — one of the category keys above",
   "asset_reference": "string or null — specific equipment tag only, else null"
