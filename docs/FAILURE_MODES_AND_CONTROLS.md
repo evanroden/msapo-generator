@@ -1,5 +1,12 @@
 # Email Process Control and Smartsheet Failure Modes
 
+> **Historical reliability register.** The authoritative business workflow as
+> of 2026-08-06 is
+> [`PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md`](PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md).
+> This file preserves valuable failure analysis, but its references to email,
+> EPO mode, full MSAPO generation, editable Object Account, and three-file
+> packages are superseded.
+
 **Status:** living reliability specification  
 **Scope:** current quote-to-email workflow plus live manual Smartsheet PO handoff  
 **Last reviewed:** 2026-08-04  
