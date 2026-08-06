@@ -100,6 +100,8 @@ def test_inline_handoff_keeps_manual_controls_and_requester_memory():
     assert "prefilled.url" in helper_source
     assert 'link_label="Open prefilled Smartsheet form ↗"' in helper_source
     assert 'config.form_url or ""' not in helper_source
+    assert 'fields.pop("send_copy_email", None)' in helper_source
+    assert "st.checkbox" not in helper_source
     assert "Request type = PO" in helper_source
     assert "Dispatch service center = NA" in helper_source
 
