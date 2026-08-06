@@ -35,6 +35,7 @@ from app.assets import (
 )
 from app import contracts
 from app import memory
+from app.po_context import PREPARED_PO_CONTEXT_STATE_KEY, build_po_context
 from app.config import (
     FACILITIES,
     FACILITY_SHORT_NAMES,
@@ -569,6 +570,10 @@ def main():
         layout="wide",
         initial_sidebar_state="collapsed",
     )
+    # A prepared snapshot is valid only while the Smartsheet page owns the
+    # session. Returning to the source workflow forces the next handoff to
+    # rebuild from the currently rendered widgets.
+    st.session_state.pop(PREPARED_PO_CONTEXT_STATE_KEY, None)
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
     # ── Hero ────────────────────────────────────────────────────────
@@ -1205,7 +1210,15 @@ def _render_smartsheet_handoff_control(step_number: str) -> None:
         use_container_width=True,
         key="continue_to_smartsheet_po",
     ):
-        st.switch_page("pages/2_Smartsheet_PO.py")
+        context = build_po_context(st.session_state)
+        if context is None:
+            st.error("Analyze a quote before opening the Smartsheet handoff.")
+        else:
+            # Widget-backed values are removed when their widgets disappear on
+            # the next Streamlit page. Persist the verified immutable snapshot
+            # under a non-widget key before switching.
+            st.session_state[PREPARED_PO_CONTEXT_STATE_KEY] = context
+            st.switch_page("pages/2_Smartsheet_PO.py")
 
 
 def _render_footer() -> None:
