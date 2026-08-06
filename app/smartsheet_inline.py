@@ -24,7 +24,6 @@ from app.memory import (
 )
 from app.po_context import POContext
 from app.smartsheet import (
-    OBJECT_ACCOUNT_OPTIONS,
     RRH_JOB_NUMBERS,
     SmartsheetConfigurationError,
     build_prefilled_form_url,
@@ -56,11 +55,11 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     """Render a prefilled form route without leaving the source workflow."""
     st.markdown("#### Smartsheet PO handoff")
     st.success(
-        "Your reviewed PO, quote, and generated attachments are still loaded on "
+        "Your reviewed PO, original quote, and supporting PDF are still loaded on "
         "this page."
     )
     st.info(
-        "Confirm the few fields below and download the prepared files. The purple "
+        "Confirm the few fields below and download both prepared files. The purple "
         "button will open a custom Smartsheet URL with the reviewed PO values "
         "already filled. Keep this page open for attachment uploads and the Copy "
         "fallback."
@@ -101,8 +100,8 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         "Requester *",
         key=requester_key,
         help=(
-            "After the same requester is used for three distinct POs, this "
-            "browser will prefill the name."
+            "Enter the person filling out this request. After the same requester "
+            "is used for three distinct POs, this browser will prefill the name."
         ),
     )
     requester_status = st.empty()
@@ -146,18 +145,6 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
             help="Adjust only if the form's exact dropdown wording differs.",
         )
     with right:
-        default_account = fields.get("object_account", "")
-        account_index = (
-            OBJECT_ACCOUNT_OPTIONS.index(default_account)
-            if default_account in OBJECT_ACCOUNT_OPTIONS
-            else 0
-        )
-        fields["object_account"] = st.selectbox(
-            "Object account *",
-            OBJECT_ACCOUNT_OPTIONS,
-            index=account_index,
-            key=f"{prefix}object_account",
-        )
         fields["instructions"] = st.text_area(
             "Additional information if needed",
             value=fields.get("instructions", ""),
@@ -165,15 +152,12 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
             key=f"{prefix}instructions",
         )
 
-    # Smartsheet's response-copy query parameter requires the requester's
-    # email address, while this workflow stores only the requester's name.
-    # Keep this as a deliberate choice inside the authenticated form rather
-    # than pretending a boolean value can prefill it.
-    fields.pop("send_copy_email", None)
     st.caption(
-        "Locked from the reviewed PO: Request type = PO; Agreement type = "
-        f"{fields.get('agreement_type') or '—'}; Dispatch service center = NA. "
-        "Choose ‘Send me a copy’ inside Smartsheet if needed."
+        "Locked from the reviewed PO rules: Request Type = PO; Object Account = "
+        f"{fields.get('object_account') or '—'}; Agreement Type = "
+        f"{fields.get('agreement_type') or '—'}; Dispatch Service Center = NA. "
+        "Leave Request Completed, PO #, Work Order #, and Original PO Number "
+        "remain blank."
     )
 
     missing_for_memory = missing_required_fields(
@@ -229,8 +213,8 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
                 use_container_width=True,
             )
         st.caption(
-            "Upload these files to the Smartsheet form. The original quote bytes "
-            "are unchanged."
+            "Upload both files to the Smartsheet form: the original quote and the "
+            "Scope/Inclusions/Exclusions PDF. The original quote bytes are unchanged."
         )
 
     st.markdown("##### 3. Open the prefilled Smartsheet form")
@@ -257,8 +241,8 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
 
     if not prefill_enabled(config):
         st.error(
-            "Automatic Smartsheet prefilling is not enabled. Use the email backup "
-            "while the deployment configuration is corrected."
+            "Automatic Smartsheet prefilling is not enabled. Use the Copy controls "
+            "after the deployment configuration is corrected."
         )
         return
 
@@ -289,7 +273,8 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         "1. Tap **Open prefilled Smartsheet form** below. It opens in a new tab.\n"
         "2. Review the populated fields. If Smartsheet leaves anything blank, "
         "return here and use its **Copy** button.\n"
-        "3. Upload the verified files downloaded above, then submit the form."
+        "3. Upload the original quote and supporting PDF downloaded above, then "
+        "submit the form."
     )
     render_manual_handoff(
         rows,
@@ -298,6 +283,6 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         link_label="Open prefilled Smartsheet form ↗",
     )
     st.caption(
-        "The custom URL fills form values but never submits the PO or includes "
-        "attachments. The original quote remains unchanged."
+        "The custom URL fills form values but cannot carry file attachments and "
+        "never submits the PO."
     )
