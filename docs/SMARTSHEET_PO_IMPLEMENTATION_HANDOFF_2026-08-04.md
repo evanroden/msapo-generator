@@ -657,3 +657,70 @@ Before modifying this feature, confirm that the change preserves all of the foll
 ## 19. Compact successor instruction
 
 > Continue from draft PR #25 on `agent/smartsheet-three-mode`. The live manual Smartsheet PO form is configured, but URL-prefill and API writes remain disabled. The current tool must always emit Request Type `PO` and service-center dispatch `NA`. RRH defaults to `RRH-695400022-O&M` and offers four confirmed RRH job numbers. Requester memory is per browser profile: an opaque cookie is hashed server-side, and the most recent requester with three distinct valid PO contexts is prefilled; reruns do not count, corrections move one event, and users can forget the browser. Preserve all existing source/document/attachment safety gates. Before merge, test the manual form and requester cookie on real iPhone/iPad Safari, verify exact RRH site/location options and multi-file attachment behavior, inspect Render disk persistence, and reconcile stacked PR #26.
+
+## Production integration correction — 2026-08-06
+
+### What production testing found
+
+Render correctly deployed merge commit 155d6dc2af003b97d7df7d59de71c3d7c4cdfc55, and the
+pages/2_Smartsheet_PO.py route existed. That did **not** make the handoff
+usable from the ordinary Email Process Control workflow:
+
+- run_web.py starts with the Streamlit sidebar collapsed.
+- app/web_ui.py contained no visible Smartsheet action after email preparation.
+- The only discoverable route was Streamlit's sidebar navigation.
+- A user opening /Smartsheet_PO directly created a new Streamlit websocket
+  session, so st.session_state no longer contained the analyzed quote,
+  reviewed routing, document signatures, or attachment bytes.
+- The direct page therefore displayed “Analyze a vendor quote in Email Process
+  Control first,” even though the user had completed the workflow in another
+  session.
+
+The prior deployment checks proved that the service and commit were live; they
+did not prove that the new feature was reachable with its required session state.
+Future acceptance must distinguish infrastructure health from workflow
+reachability.
+
+### Correction
+
+app/web_ui.py now renders an explicit **Continue to Smartsheet PO handoff**
+control immediately after the email/share panel and before contact-learning
+confirmation. The control uses st.page_link("pages/2_Smartsheet_PO.py", ...)
+so Streamlit performs an in-session page transition and retains the verified PO
+context.
+
+The visible step number remains correct for both supported workflows:
+
+- Standard MSAPO: Step 4 email → Step 5 Smartsheet.
+- Equipment-only PO: Step 3 email → Step 4 Smartsheet.
+
+A caption tells the user to continue in the same tab because opening the route
+as a fresh URL cannot carry transient session state.
+
+### Regression boundary
+
+tests/test_smartsheet_handoff_entrypoint.py verifies that:
+
+1. the main workflow calls the handoff renderer after the email/share renderer;
+2. the renderer points to the exact Streamlit page path;
+3. the link label, icon, and full-width presentation remain explicit; and
+4. the standard/EPO step-number selection remains present.
+
+### Production acceptance for this correction
+
+A deployment is accepted only when all of the following are true:
+
+1. GitHub Actions passes on the correction commit.
+2. Render reports that exact commit as live.
+3. The root workflow returns HTTP 200 and Streamlit health returns ok.
+4. A sample or redacted quote can be analyzed and its MSAPO generated.
+5. The main page visibly presents **Continue to Smartsheet PO handoff**.
+6. Activating that control changes to the Smartsheet page without starting a
+   blank context.
+7. The Smartsheet page displays the prepared PO fields and verified attachments,
+   rather than the “Analyze a vendor quote first” message.
+8. Manual mode opens the configured production form; URL prefill and API mode
+   remain disabled.
+
+Do not treat a Render live status or HTTP 200 health response alone as proof
+that a cross-page Streamlit workflow is usable.
