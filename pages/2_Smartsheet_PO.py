@@ -20,7 +20,11 @@ from app.memory import (
     record_device_requester,
     remembered_device_requester,
 )
-from app.po_context import build_po_context
+from app.po_context import (
+    POContext,
+    PREPARED_PO_CONTEXT_STATE_KEY,
+    build_po_context,
+)
 from app.smartsheet import (
     OBJECT_ACCOUNT_OPTIONS,
     RRH_JOB_NUMBERS,
@@ -65,7 +69,9 @@ except SmartsheetConfigurationError as exc:
     st.error(f"Smartsheet configuration error: {exc}")
     st.stop()
 
-context = build_po_context(st.session_state)
+context = st.session_state.get(PREPARED_PO_CONTEXT_STATE_KEY)
+if not isinstance(context, POContext):
+    context = build_po_context(st.session_state)
 if context is None:
     st.info(
         "Analyze a vendor quote in Email Process Control first. This page will then "
