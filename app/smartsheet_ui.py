@@ -9,7 +9,11 @@ import streamlit.components.v1 as components
 
 
 def render_manual_handoff(
-    rows: list[tuple[str, str, str]], form_url: str, *, key: str = "smartsheet-handoff"
+    rows: list[tuple[str, str, str]],
+    form_url: str,
+    *,
+    key: str = "smartsheet-handoff",
+    link_label: str = "Open Smartsheet form ↗",
 ) -> None:
     """Render an iPhone/iPad-friendly copy-in-order form assistant.
 
@@ -28,6 +32,7 @@ def render_manual_handoff(
         {
             "rows": row_payload,
             "formUrl": form_url,
+            "linkLabel": link_label,
             "storageKey": f"{key}-{digest}",
         },
         ensure_ascii=False,
@@ -36,7 +41,7 @@ def render_manual_handoff(
     html = r"""
 <div id="ss-root" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#12233B;">
   <div style="display:flex;gap:8px;margin-bottom:10px;">
-    <a id="ss-open" target="_blank" rel="noopener noreferrer"
+    <a id="ss-open" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"
        style="flex:1;text-align:center;background:#6D5AE6;color:#fff;text-decoration:none;border-radius:11px;padding:12px;font-weight:800;">
        Open Smartsheet form &#8599;
     </a>
@@ -128,6 +133,7 @@ def render_manual_handoff(
   }
 
   document.getElementById('ss-open').href = D.formUrl;
+  document.getElementById('ss-open').textContent = D.linkLabel;
   document.getElementById('ss-reset').addEventListener('click', () => {
     done.clear(); save(); paint(); status.textContent = 'Progress reset.';
   });
