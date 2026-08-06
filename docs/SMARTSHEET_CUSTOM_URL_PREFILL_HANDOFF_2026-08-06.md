@@ -99,10 +99,13 @@ must update this map and tests together. Do not “helpfully” correct
 `ORIGIONAL PO NUMBER` unless the live form label and sheet column have first
 been changed and verified.
 
-The “Send me a copy of my responses” checkbox is deliberately not added to the
-custom URL in this change. It remains visible in the EPC handoff and available
-through the manual Copy fallback. Checkbox query semantics were not part of the
-verified acceptance boundary and must not be guessed.
+The “Send me a copy of my responses” control is deliberately not added to the
+custom URL. Smartsheet's documented response-copy query parameter (`ECA`) needs
+the submitter's email address, while this workflow remembers only the requester's
+name. The former EPC boolean checkbox could not supply that email and its Copy
+value was not actionable, so the handoff now tells the user to choose the option
+inside Smartsheet if needed. Do not pass a vendor contact email or guess a
+requester email to automate this control.
 
 ## URL construction behavior
 
@@ -204,7 +207,9 @@ behavior are unchanged.
 - Fails loudly if the deployment gate or exact map is absent.
 - Derives fallback rows from the builder's included-field record.
 - Passes `prefilled.url`, never the base form URL, to the handoff component.
-- Keeps download buttons and all Copy controls.
+- Keeps download buttons and all mapped-field Copy controls.
+- Removes the non-actionable response-copy boolean and directs that choice to
+  the real Smartsheet form, where the requester can provide the proper email.
 - States clearly that opening the URL does not submit or carry attachments.
 
 ### `app/smartsheet_ui.py`
