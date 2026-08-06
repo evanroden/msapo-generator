@@ -16,12 +16,14 @@ services:
       # fail-closed Smartsheet idempotency state.
       - key: EPC_DATA_DIR
         value: /test1
-      # The verified PO form enables the manual handoff only. URL-prefill and API
-      # submission remain independently disabled until their acceptance gates pass.
+      # The verified PO form accepts exact-label query parameters. Custom-URL
+      # prefill is enabled; direct API row creation remains independently disabled.
       - key: SMARTSHEET_FORM_URL
         value: https://app.smartsheet.com/b/form/019e8e6717c471628f9a02280a892100
+      - key: SMARTSHEET_FORM_FIELD_MAP_JSON
+        value: '{"request_type":"REQUEST TYPE","requester_name":"REQUESTER","job_number":"JOB NUMBER","site_location":"SITE NUMBER / LOCATION","cost_code":"COST CODE","object_account":"OBJECT ACCOUNT","agreement_type":"AGREEMENT TYPE FOR PO","original_po_number":"ORIGIONAL PO NUMBER","total":"PO/CO AMOUNT","vendor":"VENDOR NAME","contact_name":"VENDOR CONTACT NAME","contact_email":"VENDOR CONTACT EMAIL","description_of_work":"DESCRIPTION OF WORK","asset_id":"ASSET ID","dispatch_service_center":"DISPATCH WO TO SERVICE CENTER?","instructions":"ADDITIONAL INFORMATION IF NEEDED"}'
       - key: SMARTSHEET_URL_PREFILL_ENABLED
-        value: "false"
+        value: "true"
       - key: SMARTSHEET_PREFILL_MAX_URL_LENGTH
         value: "7000"
       - key: SMARTSHEET_API_MODE
