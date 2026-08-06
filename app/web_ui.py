@@ -1147,6 +1147,10 @@ def main():
     _render_send_section(recipient=recipient, subject=subject, body=plain_body,
                          eml_bytes=eml_bytes, attachments=attachments)
 
+    # Keep the handoff in this Streamlit session. A direct URL visit creates a
+    # fresh session and cannot safely reuse the reviewed quote or attachments.
+    _render_smartsheet_handoff_link("4" if epo_mode else "5")
+
     # ── Learning: remember this send's details for this contract ────
     # Sending happens client-side (share sheet / .eml), so the app can't see
     # it — this button is the explicit "I sent it" signal. Once per quote+
@@ -1171,6 +1175,35 @@ def main():
             st.caption("Couldn't reach the memory store — details not saved this time.")
 
     _render_footer()
+
+
+def _render_smartsheet_handoff_link(step_number: str) -> None:
+    """Expose the prepared PO handoff without relying on sidebar discovery.
+
+    st.page_link performs Streamlit's in-session page transition. This is
+    intentional: navigating directly to /Smartsheet_PO creates a new websocket
+    session and loses the reviewed quote, generated documents, and verified
+    attachment fingerprints held in st.session_state.
+    """
+    st.markdown(
+        f"""
+        <div class="step-header">
+            <div class="step-num mint">{_h(step_number)}</div>
+            <p class="step-title">Submit the PO request</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Continue in this tab so the reviewed PO values and verified attachments "
+        "carry into Smartsheet."
+    )
+    st.page_link(
+        "pages/2_Smartsheet_PO.py",
+        label="Continue to Smartsheet PO handoff",
+        icon="📋",
+        use_container_width=True,
+    )
 
 
 def _render_footer() -> None:
