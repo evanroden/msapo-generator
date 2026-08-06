@@ -1,5 +1,11 @@
 # Smartsheet PO Implementation Handoff — 2026-08-04
 
+> **Historical implementation record.** The authoritative business policy as of
+> 2026-08-06 is
+> [`PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md`](PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md).
+> Preserve this file for incident history, but do not restore its prior
+> email/EPO/MSAPO package rules.
+
 ## 0. Purpose and authority
 
 This document is the implementation-level handoff for the Smartsheet PO work added to draft PR #25. It is written for a future developer or coding agent that may need to test, repair, extend, merge, or replace this work without access to the original conversation.
