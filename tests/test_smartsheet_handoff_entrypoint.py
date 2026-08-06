@@ -70,4 +70,34 @@ def test_handoff_uses_server_side_streamlit_page_switch():
     assert len(switches) == 1
     assert ast.literal_eval(switches[0].args[0]) == "pages/2_Smartsheet_PO.py"
 
+    helper_source = ast.get_source_segment(source, helper)
+    assert helper_source is not None
+    build = "context = build_po_context(st.session_state)"
+    persist = "st.session_state[PREPARED_PO_CONTEXT_STATE_KEY] = context"
+    switch = 'st.switch_page("pages/2_Smartsheet_PO.py")'
+    assert build in helper_source
+    assert persist in helper_source
+    assert helper_source.index(build) < helper_source.index(persist)
+    assert helper_source.index(persist) < helper_source.index(switch)
+
     assert '_render_smartsheet_handoff_control("4" if epo_mode else "5")' in source
+
+
+def test_destination_prefers_the_verified_non_widget_snapshot():
+    page = (
+        Path(__file__).parents[1] / "pages" / "2_Smartsheet_PO.py"
+    ).read_text(encoding="utf-8")
+    assert (
+        "context = st.session_state.get(PREPARED_PO_CONTEXT_STATE_KEY)"
+        in page
+    )
+    assert "if not isinstance(context, POContext):" in page
+    assert "context = build_po_context(st.session_state)" in page
+
+
+def test_source_page_invalidates_any_old_snapshot_before_rendering():
+    source = WEB_UI.read_text(encoding="utf-8")
+    assert (
+        "st.session_state.pop(PREPARED_PO_CONTEXT_STATE_KEY, None)"
+        in source
+    )
