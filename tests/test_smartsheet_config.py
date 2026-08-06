@@ -199,7 +199,6 @@ def test_prefill_value_translation_required_fields_and_length_limit():
     assert any("URL length limit" in item for item in result.skipped)
 
 
-
 def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
     field_map = {
         "request_type": "REQUEST TYPE",
@@ -252,9 +251,16 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
     assert "+" not in raw_query
     assert "REQUEST%20TYPE=PO" in raw_query
     assert "JOB%20NUMBER=RRH-695400022-O%26M" in raw_query
-    assert "SITE%20NUMBER%20%2F%20LOCATION=123%20-%20Test%20Hospital" in raw_query
+    assert (
+        "SITE%20NUMBER%20%2F%20LOCATION=123%20-%20Test%20Hospital"
+        in raw_query
+    )
     assert "VENDOR%20NAME=Example%20%26%20Sons" in raw_query
-    assert "DESCRIPTION%20OF%20WORK=Repair%20pump%20%237%20%26%20verify%20operation." in raw_query
+    assert (
+        "DESCRIPTION%20OF%20WORK="
+        "Repair%20pump%20%237%20%26%20verify%20operation."
+        in raw_query
+    )
     assert "DISPATCH%20WO%20TO%20SERVICE%20CENTER%3F=NA" in raw_query
     assert result.missing_required == ()
     assert result.skipped == ()
