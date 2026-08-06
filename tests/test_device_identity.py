@@ -17,3 +17,11 @@ def test_cookie_bootstrap_contains_no_requester_or_po_data():
     assert "SameSite=Lax" in html
     assert "requester" not in html.lower()
     assert "vendor" not in html.lower()
+
+
+def test_cookie_bootstrap_can_avoid_reloading_an_active_mobile_workflow():
+    assert "const reloadParent = true;" in cookie_bootstrap_html()
+    assert (
+        "const reloadParent = false;"
+        in cookie_bootstrap_html(reload_parent=False)
+    )
