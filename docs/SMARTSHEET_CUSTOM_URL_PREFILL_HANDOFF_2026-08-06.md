@@ -1,5 +1,12 @@
 # Smartsheet custom-URL prefill successor handoff — 2026-08-06
 
+> **Historical prefill incident record.** The `%20` encoding and exact-label
+> findings remain applicable. The authoritative business workflow and current
+> two-file package are documented in
+> [`PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md`](PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md).
+> References below to email backup, EPO mode, or full MSAPO generation are
+> superseded.
+
 
 ## Production follow-up: form opened but every value remained blank
 
