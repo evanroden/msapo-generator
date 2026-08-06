@@ -28,35 +28,46 @@ def test_main_exposes_smartsheet_handoff_after_email_panel():
     main = _functions(tree)["main"]
 
     send_lines = _named_call_lines(main, "_render_send_section")
-    handoff_lines = _named_call_lines(main, "_render_smartsheet_handoff_link")
+    handoff_lines = _named_call_lines(main, "_render_smartsheet_handoff_control")
 
     assert len(send_lines) == 1
     assert len(handoff_lines) == 1
     assert send_lines[0] < handoff_lines[0]
 
 
-def test_handoff_uses_exact_in_session_streamlit_page_link():
+def test_handoff_uses_server_side_streamlit_page_switch():
     source = WEB_UI.read_text(encoding="utf-8")
     tree = ast.parse(source)
-    helper = _functions(tree)["_render_smartsheet_handoff_link"]
+    helper = _functions(tree)["_render_smartsheet_handoff_control"]
 
-    page_links = [
+    buttons = [
         node
         for node in ast.walk(helper)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and isinstance(node.func.value, ast.Name)
         and node.func.value.id == "st"
-        and node.func.attr == "page_link"
+        and node.func.attr == "button"
     ]
 
-    assert len(page_links) == 1
-    call = page_links[0]
-    assert ast.literal_eval(call.args[0]) == "pages/2_Smartsheet_PO.py"
-
-    keywords = {item.arg: item.value for item in call.keywords}
-    assert ast.literal_eval(keywords["label"]) == "Continue to Smartsheet PO handoff"
-    assert ast.literal_eval(keywords["icon"]) == "📋"
+    assert len(buttons) == 1
+    button = buttons[0]
+    assert ast.literal_eval(button.args[0]) == "📋 Continue to Smartsheet PO handoff"
+    keywords = {item.arg: item.value for item in button.keywords}
+    assert ast.literal_eval(keywords["type"]) == "primary"
     assert ast.literal_eval(keywords["use_container_width"]) is True
+    assert ast.literal_eval(keywords["key"]) == "continue_to_smartsheet_po"
 
-    assert '_render_smartsheet_handoff_link("4" if epo_mode else "5")' in source
+    switches = [
+        node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "st"
+        and node.func.attr == "switch_page"
+    ]
+    assert len(switches) == 1
+    assert ast.literal_eval(switches[0].args[0]) == "pages/2_Smartsheet_PO.py"
+
+    assert '_render_smartsheet_handoff_control("4" if epo_mode else "5")' in source
