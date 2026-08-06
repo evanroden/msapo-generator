@@ -513,6 +513,7 @@ def _encode_prefill_query(query_items: Sequence[tuple[str, str]]) -> str:
     """
     return urlencode(query_items, doseq=True, quote_via=quote)
 
+
 def build_prefilled_form_url(
     fields: Mapping[str, Any], config: SmartsheetConfig
 ) -> PrefillResult:
@@ -554,7 +555,13 @@ def build_prefilled_form_url(
             continue
         candidate = [*query_items, (label, text)]
         candidate_url = urlunsplit(
-            (split.scheme, split.netloc, split.path, _encode_prefill_query(candidate), split.fragment)
+            (
+                split.scheme,
+                split.netloc,
+                split.path,
+                _encode_prefill_query(candidate),
+                split.fragment,
+            )
         )
         if len(candidate_url) > config.prefill_max_url_length:
             skipped.append(f"{field}: URL length limit reached")
@@ -563,7 +570,13 @@ def build_prefilled_form_url(
         included.append(field)
 
     url = urlunsplit(
-        (split.scheme, split.netloc, split.path, _encode_prefill_query(query_items), split.fragment)
+        (
+            split.scheme,
+            split.netloc,
+            split.path,
+            _encode_prefill_query(query_items),
+            split.fragment,
+        )
     )
     missing = missing_required_fields(fields, config.form_required_fields)
     return PrefillResult(url, tuple(included), tuple(skipped), missing)
