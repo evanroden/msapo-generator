@@ -1,5 +1,119 @@
 # Smartsheet custom-URL prefill successor handoff — 2026-08-06
 
+
+## Production follow-up: form opened but every value remained blank
+
+### User-visible evidence
+
+After production commit `2ad2f4da827b8a6a077033d69f68a16e223ab4ca`
+made the generated custom URL reachable, a real-device test produced a more
+specific result: the purple link opened the correct Smartsheet PO form, but no
+field was populated. This distinguishes the incident from the earlier bare-link
+and Streamlit-state failures. The prepared EPC values existed, the custom-URL
+route was enabled, and navigation reached the intended form; the receiving form
+rejected the serialized query payload.
+
+### Root cause
+
+`build_prefilled_form_url` used Python's default `urllib.parse.urlencode`
+behavior. That behavior delegates to `quote_plus`, which serializes every space
+as a literal `+`. For example, it emitted:
+
+`REQUEST+TYPE=PO&JOB+NUMBER=RRH-695400022-O%26M`
+
+Smartsheet's documented custom-form syntax uses RFC 3986 percent escapes for
+spaces, such as:
+
+`REQUEST%20TYPE=PO&JOB%20NUMBER=RRH-695400022-O%26M`
+
+The exact field names and values were logically correct, but the wire
+representation was not compatible with the live form. This affected nearly
+every production key because most labels contain spaces. Smartsheet treated the
+custom URL as an ordinary form open and presented blank inputs.
+
+The official reference used for this correction is:
+
+https://help.smartsheet.com/articles/2478871-url-query-string-form-default-values
+
+### Why the previous tests passed
+
+The PR #31 tests immediately called `parse_qs` on the generated URL and compared
+the decoded dictionary with the expected labels and values. Form-style query
+decoding deliberately treats `+` and `%20` as the same space character.
+Consequently, the test erased the very distinction that mattered to Smartsheet
+before making its assertions.
+
+This is an interoperability-test gap: semantic round-trip tests alone are
+insufficient when an external receiver requires a narrower on-the-wire syntax.
+
+### Correction
+
+The builder now centralizes serialization in `_encode_prefill_query` and calls:
+
+`urlencode(query_items, doseq=True, quote_via=quote)`
+
+The same encoder is used both while checking each candidate against the
+configured URL-length ceiling and while producing the final link. This prevents
+candidate/final length drift and guarantees that labels and values use `%20`
+for spaces. Reserved data characters continue to be escaped, including:
+
+- `&` in `O&M` as `%26`
+- `/` in `SITE NUMBER / LOCATION` as `%2F`
+- `?` in `DISPATCH WO TO SERVICE CENTER?` as `%3F`
+- `#` in scope text as `%23`
+
+No form labels, business values, environment variables, or routing controls are
+changed by this correction.
+
+### Regression boundary
+
+Tests now inspect the raw query string before decoding it. They require:
+
+1. no literal `+` anywhere in the generated prefill query;
+2. `%20` in every label and value containing spaces;
+3. exact escaping of the RRH `O&M` job number;
+4. exact escaping of the slash and question mark in live labels;
+5. exact escaping of ampersands and hashes in representative values; and
+6. the existing semantic `parse_qs` round-trip assertions.
+
+A future change that restores `quote_plus` will therefore fail even though the
+decoded Python dictionary still looks correct.
+
+### Preserved product and safety behavior
+
+This repair does not alter any established boundary:
+
+- Request Type remains locked to `PO`.
+- Dispatch remains locked to `NA`.
+- RRH defaults to `RRH-695400022-O&M`.
+- The email backup remains beside the Smartsheet route.
+- Attachments remain download-and-upload because a custom URL cannot carry them.
+- Opening the URL never submits a row.
+- Direct Smartsheet API row creation remains disabled.
+- Requester learning remains browser scoped with the three-distinct-PO rule.
+- Exact-label mapping, cell limits, URL limits, and Copy fallbacks remain active.
+
+### Deployment and acceptance sequence
+
+After CI passes, merge and allow Render to deploy the exact merge commit. Confirm
+the root page and health endpoint start cleanly. Then perform a non-submitting
+real-device check with a newly prepared PO:
+
+1. confirm the EPC page reports populated fields ready to prefill;
+2. tap **Open prefilled Smartsheet form**;
+3. confirm at minimum Request Type, Requester, Job Number, Site, Amount, Vendor,
+   Description, and Dispatch are populated;
+4. verify the dropdown values match exact options;
+5. do not submit the test form;
+6. return to EPC and confirm attachment downloads and **Use email backup** remain
+   available.
+
+If the form still opens blank, capture the visible destination URL before making
+another code change. The next branches to distinguish are query loss during
+mobile-app/auth redirection, a form-label change, and a receiver URL-length
+limit. Do not guess among those conditions, enable API submission, or remove the
+email fallback.
+
 ## Purpose and authority
 
 This document records the production correction that changes Email Process
