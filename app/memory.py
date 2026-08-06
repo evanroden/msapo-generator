@@ -1,5 +1,5 @@
 """
-Per-contract memory for Email Process Control.
+Per-contract and requester memory for Purchase Order Process Control.
 
 Learns, strictly scoped to one contract at a time:
   - administrator (recipient) emails      -> suggested after >= 5 uses
