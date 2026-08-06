@@ -692,7 +692,18 @@ that this deployment rendered the page link as an ordinary route navigation;
 following it opened a fresh websocket and again lost st.session_state. The
 final control is therefore a Streamlit button whose active-session event calls
 st.switch_page("pages/2_Smartsheet_PO.py"). The page switch occurs server-side
-inside the existing session and retains the verified PO context.
+inside the existing session.
+
+A third live pass showed that preserving the session alone was still
+insufficient: Streamlit removes widget-backed session keys when their widgets
+are not rendered on the destination page. Analysis state survived, but
+contract, site, cost code, asset, contact, and pricing widget values could
+disappear before the handoff rebuilt its context. The source page now calls
+build_po_context while every source widget is still rendered, stores the
+immutable POContext under PREPARED_PO_CONTEXT_STATE_KEY, and then switches
+pages. The destination consumes that verified non-widget snapshot on every
+rerun. Returning to the source page clears the snapshot so a later handoff
+must be rebuilt from current values.
 
 The visible step number remains correct for both supported workflows:
 
@@ -711,6 +722,11 @@ tests/test_smartsheet_handoff_entrypoint.py verifies that:
    page link or URL;
 3. the label, primary treatment, and full-width presentation remain explicit; and
 4. the standard/EPO step-number selection remains present.
+
+The regression checks also require the source to build and persist the
+verified snapshot before st.switch_page, require the destination to prefer it
+over reconstructing from disappearing widget keys, and require the source page
+to invalidate any old snapshot when it is rendered again.
 
 ### Production acceptance for this correction
 
