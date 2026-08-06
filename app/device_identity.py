@@ -25,12 +25,13 @@ def device_token(cookies: Mapping[str, str] | None) -> str:
     return value if _TOKEN_RE.fullmatch(value) else ""
 
 
-def cookie_bootstrap_html() -> str:
-    """Static script that creates the anonymous cookie and reloads at most once."""
-    return r"""
+def cookie_bootstrap_html(*, reload_parent: bool = True) -> str:
+    """Create the cookie, optionally reloading before transient work exists."""
+    source = r"""
 <script>
 (() => {
   const name = 'epc_device_id';
+  const reloadParent = __RELOAD_PARENT__;
   const present = document.cookie.split('; ').some(item => item.startsWith(name + '='));
   if (present) return;
 
@@ -46,15 +47,25 @@ def cookie_bootstrap_html() -> str:
 
   const reloadKey = 'epc-device-cookie-reload-v1';
   const stored = document.cookie.split('; ').some(item => item === `${name}=${token}`);
-  if (stored && !sessionStorage.getItem(reloadKey)) {
+  if (stored && reloadParent && !sessionStorage.getItem(reloadKey)) {
     sessionStorage.setItem(reloadKey, '1');
     window.parent.location.reload();
   }
 })();
 </script>
 """
+    return source.replace("__RELOAD_PARENT__", "true" if reload_parent else "false")
 
 
-def ensure_device_cookie() -> None:
-    """Attempt cookie creation without blocking the rest of the PO workflow."""
-    components.html(cookie_bootstrap_html(), height=0, scrolling=False)
+def ensure_device_cookie(*, reload_parent: bool = True) -> None:
+    """Attempt cookie creation without blocking the rest of the PO workflow.
+
+    Reload only during initial app setup, before a quote exists. Inline
+    handoffs use ``reload_parent=False`` because a full mobile reload can create
+    a fresh Streamlit session and discard in-memory PO values and attachments.
+    """
+    components.html(
+        cookie_bootstrap_html(reload_parent=reload_parent),
+        height=0,
+        scrolling=False,
+    )
