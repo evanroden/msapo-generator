@@ -26,6 +26,7 @@ from app.quote_analyzer import analyze_quote, QuoteAnalysis, AIAssumption
 from app.document_generator import generate_docx
 from app.pdf_converter import convert_to_pdf, PDFConversionError
 from app.eml_builder import build_eml, build_plain_body, build_mailto_url, DAVID_EMAIL
+from app.device_identity import device_token, ensure_device_cookie
 from app.assets import (
     assets_for_facility,
     asset_uids_for_facility,
@@ -35,7 +36,8 @@ from app.assets import (
 )
 from app import contracts
 from app import memory
-from app.po_context import PREPARED_PO_CONTEXT_STATE_KEY, build_po_context
+from app.po_context import POContext, build_po_context
+from app.smartsheet_inline import render_inline_smartsheet_handoff
 from app.config import (
     FACILITIES,
     FACILITY_SHORT_NAMES,
@@ -570,10 +572,14 @@ def main():
         layout="wide",
         initial_sidebar_state="collapsed",
     )
-    # A prepared snapshot is valid only while the Smartsheet page owns the
-    # session. Returning to the source workflow forces the next handoff to
-    # rebuild from the currently rendered widgets.
-    st.session_state.pop(PREPARED_PO_CONTEXT_STATE_KEY, None)
+    # Establish requester convenience identity before the user loads a quote.
+    # The bootstrap may reload once; doing it here prevents that reload from
+    # discarding an analyzed quote or generated attachment package later.
+    try:
+        if not device_token(st.context.cookies):
+            ensure_device_cookie()
+    except Exception:
+        pass
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
     # ── Hero ────────────────────────────────────────────────────────
@@ -1149,47 +1155,75 @@ def main():
 
     eml_bytes = build_eml(to=recipient, subject=subject, bullets=bullets, attachments=attachments)
 
-    _render_send_section(recipient=recipient, subject=subject, body=plain_body,
-                         eml_bytes=eml_bytes, attachments=attachments)
+    po_context = build_po_context(st.session_state)
+    delivery_route = _render_delivery_controls(
+        "4" if epo_mode else "5",
+        po_context,
+    )
 
-    # Keep the handoff in this Streamlit session. A direct URL visit creates a
-    # fresh session and cannot safely reuse the reviewed quote or attachments.
-    _render_smartsheet_handoff_control("4" if epo_mode else "5")
-
-    # ── Learning: remember this send's details for this contract ────
-    # Sending happens client-side (share sheet / .eml), so the app can't see
-    # it — this button is the explicit "I sent it" signal. Once per quote+
-    # contract to keep the >=5-uses counts honest.
-    rec_key = f"recorded_{tok}_{contract}"
-    if st.session_state.get(rec_key):
-        st.caption("✓ Details remembered for this contract — frequently used "
-                   "emails start auto-suggesting after 5 uses.")
-    elif st.button("✓ I sent it — remember these details for next time",
-                   key=f"rec_btn_{tok}_{contract}", use_container_width=True):
-        saved = memory.record_send(
-            contract=contract,
-            admin_email=recipient,
-            vendor=analysis.vendor_name,
-            contact_name=email_contact,
-            contact_email=email_contact_email,
-        )
-        st.session_state[rec_key] = True
-        if saved:
-            st.rerun()
+    if delivery_route == "smartsheet":
+        if po_context is None:
+            st.error("Analyze a quote before preparing the Smartsheet handoff.")
         else:
-            st.caption("Couldn't reach the memory store — details not saved this time.")
+            # Mobile Safari can establish a fresh Streamlit session during a
+            # multipage navigation, discarding reviewed values and attachment
+            # bytes. Keep the complete manual handoff in this page instead.
+            render_inline_smartsheet_handoff(po_context)
+
+    if delivery_route == "email":
+        st.markdown("#### Email backup")
+        st.caption(
+            "Use this if Smartsheet is unavailable or you need the established "
+            "email process instead."
+        )
+        _render_send_section(
+            recipient=recipient,
+            subject=subject,
+            body=plain_body,
+            eml_bytes=eml_bytes,
+            attachments=attachments,
+        )
+
+        # Sending happens client-side (share sheet / .eml), so this explicit
+        # confirmation is the only safe time to update contract-scoped memory.
+        rec_key = f"recorded_{tok}_{contract}"
+        if st.session_state.get(rec_key):
+            st.caption(
+                "✓ Details remembered for this contract — frequently used "
+                "emails start auto-suggesting after 5 uses."
+            )
+        elif st.button(
+            "✓ I sent it — remember these details for next time",
+            key=f"rec_btn_{tok}_{contract}",
+            use_container_width=True,
+        ):
+            saved = memory.record_send(
+                contract=contract,
+                admin_email=recipient,
+                vendor=analysis.vendor_name,
+                contact_name=email_contact,
+                contact_email=email_contact_email,
+            )
+            st.session_state[rec_key] = True
+            if saved:
+                st.rerun()
+            else:
+                st.caption(
+                    "Couldn't reach the memory store — details not saved this time."
+                )
 
     _render_footer()
 
 
-def _render_smartsheet_handoff_control(step_number: str) -> None:
-    """Switch pages through the active Streamlit session.
+def _render_delivery_controls(
+    step_number: str,
+    context: POContext | None,
+) -> str:
+    """Offer the primary Smartsheet route and email fallback together.
 
-    Production testing showed that st.page_link rendered a normal anchor in
-    this deployment. Following it opened a fresh websocket session and lost
-    the reviewed quote, generated documents, and verified attachment
-    fingerprints held in st.session_state. A button event followed by
-    st.switch_page performs the transition server-side in the active session.
+    The choice is scoped to the immutable PO context ID, so a new quote cannot
+    reopen controls for the prior quote. Smartsheet renders inline to avoid the
+    mobile Streamlit page transition that lost session state in production.
     """
     st.markdown(
         f"""
@@ -1201,24 +1235,29 @@ def _render_smartsheet_handoff_control(step_number: str) -> None:
         unsafe_allow_html=True,
     )
     st.caption(
-        "Continue in this tab so the reviewed PO values and verified attachments "
-        "carry into Smartsheet."
+        "Smartsheet is the recommended route. Email stays available beside it "
+        "as a backup."
     )
-    if st.button(
-        "📋 Continue to Smartsheet PO handoff",
-        type="primary",
-        use_container_width=True,
-        key="continue_to_smartsheet_po",
-    ):
-        context = build_po_context(st.session_state)
-        if context is None:
-            st.error("Analyze a quote before opening the Smartsheet handoff.")
-        else:
-            # Widget-backed values are removed when their widgets disappear on
-            # the next Streamlit page. Persist the verified immutable snapshot
-            # under a non-widget key before switching.
-            st.session_state[PREPARED_PO_CONTEXT_STATE_KEY] = context
-            st.switch_page("pages/2_Smartsheet_PO.py")
+    context_id = context.context_id if context is not None else "no-context"
+    route_key = f"delivery_route_{context_id}"
+    smartsheet_col, email_col = st.columns(2, gap="small")
+    with smartsheet_col:
+        if st.button(
+            "📋 Prepare Smartsheet submission",
+            type="primary",
+            use_container_width=True,
+            key=f"open_smartsheet_{context_id}",
+        ):
+            st.session_state[route_key] = "smartsheet"
+    with email_col:
+        if st.button(
+            "✉️ Use email backup",
+            type="primary",
+            use_container_width=True,
+            key=f"open_email_backup_{context_id}",
+        ):
+            st.session_state[route_key] = "email"
+    return str(st.session_state.get(route_key, ""))
 
 
 def _render_footer() -> None:
