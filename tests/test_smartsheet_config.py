@@ -154,8 +154,16 @@ def test_prefill_replaces_existing_field_value_and_preserves_unrelated_query():
         },
         config,
     )
-    query = parse_qs(urlsplit(result.url).query)
+    raw_query = urlsplit(result.url).query
+    query = parse_qs(raw_query)
 
+    # Smartsheet's live form requires documented percent escapes for spaces.
+    # parse_qs normalizes both "+" and "%20", so raw-wire assertions are
+    # necessary to catch an encoder that is semantically valid but rejected by
+    # the receiving form.
+    assert "+" not in raw_query
+    assert "SITE%20NUMBER%20%2F%20LOCATION=UMMC" in raw_query
+    assert "DESCRIPTION%20OF%20WORK=Pump%20%237%20repair" in raw_query
     assert query["source"] == ["epc"]
     assert query[label] == ["UMMC"]
     assert query["DESCRIPTION OF WORK"] == ["Pump #7 repair"]
@@ -238,8 +246,16 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
     )
 
     result = build_prefilled_form_url(fields, config)
-    query = parse_qs(urlsplit(result.url).query)
+    raw_query = urlsplit(result.url).query
+    query = parse_qs(raw_query)
 
+    assert "+" not in raw_query
+    assert "REQUEST%20TYPE=PO" in raw_query
+    assert "JOB%20NUMBER=RRH-695400022-O%26M" in raw_query
+    assert "SITE%20NUMBER%20%2F%20LOCATION=123%20-%20Test%20Hospital" in raw_query
+    assert "VENDOR%20NAME=Example%20%26%20Sons" in raw_query
+    assert "DESCRIPTION%20OF%20WORK=Repair%20pump%20%237%20%26%20verify%20operation." in raw_query
+    assert "DISPATCH%20WO%20TO%20SERVICE%20CENTER%3F=NA" in raw_query
     assert result.missing_required == ()
     assert result.skipped == ()
     assert result.included == tuple(
