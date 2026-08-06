@@ -165,17 +165,15 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
             key=f"{prefix}instructions",
         )
 
-    fields["send_copy_email"] = (
-        "true"
-        if st.checkbox(
-            "Send me a copy of my Smartsheet responses",
-            key=f"{prefix}send_copy_email",
-        )
-        else ""
-    )
+    # Smartsheet's response-copy query parameter requires the requester's
+    # email address, while this workflow stores only the requester's name.
+    # Keep this as a deliberate choice inside the authenticated form rather
+    # than pretending a boolean value can prefill it.
+    fields.pop("send_copy_email", None)
     st.caption(
         "Locked from the reviewed PO: Request type = PO; Agreement type = "
-        f"{fields.get('agreement_type') or '—'}; Dispatch service center = NA."
+        f"{fields.get('agreement_type') or '—'}; Dispatch service center = NA. "
+        "Choose ‘Send me a copy’ inside Smartsheet if needed."
     )
 
     missing_for_memory = missing_required_fields(
