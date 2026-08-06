@@ -1,9 +1,24 @@
 import hashlib
 from types import SimpleNamespace
 
-from app.contracts import RRH_CONTRACT
-from app.eml_builder import DAVID_EMAIL
+import pytest
+
 from app.po_context import _document_signature, build_po_context
+from app.po_rules import (
+    EQUIPMENT_ACCOUNT,
+    EQUIPMENT_PO,
+    MATERIALS_ACCOUNT,
+    ONSITE_LABOR,
+    ONSITE_RENTAL,
+    OUTSIDE_RENTALS_ACCOUNT,
+    RENTAL_AGREEMENT,
+    SERVICE_AGREEMENT,
+    STANDARD_PO_OVER_25K,
+    STANDARD_PO_UNDER_25K,
+    SUBCONTRACTOR_ACCOUNT,
+    THIRD_PARTY_SHIPPING,
+    VENDOR_DELIVERY,
+)
 
 
 def _analysis(**overrides):
@@ -33,170 +48,146 @@ def _token(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
-def test_generic_context_reuses_finalized_values_and_original_quote_bytes(tmp_path):
+def _state(
+    *,
+    route: str,
+    total: str = "$108.00",
+    uploaded: bool = True,
+    asset: str = "None Applicable",
+):
     quote_text = "quote text"
     quote_bytes = b"original quote bytes"
     token = _token(quote_text)
-    docx = tmp_path / "internal.docx"
-    pdf = tmp_path / "internal.pdf"
-    docx.write_bytes(b"docx bytes")
-    pdf.write_bytes(b"pdf bytes")
-
     state = {
-        "analysis": _analysis(),
+        "analysis": _analysis(total_amount=total),
         "analysis_token": token,
-        "epo_mode": False,
         "quote_text": quote_text,
-        "extracted_text": quote_text,
-        "uploaded_file_name": "vendor original.pdf",
-        "uploaded_file_bytes": quote_bytes,
-        "extract_hash": hashlib.sha256(quote_bytes).hexdigest(),
-        "docx_path": docx,
-        "pdf_path": pdf,
+        f"purchase_route_{token}": route,
         f"contract_{token}": "Tulane",
         f"gsite_{token}_Tulane": "Tulane",
         f"gcat_{token}_Tulane": "Repairs",
         f"gcost_{token}_Tulane": "TUL-REPAIR",
-        f"recip_{token}_Tulane": "administrator@example.com",
-        f"noasset_{token}_Tulane_Tulane": False,
-        f"asset_{token}_Tulane_Tulane": "EEA-CWP-07",
+        f"noasset_{token}_Tulane_Tulane": asset == "None Applicable",
+        f"asset_{token}_Tulane_Tulane": asset,
         f"contact_{token}": "Final Contact",
         f"cemail_{token}": "final@example.com",
         f"desc_{token}": "Final Pump Repair",
-        f"sub_{token}": "$100.00",
-        f"tax_{token}": "$8.00",
-        f"total_{token}": "$108.00",
+        f"total_{token}": total,
+        f"total_confirmed_{token}": True,
+        "scope_pdf_bytes": b"%PDF-1.7\nsynthetic scope pdf",
+        "scope_pdf_signature": _document_signature(
+            token,
+            "Tulane",
+            "Tulane",
+            ["Labor", "Startup testing"],
+            ["Painting"],
+        ),
     }
-    state["document_signature"] = _document_signature(
-        token, "Tulane", "Tulane", ["Labor", "Startup testing"], ["Painting"]
+    if uploaded:
+        state.update(
+            {
+                "extracted_text": quote_text,
+                "uploaded_file_name": "vendor original.pdf",
+                "uploaded_file_bytes": quote_bytes,
+                "extract_hash": hashlib.sha256(quote_bytes).hexdigest(),
+            }
+        )
+    return state
+
+
+@pytest.mark.parametrize(
+    ("route", "total", "expected_account", "expected_agreement"),
+    [
+        (ONSITE_LABOR, "$108.00", SUBCONTRACTOR_ACCOUNT, SERVICE_AGREEMENT),
+        (ONSITE_RENTAL, "$108.00", OUTSIDE_RENTALS_ACCOUNT, RENTAL_AGREEMENT),
+        (THIRD_PARTY_SHIPPING, "$108.00", EQUIPMENT_ACCOUNT, EQUIPMENT_PO),
+        (
+            VENDOR_DELIVERY,
+            "$24,999.99",
+            MATERIALS_ACCOUNT,
+            STANDARD_PO_UNDER_25K,
+        ),
+        (
+            VENDOR_DELIVERY,
+            "$25,000.00",
+            MATERIALS_ACCOUNT,
+            STANDARD_PO_OVER_25K,
+        ),
+    ],
+)
+def test_context_applies_the_canonical_classification(
+    route, total, expected_account, expected_agreement
+):
+    context = build_po_context(
+        _state(route=route, total=total),
+        {"EPC_REQUESTER_NAME": "must not become the requester"},
     )
 
-    context = build_po_context(state, {"EPC_REQUESTER_NAME": "Evan Roden"})
-
-    assert context is not None and context.ready
-    assert context.fields["requester_name"] == "Evan Roden"
-    assert context.fields["request_type"] == "PO"
-    assert context.fields["contract"] == "Tulane"
-    assert context.fields["site"] == "Tulane"
-    assert context.fields["site_location"] == "Tulane"
-    assert context.fields["job_number"] == ""
-    assert context.fields["cost_code"] == "TUL-REPAIR"
-    assert context.fields["object_account"] == "5511-SUBCONTRACTOR"
-    assert context.fields["agreement_type"] == "03 - MSAPO (SERVICE)"
-    assert context.fields["dispatch_service_center"] == "NA"
-    assert context.fields["asset_id"] == "EEA-CWP-07"
-    assert context.fields["contact_name"] == "Final Contact"
-    assert "Inclusions:" in context.fields["description_of_work"]
-    assert "Painting" in context.fields["description_of_work"]
-    assert context.attachments[0] == ("vendor original.pdf", quote_bytes)
-    assert context.attachments[1][0].startswith("Tulane Tulane")
-    assert context.attachments[1][1] == b"docx bytes"
-    assert context.attachments[2][1] == b"pdf bytes"
-    assert len(context.context_id) == 20
-
-
-def test_pasted_text_does_not_attach_a_previous_uploaded_file():
-    pasted = "new pasted quote"
-    token = _token(pasted)
-    state = {
-        "analysis": _analysis(),
-        "analysis_token": token,
-        "epo_mode": True,
-        "quote_text": pasted,
-        "extracted_text": "old uploaded quote",
-        "uploaded_file_name": "old.pdf",
-        "uploaded_file_bytes": b"old bytes",
-        "extract_hash": hashlib.sha256(b"old bytes").hexdigest(),
-        f"contract_{token}": RRH_CONTRACT,
-        f"site_{token}": "UMMC",
-        f"cat_{token}_united_memorial": "Building Automation",
-        f"total_{token}": "$108.00",
-    }
-
-    context = build_po_context(state, {})
     assert context is not None
-    assert context.attachments == (("Vendor Quote.txt", pasted.encode()),)
+    assert context.fields["requester_name"] == ""
+    assert context.fields["request_type"] == "PO"
+    assert context.fields["object_account"] == expected_account
+    assert context.fields["agreement_type"] == expected_agreement
+    assert context.fields["dispatch_service_center"] == "NA"
+    assert context.fields["total"] == total
+    assert context.fields["leave_request_completed"] == ""
+    assert context.fields["po_number"] == ""
+    assert context.fields["work_order_number"] == ""
+    assert context.fields["original_po_number"] == ""
+    assert [name for name, _ in context.attachments] == [
+        "vendor original.pdf",
+        "Tulane Tulane Repair chilled water pump Scope.pdf",
+    ]
+    assert context.attachments[0][1] == b"original quote bytes"
+    assert context.attachments[1][1].startswith(b"%PDF-")
+    assert not any("Choose how the vendor" in warning for warning in context.warnings)
 
 
-def test_rrh_equipment_only_context_omits_asset_field_and_uses_david():
-    quote_text = "equipment quote"
-    quote_bytes = b"equipment bytes"
-    token = _token(quote_text)
-    state = {
-        "analysis": _analysis(
-            facility_name="United Memorial Medical Center",
-            facility_address="127 North St, Batavia, NY 14020",
-        ),
-        "analysis_token": token,
-        "epo_mode": True,
-        "quote_text": quote_text,
-        "extracted_text": quote_text,
-        "uploaded_file_name": "equipment.pdf",
-        "uploaded_file_bytes": quote_bytes,
-        "extract_hash": hashlib.sha256(quote_bytes).hexdigest(),
-        f"contract_{token}": RRH_CONTRACT,
-        f"site_{token}": "UMMC",
-        f"cat_{token}_united_memorial": "Building Automation",
-        f"total_{token}": "$108.00",
-    }
+def test_asset_prefix_is_removed_and_only_number_reaches_smartsheet():
+    context = build_po_context(
+        _state(route=ONSITE_LABOR, asset="EEA-CWP-07"),
+        {},
+    )
+    assert context is not None and context.ready
+    assert context.fields["asset_id"] == "07"
 
+
+def test_pasted_quote_becomes_the_original_text_attachment():
+    state = _state(route=THIRD_PARTY_SHIPPING, uploaded=False)
     context = build_po_context(state, {})
     assert context is not None and context.ready
-    assert context.fields["request_type"] == "PO"
-    assert context.fields["order_type"] == "Equipment-only PO"
-    assert context.fields["site"] == "UMMC"
-    assert context.fields["site_location"] == "UMMC"
-    assert context.fields["job_number"] == "RRH-695400022-O&M"
-    assert context.fields["cost_code"] == "01CEABA"
-    assert context.fields["object_account"] == "5302-EQUIPMENT"
-    assert context.fields["agreement_type"] == "OR - EQUIPMENT PO"
-    assert context.fields["dispatch_service_center"] == "NA"
-    assert context.fields["administrator_email"] == DAVID_EMAIL
-    assert context.fields["asset_id"] == ""
-    assert context.attachments == (("equipment.pdf", quote_bytes),)
+    assert context.attachments[0] == ("Vendor Quote.txt", b"quote text")
+    assert context.attachments[1][0].endswith("Scope.pdf")
 
 
-def test_stale_document_signature_is_excluded_and_blocks_submission(tmp_path):
-    quote_text = "quote"
-    token = _token(quote_text)
-    docx = tmp_path / "stale.docx"
-    docx.write_bytes(b"stale")
-    state = {
-        "analysis": _analysis(),
-        "analysis_token": token,
-        "quote_text": quote_text,
-        "epo_mode": False,
-        "docx_path": docx,
-        "document_signature": "wrong",
-        f"contract_{token}": "Tulane",
-        f"gsite_{token}_Tulane": "Tulane",
-        f"gcost_{token}_Tulane": "TUL-REPAIR",
-        f"total_{token}": "$108.00",
-    }
+def test_stale_scope_pdf_is_excluded_and_blocks_submission():
+    state = _state(route=ONSITE_LABOR)
+    state["scope_pdf_signature"] = "wrong"
 
     context = build_po_context(state, {})
     assert context is not None and not context.ready
-    assert not any(name.endswith(".docx") for name, _ in context.attachments)
+    assert len(context.attachments) == 1
     assert any("no longer matches" in warning for warning in context.warnings)
+    assert any("must contain the original quote" in warning for warning in context.warnings)
 
 
-def test_context_reports_missing_and_mismatched_requirements():
-    quote_text = "old quote"
-    state = {
-        "analysis": _analysis(total_amount=None),
-        "analysis_token": "wrong-token",
-        "quote_text": quote_text,
-        "epo_mode": False,
-        "uploaded_file_name": "new.pdf",
-        "uploaded_file_bytes": b"new bytes",
-        "extract_hash": hashlib.sha256(b"new bytes").hexdigest(),
-        "extracted_text": "",
-    }
+def test_total_must_be_all_in_and_explicitly_confirmed():
+    state = _state(route=VENDOR_DELIVERY)
+    token = state["analysis_token"]
+    state[f"total_confirmed_{token}"] = False
 
     context = build_po_context(state, {})
     assert context is not None and not context.ready
-    assert "Select the contract in Email Process Control." in context.warnings
-    assert "Confirm the total amount before submission." in context.warnings
-    assert any("prior analysis" in warning for warning in context.warnings)
-    assert any("fingerprint" in warning for warning in context.warnings)
-    assert any("Regenerate" in warning for warning in context.warnings)
+    assert "Confirm the PO/CO amount includes all fees and taxes." in context.warnings
+
+
+def test_missing_route_is_blocked_instead_of_falling_back_to_legacy_epo_logic():
+    state = _state(route=ONSITE_LABOR)
+    token = state["analysis_token"]
+    state[f"purchase_route_{token}"] = ""
+
+    context = build_po_context(state, {})
+    assert context is not None and not context.ready
+    assert context.fields["object_account"] == ""
+    assert context.fields["agreement_type"] == ""
+    assert any("Choose how the vendor" in warning for warning in context.warnings)

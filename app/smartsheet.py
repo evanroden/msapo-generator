@@ -25,6 +25,17 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 import requests
 
 from app.smartsheet_store import SubmissionStore, SubmissionStoreError
+from app.po_rules import (
+    EQUIPMENT_ACCOUNT,
+    EQUIPMENT_PO,
+    MATERIALS_ACCOUNT,
+    OUTSIDE_RENTALS_ACCOUNT,
+    RENTAL_AGREEMENT,
+    SERVICE_AGREEMENT,
+    STANDARD_PO_OVER_25K,
+    STANDARD_PO_UNDER_25K,
+    SUBCONTRACTOR_ACCOUNT,
+)
 
 BASE_URL = "https://api.smartsheet.com/2.0"
 REQUEST_TIMEOUT = 60
@@ -40,6 +51,9 @@ DISPLAY_LABELS: dict[str, str] = {
     "cost_code": "COST CODE",
     "object_account": "OBJECT ACCOUNT",
     "agreement_type": "AGREEMENT TYPE FOR PO",
+    "leave_request_completed": "LEAVE REQUEST COMPLETED",
+    "po_number": "PO #",
+    "work_order_number": "WORK ORDER #",
     # The live form and destination sheet both contain this spelling.
     "original_po_number": "ORIGIONAL PO NUMBER",
     "total": "PO/CO AMOUNT",
@@ -50,10 +64,17 @@ DISPLAY_LABELS: dict[str, str] = {
     "asset_id": "ASSET ID",
     "dispatch_service_center": "DISPATCH WO TO SERVICE CENTER?",
     "instructions": "ADDITIONAL INFORMATION IF NEEDED",
-    "send_copy_email": "Send me a copy of my responses",
-    "submission_key": "Email Process Control Submission Key",
+    "submission_key": "Purchase Order Process Control Submission Key",
 }
 KNOWN_FIELDS = frozenset(DISPLAY_LABELS)
+ALWAYS_BLANK_FIELDS = frozenset(
+    {
+        "leave_request_completed",
+        "po_number",
+        "work_order_number",
+        "original_po_number",
+    }
+)
 
 DEFAULT_FORM_ORDER: tuple[str, ...] = (
     "request_type",
@@ -63,7 +84,6 @@ DEFAULT_FORM_ORDER: tuple[str, ...] = (
     "cost_code",
     "object_account",
     "agreement_type",
-    "original_po_number",
     "total",
     "vendor",
     "contact_name",
@@ -94,20 +114,20 @@ RRH_JOB_NUMBERS: tuple[str, ...] = (
     "RRH-695400034-ES JOB CCJ",
 )
 OBJECT_ACCOUNT_OPTIONS: tuple[str, ...] = (
-    "5301-MATERIALS",
+    MATERIALS_ACCOUNT,
     "5490-OTHER",
-    "5511-SUBCONTRACTOR",
-    "5302-EQUIPMENT",
-    "5411-OUTSIDE RENTALS",
+    SUBCONTRACTOR_ACCOUNT,
+    EQUIPMENT_ACCOUNT,
+    OUTSIDE_RENTALS_ACCOUNT,
 )
 AGREEMENT_TYPE_OPTIONS: tuple[str, ...] = (
     "NA",
-    "03 - MSAPO (SERVICE)",
-    "03 - MRAPO (RENTAL)",
+    SERVICE_AGREEMENT,
+    RENTAL_AGREEMENT,
     "03 - CSAPO (CONSTRUCTION)",
-    "ON - STANDARD PO UNDER $25K",
-    "OR - STANDARD PO OVER $25K",
-    "OR - EQUIPMENT PO",
+    STANDARD_PO_UNDER_25K,
+    STANDARD_PO_OVER_25K,
+    EQUIPMENT_PO,
 )
 _EXACT_OPTIONS: dict[str, tuple[str, ...]] = {
     "request_type": ("PO",),
@@ -119,7 +139,7 @@ _EXACT_OPTIONS: dict[str, tuple[str, ...]] = {
 _AMOUNT_FIELDS = {"total"}
 _DATE_FIELDS: set[str] = set()
 _EMAIL_FIELDS = {"contact_email"}
-_BOOLEAN_FIELDS = {"send_copy_email"}
+_BOOLEAN_FIELDS: set[str] = set()
 _ALLOWED_API_MODES = {"disabled", "dry_run", "live"}
 _ALLOWED_ROW_POSITIONS = {"top", "bottom"}
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -474,7 +494,13 @@ def missing_required_fields(
 def validate_submission_fields(fields: Mapping[str, Any]) -> tuple[str, ...]:
     problems: list[str] = []
     for field, value in fields.items():
-        if field not in KNOWN_FIELDS or not _nonempty(value):
+        if field not in KNOWN_FIELDS:
+            continue
+        if field in ALWAYS_BLANK_FIELDS:
+            if _nonempty(value):
+                problems.append(f"{DISPLAY_LABELS[field]} must remain blank.")
+            continue
+        if not _nonempty(value):
             continue
         text = str(value).strip()
         if len(text) > MAX_CELL_CHARS:
@@ -495,6 +521,8 @@ def validate_submission_fields(fields: Mapping[str, Any]) -> tuple[str, ...]:
                 _money_number(text)
             except ValueError:
                 problems.append(f"{DISPLAY_LABELS[field]} is not a valid amount.")
+        if field == "asset_id" and not text.isdigit():
+            problems.append("ASSET ID must contain numbers only.")
         options = _EXACT_OPTIONS.get(field)
         if options and text not in options:
             problems.append(
@@ -541,6 +569,8 @@ def build_prefilled_form_url(
             continue
         seen.add(field)
         if field not in KNOWN_FIELDS:
+            continue
+        if field in ALWAYS_BLANK_FIELDS:
             continue
         value = fields.get(field)
         if not _nonempty(value):
@@ -593,6 +623,8 @@ def handoff_rows(
         seen.add(field)
         if field not in KNOWN_FIELDS:
             continue
+        if field in ALWAYS_BLANK_FIELDS:
+            continue
         value = fields.get(field)
         if not _nonempty(value):
             continue
@@ -610,12 +642,17 @@ def _safe_filename(filename: str, default: str = "attachment") -> str:
 def download_names(
     attachments: Sequence[tuple[str, bytes]], base: str
 ) -> list[tuple[str, str, bytes]]:
-    stem = re.sub(r"\s*MSAPO\s*$", "", _safe_filename(base, "PO"), flags=re.I).strip() or "PO"
+    stem = re.sub(
+        r"\s*(?:MSAPO|Scope)\s*$",
+        "",
+        _safe_filename(base, "PO"),
+        flags=re.I,
+    ).strip() or "PO"
     result: list[tuple[str, str, bytes]] = []
     for index, (filename, data) in enumerate(attachments, 1):
         safe_original = _safe_filename(filename)
         extension = Path(safe_original).suffix.lower()
-        kind = "Quote" if index == 1 else "MSAPO"
+        kind = "Quote" if index == 1 else "Scope"
         label = f"{kind} · {extension.lstrip('.').upper()}" if extension else kind
         result.append((label, f"{stem} {index} {kind}{extension}", data))
     return result
@@ -645,7 +682,7 @@ def preflight_attachments(
 def _headers(config: SmartsheetConfig, extra: Mapping[str, str] | None = None) -> dict[str, str]:
     headers = {
         "Authorization": f"Bearer {config.api_token}",
-        "smartsheet-integration-source": "APPLICATION,ENFRA,EmailProcessControl",
+        "smartsheet-integration-source": "APPLICATION,ENFRA,PurchaseOrderProcessControl",
     }
     if extra:
         headers.update(extra)
@@ -805,6 +842,8 @@ def _build_cells(
     cells: list[dict] = []
     problems: list[str] = []
     for field, spec in config.column_specs.items():
+        if field in ALWAYS_BLANK_FIELDS:
+            continue
         raw = fields.get(field)
         if not _nonempty(raw):
             continue

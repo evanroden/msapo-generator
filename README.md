@@ -1,64 +1,94 @@
-# Email Process Control
+# Purchase Order Process Control
 
-Email Process Control turns a vendor quote into a reviewed MSAPO package and a ready-to-send purchase-order email. It is a Dockerized Streamlit application deployed on Render.
+Purchase Order Process Control turns a vendor quote into a reviewed, prefilled
+Smartsheet PO request and a two-file supporting package. It is a Dockerized
+Streamlit application deployed on Render. The repository retains its historical
+`msapo-generator` name, but the active product is no longer an email or MSAPO
+document generator.
 
-The repository retains its original `msapo-generator` name, but the product is a quote-to-email workflow with a Smartsheet PO handoff. The verified manual handoff is active when its form URL is configured; URL-prefill and API writes remain separately gated.
+The authoritative business and implementation handoff is
+[`docs/PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md`](docs/PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md).
+Read that document before changing routing, field mappings, attachments, or the
+Smartsheet handoff.
 
 ## Current workflow
 
-1. Select standard MSAPO or Equipment-only PO mode.
-2. Upload a PDF/image/text file or paste quote text.
-3. Extract text locally when possible; use Claude vision for scans/images.
-4. Validate Claude's structured quote analysis.
-5. Review scope, inclusions, exclusions, tax, routing, cost code, asset, contact, and pricing.
-6. Generate MSAPO DOCX and, when LibreOffice succeeds, PDF.
-7. Open a ready-to-send Outlook draft or Apple Mail share flow.
-8. Open the Smartsheet PO handoff for ordered copy/paste values and adjacent attachment downloads.
-9. Explicitly record a completed send for contract-isolated contact suggestions.
+1. Upload a PDF/image/text quote or paste quote text.
+2. Extract and review the vendor, site, amount, Scope, Inclusions, and Exclusions.
+3. Explicitly choose how the vendor will fulfill the order.
+4. Confirm contract, site, cost code, numeric asset ID, vendor contact, and the
+   all-in amount including taxes and every fee.
+5. Generate one simple Scope/Inclusions/Exclusions PDF.
+6. Prepare the Smartsheet handoff inline on the same page.
+7. Confirm the requester—the person currently filling out the request—and the
+   exact job/site values.
+8. Download the unchanged original quote and generated PDF.
+9. Open the custom prefilled Smartsheet URL, upload both files, review, and submit.
 
-Equipment-only POs preserve and attach the original quote but skip MSAPO generation.
+There is no email-submission route in the active UI.
 
-## Non-negotiable behavior
+## Canonical classification matrix
 
-- Standard MSAPO documents are generated for **all contracts**, not only RRH.
-- RRH retains its dedicated sites, cost-code derivation, fixed administrator, and conservative asset registry.
-- Data learned for one contract never appears on another.
-- An unresolved asset defaults to no applicable asset; the application never selects the first asset by convenience.
-- Unknown contract/site routing must be explicitly confirmed.
-- The original quote bytes are preserved unchanged.
-- Generated documents are accepted only while their contract/site/review fingerprint remains current.
-- Optional integrations remain inert until verified configuration exists.
-- The current handoff always emits `PO` as Request Type and `NA` for service-center dispatch.
+| Fulfillment route | Object Account | Agreement Type |
+|---|---|---|
+| Vendor performs labor onsite | `5511-SUBCONTRACTOR` | `03 - MSAPO (SERVICE)` |
+| Onsite rental service | `5411-OUTSIDE RENTALS` | `03 - MRAPO (RENTAL)` |
+| Vendor only delivers/drops off onsite; no labor | `5301-MATERIALS` | `< $25,000`: `ON - STANDARD PO UNDER $25K`; otherwise `OR - STANDARD PO OVER $25K` |
+| Third-party shipping; vendor never onsite; no labor | `5302-EQUIPMENT` | `OR - EQUIPMENT PO` |
+
+The live Smartsheet option is spelled `MRAPO` for rental even though people may
+say “MSAPO rental.” CSAPO is intentionally not selected by this tool.
+
+## Locked field rules
+
+- Request Type is always `PO`.
+- Requester is always the person filling out the current request. It is never
+  sourced from a deployment-wide default.
+- Dispatch WO to Service Center is always `NA`.
+- Leave Request Completed, PO #, Work Order #, and Original PO Number always
+  remain blank. They are omitted from custom-URL prefilling and API cell writes.
+- PO/CO Amount is the final payable amount including tax, freight, delivery,
+  surcharges, and every other fee.
+- Asset ID contains numbers only; displayed letter prefixes are removed.
+
+## Attachment package
+
+Every route requires exactly two files:
+
+1. The original quote, byte-for-byte unchanged when uploaded, or a TXT snapshot
+   when the user supplied pasted quote text.
+2. One generated PDF containing Scope, Inclusions, and Exclusions.
+
+The active workflow does not generate or request the old MSAPO DOCX/form. The
+custom URL can prefill fields but cannot place local files in Smartsheet's upload
+control, so the user downloads both verified files and uploads them in the form.
 
 ## Project structure
 
 ```text
-app/web_ui.py                 Current quote/email workflow
-app/quote_analyzer.py          Claude quote extraction
-app/analysis_schema.py         Claude response validation
+app/web_ui.py                 Active quote-to-Smartsheet workflow
+app/quote_analyzer.py          Structured quote extraction
+app/analysis_schema.py         Model-response validation
 app/ocr.py                     PDF/image extraction and normalization
-app/document_generator.py      MSAPO DOCX generation
-app/pdf_converter.py           LibreOffice/Gotenberg/docx2pdf conversion
-app/eml_builder.py             Outlook and Apple Mail draft content
-app/contracts.py               Non-RRH contract/site/asset registry
-app/assets.py                  RRH asset registry
-app/memory.py                  Contract and anonymous-browser learning
+app/po_rules.py                Canonical route/account/agreement rules
+app/scope_pdf.py               Lightweight supporting PDF generation
+app/po_context.py              Verified PO fields and two-file snapshot
+app/smartsheet.py              Manual/prefill/API validation and adapters
+app/smartsheet_inline.py       Mobile-safe inline handoff and requester entry
+app/smartsheet_ui.py           Prefilled-link and copy controls
 app/device_identity.py         Opaque first-party browser identity cookie
-app/po_context.py              Verified cross-page PO snapshot
-app/smartsheet.py              Manual, URL-prefill, and API routes
-app/smartsheet_store.py        Leased/idempotent API state
-app/smartsheet_ui.py           Mobile manual-copy assistant
-pages/2_Smartsheet_PO.py       Smartsheet PO handoff page
-docs/FAILURE_MODES_AND_CONTROLS.md
-                               Reliability register and incident runbooks
+app/memory.py                  Contract and anonymous-browser learning
+app/smartsheet_store.py        Leased/idempotent future API state
+pages/2_Smartsheet_PO.py       Non-submitting legacy bookmark notice
+docs/PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md
+                               Authoritative policy and successor handoff
 tests/                         Pytest regression suite
 ```
 
-## Template behavior
-
-`app/document_generator.py` opens `templates/Master_MSAPO_Template.docx`, verifies the sentinel paragraph, clears the pre-filled first exhibit row, and appends the reviewed facility, vendor, project description, detailed scope, inclusions, exclusions, and tax status.
-
-The template does not use `{{TAG}}` replacement. A text audit found no RRH/facility wording, but legal applicability and non-text branding still require business confirmation before broad rollout.
+`app/document_generator.py`, `app/pdf_converter.py`, and `app/eml_builder.py`
+remain only as dormant historical compatibility modules. The active UI does not
+import or call them. Do not reconnect them without a new approved business
+requirement.
 
 ## Local development
 
@@ -83,104 +113,70 @@ Run tests:
 python -m pytest -q
 ```
 
-Pull requests and pushes to `main` run the same suite in GitHub Actions and retain a seven-day JUnit artifact.
+Pull requests and pushes to `main` run the same suite in GitHub Actions.
 
 ## Deployment
 
-Render runs one Docker web service on port 8501. Production uses LibreOffice and stores contract learning, anonymous-browser requester learning, and Smartsheet idempotency state on the persistent disk at `EPC_DATA_DIR=/test1`.
+Render runs one Docker web service on port 8501. Production stores contract
+learning, anonymous-browser requester learning, and guarded Smartsheet API state
+on the persistent disk at `EPC_DATA_DIR=/test1`.
 
-Render dashboard values can override `render.yaml`; inspect both when a model, credential, form URL, or integration change appears ineffective.
-
-SQLite is appropriate only while the service remains single-instance. Migrate learning and idempotency to a shared transactional database before scaling horizontally.
+Render dashboard values override `render.yaml`. When form behavior differs from
+the repository, compare `SMARTSHEET_FORM_URL`,
+`SMARTSHEET_FORM_FIELD_MAP_JSON`, `SMARTSHEET_URL_PREFILL_ENABLED`, and
+`SMARTSHEET_API_MODE` in both places.
 
 ## Input support
 
-The UI accepts PDF, TXT, PNG, JPEG, WebP, TIFF/TIF, BMP, and HEIC/HEIF/HIF. Text PDFs are extracted locally. TIFF/BMP/HEIC are normalized to Claude-compatible PNG blocks in memory; the original upload remains unchanged for attachment.
+The UI accepts PDF, TXT, PNG, JPEG, WebP, TIFF/TIF, BMP, and HEIC/HEIF/HIF.
+Text PDFs are extracted locally. Scans and images use the configured analysis
+path. The original uploaded bytes are retained for the attachment package.
 
-## Smartsheet PO handoff
+## Requester memory
 
-The handoff supports three independent routes that reuse the same verified source record. The live form's exact field labels and required inputs are represented in code. Request Type is locked to `PO`; service-center dispatch is locked to `NA` because this workflow does not submit work orders.
+The page uses a random opaque first-party browser cookie. The token is hashed
+before SQLite storage and contains no requester, quote, vendor, price, or PO
+data. After the same requester is used on three distinct verified PO contexts,
+that browser suggests the name. Streamlit reruns do not increase the count, and
+shared devices can forget the requester. Blocked cookies disable only this
+convenience.
 
-RRH defaults to `RRH-695400022-O&M` and offers the four confirmed choices:
+## Smartsheet modes
 
-- `RRH-695400022-O&M`
-- `RRH-695400023-START UP`
-- `RRH-695400030-ISDC`
-- `RRH-695400034-ES JOB CCJ`
+### Custom-URL handoff
 
-Non-RRH job numbers remain exact-value entry until their Smartsheet option lists are supplied and verified.
-
-### Requester memory
-
-The page creates a random, opaque first-party browser cookie. The token is hashed before SQLite storage and contains no requester, quote, vendor, pricing, or PO data. After the same requester is used on three distinct verified PO contexts, that browser prefills the name. Streamlit reruns cannot increase the count, correcting a name moves the one recorded use, and a shared device can forget its requester without deleting contract learning. Clearing browser storage or using another browser/device starts fresh; blocked cookies simply disable this convenience without blocking the PO workflow.
-
-### Manual copy/paste
-
-`SMARTSHEET_FORM_URL` points to the verified live PO form. The page supplies one-tap values in the form's order and safe adjacent attachment downloads. It opens only when the source package and confirmed required fields pass preflight.
-
-### Exact-label URL prefill
-
-URL prefill remains off until the live form is proven to accept query parameters. To test it safely, configure:
-
-- `SMARTSHEET_URL_PREFILL_ENABLED=true`
-- `SMARTSHEET_FORM_FIELD_MAP_JSON` using exact visible labels
-- optional `SMARTSHEET_FORM_VALUE_MAP_JSON` using exact option values
-- `SMARTSHEET_FORM_REQUIRED_FIELDS`
-- optional `SMARTSHEET_PREFILL_MAX_URL_LENGTH` (default 7000)
-
-The application never guesses parameter names. Existing mapped parameters are replaced rather than duplicated. Oversized fields are skipped with reasons. Files must still be attached manually.
+Production uses exact visible field labels and percent-encoded values. The link
+opens but does not submit the form. Empty locked fields are deliberately omitted.
+Any field that cannot fit safely in the URL remains available through a Copy
+control.
 
 ### Direct API
 
-Proceed from `disabled` to `dry_run` before `live`. Configure:
-
-- dedicated least-privilege `SMARTSHEET_API_TOKEN`
-- `SMARTSHEET_SHEET_ID`
-- `SMARTSHEET_COLUMN_SPECS_JSON`
-- `SMARTSHEET_REQUIRED_FIELDS`
-- a dedicated writable `submission_key` text column
-
-Each column specification records a numeric ID, exact title, exact type, and optionally expected picklist options. Live validation blocks renamed, retyped, locked, system, formula, or option-drifted columns. Values are sent strictly typed; no `strict:false` coercion is used.
-
-API reliability controls include:
-
-- deterministic field/attachment submission key;
-- expiring single-owner SQLite lease;
-- duplicate rows blocked across reruns and reopened browsers;
-- ambiguous row creation marked `uncertain`, never blindly retried;
-- exact submission-key reconciliation, including recovery after local-state loss;
-- deterministic remote attachment names and remote-list verification after a lost upload response;
-- partial attachment retry resumes the same row;
-- empty, duplicate, unsafe, or over-30-MB attachments blocked;
-- values over 4,000 characters blocked before silent cell truncation;
-- live tokens restricted to `api.smartsheet.com`.
-
-## Reliability and activation
-
-Read [`docs/FAILURE_MODES_AND_CONTROLS.md`](docs/FAILURE_MODES_AND_CONTROLS.md) before enabling URL prefill or API writes. It contains the failure-mode register, activation gates, acceptance matrix, and runbooks for uncertain writes, partial attachments, schema drift, form changes, and idempotency-store failure.
-
-PR #25 should remain draft until the manual handoff receives a real-device Safari pass. API mode must remain disabled until verified column IDs exist and one controlled live row-plus-attachments round trip succeeds.
-
-## Security cautions
-
-- Quotes may contain pricing, contacts, facility, and asset information and may be sent to Anthropic for analysis/OCR.
-- The current production app has no merged application-level authentication. Configure Render protection or merge the fail-closed access gate only after its secret exists; ENFRA SSO is preferable before broad use.
-- Do not commit API keys, tokens, production mappings, or real credentials.
-- Live Smartsheet API use requires a dedicated least-privilege service account.
-- The original quote and generated package must be reviewed before send/submission.
+Direct row creation remains disabled. Do not enable it without a least-privilege
+token, destination sheet ID, exact column IDs/titles/types/options, a dedicated
+submission-key column, dry-run validation, and one controlled row-plus-two-files
+acceptance test. The existing adapter is fail-closed and retains duplicate and
+ambiguous-write controls for possible future use.
 
 ## Troubleshooting
 
 | Problem | Action |
 |---|---|
-| Model-not-found or authentication error | Check `ANTHROPIC_MODEL`/key in both Render dashboard and blueprint. |
-| Scanned PDF appears blank | Try a clearer scan and verify the configured model supports document/image input. |
-| PDF conversion fails | Continue with DOCX and inspect LibreOffice availability/logs. |
-| Routing/review edit invalidates document | Regenerate the MSAPO. |
-| No asset selected | Confirm the quote names a real tagged unit; otherwise retain no applicable asset. |
-| Requester is not remembered | Complete three distinct PO contexts in the same browser; check whether cookies are blocked or cleared. |
-| Manual Smartsheet route absent | Check the verified form URL in both `render.yaml` and the Render dashboard. |
-| URL prefill absent | It is intentionally off until exact labels and live query behavior are verified. |
-| API schema blocked | Validate exact ID/title/type/options and writability in dry-run. |
-| API result says outcome uncertain | Do not resubmit; follow exact-key reconciliation in the runbook. |
-| API storage blocked | Restore the persistent disk/database; never use an in-memory fallback. |
+| Quote analysis is stale after a new upload | Re-analyze the current quote; the handoff blocks mismatched fingerprints. |
+| Route classification looks wrong | Recheck the four route definitions in `app/po_rules.py`; do not infer from “comes onsite” alone. |
+| Standard PO tier is missing | Enter and confirm a valid all-in PO/CO Amount. |
+| Asset contains letters | Confirm the selected registry asset; only its numeric identifier is sent. |
+| Scope PDF became stale | Regenerate it after changing contract, site, Inclusions, or Exclusions. |
+| Attachments are not in Smartsheet | Download both files from the handoff and upload them to the form; URL parameters cannot carry files. |
+| Prefilled fields are blank | Compare exact form labels and the `%20` URL encoding with production environment values. |
+| Requester is not remembered | Prepare three distinct PO contexts in the same browser and verify cookies are permitted. |
+| API mode is blocked | Leave it disabled until the complete activation gate in the handoff document is satisfied. |
+
+## Security cautions
+
+- Quotes can contain pricing, contacts, facility, and asset information.
+- Do not commit API keys, service tokens, production credentials, or real quotes.
+- Review every prefilled form and both attachments before submission.
+- Do not add an automatic submit action to the custom-URL route.
+- Migrate SQLite state to a shared transactional database before running more
+  than one application instance.

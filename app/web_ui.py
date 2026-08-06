@@ -1,43 +1,20 @@
-"""
-Streamlit web interface for Email Process Control.
+"""Streamlit interface for Purchase Order Process Control.
 
-Drop in a vendor quote and the app extracts the details, builds the MSAPO
-document (or skips it for equipment-only POs), and hands you a ready-to-send
-administrator email — pre-filled for Outlook on desktop and Apple Mail on an
-iPhone/iPad, detected automatically.
+The application converts a reviewed vendor quote into a prefilled Smartsheet PO
+request and a two-file supporting package: the unchanged quote plus a concise
+Scope/Inclusions/Exclusions PDF. It does not create or send email.
 """
 
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
-
-import base64
 import hashlib
 import html
-import json
-import mimetypes
 import re
-import streamlit as st
-import streamlit.components.v1 as components
-from pathlib import Path
 
-from app.ocr import extract_text
-from app.quote_analyzer import analyze_quote, QuoteAnalysis, AIAssumption
-from app.document_generator import generate_docx
-from app.pdf_converter import convert_to_pdf, PDFConversionError
-from app.eml_builder import build_eml, build_plain_body, build_mailto_url, DAVID_EMAIL
-from app.device_identity import device_token, ensure_device_cookie
-from app.assets import (
-    assets_for_facility,
-    asset_uids_for_facility,
-    asset_by_uid,
-    asset_label,
-    guess_asset_id,
-)
+import streamlit as st
+
 from app import contracts
-from app import memory
-from app.po_context import POContext, build_po_context
-from app.smartsheet_inline import render_inline_smartsheet_handoff
+from app.assets import assets_for_facility, guess_asset_id
 from app.config import (
     FACILITIES,
     FACILITY_SHORT_NAMES,
@@ -46,14 +23,27 @@ from app.config import (
     lookup_cost_code,
     valid_categories_for_site,
 )
+from app.device_identity import device_token, ensure_device_cookie
+from app.ocr import extract_text
+from app.po_context import POContext, _document_signature, build_po_context
+from app.po_rules import (
+    PURCHASE_ROUTE_LABELS,
+    PURCHASE_ROUTES,
+    classify_po,
+    normalize_asset_id,
+)
+from app.quote_analyzer import AIAssumption, QuoteAnalysis, analyze_quote
+from app.scope_pdf import build_scope_pdf
+from app.smartsheet_inline import render_inline_smartsheet_handoff
+
 
 SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
 SITE_LABELS = list(FACILITY_SHORT_NAMES.values())
 CONTRACT_PLACEHOLDER = "— Select a contract —"
 SITE_PLACEHOLDER = "— Select a site —"
+ROUTE_PLACEHOLDER = "— Select how the vendor will provide this order —"
 
-# ── Design System ────────────────────────────────────────────────────
-# Navy #12314F · Orange #F0803C · Grape #6D5AE6 · Mint #16A34A
+
 CUSTOM_CSS = """
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&display=swap');
@@ -211,85 +201,42 @@ CUSTOM_CSS = """
 """
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Helpers
-# ══════════════════════════════════════════════════════════════════════
-def _h(value) -> str:
-    """HTML-escape a model/user-derived value before it goes into an
-    unsafe_allow_html markdown block (the quote is authored by the vendor)."""
-    return html.escape(str(value)) if value is not None else ""
+def _h(value: object) -> str:
+    return html.escape(str(value or ""))
 
 
 def _strip_ai_wrapper(text: str) -> str:
-    m = re.search(r"\[AI ESTIMATE:\s*(.+?)\]", text)
-    return m.group(1) if m else text
+    match = re.search(r"\[AI ESTIMATE:\s*(.+?)\]", text)
+    return match.group(1).strip() if match else text.strip()
 
 
-def _build_unified_lists(analysis: QuoteAnalysis):
-    """Return (inclusions, exclusions) as lists of (clean_text, is_ai)."""
-    def _process(raw_items: list[str], section_key: str) -> list[tuple[str, bool]]:
-        seen: set[str] = set()
+def _build_unified_lists(
+    analysis: QuoteAnalysis,
+) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
+    """Return de-duplicated inclusion/exclusion choices with AI flags."""
+
+    def _process(items: list[str], section: str) -> list[tuple[str, bool]]:
         result: list[tuple[str, bool]] = []
-        for item in raw_items:
-            is_ai = "[AI ESTIMATE:" in item
-            clean = _strip_ai_wrapper(item)
-            if clean not in seen:
+        seen: set[str] = set()
+        for item in items or []:
+            raw = str(item)
+            clean = _strip_ai_wrapper(raw)
+            if clean and clean not in seen:
                 seen.add(clean)
-                result.append((clean, is_ai))
-        for assumption in analysis.ai_assumptions:
-            if assumption.section == section_key and assumption.text not in seen:
-                seen.add(assumption.text)
-                result.append((assumption.text, True))
+                result.append((clean, "[AI ESTIMATE:" in raw))
+        for assumption in analysis.ai_assumptions or []:
+            if assumption.section != section:
+                continue
+            clean = str(assumption.text or "").strip()
+            if clean and clean not in seen:
+                seen.add(clean)
+                result.append((clean, True))
         return result
 
-    return _process(analysis.inclusions, "inclusion"), _process(analysis.exclusions, "exclusion")
-
-
-def _has_breakdown(subtotal: str, tax: str) -> bool:
-    """Show subtotal + tax bullets only when the quote itemized both."""
-    return bool(subtotal and subtotal.strip()) and bool(tax and tax.strip())
-
-
-def _parse_amount(value: str | None) -> Decimal | None:
-    """Parse a displayed US-dollar amount without changing the user's text."""
-    if not value or not value.strip():
-        return None
-    cleaned = re.sub(r"[^0-9.-]", "", value)
-    if not cleaned or cleaned in {"-", ".", "-."}:
-        return None
-    try:
-        return Decimal(cleaned)
-    except InvalidOperation:
-        return None
-
-
-def _pricing_difference(subtotal: str, tax: str, total: str) -> Decimal | None:
-    """Return subtotal + tax - total when all three values are parseable."""
-    sub = _parse_amount(subtotal)
-    sales_tax = _parse_amount(tax)
-    grand_total = _parse_amount(total)
-    if sub is None or sales_tax is None or grand_total is None:
-        return None
-    return sub + sales_tax - grand_total
-
-
-def _document_signature(
-    token: str,
-    contract: str,
-    site_label: str,
-    inclusions: list[str],
-    exclusions: list[str],
-) -> str:
-    """Fingerprint every selection that changes the generated MSAPO."""
-    payload = {
-        "analysis": token,
-        "contract": contract,
-        "site": site_label,
-        "inclusions": inclusions,
-        "exclusions": exclusions,
-    }
-    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return (
+        _process(analysis.inclusions, "inclusion"),
+        _process(analysis.exclusions, "exclusion"),
+    )
 
 
 def _routing_for_generation(
@@ -297,25 +244,20 @@ def _routing_for_generation(
     quote_text: str,
     token: str,
 ) -> tuple[str, str, str | None, str | None]:
-    """Use the user's saved routing choices when rebuilding a document.
-
-    Contract/site widgets appear after the build step. Streamlit preserves their
-    values in session state, so a required regeneration can still use the final
-    corrected routing instead of repeating the original AI guess.
-    """
+    """Resolve the reviewed contract/site for the generated scope PDF."""
     detected_contract, detected_site = contracts.match_facility(
         analysis.facility_name, quote_text
     )
     contract = st.session_state.get(f"contract_{token}") or detected_contract or ""
     if contract == CONTRACT_PLACEHOLDER:
-        contract = detected_contract or ""
+        contract = ""
 
     if contracts.is_rrh(contract):
         facility_key = facility_key_from_name(analysis.facility_name)
         default_site = FACILITY_SHORT_NAMES.get(facility_key) if facility_key else ""
         site = st.session_state.get(f"site_{token}") or default_site or ""
         if site == SITE_PLACEHOLDER:
-            site = default_site or ""
+            site = ""
         selected_key = SITE_LABEL_TO_KEY.get(site)
         if selected_key:
             facility = FACILITIES[selected_key]
@@ -338,243 +280,260 @@ def _routing_for_generation(
     return "", detected_site or "", analysis.facility_name, analysis.facility_address
 
 
-def _doc_basename(contract: str, rrh: bool, site_label: str, description: str) -> str:
-    """Contract-aware MSAPO document filename stem (no extension).
-
-    RRH keeps its established convention exactly — "RRH {short-site} {desc} MSAPO".
-    Every other contract is prefixed with its own name and chosen site instead of
-    a hardcoded "RRH", so a Tulane/NOVANT/etc. administrator never receives a file
-    labeled "RRH …". Built in the email step, where the contract and the user's
-    final site choice are both known (the document itself is contract-neutral).
-    """
-    prefix = "RRH" if rrh else (contract or "").strip()
-    safe_desc = re.sub(r"[^\w\s\-]", "", description or "SOW")[:50]
-    # Don't cut mid-word ("…seals in t") — trim back to the last full word.
-    if len(safe_desc) == 50 and " " in safe_desc:
-        safe_desc = safe_desc.rsplit(" ", 1)[0]
-    parts = [prefix, (site_label or "").strip(), safe_desc.strip(), "MSAPO"]
-    name = " ".join(p for p in parts if p)
-    # Strip characters that are invalid in filenames / attachment names.
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
-    return re.sub(r"\s+", " ", name).strip() or "MSAPO"
-
-
 def _build_test_analysis() -> QuoteAnalysis:
-    """A realistic sample that exercises every downstream feature: a site with
-    assets, an itemized subtotal + tax, and a guessable asset tag (CH-1)."""
     return QuoteAnalysis(
         vendor_name="Northeast Mechanical Services",
-        project_description="Absorption chiller CH-1 teardown, inspection, and seasonal repair at Clifton Springs Hospital.",
+        project_description="Repair and recommission absorption chiller CH-1.",
         facility_name="Clifton Springs Hospital & Clinic",
         facility_address="2 Coulter Rd, Clifton Springs, NY 14432",
         scope_of_work=(
-            "1. Isolate and drain absorption chiller CH-1 in the Central Plant.\n\n"
-            "2. Inspect the CH-1 solution pump, purge unit, and tube bundle; replace "
-            "worn gaskets and the purge valve.\n\n"
-            "3. Verify cooling tower CT-1 interlocks and refill CH-1 with lithium "
-            "bromide to spec, then run a full commissioning cycle."
+            "Isolate and drain absorption chiller CH-1. Inspect the solution "
+            "pump, purge unit, and tube bundle; replace worn gaskets and the "
+            "purge valve. Refill and perform a full commissioning cycle."
         ),
         inclusions=[
-            "Absorption chiller CH-1 teardown and reassembly",
+            "Chiller teardown and reassembly",
             "Gasket and purge valve replacement",
-            "Lithium bromide charge to manufacturer spec",
-            "Full commissioning cycle and written report",
+            "Startup and commissioning",
         ],
-        exclusions=[
-            "Replacement of the CH-1 tube bundle",
-            "Refrigerant reclamation beyond the purge unit",
-            "[AI ESTIMATE: After-hours or emergency service calls]",
-            "[AI ESTIMATE: Crane or rigging for major component removal]",
-        ],
-        tax_status="included",
-        tax_warning=None,
-        tax_note="Estimated sales tax is included in the total. Actual invoice amount may differ.",
+        exclusions=["Crane or rigging", "Work outside the quoted equipment"],
         ai_assumptions=[
-            AIAssumption(text="After-hours or emergency service calls", section="exclusion"),
-            AIAssumption(text="Crane or rigging for major component removal", section="exclusion"),
-            AIAssumption(text="Facility provides access to the Central Plant during business hours", section="inclusion"),
+            AIAssumption(
+                text="Facility provides normal-hours equipment access",
+                section="inclusion",
+            )
         ],
-        contact_name="Marcus Bell",
-        contact_email="mbell@nemechanical.com",
-        subtotal_amount="$4,200.00",
-        tax_amount="$346.50",
-        total_amount="$4,546.50",
-        short_description="Chiller CH-1 Repair",
+        contact_name="Morgan Bell",
+        contact_email="mbell@example.com",
+        subtotal_amount="$23,250.00",
+        tax_amount="$1,860.00",
+        total_amount="$25,110.00",
+        short_description="Chiller Repair",
+        tax_status="included",
+        tax_note="Quoted total includes the stated sales tax.",
         work_category="repairs",
+        asset_reference="CH-1",
     )
 
 
 def _load_test_into_state() -> None:
     analysis = _build_test_analysis()
+    quote_text = analysis.scope_of_work
+    token = hashlib.sha256(quote_text.encode("utf-8")).hexdigest()[:12]
+    quote_bytes = b"(synthetic sample quote placeholder)"
     st.session_state["analysis"] = analysis
-    st.session_state["analysis_token"] = "TEST"
-    st.session_state["quote_text"] = analysis.scope_of_work
-    st.session_state["last_sig"] = "TEST"
-    st.session_state["uploaded_file_bytes"] = b"(sample quote placeholder)"
-    st.session_state["uploaded_file_name"] = "Sample_Quote.pdf"
-    st.session_state.pop("docx_path", None)
-    st.session_state.pop("pdf_path", None)
+    st.session_state["analysis_token"] = token
+    st.session_state["quote_text"] = quote_text
+    st.session_state["last_sig"] = hashlib.sha256(
+        quote_text.encode("utf-8")
+    ).hexdigest()
+    st.session_state["extracted_text"] = quote_text
+    st.session_state["uploaded_file_bytes"] = quote_bytes
+    st.session_state["uploaded_file_name"] = "Sample_Quote.txt"
+    st.session_state["extract_hash"] = hashlib.sha256(quote_bytes).hexdigest()
+    st.session_state.pop("scope_pdf_bytes", None)
+    st.session_state.pop("scope_pdf_signature", None)
 
 
-def _render_send_section(*, recipient: str, subject: str, body: str, eml_bytes: bytes,
-                         attachments: list[tuple[str, bytes]]) -> None:
-    """One self-contained, client-side send panel.
+def _render_routing_controls(
+    analysis: QuoteAnalysis,
+    quote_text: str,
+    token: str,
+) -> tuple[str, bool, str, str, str, str | None]:
+    """Render contract/site/cost-code controls using the established keys."""
+    detected_contract, detected_site = contracts.match_facility(
+        analysis.facility_name, quote_text
+    )
+    contract_options = [CONTRACT_PLACEHOLDER] + contracts.contract_names()
+    default_index = (
+        contract_options.index(detected_contract)
+        if detected_contract in contract_options
+        else 0
+    )
+    contract = st.selectbox(
+        "Contract *",
+        contract_options,
+        index=default_index,
+        key=f"contract_{token}",
+    )
+    if contract == CONTRACT_PLACEHOLDER:
+        return "", False, "", "", "", None
 
-    Detects iPhone/iPad vs. desktop in the browser (using navigator.maxTouchPoints,
-    which is the only reliable way to catch an iPad that reports itself as a Mac)
-    and shows the matching flow — Apple Mail share sheet or Outlook .eml download —
-    with a manual switch for edge cases.  No server round-trip, no toggle to babysit.
-    """
-    payload = json.dumps({
-        "subject": subject,
-        "body": body,
-        "to": recipient,
-        "emlName": f"{subject}.eml",
-        "emlB64": base64.b64encode(eml_bytes).decode("ascii"),
-        "files": [
-            {
-                "name": name,
-                "mime": mimetypes.guess_type(name)[0] or "application/octet-stream",
-                "b64": base64.b64encode(data).decode("ascii"),
-            }
-            for name, data in attachments
-        ],
-    }).replace("<", "\\u003c")
+    rrh = contracts.is_rrh(contract)
+    if rrh:
+        facility_key = facility_key_from_name(analysis.facility_name)
+        default_site = FACILITY_SHORT_NAMES.get(facility_key) if facility_key else None
+        site_options = [SITE_PLACEHOLDER] + SITE_LABELS
+        site_index = (
+            site_options.index(default_site) if default_site in site_options else 0
+        )
+        columns = st.columns(3)
+        with columns[0]:
+            site = st.selectbox(
+                "Site *", site_options, index=site_index, key=f"site_{token}"
+            )
+        if site == SITE_PLACEHOLDER:
+            return contract, rrh, "", "", "", None
+        site_key = SITE_LABEL_TO_KEY[site]
+        valid_categories = valid_categories_for_site(site_key)
+        category_labels = [
+            WORK_CATEGORY_DISPLAY.get(item, item) for item in valid_categories
+        ]
+        default_category = (
+            valid_categories.index(analysis.work_category)
+            if analysis.work_category in valid_categories
+            else 0
+        )
+        with columns[1]:
+            category_label = st.selectbox(
+                "Work category",
+                category_labels,
+                index=default_category,
+                key=f"cat_{token}_{site_key}",
+            )
+        category_key = valid_categories[category_labels.index(category_label)]
+        cost_code = lookup_cost_code(site_key, category_key) or ""
+        with columns[2]:
+            if cost_code:
+                st.markdown(
+                    '<div class="field-label">Job cost code</div>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    f'<div class="cost-code-pill">🏷️ {_h(cost_code)}</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                cost_code = st.text_input(
+                    "Job cost code *",
+                    key=f"manualcost_{token}_{site_key}",
+                    placeholder="Enter the site cost code",
+                )
+        return contract, rrh, site, category_label, cost_code, site_key
 
-    html = r"""
-<div id="send-root" style="font-family:Inter,-apple-system,BlinkMacSystemFont,sans-serif;color:#12233B;">
-  <div id="dev-chip" style="font-size:12px;font-weight:700;color:#6D5AE6;margin-bottom:8px;"></div>
-
-  <!-- APPLE PANEL -->
-  <div id="apple-panel" style="display:none;">
-    <button id="share-btn" style="width:100%;background:linear-gradient(135deg,#F0803C,#E5661C);color:#fff;border:none;border-radius:12px;padding:15px 0;font-size:16px;font-weight:800;cursor:pointer;box-shadow:0 8px 20px rgba(240,128,60,.3);">
-      &#128228;&nbsp; Share to Apple Mail &mdash; attachments attached
-    </button>
-    <div style="display:flex;gap:8px;margin-top:10px;">
-      <div style="flex:1;">
-        <div style="font-size:11px;font-weight:800;color:#9AA0B4;text-transform:uppercase;letter-spacing:.06em;">To</div>
-        <div id="to-val" style="font-size:13px;font-weight:600;word-break:break-all;"></div>
-      </div>
-      <button class="copy-btn" data-target="to-val" style="align-self:flex-end;">Copy</button>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:8px;">
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:11px;font-weight:800;color:#9AA0B4;text-transform:uppercase;letter-spacing:.06em;">Subject</div>
-        <div id="subj-val" style="font-size:13px;font-weight:600;overflow-wrap:anywhere;"></div>
-      </div>
-      <button class="copy-btn" data-target="subj-val" style="align-self:flex-end;">Copy</button>
-    </div>
-    <p style="color:#64748B;font-size:12.5px;margin:12px 2px 0;">
-      Tap <b>Share to Apple Mail</b>, choose <b>Mail</b>, then paste the To &amp; Subject above.
-      &nbsp;<a id="mailto-link" href="#" style="color:#12314F;font-weight:700;">Prefer a pre-filled draft?</a> (no attachments)
-    </p>
-  </div>
-
-  <!-- DESKTOP PANEL -->
-  <div id="desktop-panel" style="display:none;">
-    <a id="eml-link" download="email.eml" href="#" style="display:block;text-align:center;text-decoration:none;background:linear-gradient(135deg,#12314F,#1C4A73);color:#fff;border-radius:12px;padding:15px 0;font-size:16px;font-weight:800;box-shadow:0 8px 20px rgba(18,49,79,.25);">
-      &#128231;&nbsp; Download email for Outlook &mdash; then hit Send
-    </a>
-    <p style="color:#64748B;font-size:12.5px;margin:12px 2px 0;">
-      Open the downloaded <b>.eml</b> in Outlook: it opens as a ready-to-send draft with every attachment already included.
-    </p>
-  </div>
-
-  <div style="margin-top:12px;">
-    <a id="switch-link" href="#" style="color:#9AA0B4;font-size:12px;text-decoration:underline;cursor:pointer;"></a>
-  </div>
-</div>
-<script>
-  const D = __PAYLOAD__;
-  const root = document.getElementById("send-root");
-  try {
-    const b2blob = (b64, mime) => {
-      const bin = atob(b64); const arr = new Uint8Array(bin.length);
-      for (let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i);
-      return new Blob([arr], {type: mime});
-    };
-    const ua = navigator.userAgent || "";
-    const isApple = /iPhone|iPad|iPod/.test(ua) || (navigator.maxTouchPoints > 1 && /Mac/.test(ua));
-
-    const applePanel = document.getElementById("apple-panel");
-    const desktopPanel = document.getElementById("desktop-panel");
-    const chip = document.getElementById("dev-chip");
-    const switchLink = document.getElementById("switch-link");
-    const emlLink = document.getElementById("eml-link");
-    let showingApple = isApple;
-
-    // Build heavy objects lazily and only for the panel actually shown, and
-    // revoke the object URL so it can't leak across Streamlit reruns (repeated
-    // reruns leaking object URLs can crash a memory-constrained mobile tab).
-    let _files = null, _emlUrl = null;
-    const getFiles = () => {
-      if (!_files) _files = D.files.map(f => new File([b2blob(f.b64, f.mime)], f.name, {type: f.mime}));
-      return _files;
-    };
-    const revokeEml = () => { if (_emlUrl) { URL.revokeObjectURL(_emlUrl); _emlUrl = null; } };
-    const ensureEmlUrl = () => {
-      if (!_emlUrl) {
-        _emlUrl = URL.createObjectURL(b2blob(D.emlB64, "message/rfc822"));
-        emlLink.href = _emlUrl; emlLink.setAttribute("download", D.emlName);
-      }
-    };
-
-    function paint() {
-      applePanel.style.display = showingApple ? "block" : "none";
-      desktopPanel.style.display = showingApple ? "none" : "block";
-      chip.textContent = showingApple ? "📱  iPhone / iPad detected" : "💻  Desktop detected";
-      switchLink.textContent = showingApple ? "On a computer instead? Show the Outlook option" : "On an iPhone or iPad instead? Show the Apple Mail option";
-      if (showingApple) { revokeEml(); } else { ensureEmlUrl(); }
-    }
-    switchLink.addEventListener("click", (e) => { e.preventDefault(); showingApple = !showingApple; paint(); });
-
-    document.getElementById("to-val").textContent = D.to || "(add recipient above)";
-    document.getElementById("subj-val").textContent = D.subject;
-    document.getElementById("mailto-link").href =
-      "mailto:" + encodeURIComponent(D.to) + "?subject=" + encodeURIComponent(D.subject) + "&body=" + encodeURIComponent(D.body);
-
-    const shareBtn = document.getElementById("share-btn");
-    shareBtn.addEventListener("click", async () => {
-      const files = getFiles();
-      if (!(navigator.canShare && navigator.canShare({files}))) {
-        alert("This browser can't share files directly. Use the pre-filled draft link, or switch to the Outlook option below.");
-        return;
-      }
-      try { await navigator.share({files, title: D.subject, text: D.body}); } catch (err) {}
-    });
-
-    window.addEventListener("pagehide", revokeEml);
-    paint();
-
-    document.querySelectorAll(".copy-btn").forEach(btn => {
-      btn.style.cssText += "background:#F1EEFB;border:1px solid #DDD6F3;color:#6D5AE6;border-radius:8px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;";
-      btn.addEventListener("click", async () => {
-        const txt = document.getElementById(btn.dataset.target).textContent;
-        try { await navigator.clipboard.writeText(txt); btn.textContent = "Copied!"; setTimeout(() => btn.textContent = "Copy", 1400); }
-        catch (e) { btn.textContent = "Copy failed"; }
-      });
-    });
-  } catch (err) {
-    if (root) root.innerHTML = '<div style="padding:12px;border:1px solid #FECACA;background:#FEF2F2;border-radius:10px;color:#991B1B;font-size:13px;">Send panel hit an error: ' + ((err && err.message) ? err.message : err) + '. Please screenshot this — you can still use the email preview above.</div>';
-  }
-</script>
-"""
-    components.html(html.replace("__PAYLOAD__", payload), height=340, scrolling=True)
+    sites = contracts.sites_for_contract(contract)
+    columns = st.columns(3)
+    with columns[0]:
+        if sites:
+            site_options = [SITE_PLACEHOLDER] + sites
+            site_index = (
+                site_options.index(detected_site)
+                if contract == detected_contract and detected_site in site_options
+                else 0
+            )
+            site = st.selectbox(
+                "Site *",
+                site_options,
+                index=site_index,
+                key=f"gsite_{token}_{contract}",
+            )
+            if site == SITE_PLACEHOLDER:
+                site = ""
+        else:
+            site = st.text_input(
+                "Site *",
+                key=f"gsitetxt_{token}_{contract}",
+                placeholder="Enter the site",
+            )
+    with columns[1]:
+        category_label = st.text_input(
+            "Work category",
+            value=WORK_CATEGORY_DISPLAY.get(
+                analysis.work_category, analysis.work_category or ""
+            ),
+            key=f"gcat_{token}_{contract}",
+        )
+    with columns[2]:
+        cost_code = st.text_input(
+            "Job cost code *",
+            key=f"gcost_{token}_{contract}",
+            placeholder="Paste the cost code",
+        )
+    return contract, rrh, site, category_label, cost_code, None
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Main
-# ══════════════════════════════════════════════════════════════════════
-def main():
+def _render_asset_control(
+    *,
+    analysis: QuoteAnalysis,
+    quote_text: str,
+    token: str,
+    contract: str,
+    rrh: bool,
+    site: str,
+    rrh_site_key: str | None,
+) -> str:
+    """Show a conservative asset selector for every PO route."""
+    if not contract or not site:
+        return "None Applicable"
+
+    if rrh:
+        site_assets = assets_for_facility(rrh_site_key) if rrh_site_key else []
+        guess = (
+            guess_asset_id(quote_text, rrh_site_key, hint=analysis.asset_reference)
+            if rrh_site_key
+            else None
+        )
+    else:
+        site_assets = contracts.assets_for_site(contract, site)
+        guess = contracts.guess_uid(
+            quote_text, contract, site, hint=analysis.asset_reference
+        )
+
+    uids = [asset["uid"] for asset in site_assets]
+    if not uids:
+        st.caption(
+            "No asset registry is configured for this site; Asset ID will be blank."
+        )
+        return "None Applicable"
+
+    labels = {asset["uid"]: contracts.asset_label(asset) for asset in site_assets}
+    columns = st.columns([2, 1])
+    with columns[1]:
+        no_asset = st.checkbox(
+            "No asset applicable",
+            key=f"noasset_{token}_{contract}_{site}",
+            value=(guess not in uids),
+        )
+    if no_asset:
+        return "None Applicable"
+
+    with columns[0]:
+        index = uids.index(guess) if guess in uids else 0
+        raw_asset = st.selectbox(
+            "Applicable Asset ID",
+            uids,
+            index=index,
+            format_func=lambda uid: f"{labels[uid]} · {uid}",
+            key=f"asset_{token}_{contract}_{site}",
+        )
+        numeric = normalize_asset_id(raw_asset)
+        if numeric:
+            st.caption(f"Smartsheet Asset ID: **{numeric}** (letter prefix removed)")
+        else:
+            st.warning("The selected asset has no numeric ID and cannot be sent.")
+        return raw_asset
+
+
+def _render_footer() -> None:
+    st.markdown(
+        """
+        <div class="app-footer">
+            <div class="footer-divider"></div>
+            Built by <a href="mailto:evan.roden@ENFRAsolutions.com">Evan Roden</a>
+            &nbsp;•&nbsp; purchase-order prep without duplicate entry
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def main() -> None:
     st.set_page_config(
-        page_title="Email Process Control",
-        page_icon="📮",
+        page_title="Purchase Order Process Control",
+        page_icon="📋",
         layout="wide",
         initial_sidebar_state="collapsed",
     )
-    # Establish requester convenience identity before the user loads a quote.
-    # The bootstrap may reload once; doing it here prevents that reload from
-    # discarding an analyzed quote or generated attachment package later.
     try:
         if not device_token(st.context.cookies):
             ensure_device_cookie()
@@ -582,693 +541,388 @@ def main():
         pass
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-    # ── Hero ────────────────────────────────────────────────────────
-    st.markdown("""
-    <div class="hero">
-        <span class="hero-emoji">📮</span>
-        <h1>Email <span class="zing">Process Control</span></h1>
-        <p class="hero-subtitle">
-            Drop in a vendor quote and get a tidy, ready-to-send administrator email —
-            MSAPO paperwork built, pricing tallied, the right contract and cost code confirmed.
-            No fuss.
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Byline that doubles as the secret sample-loader (click the name)
-    bl, bc, br = st.columns([2, 3, 2])
-    with bc:
-        if st.button("Built by Evan Roden", key="name_test",
-                     use_container_width=True,
-                     help="click to load a sample and try the whole flow"):
-            _load_test_into_state()
-            # Reset the uploader so a lingering file can't re-trigger auto-analysis
-            # and clobber the sample on the next rerun.
-            st.session_state["uploader_nonce"] = st.session_state.get("uploader_nonce", 0) + 1
-            st.rerun()
-
-    # ── Order type ──────────────────────────────────────────────────
-    epo_mode = st.checkbox(
-        "📦  Equipment-only PO — delivered by a third party, no vendor visit "
-        "(skips the MSAPO document; sends the quote + details only)",
-        key="epo_mode",
+    st.markdown(
+        """
+        <div class="hero">
+            <span class="hero-emoji">📋</span>
+            <h1>Purchase Order <span class="zing">Process Control</span></h1>
+            <p class="hero-subtitle">
+                Upload a vendor quote, confirm the PO rules, build the two-file
+                supporting package, and open a prefilled Smartsheet request.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    # ════════════════════════════════════════════════════════════════
-    # STEP 1 — Provide the quote (auto-analyzes on upload)
-    # ════════════════════════════════════════════════════════════════
-    st.markdown("""
-    <div class="step-header">
-        <div class="step-num navy">1</div>
-        <p class="step-title">Provide the vendor quote</p>
-    </div>
-    """, unsafe_allow_html=True)
+    _, center, _ = st.columns([2, 3, 2])
+    with center:
+        if st.button(
+            "Built by Evan Roden",
+            key="name_test",
+            use_container_width=True,
+            help="Click to load a synthetic sample.",
+        ):
+            _load_test_into_state()
+            st.session_state["uploader_nonce"] = (
+                st.session_state.get("uploader_nonce", 0) + 1
+            )
+            st.rerun()
 
-    tab_upload, tab_paste = st.tabs(["📁 Upload file", "📝 Paste text"])
+    st.markdown(
+        """
+        <div class="step-header">
+            <div class="step-num navy">1</div>
+            <p class="step-title">Provide the vendor quote</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    upload_tab, paste_tab = st.tabs(["📁 Upload file", "📝 Paste text"])
     quote_text = ""
 
-    with tab_upload:
+    with upload_tab:
         uploaded = st.file_uploader(
-            "Upload quote (PDF, image, or text)",
-            type=["pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp", "heic", "heif", "hif", "txt"],
+            "Upload quote",
+            type=[
+                "pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp",
+                "heic", "heif", "hif", "txt",
+            ],
             label_visibility="collapsed",
             key=f"uploader_{st.session_state.get('uploader_nonce', 0)}",
         )
         if uploaded is not None:
-            # getvalue() is position-independent — read() can return b"" on a
-            # rerun after the buffer's already been consumed, which would blank
-            # the quote and silently skip auto-analysis.
             file_bytes = uploaded.getvalue()
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
-            # Extract ONCE per file and cache it. Streamlit reruns the whole
-            # script on every widget interaction; re-extracting each time is slow
-            # and — for OCR — non-deterministic, which made later steps (e.g. a
-            # generated document) reset when you edited a field further down.
-            fhash = hashlib.sha256(file_bytes).hexdigest()
-            if st.session_state.get("extract_hash") != fhash:
-                with st.spinner("Reading your file… (scanned PDFs are read with OCR and take a few seconds)"):
+            file_hash = hashlib.sha256(file_bytes).hexdigest()
+            if st.session_state.get("extract_hash") != file_hash:
+                with st.spinner("Reading the quote…"):
                     try:
-                        st.session_state["extracted_text"] = extract_text(file_bytes, uploaded.name)
-                    except Exception as e:
-                        st.error(f"Couldn't read that file: {e}")
+                        st.session_state["extracted_text"] = extract_text(
+                            file_bytes, uploaded.name
+                        )
+                    except Exception as exc:
+                        st.error(f"Could not read that file: {exc}")
                         st.session_state["extracted_text"] = ""
-                st.session_state["extract_hash"] = fhash
+                st.session_state["extract_hash"] = file_hash
             quote_text = st.session_state.get("extracted_text", "")
             if quote_text:
                 with st.expander("Preview extracted text", expanded=False):
-                    st.text_area("Raw text", quote_text, height=170,
-                                 disabled=True, label_visibility="collapsed")
+                    st.text_area(
+                        "Raw text",
+                        quote_text,
+                        height=170,
+                        disabled=True,
+                        label_visibility="collapsed",
+                    )
             else:
-                st.warning("I couldn't find any readable text in that file. If it's a "
-                           "photo or scan, try a clearer copy — or use the **Paste text** tab.")
+                st.warning(
+                    "No readable text was found. Try a clearer file or paste the quote text."
+                )
 
-    with tab_paste:
+    with paste_tab:
         pasted = st.text_area(
             "Paste the full vendor quote text",
-            height=200, placeholder="Paste the vendor quote here…",
+            height=200,
+            placeholder="Paste the vendor quote here…",
             label_visibility="collapsed",
         )
         if pasted.strip():
             quote_text = pasted.strip()
 
-    # ── Auto-analyze whenever the input changes ─────────────────────
     if quote_text.strip():
-        sig = hashlib.sha256(quote_text.encode("utf-8", "ignore")).hexdigest()
-        if st.session_state.get("last_sig") != sig:
-            with st.spinner("Reading the quote and pulling out the details…"):
+        full_signature = hashlib.sha256(
+            quote_text.encode("utf-8", "ignore")
+        ).hexdigest()
+        if st.session_state.get("last_sig") != full_signature:
+            with st.spinner("Reading the quote and extracting the PO details…"):
                 try:
                     analysis = analyze_quote(quote_text)
-                except Exception as e:
-                    msg = str(e)
-                    if "overloaded" in msg.lower() or "529" in msg:
-                        st.error("The AI service is briefly overloaded — give it a moment and re-upload.")
-                    elif "401" in msg or "authentication" in msg.lower():
-                        st.error("API authentication failed. Please check the API key.")
-                    else:
-                        st.error(f"Analysis failed: {e}")
+                except Exception as exc:
+                    st.error(f"Analysis failed: {exc}")
                     st.stop()
             st.session_state["analysis"] = analysis
-            st.session_state["analysis_token"] = sig[:12]
-            st.session_state["last_sig"] = sig
+            st.session_state["analysis_token"] = full_signature[:12]
+            st.session_state["last_sig"] = full_signature
             st.session_state["quote_text"] = quote_text
-            st.session_state.pop("docx_path", None)
-            st.session_state.pop("pdf_path", None)
+            st.session_state.pop("scope_pdf_bytes", None)
+            st.session_state.pop("scope_pdf_signature", None)
 
     analysis: QuoteAnalysis | None = st.session_state.get("analysis")
     if analysis is None:
-        st.info("Upload or paste a quote above and it'll be analyzed automatically. "
-                "Or click the byline to try a sample.")
+        st.info("Upload or paste a quote above. It will be analyzed automatically.")
         _render_footer()
         return
 
-    tok = st.session_state.get("analysis_token", "x")
-    quote_text_cached = st.session_state.get("quote_text", "")
+    token = st.session_state.get("analysis_token", "x")
+    cached_quote = st.session_state.get("quote_text", "")
 
-    # ════════════════════════════════════════════════════════════════
-    # STEP 2 — Review
-    # ════════════════════════════════════════════════════════════════
-    st.markdown(f"""
-    <div class="step-header">
-        <div class="step-num mint">2</div>
-        <p class="step-title">Here's what I found</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    tax_map = {
-        "included": ("INCLUDED", "tax-included", "✅"),
-        "excluded": ("EXCLUDED", "tax-excluded", "⚠️"),
-        "unclear": ("UNCLEAR", "tax-unclear", "❓"),
-    }
-    ts = analysis.tax_status or "unclear"
-    tax_display, tax_class, tax_icon = tax_map.get(ts, (ts.upper(), "", "•"))
-
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.markdown(f"""<div class="metric-card"><div class="metric-icon">🏢</div>
-            <div class="metric-label">Vendor</div>
-            <div class="metric-value">{_h(analysis.vendor_name or "—")}</div></div>""", unsafe_allow_html=True)
-    with m2:
-        st.markdown(f"""<div class="metric-card"><div class="metric-icon">{tax_icon}</div>
-            <div class="metric-label">Tax Status</div>
-            <div class="metric-value {tax_class}">{_h(tax_display)}</div></div>""", unsafe_allow_html=True)
-    with m3:
-        st.markdown(f"""<div class="metric-card"><div class="metric-icon">💵</div>
-            <div class="metric-label">Total</div>
-            <div class="metric-value">{_h(analysis.total_amount or "—")}</div></div>""", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="step-header">
+            <div class="step-num mint">2</div>
+            <p class="step-title">Review the extracted work</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    metrics = st.columns(3)
+    with metrics[0]:
+        st.markdown(
+            f'<div class="metric-card"><div class="metric-label">Vendor</div>'
+            f'<div class="metric-value">{_h(analysis.vendor_name or "—")}</div></div>',
+            unsafe_allow_html=True,
+        )
+    with metrics[1]:
+        st.markdown(
+            f'<div class="metric-card"><div class="metric-label">Tax status</div>'
+            f'<div class="metric-value">{_h((analysis.tax_status or "unclear").upper())}</div></div>',
+            unsafe_allow_html=True,
+        )
+    with metrics[2]:
+        st.markdown(
+            f'<div class="metric-card"><div class="metric-label">Quote total</div>'
+            f'<div class="metric-value">{_h(analysis.total_amount or "—")}</div></div>',
+            unsafe_allow_html=True,
+        )
 
     if analysis.facility_name:
-        st.markdown(f"""<div class="facility-banner"><div class="facility-icon">🏥</div>
-            <div><div class="facility-name">{_h(analysis.facility_name)}</div>
-            <div class="facility-address">{_h(analysis.facility_address or '')}</div></div></div>""",
-            unsafe_allow_html=True)
-
+        st.markdown(
+            f'<div class="facility-banner"><div class="facility-icon">🏥</div>'
+            f'<div><div class="facility-name">{_h(analysis.facility_name)}</div>'
+            f'<div class="facility-address">{_h(analysis.facility_address)}</div></div></div>',
+            unsafe_allow_html=True,
+        )
     if analysis.tax_warning:
-        st.markdown(f"""<div class="alert-box alert-danger"><span>🚨</span>
-            <div><strong>Tax warning:</strong> {_h(analysis.tax_warning)}</div></div>""", unsafe_allow_html=True)
+        st.warning(analysis.tax_warning)
     if analysis.tax_note:
-        st.markdown(f"""<div class="alert-box alert-warning"><span>📝</span>
-            <div><strong>Tax note:</strong> {_h(analysis.tax_note)}</div></div>""", unsafe_allow_html=True)
+        st.info(analysis.tax_note)
+
+    with st.expander("📄 Scope preview", expanded=False):
+        st.markdown(
+            f'<div class="scope-section"><div class="scope-label">Scope</div>'
+            f'<p class="scope-text" style="white-space:pre-line;">'
+            f'{_h(analysis.scope_of_work)}</p></div>',
+            unsafe_allow_html=True,
+        )
 
     final_inclusions: list[str] = []
     final_exclusions: list[str] = []
+    unified_inclusions, unified_exclusions = _build_unified_lists(analysis)
+    inclusion_column, exclusion_column = st.columns(2)
+    with inclusion_column:
+        st.markdown('<div class="scope-label">Inclusions</div>', unsafe_allow_html=True)
+        st.caption("Uncheck any item that should not appear in the PDF.")
+        for index, (text_value, is_ai) in enumerate(unified_inclusions):
+            if st.checkbox(
+                f"{'✎ ' if is_ai else ''}{text_value}",
+                key=f"inc_{token}_{index}",
+                value=True,
+            ):
+                final_inclusions.append(text_value)
+    with exclusion_column:
+        st.markdown('<div class="scope-label">Exclusions</div>', unsafe_allow_html=True)
+        st.caption("Uncheck any item that should not appear in the PDF.")
+        for index, (text_value, is_ai) in enumerate(unified_exclusions):
+            if st.checkbox(
+                f"{'✎ ' if is_ai else ''}{text_value}",
+                key=f"exc_{token}_{index}",
+                value=True,
+            ):
+                final_exclusions.append(text_value)
+    if any(is_ai for _, is_ai in unified_inclusions + unified_exclusions):
+        st.caption("✎ = suggested by the analyzer rather than explicitly stated")
 
-    if not epo_mode:
-        # Scope preview — collapsed by default
-        with st.expander("📄 Scope of Work preview", expanded=False):
-            st.markdown(f"""<div class="scope-section">
-                <div class="scope-label">Project Description</div>
-                <p class="scope-text">{_h(analysis.project_description)}</p></div>""", unsafe_allow_html=True)
-            st.markdown(f"""<div class="scope-section">
-                <div class="scope-label">Detailed Scope</div>
-                <p class="scope-text" style="white-space:pre-line;">{_h(analysis.scope_of_work)}</p></div>""",
-                unsafe_allow_html=True)
-
-        unified_inc, unified_exc = _build_unified_lists(analysis)
-        inc_col, exc_col = st.columns(2)
-        with inc_col:
-            st.markdown('<div class="scope-label">Inclusions</div>', unsafe_allow_html=True)
-            st.caption("Uncheck to drop from the document.")
-            for i, (text, is_ai) in enumerate(unified_inc):
-                if st.checkbox(f"{'✎ ' if is_ai else ''}{text}", key=f"inc_{tok}_{i}", value=True):
-                    final_inclusions.append(text)
-        with exc_col:
-            st.markdown('<div class="scope-label">Exclusions</div>', unsafe_allow_html=True)
-            st.caption("Uncheck to drop from the document.")
-            for i, (text, is_ai) in enumerate(unified_exc):
-                if st.checkbox(f"{'✎ ' if is_ai else ''}{text}", key=f"exc_{tok}_{i}", value=True):
-                    final_exclusions.append(text)
-        if any(is_ai for _, is_ai in unified_inc + unified_exc):
-            st.caption("✎ = suggested (not explicitly stated in the quote)")
-
-    # ════════════════════════════════════════════════════════════════
-    # STEP 3 — Generate MSAPO document (skipped for equipment-only POs)
-    # ════════════════════════════════════════════════════════════════
-    docx_path: Path | None = st.session_state.get("docx_path")
-    pdf_path: Path | None = st.session_state.get("pdf_path")
-
-    if not epo_mode:
-        st.markdown("""
+    st.markdown(
+        """
         <div class="step-header">
-            <div class="step-num grape">3</div>
-            <p class="step-title">Build the MSAPO document</p>
+            <div class="step-num orange">3</div>
+            <p class="step-title">Confirm the PO details</p>
         </div>
-        """, unsafe_allow_html=True)
-
-        if st.button("🛠️  Generate MSAPO files", type="primary", use_container_width=True):
-            selected_contract, selected_site, facility_display, facility_address = (
-                _routing_for_generation(analysis, quote_text_cached, tok)
-            )
-            with st.spinner("Assembling the MSAPO document…"):
-                try:
-                    docx_path = generate_docx(
-                        analysis,
-                        final_inclusions=final_inclusions,
-                        final_exclusions=final_exclusions,
-                        facility_display=facility_display,
-                        facility_address_display=facility_address,
-                    )
-                    st.session_state["docx_path"] = docx_path
-                    st.session_state["document_signature"] = _document_signature(
-                        tok,
-                        selected_contract,
-                        selected_site,
-                        final_inclusions,
-                        final_exclusions,
-                    )
-                except Exception as e:
-                    st.error(f"Document generation failed: {e}")
-                    st.stop()
-            with st.spinner("Converting to PDF…"):
-                try:
-                    pdf_path = convert_to_pdf(docx_path)
-                    st.session_state["pdf_path"] = pdf_path
-                except PDFConversionError as e:
-                    st.warning(f"PDF conversion unavailable: {e}. The .docx is still ready.")
-                    st.session_state["pdf_path"] = None
-            st.markdown("""<div class="alert-box alert-success"><span>✓</span>
-                <div><strong>Done.</strong> Your MSAPO document is built and attached to the email below.</div></div>""",
-                unsafe_allow_html=True)
-            docx_path = st.session_state.get("docx_path")
-            pdf_path = st.session_state.get("pdf_path")
-
-    # ════════════════════════════════════════════════════════════════
-    # STEP 4 — Confirm routing and send the email
-    # ════════════════════════════════════════════════════════════════
-    email_ready = epo_mode or (docx_path and docx_path.exists())
-    if not email_ready:
-        st.caption("Generate the MSAPO files above to unlock the email step.")
-        _render_footer()
-        return
-
-    step_n = "3" if epo_mode else "4"
-    st.markdown(f"""
-    <div class="step-header">
-        <div class="step-num orange">{step_n}</div>
-        <p class="step-title">Send the email {'(equipment-only PO)' if epo_mode else ''}</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Contract → recipient ────────────────────────────────────────
-    # Recognition supplies a default, but an unknown quote must be confirmed by
-    # the user instead of silently becoming an RRH purchase order.
-    det_contract, det_site = contracts.match_facility(analysis.facility_name, quote_text_cached)
-    crow = st.columns([1, 1])
-    with crow[0]:
-        _cnames = contracts.contract_names()
-        _contract_options = [CONTRACT_PLACEHOLDER] + _cnames
-        _cidx = _contract_options.index(det_contract) if det_contract in _contract_options else 0
-        contract = st.selectbox(
-            "Contract", _contract_options, index=_cidx, key=f"contract_{tok}"
-        )
-        if det_contract and not contracts.is_rrh(det_contract) and contract == det_contract:
-            st.caption(f"↳ Recognized from the quote: **{det_site or det_contract}**")
-    if contract == CONTRACT_PLACEHOLDER:
-        st.warning("Choose the contract before preparing the email or final MSAPO.")
-        _render_footer()
-        return
-    rrh = contracts.is_rrh(contract)
-    with crow[1]:
-        # RRH always goes to David; other contracts get their own administrator.
-        recipient = st.text_input(
-            "Send to (administrator email)",
-            value=(DAVID_EMAIL if rrh else ""),
-            key=f"recip_{tok}_{contract}",
-            placeholder="administrator@company.com",
-        )
-        # Learned admin emails for THIS contract (>=5 uses). RRH is fixed to
-        # David, so no picker there.
-        if not rrh:
-            admin_sugs = memory.suggest_admin_emails(contract)
-            if admin_sugs:
-                _ph = "— pick a known administrator —"
-
-                def _fill_recipient(tok=tok, contract=contract, ph=_ph):
-                    sel = st.session_state.get(f"recip_pick_{tok}_{contract}")
-                    if sel and sel != ph:
-                        st.session_state[f"recip_{tok}_{contract}"] = sel
-
-                st.selectbox(
-                    "Known administrators for this contract",
-                    [_ph] + admin_sugs,
-                    key=f"recip_pick_{tok}_{contract}",
-                    on_change=_fill_recipient,
-                )
-
-    row1 = st.columns([1, 1, 1])
-    if rrh:
-        # ── RRH — dedicated flow: short site names + autofilled cost code ──
-        fac_key = facility_key_from_name(analysis.facility_name)
-        default_site_label = FACILITY_SHORT_NAMES.get(fac_key) if fac_key else None
-        site_options = [SITE_PLACEHOLDER] + SITE_LABELS
-        default_site_idx = (
-            site_options.index(default_site_label)
-            if default_site_label in site_options
-            else 0
-        )
-        with row1[0]:
-            site_label = st.selectbox(
-                "Site", site_options, index=default_site_idx, key=f"site_{tok}"
-            )
-        if site_label == SITE_PLACEHOLDER:
-            st.warning("Choose the RRH site before preparing the email or final MSAPO.")
-            _render_footer()
-            return
-        sel_key = SITE_LABEL_TO_KEY[site_label]
-        valid_cats = valid_categories_for_site(sel_key)
-        cat_labels = [WORK_CATEGORY_DISPLAY.get(c, c) for c in valid_cats]
-        default_cat_idx = valid_cats.index(analysis.work_category) if analysis.work_category in valid_cats else 0
-        with row1[1]:
-            cat_label = st.selectbox("Work category", cat_labels, index=default_cat_idx, key=f"cat_{tok}_{sel_key}")
-        sel_cat = valid_cats[cat_labels.index(cat_label)]
-        cost_code = lookup_cost_code(sel_key, sel_cat) or ""
-        with row1[2]:
-            if cost_code:
-                st.markdown('<div class="field-label">Job cost code</div>', unsafe_allow_html=True)
-                st.markdown(f'<div class="cost-code-pill">🏷️ {cost_code}</div>', unsafe_allow_html=True)
-            else:
-                cost_code = st.text_input(
-                    "Job cost code",
-                    value="",
-                    key=f"manualcost_{tok}_{sel_key}",
-                    placeholder="Enter the site cost code",
-                )
-                st.caption("No automatic cost-code mapping is configured for this site.")
-        site_line = f"RRH {site_label}"
-    else:
-        # ── Generic contract — dependent site dropdown + free-text cost code ──
-        sites = contracts.sites_for_contract(contract)
-        with row1[0]:
-            if sites:
-                site_options = [SITE_PLACEHOLDER] + sites
-                _sidx = (
-                    site_options.index(det_site)
-                    if contract == det_contract and det_site in site_options
-                    else 0
-                )
-                site_label = st.selectbox(
-                    "Site", site_options, index=_sidx, key=f"gsite_{tok}_{contract}"
-                )
-                if site_label == SITE_PLACEHOLDER:
-                    st.warning("Choose the site before preparing the email or final MSAPO.")
-                    _render_footer()
-                    return
-            else:
-                site_label = st.text_input("Site", value="", key=f"gsitetxt_{tok}_{contract}")
-                if not site_label.strip():
-                    st.warning("Enter the site before preparing the email or final MSAPO.")
-                    _render_footer()
-                    return
-        with row1[1]:
-            generic_category = WORK_CATEGORY_DISPLAY.get(
-                analysis.work_category, analysis.work_category or ""
-            )
-            cat_label = st.text_input(
-                "Work category",
-                value=generic_category,
-                key=f"gcat_{tok}_{contract}",
-                placeholder="e.g. Chiller repair",
-            )
-        with row1[2]:
-            cost_code = st.text_input("Job cost code", value="",
-                                      key=f"gcost_{tok}_{contract}", placeholder="Paste the cost code")
-        site_line = site_label
-
-    if not epo_mode and docx_path and docx_path.exists():
-        current_signature = _document_signature(
-            tok, contract, site_label, final_inclusions, final_exclusions
-        )
-        if st.session_state.get("document_signature") != current_signature:
-            st.session_state.pop("docx_path", None)
-            st.session_state.pop("pdf_path", None)
-            st.warning(
-                "The contract, site, inclusions, or exclusions changed after the "
-                "MSAPO was generated. Generate the files again before sending."
-            )
-            _render_footer()
-            return
-
-    # ── Applicable Asset ID — hidden for EPO and when the contract/site
-    #    has no asset tags; otherwise a site-filtered dropdown with a guess. ──
-    asset_id_value = "None Applicable"
-    if not epo_mode:
-        hint = analysis.asset_reference
-        if rrh:
-            site_assets = assets_for_facility(sel_key)
-            guess = guess_asset_id(quote_text_cached, sel_key, hint=hint)
-        else:
-            site_assets = contracts.assets_for_site(contract, site_label)
-            guess = contracts.guess_uid(quote_text_cached, contract, site_label, hint=hint)
-        uids = [a["uid"] for a in site_assets]
-        labels = {a["uid"]: contracts.asset_label(a) for a in site_assets}
-        if uids:
-            arow = st.columns([2, 1])
-            with arow[1]:
-                # Default to "no asset" unless a specific asset was confidently
-                # identified — never fall back to the first alphabetical asset
-                # (which used to leave e.g. the air separator wrongly selected).
-                no_asset = st.checkbox("No asset applicable",
-                                       key=f"noasset_{tok}_{contract}_{site_label}",
-                                       value=(guess not in uids))
-            with arow[0]:
-                if not no_asset:
-                    default_asset_idx = uids.index(guess) if guess in uids else 0
-                    asset_id_value = st.selectbox(
-                        "Applicable Asset ID", uids, index=default_asset_idx,
-                        format_func=lambda u: f"{labels[u]}  ·  {u}",
-                        key=f"asset_{tok}_{contract}_{site_label}",
-                    )
-                    a_show = next((a for a in site_assets if a["uid"] == asset_id_value), None)
-                    if a_show:
-                        name = _h(a_show.get("asset") or a_show["uid"])
-                        if a_show.get("equipment"):
-                            name += f' · {_h(a_show["equipment"])}'
-                        serves = f' ({_h(a_show["serves"])})' if a_show.get("serves") else ""
-                        st.markdown(
-                            f'<div style="margin:-6px 0 4px;">'
-                            f'<span style="font-weight:700;color:#12233B;">{name}</span>'
-                            f'<span style="color:#94A3B8;font-size:0.72rem;">{serves}</span><br>'
-                            f'<span style="color:#94A3B8;font-size:0.75rem;font-weight:500;">{_h(asset_id_value)}</span>'
-                            f'</div>', unsafe_allow_html=True)
-                else:
-                    asset_id_value = "None Applicable"
-                    st.markdown('<div class="field-label">Applicable Asset ID</div>', unsafe_allow_html=True)
-                    st.markdown('<div class="cost-code-pill" style="background:#64748B;">None Applicable</div>',
-                                unsafe_allow_html=True)
-        # else: no asset tags for this contract/site → no asset field shown
-
-    # ── Contact suggestions, scoped to THIS contract only ───────────
-    # Learned pairs (entered together >=5 times), plus — when the vendor is
-    # identified but the quote didn't give a clear contact — every rep we've
-    # seen for that vendor on this contract (vendors rarely have many).
-    contact_sugs: list[tuple[str, str]] = list(memory.suggest_contacts(contract))
-    if analysis.vendor_name and not (analysis.contact_name and analysis.contact_email):
-        for pair in memory.vendor_reps(contract, analysis.vendor_name):
-            if pair not in contact_sugs:
-                contact_sugs.append(pair)
-    if contact_sugs:
-        _cph = "— pick a known contact to fill both fields —"
-        _by_label = {f"{n}  <{e}>": (n, e) for n, e in contact_sugs}
-
-        def _fill_contact(tok=tok, contract=contract, ph=_cph, by_label=_by_label):
-            sel = st.session_state.get(f"contact_pick_{tok}_{contract}")
-            if sel and sel != ph:
-                n, e = by_label[sel]
-                st.session_state[f"contact_{tok}"] = n
-                st.session_state[f"cemail_{tok}"] = e
-
-        st.selectbox(
-            f"Known contacts on {contract}",
-            [_cph] + list(_by_label.keys()),
-            key=f"contact_pick_{tok}_{contract}",
-            on_change=_fill_contact,
-        )
-
-    # Contact + description
-    row2 = st.columns([1, 1, 1])
-    with row2[0]:
-        email_contact = st.text_input("Contact name", value=analysis.contact_name or "", key=f"contact_{tok}")
-    with row2[1]:
-        email_contact_email = st.text_input("Contact email", value=analysis.contact_email or "", key=f"cemail_{tok}")
-    with row2[2]:
-        email_desc = st.text_input("Short description (≤20 chars)",
-                                   value=(analysis.short_description or "")[:20],
-                                   max_chars=20, key=f"desc_{tok}")
-
-    # Pricing
-    st.markdown('<div class="field-label" style="margin-top:0.4rem;">Pricing — leave subtotal & tax blank if the quote shows a single all-in total</div>', unsafe_allow_html=True)
-    prow = st.columns(3)
-    with prow[0]:
-        subtotal_val = st.text_input("Subtotal (pre-tax)", value=analysis.subtotal_amount or "", key=f"sub_{tok}")
-    with prow[1]:
-        tax_val = st.text_input("Sales tax", value=analysis.tax_amount or "", key=f"tax_{tok}")
-    with prow[2]:
-        total_val = st.text_input("Total amount", value=analysis.total_amount or "", key=f"total_{tok}")
-
-    vendor = analysis.vendor_name or "Vendor"
-    breakdown = _has_breakdown(subtotal_val, tax_val)
-    pricing_difference = _pricing_difference(subtotal_val, tax_val, total_val)
-    if breakdown and pricing_difference is not None and abs(pricing_difference) > Decimal("0.01"):
-        st.warning(
-            "Subtotal plus sales tax does not equal the total. Confirm the quote "
-            "amounts before sending."
-        )
-
-    # ── Assemble bullets + subject per order type ───────────────────
-    if epo_mode:
-        subject = f"{vendor} {email_desc} at {site_label} EPO".strip()
-        bullets = [
-            ("Site Location", site_line),
-            ("Work Category", cat_label),
-            ("Description", email_desc),
-            ("Job cost code", cost_code or "—"),
-            ("Contact Name", email_contact),
-            ("Contact Email", email_contact_email),
-        ]
-    else:
-        subject = f"{vendor} {email_desc} at {site_label} MSA PO".strip()
-        bullets = [
-            ("Site Location", site_line),
-            ("Job cost code", cost_code or "—"),
-            ("Applicable Asset ID", asset_id_value),
-            ("Subcontractor name", vendor),
-            ("Contact Name", email_contact),
-            ("Contact Email", email_contact_email),
-            ("Description", email_desc),
-        ]
-    if breakdown:
-        bullets.append(("Subtotal (pre-tax)", subtotal_val))
-        bullets.append(("Sales Tax", tax_val))
-    bullets.append(("Amount", total_val))
-
-    plain_body = build_plain_body(bullets)
-
-    if not recipient.strip():
-        st.caption("⬆︎ Add the administrator's email above before sending.")
-
-    with st.expander("Preview the email", expanded=False):
-        st.markdown(f"**To:** {_h(recipient) or '—'}")
-        st.markdown(f"**Subject:** {subject}")
-        st.markdown("---")
-        st.text(plain_body)
-        st.caption("Your Outlook/Apple Mail signature is added automatically.")
-
-    # ── Attachments ─────────────────────────────────────────────────
-    attachments: list[tuple[str, bytes]] = []
-    up_bytes = st.session_state.get("uploaded_file_bytes")
-    up_name = st.session_state.get("uploaded_file_name")
-    if up_bytes and up_name:
-        attachments.append((up_name, up_bytes))
-    elif quote_text_cached:
-        # Quote was pasted, not uploaded — attach the text so the email
-        # (especially an EPO, which has no other attachment) still carries it.
-        attachments.append(("Vendor Quote.txt", quote_text_cached.encode("utf-8")))
-    if not epo_mode:
-        # Name the attachments per the selected contract + site (the on-disk
-        # name from generate_docx is RRH-shaped and set before the contract is
-        # known, so it must not reach the recipient for non-RRH contracts).
-        doc_name = _doc_basename(contract, rrh, site_label, analysis.project_description)
-        if docx_path and docx_path.exists():
-            attachments.append((f"{doc_name}.docx", docx_path.read_bytes()))
-        if pdf_path and pdf_path.exists():
-            attachments.append((f"{doc_name}.pdf", pdf_path.read_bytes()))
-
-    eml_bytes = build_eml(to=recipient, subject=subject, bullets=bullets, attachments=attachments)
-
-    po_context = build_po_context(st.session_state)
-    delivery_route = _render_delivery_controls(
-        "4" if epo_mode else "5",
-        po_context,
+        """,
+        unsafe_allow_html=True,
     )
 
-    if delivery_route == "smartsheet":
-        if po_context is None:
-            st.error("Analyze a quote before preparing the Smartsheet handoff.")
-        else:
-            # Mobile Safari can establish a fresh Streamlit session during a
-            # multipage navigation, discarding reviewed values and attachment
-            # bytes. Keep the complete manual handoff in this page instead.
-            render_inline_smartsheet_handoff(po_context)
+    route_options = [ROUTE_PLACEHOLDER, *PURCHASE_ROUTES]
+    purchase_route = st.selectbox(
+        "How will the vendor provide this order? *",
+        route_options,
+        format_func=lambda route: (
+            ROUTE_PLACEHOLDER
+            if route == ROUTE_PLACEHOLDER
+            else PURCHASE_ROUTE_LABELS[route]
+        ),
+        key=f"purchase_route_{token}",
+    )
+    if purchase_route == ROUTE_PLACEHOLDER:
+        purchase_route = ""
 
-    if delivery_route == "email":
-        st.markdown("#### Email backup")
-        st.caption(
-            "Use this if Smartsheet is unavailable or you need the established "
-            "email process instead."
+    contract, rrh, site, category_label, cost_code, rrh_site_key = (
+        _render_routing_controls(analysis, cached_quote, token)
+    )
+    if not contract:
+        st.warning("Choose the contract.")
+    elif not site:
+        st.warning("Choose or enter the site.")
+
+    _render_asset_control(
+        analysis=analysis,
+        quote_text=cached_quote,
+        token=token,
+        contract=contract,
+        rrh=rrh,
+        site=site,
+        rrh_site_key=rrh_site_key,
+    )
+
+    contact_columns = st.columns(3)
+    with contact_columns[0]:
+        st.text_input(
+            "Vendor contact name",
+            value=analysis.contact_name or "",
+            key=f"contact_{token}",
         )
-        _render_send_section(
-            recipient=recipient,
-            subject=subject,
-            body=plain_body,
-            eml_bytes=eml_bytes,
-            attachments=attachments,
+    with contact_columns[1]:
+        st.text_input(
+            "Vendor contact email",
+            value=analysis.contact_email or "",
+            key=f"cemail_{token}",
+        )
+    with contact_columns[2]:
+        st.text_input(
+            "Short description (≤20 chars)",
+            value=(analysis.short_description or "")[:20],
+            max_chars=20,
+            key=f"desc_{token}",
         )
 
-        # Sending happens client-side (share sheet / .eml), so this explicit
-        # confirmation is the only safe time to update contract-scoped memory.
-        rec_key = f"recorded_{tok}_{contract}"
-        if st.session_state.get(rec_key):
-            st.caption(
-                "✓ Details remembered for this contract — frequently used "
-                "emails start auto-suggesting after 5 uses."
+    total_value = st.text_input(
+        "PO/CO amount — total including every fee and tax *",
+        value=analysis.total_amount or "",
+        key=f"total_{token}",
+        help=(
+            "Use the final amount payable, including sales tax, freight, delivery, "
+            "surcharges, and any other quoted fees."
+        ),
+    )
+    st.checkbox(
+        "I confirmed this amount includes all fees and taxes shown on the quote.",
+        key=f"total_confirmed_{token}",
+    )
+
+    if purchase_route:
+        try:
+            classification = classify_po(purchase_route, total_value)
+            st.success(
+                "Smartsheet classification: "
+                f"Object Account = {classification.object_account}; "
+                f"Agreement Type = {classification.agreement_type}."
             )
-        elif st.button(
-            "✓ I sent it — remember these details for next time",
-            key=f"rec_btn_{tok}_{contract}",
-            use_container_width=True,
-        ):
-            saved = memory.record_send(
-                contract=contract,
-                admin_email=recipient,
-                vendor=analysis.vendor_name,
-                contact_name=email_contact,
-                contact_email=email_contact_email,
-            )
-            st.session_state[rec_key] = True
-            if saved:
-                st.rerun()
-            else:
-                st.caption(
-                    "Couldn't reach the memory store — details not saved this time."
-                )
+        except ValueError as exc:
+            st.warning(str(exc))
 
-    _render_footer()
+    st.caption(
+        "Locked rules: Request Type = PO; Dispatch WO to Service Center = NA. "
+        "Leave Request Completed, PO #, Work Order #, and Original PO Number "
+        "remain blank."
+    )
 
+    selected_contract, selected_site, facility_name, _ = _routing_for_generation(
+        analysis, cached_quote, token
+    )
+    current_pdf_signature = _document_signature(
+        token,
+        selected_contract,
+        selected_site,
+        final_inclusions,
+        final_exclusions,
+    )
+    if (
+        st.session_state.get("scope_pdf_bytes")
+        and st.session_state.get("scope_pdf_signature") != current_pdf_signature
+    ):
+        st.session_state.pop("scope_pdf_bytes", None)
+        st.session_state.pop("scope_pdf_signature", None)
+        st.warning(
+            "The site, contract, inclusions, or exclusions changed. Rebuild the "
+            "supporting PDF before opening Smartsheet."
+        )
 
-def _render_delivery_controls(
-    step_number: str,
-    context: POContext | None,
-) -> str:
-    """Offer the primary Smartsheet route and email fallback together.
-
-    The choice is scoped to the immutable PO context ID, so a new quote cannot
-    reopen controls for the prior quote. Smartsheet renders inline to avoid the
-    mobile Streamlit page transition that lost session state in production.
-    """
     st.markdown(
-        f"""
+        """
         <div class="step-header">
-            <div class="step-num mint">{_h(step_number)}</div>
-            <p class="step-title">Submit the PO request</p>
+            <div class="step-num grape">4</div>
+            <p class="step-title">Build the two-file attachment package</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
     st.caption(
-        "Smartsheet is the recommended route. Email stays available beside it "
-        "as a backup."
+        "The package is always the unchanged original quote plus one simple PDF "
+        "containing Scope, Inclusions, and Exclusions."
     )
-    context_id = context.context_id if context is not None else "no-context"
-    route_key = f"delivery_route_{context_id}"
-    smartsheet_col, email_col = st.columns(2, gap="small")
-    with smartsheet_col:
-        if st.button(
-            "📋 Prepare Smartsheet submission",
-            type="primary",
-            use_container_width=True,
-            key=f"open_smartsheet_{context_id}",
-        ):
-            st.session_state[route_key] = "smartsheet"
-    with email_col:
-        if st.button(
-            "✉️ Use email backup",
-            type="primary",
-            use_container_width=True,
-            key=f"open_email_backup_{context_id}",
-        ):
-            st.session_state[route_key] = "email"
-    return str(st.session_state.get(route_key, ""))
+    if st.button(
+        "🛠️ Generate Scope/Inclusions/Exclusions PDF",
+        type="primary",
+        use_container_width=True,
+    ):
+        try:
+            scope_pdf = build_scope_pdf(
+                scope=analysis.scope_of_work,
+                inclusions=final_inclusions,
+                exclusions=final_exclusions,
+                vendor=analysis.vendor_name,
+                site=facility_name or selected_site,
+            )
+        except Exception as exc:
+            st.error(f"PDF generation failed: {exc}")
+            st.stop()
+        st.session_state["scope_pdf_bytes"] = scope_pdf
+        st.session_state["scope_pdf_signature"] = current_pdf_signature
+        st.success("The supporting PDF is ready.")
 
+    scope_pdf_bytes = st.session_state.get("scope_pdf_bytes")
+    if isinstance(scope_pdf_bytes, bytes) and scope_pdf_bytes.startswith(b"%PDF-"):
+        st.download_button(
+            "Preview/download supporting PDF",
+            data=scope_pdf_bytes,
+            file_name="Scope Inclusions Exclusions.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    else:
+        st.caption("Generate the supporting PDF to unlock a complete Smartsheet package.")
 
-def _render_footer() -> None:
-    st.markdown("""
-    <div class="app-footer">
-        <div class="footer-divider"></div>
-        Built by <a href="mailto:evan.roden@ENFRAsolutions.com">Evan Roden</a>
-        &nbsp;•&nbsp; a friendlier way to push paper 📮
-    </div>
-    """, unsafe_allow_html=True)
+    context = build_po_context(st.session_state)
+    context_id = context.context_id if context else "no-context"
+    st.markdown(
+        """
+        <div class="step-header">
+            <div class="step-num mint">5</div>
+            <p class="step-title">Submit the PO request</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    panel_key = f"smartsheet_panel_{context_id}"
+    if st.button(
+        "📋 Prepare Smartsheet submission",
+        type="primary",
+        use_container_width=True,
+        key=f"open_smartsheet_{context_id}",
+    ):
+        st.session_state[panel_key] = True
+
+    if st.session_state.get(panel_key):
+        if context is None:
+            st.error("Analyze a quote before preparing the Smartsheet handoff.")
+        else:
+            render_inline_smartsheet_handoff(context)
+
+    _render_footer()
 
 
 if __name__ == "__main__":
     main()
+

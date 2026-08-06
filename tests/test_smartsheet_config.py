@@ -38,7 +38,7 @@ def _specs() -> str:
             },
             "submission_key": {
                 "id": 999,
-                "title": "Email Process Control Submission Key",
+                "title": "Purchase Order Process Control Submission Key",
                 "type": "TEXT_NUMBER",
             },
         }
@@ -62,7 +62,6 @@ def test_live_form_schema_and_rrh_choices_are_exact():
         "cost_code",
         "object_account",
         "agreement_type",
-        "original_po_number",
         "total",
         "vendor",
         "contact_name",
@@ -90,9 +89,14 @@ def test_live_form_schema_and_rrh_choices_are_exact():
         "RRH-695400030-ISDC",
         "RRH-695400034-ES JOB CCJ",
     )
+    assert "5301-MATERIALS" in OBJECT_ACCOUNT_OPTIONS
     assert "5511-SUBCONTRACTOR" in OBJECT_ACCOUNT_OPTIONS
     assert "5302-EQUIPMENT" in OBJECT_ACCOUNT_OPTIONS
+    assert "5411-OUTSIDE RENTALS" in OBJECT_ACCOUNT_OPTIONS
     assert "03 - MSAPO (SERVICE)" in AGREEMENT_TYPE_OPTIONS
+    assert "03 - MRAPO (RENTAL)" in AGREEMENT_TYPE_OPTIONS
+    assert "ON - STANDARD PO UNDER $25K" in AGREEMENT_TYPE_OPTIONS
+    assert "OR - STANDARD PO OVER $25K" in AGREEMENT_TYPE_OPTIONS
     assert "OR - EQUIPMENT PO" in AGREEMENT_TYPE_OPTIONS
 
 
@@ -208,7 +212,6 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
         "cost_code": "COST CODE",
         "object_account": "OBJECT ACCOUNT",
         "agreement_type": "AGREEMENT TYPE FOR PO",
-        "original_po_number": "ORIGIONAL PO NUMBER",
         "total": "PO/CO AMOUNT",
         "vendor": "VENDOR NAME",
         "contact_name": "VENDOR CONTACT NAME",
@@ -226,13 +229,16 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
         "cost_code": "01CEABA",
         "object_account": "5511-SUBCONTRACTOR",
         "agreement_type": "03 - MSAPO (SERVICE)",
+        "leave_request_completed": "",
+        "po_number": "",
+        "work_order_number": "",
         "original_po_number": "",
         "total": "$1,234.56",
         "vendor": "Example & Sons",
         "contact_name": "Pat O'Brien",
         "contact_email": "pat@example.invalid",
         "description_of_work": "Repair pump #7 & verify operation.",
-        "asset_id": "RRH-0007",
+        "asset_id": "0007",
         "dispatch_service_center": "NA",
         "instructions": "Synthetic test only; do not submit.",
     }
@@ -273,6 +279,39 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
         if fields.get(field)
     }
     assert "attachments" not in result.url.lower()
+
+
+def test_always_blank_fields_are_never_prefilled_or_copied_even_if_mapped():
+    field_map = {
+        "request_type": "REQUEST TYPE",
+        "leave_request_completed": "LEAVE REQUEST COMPLETED",
+        "po_number": "PO #",
+        "work_order_number": "WORK ORDER #",
+        "original_po_number": "ORIGIONAL PO NUMBER",
+    }
+    fields = {
+        "request_type": "PO",
+        "leave_request_completed": "Yes",
+        "po_number": "123",
+        "work_order_number": "456",
+        "original_po_number": "789",
+    }
+    config = load_config(
+        {
+            "SMARTSHEET_FORM_URL": "https://app.smartsheet.com/b/form/example",
+            "SMARTSHEET_URL_PREFILL_ENABLED": "true",
+            "SMARTSHEET_FORM_FIELD_MAP_JSON": json.dumps(field_map),
+        }
+    )
+
+    result = build_prefilled_form_url(fields, config)
+    query = parse_qs(urlsplit(result.url).query)
+    rows = handoff_rows(fields, config)
+
+    assert query == {"REQUEST TYPE": ["PO"]}
+    assert rows == [("request_type", "REQUEST TYPE", "PO")]
+    problems = validate_submission_fields(fields)
+    assert len([item for item in problems if "must remain blank" in item]) == 4
 
 def test_manual_rows_follow_configured_order_and_skip_empty_values():
     config = load_config(
@@ -333,12 +372,14 @@ def test_field_and_attachment_preflight_rejects_silent_corruption():
             "description_of_work": "x" * 4001,
             "request_type": "WO",
             "dispatch_service_center": "DALLAS",
+            "asset_id": "A-123",
         }
     )
     assert any("valid email" in item for item in problems)
     assert any("4,000-character" in item for item in problems)
     assert any("REQUEST TYPE" in item and "PO" in item for item in problems)
     assert any("DISPATCH WO" in item and "NA" in item for item in problems)
+    assert any("ASSET ID" in item and "numbers only" in item for item in problems)
 
     attachment_problems = preflight_attachments(
         [
@@ -362,9 +403,9 @@ def test_submission_fingerprint_is_stable_and_attachment_sensitive():
 
 
 def test_download_names_sanitize_untrusted_names_without_changing_data():
-    files = [("../original\nquote.pdf", b"quote"), ("scope.docx", b"doc")]
-    result = download_names(files, "RRH UMMC Pump MSAPO")
+    files = [("../original\nquote.pdf", b"quote"), ("scope.pdf", b"pdf")]
+    result = download_names(files, "RRH UMMC Pump Scope")
     assert result[0][1] == "RRH UMMC Pump 1 Quote.pdf"
-    assert result[1][1] == "RRH UMMC Pump 2 MSAPO.docx"
+    assert result[1][1] == "RRH UMMC Pump 2 Scope.pdf"
     assert result[0][2] == b"quote"
-    assert result[1][2] == b"doc"
+    assert result[1][2] == b"pdf"

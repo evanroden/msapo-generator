@@ -1,0 +1,198 @@
+"""Generate the lightweight Scope/Inclusions/Exclusions PO attachment.
+
+This PDF intentionally contains no MSAPO agreement language and replaces the
+former DOCX-plus-converted-PDF package.  It is built directly with PyMuPDF,
+which is already required for quote extraction, so every PO route receives the
+same two-file package: the unchanged vendor quote and this reviewed PDF.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Iterable
+
+import fitz
+
+
+_PAGE_WIDTH = 612.0  # US Letter, points
+_PAGE_HEIGHT = 792.0
+_LEFT = 54.0
+_RIGHT = 54.0
+_TOP = 54.0
+_BOTTOM = 54.0
+_BODY_SIZE = 10.5
+_BODY_LEADING = 15.0
+
+
+def _pdf_text(value: object) -> str:
+    """Normalize common typography for the built-in Helvetica font."""
+    text = str(value or "")
+    replacements = {
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2022": "-",
+        "\u00a0": " ",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    return text
+
+
+def _wrap(text: str, width: float, *, size: float, font: str) -> list[str]:
+    """Wrap one logical line to the available point width."""
+    words = _pdf_text(text).split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if fitz.get_text_length(candidate, fontname=font, fontsize=size) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+            current = ""
+        # Split a single pathological token rather than allowing it past the
+        # margin or dropping it from the PDF.
+        chunk = ""
+        for character in word:
+            candidate = chunk + character
+            if chunk and fitz.get_text_length(
+                candidate, fontname=font, fontsize=size
+            ) > width:
+                lines.append(chunk)
+                chunk = character
+            else:
+                chunk = candidate
+        current = chunk
+    if current:
+        lines.append(current)
+    return lines
+
+
+class _Writer:
+    def __init__(self, document: fitz.Document):
+        self.document = document
+        self.page: fitz.Page | None = None
+        self.y = _TOP
+        self.page_number = 0
+        self._new_page()
+
+    def _new_page(self) -> None:
+        self.page = self.document.new_page(width=_PAGE_WIDTH, height=_PAGE_HEIGHT)
+        self.page_number += 1
+        self.y = _TOP
+        self.page.insert_text(
+            (_PAGE_WIDTH - _RIGHT - 38, _PAGE_HEIGHT - 24),
+            f"Page {self.page_number}",
+            fontname="helv",
+            fontsize=8,
+            color=(0.38, 0.44, 0.52),
+        )
+
+    def _ensure(self, height: float) -> None:
+        if self.y + height > _PAGE_HEIGHT - _BOTTOM:
+            self._new_page()
+
+    def spacer(self, height: float = 7.0) -> None:
+        self._ensure(height)
+        self.y += height
+
+    def paragraph(
+        self,
+        text: object,
+        *,
+        size: float = _BODY_SIZE,
+        font: str = "helv",
+        color: tuple[float, float, float] = (0.12, 0.18, 0.25),
+        leading: float = _BODY_LEADING,
+        prefix: str = "",
+    ) -> None:
+        logical_lines = _pdf_text(text).splitlines() or [""]
+        for logical in logical_lines:
+            rendered = f"{prefix}{logical}" if logical.strip() else ""
+            wrapped = _wrap(
+                rendered,
+                _PAGE_WIDTH - _LEFT - _RIGHT,
+                size=size,
+                font=font,
+            )
+            for line in wrapped:
+                self._ensure(leading)
+                if line:
+                    assert self.page is not None
+                    self.page.insert_text(
+                        (_LEFT, self.y + size),
+                        line,
+                        fontname=font,
+                        fontsize=size,
+                        color=color,
+                    )
+                self.y += leading
+
+    def section(self, title: str, content: str | Iterable[str], *, bullets: bool) -> None:
+        self._ensure(30)
+        self.paragraph(
+            title,
+            size=13,
+            font="hebo",
+            color=(0.07, 0.19, 0.31),
+            leading=18,
+        )
+        self.spacer(2)
+        if bullets:
+            items = [str(item).strip() for item in content if str(item).strip()]
+            if not items:
+                self.paragraph("None stated.", color=(0.38, 0.44, 0.52))
+            for item in items:
+                self.paragraph(item, prefix="- ")
+                self.spacer(2)
+        else:
+            text = str(content or "").strip()
+            self.paragraph(text or "None stated.")
+        self.spacer(10)
+
+
+def build_scope_pdf(
+    *,
+    scope: str,
+    inclusions: Iterable[str],
+    exclusions: Iterable[str],
+    vendor: str = "",
+    site: str = "",
+) -> bytes:
+    """Return a reviewable PDF containing only scope, inclusions, and exclusions."""
+    document = fitz.open()
+    try:
+        document.set_metadata(
+            {
+                "title": "Scope, Inclusions, and Exclusions",
+                "subject": "Purchase order supporting attachment",
+                "creator": "Purchase Order Process Control",
+            }
+        )
+        writer = _Writer(document)
+        writer.paragraph(
+            "Scope, Inclusions, and Exclusions",
+            size=18,
+            font="hebo",
+            color=(0.07, 0.19, 0.31),
+            leading=23,
+        )
+        if vendor:
+            writer.paragraph(f"Vendor: {vendor}", font="hebo")
+        if site:
+            writer.paragraph(f"Site: {site}", font="hebo")
+        writer.spacer(12)
+        writer.section("Scope", scope, bullets=False)
+        writer.section("Inclusions", list(inclusions), bullets=True)
+        writer.section("Exclusions", list(exclusions), bullets=True)
+        return document.tobytes(garbage=4, deflate=True)
+    finally:
+        document.close()

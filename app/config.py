@@ -1,5 +1,5 @@
 """
-Configuration module for Email Process Control.
+Configuration module for Purchase Order Process Control.
 Loads settings from environment variables and .env file.
 """
 

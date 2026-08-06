@@ -22,15 +22,10 @@ def _config():
             "type": "PICKLIST",
             "options": ["PO"],
         },
-        "send_copy_email": {
-            "id": 4,
-            "title": "Send me a copy of my responses",
-            "type": "CHECKBOX",
-        },
         "contact_email": {"id": 5, "title": "Contact", "type": "CONTACT_LIST"},
         "submission_key": {
             "id": 6,
-            "title": "Email Process Control Submission Key",
+            "title": "Purchase Order Process Control Submission Key",
             "type": "TEXT_NUMBER",
         },
     }
@@ -50,15 +45,10 @@ def _columns():
         {"id": 1, "title": "SITE NUMBER / LOCATION", "type": "TEXT_NUMBER"},
         {"id": 2, "title": "PO/CO AMOUNT", "type": "TEXT_NUMBER"},
         {"id": 3, "title": "REQUEST TYPE", "type": "PICKLIST", "options": ["PO"]},
-        {
-            "id": 4,
-            "title": "Send me a copy of my responses",
-            "type": "CHECKBOX",
-        },
         {"id": 5, "title": "Contact", "type": "CONTACT_LIST"},
         {
             "id": 6,
-            "title": "Email Process Control Submission Key",
+            "title": "Purchase Order Process Control Submission Key",
             "type": "TEXT_NUMBER",
         },
     ]
@@ -71,7 +61,6 @@ def test_build_cells_uses_strict_typed_values():
             "site_location": "UMMC",
             "total": "$1,234.56",
             "request_type": "PO",
-            "send_copy_email": "true",
             "contact_email": "person@example.com",
             "submission_key": "key",
         },
@@ -82,7 +71,6 @@ def test_build_cells_uses_strict_typed_values():
     by_id = {cell["columnId"]: cell for cell in cells}
     assert by_id[2]["value"] == 1234.56
     assert by_id[3]["value"] == "PO"
-    assert by_id[4]["value"] is True
     assert by_id[5]["value"] == "person@example.com"
     assert all(cell["strict"] is True for cell in cells)
 

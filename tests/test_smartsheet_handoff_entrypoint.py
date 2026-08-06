@@ -24,67 +24,33 @@ def _named_call_lines(function: ast.FunctionDef, name: str) -> list[int]:
     ]
 
 
-def test_main_exposes_delivery_controls_before_conditional_routes():
-    tree = ast.parse(WEB_UI.read_text(encoding="utf-8"))
-    main = _functions(tree)["main"]
-
-    send_lines = _named_call_lines(main, "_render_send_section")
-    control_lines = _named_call_lines(main, "_render_delivery_controls")
-    inline_lines = _named_call_lines(main, "render_inline_smartsheet_handoff")
-
-    assert len(send_lines) == 1
-    assert len(control_lines) == 1
-    assert len(inline_lines) == 1
-    assert control_lines[0] < send_lines[0]
-    assert control_lines[0] < inline_lines[0]
-
-
-def test_delivery_controls_offer_smartsheet_and_email_side_by_side():
+def test_main_has_one_inline_smartsheet_route_and_no_email_route():
     source = WEB_UI.read_text(encoding="utf-8")
     tree = ast.parse(source)
-    helper = _functions(tree)["_render_delivery_controls"]
+    main = _functions(tree)["main"]
 
-    buttons = [
-        node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "st"
-        and node.func.attr == "button"
-    ]
-
-    assert len(buttons) == 2
-    labels = {ast.literal_eval(button.args[0]) for button in buttons}
-    assert labels == {
-        "📋 Prepare Smartsheet submission",
-        "✉️ Use email backup",
-    }
-    for button in buttons:
-        keywords = {item.arg: item.value for item in button.keywords}
-        assert ast.literal_eval(keywords["type"]) == "primary"
-        assert ast.literal_eval(keywords["use_container_width"]) is True
-
-    columns = [
-        node
-        for node in ast.walk(helper)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "st"
-        and node.func.attr == "columns"
-    ]
-    assert len(columns) == 1
-    assert ast.literal_eval(columns[0].args[0]) == 2
-
-    helper_source = ast.get_source_segment(source, helper)
-    assert helper_source is not None
-    assert 'st.session_state[route_key] = "smartsheet"' in helper_source
-    assert 'st.session_state[route_key] = "email"' in helper_source
+    assert len(_named_call_lines(main, "render_inline_smartsheet_handoff")) == 1
+    assert "Prepare Smartsheet submission" in source
     assert "st.switch_page" not in source
+    assert "build_eml" not in source
+    assert "Use email backup" not in source
+    assert "Outlook" not in source
+    assert "Apple Mail" not in source
+    assert "_render_send_section" not in source
 
 
-def test_inline_handoff_keeps_manual_controls_and_requester_memory():
+def test_main_generates_only_the_scope_pdf_package():
+    source = WEB_UI.read_text(encoding="utf-8")
+
+    assert "build_scope_pdf(" in source
+    assert "Generate Scope/Inclusions/Exclusions PDF" in source
+    assert "unchanged original quote plus one simple PDF" in source
+    assert "generate_msapo" not in source
+    assert "convert_docx" not in source
+    assert "download_button(" in source
+
+
+def test_inline_handoff_keeps_prefill_downloads_and_requester_memory():
     inline_path = ROOT / "app" / "smartsheet_inline.py"
     inline = inline_path.read_text(encoding="utf-8")
     tree = ast.parse(inline)
@@ -99,18 +65,22 @@ def test_inline_handoff_keeps_manual_controls_and_requester_memory():
     assert "prefill_enabled(config)" in helper_source
     assert "prefilled.url" in helper_source
     assert 'link_label="Open prefilled Smartsheet form ↗"' in helper_source
-    assert 'config.form_url or ""' not in helper_source
-    assert 'fields.pop("send_copy_email", None)' in helper_source
+    assert "st.switch_page" not in inline
     assert "st.checkbox" not in helper_source
-    assert "Request type = PO" in helper_source
-    assert "Dispatch service center = NA" in helper_source
+    assert "person filling out this request" in helper_source
+    assert "Object Account =" in helper_source
+    assert "Agreement Type =" in helper_source
+    assert "Dispatch Service Center = NA" in helper_source
+    assert "Leave Request Completed, PO #, Work Order #" in helper_source
+    assert "email backup" not in helper_source.lower()
 
 
-def test_legacy_destination_explains_mobile_session_loss():
+def test_legacy_destination_is_non_submitting_compatibility_notice():
     page = (ROOT / "pages" / "2_Smartsheet_PO.py").read_text(encoding="utf-8")
-    assert "No prepared PO reached this page" in page
-    assert "opens inline on the same page" in page
-
+    assert "compatibility page" in page.lower()
+    assert "Return to Purchase Order Process Control" in page
+    assert "render_inline_smartsheet_handoff" not in page
+    assert "submit_po" not in page
 
 
 def test_prefilled_link_is_labeled_and_suppresses_referrer_data():
@@ -121,22 +91,33 @@ def test_prefilled_link_is_labeled_and_suppresses_referrer_data():
     assert 'referrerpolicy="no-referrer"' in component
 
 
-def test_render_blueprint_enables_the_complete_exact_label_map():
+def test_render_blueprint_maps_only_fields_that_may_be_populated():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
     assert 'SMARTSHEET_URL_PREFILL_ENABLED\n        value: "true"' in source
-    assert '"request_type":"REQUEST TYPE"' in source
-    assert '"requester_name":"REQUESTER"' in source
-    assert '"job_number":"JOB NUMBER"' in source
-    assert '"site_location":"SITE NUMBER / LOCATION"' in source
-    assert '"cost_code":"COST CODE"' in source
-    assert '"object_account":"OBJECT ACCOUNT"' in source
-    assert '"agreement_type":"AGREEMENT TYPE FOR PO"' in source
-    assert '"original_po_number":"ORIGIONAL PO NUMBER"' in source
-    assert '"total":"PO/CO AMOUNT"' in source
-    assert '"vendor":"VENDOR NAME"' in source
-    assert '"contact_name":"VENDOR CONTACT NAME"' in source
-    assert '"contact_email":"VENDOR CONTACT EMAIL"' in source
-    assert '"description_of_work":"DESCRIPTION OF WORK"' in source
-    assert '"asset_id":"ASSET ID"' in source
-    assert '"dispatch_service_center":"DISPATCH WO TO SERVICE CENTER?"' in source
-    assert '"instructions":"ADDITIONAL INFORMATION IF NEEDED"' in source
+    for mapping in (
+        '"request_type":"REQUEST TYPE"',
+        '"requester_name":"REQUESTER"',
+        '"job_number":"JOB NUMBER"',
+        '"site_location":"SITE NUMBER / LOCATION"',
+        '"cost_code":"COST CODE"',
+        '"object_account":"OBJECT ACCOUNT"',
+        '"agreement_type":"AGREEMENT TYPE FOR PO"',
+        '"total":"PO/CO AMOUNT"',
+        '"vendor":"VENDOR NAME"',
+        '"contact_name":"VENDOR CONTACT NAME"',
+        '"contact_email":"VENDOR CONTACT EMAIL"',
+        '"description_of_work":"DESCRIPTION OF WORK"',
+        '"asset_id":"ASSET ID"',
+        '"dispatch_service_center":"DISPATCH WO TO SERVICE CENTER?"',
+        '"instructions":"ADDITIONAL INFORMATION IF NEEDED"',
+    ):
+        assert mapping in source
+
+    for forbidden in (
+        "leave_request_completed",
+        "po_number",
+        "work_order_number",
+        "original_po_number",
+        "send_copy_email",
+    ):
+        assert f'"{forbidden}":' not in source
