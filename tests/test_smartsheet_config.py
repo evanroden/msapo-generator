@@ -191,6 +191,67 @@ def test_prefill_value_translation_required_fields_and_length_limit():
     assert any("URL length limit" in item for item in result.skipped)
 
 
+
+def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
+    field_map = {
+        "request_type": "REQUEST TYPE",
+        "requester_name": "REQUESTER",
+        "job_number": "JOB NUMBER",
+        "site_location": "SITE NUMBER / LOCATION",
+        "cost_code": "COST CODE",
+        "object_account": "OBJECT ACCOUNT",
+        "agreement_type": "AGREEMENT TYPE FOR PO",
+        "original_po_number": "ORIGIONAL PO NUMBER",
+        "total": "PO/CO AMOUNT",
+        "vendor": "VENDOR NAME",
+        "contact_name": "VENDOR CONTACT NAME",
+        "contact_email": "VENDOR CONTACT EMAIL",
+        "description_of_work": "DESCRIPTION OF WORK",
+        "asset_id": "ASSET ID",
+        "dispatch_service_center": "DISPATCH WO TO SERVICE CENTER?",
+        "instructions": "ADDITIONAL INFORMATION IF NEEDED",
+    }
+    fields = {
+        "request_type": "PO",
+        "requester_name": "Test Requester",
+        "job_number": "RRH-695400022-O&M",
+        "site_location": "123 - Test Hospital",
+        "cost_code": "01CEABA",
+        "object_account": "5511-SUBCONTRACTOR",
+        "agreement_type": "03 - MSAPO (SERVICE)",
+        "original_po_number": "",
+        "total": "$1,234.56",
+        "vendor": "Example & Sons",
+        "contact_name": "Pat O'Brien",
+        "contact_email": "pat@example.invalid",
+        "description_of_work": "Repair pump #7 & verify operation.",
+        "asset_id": "RRH-0007",
+        "dispatch_service_center": "NA",
+        "instructions": "Synthetic test only; do not submit.",
+    }
+    config = load_config(
+        {
+            "SMARTSHEET_FORM_URL": "https://app.smartsheet.com/b/form/example",
+            "SMARTSHEET_URL_PREFILL_ENABLED": "true",
+            "SMARTSHEET_FORM_FIELD_MAP_JSON": json.dumps(field_map),
+        }
+    )
+
+    result = build_prefilled_form_url(fields, config)
+    query = parse_qs(urlsplit(result.url).query)
+
+    assert result.missing_required == ()
+    assert result.skipped == ()
+    assert result.included == tuple(
+        field for field in DEFAULT_FORM_ORDER if fields.get(field)
+    )
+    assert query == {
+        label: [str(fields[field]).strip()]
+        for field, label in field_map.items()
+        if fields.get(field)
+    }
+    assert "attachments" not in result.url.lower()
+
 def test_manual_rows_follow_configured_order_and_skip_empty_values():
     config = load_config(
         {

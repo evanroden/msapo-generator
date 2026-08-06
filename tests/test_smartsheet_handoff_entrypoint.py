@@ -95,6 +95,13 @@ def test_inline_handoff_keeps_manual_controls_and_requester_memory():
     assert "render_manual_handoff(" in helper_source
     assert ".download_button(" in helper_source
     assert "record_device_requester(" in helper_source
+    assert "build_prefilled_form_url(fields, config)" in helper_source
+    assert "prefill_enabled(config)" in helper_source
+    assert "prefilled.url" in helper_source
+    assert 'link_label="Open prefilled Smartsheet form ↗"' in helper_source
+    assert 'config.form_url or ""' not in helper_source
+    assert 'fields.pop("send_copy_email", None)' in helper_source
+    assert "st.checkbox" not in helper_source
     assert "Request type = PO" in helper_source
     assert "Dispatch service center = NA" in helper_source
 
@@ -103,3 +110,33 @@ def test_legacy_destination_explains_mobile_session_loss():
     page = (ROOT / "pages" / "2_Smartsheet_PO.py").read_text(encoding="utf-8")
     assert "No prepared PO reached this page" in page
     assert "opens inline on the same page" in page
+
+
+
+def test_prefilled_link_is_labeled_and_suppresses_referrer_data():
+    component = (ROOT / "app" / "smartsheet_ui.py").read_text(encoding="utf-8")
+    assert 'link_label: str = "Open Smartsheet form ↗"' in component
+    assert '"linkLabel": link_label' in component
+    assert "textContent = D.linkLabel" in component
+    assert 'referrerpolicy="no-referrer"' in component
+
+
+def test_render_blueprint_enables_the_complete_exact_label_map():
+    source = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    assert 'SMARTSHEET_URL_PREFILL_ENABLED\n        value: "true"' in source
+    assert '"request_type":"REQUEST TYPE"' in source
+    assert '"requester_name":"REQUESTER"' in source
+    assert '"job_number":"JOB NUMBER"' in source
+    assert '"site_location":"SITE NUMBER / LOCATION"' in source
+    assert '"cost_code":"COST CODE"' in source
+    assert '"object_account":"OBJECT ACCOUNT"' in source
+    assert '"agreement_type":"AGREEMENT TYPE FOR PO"' in source
+    assert '"original_po_number":"ORIGIONAL PO NUMBER"' in source
+    assert '"total":"PO/CO AMOUNT"' in source
+    assert '"vendor":"VENDOR NAME"' in source
+    assert '"contact_name":"VENDOR CONTACT NAME"' in source
+    assert '"contact_email":"VENDOR CONTACT EMAIL"' in source
+    assert '"description_of_work":"DESCRIPTION OF WORK"' in source
+    assert '"asset_id":"ASSET ID"' in source
+    assert '"dispatch_service_center":"DISPATCH WO TO SERVICE CENTER?"' in source
+    assert '"instructions":"ADDITIONAL INFORMATION IF NEEDED"' in source

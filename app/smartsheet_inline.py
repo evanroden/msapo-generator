@@ -1,10 +1,11 @@
-"""Inline manual Smartsheet handoff for mobile-safe PO submission.
+"""Inline prefilled Smartsheet handoff for mobile-safe PO submission.
 
 The production Streamlit app keeps quote bytes, generated documents, and most
 reviewed widget values in the active websocket session. On iPhone/iPad Safari,
 navigating to a separate Streamlit page can create a fresh session. Rendering
-the manual handoff inline avoids that boundary while retaining the exact form
-labels, validation, attachment checks, and browser-scoped requester learning.
+the handoff inline avoids that boundary while retaining exact form labels,
+custom-URL prefilling, validation, attachment checks, and browser-scoped
+requester learning.
 """
 
 from __future__ import annotations
@@ -26,11 +27,13 @@ from app.smartsheet import (
     OBJECT_ACCOUNT_OPTIONS,
     RRH_JOB_NUMBERS,
     SmartsheetConfigurationError,
+    build_prefilled_form_url,
     download_names,
     handoff_rows,
     load_config,
     manual_enabled,
     missing_required_fields,
+    prefill_enabled,
     preflight_attachments,
     validate_submission_fields,
 )
@@ -50,16 +53,17 @@ def _browser_token() -> str:
 
 
 def render_inline_smartsheet_handoff(context: POContext) -> None:
-    """Render the supported manual route without leaving the source workflow."""
+    """Render a prefilled form route without leaving the source workflow."""
     st.markdown("#### Smartsheet PO handoff")
     st.success(
         "Your reviewed PO, quote, and generated attachments are still loaded on "
         "this page."
     )
     st.info(
-        "Smartsheet does not receive these values automatically yet. Confirm the "
-        "few fields below, download the prepared files, then use the purple form "
-        "button and the Copy buttons to complete the form. Keep this page open."
+        "Confirm the few fields below and download the prepared files. The purple "
+        "button will open a custom Smartsheet URL with the reviewed PO values "
+        "already filled. Keep this page open for attachment uploads and the Copy "
+        "fallback."
     )
 
     try:
@@ -161,17 +165,15 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
             key=f"{prefix}instructions",
         )
 
-    fields["send_copy_email"] = (
-        "true"
-        if st.checkbox(
-            "Send me a copy of my Smartsheet responses",
-            key=f"{prefix}send_copy_email",
-        )
-        else ""
-    )
+    # Smartsheet's response-copy query parameter requires the requester's
+    # email address, while this workflow stores only the requester's name.
+    # Keep this as a deliberate choice inside the authenticated form rather
+    # than pretending a boolean value can prefill it.
+    fields.pop("send_copy_email", None)
     st.caption(
         "Locked from the reviewed PO: Request type = PO; Agreement type = "
-        f"{fields.get('agreement_type') or '—'}; Dispatch service center = NA."
+        f"{fields.get('agreement_type') or '—'}; Dispatch service center = NA. "
+        "Choose ‘Send me a copy’ inside Smartsheet if needed."
     )
 
     missing_for_memory = missing_required_fields(
@@ -231,7 +233,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
             "are unchanged."
         )
 
-    st.markdown("##### 3. Open Smartsheet and copy the prepared values")
+    st.markdown("##### 3. Open the prefilled Smartsheet form")
     if not manual_enabled(config):
         st.error("The Smartsheet form link is not configured.")
         return
@@ -253,17 +255,49 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         st.warning("No populated fields are available to copy.")
         return
 
+    if not prefill_enabled(config):
+        st.error(
+            "Automatic Smartsheet prefilling is not enabled. Use the email backup "
+            "while the deployment configuration is corrected."
+        )
+        return
+
+    try:
+        prefilled = build_prefilled_form_url(fields, config)
+    except SmartsheetConfigurationError as exc:
+        st.error(f"Could not build the prefilled Smartsheet link: {exc}")
+        return
+
+    included = set(prefilled.included)
+    fallback_rows = [
+        (field, label, value)
+        for field, label, value in rows
+        if field not in included
+    ]
+    st.success(
+        f"{len(prefilled.included)} populated field"
+        f"{'s are' if len(prefilled.included) != 1 else ' is'} ready to prefill."
+    )
+    if fallback_rows:
+        st.warning(
+            "These fields could not be included safely in the custom URL. Use "
+            "their Copy buttons below: "
+            + ", ".join(label for _, label, _ in fallback_rows)
+        )
+
     st.markdown(
-        "1. Tap **Open Smartsheet form** below. It opens in a new tab.\n"
-        "2. Return to this tab and tap **Copy** beside each value in order.\n"
-        "3. Paste into the matching Smartsheet field, upload the files above, "
-        "and submit."
+        "1. Tap **Open prefilled Smartsheet form** below. It opens in a new tab.\n"
+        "2. Review the populated fields. If Smartsheet leaves anything blank, "
+        "return here and use its **Copy** button.\n"
+        "3. Upload the verified files downloaded above, then submit the form."
     )
     render_manual_handoff(
         rows,
-        config.form_url or "",
-        key=f"{context.context_id}-inline-manual",
+        prefilled.url,
+        key=f"{context.context_id}-inline-prefill",
+        link_label="Open prefilled Smartsheet form ↗",
     )
     st.caption(
-        "This manual pilot prepares the entry but does not submit it automatically."
+        "The custom URL fills form values but never submits the PO or includes "
+        "attachments. The original quote remains unchanged."
     )
