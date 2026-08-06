@@ -685,9 +685,14 @@ reachability.
 
 app/web_ui.py now renders an explicit **Continue to Smartsheet PO handoff**
 control immediately after the email/share panel and before contact-learning
-confirmation. The control uses st.page_link("pages/2_Smartsheet_PO.py", ...)
-so Streamlit performs an in-session page transition and retains the verified PO
-context.
+confirmation.
+
+The first production correction used st.page_link. A second live test proved
+that this deployment rendered the page link as an ordinary route navigation;
+following it opened a fresh websocket and again lost st.session_state. The
+final control is therefore a Streamlit button whose active-session event calls
+st.switch_page("pages/2_Smartsheet_PO.py"). The page switch occurs server-side
+inside the existing session and retains the verified PO context.
 
 The visible step number remains correct for both supported workflows:
 
@@ -702,8 +707,9 @@ as a fresh URL cannot carry transient session state.
 tests/test_smartsheet_handoff_entrypoint.py verifies that:
 
 1. the main workflow calls the handoff renderer after the email/share renderer;
-2. the renderer points to the exact Streamlit page path;
-3. the link label, icon, and full-width presentation remain explicit; and
+2. the renderer uses a button followed by st.switch_page, rather than a direct
+   page link or URL;
+3. the label, primary treatment, and full-width presentation remain explicit; and
 4. the standard/EPO step-number selection remains present.
 
 ### Production acceptance for this correction
