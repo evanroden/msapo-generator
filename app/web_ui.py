@@ -1149,7 +1149,7 @@ def main():
 
     # Keep the handoff in this Streamlit session. A direct URL visit creates a
     # fresh session and cannot safely reuse the reviewed quote or attachments.
-    _render_smartsheet_handoff_link("4" if epo_mode else "5")
+    _render_smartsheet_handoff_control("4" if epo_mode else "5")
 
     # ── Learning: remember this send's details for this contract ────
     # Sending happens client-side (share sheet / .eml), so the app can't see
@@ -1177,13 +1177,14 @@ def main():
     _render_footer()
 
 
-def _render_smartsheet_handoff_link(step_number: str) -> None:
-    """Expose the prepared PO handoff without relying on sidebar discovery.
+def _render_smartsheet_handoff_control(step_number: str) -> None:
+    """Switch pages through the active Streamlit session.
 
-    st.page_link performs Streamlit's in-session page transition. This is
-    intentional: navigating directly to /Smartsheet_PO creates a new websocket
-    session and loses the reviewed quote, generated documents, and verified
-    attachment fingerprints held in st.session_state.
+    Production testing showed that st.page_link rendered a normal anchor in
+    this deployment. Following it opened a fresh websocket session and lost
+    the reviewed quote, generated documents, and verified attachment
+    fingerprints held in st.session_state. A button event followed by
+    st.switch_page performs the transition server-side in the active session.
     """
     st.markdown(
         f"""
@@ -1198,12 +1199,13 @@ def _render_smartsheet_handoff_link(step_number: str) -> None:
         "Continue in this tab so the reviewed PO values and verified attachments "
         "carry into Smartsheet."
     )
-    st.page_link(
-        "pages/2_Smartsheet_PO.py",
-        label="Continue to Smartsheet PO handoff",
-        icon="📋",
+    if st.button(
+        "📋 Continue to Smartsheet PO handoff",
+        type="primary",
         use_container_width=True,
-    )
+        key="continue_to_smartsheet_po",
+    ):
+        st.switch_page("pages/2_Smartsheet_PO.py")
 
 
 def _render_footer() -> None:
