@@ -73,9 +73,14 @@ context = st.session_state.get(PREPARED_PO_CONTEXT_STATE_KEY)
 if not isinstance(context, POContext):
     context = build_po_context(st.session_state)
 if context is None:
+    st.error(
+        "No prepared PO reached this page. On some mobile browsers, opening a "
+        "separate Streamlit page starts a new session and loses the in-memory quote."
+    )
     st.info(
-        "Analyze a vendor quote in Email Process Control first. This page will then "
-        "reuse the reviewed PO values and attachments."
+        "Return to Email Process Control and tap **Prepare Smartsheet submission**. "
+        "The handoff now opens inline on the same page with the prepared values "
+        "and attachment buttons visible."
     )
     st.stop()
 

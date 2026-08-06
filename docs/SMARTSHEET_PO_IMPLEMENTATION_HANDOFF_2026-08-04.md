@@ -746,3 +746,161 @@ A deployment is accepted only when all of the following are true:
 
 Do not treat a Render live status or HTTP 200 health response alone as proof
 that a cross-page Streamlit workflow is usable.
+
+## Mobile state-loss incident and inline-route correction — 2026-08-06
+
+### User-visible production failure
+
+An actual iPhone Safari attempt disproved the final assumption in the prior
+correction. The user completed quote analysis and document preparation, tapped
+the Smartsheet action, and arrived at the separate **Smartsheet PO Handoff**
+page. That page contained only this empty-state message:
+
+> Analyze a vendor quote in Email Process Control first. This page will then
+> reuse the reviewed PO values and attachments.
+
+The user therefore had no prepared values, no attachment buttons, no form
+button, and no actionable instruction. A screenshot captured the failure at
+10:37 on an iPhone. This is authoritative real-device evidence that the
+server-side `st.switch_page` plus immutable snapshot strategy did not reliably
+preserve the production session across mobile multipage navigation.
+
+The exact mechanism may be Safari reconnect behavior, Streamlit multipage
+websocket handling, or an infrastructure/session affinity interaction. The
+product-level conclusion does not depend on selecting among those internal
+causes: crossing the Streamlit page boundary is not a dependable way to carry
+quote bytes and generated files on the target production device.
+
+### Corrected architecture
+
+The primary Smartsheet flow no longer navigates to
+`pages/2_Smartsheet_PO.py`. It renders inside the same `app/web_ui.py` page and
+active session that owns the analyzed quote and generated attachments.
+
+`app/web_ui.py` now:
+
+1. Builds the immutable `POContext` while all reviewed source widgets still
+   exist.
+2. Displays two explicit, adjacent choices under **Submit the PO request**:
+   - **Prepare Smartsheet submission** (recommended route)
+   - **Use email backup** (established fallback)
+3. Stores only the chosen presentation route in `st.session_state`, scoped by
+   `POContext.context_id` so a new quote cannot reopen the prior quote's panel.
+4. Calls `render_inline_smartsheet_handoff(po_context)` for Smartsheet without
+   calling `st.switch_page` or constructing a new URL.
+5. Renders the existing Outlook/Apple Mail component only after the user
+   chooses **Use email backup**.
+6. Shows the existing “I sent it” contract-learning confirmation only with the
+   email route, because that confirmation describes a client-side email send.
+7. Bootstraps the anonymous requester cookie at initial root-page load, before
+   a quote is analyzed. If an inline fallback must create the cookie later, it
+   does so without reloading the parent page.
+
+The email content and attachments are unchanged. Smartsheet remains the
+recommended path, while email remains visibly available rather than being
+removed during the pilot.
+
+### Inline handoff module
+
+`app/smartsheet_inline.py` is the mobile-safe manual-route presentation layer.
+It deliberately reuses, rather than weakens, the existing validated domain
+functions:
+
+- `load_config` and `manual_enabled` for the verified production form URL;
+- `missing_required_fields` and `validate_submission_fields` for exact form
+  values;
+- `preflight_attachments` and `download_names` for safe files;
+- `handoff_rows` for exact labels and final field order;
+- `render_manual_handoff` for copy buttons, progress, and the external form
+  link;
+- the existing device cookie and requester-memory functions for the three-PO
+  learning threshold.
+
+The inline experience is intentionally manual and tells the user this plainly.
+Its visible sequence is:
+
+1. Confirm Requester, Job number, exact Smartsheet site/location, Object
+   account, and optional additional information.
+2. Download the verified quote and generated document files.
+3. Read the explicit explanation that the external form does **not** receive
+   values automatically yet.
+4. Open the Smartsheet form in a new tab.
+5. Return to Email Process Control and use the copy buttons in exact form order.
+6. Upload the downloaded files and submit in Smartsheet.
+
+The view surfaces locked constants before form entry:
+
+- Request Type = `PO`
+- Agreement Type = the reviewed MSAPO/EPO mapping
+- Dispatch service center = `NA`
+
+The form assistant remains blocked if the source context, required fields, or
+attachments fail their existing preflight checks. URL-prefill and API modes are
+not exposed by the inline pilot and remain disabled in configuration.
+
+`app/device_identity.py` now accepts a `reload_parent` option. Its default
+remains `True` for the safe initial app bootstrap. The inline handoff passes
+`False`; otherwise first-time requester setup could force a full Safari reload,
+create a fresh Streamlit session, and discard the very PO state this correction
+is designed to preserve. If the fallback creates a cookie without reloading,
+the current handoff continues normally and a later browser request can observe
+the cookie. Cookie failure still degrades only requester convenience, never PO
+preparation.
+
+### Legacy page behavior
+
+`pages/2_Smartsheet_PO.py` remains in the repository for compatibility and for
+future API/prefill work. It is no longer the primary production entrypoint. If
+someone reaches it without a valid context, its empty state now explains that
+mobile navigation can create a new session and directs the user back to the
+inline **Prepare Smartsheet submission** action. Do not restore cross-page
+navigation as the primary manual route without a proven durable server-side job
+or artifact store and real-device acceptance.
+
+### Regression boundary added for this incident
+
+`tests/test_smartsheet_handoff_entrypoint.py` now requires:
+
+1. Delivery controls to render before either conditional route.
+2. Exactly two adjacent full-width action buttons with the production labels.
+3. Route state to contain distinct `smartsheet` and `email` values.
+4. No `st.switch_page` call in `app/web_ui.py`.
+5. The inline handoff to retain the manual copy component, attachment download
+   controls, and requester-memory recording.
+6. The locked `PO` and `NA` statements to remain visible.
+7. The legacy empty state to explain the mobile session boundary and inline
+   recovery path.
+8. The cookie script to support a non-reloading mode for an active mobile
+   workflow.
+
+Focused syntax compilation and all four focused entrypoint checks passed before
+publication. Full GitHub Actions and the Render production acceptance pass must
+still be recorded against the resulting commit.
+
+### Required production acceptance for this correction
+
+Do not accept this change based only on desktop emulation. After GitHub Actions
+and Render deployment succeed:
+
+1. Start from the root Email Process Control URL on an actual iPhone/iPad.
+2. Analyze a redacted or approved quote and generate the correct document
+   package.
+3. Confirm **Prepare Smartsheet submission** and **Use email backup** appear
+   beside each other.
+4. Tap **Prepare Smartsheet submission** and confirm the URL/page does not
+   change.
+5. Confirm the same screen immediately shows the success explanation,
+   Requester, RRH job default, site/location, object account, attachment
+   downloads, and instructions.
+6. Enter Requester and confirm the prepared copy rows and purple **Open
+   Smartsheet form** control appear.
+7. Download every offered attachment and confirm the external form accepts
+   them.
+8. Switch back to the root page, choose **Use email backup**, and confirm the
+   existing Apple Mail/Outlook route still works with the same attachments.
+9. Start a different quote and verify the prior delivery panel state and values
+   do not carry into its new `context_id`.
+
+The overriding rule from this incident is: **transient Streamlit session data
+that includes files must not cross a mobile page boundary unless the data has
+first been persisted to a durable, authenticated server-side record.**
