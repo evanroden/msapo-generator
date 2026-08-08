@@ -27,6 +27,13 @@ _ALLOWED_WORK_CATEGORIES = {
     "water_softener",
 }
 _ALLOWED_ASSUMPTION_SECTIONS = {"inclusion", "exclusion", "scope"}
+_ALLOWED_PURCHASE_ROUTES = {
+    "onsite_labor",
+    "onsite_rental",
+    "equipment_purchase",
+    "materials_purchase",
+}
+_ALLOWED_REQUEST_TYPES = {"PO", "CHANGE ORDER"}
 
 _STRING_FIELDS = {
     "vendor_name",
@@ -46,6 +53,9 @@ _OPTIONAL_STRING_FIELDS = {
     "short_description",
     "work_category",
     "asset_reference",
+    "purchase_route_guess",
+    "request_type_guess",
+    "original_po_number",
 }
 _LIST_FIELDS = {"inclusions", "exclusions"}
 
@@ -174,6 +184,21 @@ def normalize_analysis_response(raw: str) -> dict[str, Any]:
     short_description = normalized.get("short_description")
     if short_description:
         normalized["short_description"] = short_description[:20]
+
+    purchase_route = normalized.get("purchase_route_guess")
+    if purchase_route is not None and purchase_route not in _ALLOWED_PURCHASE_ROUTES:
+        raise AnalysisResponseError(
+            "Field 'purchase_route_guess' contains an unsupported value: "
+            f"{purchase_route!r}."
+        )
+
+    request_type = normalized.get("request_type_guess")
+    if request_type is not None and request_type not in _ALLOWED_REQUEST_TYPES:
+        raise AnalysisResponseError(
+            "Field 'request_type_guess' must be PO or CHANGE ORDER."
+        )
+    if request_type != "CHANGE ORDER":
+        normalized["original_po_number"] = None
 
     normalized["ai_assumptions"] = _assumptions(source.get("ai_assumptions"))
     return normalized

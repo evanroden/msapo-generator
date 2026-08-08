@@ -1,8 +1,8 @@
 # Smartsheet PO Implementation Handoff — 2026-08-04
 
 > **Historical implementation record.** The authoritative business policy as of
-> 2026-08-06 is
-> [`PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md`](PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md).
+> 2026-08-08 is
+> [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
 > Preserve this file for incident history, but do not restore its prior
 > email/EPO/MSAPO package rules.
 

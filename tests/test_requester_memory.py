@@ -3,9 +3,93 @@ import sqlite3
 from app.memory import (
     REQUESTER_SUGGEST_THRESHOLD,
     forget_device_requester,
+    record_device_account_manager,
     record_device_requester,
+    remembered_device_account_manager,
     remembered_device_requester,
 )
+
+
+def test_asset_manager_is_remembered_after_first_package_for_device_and_account(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+
+    count = record_device_account_manager(
+        device_token="browser-a",
+        account="ENFRA RRH",
+        manager_name="  Evan   Roden  ",
+        context_id="verified-po-1",
+    )
+
+    assert count == 1
+    assert remembered_device_account_manager("browser-a", "ENFRA RRH") == "Evan Roden"
+    assert remembered_device_account_manager("browser-a", "Tulane") == ""
+    assert remembered_device_account_manager("browser-b", "ENFRA RRH") == ""
+    with sqlite3.connect(tmp_path / "epc_memory.db") as conn:
+        stored_device = conn.execute(
+            "SELECT device_hash FROM device_account_managers LIMIT 1"
+        ).fetchone()[0]
+    assert stored_device != "browser-a"
+    assert len(stored_device) == 64
+
+
+def test_account_manager_reruns_are_idempotent_and_corrections_move_the_event(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+
+    for _ in range(6):
+        assert record_device_account_manager(
+            device_token="browser-a",
+            account="ENFRA RRH",
+            manager_name="Wrong Person",
+            context_id="same-package",
+        ) == 1
+
+    assert record_device_account_manager(
+        device_token="browser-a",
+        account="ENFRA RRH",
+        manager_name="Correct Person",
+        context_id="same-package",
+    ) == 1
+    assert remembered_device_account_manager("browser-a", "ENFRA RRH") == "Correct Person"
+
+    with sqlite3.connect(tmp_path / "epc_memory.db") as conn:
+        rows = conn.execute(
+            "SELECT display_name, use_count FROM device_account_managers"
+        ).fetchall()
+    assert rows == [("Correct Person", 1)]
+
+
+def test_latest_manager_wins_only_inside_the_same_device_account_pair(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    timestamps = iter((1, 2, 3))
+    monkeypatch.setattr("app.memory.time.time", lambda: next(timestamps))
+
+    record_device_account_manager(
+        device_token="shared-tablet",
+        account="ENFRA RRH",
+        manager_name="First Manager",
+        context_id="one",
+    )
+    record_device_account_manager(
+        device_token="shared-tablet",
+        account="ENFRA RRH",
+        manager_name="Second Manager",
+        context_id="two",
+    )
+    record_device_account_manager(
+        device_token="shared-tablet",
+        account="Tulane",
+        manager_name="Tulane Manager",
+        context_id="three",
+    )
+
+    assert remembered_device_account_manager("shared-tablet", "ENFRA RRH") == "Second Manager"
+    assert remembered_device_account_manager("shared-tablet", "Tulane") == "Tulane Manager"
 
 
 def test_requester_is_remembered_after_three_distinct_po_contexts(monkeypatch, tmp_path):

@@ -21,9 +21,9 @@ services:
       - key: SMARTSHEET_FORM_URL
         value: https://app.smartsheet.com/b/form/019e8e6717c471628f9a02280a892100
       - key: SMARTSHEET_FORM_FIELD_MAP_JSON
-        # Leave Request Completed, PO #, Work Order #, and Original PO Number
-        # are intentionally absent so the custom URL always leaves them blank.
-        value: '{"request_type":"REQUEST TYPE","requester_name":"REQUESTER","job_number":"JOB NUMBER","site_location":"SITE NUMBER / LOCATION","cost_code":"COST CODE","object_account":"OBJECT ACCOUNT","agreement_type":"AGREEMENT TYPE FOR PO","total":"PO/CO AMOUNT","vendor":"VENDOR NAME","contact_name":"VENDOR CONTACT NAME","contact_email":"VENDOR CONTACT EMAIL","description_of_work":"DESCRIPTION OF WORK","asset_id":"ASSET ID","dispatch_service_center":"DISPATCH WO TO SERVICE CENTER?","instructions":"ADDITIONAL INFORMATION IF NEEDED"}'
+        # REQUEST COMPLETED, PO #, and WORK ORDER # stay absent/blank.
+        # ORIGINAL PO NUMBER is included only for CHANGE ORDER requests.
+        value: '{"request_type":"REQUEST TYPE","requester_name":"REQUESTER","job_number":"JOB NUMBER","site_location":"SITE NUMBER / LOCATION","cost_code":"COST CODE","object_account":"OBJECT ACCOUNT","agreement_type":"AGREEMENT TYPE FOR PO","original_po_number":"ORIGINAL PO NUMBER","total":"PO/CO AMOUNT","vendor":"VENDOR NAME","contact_name":"VENDOR CONTACT NAME","contact_email":"VENDOR CONTACT EMAIL","description_of_work":"DESCRIPTION OF WORK","asset_id":"ASSET ID","dispatch_service_center":"DISPATCH WO TO SERVICE CENTER?","instructions":"ADDITIONAL INFORMATION IF NEEDED"}'
       - key: SMARTSHEET_URL_PREFILL_ENABLED
         value: "true"
       - key: SMARTSHEET_PREFILL_MAX_URL_LENGTH

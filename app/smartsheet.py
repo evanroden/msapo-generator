@@ -54,8 +54,7 @@ DISPLAY_LABELS: dict[str, str] = {
     "leave_request_completed": "LEAVE REQUEST COMPLETED",
     "po_number": "PO #",
     "work_order_number": "WORK ORDER #",
-    # The live form and destination sheet both contain this spelling.
-    "original_po_number": "ORIGIONAL PO NUMBER",
+    "original_po_number": "ORIGINAL PO NUMBER",
     "total": "PO/CO AMOUNT",
     "vendor": "VENDOR NAME",
     "contact_name": "VENDOR CONTACT NAME",
@@ -72,7 +71,6 @@ ALWAYS_BLANK_FIELDS = frozenset(
         "leave_request_completed",
         "po_number",
         "work_order_number",
-        "original_po_number",
     }
 )
 
@@ -84,6 +82,7 @@ DEFAULT_FORM_ORDER: tuple[str, ...] = (
     "cost_code",
     "object_account",
     "agreement_type",
+    "original_po_number",
     "total",
     "vendor",
     "contact_name",
@@ -103,6 +102,7 @@ DEFAULT_FORM_REQUIRED_FIELDS: tuple[str, ...] = (
     "object_account",
     "agreement_type",
     "total",
+    "vendor",
     "description_of_work",
     "dispatch_service_center",
 )
@@ -114,6 +114,7 @@ RRH_JOB_NUMBERS: tuple[str, ...] = (
     "RRH-695400034-ES JOB CCJ",
 )
 OBJECT_ACCOUNT_OPTIONS: tuple[str, ...] = (
+    "NA",
     MATERIALS_ACCOUNT,
     "5490-OTHER",
     SUBCONTRACTOR_ACCOUNT,
@@ -129,8 +130,9 @@ AGREEMENT_TYPE_OPTIONS: tuple[str, ...] = (
     STANDARD_PO_OVER_25K,
     EQUIPMENT_PO,
 )
+REQUEST_TYPE_OPTIONS: tuple[str, ...] = ("PO", "CHANGE ORDER")
 _EXACT_OPTIONS: dict[str, tuple[str, ...]] = {
-    "request_type": ("PO",),
+    "request_type": REQUEST_TYPE_OPTIONS,
     "object_account": OBJECT_ACCOUNT_OPTIONS,
     "agreement_type": AGREEMENT_TYPE_OPTIONS,
     "dispatch_service_center": ("NA",),
@@ -473,6 +475,15 @@ def _nonempty(value: Any) -> bool:
     return value is not None and str(value).strip() != ""
 
 
+def _must_remain_blank(field: str, fields: Mapping[str, Any]) -> bool:
+    if field in ALWAYS_BLANK_FIELDS:
+        return True
+    return (
+        field == "original_po_number"
+        and str(fields.get("request_type", "")).strip() != "CHANGE ORDER"
+    )
+
+
 def _mapped_value(config: SmartsheetConfig, field: str, value: Any) -> str:
     text = str(value).strip()
     mappings = config.form_value_map.get(field, {})
@@ -488,7 +499,16 @@ def _mapped_value(config: SmartsheetConfig, field: str, value: Any) -> str:
 def missing_required_fields(
     fields: Mapping[str, Any], required_fields: Sequence[str]
 ) -> tuple[str, ...]:
-    return tuple(field for field in required_fields if not _nonempty(fields.get(field)))
+    missing = [
+        field for field in required_fields if not _nonempty(fields.get(field))
+    ]
+    if (
+        str(fields.get("request_type", "")).strip() == "CHANGE ORDER"
+        and not _nonempty(fields.get("original_po_number"))
+        and "original_po_number" not in missing
+    ):
+        missing.append("original_po_number")
+    return tuple(missing)
 
 
 def validate_submission_fields(fields: Mapping[str, Any]) -> tuple[str, ...]:
@@ -496,7 +516,7 @@ def validate_submission_fields(fields: Mapping[str, Any]) -> tuple[str, ...]:
     for field, value in fields.items():
         if field not in KNOWN_FIELDS:
             continue
-        if field in ALWAYS_BLANK_FIELDS:
+        if _must_remain_blank(field, fields):
             if _nonempty(value):
                 problems.append(f"{DISPLAY_LABELS[field]} must remain blank.")
             continue
@@ -521,8 +541,10 @@ def validate_submission_fields(fields: Mapping[str, Any]) -> tuple[str, ...]:
                 _money_number(text)
             except ValueError:
                 problems.append(f"{DISPLAY_LABELS[field]} is not a valid amount.")
-        if field == "asset_id" and not text.isdigit():
-            problems.append("ASSET ID must contain numbers only.")
+        if field == "description_of_work" and len(text) > 20:
+            problems.append("DESCRIPTION OF WORK must be 20 characters or fewer.")
+        if field == "asset_id" and len(text) > 160:
+            problems.append("ASSET ID exceeds the 160-character safety limit.")
         options = _EXACT_OPTIONS.get(field)
         if options and text not in options:
             problems.append(
@@ -570,7 +592,7 @@ def build_prefilled_form_url(
         seen.add(field)
         if field not in KNOWN_FIELDS:
             continue
-        if field in ALWAYS_BLANK_FIELDS:
+        if _must_remain_blank(field, fields):
             continue
         value = fields.get(field)
         if not _nonempty(value):
@@ -623,7 +645,7 @@ def handoff_rows(
         seen.add(field)
         if field not in KNOWN_FIELDS:
             continue
-        if field in ALWAYS_BLANK_FIELDS:
+        if _must_remain_blank(field, fields):
             continue
         value = fields.get(field)
         if not _nonempty(value):
@@ -842,7 +864,7 @@ def _build_cells(
     cells: list[dict] = []
     problems: list[str] = []
     for field, spec in config.column_specs.items():
-        if field in ALWAYS_BLANK_FIELDS:
+        if _must_remain_blank(field, fields):
             continue
         raw = fields.get(field)
         if not _nonempty(raw):

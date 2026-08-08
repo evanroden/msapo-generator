@@ -154,7 +154,9 @@ def _routing_fields(
 
 def _asset_value(state: Mapping[str, Any], token: str, contract: str, site: str) -> str:
     no_asset_key = f"noasset_{token}_{contract}_{site}"
-    if bool(state.get(no_asset_key, True)):
+    # Retain the old checkbox key only as a compatibility read. The active UI
+    # uses one asset dropdown with a No asset option and exports the full UID.
+    if bool(state.get(no_asset_key, False)):
         return "None Applicable"
     return _state_text(state, f"asset_{token}_{contract}_{site}") or "None Applicable"
 
@@ -295,6 +297,22 @@ def _context_id(fields: Mapping[str, str], attachments: tuple[tuple[str, bytes],
     return hashlib.sha256(encoded).hexdigest()[:20]
 
 
+def account_manager_memory_context_id(context: POContext) -> str:
+    """Return a package identity that is stable while correcting requester name.
+
+    The UI context includes requester name so changing it refreshes the generated
+    handoff. Requester-memory deduplication intentionally excludes only that one
+    field, allowing a correction on the same otherwise-identical package to move
+    the event instead of creating a second remembered use.
+    """
+    fields = {
+        field: value
+        for field, value in context.fields.items()
+        if field != "requester_name"
+    }
+    return _context_id(fields, context.attachments)
+
+
 def build_po_context(
     state: Mapping[str, Any], env: Mapping[str, str] | None = None
 ) -> POContext | None:
@@ -304,9 +322,9 @@ def build_po_context(
 
     # ``env`` remains in the public signature for backwards compatibility with
     # older callers, but requester identity must never come from a deployment
-    # default.  The requester is the person currently filling out the form and
-    # is collected in the inline handoff (with browser-scoped memory only after
-    # three confirmed POs).
+    # default. The requester is the person currently filling out the form and
+    # is collected before generation, with device+account-scoped memory after
+    # the first verified package.
     _ = env
     token = _state_text(state, "analysis_token", "x") or "x"
     purchase_route = _state_text(state, f"purchase_route_{token}")
@@ -323,7 +341,11 @@ def build_po_context(
         f"desc_{token}",
         str(getattr(analysis, "short_description", "") or "")[:20],
     )[:20]
-    vendor = str(getattr(analysis, "vendor_name", "") or "").strip()
+    vendor = _state_text(
+        state,
+        f"vendor_{token}",
+        str(getattr(analysis, "vendor_name", "") or ""),
+    )
     quote_text = _state_text(state, "quote_text")
     expected_token = hashlib.sha256(quote_text.encode("utf-8", "ignore")).hexdigest()[:12] if quote_text else ""
     base = _safe_basename(contract, site, getattr(analysis, "project_description", ""), rrh)
@@ -357,14 +379,36 @@ def build_po_context(
     except ValueError as exc:
         classification = None
         classification_error = str(exc)
+    request_type = _state_text(
+        state,
+        f"request_type_{token}",
+        str(getattr(analysis, "request_type_guess", "") or "PO"),
+    )
+    if request_type not in {"PO", "CHANGE ORDER"}:
+        request_type = "PO"
+    original_po_number = (
+        _state_text(
+            state,
+            f"original_po_{token}",
+            str(getattr(analysis, "original_po_number", "") or ""),
+        )
+        if request_type == "CHANGE ORDER"
+        else ""
+    )
+    requester_name = _state_text(state, f"requester_{token}_{contract}")
+    job_number = _state_text(
+        state,
+        f"job_number_{token}_{contract}",
+        RRH_DEFAULT_JOB_NUMBER if rrh else "",
+    )
     fields = {
-        "requester_name": "",
-        "request_type": "PO",
+        "requester_name": requester_name,
+        "request_type": request_type,
         "order_type": PURCHASE_ROUTE_LABELS.get(purchase_route, ""),
         "purchase_route": purchase_route,
         "contract": contract,
         "site": site,
-        "job_number": RRH_DEFAULT_JOB_NUMBER if rrh else "",
+        "job_number": job_number,
         "site_location": site,
         "facility_address": address,
         "related_to_om": "",
@@ -377,7 +421,7 @@ def build_po_context(
         "leave_request_completed": "",
         "po_number": "",
         "work_order_number": "",
-        "original_po_number": "",
+        "original_po_number": original_po_number,
         "asset_id": asset_id,
         "vendor": vendor,
         "contact_name": _state_text(
@@ -387,7 +431,9 @@ def build_po_context(
             state, f"cemail_{token}", str(getattr(analysis, "contact_email", "") or "")
         ),
         "description": description,
-        "description_of_work": reviewed_scope,
+        # Smartsheet's Description of Work field is capped at 20 characters.
+        # The complete reviewed scope remains in the generated PDF only.
+        "description_of_work": description,
         "scope_of_work": reviewed_scope,
         "estimated_start_date": "",
         "estimated_completion_date": "",
@@ -401,7 +447,7 @@ def build_po_context(
         ),
         "total": total_value,
         "tax_status": str(getattr(analysis, "tax_status", "") or "").strip(),
-        "instructions": str(getattr(analysis, "tax_note", "") or "").strip(),
+        "instructions": _state_text(state, f"instructions_{token}"),
         "dispatch_service_center": "NA",
     }
 
@@ -418,10 +464,18 @@ def build_po_context(
         warnings.append("Confirm the job cost code before submission.")
     if classification_error:
         warnings.append(classification_error)
+    if not fields["requester_name"]:
+        warnings.append("Enter the person filling out this request.")
+    if not fields["job_number"]:
+        warnings.append("Confirm the job number before submission.")
+    if request_type == "CHANGE ORDER" and not original_po_number:
+        warnings.append("Enter the original PO number for this change order.")
+    if not fields["vendor"]:
+        warnings.append("Confirm the vendor name before submission.")
+    if not description:
+        warnings.append("Confirm a Description of Work of 20 characters or fewer.")
     if not fields["total"]:
         warnings.append("Confirm the total amount before submission.")
-    if not bool(state.get(f"total_confirmed_{token}", False)):
-        warnings.append("Confirm the PO/CO amount includes all fees and taxes.")
     if not attachments:
         warnings.append("No verified quote and scope PDF package is available to attach.")
     if not document_valid:
@@ -434,8 +488,8 @@ def build_po_context(
         warnings.append(
             "The attachment package must contain the original quote and one Scope/Inclusions/Exclusions PDF."
         )
-    if raw_asset_id not in {"", "None Applicable"} and not asset_id:
-        warnings.append("The selected asset does not contain a numeric Asset ID.")
+    if len(asset_id) > 160:
+        warnings.append("The selected full Asset ID is unexpectedly long.")
 
     subtotal = _money(fields["subtotal"])
     tax = _money(fields["tax"])

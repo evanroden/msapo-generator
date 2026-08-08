@@ -14,6 +14,7 @@ import re
 import streamlit as st
 
 from app import contracts
+from app.asset_guess import guess_asset_uid
 from app.assets import assets_for_facility, guess_asset_id
 from app.config import (
     FACILITIES,
@@ -24,16 +25,30 @@ from app.config import (
     valid_categories_for_site,
 )
 from app.device_identity import device_token, ensure_device_cookie
+from app.memory import (
+    record_device_account_manager,
+    remembered_device_account_manager,
+)
 from app.ocr import extract_text
-from app.po_context import POContext, _document_signature, build_po_context
+from app.po_context import (
+    _document_signature,
+    account_manager_memory_context_id,
+    build_po_context,
+)
 from app.po_rules import (
     PURCHASE_ROUTE_LABELS,
     PURCHASE_ROUTES,
     classify_po,
+    infer_purchase_route,
     normalize_asset_id,
 )
 from app.quote_analyzer import AIAssumption, QuoteAnalysis, analyze_quote
 from app.scope_pdf import build_scope_pdf
+from app.smartsheet import (
+    RRH_JOB_NUMBERS,
+    preflight_attachments,
+    validate_submission_fields,
+)
 from app.smartsheet_inline import render_inline_smartsheet_handoff
 
 
@@ -41,7 +56,11 @@ SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
 SITE_LABELS = list(FACILITY_SHORT_NAMES.values())
 CONTRACT_PLACEHOLDER = "— Select a contract —"
 SITE_PLACEHOLDER = "— Select a site —"
-ROUTE_PLACEHOLDER = "— Select how the vendor will provide this order —"
+ASSET_NONE = "None Applicable"
+REQUEST_TYPE_LABELS = {
+    "PO": "New purchase order",
+    "CHANGE ORDER": "Change order to an existing PO",
+}
 
 
 CUSTOM_CSS = """
@@ -313,6 +332,8 @@ def _build_test_analysis() -> QuoteAnalysis:
         tax_note="Quoted total includes the stated sales tax.",
         work_category="repairs",
         asset_reference="CH-1",
+        purchase_route_guess="onsite_labor",
+        request_type_guess="PO",
     )
 
 
@@ -462,20 +483,20 @@ def _render_asset_control(
     site: str,
     rrh_site_key: str | None,
 ) -> str:
-    """Show a conservative asset selector for every PO route."""
+    """Show one AI-suggested asset dropdown and export the full registry UID."""
     if not contract or not site:
-        return "None Applicable"
+        return ASSET_NONE
 
     if rrh:
         site_assets = assets_for_facility(rrh_site_key) if rrh_site_key else []
-        guess = (
+        exact_guess = (
             guess_asset_id(quote_text, rrh_site_key, hint=analysis.asset_reference)
             if rrh_site_key
             else None
         )
     else:
         site_assets = contracts.assets_for_site(contract, site)
-        guess = contracts.guess_uid(
+        exact_guess = contracts.guess_uid(
             quote_text, contract, site, hint=analysis.asset_reference
         )
 
@@ -484,34 +505,40 @@ def _render_asset_control(
         st.caption(
             "No asset registry is configured for this site; Asset ID will be blank."
         )
-        return "None Applicable"
+        return ASSET_NONE
 
     labels = {asset["uid"]: contracts.asset_label(asset) for asset in site_assets}
-    columns = st.columns([2, 1])
-    with columns[1]:
-        no_asset = st.checkbox(
-            "No asset applicable",
-            key=f"noasset_{token}_{contract}_{site}",
-            value=(guess not in uids),
+    broad_guess = guess_asset_uid(
+        site_assets,
+        quote_text=quote_text,
+        hint=analysis.asset_reference,
+    )
+    guess = exact_guess if exact_guess in uids else broad_guess
+    options = [ASSET_NONE, *uids]
+    index = options.index(guess) if guess in options else 0
+    raw_asset = st.selectbox(
+        "Specific asset",
+        options,
+        index=index,
+        format_func=lambda uid: (
+            "No asset applies"
+            if uid == ASSET_NONE
+            else f"{labels[uid]} · {uid}"
+        ),
+        key=f"asset_{token}_{contract}_{site}",
+        help=(
+            "The tool suggests the asset from the quote and selected site. "
+            "Choose a different one only if the suggestion is wrong."
+        ),
+    )
+    full_asset_id = normalize_asset_id(raw_asset)
+    if full_asset_id:
+        st.caption(f"Full Asset ID sent to Smartsheet: **{full_asset_id}**")
+    elif analysis.asset_reference:
+        st.caption(
+            f"Quote clue: {analysis.asset_reference}. No unique site asset was found."
         )
-    if no_asset:
-        return "None Applicable"
-
-    with columns[0]:
-        index = uids.index(guess) if guess in uids else 0
-        raw_asset = st.selectbox(
-            "Applicable Asset ID",
-            uids,
-            index=index,
-            format_func=lambda uid: f"{labels[uid]} · {uid}",
-            key=f"asset_{token}_{contract}_{site}",
-        )
-        numeric = normalize_asset_id(raw_asset)
-        if numeric:
-            st.caption(f"Smartsheet Asset ID: **{numeric}** (letter prefix removed)")
-        else:
-            st.warning("The selected asset has no numeric ID and cannot be sent.")
-        return raw_asset
+    return raw_asset
 
 
 def _render_footer() -> None:
@@ -535,10 +562,11 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
     try:
-        if not device_token(st.context.cookies):
+        browser_token = device_token(st.context.cookies)
+        if not browser_token:
             ensure_device_cookie()
     except Exception:
-        pass
+        browser_token = ""
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
     st.markdown(
@@ -676,8 +704,8 @@ def main() -> None:
         )
     with metrics[1]:
         st.markdown(
-            f'<div class="metric-card"><div class="metric-label">Tax status</div>'
-            f'<div class="metric-value">{_h((analysis.tax_status or "unclear").upper())}</div></div>',
+            f'<div class="metric-card"><div class="metric-label">Site found</div>'
+            f'<div class="metric-value">{_h(analysis.facility_name or "—")}</div></div>',
             unsafe_allow_html=True,
         )
     with metrics[2]:
@@ -696,43 +724,51 @@ def main() -> None:
         )
     if analysis.tax_warning:
         st.warning(analysis.tax_warning)
-    if analysis.tax_note:
-        st.info(analysis.tax_note)
 
-    with st.expander("📄 Scope preview", expanded=False):
+    final_inclusions: list[str] = []
+    final_exclusions: list[str] = []
+    unified_inclusions, unified_exclusions = _build_unified_lists(analysis)
+    with st.expander(
+        "Review scope, inclusions, and exclusions (optional)",
+        expanded=False,
+    ):
+        st.caption(
+            "The tool selected everything below for the supporting PDF. "
+            "Only change an item if the quote was interpreted incorrectly."
+        )
         st.markdown(
             f'<div class="scope-section"><div class="scope-label">Scope</div>'
             f'<p class="scope-text" style="white-space:pre-line;">'
             f'{_h(analysis.scope_of_work)}</p></div>',
             unsafe_allow_html=True,
         )
-
-    final_inclusions: list[str] = []
-    final_exclusions: list[str] = []
-    unified_inclusions, unified_exclusions = _build_unified_lists(analysis)
-    inclusion_column, exclusion_column = st.columns(2)
-    with inclusion_column:
-        st.markdown('<div class="scope-label">Inclusions</div>', unsafe_allow_html=True)
-        st.caption("Uncheck any item that should not appear in the PDF.")
-        for index, (text_value, is_ai) in enumerate(unified_inclusions):
-            if st.checkbox(
-                f"{'✎ ' if is_ai else ''}{text_value}",
-                key=f"inc_{token}_{index}",
-                value=True,
-            ):
-                final_inclusions.append(text_value)
-    with exclusion_column:
-        st.markdown('<div class="scope-label">Exclusions</div>', unsafe_allow_html=True)
-        st.caption("Uncheck any item that should not appear in the PDF.")
-        for index, (text_value, is_ai) in enumerate(unified_exclusions):
-            if st.checkbox(
-                f"{'✎ ' if is_ai else ''}{text_value}",
-                key=f"exc_{token}_{index}",
-                value=True,
-            ):
-                final_exclusions.append(text_value)
-    if any(is_ai for _, is_ai in unified_inclusions + unified_exclusions):
-        st.caption("✎ = suggested by the analyzer rather than explicitly stated")
+        inclusion_column, exclusion_column = st.columns(2)
+        with inclusion_column:
+            st.markdown(
+                '<div class="scope-label">Inclusions</div>',
+                unsafe_allow_html=True,
+            )
+            for index, (text_value, is_ai) in enumerate(unified_inclusions):
+                if st.checkbox(
+                    f"{'✎ ' if is_ai else ''}{text_value}",
+                    key=f"inc_{token}_{index}",
+                    value=True,
+                ):
+                    final_inclusions.append(text_value)
+        with exclusion_column:
+            st.markdown(
+                '<div class="scope-label">Exclusions</div>',
+                unsafe_allow_html=True,
+            )
+            for index, (text_value, is_ai) in enumerate(unified_exclusions):
+                if st.checkbox(
+                    f"{'✎ ' if is_ai else ''}{text_value}",
+                    key=f"exc_{token}_{index}",
+                    value=True,
+                ):
+                    final_exclusions.append(text_value)
+        if any(is_ai for _, is_ai in unified_inclusions + unified_exclusions):
+            st.caption("✎ = suggested by the tool rather than stated in the quote")
 
     st.markdown(
         """
@@ -744,27 +780,100 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    route_options = [ROUTE_PLACEHOLDER, *PURCHASE_ROUTES]
-    purchase_route = st.selectbox(
-        "How will the vendor provide this order? *",
-        route_options,
-        format_func=lambda route: (
-            ROUTE_PLACEHOLDER
-            if route == ROUTE_PLACEHOLDER
-            else PURCHASE_ROUTE_LABELS[route]
-        ),
-        key=f"purchase_route_{token}",
-    )
-    if purchase_route == ROUTE_PLACEHOLDER:
-        purchase_route = ""
-
-    contract, rrh, site, category_label, cost_code, rrh_site_key = (
+    contract, rrh, site, _category_label, _cost_code, rrh_site_key = (
         _render_routing_controls(analysis, cached_quote, token)
     )
     if not contract:
         st.warning("Choose the contract.")
     elif not site:
         st.warning("Choose or enter the site.")
+
+    request_type_key = f"request_type_{token}"
+    request_type_guess = str(
+        getattr(analysis, "request_type_guess", "") or "PO"
+    ).strip()
+    if request_type_guess not in REQUEST_TYPE_LABELS:
+        request_type_guess = "PO"
+    if request_type_key not in st.session_state:
+        st.session_state[request_type_key] = request_type_guess
+    request_type = st.selectbox(
+        "What kind of request is this? *",
+        tuple(REQUEST_TYPE_LABELS),
+        format_func=lambda value: REQUEST_TYPE_LABELS[value],
+        key=request_type_key,
+        help="The tool guesses this from the quote. Change it only if needed.",
+    )
+    if request_type == "CHANGE ORDER":
+        original_po_key = f"original_po_{token}"
+        if original_po_key not in st.session_state:
+            st.session_state[original_po_key] = str(
+                getattr(analysis, "original_po_number", "") or ""
+            ).strip()
+        st.text_input(
+            "Original PO number *",
+            key=original_po_key,
+            placeholder="Required for a change order",
+        )
+
+    if contract:
+        requester_key = f"requester_{token}_{contract}"
+        if requester_key not in st.session_state:
+            st.session_state[requester_key] = remembered_device_account_manager(
+                browser_token, contract
+            )
+        st.text_input(
+            "Your name (Requester / Asset Manager) *",
+            key=requester_key,
+            placeholder="Enter your name once",
+            help=(
+                "After a successful package, this browser remembers the most "
+                "recent name for this ENFRA account."
+            ),
+        )
+
+        job_key = f"job_number_{token}_{contract}"
+        if rrh:
+            if st.session_state.get(job_key) not in RRH_JOB_NUMBERS:
+                st.session_state[job_key] = RRH_JOB_NUMBERS[0]
+            st.selectbox(
+                "Job number *",
+                RRH_JOB_NUMBERS,
+                key=job_key,
+                help="RRH O&M is selected automatically for most requests.",
+            )
+        else:
+            st.text_input(
+                "Job number *",
+                key=job_key,
+                placeholder="Enter the account job number",
+            )
+
+    route_key = f"purchase_route_{token}"
+    route_guess = str(
+        getattr(analysis, "purchase_route_guess", "") or ""
+    ).strip()
+    if route_guess not in PURCHASE_ROUTES:
+        route_guess = infer_purchase_route(
+            " ".join(
+                (
+                    cached_quote,
+                    str(getattr(analysis, "project_description", "") or ""),
+                    str(getattr(analysis, "scope_of_work", "") or ""),
+                )
+            )
+        )
+    if st.session_state.get(route_key) not in PURCHASE_ROUTES:
+        st.session_state[route_key] = route_guess
+    purchase_route = st.selectbox(
+        "How will this work or purchase be handled? *",
+        PURCHASE_ROUTES,
+        format_func=lambda route: PURCHASE_ROUTE_LABELS[route],
+        key=route_key,
+        help=(
+            "The tool guesses from the quote. Labor and rentals take priority; "
+            "equipment applies only to complete Group A equipment purchases."
+        ),
+    )
 
     _render_asset_control(
         analysis=analysis,
@@ -775,6 +884,21 @@ def main() -> None:
         site=site,
         rrh_site_key=rrh_site_key,
     )
+
+    total_value = st.text_input(
+        "PO/CO amount — final total including every fee and tax *",
+        value=analysis.total_amount or "",
+        key=f"total_{token}",
+        help=(
+            "Use the final amount payable, including sales tax, freight, delivery, "
+            "surcharges, and any other quoted fees."
+        ),
+    )
+
+    vendor_key = f"vendor_{token}"
+    if vendor_key not in st.session_state:
+        st.session_state[vendor_key] = analysis.vendor_name or ""
+    st.text_input("Vendor name *", key=vendor_key)
 
     contact_columns = st.columns(3)
     with contact_columns[0]:
@@ -797,35 +921,27 @@ def main() -> None:
             key=f"desc_{token}",
         )
 
-    total_value = st.text_input(
-        "PO/CO amount — total including every fee and tax *",
-        value=analysis.total_amount or "",
-        key=f"total_{token}",
-        help=(
-            "Use the final amount payable, including sales tax, freight, delivery, "
-            "surcharges, and any other quoted fees."
-        ),
-    )
-    st.checkbox(
-        "I confirmed this amount includes all fees and taxes shown on the quote.",
-        key=f"total_confirmed_{token}",
+    st.text_area(
+        "Additional information (optional)",
+        key=f"instructions_{token}",
+        placeholder="Leave blank unless Smartsheet needs another note",
+        help="Only add a note that the Smartsheet reviewer needs to see.",
     )
 
-    if purchase_route:
-        try:
-            classification = classify_po(purchase_route, total_value)
-            st.success(
-                "Smartsheet classification: "
-                f"Object Account = {classification.object_account}; "
-                f"Agreement Type = {classification.agreement_type}."
-            )
-        except ValueError as exc:
-            st.warning(str(exc))
+    try:
+        classification = classify_po(purchase_route, total_value)
+        st.success(
+            "The tool will use "
+            f"**{classification.object_account}** and "
+            f"**{classification.agreement_type}** in Smartsheet."
+        )
+    except ValueError as exc:
+        st.warning(str(exc))
 
     st.caption(
-        "Locked rules: Request Type = PO; Dispatch WO to Service Center = NA. "
-        "Leave Request Completed, PO #, Work Order #, and Original PO Number "
-        "remain blank."
+        "The tool leaves Request Completed, PO #, and Work Order # blank and "
+        "sets Dispatch WO to Service Center to NA. Original PO Number is sent "
+        "only for a change order."
     )
 
     selected_contract, selected_site, facility_name, _ = _routing_for_generation(
@@ -853,26 +969,28 @@ def main() -> None:
         """
         <div class="step-header">
             <div class="step-num grape">4</div>
-            <p class="step-title">Build the two-file attachment package</p>
+            <p class="step-title">Generate both files and the Smartsheet link</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
     st.caption(
-        "The package is always the unchanged original quote plus one simple PDF "
-        "containing Scope, Inclusions, and Exclusions."
+        "One button creates the Scope/Inclusions/Exclusions PDF, keeps the "
+        "unchanged quote, and prepares the prefilled Smartsheet link."
     )
+    generated_key = f"generated_context_{token}"
     if st.button(
-        "🛠️ Generate Scope/Inclusions/Exclusions PDF",
+        "Generate both files and Smartsheet link",
         type="primary",
         use_container_width=True,
+        key=f"generate_package_{token}",
     ):
         try:
             scope_pdf = build_scope_pdf(
                 scope=analysis.scope_of_work,
                 inclusions=final_inclusions,
                 exclusions=final_exclusions,
-                vendor=analysis.vendor_name,
+                vendor=str(st.session_state.get(vendor_key, "") or ""),
                 site=facility_name or selected_site,
             )
         except Exception as exc:
@@ -880,49 +998,31 @@ def main() -> None:
             st.stop()
         st.session_state["scope_pdf_bytes"] = scope_pdf
         st.session_state["scope_pdf_signature"] = current_pdf_signature
-        st.success("The supporting PDF is ready.")
-
-    scope_pdf_bytes = st.session_state.get("scope_pdf_bytes")
-    if isinstance(scope_pdf_bytes, bytes) and scope_pdf_bytes.startswith(b"%PDF-"):
-        st.download_button(
-            "Preview/download supporting PDF",
-            data=scope_pdf_bytes,
-            file_name="Scope Inclusions Exclusions.pdf",
-            mime="application/pdf",
-            use_container_width=True,
-        )
-    else:
-        st.caption("Generate the supporting PDF to unlock a complete Smartsheet package.")
+        context = build_po_context(st.session_state)
+        if context is not None:
+            st.session_state[generated_key] = context.context_id
+            memory_ready = (
+                context.ready
+                and not validate_submission_fields(context.fields)
+                and not preflight_attachments(context.attachments)
+            )
+            if memory_ready and contract:
+                record_device_account_manager(
+                    device_token=browser_token,
+                    account=contract,
+                    manager_name=context.fields.get("requester_name"),
+                    context_id=account_manager_memory_context_id(context),
+                )
 
     context = build_po_context(st.session_state)
-    context_id = context.context_id if context else "no-context"
-    st.markdown(
-        """
-        <div class="step-header">
-            <div class="step-num mint">5</div>
-            <p class="step-title">Submit the PO request</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    panel_key = f"smartsheet_panel_{context_id}"
-    if st.button(
-        "📋 Prepare Smartsheet submission",
-        type="primary",
-        use_container_width=True,
-        key=f"open_smartsheet_{context_id}",
-    ):
-        st.session_state[panel_key] = True
-
-    if st.session_state.get(panel_key):
-        if context is None:
-            st.error("Analyze a quote before preparing the Smartsheet handoff.")
-        else:
-            render_inline_smartsheet_handoff(context)
+    generated_context = st.session_state.get(generated_key, "")
+    if context is not None and generated_context == context.context_id:
+        render_inline_smartsheet_handoff(context)
+    elif generated_context:
+        st.info("A detail changed. Use the button again to refresh both files and the link.")
 
     _render_footer()
 
 
 if __name__ == "__main__":
     main()
-

@@ -24,33 +24,64 @@ def _named_call_lines(function: ast.FunctionDef, name: str) -> list[int]:
     ]
 
 
-def test_main_has_one_inline_smartsheet_route_and_no_email_route():
+def test_main_has_one_final_generation_route_and_no_separate_submit_or_email_route():
     source = WEB_UI.read_text(encoding="utf-8")
     tree = ast.parse(source)
     main = _functions(tree)["main"]
 
     assert len(_named_call_lines(main, "render_inline_smartsheet_handoff")) == 1
-    assert "Prepare Smartsheet submission" in source
+    assert source.count('"Generate both files and Smartsheet link"') == 1
+    assert "Prepare Smartsheet submission" not in source
+    assert "Generate Scope/Inclusions/Exclusions PDF" not in source
+    assert "step-num mint\">5" not in source
     assert "st.switch_page" not in source
     assert "build_eml" not in source
     assert "Use email backup" not in source
     assert "Outlook" not in source
     assert "Apple Mail" not in source
-    assert "_render_send_section" not in source
 
 
-def test_main_generates_only_the_scope_pdf_package():
+def test_four_step_screen_follows_actual_interaction_order():
+    source = WEB_UI.read_text(encoding="utf-8")
+    labels = (
+        "Provide the vendor quote",
+        "Review the extracted work",
+        "Confirm the PO details",
+        "Generate both files and the Smartsheet link",
+    )
+    positions = [source.index(label) for label in labels]
+    assert positions == sorted(positions)
+    assert source.count('class="step-num') == 4
+
+
+def test_main_generates_exactly_the_quote_and_scope_pdf_from_one_action():
     source = WEB_UI.read_text(encoding="utf-8")
 
-    assert "build_scope_pdf(" in source
-    assert "Generate Scope/Inclusions/Exclusions PDF" in source
-    assert "unchanged original quote plus one simple PDF" in source
+    assert source.count("build_scope_pdf(") == 1
+    assert "unchanged quote" in source
+    assert "scope_pdf_bytes" in source
+    assert "uploaded_file_bytes" in source
     assert "generate_msapo" not in source
     assert "convert_docx" not in source
-    assert "download_button(" in source
+    assert "download_button(" not in source
 
 
-def test_inline_handoff_keeps_prefill_downloads_and_requester_memory():
+def test_streamlined_controls_guess_and_remember_without_obsolete_buttons():
+    source = WEB_UI.read_text(encoding="utf-8")
+
+    assert "purchase_route_guess" in source
+    assert "infer_purchase_route(" in source
+    assert "guess_asset_uid(" in source
+    assert "request_type_guess" in source
+    assert "remembered_device_account_manager(" in source
+    assert "record_device_account_manager(" in source
+    assert "total_confirmed" not in source
+    assert "forget_device_requester" not in source
+    assert "Forget requester" not in source
+    assert "max_chars=20" in source
+
+
+def test_inline_handoff_shows_two_downloads_link_and_only_hidden_copy_fallback():
     inline_path = ROOT / "app" / "smartsheet_inline.py"
     inline = inline_path.read_text(encoding="utf-8")
     tree = ast.parse(inline)
@@ -58,21 +89,27 @@ def test_inline_handoff_keeps_prefill_downloads_and_requester_memory():
     helper_source = ast.get_source_segment(inline, helper)
 
     assert helper_source is not None
+    assert "render_prefilled_link(prefilled.url)" in helper_source
     assert "render_manual_handoff(" in helper_source
+    assert '.expander("Troubleshooting: show manual field values", expanded=False)' in helper_source
     assert ".download_button(" in helper_source
-    assert "record_device_requester(" in helper_source
+    assert "len(renamed_files) != 2" in helper_source
+    assert "record_device_requester(" not in helper_source
     assert "build_prefilled_form_url(fields, config)" in helper_source
     assert "prefill_enabled(config)" in helper_source
-    assert "prefilled.url" in helper_source
-    assert 'link_label="Open prefilled Smartsheet form ↗"' in helper_source
     assert "st.switch_page" not in inline
     assert "st.checkbox" not in helper_source
-    assert "person filling out this request" in helper_source
-    assert "Object Account =" in helper_source
-    assert "Agreement Type =" in helper_source
-    assert "Dispatch Service Center = NA" in helper_source
-    assert "Leave Request Completed, PO #, Work Order #" in helper_source
     assert "email backup" not in helper_source.lower()
+
+
+def test_inline_handoff_contains_recent_login_retry_and_upload_reminders():
+    inline = (ROOT / "app" / "smartsheet_inline.py").read_text(encoding="utf-8")
+
+    assert "within the last few hours" in inline
+    assert "same link again" in inline
+    assert "upload the original quote" in inline
+    assert "Scope/Inclusions/Exclusions PDF" in inline
+    assert "does not submit it and cannot upload files" in inline
 
 
 def test_legacy_destination_is_non_submitting_compatibility_notice():
@@ -86,12 +123,11 @@ def test_legacy_destination_is_non_submitting_compatibility_notice():
 def test_prefilled_link_is_labeled_and_suppresses_referrer_data():
     component = (ROOT / "app" / "smartsheet_ui.py").read_text(encoding="utf-8")
     assert 'link_label: str = "Open Smartsheet form ↗"' in component
-    assert '"linkLabel": link_label' in component
-    assert "textContent = D.linkLabel" in component
+    assert 'link_label: str = "Open prefilled Smartsheet form ↗"' in component
     assert 'referrerpolicy="no-referrer"' in component
 
 
-def test_render_blueprint_maps_only_fields_that_may_be_populated():
+def test_render_blueprint_maps_every_populated_field_under_exact_live_labels():
     source = (ROOT / "render.yaml").read_text(encoding="utf-8")
     assert 'SMARTSHEET_URL_PREFILL_ENABLED\n        value: "true"' in source
     for mapping in (
@@ -102,6 +138,7 @@ def test_render_blueprint_maps_only_fields_that_may_be_populated():
         '"cost_code":"COST CODE"',
         '"object_account":"OBJECT ACCOUNT"',
         '"agreement_type":"AGREEMENT TYPE FOR PO"',
+        '"original_po_number":"ORIGINAL PO NUMBER"',
         '"total":"PO/CO AMOUNT"',
         '"vendor":"VENDOR NAME"',
         '"contact_name":"VENDOR CONTACT NAME"',
@@ -117,7 +154,7 @@ def test_render_blueprint_maps_only_fields_that_may_be_populated():
         "leave_request_completed",
         "po_number",
         "work_order_number",
-        "original_po_number",
         "send_copy_email",
     ):
         assert f'"{forbidden}":' not in source
+    assert "ORIGIONAL PO NUMBER" not in source

@@ -1,5 +1,11 @@
 # Purchase Order Workflow Policy and Attachment Handoff
 
+> **Superseded business policy.** The authoritative workflow as of 2026-08-08
+> is [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
+> This file remains historical context. Its delivery-based Equipment rule,
+> numeric-only Asset ID, always-PO/blank Original PO rule, separate final steps,
+> tax confirmation, and older requester-memory behavior must not be restored.
+
 **Status:** authoritative successor handoff  
 **Policy date:** 2026-08-06  
 **Source of authority:** business-process changes confirmed by the user after a phone conversation  
