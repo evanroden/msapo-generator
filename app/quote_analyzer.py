@@ -21,6 +21,7 @@ import anthropic
 
 from app.analysis_schema import normalize_analysis_response
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES
+from app.equipment_policy import GROUP_A_PROMPT_LIST
 
 SYSTEM_PROMPT = """\
 You are an expert construction and facilities project analyst supporting \
@@ -127,16 +128,40 @@ STRICT RULES:
      "water_softener" — Water softener service / salt delivery
    Pick the single best match. If truly ambiguous, default to "repairs".
 
-10. **ASSET REFERENCE (be conservative):**
-   - "asset_reference": the specific equipment TAG / unit identifier the quote
-     is about, if — and ONLY if — the quote names a specific tagged unit.
-     Normalize it toward "TAG-NUMBER" form, e.g. "Pump #7 (CWP)" → "CWP-7",
-     "Boiler 2" → "B-2", "AHU 3" → "AHU-3", "Chiller CH-01" → "CH-01".
-   - Return null when the quote only describes an equipment TYPE without a
-     specific unit (e.g. "chilled water pump seal", "a cooling tower",
-     "steam traps") or names no equipment at all. Do NOT guess a number.
-     It is much better to return null than to invent a tag — a wrong tag is
-     worse than none.
+10. **ASSET REFERENCE (make a useful, reviewable guess):**
+   - "asset_reference": the most specific equipment tag, unit identifier,
+     model, or plain-English asset reference supported by the quote.
+   - Normalize a named unit toward "TAG-NUMBER" form, e.g. "Pump #7 (CWP)" →
+     "CWP-7", "Boiler 2" → "B-2", "AHU 3" → "AHU-3", "Chiller CH-01" →
+     "CH-01".
+   - If the quote identifies one likely asset by equipment name/model but omits
+     a formal tag, return that useful phrase so the site registry can match it.
+   - Never invent a unit number, serial number, or asset code. Return null only
+     when the quote provides no usable equipment clue.
+
+11. **REQUEST TYPE:**
+   - Set "request_type_guess" to "CHANGE ORDER" only when the quote or request
+     clearly modifies an existing purchase order. Otherwise set it to "PO".
+   - For a change order, extract the existing PO number into
+     "original_po_number". For a new PO, set original_po_number to null.
+
+12. **HOW THE ORDER WILL BE PROVIDED — ALWAYS MAKE A BEST GUESS:**
+   Set "purchase_route_guess" to exactly one of:
+   - "onsite_labor" when the vendor will perform labor/service onsite. This
+     takes priority even if parts or equipment are also supplied.
+   - "onsite_rental" for an onsite rental service such as a rental chiller or
+     scissor lift. This takes priority over equipment/material classification.
+   - "equipment_purchase" when there is no vendor labor/rental and the item
+     itself is on the approved Group A list below.
+   - "materials_purchase" when there is no vendor labor/rental and the item is
+     not on the Group A list, including loose parts, supplies, and consumables.
+
+   Delivery method does NOT decide Equipment versus Materials. A vendor merely
+   dropping something onsite does not make it labor, and third-party shipping
+   does not automatically make it Equipment.
+
+   APPROVED GROUP A EQUIPMENT LIST:
+__GROUP_A_EQUIPMENT__
 
 Return your answer as a JSON object with exactly these keys:
 {
@@ -158,11 +183,14 @@ Return your answer as a JSON object with exactly these keys:
   "total_amount": "string or null — final all-in dollar total after every fee and tax, e.g. '$1,234.56'",
   "short_description": "string or null — 20 chars max",
   "work_category": "string — one of the category keys above",
-  "asset_reference": "string or null — specific equipment tag only, else null"
+  "asset_reference": "string or null — best supported equipment clue",
+  "purchase_route_guess": "onsite_labor | onsite_rental | equipment_purchase | materials_purchase",
+  "request_type_guess": "PO | CHANGE ORDER",
+  "original_po_number": "string or null — required only for a change order"
 }
 
 Return ONLY the JSON object, no markdown fences, no extra text.
-"""
+""".replace("__GROUP_A_EQUIPMENT__", GROUP_A_PROMPT_LIST)
 
 
 @dataclass
@@ -193,6 +221,9 @@ class QuoteAnalysis:
     short_description: Optional[str] = None
     work_category: Optional[str] = None
     asset_reference: Optional[str] = None
+    purchase_route_guess: Optional[str] = None
+    request_type_guess: Optional[str] = None
+    original_po_number: Optional[str] = None
 
 
 def _match_facility(name: Optional[str], address: Optional[str]) -> tuple[Optional[str], Optional[str]]:
@@ -299,7 +330,8 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
     # Defaults for email / cost-code fields
     for key in ("contact_name", "contact_email", "subtotal_amount",
                 "tax_amount", "total_amount", "short_description",
-                "work_category", "asset_reference"):
+                "work_category", "asset_reference", "purchase_route_guess",
+                "request_type_guess", "original_po_number"):
         if key not in data:
             data[key] = None
 

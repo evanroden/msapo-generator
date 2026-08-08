@@ -7,7 +7,9 @@ from app.smartsheet import (
     AGREEMENT_TYPE_OPTIONS,
     DEFAULT_FORM_ORDER,
     DEFAULT_FORM_REQUIRED_FIELDS,
+    DISPLAY_LABELS,
     OBJECT_ACCOUNT_OPTIONS,
+    REQUEST_TYPE_OPTIONS,
     RRH_JOB_NUMBERS,
     SmartsheetConfigurationError,
     api_readiness,
@@ -62,6 +64,7 @@ def test_live_form_schema_and_rrh_choices_are_exact():
         "cost_code",
         "object_account",
         "agreement_type",
+        "original_po_number",
         "total",
         "vendor",
         "contact_name",
@@ -80,6 +83,7 @@ def test_live_form_schema_and_rrh_choices_are_exact():
         "object_account",
         "agreement_type",
         "total",
+        "vendor",
         "description_of_work",
         "dispatch_service_center",
     )
@@ -89,15 +93,25 @@ def test_live_form_schema_and_rrh_choices_are_exact():
         "RRH-695400030-ISDC",
         "RRH-695400034-ES JOB CCJ",
     )
-    assert "5301-MATERIALS" in OBJECT_ACCOUNT_OPTIONS
-    assert "5511-SUBCONTRACTOR" in OBJECT_ACCOUNT_OPTIONS
-    assert "5302-EQUIPMENT" in OBJECT_ACCOUNT_OPTIONS
-    assert "5411-OUTSIDE RENTALS" in OBJECT_ACCOUNT_OPTIONS
-    assert "03 - MSAPO (SERVICE)" in AGREEMENT_TYPE_OPTIONS
-    assert "03 - MRAPO (RENTAL)" in AGREEMENT_TYPE_OPTIONS
-    assert "ON - STANDARD PO UNDER $25K" in AGREEMENT_TYPE_OPTIONS
-    assert "OR - STANDARD PO OVER $25K" in AGREEMENT_TYPE_OPTIONS
-    assert "OR - EQUIPMENT PO" in AGREEMENT_TYPE_OPTIONS
+    assert OBJECT_ACCOUNT_OPTIONS == (
+        "NA",
+        "5301-MATERIALS",
+        "5490-OTHER",
+        "5511-SUBCONTRACTOR",
+        "5302-EQUIPMENT",
+        "5411-OUTSIDE RENTALS",
+    )
+    assert AGREEMENT_TYPE_OPTIONS == (
+        "NA",
+        "03 - MSAPO (SERVICE)",
+        "03 - MRAPO (RENTAL)",
+        "03 - CSAPO (CONSTRUCTION)",
+        "ON - STANDARD PO UNDER $25K",
+        "OR - STANDARD PO OVER $25K",
+        "OR - EQUIPMENT PO",
+    )
+    assert REQUEST_TYPE_OPTIONS == ("PO", "CHANGE ORDER")
+    assert DISPLAY_LABELS["original_po_number"] == "ORIGINAL PO NUMBER"
 
 
 def test_invalid_or_unsafe_configuration_is_rejected():
@@ -212,6 +226,7 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
         "cost_code": "COST CODE",
         "object_account": "OBJECT ACCOUNT",
         "agreement_type": "AGREEMENT TYPE FOR PO",
+        "original_po_number": "ORIGINAL PO NUMBER",
         "total": "PO/CO AMOUNT",
         "vendor": "VENDOR NAME",
         "contact_name": "VENDOR CONTACT NAME",
@@ -237,8 +252,8 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
         "vendor": "Example & Sons",
         "contact_name": "Pat O'Brien",
         "contact_email": "pat@example.invalid",
-        "description_of_work": "Repair pump #7 & verify operation.",
-        "asset_id": "0007",
+        "description_of_work": "Pump #7 repair",
+        "asset_id": "EEA-CWP-07",
         "dispatch_service_center": "NA",
         "instructions": "Synthetic test only; do not submit.",
     }
@@ -263,8 +278,7 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
     )
     assert "VENDOR%20NAME=Example%20%26%20Sons" in raw_query
     assert (
-        "DESCRIPTION%20OF%20WORK="
-        "Repair%20pump%20%237%20%26%20verify%20operation."
+        "DESCRIPTION%20OF%20WORK=Pump%20%237%20repair"
         in raw_query
     )
     assert "DISPATCH%20WO%20TO%20SERVICE%20CENTER%3F=NA" in raw_query
@@ -281,13 +295,13 @@ def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
     assert "attachments" not in result.url.lower()
 
 
-def test_always_blank_fields_are_never_prefilled_or_copied_even_if_mapped():
+def test_locked_blank_fields_and_new_po_original_are_never_prefilled_or_copied():
     field_map = {
         "request_type": "REQUEST TYPE",
         "leave_request_completed": "LEAVE REQUEST COMPLETED",
         "po_number": "PO #",
         "work_order_number": "WORK ORDER #",
-        "original_po_number": "ORIGIONAL PO NUMBER",
+        "original_po_number": "ORIGINAL PO NUMBER",
     }
     fields = {
         "request_type": "PO",
@@ -312,6 +326,42 @@ def test_always_blank_fields_are_never_prefilled_or_copied_even_if_mapped():
     assert rows == [("request_type", "REQUEST TYPE", "PO")]
     problems = validate_submission_fields(fields)
     assert len([item for item in problems if "must remain blank" in item]) == 4
+
+
+def test_change_order_requires_and_prefills_the_exact_original_po_field():
+    field_map = {
+        "request_type": "REQUEST TYPE",
+        "original_po_number": "ORIGINAL PO NUMBER",
+    }
+    config = load_config(
+        {
+            "SMARTSHEET_FORM_URL": "https://app.smartsheet.com/b/form/example",
+            "SMARTSHEET_URL_PREFILL_ENABLED": "true",
+            "SMARTSHEET_FORM_FIELD_MAP_JSON": json.dumps(field_map),
+        }
+    )
+
+    missing = build_prefilled_form_url({"request_type": "CHANGE ORDER"}, config)
+    assert "original_po_number" in missing.missing_required
+
+    complete = build_prefilled_form_url(
+        {
+            "request_type": "CHANGE ORDER",
+            "original_po_number": "4500123456",
+        },
+        config,
+    )
+    query = parse_qs(urlsplit(complete.url).query)
+    assert query == {
+        "REQUEST TYPE": ["CHANGE ORDER"],
+        "ORIGINAL PO NUMBER": ["4500123456"],
+    }
+    assert validate_submission_fields(
+        {
+            "request_type": "CHANGE ORDER",
+            "original_po_number": "4500123456",
+        }
+    ) == ()
 
 def test_manual_rows_follow_configured_order_and_skip_empty_values():
     config = load_config(
@@ -372,14 +422,15 @@ def test_field_and_attachment_preflight_rejects_silent_corruption():
             "description_of_work": "x" * 4001,
             "request_type": "WO",
             "dispatch_service_center": "DALLAS",
-            "asset_id": "A-123",
+            "asset_id": "EEA-CWP-07",
         }
     )
     assert any("valid email" in item for item in problems)
     assert any("4,000-character" in item for item in problems)
     assert any("REQUEST TYPE" in item and "PO" in item for item in problems)
     assert any("DISPATCH WO" in item and "NA" in item for item in problems)
-    assert any("ASSET ID" in item and "numbers only" in item for item in problems)
+    assert not any("ASSET ID" in item for item in problems)
+    assert any("20 characters or fewer" in item for item in problems)
 
     attachment_problems = preflight_attachments(
         [

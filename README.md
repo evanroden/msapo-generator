@@ -7,23 +7,19 @@ Streamlit application deployed on Render. The repository retains its historical
 document generator.
 
 The authoritative business and implementation handoff is
-[`docs/PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md`](docs/PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md).
+[`docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
 Read that document before changing routing, field mappings, attachments, or the
 Smartsheet handoff.
 
 ## Current workflow
 
 1. Upload a PDF/image/text quote or paste quote text.
-2. Extract and review the vendor, site, amount, Scope, Inclusions, and Exclusions.
-3. Explicitly choose how the vendor will fulfill the order.
-4. Confirm contract, site, cost code, numeric asset ID, vendor contact, and the
-   all-in amount including taxes and every fee.
-5. Generate one simple Scope/Inclusions/Exclusions PDF.
-6. Prepare the Smartsheet handoff inline on the same page.
-7. Confirm the requester—the person currently filling out the request—and the
-   exact job/site values.
-8. Download the unchanged original quote and generated PDF.
-9. Open the custom prefilled Smartsheet URL, upload both files, review, and submit.
+2. Review AI-extracted vendor, site, amount, Scope, Inclusions, and Exclusions.
+3. Confirm the preselected account/site, request type, requester, job, work route,
+   full asset, amount, vendor details, 20-character description, and optional note.
+4. Press one button to create the scope PDF and reveal both downloads plus the
+   prefilled Smartsheet link. Upload both files near the end of the form, review,
+   and submit it manually.
 
 There is no email-submission route in the active UI.
 
@@ -33,23 +29,28 @@ There is no email-submission route in the active UI.
 |---|---|---|
 | Vendor performs labor onsite | `5511-SUBCONTRACTOR` | `03 - MSAPO (SERVICE)` |
 | Onsite rental service | `5411-OUTSIDE RENTALS` | `03 - MRAPO (RENTAL)` |
-| Vendor only delivers/drops off onsite; no labor | `5301-MATERIALS` | `< $25,000`: `ON - STANDARD PO UNDER $25K`; otherwise `OR - STANDARD PO OVER $25K` |
-| Third-party shipping; vendor never onsite; no labor | `5302-EQUIPMENT` | `OR - EQUIPMENT PO` |
+| Complete approved Group A equipment purchase; no labor/rental | `5302-EQUIPMENT` | `OR - EQUIPMENT PO` |
+| Parts, supplies, consumables, or other non-Group-A purchase; no labor/rental | `5301-MATERIALS` | `< $25,000`: `ON - STANDARD PO UNDER $25K`; otherwise `OR - STANDARD PO OVER $25K` |
 
-The live Smartsheet option is spelled `MRAPO` for rental even though people may
-say “MSAPO rental.” CSAPO is intentionally not selected by this tool.
+Labor and rentals take precedence. Delivery/drop-off versus third-party shipping
+does not determine Equipment versus Materials. The live option is spelled
+`MRAPO` for rental; CSAPO is represented for schema validation but is not selected
+by this classification policy.
 
 ## Locked field rules
 
-- Request Type is always `PO`.
-- Requester is always the person filling out the current request. It is never
-  sourced from a deployment-wide default.
+- Request Type is `PO` or `CHANGE ORDER`; a change order requires Original PO
+  Number, while a new PO forces that field blank.
+- Requester is the person filling out the current request. It is remembered only
+  for the same anonymous device and account after a verified package.
 - Dispatch WO to Service Center is always `NA`.
-- Leave Request Completed, PO #, Work Order #, and Original PO Number always
-  remain blank. They are omitted from custom-URL prefilling and API cell writes.
+- Leave Request Completed, PO #, and Work Order # always remain blank.
 - PO/CO Amount is the final payable amount including tax, freight, delivery,
   surcharges, and every other fee.
-- Asset ID contains numbers only; displayed letter prefixes are removed.
+- Description of Work is capped at 20 characters during export.
+- Asset ID is the complete configured site asset UID, with prefixes preserved.
+- Additional Information is blank unless the operator enters a note; tax notes
+  are not copied into it.
 
 ## Attachment package
 
@@ -70,17 +71,19 @@ app/web_ui.py                 Active quote-to-Smartsheet workflow
 app/quote_analyzer.py          Structured quote extraction
 app/analysis_schema.py         Model-response validation
 app/ocr.py                     PDF/image extraction and normalization
+app/equipment_policy.py        Ashley's exact Group A equipment policy
+app/asset_guess.py             Unique-best site asset suggestion
 app/po_rules.py                Canonical route/account/agreement rules
 app/scope_pdf.py               Lightweight supporting PDF generation
 app/po_context.py              Verified PO fields and two-file snapshot
 app/smartsheet.py              Manual/prefill/API validation and adapters
-app/smartsheet_inline.py       Mobile-safe inline handoff and requester entry
+app/smartsheet_inline.py       Two downloads, prefilled link, and hidden fallback
 app/smartsheet_ui.py           Prefilled-link and copy controls
 app/device_identity.py         Opaque first-party browser identity cookie
 app/memory.py                  Contract and anonymous-browser learning
 app/smartsheet_store.py        Leased/idempotent future API state
 pages/2_Smartsheet_PO.py       Non-submitting legacy bookmark notice
-docs/PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md
+docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md
                                Authoritative policy and successor handoff
 tests/                         Pytest regression suite
 ```
@@ -136,10 +139,10 @@ path. The original uploaded bytes are retained for the attachment package.
 
 The page uses a random opaque first-party browser cookie. The token is hashed
 before SQLite storage and contains no requester, quote, vendor, price, or PO
-data. After the same requester is used on three distinct verified PO contexts,
-that browser suggests the name. Streamlit reruns do not increase the count, and
-shared devices can forget the requester. Blocked cookies disable only this
-convenience.
+data. After the first verified package, that browser remembers the latest
+requester for that exact ENFRA account. Streamlit reruns do not increase the
+count, account memories do not cross, and there is no Forget button in the
+active flow. Blocked cookies disable only this convenience.
 
 ## Smartsheet modes
 
@@ -147,8 +150,9 @@ convenience.
 
 Production uses exact visible field labels and percent-encoded values. The link
 opens but does not submit the form. Empty locked fields are deliberately omitted.
-Any field that cannot fit safely in the URL remains available through a Copy
-control.
+The user should have Smartsheet opened or signed into in the same browser within
+the last few hours. If values do not appear, sign back in and use the same link
+again. Manual Copy controls are hidden inside a collapsed troubleshooting panel.
 
 ### Direct API
 
@@ -163,13 +167,13 @@ ambiguous-write controls for possible future use.
 | Problem | Action |
 |---|---|
 | Quote analysis is stale after a new upload | Re-analyze the current quote; the handoff blocks mismatched fingerprints. |
-| Route classification looks wrong | Recheck the four route definitions in `app/po_rules.py`; do not infer from “comes onsite” alone. |
+| Route classification looks wrong | Recheck labor/rental precedence and the exact Group A list in `app/equipment_policy.py`; delivery method is not the deciding factor. |
 | Standard PO tier is missing | Enter and confirm a valid all-in PO/CO Amount. |
-| Asset contains letters | Confirm the selected registry asset; only its numeric identifier is sent. |
+| Asset contains letters | Expected: the complete configured asset UID is sent, including letters and separators. |
 | Scope PDF became stale | Regenerate it after changing contract, site, Inclusions, or Exclusions. |
-| Attachments are not in Smartsheet | Download both files from the handoff and upload them to the form; URL parameters cannot carry files. |
-| Prefilled fields are blank | Compare exact form labels and the `%20` URL encoding with production environment values. |
-| Requester is not remembered | Prepare three distinct PO contexts in the same browser and verify cookies are permitted. |
+| Attachments are not in Smartsheet | Download both files and upload both near the end of the form; URL parameters cannot carry files. |
+| Prefilled fields are blank | Sign back into/open Smartsheet, return to the tool, and use the same link again; then verify exact labels and `%20` encoding. |
+| Requester is not remembered | Complete one ready package for the same account in the same browser and verify cookies are permitted. |
 | API mode is blocked | Leave it disabled until the complete activation gate in the handoff document is satisfied. |
 
 ## Security cautions

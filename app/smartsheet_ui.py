@@ -8,6 +8,42 @@ import json
 import streamlit.components.v1 as components
 
 
+def render_prefilled_link(
+    form_url: str,
+    *,
+    link_label: str = "Open prefilled Smartsheet form ↗",
+) -> None:
+    """Render only the primary link; manual copy rows stay hidden elsewhere."""
+    payload = json.dumps(
+        {"formUrl": form_url, "linkLabel": link_label},
+        ensure_ascii=False,
+    ).replace("<", "\\u003c")
+    html = r"""
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <a id="ss-open" target="_blank" rel="noopener noreferrer"
+     referrerpolicy="no-referrer"
+     style="display:block;text-align:center;background:#6D5AE6;color:#fff;
+            text-decoration:none;border-radius:11px;padding:13px;
+            font-weight:800;">
+    Open prefilled Smartsheet form &#8599;
+  </a>
+</div>
+<script>
+(() => {
+  const D = __PAYLOAD__;
+  const link = document.getElementById('ss-open');
+  link.href = D.formUrl;
+  link.textContent = D.linkLabel;
+})();
+</script>
+"""
+    components.html(
+        html.replace("__PAYLOAD__", payload),
+        height=58,
+        scrolling=False,
+    )
+
+
 def render_manual_handoff(
     rows: list[tuple[str, str, str]],
     form_url: str,

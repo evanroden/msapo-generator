@@ -1,8 +1,8 @@
 # Email Process Control and Smartsheet Failure Modes
 
 > **Historical reliability register.** The authoritative business workflow as
-> of 2026-08-06 is
-> [`PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md`](PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md).
+> of 2026-08-08 is
+> [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
 > This file preserves valuable failure analysis, but its references to email,
 > EPO mode, full MSAPO generation, editable Object Account, and three-file
 > packages are superseded.
@@ -40,7 +40,7 @@ Control states:
 
 1. The email workflow remains the source record for contract, site, cost code, asset, vendor, scope, pricing, and attachments.
 2. A deterministic context ID isolates Streamlit widgets and results for each reviewed PO.
-3. Generated MSAPO files are accepted only when their stored document fingerprint matches the current analysis, contract, site, inclusions, and exclusions.
+3. The generated Scope/Inclusions/Exclusions PDF is accepted only when its stored document fingerprint matches the current analysis, contract, site, inclusions, and exclusions.
 4. The manual route uses the verified live form; URL-prefill and API routes remain independent and disabled until separately verified.
 5. URL prefill uses exact configured labels and values; it never guesses.
 6. API submission uses exact verified column IDs, titles, types, options, and strict typed values.
@@ -113,7 +113,7 @@ Control states:
 - **Severity:** High
 - **Trigger:** long scope or instructions over 4,000 characters.
 - **Impact:** Smartsheet can truncate a cell, producing an incomplete scope without an obvious failure.
-- **Control:** preflight blocks API use and omits the field from a prefill URL with an explicit reason. Split/shorten the field or store the full scope in the attached MSAPO.
+- **Control:** preflight blocks API use and omits the field from a prefill URL with an explicit reason. Description of Work is capped at 20 characters; the full scope remains in the attached Scope/Inclusions/Exclusions PDF.
 - **State:** Implemented.
 
 ### B. Document and attachment integrity
@@ -121,7 +121,7 @@ Control states:
 #### FM-B01 — Contract, site, inclusions, or exclusions change after generation
 - **Severity:** Critical
 - **Trigger:** user edits routing or review checkboxes after building the document.
-- **Impact:** email/form values and attached MSAPO disagree.
+- **Impact:** form values and the attached Scope/Inclusions/Exclusions PDF disagree.
 - **Detection:** deterministic document signature.
 - **Control:** remove stale paths from use and require regeneration.
 - **State:** Implemented on `main` and reverified by the Smartsheet context builder.
@@ -194,8 +194,8 @@ Control states:
 #### FM-C04 — User edits a document-bearing value without regenerating the document
 - **Severity:** Critical
 - **Trigger:** a second editable copy of contract, source site, cost code, asset, scope, amount, or attachment-bearing data exists on the handoff page.
-- **Impact:** submitted values and the attached MSAPO disagree.
-- **Control:** document-bearing source fields remain read-only. Corrections must be made in Email Process Control and regenerate the document. Smartsheet-only fields (requester, exact job/site option, object account, and additional information) are context-namespaced and explicitly reviewed.
+- **Impact:** submitted values and the attached Scope/Inclusions/Exclusions PDF disagree.
+- **Control:** all operator corrections occur above one final generation action. A context-ID mismatch hides the old downloads/link, and a document-signature mismatch requires the PDF to be rebuilt.
 - **State:** Implemented.
 
 #### FM-C05 — Manual route opens despite an invalid source package
@@ -215,8 +215,8 @@ Control states:
 - **Severity:** Medium
 - **Trigger:** several people use one browser profile, or Streamlit reruns are mistaken for repeated use.
 - **Impact:** a PO can be attributed to the wrong requester.
-- **Detection:** requester counts are tied to distinct verified PO context IDs, not reruns.
-- **Control:** do not prefill until the same normalized requester has been used on three distinct contexts; a newly repeated requester can take over after three uses; expose a per-browser Forget action. The browser cookie contains only a random token, which is hashed before server storage. Blocked/cleared cookies disable convenience without blocking the workflow.
+- **Detection:** requester events are tied to a verified PO context ID and exact account, not Streamlit reruns.
+- **Control:** remember the latest successfully used requester after the first ready package for the exact anonymous device+account pair. Never cross accounts or browsers. A later verified user naturally takes over on a shared device; no Forget action appears in the active UI. The browser cookie contains only a random token, which is hashed before server storage. Blocked/cleared cookies disable convenience without blocking the workflow.
 - **State:** Implemented and regression-tested; real Safari cookie behavior remains an acceptance check.
 
 ### D. URL-prefill route
@@ -505,7 +505,7 @@ Automated coverage must include:
 - remote attachment reconciliation after lost response;
 - 4,000-character, 30 MB, empty, duplicate, and unsafe filename preflight;
 - deterministic context and submission fingerprints;
-- requester learning threshold, browser isolation, rerun deduplication, correction, takeover, and forgetting.
+- device+account requester isolation, first-package recall, rerun deduplication, correction, and latest-user takeover.
 
 Manual acceptance must include:
 

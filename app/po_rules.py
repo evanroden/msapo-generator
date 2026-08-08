@@ -1,10 +1,10 @@
 """Canonical purchase-order routing rules for the Smartsheet handoff.
 
-The former workflow classified requests from whether a vendor visited the site.
-The current policy classifies them from the work/delivery relationship instead:
-onsite labor, onsite rental, vendor delivery without labor, or third-party
-shipping without a vendor visit.  Keep every UI and integration consumer on
-these helpers so Object Account and Agreement Type cannot drift.
+Ashley Connolly's August 2026 correction supersedes both historical EPO logic
+and the delivery-method version deployed in PR #33. Labor and rental take
+priority. With neither present, items on the supplied Group A list are
+Equipment and every other purchase is Materials; who delivers the item does
+not determine the account.
 """
 
 from __future__ import annotations
@@ -13,21 +13,21 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from app.equipment_policy import group_a_equipment_match
+
 
 ONSITE_LABOR = "onsite_labor"
 ONSITE_RENTAL = "onsite_rental"
-VENDOR_DELIVERY = "vendor_delivery"
-THIRD_PARTY_SHIPPING = "third_party_shipping"
+EQUIPMENT_PURCHASE = "equipment_purchase"
+MATERIALS_PURCHASE = "materials_purchase"
 
 PURCHASE_ROUTE_LABELS: dict[str, str] = {
     ONSITE_LABOR: "Vendor will perform labor onsite",
     ONSITE_RENTAL: (
         "Onsite rental service (for example, a rental chiller or scissor lift)"
     ),
-    VENDOR_DELIVERY: "Vendor will deliver/drop off onsite, with no labor",
-    THIRD_PARTY_SHIPPING: (
-        "Third-party shipping; vendor will not come onsite and will perform no labor"
-    ),
+    EQUIPMENT_PURCHASE: "Buying Group A equipment; no vendor labor onsite",
+    MATERIALS_PURCHASE: "Buying materials or parts; no vendor labor onsite",
 }
 PURCHASE_ROUTES: tuple[str, ...] = tuple(PURCHASE_ROUTE_LABELS)
 
@@ -75,9 +75,9 @@ def classify_po(route: str, total: object) -> POClassification:
         return POClassification(SUBCONTRACTOR_ACCOUNT, SERVICE_AGREEMENT)
     if route == ONSITE_RENTAL:
         return POClassification(OUTSIDE_RENTALS_ACCOUNT, RENTAL_AGREEMENT)
-    if route == THIRD_PARTY_SHIPPING:
+    if route == EQUIPMENT_PURCHASE:
         return POClassification(EQUIPMENT_ACCOUNT, EQUIPMENT_PO)
-    if route == VENDOR_DELIVERY:
+    if route == MATERIALS_PURCHASE:
         amount = parse_amount(total)
         if amount is None:
             raise ValueError(
@@ -92,21 +92,36 @@ def classify_po(route: str, total: object) -> POClassification:
     raise ValueError("Choose how the vendor will provide the goods or service.")
 
 
-def normalize_asset_id(value: object) -> str:
-    """Return only the numeric asset identifier, without a letter prefix.
+def infer_purchase_route(text: object) -> str:
+    """Make a reviewable fallback guess when the analyzer has no route value."""
+    source = " ".join(str(text or "").lower().split())
+    if re.search(r"\b(?:rental|rent|leased?|temporary chiller|scissor lift)\b", source):
+        return ONSITE_RENTAL
+    if re.search(
+        r"\b(?:install|installation|repair|service|labor|technician|startup|"
+        r"start-up|commission|inspect|troubleshoot|replace onsite|perform work)\b",
+        source,
+    ):
+        return ONSITE_LABOR
+    if group_a_equipment_match(source):
+        return EQUIPMENT_PURCHASE
+    return MATERIALS_PURCHASE
 
-    Asset registries often display values such as ``A001234`` or
-    ``EEA-CWP-07``.  Smartsheet expects the numeric portion only.  Use the final
-    numeric run because prefixes and equipment abbreviations can themselves
-    contain separators; preserve leading zeroes because they may be significant.
+
+def normalize_asset_id(value: object) -> str:
+    """Return the complete configured Asset ID, preserving every prefix.
+
+    Ashley referenced a five-digit JDE code, but the account team does not have
+    a verified mapping for it. The product owner explicitly directed the tool
+    to continue exporting the full asset codes already configured for every
+    site. Keep the historical function name for compatibility with callers.
     """
     text = str(value or "").strip()
     if not text or text.casefold() in {"none applicable", "n/a", "na"}:
         return ""
-    matches = re.findall(r"\d+", text)
-    return matches[-1] if matches else ""
+    return " ".join(text.split())
 
 
 def asset_id_is_numeric(value: object) -> bool:
-    text = str(value or "").strip()
-    return not text or text.isdigit()
+    """Compatibility helper: configured full asset codes are valid text IDs."""
+    return len(normalize_asset_id(value)) <= 160

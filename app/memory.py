@@ -8,9 +8,14 @@ Learns, strictly scoped to one contract at a time:
                                              identified (vendors rarely have
                                              more than a handful of reps)
 
-Separately remembers a requester for one anonymous browser after the same
-normalized name is used on three distinct prepared PO contexts. Browser tokens
-are random and stored only as hashes; Streamlit reruns do not increase counts.
+The active streamlined flow remembers the last requester/asset manager for
+each account on each anonymous browser after one completed package. Browser
+tokens are random and stored only as hashes; Streamlit reruns do not increase
+counts. This prevents an RRH manager from becoming the default requester on a
+different ENFRA account while removing repeated name entry for the same user.
+
+The older three-use device_requesters tables/functions remain readable for
+backward compatibility, but the active UI no longer uses or exposes them.
 
 Nothing learned on one contract is ever surfaced on another — the same way
 David is only relevant to RRH.
@@ -71,6 +76,23 @@ CREATE TABLE IF NOT EXISTS device_requester_events (
     recorded_at   REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (device_hash, context_id)
 );
+CREATE TABLE IF NOT EXISTS device_account_managers (
+    device_hash  TEXT NOT NULL,
+    account_key  TEXT NOT NULL,
+    manager_key  TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    use_count    INTEGER NOT NULL DEFAULT 0,
+    last_used    REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (device_hash, account_key, manager_key)
+);
+CREATE TABLE IF NOT EXISTS device_account_manager_events (
+    device_hash TEXT NOT NULL,
+    account_key TEXT NOT NULL,
+    context_id  TEXT NOT NULL,
+    manager_key TEXT NOT NULL,
+    recorded_at REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (device_hash, account_key, context_id)
+);
 """
 
 
@@ -111,6 +133,10 @@ def _norm_name(name: str | None) -> str:
 
 def _requester_key(name: str | None) -> str:
     return _norm_name(name).casefold()
+
+
+def _account_key(account: str | None) -> str:
+    return " ".join((account or "").split()).casefold()
 
 
 def _device_hash(device_token: str | None) -> str:
@@ -228,6 +254,126 @@ def vendor_reps(contract: str, vendor: str | None) -> list[tuple[str, str]]:
         return [(r[0], r[1]) for r in rows]
     except Exception:
         return []
+    finally:
+        conn.close()
+
+
+def record_device_account_manager(
+    *,
+    device_token: str | None,
+    account: str | None,
+    manager_name: str | None,
+    context_id: str | None,
+) -> int:
+    """Remember one requester/asset manager for one device and ENFRA account.
+
+    A verified PO context counts once. Correcting the name on the same context
+    moves that event instead of double-counting. The latest valid name becomes
+    the next default for this exact device+account pair after the first use.
+    """
+    device = _device_hash(device_token)
+    account_key = _account_key(account)
+    name = _norm_name(manager_name)
+    manager = _requester_key(name)
+    context = (context_id or "").strip()
+    if (
+        not device
+        or not account_key
+        or not manager
+        or not context
+        or len(name) > 160
+        or len(account_key) > 240
+        or len(context) > 200
+    ):
+        return 0
+
+    conn = _connect()
+    if conn is None:
+        return 0
+    now = time.time()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        prior = conn.execute(
+            "SELECT manager_key FROM device_account_manager_events "
+            "WHERE device_hash=? AND account_key=? AND context_id=?",
+            (device, account_key, context),
+        ).fetchone()
+        if prior and prior[0] != manager:
+            conn.execute(
+                "UPDATE device_account_managers SET use_count=use_count-1 "
+                "WHERE device_hash=? AND account_key=? AND manager_key=?",
+                (device, account_key, prior[0]),
+            )
+            conn.execute(
+                "DELETE FROM device_account_managers "
+                "WHERE device_hash=? AND account_key=? AND manager_key=? "
+                "AND use_count<=0",
+                (device, account_key, prior[0]),
+            )
+
+        if not prior or prior[0] != manager:
+            conn.execute(
+                "INSERT INTO device_account_manager_events "
+                "(device_hash,account_key,context_id,manager_key,recorded_at) "
+                "VALUES (?,?,?,?,?) ON CONFLICT(device_hash,account_key,context_id) "
+                "DO UPDATE SET manager_key=excluded.manager_key, "
+                "recorded_at=excluded.recorded_at",
+                (device, account_key, context, manager, now),
+            )
+            conn.execute(
+                "INSERT INTO device_account_managers "
+                "(device_hash,account_key,manager_key,display_name,use_count,last_used) "
+                "VALUES (?,?,?,?,1,?) "
+                "ON CONFLICT(device_hash,account_key,manager_key) DO UPDATE SET "
+                "display_name=excluded.display_name, use_count=use_count+1, "
+                "last_used=excluded.last_used",
+                (device, account_key, manager, name, now),
+            )
+        else:
+            conn.execute(
+                "UPDATE device_account_managers SET display_name=?, last_used=? "
+                "WHERE device_hash=? AND account_key=? AND manager_key=?",
+                (name, now, device, account_key, manager),
+            )
+
+        row = conn.execute(
+            "SELECT use_count FROM device_account_managers "
+            "WHERE device_hash=? AND account_key=? AND manager_key=?",
+            (device, account_key, manager),
+        ).fetchone()
+        conn.commit()
+        return int(row[0]) if row else 0
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        conn.close()
+
+
+def remembered_device_account_manager(
+    device_token: str | None, account: str | None
+) -> str:
+    """Return the latest requester for this exact browser and account."""
+    device = _device_hash(device_token)
+    account_key = _account_key(account)
+    if not device or not account_key:
+        return ""
+    conn = _connect()
+    if conn is None:
+        return ""
+    try:
+        row = conn.execute(
+            "SELECT display_name FROM device_account_managers "
+            "WHERE device_hash=? AND account_key=? AND use_count>=1 "
+            "ORDER BY last_used DESC, use_count DESC LIMIT 1",
+            (device, account_key),
+        ).fetchone()
+        return str(row[0]) if row else ""
+    except Exception:
+        return ""
     finally:
         conn.close()
 

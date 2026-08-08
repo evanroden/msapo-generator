@@ -1,9 +1,13 @@
 # Smartsheet custom-URL prefill successor handoff — 2026-08-06
 
+> **Superseded operator workflow.** Keep the `%20` URL-encoding incident analysis
+> below, but use [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md)
+> for current fields, routing, assets, change orders, attachments, and UX.
+
 > **Historical prefill incident record.** The `%20` encoding and exact-label
 > findings remain applicable. The authoritative business workflow and current
 > two-file package are documented in
-> [`PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md`](PO_WORKFLOW_POLICY_AND_ATTACHMENT_HANDOFF_2026-08-06.md).
+> [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
 > References below to email backup, EPO mode, or full MSAPO generation are
 > superseded.
 
