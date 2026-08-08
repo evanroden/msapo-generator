@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import html
 import re
+from decimal import Decimal
 
 import streamlit as st
 
@@ -41,6 +42,7 @@ from app.po_rules import (
     classify_po,
     infer_purchase_route,
     normalize_asset_id,
+    parse_amount,
 )
 from app.quote_analyzer import AIAssumption, QuoteAnalysis, analyze_quote
 from app.scope_pdf import build_scope_pdf
@@ -222,6 +224,22 @@ CUSTOM_CSS = """
 
 def _h(value: object) -> str:
     return html.escape(str(value or ""))
+
+
+def _parse_amount(value: object) -> Decimal | None:
+    """Compatibility wrapper around the canonical currency parser."""
+    return parse_amount(value)
+
+
+def _pricing_difference(
+    subtotal: object, tax: object, total: object
+) -> Decimal | None:
+    """Return subtotal plus tax minus total when all values are parseable."""
+    parsed = tuple(_parse_amount(value) for value in (subtotal, tax, total))
+    if any(value is None for value in parsed):
+        return None
+    sub, sales_tax, grand_total = parsed
+    return sub + sales_tax - grand_total
 
 
 def _strip_ai_wrapper(text: str) -> str:
