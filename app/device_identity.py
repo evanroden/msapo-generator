@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
-import streamlit.components.v1 as components
+import streamlit as st
 
 COOKIE_NAME = "epc_device_id"
 _TOKEN_RE = re.compile(r"^[a-f0-9]{32}$")
@@ -64,8 +64,8 @@ def ensure_device_cookie(*, reload_parent: bool = True) -> None:
     handoffs use ``reload_parent=False`` because a full mobile reload can create
     a fresh Streamlit session and discard in-memory PO values and attachments.
     """
-    components.html(
+    st.iframe(
         cookie_bootstrap_html(reload_parent=reload_parent),
         height=0,
-        scrolling=False,
+        tab_index=-1,
     )

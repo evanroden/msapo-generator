@@ -147,6 +147,16 @@ def test_prefilled_link_is_labeled_and_suppresses_referrer_data():
     assert 'link_label: str = "Open Smartsheet form ↗"' in component
     assert 'link_label: str = "Open prefilled Smartsheet form ↗"' in component
     assert 'referrerpolicy="no-referrer"' in component
+    assert component.count("st.iframe(") == 2
+    assert "components.html(" not in component
+
+
+def test_streamlit_runtime_security_controls_are_not_contradictory():
+    config = (ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+
+    assert "enableCORS = true" in config
+    assert "enableCORS = false" not in config
+    assert "enableXsrfProtection = true" in config
 
 
 def test_render_blueprint_maps_every_populated_field_under_exact_live_labels():

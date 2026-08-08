@@ -282,6 +282,17 @@ Control states:
   opens when a critical guess is missing or invalid.
 - **State:** Implemented and covered by the UI contract tests.
 
+#### FM-C10 — Embedded handoff API or runtime security settings drift
+- **Severity:** Medium
+- **Trigger:** Streamlit removes its deprecated components HTML helper, or CORS
+  is configured off while XSRF protection requires it on.
+- **Impact:** the Smartsheet link/copy fallback or browser identity bootstrap can
+  stop rendering after an upgrade; contradictory startup settings can hide the
+  intended request-origin policy.
+- **Control:** pin Streamlit below 2.0, use the supported `st.iframe` API, and
+  explicitly keep CORS and XSRF protection enabled together.
+- **State:** Implemented and regression-tested in the 2026-08-08 follow-up.
+
 ### D. URL-prefill route
 
 #### FM-D01 — Wrong guessed query parameter fills the wrong field
