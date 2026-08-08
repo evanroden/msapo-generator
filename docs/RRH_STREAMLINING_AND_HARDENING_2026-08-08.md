@@ -186,6 +186,20 @@ This is the quick correctness check before generation.
 - **Fix:** keep the page active, show the error, and allow the operator to retry
   the same final button.
 
+### HF-14 — Runtime warnings forecast iframe failure and masked CORS intent
+
+- **Severity:** Medium
+- **Prior behavior:** the handoff and anonymous-device bootstrap used
+  `st.components.v1.html`, which Streamlit 1.61 marks for removal. Runtime
+  configuration also set CORS off while keeping XSRF protection on, forcing
+  Streamlit to override the CORS value at startup.
+- **Fix:** use the supported `st.iframe` API for all trusted inline components,
+  keep the invisible cookie bootstrap out of keyboard navigation, and explicitly
+  align CORS with enabled XSRF protection. Production startup no longer depends
+  on an automatic security-setting override.
+- **Coverage:** component-source and runtime-configuration regression tests plus
+  the synthetic AppTest workflow.
+
 ## 4. Additional streamlining opportunities
 
 ### A. Add the complete site/cost-code catalog
@@ -281,7 +295,7 @@ without adding state or confirmation controls to the generator.
 
 ## 6. Verification
 
-The focused local suite contains **128 passing tests** after this hardening pass.
+The focused local suite contains **130 passing tests** after this hardening pass.
 It covers the Ashley routing matrix, strict amount parsing, negation-aware route
 fallback, Group A parts handling, bounded Asset ID matching, source selection,
 stale-state clearing, vendor-bearing PDF signatures, required URL inclusion,
@@ -324,5 +338,23 @@ Suggested body:
 - include vendor and scope in the generated-PDF signature
 - withhold Smartsheet links that omit any required encoded field
 - sanitize stale selectbox state and keep PDF failures recoverable
+- replace deprecated iframe calls and align CORS/XSRF runtime settings
 - add focused regression coverage and a detailed failure-mode register
+```
+
+Runtime-warning follow-up title:
+
+```text
+Replace deprecated Streamlit embeds and align CORS protection
+```
+
+Runtime-warning follow-up body:
+
+```text
+- replace every trusted components.v1 HTML embed with the supported st.iframe API
+- keep the invisible device-cookie bootstrap outside keyboard navigation
+- preserve scrolling and fixed sizing for the Smartsheet handoff components
+- explicitly enable CORS alongside XSRF protection instead of relying on a runtime override
+- add regression coverage for embed API removal and contradictory security settings
+- rerun the full synthetic four-step package and handoff workflow without submission
 ```

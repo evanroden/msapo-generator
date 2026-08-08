@@ -2,7 +2,9 @@
 headless = true
 port = 8501
 address = "0.0.0.0"
-enableCORS = false
+# XSRF protection requires same-origin CORS enforcement. Keep both controls
+# aligned instead of relying on Streamlit to override a contradictory value.
+enableCORS = true
 enableXsrfProtection = true
 maxUploadSize = 200
 

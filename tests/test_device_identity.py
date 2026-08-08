@@ -1,3 +1,6 @@
+import inspect
+
+import app.device_identity as identity_module
 from app.device_identity import COOKIE_NAME, cookie_bootstrap_html, device_token
 
 
@@ -25,3 +28,11 @@ def test_cookie_bootstrap_can_avoid_reloading_an_active_mobile_workflow():
         "const reloadParent = false;"
         in cookie_bootstrap_html(reload_parent=False)
     )
+
+
+def test_cookie_bootstrap_uses_the_supported_streamlit_iframe_api():
+    source = inspect.getsource(identity_module)
+
+    assert "st.iframe(" in source
+    assert "components.html(" not in source
+    assert "tab_index=-1" in source

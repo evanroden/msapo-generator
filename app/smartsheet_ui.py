@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-import streamlit.components.v1 as components
+import streamlit as st
 
 
 def render_prefilled_link(
@@ -37,10 +37,10 @@ def render_prefilled_link(
 })();
 </script>
 """
-    components.html(
+    st.iframe(
         html.replace("__PAYLOAD__", payload),
         height=58,
-        scrolling=False,
+        tab_index=0,
     )
 
 
@@ -183,8 +183,8 @@ def render_manual_handoff(
 </script>
 """
     height = min(1050, 175 + 67 * len(rows))
-    components.html(
+    st.iframe(
         html.replace("__PAYLOAD__", payload),
         height=height,
-        scrolling=True,
+        tab_index=0,
     )
