@@ -3,13 +3,16 @@
 > **Historical reliability register.** The authoritative business workflow as
 > of 2026-08-08 is
 > [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
+> The current quick-path and reliability controls, including the second-pass
+> bug register, are in
+> [`RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](RRH_STREAMLINING_AND_HARDENING_2026-08-08.md).
 > This file preserves valuable failure analysis, but its references to email,
 > EPO mode, full MSAPO generation, editable Object Account, and three-file
 > packages are superseded.
 
 **Status:** living reliability specification  
 **Scope:** current quote-to-email workflow plus live manual Smartsheet PO handoff  
-**Last reviewed:** 2026-08-04  
+**Last reviewed:** 2026-08-08
 **Primary implementation:** draft PR #25
 
 ## 1. Purpose
@@ -59,15 +62,19 @@ Control states:
 - **Trigger:** extraction fails after another quote was already analyzed in the same browser session.
 - **Impact:** the user could submit the prior quote's details while believing the new file is active.
 - **Detection:** uploaded-file hash, extraction hash, extracted text, stored quote text, and analysis token are compared.
-- **Control:** the handoff warns that the uploaded file was not successfully extracted and blocks submission; the source workflow must re-analyze successfully.
-- **State:** Implemented.
+- **Control:** the active page now removes the prior analysis, document, and
+  generated context immediately. Failed extraction has a separate error hash
+  and explicit retry action; only a successful extraction enters the cache.
+- **State:** Implemented and regression-tested in the 2026-08-08 hardening pass.
 
 #### FM-A02 — Pasted quote attaches an older uploaded file
 - **Severity:** Critical
 - **Trigger:** a user uploads one quote, then switches to pasted text without clearing upload-related session state.
 - **Impact:** the correct fields could be paired with the wrong vendor document.
 - **Detection:** an uploaded file is active only when its hash and extracted text match the analyzed quote text.
-- **Control:** otherwise attach `Vendor Quote.txt` generated from the analyzed text; never reuse the stale upload.
+- **Control:** Upload and Paste are now mutually exclusive active sources. The
+  selected source is stored in the verified context; Paste always creates
+  `Vendor Quote.txt`, including when its text happens to equal an older upload.
 - **State:** Implemented and tested.
 
 #### FM-A03 — Analysis object and quote text do not match
@@ -116,13 +123,50 @@ Control states:
 - **Control:** preflight blocks API use and omits the field from a prefill URL with an explicit reason. Description of Work is capped at 20 characters; the full scope remains in the attached Scope/Inclusions/Exclusions PDF.
 - **State:** Implemented.
 
+#### FM-A09 — Zero, negative, or repaired amount reaches classification
+- **Severity:** Critical
+- **Trigger:** zero/negative input, exponent-like text, or extra decimals.
+- **Impact:** invalid PO value or wrong Standard PO tier.
+- **Control:** one strict currency parser is used by classification, context
+  reconciliation, and Smartsheet validation. Every route requires a value
+  greater than zero; generation stays disabled until it passes.
+- **State:** Implemented and tested.
+
+#### FM-A10 — Negated work controls route inference
+- **Severity:** Critical
+- **Trigger:** phrases such as `installation excluded`, `labor by others`, or
+  `rental not included` appear in the quote.
+- **Impact:** wrong Object Account and Agreement Type.
+- **Control:** deterministic fallback evaluates terms within their clause and
+  ignores locally negated/excluded work. The model prompt carries the same rule.
+- **State:** Implemented and tested.
+
+#### FM-A11 — Asset UID matches inside a longer serial number
+- **Severity:** Critical
+- **Trigger:** one configured UID is a substring of unrelated quote text.
+- **Impact:** wrong full asset code is exported.
+- **Control:** normalized identifier-boundary matching plus the existing
+  unique-best registry requirement.
+- **State:** Implemented and tested.
+
+#### FM-A12 — Oversized quote cannot become a valid package
+- **Severity:** High
+- **Trigger:** uploaded quote exceeds Smartsheet's 30 MB attachment limit or
+  extracted/pasted input exceeds 500,000 characters.
+- **Impact:** wasted OCR/model work followed by a late attachment failure.
+- **Control:** reject at the uploader/input boundary before extraction or model
+  analysis.
+- **State:** Implemented and tested.
+
 ### B. Document and attachment integrity
 
-#### FM-B01 — Contract, site, inclusions, or exclusions change after generation
+#### FM-B01 — A PDF-bearing value changes after generation
 - **Severity:** Critical
-- **Trigger:** user edits routing or review checkboxes after building the document.
+- **Trigger:** user edits contract, site, vendor, Scope, Inclusions, or Exclusions
+  after building the document.
 - **Impact:** form values and the attached Scope/Inclusions/Exclusions PDF disagree.
-- **Detection:** deterministic document signature.
+- **Detection:** deterministic document signature covers the analyzed quote,
+  contract, site, vendor, full scope text, Inclusions, and Exclusions.
 - **Control:** remove stale paths from use and require regeneration.
 - **State:** Implemented on `main` and reverified by the Smartsheet context builder.
 
@@ -219,6 +263,25 @@ Control states:
 - **Control:** remember the latest successfully used requester after the first ready package for the exact anonymous device+account pair. Never cross accounts or browsers. A later verified user naturally takes over on a shared device; no Forget action appears in the active UI. The browser cookie contains only a random token, which is hashed before server storage. Blocked/cleared cookies disable convenience without blocking the workflow.
 - **State:** Implemented and regression-tested; real Safari cookie behavior remains an acceptance check.
 
+#### FM-C08 — Stale selectbox value is no longer in the deployed catalog
+- **Severity:** High
+- **Trigger:** an app deployment changes contract, site, category, job, route,
+  request-type, or asset options while a browser session remains active.
+- **Impact:** widget exception or export of a retired value.
+- **Control:** sanitize every keyed selection against its current catalog before
+  rendering; reset to the detected/default value or a blocking placeholder.
+- **State:** Implemented in the 2026-08-08 hardening pass.
+
+#### FM-C09 — Automatic choices create too much routine review
+- **Severity:** Medium
+- **Trigger:** every AI/defaulted field remains visible for every PO.
+- **Impact:** operators re-read or alter correct defaults, increasing time and
+  error likelihood.
+- **Control:** keep only requester plus one compact exported-value summary in the
+  normal RRH path. Full controls remain in an exception-only review section that
+  opens when a critical guess is missing or invalid.
+- **State:** Implemented and covered by the UI contract tests.
+
 ### D. URL-prefill route
 
 #### FM-D01 — Wrong guessed query parameter fills the wrong field
@@ -249,8 +312,11 @@ Control states:
 
 #### FM-D06 — Required form fields are missing
 - **Severity:** High
-- **Control:** independently configured `SMARTSHEET_FORM_REQUIRED_FIELDS`; block the handoff link until populated.
-- **State:** Implemented and configured for the current live form.
+- **Control:** independently configured `SMARTSHEET_FORM_REQUIRED_FIELDS`; block
+  until each value is populated **and actually included in the final encoded
+  URL**. A missing label mapping or URL-length skip withholds the link. Change
+  Orders apply the same gate to Original PO Number.
+- **State:** Implemented, configured, and regression-tested for the current form.
 
 ### E. API schema and value safety
 

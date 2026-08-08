@@ -12,8 +12,9 @@ PyMuPDF>=1.24.0
 Pillow>=11.3.0
 pillow-heif>=1.1.1
 
-# Web UI
-streamlit>=1.38.0
+# Web UI. 1.61 adds the per-widget upload cap used to enforce Smartsheet's
+# 30 MB attachment limit before an oversized quote is read or analyzed.
+streamlit>=1.61.0,<2.0.0
 
 # HTTP (for Gotenberg backend and optional integrations)
 requests>=2.32.0

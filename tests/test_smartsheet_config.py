@@ -217,6 +217,28 @@ def test_prefill_value_translation_required_fields_and_length_limit():
     assert any("URL length limit" in item for item in result.skipped)
 
 
+def test_prefill_withholds_required_values_that_are_nonempty_but_not_encoded():
+    config = load_config(
+        {
+            "SMARTSHEET_FORM_URL": "https://app.smartsheet.com/b/form/example",
+            "SMARTSHEET_URL_PREFILL_ENABLED": "true",
+            "SMARTSHEET_FORM_FIELD_MAP_JSON": json.dumps(
+                {"request_type": "REQUEST TYPE"}
+            ),
+            "SMARTSHEET_FORM_REQUIRED_FIELDS": "request_type,vendor",
+        }
+    )
+
+    result = build_prefilled_form_url(
+        {"request_type": "PO", "vendor": "Populated but unmapped vendor"},
+        config,
+    )
+
+    assert result.included == ("request_type",)
+    assert result.missing_required == ("vendor",)
+    assert any(item.startswith("vendor:") for item in result.skipped)
+
+
 def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():
     field_map = {
         "request_type": "REQUEST TYPE",
@@ -431,6 +453,10 @@ def test_field_and_attachment_preflight_rejects_silent_corruption():
     assert any("DISPATCH WO" in item and "NA" in item for item in problems)
     assert not any("ASSET ID" in item for item in problems)
     assert any("20 characters or fewer" in item for item in problems)
+
+    for invalid_total in ("$0.00", "-$5.00", "1e3", "12.345"):
+        amount_problems = validate_submission_fields({"total": invalid_total})
+        assert any("valid amount" in item for item in amount_problems)
 
     attachment_problems = preflight_attachments(
         [

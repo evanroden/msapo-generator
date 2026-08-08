@@ -63,6 +63,15 @@ def test_materials_purchase_requires_a_valid_all_in_total():
         classify_po(MATERIALS_PURCHASE, "not an amount")
 
 
+@pytest.mark.parametrize(
+    "route", [ONSITE_LABOR, ONSITE_RENTAL, EQUIPMENT_PURCHASE, MATERIALS_PURCHASE]
+)
+@pytest.mark.parametrize("amount", ["", "$0.00", "-$1.00", "1e3", "12.345"])
+def test_every_route_requires_a_strictly_positive_valid_total(route, amount):
+    with pytest.raises(ValueError, match=r"greater than \$0.00"):
+        classify_po(route, amount)
+
+
 def test_unknown_route_is_rejected():
     with pytest.raises(ValueError, match="Choose how"):
         classify_po("legacy_epo", "$100")
@@ -72,6 +81,9 @@ def test_amount_parser_preserves_threshold_precision():
     assert parse_amount("$25,000.00") == Decimal("25000.00")
     assert parse_amount("24,999.99 USD") == Decimal("24999.99")
     assert parse_amount(None) is None
+    assert parse_amount("1e3") is None
+    assert parse_amount("$12.345") is None
+    assert parse_amount("USD 1,234.50") == Decimal("1234.50")
 
 
 @pytest.mark.parametrize(
@@ -88,6 +100,22 @@ def test_route_fallback_guesses_more_without_using_delivery_method(quote, expect
     assert infer_purchase_route(quote) == expected
 
 
+@pytest.mark.parametrize(
+    ("quote", "expected"),
+    [
+        ("Installation excluded. Supply one new chiller.", EQUIPMENT_PURCHASE),
+        ("No vendor labor. Purchase one new boiler.", EQUIPMENT_PURCHASE),
+        ("Rental by others. Supply water-softener salt.", MATERIALS_PURCHASE),
+        ("Rental not included; technician will repair the pump onsite.", ONSITE_LABOR),
+        ("Installation and labor excluded. Supply one new chiller.", EQUIPMENT_PURCHASE),
+        ("Rental equipment is excluded. Supply water-softener salt.", MATERIALS_PURCHASE),
+        ("Installation is not part of the quoted scope. Supply one new boiler.", EQUIPMENT_PURCHASE),
+    ],
+)
+def test_fallback_does_not_route_from_negated_or_excluded_work(quote, expected):
+    assert infer_purchase_route(quote) == expected
+
+
 def test_group_a_source_recognizes_complete_equipment_but_not_loose_parts():
     assert group_a_equipment_match("Purchase one new boiler") == "Boiler"
     assert group_a_equipment_match("Long-lead procurement equipment") == "Long-lead Equipment"
@@ -95,6 +123,12 @@ def test_group_a_source_recognizes_complete_equipment_but_not_loose_parts():
         "Owner-furnished, contractor-installed equipment"
     ) == "Owner-furnished Equipment"
     assert group_a_equipment_match("Provide chiller gaskets and filters") is None
+    assert group_a_equipment_match("Supply replacement chiller gaskets") is None
+    assert group_a_equipment_match("Supply one chiller and spare gaskets") == "Chiller"
+    assert (
+        group_a_equipment_match("Provide chiller parts and purchase one new boiler")
+        == "Chiller"
+    )
     assert group_a_equipment_match("Box delivered by third-party carrier") is None
 
 
