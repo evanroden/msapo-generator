@@ -58,3 +58,13 @@ def test_asset_guess_does_not_choose_an_arbitrary_asset_on_an_equipment_only_tie
 
 def test_asset_guess_never_invents_an_unconfigured_code():
     assert guess_asset_uid(ASSETS, quote_text="Repair AHU-99", hint="AHU-99") is None
+
+
+def test_asset_uid_must_be_a_complete_bounded_identifier():
+    assert (
+        guess_asset_uid(
+            ASSETS,
+            quote_text="Reference XEEA-CWP-07Z in an unrelated serial number.",
+        )
+        is None
+    )

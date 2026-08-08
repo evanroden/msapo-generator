@@ -13,7 +13,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -28,6 +28,7 @@ from app.po_rules import (
     PURCHASE_ROUTE_LABELS,
     classify_po,
     normalize_asset_id,
+    parse_amount,
 )
 
 _CONTRACT_PLACEHOLDER = "— Select a contract —"
@@ -206,11 +207,16 @@ def _document_signature(
     site: str,
     inclusions: list[str],
     exclusions: list[str],
+    *,
+    vendor: str = "",
+    scope: str = "",
 ) -> str:
     payload = {
         "analysis": token,
         "contract": contract,
         "site": site,
+        "vendor": vendor,
+        "scope": scope,
         "inclusions": inclusions,
         "exclusions": exclusions,
     }
@@ -231,12 +237,16 @@ def _active_quote_attachment(
     state: Mapping[str, Any], quote_text: str
 ) -> tuple[tuple[str, bytes] | None, list[str]]:
     warnings: list[str] = []
+    quote_source = _state_text(state, "quote_source")
     uploaded_bytes = state.get("uploaded_file_bytes")
     uploaded_name = _state_text(state, "uploaded_file_name")
     extracted_text = _state_text(state, "extracted_text")
     extract_hash = _state_text(state, "extract_hash")
 
+    upload_allowed = quote_source in {"", "upload", "synthetic"}
     upload_valid = (
+        upload_allowed
+        and
         isinstance(uploaded_bytes, bytes)
         and bool(uploaded_bytes)
         and bool(uploaded_name)
@@ -247,7 +257,12 @@ def _active_quote_attachment(
     if upload_valid:
         return (uploaded_name, uploaded_bytes), warnings
 
-    if isinstance(uploaded_bytes, bytes) and uploaded_bytes and not extracted_text:
+    if (
+        quote_source == "upload"
+        and isinstance(uploaded_bytes, bytes)
+        and uploaded_bytes
+        and not extracted_text
+    ):
         warnings.append(
             "The current uploaded file was not successfully extracted; the prior analysis may not describe it."
         )
@@ -273,13 +288,7 @@ def _attachments(
 
 
 def _money(value: str) -> Decimal | None:
-    text = re.sub(r"[^0-9.-]", "", value or "")
-    if not text or text in {"-", ".", "-."}:
-        return None
-    try:
-        return Decimal(text)
-    except InvalidOperation:
-        return None
+    return parse_amount(value)
 
 
 def _context_id(fields: Mapping[str, str], attachments: tuple[tuple[str, bytes], ...]) -> str:
@@ -351,7 +360,13 @@ def build_po_context(
     base = _safe_basename(contract, site, getattr(analysis, "project_description", ""), rrh)
 
     expected_document_signature = _document_signature(
-        token, contract, site, inclusions, exclusions
+        token,
+        contract,
+        site,
+        inclusions,
+        exclusions,
+        vendor=vendor,
+        scope=str(getattr(analysis, "scope_of_work", "") or "").strip(),
     )
     stored_document_signature = _state_text(state, "scope_pdf_signature")
     scope_pdf_bytes = state.get("scope_pdf_bytes")

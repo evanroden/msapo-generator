@@ -93,7 +93,10 @@ def _state(
             "Tulane",
             ["Labor", "Startup testing"],
             ["Painting"],
+            vendor="Corrected Vendor Co",
+            scope="Repair the chilled water pump and test operation.",
         ),
+        "quote_source": "upload" if uploaded else "paste",
     }
     if uploaded:
         state.update(
@@ -233,6 +236,27 @@ def test_pasted_quote_becomes_the_original_text_attachment():
     assert context is not None and context.ready
     assert context.attachments[0] == ("Vendor Quote.txt", b"quote text")
     assert context.attachments[1][0].endswith("Scope.pdf")
+
+
+def test_explicit_paste_source_never_reuses_a_stale_upload_with_identical_text():
+    state = _state(route=EQUIPMENT_PURCHASE, uploaded=True)
+    state["quote_source"] = "paste"
+
+    context = build_po_context(state, {})
+
+    assert context is not None and context.ready
+    assert context.attachments[0] == ("Vendor Quote.txt", b"quote text")
+
+
+def test_vendor_change_invalidates_the_vendor_bearing_scope_pdf():
+    state = _state(route=ONSITE_LABOR)
+    token = state["analysis_token"]
+    state[f"vendor_{token}"] = "Different Vendor"
+
+    context = build_po_context(state, {})
+
+    assert context is not None and not context.ready
+    assert any("Regenerate" in warning for warning in context.warnings)
 
 
 def test_stale_scope_pdf_is_excluded_and_blocks_submission():

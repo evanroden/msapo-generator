@@ -54,9 +54,17 @@ class POClassification:
 
 
 def parse_amount(value: object) -> Decimal | None:
-    """Parse a currency-like amount without guessing malformed values."""
-    text = re.sub(r"[^0-9.-]", "", str(value or ""))
-    if not text or text in {"-", ".", "-."}:
+    """Parse a conventional currency value without repairing bad input.
+
+    The old implementation removed every nonnumeric character, which could
+    turn malformed values such as ``1e3`` into ``13``.  Accept the formats the
+    quote analyzer and UI actually produce, while rejecting ambiguous text,
+    repeated signs, and more than two decimal places.
+    """
+    text = str(value or "").strip()
+    text = re.sub(r"(?i)\bUSD\b", "", text)
+    text = text.replace("$", "").replace(",", "").strip()
+    if not re.fullmatch(r"-?(?:\d+(?:\.\d{1,2})?|\.\d{1,2})", text):
         return None
     try:
         return Decimal(text)
@@ -71,6 +79,13 @@ def classify_po(route: str, total: object) -> POClassification:
     below $25,000 use the under-$25K option; $25,000 and above use the other
     Standard PO option.
     """
+    if route not in PURCHASE_ROUTES:
+        raise ValueError("Choose how the vendor will provide the goods or service.")
+
+    amount = parse_amount(total)
+    if amount is None or amount <= 0:
+        raise ValueError("Enter a valid all-in PO/CO amount greater than $0.00.")
+
     if route == ONSITE_LABOR:
         return POClassification(SUBCONTRACTOR_ACCOUNT, SERVICE_AGREEMENT)
     if route == ONSITE_RENTAL:
@@ -78,30 +93,67 @@ def classify_po(route: str, total: object) -> POClassification:
     if route == EQUIPMENT_PURCHASE:
         return POClassification(EQUIPMENT_ACCOUNT, EQUIPMENT_PO)
     if route == MATERIALS_PURCHASE:
-        amount = parse_amount(total)
-        if amount is None:
-            raise ValueError(
-                "A valid all-in PO/CO amount is required to choose the Standard PO tier."
-            )
         agreement = (
             STANDARD_PO_UNDER_25K
             if amount < STANDARD_PO_THRESHOLD
             else STANDARD_PO_OVER_25K
         )
         return POClassification(MATERIALS_ACCOUNT, agreement)
+
+    # ``route`` is guarded above.  Keep an explicit fail-closed tail so a
+    # future enum addition cannot silently bypass classification.
     raise ValueError("Choose how the vendor will provide the goods or service.")
+
+
+_RENTAL_RE = re.compile(
+    r"\b(?:rental|rent(?:ed|ing)?|leased?|temporary chiller|scissor lift)\b"
+)
+_LABOR_RE = re.compile(
+    r"\b(?:install(?:ation|ing|ed)?|repair(?:ing|ed)?|service|labor|technician|"
+    r"start-?up|commission(?:ing|ed)?|inspect(?:ion|ing|ed)?|troubleshoot(?:ing|ed)?|"
+    r"perform(?:ing|ed)? work)\b"
+)
+_NEGATION_BEFORE_RE = re.compile(
+    r"(?:\bno\b|\bnot\b|\bwithout\b|\bexclude(?:d|s|ing)?\b|"
+    r"\bowner[- ]provided\b|\bcustomer[- ]provided\b)"
+    r"(?:\W+\w+){0,3}\W*$"
+)
+_NEGATION_AFTER_RE = re.compile(
+    r"^\W*(?:(?:and|or|equipment|service|work|labor|installation|rental|"
+    r"start-?up|commissioning)\W+){0,4}"
+    r"(?:(?:is|are|will\W+be|to\W+be)\W+)?"
+    r"(?:not\W+included|excluded|by\W+(?:others|owner|customer)|"
+    r"provided\W+by\W+(?:others|owner|customer)|"
+    r"not\W+(?:part\W+of|in)\W+(?:the\W+)?(?:quote|quoted\W+scope|scope))\b"
+)
+
+
+def _has_affirmative_match(source: str, pattern: re.Pattern[str]) -> bool:
+    """Return true when a routing term is not locally negated.
+
+    Quotes frequently list phrases such as ``installation excluded`` and
+    ``rental by others``.  Looking only for the noun sends those purchases to
+    the wrong account.  Examine a short window around every match and accept
+    the route when at least one occurrence is affirmative.
+    """
+    for match in pattern.finditer(source):
+        before = source[max(0, match.start() - 48) : match.start()]
+        after = source[match.end() : min(len(source), match.end() + 48)]
+        before_clause = re.split(r"[.;:\n]", before)[-1]
+        after_clause = re.split(r"[.;:\n]|\bbut\b|\bhowever\b", after)[0]
+        if not _NEGATION_BEFORE_RE.search(
+            before_clause
+        ) and not _NEGATION_AFTER_RE.search(after_clause):
+            return True
+    return False
 
 
 def infer_purchase_route(text: object) -> str:
     """Make a reviewable fallback guess when the analyzer has no route value."""
     source = " ".join(str(text or "").lower().split())
-    if re.search(r"\b(?:rental|rent|leased?|temporary chiller|scissor lift)\b", source):
+    if _has_affirmative_match(source, _RENTAL_RE):
         return ONSITE_RENTAL
-    if re.search(
-        r"\b(?:install|installation|repair|service|labor|technician|startup|"
-        r"start-up|commission|inspect|troubleshoot|replace onsite|perform work)\b",
-        source,
-    ):
+    if _has_affirmative_match(source, _LABOR_RE):
         return ONSITE_LABOR
     if group_a_equipment_match(source):
         return EQUIPMENT_PURCHASE

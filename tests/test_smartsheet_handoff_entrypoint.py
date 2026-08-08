@@ -79,6 +79,27 @@ def test_streamlined_controls_guess_and_remember_without_obsolete_buttons():
     assert "forget_device_requester" not in source
     assert "Forget requester" not in source
     assert "max_chars=20" in source
+    assert '"Review or change the tool\'s selections"' in source
+    assert "disabled=bool(draft_problems)" in source
+    assert "st.session_state.get(asset_state_key) not in options" in source
+    assert source.index("Review or change the tool's selections") < source.index(
+        "Your name (Requester / Asset Manager) *"
+    )
+
+
+def test_quote_source_and_retry_flow_fail_closed_without_stale_analysis():
+    source = WEB_UI.read_text(encoding="utf-8")
+
+    assert "QUOTE_INPUT_MODES" in source
+    assert "choose_quote_text(" in source
+    assert "clear_active_analysis(" in source
+    assert "max_upload_size=MAX_ATTACHMENT_BYTES" in source
+    assert "extraction_error_hash" in source
+    assert "Try reading this file again" in source
+    assert "analysis_error_signature" in source
+    assert "Try analyzing this quote again" in source
+    assert "st.tabs(" not in source
+    assert "st.stop()" not in source
 
 
 def test_inline_handoff_shows_two_downloads_link_and_only_hidden_copy_fallback():
@@ -97,6 +118,7 @@ def test_inline_handoff_shows_two_downloads_link_and_only_hidden_copy_fallback()
     assert "record_device_requester(" not in helper_source
     assert "build_prefilled_form_url(fields, config)" in helper_source
     assert "prefill_enabled(config)" in helper_source
+    assert "prefilled.missing_required" in helper_source
     assert "st.switch_page" not in inline
     assert "st.checkbox" not in helper_source
     assert "email backup" not in helper_source.lower()

@@ -49,9 +49,9 @@ def guess_asset_uid(
         serves_norm = _norm(serves)
         score = 0
 
-        if uid and uid.upper() in raw_quote:
+        if uid_norm and _bounded_contains(norm_quote, uid_norm):
             score += 150
-        if uid and uid.upper() in raw_hint:
+        if uid_norm and _bounded_contains(norm_hint, uid_norm):
             score += 170
         if tag_norm and _bounded_contains(norm_quote, tag_norm):
             score += 105
@@ -87,4 +87,3 @@ def guess_asset_uid(
     if best_score < 45 or best_score == runner_up:
         return None
     return best_uid
-

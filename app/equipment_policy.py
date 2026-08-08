@@ -76,13 +76,34 @@ _PARTS_ONLY_RE = re.compile(
 )
 
 _EXPLICIT_WHOLE_UNIT_RE = re.compile(
-    r"\b(?:new|complete|packaged|modular)\b.{0,50}\b(?:air handling unit|ahu|"
+    r"\b(?:new|complete|packaged|modular|purchase|buy|furnish|supply|provide)\b"
+    r".{0,60}\b(?:air handling unit|ahu|"
     r"rooftop unit|rtu|chiller|boiler|cooling tower|heat exchanger|pump|vfd|"
     r"generator|solar panel|switchgear|transformer|ups|automatic transfer "
     r"switch|motor control center|bms|battery energy storage|microgrid|chp|"
     r"thermal energy storage|inverter|skid|station)s?\b",
     re.IGNORECASE,
 )
+
+_PART_AFTER_UNIT_RE = re.compile(
+    r"^\W+(?:(?:replacement|spare)\W+)?"
+    r"(?:parts?|gaskets?|belts?|filters?|bearings?|seals?|kits?)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_explicit_whole_unit(source: str) -> bool:
+    """Distinguish a complete unit from a part named after that unit.
+
+    Evaluate each explicit purchase phrase independently.  A quote containing
+    both chiller parts and one new boiler must still recognize the boiler; a
+    global "any part phrase" check incorrectly downgraded that mixed quote.
+    """
+    for match in _EXPLICIT_WHOLE_UNIT_RE.finditer(source):
+        tail = source[match.end() : match.end() + 40]
+        if not _PART_AFTER_UNIT_RE.search(tail):
+            return True
+    return False
 
 _GROUP_A_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Air Handling Unit / Rooftop Unit", re.compile(r"\b(?:air handling unit|ahu|rooftop unit|rtu)s?\b", re.I)),
@@ -129,7 +150,8 @@ def group_a_equipment_match(text: object) -> str | None:
     source = " ".join(str(text or "").split())
     if not source:
         return None
-    if _PARTS_ONLY_RE.search(source) and not _EXPLICIT_WHOLE_UNIT_RE.search(source):
+    explicit_whole_unit = _has_explicit_whole_unit(source)
+    if _PARTS_ONLY_RE.search(source) and not explicit_whole_unit:
         return None
     for label, pattern in _GROUP_A_PATTERNS:
         if pattern.search(source):

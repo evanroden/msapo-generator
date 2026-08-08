@@ -105,6 +105,13 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     except SmartsheetConfigurationError as exc:
         st.error(f"Could not build the prefilled Smartsheet link: {exc}")
         return
+    if prefilled.missing_required:
+        st.error(
+            "The Smartsheet link could not include every required value: "
+            + ", ".join(prefilled.missing_required)
+            + ". The form link has been withheld."
+        )
+        return
 
     rows = handoff_rows(fields, config)
     if not rows:

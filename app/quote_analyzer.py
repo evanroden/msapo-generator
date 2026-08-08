@@ -159,6 +159,10 @@ STRICT RULES:
    Delivery method does NOT decide Equipment versus Materials. A vendor merely
    dropping something onsite does not make it labor, and third-party shipping
    does not automatically make it Equipment.
+   Read exclusions and responsibility notes before choosing: phrases such as
+   "installation excluded," "labor by others," or "rental not included" do
+   NOT establish onsite labor or rental. Classify only the work or goods the
+   vendor is affirmatively providing in this quote.
 
    APPROVED GROUP A EQUIPMENT LIST:
 __GROUP_A_EQUIPMENT__

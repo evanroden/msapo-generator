@@ -17,7 +17,6 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
@@ -35,6 +34,7 @@ from app.po_rules import (
     STANDARD_PO_OVER_25K,
     STANDARD_PO_UNDER_25K,
     SUBCONTRACTOR_ACCOUNT,
+    parse_amount,
 )
 
 BASE_URL = "https://api.smartsheet.com/2.0"
@@ -630,7 +630,18 @@ def build_prefilled_form_url(
             split.fragment,
         )
     )
-    missing = missing_required_fields(fields, config.form_required_fields)
+    required_for_request = list(config.form_required_fields)
+    if (
+        str(fields.get("request_type", "")).strip() == "CHANGE ORDER"
+        and "original_po_number" not in required_for_request
+    ):
+        required_for_request.append("original_po_number")
+    missing = tuple(
+        field
+        for field in required_for_request
+        if not _must_remain_blank(field, fields)
+        and (not _nonempty(fields.get(field)) or field not in included)
+    )
     return PrefillResult(url, tuple(included), tuple(skipped), missing)
 
 
@@ -808,13 +819,10 @@ def validate_column_mapping(config: SmartsheetConfig) -> dict:
 
 
 def _money_number(value: Any) -> float:
-    text = re.sub(r"[^0-9.-]", "", str(value))
-    if not text or text in {"-", ".", "-."}:
-        raise ValueError("not a number")
-    try:
-        return float(Decimal(text))
-    except (InvalidOperation, ValueError) as exc:
-        raise ValueError("not a number") from exc
+    amount = parse_amount(value)
+    if amount is None or amount <= 0:
+        raise ValueError("must be a valid amount greater than $0.00")
+    return float(amount)
 
 
 def _iso_date(value: Any) -> str:

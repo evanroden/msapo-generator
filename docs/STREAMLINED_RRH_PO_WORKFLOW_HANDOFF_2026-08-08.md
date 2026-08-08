@@ -6,6 +6,11 @@
 **Applies to:** quote analysis, RRH PO classification, asset selection, requester memory, the two-file package, and Smartsheet custom-URL prefilling  
 **Supersedes:** the business rules and operator flow in the 2026-08-06 PO workflow handoff wherever they conflict with this document
 
+> **Current reliability supplement:**
+> [`RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](RRH_STREAMLINING_AND_HARDENING_2026-08-08.md)
+> preserves these business rules while defining the exception-only review UI,
+> source-state controls, strict amount gate, and second-pass bug fixes.
+
 Read this file before changing any PO route, Object Account, Agreement Type,
 asset behavior, requester behavior, attachment, or Smartsheet field mapping.
 The older documents remain useful incident history, especially for the `%20`

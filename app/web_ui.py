@@ -47,11 +47,20 @@ from app.po_rules import (
 from app.quote_analyzer import AIAssumption, QuoteAnalysis, analyze_quote
 from app.scope_pdf import build_scope_pdf
 from app.smartsheet import (
+    MAX_ATTACHMENT_BYTES,
     RRH_JOB_NUMBERS,
     preflight_attachments,
     validate_submission_fields,
 )
 from app.smartsheet_inline import render_inline_smartsheet_handoff
+from app.workflow_state import (
+    PASTE_MODE,
+    QUOTE_INPUT_MODES,
+    UPLOAD_MODE,
+    choose_quote_text,
+    clear_active_analysis,
+    quote_length_problem,
+)
 
 
 SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
@@ -363,6 +372,9 @@ def _load_test_into_state() -> None:
     st.session_state["analysis"] = analysis
     st.session_state["analysis_token"] = token
     st.session_state["quote_text"] = quote_text
+    st.session_state["quote_source"] = "synthetic"
+    st.session_state["synthetic_quote_active"] = True
+    st.session_state["quote_input_mode"] = UPLOAD_MODE
     st.session_state["last_sig"] = hashlib.sha256(
         quote_text.encode("utf-8")
     ).hexdigest()
@@ -372,6 +384,39 @@ def _load_test_into_state() -> None:
     st.session_state["extract_hash"] = hashlib.sha256(quote_bytes).hexdigest()
     st.session_state.pop("scope_pdf_bytes", None)
     st.session_state.pop("scope_pdf_signature", None)
+    st.session_state.pop("analysis_error_signature", None)
+    st.session_state.pop("analysis_error_message", None)
+    st.session_state.pop("extraction_error_hash", None)
+    st.session_state.pop("extraction_error_message", None)
+
+
+def _deactivate_synthetic_quote() -> None:
+    st.session_state["synthetic_quote_active"] = False
+
+
+def _retry_extraction() -> None:
+    st.session_state.pop("extraction_error_hash", None)
+    st.session_state.pop("extraction_error_message", None)
+
+
+def _retry_analysis() -> None:
+    st.session_state.pop("analysis_error_signature", None)
+    st.session_state.pop("analysis_error_message", None)
+
+
+def _render_analysis_retry(signature: str) -> None:
+    st.error(
+        "The quote could not be analyzed. Try again, or switch to Paste text "
+        "if the uploaded file has an unusual layout."
+    )
+    details = st.session_state.get("analysis_error_message", "")
+    if details:
+        st.caption(f"Analysis detail: {details}")
+    st.button(
+        "Try analyzing this quote again",
+        key=f"retry_analysis_{signature[:12]}",
+        on_click=_retry_analysis,
+    )
 
 
 def _render_routing_controls(
@@ -379,21 +424,22 @@ def _render_routing_controls(
     quote_text: str,
     token: str,
 ) -> tuple[str, bool, str, str, str, str | None]:
-    """Render contract/site/cost-code controls using the established keys."""
+    """Render sanitized contract/site/cost-code overrides in page order."""
     detected_contract, detected_site = contracts.match_facility(
         analysis.facility_name, quote_text
     )
     contract_options = [CONTRACT_PLACEHOLDER] + contracts.contract_names()
-    default_index = (
-        contract_options.index(detected_contract)
-        if detected_contract in contract_options
-        else 0
-    )
+    contract_key = f"contract_{token}"
+    if st.session_state.get(contract_key) not in contract_options:
+        st.session_state[contract_key] = (
+            detected_contract
+            if detected_contract in contract_options
+            else CONTRACT_PLACEHOLDER
+        )
     contract = st.selectbox(
         "Contract *",
         contract_options,
-        index=default_index,
-        key=f"contract_{token}",
+        key=contract_key,
     )
     if contract == CONTRACT_PLACEHOLDER:
         return "", False, "", "", "", None
@@ -403,91 +449,87 @@ def _render_routing_controls(
         facility_key = facility_key_from_name(analysis.facility_name)
         default_site = FACILITY_SHORT_NAMES.get(facility_key) if facility_key else None
         site_options = [SITE_PLACEHOLDER] + SITE_LABELS
-        site_index = (
-            site_options.index(default_site) if default_site in site_options else 0
-        )
-        columns = st.columns(3)
-        with columns[0]:
-            site = st.selectbox(
-                "Site *", site_options, index=site_index, key=f"site_{token}"
+        site_key_name = f"site_{token}"
+        if st.session_state.get(site_key_name) not in site_options:
+            st.session_state[site_key_name] = (
+                default_site if default_site in site_options else SITE_PLACEHOLDER
             )
+        site = st.selectbox("Site *", site_options, key=site_key_name)
         if site == SITE_PLACEHOLDER:
             return contract, rrh, "", "", "", None
-        site_key = SITE_LABEL_TO_KEY[site]
+        site_key = SITE_LABEL_TO_KEY.get(site)
+        if not site_key:
+            return contract, rrh, "", "", "", None
         valid_categories = valid_categories_for_site(site_key)
         category_labels = [
             WORK_CATEGORY_DISPLAY.get(item, item) for item in valid_categories
         ]
+        if not category_labels:
+            return contract, rrh, site, "", "", site_key
         default_category = (
-            valid_categories.index(analysis.work_category)
+            WORK_CATEGORY_DISPLAY.get(analysis.work_category, analysis.work_category)
             if analysis.work_category in valid_categories
-            else 0
+            else category_labels[0]
         )
-        with columns[1]:
-            category_label = st.selectbox(
-                "Work category",
-                category_labels,
-                index=default_category,
-                key=f"cat_{token}_{site_key}",
-            )
+        category_state_key = f"cat_{token}_{site_key}"
+        if st.session_state.get(category_state_key) not in category_labels:
+            st.session_state[category_state_key] = default_category
+        category_label = st.selectbox(
+            "Work category",
+            category_labels,
+            key=category_state_key,
+        )
         category_key = valid_categories[category_labels.index(category_label)]
         cost_code = lookup_cost_code(site_key, category_key) or ""
-        with columns[2]:
-            if cost_code:
-                st.markdown(
-                    '<div class="field-label">Job cost code</div>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    f'<div class="cost-code-pill">🏷️ {_h(cost_code)}</div>',
-                    unsafe_allow_html=True,
-                )
-            else:
-                cost_code = st.text_input(
-                    "Job cost code *",
-                    key=f"manualcost_{token}_{site_key}",
-                    placeholder="Enter the site cost code",
-                )
+        if cost_code:
+            st.markdown(
+                '<div class="field-label">Job cost code</div>',
+                unsafe_allow_html=True,
+            )
+            st.markdown(
+                f'<div class="cost-code-pill">🏷️ {_h(cost_code)}</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            cost_code = st.text_input(
+                "Job cost code *",
+                key=f"manualcost_{token}_{site_key}",
+                placeholder="Enter the site cost code",
+            )
         return contract, rrh, site, category_label, cost_code, site_key
 
     sites = contracts.sites_for_contract(contract)
-    columns = st.columns(3)
-    with columns[0]:
-        if sites:
-            site_options = [SITE_PLACEHOLDER] + sites
-            site_index = (
-                site_options.index(detected_site)
-                if contract == detected_contract and detected_site in site_options
-                else 0
-            )
-            site = st.selectbox(
-                "Site *",
-                site_options,
-                index=site_index,
-                key=f"gsite_{token}_{contract}",
-            )
-            if site == SITE_PLACEHOLDER:
-                site = ""
-        else:
-            site = st.text_input(
-                "Site *",
-                key=f"gsitetxt_{token}_{contract}",
-                placeholder="Enter the site",
-            )
-    with columns[1]:
-        category_label = st.text_input(
-            "Work category",
-            value=WORK_CATEGORY_DISPLAY.get(
-                analysis.work_category, analysis.work_category or ""
-            ),
-            key=f"gcat_{token}_{contract}",
+    if sites:
+        site_options = [SITE_PLACEHOLDER] + sites
+        site_state_key = f"gsite_{token}_{contract}"
+        site_default = (
+            detected_site
+            if contract == detected_contract and detected_site in site_options
+            else (sites[0] if len(sites) == 1 else SITE_PLACEHOLDER)
         )
-    with columns[2]:
-        cost_code = st.text_input(
-            "Job cost code *",
-            key=f"gcost_{token}_{contract}",
-            placeholder="Paste the cost code",
+        if st.session_state.get(site_state_key) not in site_options:
+            st.session_state[site_state_key] = site_default
+        site = st.selectbox("Site *", site_options, key=site_state_key)
+        if site == SITE_PLACEHOLDER:
+            site = ""
+    else:
+        site = st.text_input(
+            "Site *",
+            key=f"gsitetxt_{token}_{contract}",
+            placeholder="Enter the site",
         )
+    category_label = st.text_input(
+        "Work category",
+        value=WORK_CATEGORY_DISPLAY.get(
+            analysis.work_category, analysis.work_category or ""
+        ),
+        key=f"gcat_{token}_{contract}",
+    )
+    cost_code = st.text_input(
+        "Job cost code *",
+        key=f"gcost_{token}_{contract}",
+        placeholder="Paste the cost code",
+    )
     return contract, rrh, site, category_label, cost_code, None
 
 
@@ -533,17 +575,23 @@ def _render_asset_control(
     )
     guess = exact_guess if exact_guess in uids else broad_guess
     options = [ASSET_NONE, *uids]
-    index = options.index(guess) if guess in options else 0
+    asset_state_key = f"asset_{token}_{contract}_{site}"
+    default_asset = guess if guess in options else ASSET_NONE
+    # A registry update can remove an asset while an older Streamlit session
+    # still holds its UID.  Never pass that stale value back to selectbox: it
+    # can otherwise render a choice that is no longer valid or raise during a
+    # rerun.  Reset only this account/site asset selection to the fresh guess.
+    if st.session_state.get(asset_state_key) not in options:
+        st.session_state[asset_state_key] = default_asset
     raw_asset = st.selectbox(
         "Specific asset",
         options,
-        index=index,
         format_func=lambda uid: (
             "No asset applies"
             if uid == ASSET_NONE
             else f"{labels[uid]} · {uid}"
         ),
-        key=f"asset_{token}_{contract}_{site}",
+        key=asset_state_key,
         help=(
             "The tool suggests the asset from the quote and selected site. "
             "Choose a different one only if the suggestion is wrong."
@@ -624,80 +672,153 @@ def main() -> None:
         """,
         unsafe_allow_html=True,
     )
-    upload_tab, paste_tab = st.tabs(["📁 Upload file", "📝 Paste text"])
-    quote_text = ""
+    input_mode = st.radio(
+        "Quote source",
+        QUOTE_INPUT_MODES,
+        horizontal=True,
+        key="quote_input_mode",
+        on_change=_deactivate_synthetic_quote,
+        label_visibility="collapsed",
+    )
+    uploaded_text = ""
+    pasted_text = ""
+    uploaded = None
 
-    with upload_tab:
+    if input_mode == UPLOAD_MODE:
         uploaded = st.file_uploader(
             "Upload quote",
             type=[
                 "pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp",
                 "heic", "heif", "hif", "txt",
             ],
+            max_upload_size=MAX_ATTACHMENT_BYTES // (1024 * 1024),
             label_visibility="collapsed",
             key=f"uploader_{st.session_state.get('uploader_nonce', 0)}",
+            on_change=_deactivate_synthetic_quote,
         )
         if uploaded is not None:
             file_bytes = uploaded.getvalue()
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
             file_hash = hashlib.sha256(file_bytes).hexdigest()
-            if st.session_state.get("extract_hash") != file_hash:
+            extraction_failed = (
+                st.session_state.get("extraction_error_hash") == file_hash
+            )
+            if (
+                st.session_state.get("extract_hash") != file_hash
+                and not extraction_failed
+            ):
                 with st.spinner("Reading the quote…"):
                     try:
-                        st.session_state["extracted_text"] = extract_text(
+                        extracted = extract_text(
                             file_bytes, uploaded.name
-                        )
+                        ).strip()
+                        if not extracted:
+                            raise ValueError("No readable text was found in the file.")
                     except Exception as exc:
-                        st.error(f"Could not read that file: {exc}")
                         st.session_state["extracted_text"] = ""
-                st.session_state["extract_hash"] = file_hash
-            quote_text = st.session_state.get("extracted_text", "")
-            if quote_text:
+                        st.session_state["extraction_error_hash"] = file_hash
+                        st.session_state["extraction_error_message"] = str(exc)[:300]
+                    else:
+                        st.session_state["extracted_text"] = extracted
+                        st.session_state["extract_hash"] = file_hash
+                        st.session_state.pop("extraction_error_hash", None)
+                        st.session_state.pop("extraction_error_message", None)
+            if st.session_state.get("extraction_error_hash") == file_hash:
+                st.error(
+                    "The file could not be read. Try reading it again, upload a "
+                    "clearer copy, or switch to Paste text."
+                )
+                details = st.session_state.get("extraction_error_message", "")
+                if details:
+                    st.caption(f"File-reading detail: {details}")
+                st.button(
+                    "Try reading this file again",
+                    key=f"retry_extract_{file_hash[:12]}",
+                    on_click=_retry_extraction,
+                )
+            else:
+                uploaded_text = st.session_state.get("extracted_text", "")
+            if uploaded_text:
                 with st.expander("Preview extracted text", expanded=False):
                     st.text_area(
                         "Raw text",
-                        quote_text,
+                        uploaded_text,
                         height=170,
                         disabled=True,
                         label_visibility="collapsed",
                     )
-            else:
-                st.warning(
-                    "No readable text was found. Try a clearer file or paste the quote text."
-                )
-
-    with paste_tab:
-        pasted = st.text_area(
+    elif input_mode == PASTE_MODE:
+        pasted_text = st.text_area(
             "Paste the full vendor quote text",
             height=200,
             placeholder="Paste the vendor quote here…",
             label_visibility="collapsed",
+            key="pasted_quote_text",
+            on_change=_deactivate_synthetic_quote,
         )
-        if pasted.strip():
-            quote_text = pasted.strip()
 
-    if quote_text.strip():
-        full_signature = hashlib.sha256(
-            quote_text.encode("utf-8", "ignore")
-        ).hexdigest()
-        if st.session_state.get("last_sig") != full_signature:
-            with st.spinner("Reading the quote and extracting the PO details…"):
-                try:
-                    analysis = analyze_quote(quote_text)
-                except Exception as exc:
-                    st.error(f"Analysis failed: {exc}")
-                    st.stop()
-            st.session_state["analysis"] = analysis
-            st.session_state["analysis_token"] = full_signature[:12]
-            st.session_state["last_sig"] = full_signature
-            st.session_state["quote_text"] = quote_text
-            st.session_state.pop("scope_pdf_bytes", None)
-            st.session_state.pop("scope_pdf_signature", None)
+    quote_text, quote_source = choose_quote_text(
+        input_mode,
+        uploaded_text=uploaded_text,
+        pasted_text=pasted_text,
+        synthetic_active=bool(st.session_state.get("synthetic_quote_active")),
+        synthetic_text=st.session_state.get("quote_text", ""),
+    )
+
+    length_problem = quote_length_problem(quote_text)
+    if length_problem:
+        clear_active_analysis(st.session_state)
+        st.error(length_problem)
+        _render_footer()
+        return
+
+    if not quote_text:
+        if st.session_state.get("analysis") is not None:
+            clear_active_analysis(st.session_state)
+        st.info("Upload or paste a quote above. It will be analyzed automatically.")
+        _render_footer()
+        return
+
+    full_signature = hashlib.sha256(
+        quote_text.encode("utf-8", "ignore")
+    ).hexdigest()
+    if (
+        st.session_state.get("last_sig") == full_signature
+        and st.session_state.get("analysis") is not None
+    ):
+        # The same text can legitimately move from an uploaded file to pasted
+        # text (or vice versa).  Keep the attachment source current even when
+        # another AI call is unnecessary.
+        st.session_state["quote_text"] = quote_text
+        st.session_state["quote_source"] = quote_source
+    if st.session_state.get("analysis_error_signature") == full_signature:
+        _render_analysis_retry(full_signature)
+    elif st.session_state.get("last_sig") != full_signature:
+        with st.spinner("Reading the quote and extracting the PO details…"):
+            try:
+                analysis = analyze_quote(quote_text)
+            except Exception as exc:
+                clear_active_analysis(st.session_state)
+                st.session_state["analysis_error_signature"] = full_signature
+                st.session_state["analysis_error_message"] = str(exc)[:300]
+                st.session_state["quote_source"] = quote_source
+            else:
+                st.session_state["analysis"] = analysis
+                st.session_state["analysis_token"] = full_signature[:12]
+                st.session_state["last_sig"] = full_signature
+                st.session_state["quote_text"] = quote_text
+                st.session_state["quote_source"] = quote_source
+                st.session_state.pop("scope_pdf_bytes", None)
+                st.session_state.pop("scope_pdf_signature", None)
+                st.session_state.pop("analysis_error_signature", None)
+                st.session_state.pop("analysis_error_message", None)
+
+        if st.session_state.get("analysis_error_signature") == full_signature:
+            _render_analysis_retry(full_signature)
 
     analysis: QuoteAnalysis | None = st.session_state.get("analysis")
     if analysis is None:
-        st.info("Upload or paste a quote above. It will be analyzed automatically.")
         _render_footer()
         return
 
@@ -798,48 +919,198 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    contract, rrh, site, _category_label, _cost_code, rrh_site_key = (
-        _render_routing_controls(analysis, cached_quote, token)
+    detected_contract, detected_site = contracts.match_facility(
+        analysis.facility_name, cached_quote
     )
-    if not contract:
-        st.warning("Choose the contract.")
-    elif not site:
-        st.warning("Choose or enter the site.")
-
-    request_type_key = f"request_type_{token}"
     request_type_guess = str(
         getattr(analysis, "request_type_guess", "") or "PO"
     ).strip()
     if request_type_guess not in REQUEST_TYPE_LABELS:
         request_type_guess = "PO"
-    if request_type_key not in st.session_state:
-        st.session_state[request_type_key] = request_type_guess
-    request_type = st.selectbox(
-        "What kind of request is this? *",
-        tuple(REQUEST_TYPE_LABELS),
-        format_func=lambda value: REQUEST_TYPE_LABELS[value],
-        key=request_type_key,
-        help="The tool guesses this from the quote. Change it only if needed.",
+    original_po_guess = str(
+        getattr(analysis, "original_po_number", "") or ""
+    ).strip()
+    route_guess_from_model = str(
+        getattr(analysis, "purchase_route_guess", "") or ""
+    ).strip()
+    work_category_guess = str(
+        getattr(analysis, "work_category", "") or ""
+    ).strip()
+    contact_email_guess = str(
+        getattr(analysis, "contact_email", "") or ""
+    ).strip()
+    detected_site_key = facility_key_from_name(analysis.facility_name)
+    detected_cost_code = (
+        lookup_cost_code(detected_site_key, work_category_guess)
+        if contracts.is_rrh(detected_contract)
+        else ""
     )
-    if request_type == "CHANGE ORDER":
-        original_po_key = f"original_po_{token}"
-        if original_po_key not in st.session_state:
-            st.session_state[original_po_key] = str(
-                getattr(analysis, "original_po_number", "") or ""
-            ).strip()
-        st.text_input(
-            "Original PO number *",
-            key=original_po_key,
-            placeholder="Required for a change order",
+    analyzed_total = parse_amount(getattr(analysis, "total_amount", ""))
+    review_expanded = bool(
+        not detected_contract
+        or not detected_site
+        or route_guess_from_model not in PURCHASE_ROUTES
+        or not work_category_guess
+        or not detected_cost_code
+        or not str(getattr(analysis, "vendor_name", "") or "").strip()
+        or analyzed_total is None
+        or analyzed_total <= 0
+        or not str(getattr(analysis, "short_description", "") or "").strip()
+        or bool(
+            contact_email_guess
+            and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", contact_email_guess)
+        )
+        or (request_type_guess == "CHANGE ORDER" and not original_po_guess)
+    )
+
+    with st.expander(
+        "Review or change the tool's selections",
+        expanded=review_expanded,
+    ):
+        st.caption(
+            "Most RRH requests can leave these selections as-is. Open this "
+            "section only when the summary below is wrong or a required value "
+            "was not found."
+        )
+        contract, rrh, site, category_label, cost_code, rrh_site_key = (
+            _render_routing_controls(analysis, cached_quote, token)
         )
 
+        request_type_key = f"request_type_{token}"
+        if st.session_state.get(request_type_key) not in REQUEST_TYPE_LABELS:
+            st.session_state[request_type_key] = request_type_guess
+        request_type = st.selectbox(
+            "What kind of request is this? *",
+            tuple(REQUEST_TYPE_LABELS),
+            format_func=lambda value: REQUEST_TYPE_LABELS[value],
+            key=request_type_key,
+            help="The tool guesses this from the quote. Change it only if needed.",
+        )
+        original_po_key = f"original_po_{token}"
+        if request_type == "CHANGE ORDER":
+            if original_po_key not in st.session_state:
+                st.session_state[original_po_key] = original_po_guess
+            st.text_input(
+                "Original PO number *",
+                key=original_po_key,
+                placeholder="Required for a change order",
+            )
+
+        if contract:
+            job_key = f"job_number_{token}_{contract}"
+            if rrh:
+                if st.session_state.get(job_key) not in RRH_JOB_NUMBERS:
+                    st.session_state[job_key] = RRH_JOB_NUMBERS[0]
+                st.selectbox(
+                    "Job number *",
+                    RRH_JOB_NUMBERS,
+                    key=job_key,
+                    help="RRH O&M is selected automatically for most requests.",
+                )
+            else:
+                st.text_input(
+                    "Job number *",
+                    key=job_key,
+                    placeholder="Enter the account job number",
+                )
+        else:
+            job_key = ""
+
+        route_key = f"purchase_route_{token}"
+        route_guess = str(
+            getattr(analysis, "purchase_route_guess", "") or ""
+        ).strip()
+        if route_guess not in PURCHASE_ROUTES:
+            route_guess = infer_purchase_route(
+                " ".join(
+                    (
+                        cached_quote,
+                        str(getattr(analysis, "project_description", "") or ""),
+                        str(getattr(analysis, "scope_of_work", "") or ""),
+                    )
+                )
+            )
+        if st.session_state.get(route_key) not in PURCHASE_ROUTES:
+            st.session_state[route_key] = route_guess
+        purchase_route = st.selectbox(
+            "How will this work or purchase be handled? *",
+            PURCHASE_ROUTES,
+            format_func=lambda route: PURCHASE_ROUTE_LABELS[route],
+            key=route_key,
+            help=(
+                "The tool guesses from the quote. Labor and rentals take priority; "
+                "equipment applies only to complete Group A equipment purchases."
+            ),
+        )
+
+        selected_asset = _render_asset_control(
+            analysis=analysis,
+            quote_text=cached_quote,
+            token=token,
+            contract=contract,
+            rrh=rrh,
+            site=site,
+            rrh_site_key=rrh_site_key,
+        )
+
+        total_key = f"total_{token}"
+        if total_key not in st.session_state:
+            st.session_state[total_key] = analysis.total_amount or ""
+        total_value = st.text_input(
+            "PO/CO amount — final total including every fee and tax *",
+            key=total_key,
+            help=(
+                "Use the final amount payable, including sales tax, freight, "
+                "delivery, surcharges, and any other quoted fees."
+            ),
+        )
+
+        vendor_key = f"vendor_{token}"
+        if vendor_key not in st.session_state:
+            st.session_state[vendor_key] = analysis.vendor_name or ""
+        st.text_input("Vendor name *", key=vendor_key)
+
+        contact_key = f"contact_{token}"
+        if contact_key not in st.session_state:
+            st.session_state[contact_key] = analysis.contact_name or ""
+        st.text_input("Vendor contact name", key=contact_key)
+
+        email_key = f"cemail_{token}"
+        if email_key not in st.session_state:
+            st.session_state[email_key] = analysis.contact_email or ""
+        st.text_input("Vendor contact email", key=email_key)
+
+        description_key = f"desc_{token}"
+        if description_key not in st.session_state:
+            st.session_state[description_key] = (
+                analysis.short_description or ""
+            )[:20]
+        st.text_input(
+            "Short description (≤20 chars)",
+            max_chars=20,
+            key=description_key,
+        )
+
+        st.text_area(
+            "Additional information (optional)",
+            key=f"instructions_{token}",
+            placeholder="Leave blank unless Smartsheet needs another note",
+            help="Only add a note that the Smartsheet reviewer needs to see.",
+        )
+        st.caption(
+            "Request Completed, PO #, and Work Order # stay blank. Dispatch to "
+            "Service Center is NA. Original PO Number is sent only for a change order."
+        )
+
+    requester_value = ""
+    requester_key = ""
     if contract:
         requester_key = f"requester_{token}_{contract}"
         if requester_key not in st.session_state:
             st.session_state[requester_key] = remembered_device_account_manager(
                 browser_token, contract
             )
-        st.text_input(
+        requester_value = st.text_input(
             "Your name (Requester / Asset Manager) *",
             key=requester_key,
             placeholder="Enter your name once",
@@ -847,120 +1118,59 @@ def main() -> None:
                 "After a successful package, this browser remembers the most "
                 "recent name for this ENFRA account."
             ),
-        )
+        ).strip()
 
-        job_key = f"job_number_{token}_{contract}"
-        if rrh:
-            if st.session_state.get(job_key) not in RRH_JOB_NUMBERS:
-                st.session_state[job_key] = RRH_JOB_NUMBERS[0]
-            st.selectbox(
-                "Job number *",
-                RRH_JOB_NUMBERS,
-                key=job_key,
-                help="RRH O&M is selected automatically for most requests.",
-            )
-        else:
-            st.text_input(
-                "Job number *",
-                key=job_key,
-                placeholder="Enter the account job number",
-            )
-
-    route_key = f"purchase_route_{token}"
-    route_guess = str(
-        getattr(analysis, "purchase_route_guess", "") or ""
-    ).strip()
-    if route_guess not in PURCHASE_ROUTES:
-        route_guess = infer_purchase_route(
-            " ".join(
-                (
-                    cached_quote,
-                    str(getattr(analysis, "project_description", "") or ""),
-                    str(getattr(analysis, "scope_of_work", "") or ""),
-                )
-            )
-        )
-    if st.session_state.get(route_key) not in PURCHASE_ROUTES:
-        st.session_state[route_key] = route_guess
-    purchase_route = st.selectbox(
-        "How will this work or purchase be handled? *",
-        PURCHASE_ROUTES,
-        format_func=lambda route: PURCHASE_ROUTE_LABELS[route],
-        key=route_key,
-        help=(
-            "The tool guesses from the quote. Labor and rentals take priority; "
-            "equipment applies only to complete Group A equipment purchases."
-        ),
-    )
-
-    _render_asset_control(
-        analysis=analysis,
-        quote_text=cached_quote,
-        token=token,
-        contract=contract,
-        rrh=rrh,
-        site=site,
-        rrh_site_key=rrh_site_key,
-    )
-
-    total_value = st.text_input(
-        "PO/CO amount — final total including every fee and tax *",
-        value=analysis.total_amount or "",
-        key=f"total_{token}",
-        help=(
-            "Use the final amount payable, including sales tax, freight, delivery, "
-            "surcharges, and any other quoted fees."
-        ),
-    )
-
-    vendor_key = f"vendor_{token}"
-    if vendor_key not in st.session_state:
-        st.session_state[vendor_key] = analysis.vendor_name or ""
-    st.text_input("Vendor name *", key=vendor_key)
-
-    contact_columns = st.columns(3)
-    with contact_columns[0]:
-        st.text_input(
-            "Vendor contact name",
-            value=analysis.contact_name or "",
-            key=f"contact_{token}",
-        )
-    with contact_columns[1]:
-        st.text_input(
-            "Vendor contact email",
-            value=analysis.contact_email or "",
-            key=f"cemail_{token}",
-        )
-    with contact_columns[2]:
-        st.text_input(
-            "Short description (≤20 chars)",
-            value=(analysis.short_description or "")[:20],
-            max_chars=20,
-            key=f"desc_{token}",
-        )
-
-    st.text_area(
-        "Additional information (optional)",
-        key=f"instructions_{token}",
-        placeholder="Leave blank unless Smartsheet needs another note",
-        help="Only add a note that the Smartsheet reviewer needs to see.",
-    )
-
+    classification = None
+    classification_error = ""
     try:
         classification = classify_po(purchase_route, total_value)
-        st.success(
-            "The tool will use "
-            f"**{classification.object_account}** and "
-            f"**{classification.agreement_type}** in Smartsheet."
-        )
     except ValueError as exc:
-        st.warning(str(exc))
+        classification_error = str(exc)
 
-    st.caption(
-        "The tool leaves Request Completed, PO #, and Work Order # blank and "
-        "sets Dispatch WO to Service Center to NA. Original PO Number is sent "
-        "only for a change order."
+    asset_id = normalize_asset_id(selected_asset)
+    summary_route = PURCHASE_ROUTE_LABELS.get(purchase_route, "Route not found")
+    summary_line = (
+        f"**{REQUEST_TYPE_LABELS.get(request_type, request_type)}** · "
+        f"**{contract or 'Account needed'}** · **{site or 'Site needed'}** · "
+        f"{category_label or 'Category needed'} / {cost_code or 'Cost code needed'}"
     )
+    st.info(summary_line)
+    st.caption(
+        f"{summary_route} · "
+        f"{classification.object_account if classification else 'Account pending'} · "
+        f"{classification.agreement_type if classification else 'Agreement pending'} · "
+        f"Asset: {asset_id or 'None'} · Total: {total_value or 'Needed'}"
+    )
+
+    draft_problems: list[str] = []
+    if not contract:
+        draft_problems.append("choose the contract")
+    if not site:
+        draft_problems.append("choose the site")
+    if not cost_code:
+        draft_problems.append("enter the job cost code")
+    if not requester_value:
+        draft_problems.append("enter your name")
+    if not job_key or not str(st.session_state.get(job_key, "")).strip():
+        draft_problems.append("confirm the job number")
+    if request_type == "CHANGE ORDER" and not str(
+        st.session_state.get(original_po_key, "")
+    ).strip():
+        draft_problems.append("enter the original PO number")
+    if not str(st.session_state.get(vendor_key, "")).strip():
+        draft_problems.append("confirm the vendor name")
+    if not str(st.session_state.get(description_key, "")).strip():
+        draft_problems.append("confirm the short description")
+    contact_email = str(st.session_state.get(email_key, "")).strip()
+    if contact_email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", contact_email):
+        draft_problems.append("correct or clear the vendor contact email")
+    if classification_error:
+        draft_problems.append(classification_error)
+
+    if draft_problems:
+        st.warning(
+            "Before generating: " + "; ".join(dict.fromkeys(draft_problems)) + "."
+        )
 
     selected_contract, selected_site, facility_name, _ = _routing_for_generation(
         analysis, cached_quote, token
@@ -971,6 +1181,8 @@ def main() -> None:
         selected_site,
         final_inclusions,
         final_exclusions,
+        vendor=str(st.session_state.get(vendor_key, "") or "").strip(),
+        scope=str(getattr(analysis, "scope_of_work", "") or "").strip(),
     )
     if (
         st.session_state.get("scope_pdf_bytes")
@@ -979,8 +1191,8 @@ def main() -> None:
         st.session_state.pop("scope_pdf_bytes", None)
         st.session_state.pop("scope_pdf_signature", None)
         st.warning(
-            "The site, contract, inclusions, or exclusions changed. Rebuild the "
-            "supporting PDF before opening Smartsheet."
+            "A PDF-bearing detail changed. Generate the package again before "
+            "opening Smartsheet."
         )
 
     st.markdown(
@@ -1002,6 +1214,7 @@ def main() -> None:
         type="primary",
         use_container_width=True,
         key=f"generate_package_{token}",
+        disabled=bool(draft_problems),
     ):
         try:
             scope_pdf = build_scope_pdf(
@@ -1013,24 +1226,24 @@ def main() -> None:
             )
         except Exception as exc:
             st.error(f"PDF generation failed: {exc}")
-            st.stop()
-        st.session_state["scope_pdf_bytes"] = scope_pdf
-        st.session_state["scope_pdf_signature"] = current_pdf_signature
-        context = build_po_context(st.session_state)
-        if context is not None:
-            st.session_state[generated_key] = context.context_id
-            memory_ready = (
-                context.ready
-                and not validate_submission_fields(context.fields)
-                and not preflight_attachments(context.attachments)
-            )
-            if memory_ready and contract:
-                record_device_account_manager(
-                    device_token=browser_token,
-                    account=contract,
-                    manager_name=context.fields.get("requester_name"),
-                    context_id=account_manager_memory_context_id(context),
+        else:
+            st.session_state["scope_pdf_bytes"] = scope_pdf
+            st.session_state["scope_pdf_signature"] = current_pdf_signature
+            context = build_po_context(st.session_state)
+            if context is not None:
+                st.session_state[generated_key] = context.context_id
+                memory_ready = (
+                    context.ready
+                    and not validate_submission_fields(context.fields)
+                    and not preflight_attachments(context.attachments)
                 )
+                if memory_ready and contract:
+                    record_device_account_manager(
+                        device_token=browser_token,
+                        account=contract,
+                        manager_name=context.fields.get("requester_name"),
+                        context_id=account_manager_memory_context_id(context),
+                    )
 
     context = build_po_context(st.session_state)
     generated_context = st.session_state.get(generated_key, "")

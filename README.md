@@ -9,14 +9,20 @@ document generator.
 The authoritative business and implementation handoff is
 [`docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
 Read that document before changing routing, field mappings, attachments, or the
-Smartsheet handoff.
+Smartsheet handoff. The second-pass usability and reliability changes are
+documented in
+[`docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md).
 
 ## Current workflow
 
-1. Upload a PDF/image/text quote or paste quote text.
-2. Review AI-extracted vendor, site, amount, Scope, Inclusions, and Exclusions.
-3. Confirm the preselected account/site, request type, requester, job, work route,
-   full asset, amount, vendor details, 20-character description, and optional note.
+1. Choose Upload or Paste and provide one quote. The inactive source can never
+   silently override the selected source.
+2. Glance at the AI-extracted vendor, site, amount, Scope, Inclusions, and
+   Exclusions.
+3. Enter or confirm the requester name and read one compact summary of the
+   request type, routing, cost code, account/agreement, full asset, and total.
+   AI/defaulted controls stay inside a collapsed review section unless a value
+   is missing or invalid.
 4. Press one button to create the scope PDF and reveal both downloads plus the
    prefilled Smartsheet link. Upload both files near the end of the form, review,
    and submit it manually.
@@ -81,10 +87,13 @@ app/smartsheet_inline.py       Two downloads, prefilled link, and hidden fallbac
 app/smartsheet_ui.py           Prefilled-link and copy controls
 app/device_identity.py         Opaque first-party browser identity cookie
 app/memory.py                  Contract and anonymous-browser learning
+app/workflow_state.py          Active-source and stale-analysis state controls
 app/smartsheet_store.py        Leased/idempotent future API state
 pages/2_Smartsheet_PO.py       Non-submitting legacy bookmark notice
 docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md
                                Authoritative policy and successor handoff
+docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md
+                               Quick-path and reliability hardening notes
 tests/                         Pytest regression suite
 ```
 
@@ -131,9 +140,11 @@ the repository, compare `SMARTSHEET_FORM_URL`,
 
 ## Input support
 
-The UI accepts PDF, TXT, PNG, JPEG, WebP, TIFF/TIF, BMP, and HEIC/HEIF/HIF.
-Text PDFs are extracted locally. Scans and images use the configured analysis
-path. The original uploaded bytes are retained for the attachment package.
+The UI accepts PDF, TXT, PNG, JPEG, WebP, TIFF/TIF, BMP, and HEIC/HEIF/HIF up
+to 30 MB. Text PDFs are extracted locally. Scans and images use the configured
+analysis path. The original uploaded bytes are retained for the attachment
+package. File-reading and model failures expose explicit retry actions instead
+of leaving an older analysis visible or retrying on every rerun.
 
 ## Requester memory
 
@@ -166,11 +177,11 @@ ambiguous-write controls for possible future use.
 
 | Problem | Action |
 |---|---|
-| Quote analysis is stale after a new upload | Re-analyze the current quote; the handoff blocks mismatched fingerprints. |
+| Quote analysis is stale after a new upload | The current build clears it automatically. Use the visible file-reading or analysis retry action. |
 | Route classification looks wrong | Recheck labor/rental precedence and the exact Group A list in `app/equipment_policy.py`; delivery method is not the deciding factor. |
-| Standard PO tier is missing | Enter and confirm a valid all-in PO/CO Amount. |
+| Standard PO tier is missing | Enter a valid all-in PO/CO Amount greater than zero. Every route now applies the same amount gate. |
 | Asset contains letters | Expected: the complete configured asset UID is sent, including letters and separators. |
-| Scope PDF became stale | Regenerate it after changing contract, site, Inclusions, or Exclusions. |
+| Scope PDF became stale | Regenerate it after changing contract, site, vendor, Scope, Inclusions, or Exclusions. |
 | Attachments are not in Smartsheet | Download both files and upload both near the end of the form; URL parameters cannot carry files. |
 | Prefilled fields are blank | Sign back into/open Smartsheet, return to the tool, and use the same link again; then verify exact labels and `%20` encoding. |
 | Requester is not remembered | Complete one ready package for the same account in the same browser and verify cookies are permitted. |
