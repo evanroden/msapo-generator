@@ -22,6 +22,7 @@ def test_scope_pdf_contains_only_the_reviewed_supporting_sections():
 
     assert payload.startswith(b"%PDF-")
     text = _text(payload)
+    assert "ENFRA | PURCHASE ORDER SUPPORT" in text
     assert "Scope, Inclusions, and Exclusions" in text
     assert "Vendor: Vendor & Sons" in text
     assert "Site: UMMC" in text
@@ -52,4 +53,3 @@ def test_scope_pdf_paginates_long_content_without_dropping_the_final_item():
     assert "Scope task 99" in text
     assert "Inclusion item 79" in text
     assert "Exclusion item 49" in text
-
