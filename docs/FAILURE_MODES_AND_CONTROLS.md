@@ -3,16 +3,16 @@
 > **Historical reliability register.** The authoritative business workflow as
 > of 2026-08-08 is
 > [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
-> The current quick-path and reliability controls, including the second-pass
-> bug register, are in
-> [`RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](RRH_STREAMLINING_AND_HARDENING_2026-08-08.md).
+> The current three-step UI, release controls, browser matrix, and new bug
+> register are in
+> [`RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md).
 > This file preserves valuable failure analysis, but its references to email,
 > EPO mode, full MSAPO generation, editable Object Account, and three-file
 > packages are superseded.
 
-**Status:** living reliability specification  
-**Scope:** current quote-to-email workflow plus live manual Smartsheet PO handoff  
-**Last reviewed:** 2026-08-08
+**Status:** historical reliability register  
+**Scope:** prior quote/email and manual Smartsheet failure analysis  
+**Last reviewed:** 2026-08-09  
 **Primary implementation:** draft PR #25
 
 ## 1. Purpose

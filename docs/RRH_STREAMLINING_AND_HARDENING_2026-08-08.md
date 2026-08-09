@@ -6,6 +6,11 @@ workflow correction
 **Parent specification:**
 [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md)
 
+> **Current UI and release supplement:**
+> [`RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md)
+> supersedes this document's step count, field-placement behavior, test count,
+> brand notes, and browser/Smartsheet attachment guidance.
+
 ## 1. Outcome
 
 The normal RRH operator path is now:
@@ -356,5 +361,5 @@ Runtime-warning follow-up body:
 - preserve scrolling and fixed sizing for the Smartsheet handoff components
 - explicitly enable CORS alongside XSRF protection instead of relying on a runtime override
 - add regression coverage for embed API removal and contradictory security settings
-- rerun the full synthetic four-step package and handoff workflow without submission
+- rerun the full synthetic three-step package and handoff workflow without submission
 ```

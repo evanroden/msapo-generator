@@ -1,15 +1,15 @@
 # Streamlined ENFRA RRH PO workflow and implementation handoff
 
-**Status:** authoritative business and implementation handoff  
+**Status:** authoritative business policy; current UI supplement dated 2026-08-09  
 **Policy date:** 2026-08-08  
 **Primary audience:** future maintainers, reviewers, and AI coding agents  
 **Applies to:** quote analysis, RRH PO classification, asset selection, requester memory, the two-file package, and Smartsheet custom-URL prefilling  
 **Supersedes:** the business rules and operator flow in the 2026-08-06 PO workflow handoff wherever they conflict with this document
 
 > **Current reliability supplement:**
-> [`RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](RRH_STREAMLINING_AND_HARDENING_2026-08-08.md)
-> preserves these business rules while defining the exception-only review UI,
-> source-state controls, strict amount gate, and second-pass bug fixes.
+> [`RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md)
+> preserves these business rules while defining the current three-step UI,
+> exception-only questions, ENFRA brand, browser behavior, and Smartsheet handoff.
 
 Read this file before changing any PO route, Object Account, Agreement Type,
 asset behavior, requester behavior, attachment, or Smartsheet field mapping.
@@ -61,20 +61,18 @@ The user should be able to upload a quote, accept mostly correct suggestions,
 make only necessary corrections, and press one final button. The page then
 shows exactly two downloads and one prefilled Smartsheet link.
 
-The active page has four steps in the same order the operator uses them:
+The active page has three steps in the same order the operator uses them:
 
 1. **Provide the vendor quote.** Upload the original file or paste the text.
-2. **Review the extracted work.** Check the vendor, site, amount, and optionally
-   expand Scope/Inclusions/Exclusions.
-3. **Confirm the PO details.** Work from account/site through the few remaining
-   business fields in top-to-bottom interaction order.
-4. **Generate both files and the Smartsheet link.** One action creates the scope
+2. **Review and complete the request.** Check the summary, answer only unresolved
+   questions, and optionally correct AI/defaulted details or scope selections.
+3. **Generate both files and the Smartsheet link.** One action creates the scope
    PDF, verifies the package, and reveals the downloads and link.
 
-There is no fifth step, separate Prepare Smartsheet button, email route, tax
+There is no separate Prepare Smartsheet button, email route, tax
 confirmation checkbox, or Forget requester action.
 
-## 4. Step 3 field order and defaults
+## 4. Step 2 field order and defaults
 
 The main screen asks for or shows fields in this order:
 
@@ -375,7 +373,7 @@ the prefilled link fails after the user refreshes their Smartsheet session.
 - `app/analysis_schema.py`: validates the new guesses and 20-character description.
 - `app/po_rules.py`: Ashley's route matrix and full asset-code preservation.
 - `app/memory.py`: anonymous device+account requester/asset-manager memory.
-- `app/web_ui.py`: four-step interaction, suggestion defaults, and one final action.
+- `app/web_ui.py`: three-step interaction, exception-only questions, suggestion defaults, and one final action.
 - `app/po_context.py`: change-order, 20-character, requester/job, full asset, and
   Additional Information export rules.
 - `app/smartsheet.py`: exact dropdowns, exact Original PO label, conditional
@@ -421,7 +419,7 @@ non-submitting custom-URL handoff.
 
 After deployment, verify with synthetic data only:
 
-1. The screen has four steps and one final button.
+1. The screen has three steps and one final button.
 2. An RRH quote suggests account/site, O&M job, work route, and a unique asset.
 3. New PO omits Original PO Number.
 4. Change Order requires and prefills Original PO Number.
@@ -465,5 +463,5 @@ Suggested body:
 - combine document preparation and Smartsheet handoff into one final action
 - hide manual copy fields behind troubleshooting and add login/upload reminders
 - update exact Smartsheet dropdown/schema mappings and add successor handoff
-- add regression coverage for the new policy and four-step UX
+- add regression coverage for the new policy and three-step UX
 ```

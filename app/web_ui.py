@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import html
+import os
 import re
+from dataclasses import dataclass
 from decimal import Decimal
 
 import streamlit as st
@@ -61,6 +63,13 @@ from app.workflow_state import (
     clear_active_analysis,
     quote_length_problem,
 )
+from app.workflow_review import (
+    ReviewNeeds,
+    email_is_valid_or_blank,
+    retain_review_needs,
+    review_needs,
+    tax_alert_message,
+)
 
 
 SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
@@ -68,171 +77,325 @@ SITE_LABELS = list(FACILITY_SHORT_NAMES.values())
 CONTRACT_PLACEHOLDER = "— Select a contract —"
 SITE_PLACEHOLDER = "— Select a site —"
 ASSET_NONE = "None Applicable"
+ASSET_PLACEHOLDER = "— Choose an asset or No asset —"
 REQUEST_TYPE_LABELS = {
     "PO": "New purchase order",
     "CHANGE ORDER": "Change order to an existing PO",
 }
 
 
+@dataclass(frozen=True)
+class RoutingSnapshot:
+    """Current routing values before their widgets are placed on the page."""
+
+    contract: str
+    rrh: bool
+    site: str
+    category_label: str
+    cost_code: str
+    rrh_site_key: str | None
+
+
 CUSTOM_CSS = """
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&display=swap');
+    :root {
+        --enfra-ocean: #092B24;
+        --enfra-blue: #557F7F;
+        --enfra-iced: #D3E7E0;
+        --enfra-concrete: #D3CCC4;
+        --enfra-yellow: #D6EF4B;
+        --enfra-iron: #000000;
+    }
 
     .stApp {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-        background:
-            radial-gradient(1200px 500px at 15% -10%, #FFE9D6 0%, transparent 55%),
-            radial-gradient(1000px 460px at 100% 0%, #E7E1FF 0%, transparent 50%),
-            #F6F7FB;
+        font-family: Arial, Helvetica, sans-serif;
+        color: var(--enfra-iron);
+        background: linear-gradient(180deg, var(--enfra-iced) 0, #FFFFFF 250px);
     }
     #MainMenu, footer, header {visibility: hidden;}
 
     .block-container {
         max-width: 1000px !important;
-        padding-top: 1.4rem !important;
-        padding-bottom: 3rem !important;
+        padding-top: 1.25rem !important;
+        padding-right: max(1rem, env(safe-area-inset-right)) !important;
+        padding-bottom: max(3rem, env(safe-area-inset-bottom)) !important;
+        padding-left: max(1rem, env(safe-area-inset-left)) !important;
     }
 
-    /* ── Hero ─────────────────────────────────────────────── */
     .hero {
-        background: linear-gradient(130deg, #12314F 0%, #1C4A73 55%, #2E6AA0 100%);
-        padding: 2.1rem 2.4rem;
-        border-radius: 22px;
-        margin-bottom: 0.4rem;
-        position: relative;
-        overflow: hidden;
-        box-shadow: 0 18px 40px rgba(18,49,79,0.28);
+        background: var(--enfra-ocean);
+        border-left: 8px solid var(--enfra-yellow);
+        border-radius: 6px;
+        padding: 2rem 2.2rem;
+        margin-bottom: 0.45rem;
+        box-shadow: 0 12px 30px rgba(9,43,36,0.20);
     }
-    .hero::after {
-        content: '';
-        position: absolute; inset: 0;
-        background-image: radial-gradient(rgba(255,255,255,0.10) 1px, transparent 1px);
-        background-size: 22px 22px;
-        opacity: 0.5;
-        pointer-events: none;
+    .brand-kicker {
+        color: var(--enfra-yellow);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        margin: 0 0 0.65rem;
+        text-transform: uppercase;
     }
-    .hero-emoji {
-        font-size: 2.6rem;
-        display: inline-block;
-        animation: bob 3.2s ease-in-out infinite;
-        filter: drop-shadow(0 6px 10px rgba(0,0,0,0.25));
-    }
-    @keyframes bob { 0%,100%{transform: translateY(0) rotate(-4deg);} 50%{transform: translateY(-9px) rotate(4deg);} }
     .hero h1 {
-        font-family: 'Fraunces', Georgia, serif;
         color: #FFFFFF;
-        font-size: 2.35rem;
+        font-size: 2.2rem;
         font-weight: 700;
-        margin: 0.4rem 0 0.3rem 0;
         letter-spacing: -0.02em;
-        line-height: 1.05;
-        position: relative;
+        line-height: 1.08;
+        margin: 0 0 0.45rem;
     }
-    .hero h1 .zing { color: #FFC79A; }
+    .hero h1 .zing { color: var(--enfra-yellow); }
     .hero-subtitle {
-        color: rgba(255,255,255,0.78);
+        color: var(--enfra-iced);
         font-size: 0.98rem;
+        line-height: 1.5;
         margin: 0;
-        position: relative;
-        max-width: 34rem;
+        max-width: 40rem;
     }
 
-    /* ── Byline / secret test trigger ─────────────────────── */
-    div[data-testid="stButton"] > button[kind="secondary"] {
-        background: transparent;
-        border: none;
-        color: #B0447A;
-        font-weight: 700;
-        font-size: 0.82rem;
-        padding: 0.25rem 0.5rem;
-        box-shadow: none;
-        letter-spacing: 0.01em;
+    .st-key-load_synthetic_test button {
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+        color: var(--enfra-blue) !important;
+        font-size: 0.8rem !important;
+        min-height: 32px !important;
+        padding: 0.2rem 0.45rem !important;
     }
-    div[data-testid="stButton"] > button[kind="secondary"]:hover {
-        background: transparent;
-        color: #F0803C;
+    .st-key-load_synthetic_test button:hover {
+        color: var(--enfra-ocean) !important;
         text-decoration: underline;
-        transform: none;
-        box-shadow: none;
     }
 
-    /* ── Section headers ──────────────────────────────────── */
-    .step-header { display:flex; align-items:center; gap:0.7rem; margin: 1.4rem 0 0.7rem; }
+    .step-header {
+        align-items: center;
+        display: flex;
+        gap: 0.7rem;
+        margin: 1.45rem 0 0.75rem;
+    }
     .step-num {
-        width: 30px; height: 30px; border-radius: 9px;
-        display:flex; align-items:center; justify-content:center;
-        font-size: 0.85rem; font-weight: 800; color:#fff; flex-shrink:0;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+        align-items: center;
+        background: var(--enfra-ocean);
+        border-radius: 3px;
+        color: #FFFFFF;
+        display: flex;
+        flex-shrink: 0;
+        font-size: 0.85rem;
+        font-weight: 700;
+        height: 30px;
+        justify-content: center;
+        width: 30px;
     }
-    .step-num.navy   { background:#12314F; }
-    .step-num.orange { background:#F0803C; }
-    .step-num.grape  { background:#6D5AE6; }
-    .step-num.mint   { background:#16A34A; }
-    .step-title { font-family:'Fraunces', Georgia, serif; font-size:1.3rem; font-weight:700; color:#12233B; margin:0; }
+    .step-num.yellow { background: var(--enfra-yellow); color: var(--enfra-ocean); }
+    .step-title {
+        color: var(--enfra-ocean);
+        font-size: 1.28rem;
+        font-weight: 700;
+        line-height: 1.2;
+        margin: 0;
+    }
 
-    /* ── Cards / metrics ──────────────────────────────────── */
     .metric-card {
-        background: #fff; border: 1px solid #ECE7F5; border-radius: 16px;
-        padding: 1rem 1.15rem; box-shadow: 0 6px 16px rgba(20,20,50,0.05);
-        transition: transform .18s ease, box-shadow .18s ease; height: 100%;
+        background: #FFFFFF;
+        border: 1px solid var(--enfra-concrete);
+        border-radius: 5px;
+        height: 100%;
+        min-width: 0;
+        padding: 0.95rem 1.05rem;
     }
-    .metric-card:hover { transform: translateY(-3px); box-shadow: 0 12px 26px rgba(20,20,50,0.10); }
-    .metric-icon { font-size: 1.35rem; margin-bottom: 0.3rem; }
-    .metric-label { font-size: 0.64rem; font-weight: 800; color:#9AA0B4; text-transform: uppercase; letter-spacing: 0.09em; }
-    .metric-value { font-size: 1.05rem; font-weight: 800; color:#111827; margin-top:0.15rem; line-height:1.25; }
-    .tax-included { color:#16A34A; } .tax-excluded { color:#F0803C; } .tax-unclear { color:#DC2626; }
+    .metric-label {
+        color: var(--enfra-blue);
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+    }
+    .metric-value {
+        color: var(--enfra-ocean);
+        font-size: 1.02rem;
+        font-weight: 700;
+        line-height: 1.3;
+        margin-top: 0.2rem;
+        overflow-wrap: anywhere;
+    }
 
     .facility-banner {
-        background: linear-gradient(120deg,#F1F6FF,#F6F1FF);
-        border: 1px solid #DDE4F5; border-left: 5px solid #2E6AA0;
-        border-radius: 14px; padding: 0.95rem 1.2rem; margin: 0.4rem 0 0.2rem;
-        display:flex; align-items:center; gap:0.8rem;
+        align-items: center;
+        background: var(--enfra-iced);
+        border-left: 5px solid var(--enfra-blue);
+        border-radius: 4px;
+        display: flex;
+        gap: 0.75rem;
+        margin: 0.45rem 0 0.25rem;
+        padding: 0.9rem 1.1rem;
     }
-    .facility-icon { font-size: 1.5rem; }
-    .facility-name { font-weight: 800; color:#12233B; font-size:0.98rem; }
-    .facility-address { color:#64748B; font-size:0.82rem; margin-top:0.1rem; }
+    .facility-name { color: var(--enfra-ocean); font-size: 0.96rem; font-weight: 700; }
+    .facility-address { color: #365B55; font-size: 0.82rem; margin-top: 0.12rem; }
 
-    .alert-box { border-radius:12px; padding:0.85rem 1.1rem; margin:0.5rem 0; font-size:0.87rem; line-height:1.5; display:flex; gap:0.6rem; }
-    .alert-warning { background:#FFFBEB; border:1px solid #FDE68A; color:#92400E; }
-    .alert-danger  { background:#FEF2F2; border:1px solid #FECACA; color:#991B1B; }
-    .alert-success { background:#F0FDF4; border:1px solid #BBF7D0; color:#166534; }
+    .tax-alert {
+        align-items: flex-start;
+        background: var(--enfra-yellow);
+        border: 2px solid var(--enfra-ocean);
+        border-radius: 4px;
+        color: var(--enfra-ocean);
+        display: flex;
+        gap: 0.75rem;
+        line-height: 1.45;
+        margin: 0.7rem 0;
+        padding: 0.95rem 1.05rem;
+    }
+    .tax-alert-label {
+        background: var(--enfra-ocean);
+        border-radius: 2px;
+        color: #FFFFFF;
+        flex: 0 0 auto;
+        font-size: 0.68rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        padding: 0.25rem 0.4rem;
+    }
+    .needs-banner {
+        background: #F5F9F7;
+        border: 1px solid var(--enfra-blue);
+        border-left: 5px solid var(--enfra-yellow);
+        border-radius: 4px;
+        color: var(--enfra-ocean);
+        line-height: 1.45;
+        margin: 0.8rem 0;
+        padding: 0.85rem 1rem;
+    }
+    .request-summary {
+        background: var(--enfra-ocean);
+        border-left: 6px solid var(--enfra-yellow);
+        border-radius: 4px;
+        color: #FFFFFF;
+        line-height: 1.5;
+        margin: 0.9rem 0 0.35rem;
+        overflow-wrap: anywhere;
+        padding: 0.9rem 1rem;
+    }
+    .request-summary-detail {
+        color: var(--enfra-iced);
+        display: block;
+        font-size: 0.82rem;
+        margin-top: 0.25rem;
+    }
 
-    .scope-section { background:#FBFAFF; border:1px solid #ECE7F5; border-radius:12px; padding:1.05rem 1.2rem; margin-bottom:0.7rem; }
-    .scope-label { font-size:0.66rem; font-weight:800; color:#12314F; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.5rem; padding-bottom:0.35rem; border-bottom:2px solid #F0803C; display:inline-block; }
-    .scope-text { color:#334155; font-size:0.88rem; line-height:1.6; margin:0; }
+    .scope-section {
+        background: #F5F9F7;
+        border: 1px solid var(--enfra-concrete);
+        border-radius: 4px;
+        margin-bottom: 0.7rem;
+        padding: 1rem 1.1rem;
+    }
+    .scope-label {
+        border-bottom: 3px solid var(--enfra-yellow);
+        color: var(--enfra-ocean);
+        display: inline-block;
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.5rem;
+        padding-bottom: 0.3rem;
+        text-transform: uppercase;
+    }
+    .scope-text { color: #243F3A; font-size: 0.88rem; line-height: 1.6; margin: 0; }
 
     .cost-code-pill {
-        background:#12314F; color:#fff; border-radius:10px; padding:0.55rem 0.9rem;
-        font-size:1.05rem; font-weight:800; letter-spacing:0.02em; margin-top:0.25rem;
-        display:flex; align-items:center; gap:0.5rem; box-shadow:0 6px 14px rgba(18,49,79,0.22);
+        align-items: center;
+        background: var(--enfra-ocean);
+        border-left: 5px solid var(--enfra-yellow);
+        border-radius: 3px;
+        color: #FFFFFF;
+        display: flex;
+        font-size: 1rem;
+        font-weight: 700;
+        gap: 0.5rem;
+        letter-spacing: 0.02em;
+        margin-top: 0.25rem;
+        padding: 0.58rem 0.85rem;
     }
-    .field-label { font-size:0.8rem; font-weight:700; color:#334155; margin-bottom:0.15rem; }
+    .field-label { color: var(--enfra-ocean); font-size: 0.8rem; font-weight: 700; margin-bottom: 0.15rem; }
 
-    /* ── Buttons ──────────────────────────────────────────── */
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg,#F0803C 0%,#E5661C 100%);
-        border:none; border-radius:12px; font-weight:800; font-size:0.98rem;
-        padding:0.7rem 1.5rem; box-shadow:0 8px 20px rgba(240,128,60,0.30);
-        transition: all .2s ease;
+        background: var(--enfra-yellow);
+        border: 2px solid var(--enfra-ocean);
+        border-radius: 4px;
+        box-shadow: 0 5px 14px rgba(9,43,36,0.18);
+        color: var(--enfra-ocean);
+        font-size: 0.98rem;
+        font-weight: 700;
+        min-height: 46px;
     }
-    .stButton > button[kind="primary"]:hover { transform: translateY(-2px); box-shadow:0 12px 26px rgba(240,128,60,0.42); }
+    .stButton > button[kind="primary"]:hover {
+        background: #C6DF3E;
+        border-color: var(--enfra-ocean);
+        color: var(--enfra-ocean);
+    }
+    button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible {
+        outline: 3px solid var(--enfra-yellow) !important;
+        outline-offset: 2px !important;
+    }
 
     div[data-testid="stFileUploader"] section {
-        border-radius:16px; border:2px dashed #C8BEE8; background:#FBFAFF;
+        background: #F5F9F7;
+        border: 2px dashed var(--enfra-blue);
+        border-radius: 5px;
     }
-    div[data-testid="stFileUploader"] section:hover { border-color:#F0803C; }
-    div[data-testid="stExpander"] { border-radius:14px; border:1px solid #ECE7F5; background:#fff; }
+    div[data-testid="stFileUploader"] section:hover { border-color: var(--enfra-ocean); }
+    div[data-testid="stExpander"] {
+        background: #FFFFFF;
+        border: 1px solid var(--enfra-concrete);
+        border-radius: 4px;
+    }
 
-    .app-footer { text-align:center; padding:2rem 1rem 0.5rem; color:#9AA0B4; font-size:0.78rem; }
-    .app-footer a { color:#F0803C; text-decoration:none; font-weight:700; }
-    .footer-divider { width:44px; height:3px; background:linear-gradient(90deg,#F0803C,#6D5AE6); border-radius:2px; margin:0 auto 0.8rem; }
-    hr { border:none; border-top:1px solid #ECE7F5; margin:1.1rem 0; }
+    .app-footer { color: var(--enfra-blue); font-size: 0.78rem; padding: 2rem 1rem 0.5rem; text-align: center; }
+    .app-footer a { color: var(--enfra-ocean); font-weight: 700; text-decoration: none; }
+    .footer-divider { background: var(--enfra-yellow); height: 4px; margin: 0 auto 0.8rem; width: 44px; }
+    hr { border: 0; border-top: 1px solid var(--enfra-concrete); margin: 1.1rem 0; }
+
+    @media (max-width: 640px) {
+        .block-container { padding-top: 0.7rem !important; }
+        .hero { border-left-width: 6px; padding: 1.45rem 1.15rem; }
+        .hero h1 { font-size: 1.7rem; }
+        .hero-subtitle { font-size: 0.92rem; }
+        .step-header { align-items: flex-start; margin-top: 1.2rem; }
+        .step-title { font-size: 1.13rem; padding-top: 0.2rem; }
+        div[data-testid="stHorizontalBlock"] { flex-wrap: wrap; }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+            width: 100% !important;
+        }
+        div[data-baseweb="input"] input,
+        div[data-baseweb="select"] input,
+        textarea { font-size: 16px !important; }
+        .tax-alert { display: block; }
+        .tax-alert-label { display: inline-block; margin-bottom: 0.55rem; }
+    }
+
+    @media (pointer: coarse) {
+        button, a[role="button"] { min-height: 44px; }
+        input, textarea, [role="combobox"] { font-size: 16px !important; }
+    }
 </style>
 """
 
 
 def _h(value: object) -> str:
     return html.escape(str(value or ""))
+
+
+def _synthetic_sample_enabled() -> bool:
+    """Keep test data off the production operator path by default."""
+    return os.getenv("EPC_ENABLE_SYNTHETIC_SAMPLE", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _parse_amount(value: object) -> Decimal | None:
@@ -324,6 +487,144 @@ def _routing_for_generation(
         return contract, site, site or analysis.facility_name, address
 
     return "", detected_site or "", analysis.facility_name, analysis.facility_address
+
+
+def _routing_snapshot(
+    analysis: QuoteAnalysis,
+    quote_text: str,
+    token: str,
+) -> RoutingSnapshot:
+    """Resolve routing defaults without rendering or creating blank widgets."""
+    detected_contract, detected_site = contracts.match_facility(
+        analysis.facility_name, quote_text
+    )
+    contract_options = set(contracts.contract_names())
+    stored_contract = str(st.session_state.get(f"contract_{token}", "") or "")
+    contract = (
+        stored_contract
+        if stored_contract in contract_options
+        else detected_contract if detected_contract in contract_options else ""
+    )
+    if not contract:
+        return RoutingSnapshot("", False, "", "", "", None)
+
+    rrh = contracts.is_rrh(contract)
+    if rrh:
+        detected_site_key = facility_key_from_name(analysis.facility_name)
+        default_site = (
+            FACILITY_SHORT_NAMES.get(detected_site_key) if detected_site_key else ""
+        )
+        stored_site = str(st.session_state.get(f"site_{token}", "") or "")
+        site = stored_site if stored_site in SITE_LABELS else default_site or ""
+        site_key = SITE_LABEL_TO_KEY.get(site)
+        if not site_key:
+            return RoutingSnapshot(contract, True, site, "", "", None)
+        valid_categories = valid_categories_for_site(site_key)
+        category_labels = [
+            WORK_CATEGORY_DISPLAY.get(item, item) for item in valid_categories
+        ]
+        if not category_labels:
+            return RoutingSnapshot(contract, True, site, "", "", site_key)
+        guessed_category = (
+            WORK_CATEGORY_DISPLAY.get(analysis.work_category, analysis.work_category)
+            if analysis.work_category in valid_categories
+            else category_labels[0]
+        )
+        stored_category = str(
+            st.session_state.get(f"cat_{token}_{site_key}", "") or ""
+        )
+        category_label = (
+            stored_category if stored_category in category_labels else guessed_category
+        )
+        category_key = valid_categories[category_labels.index(category_label)]
+        cost_code = lookup_cost_code(site_key, category_key) or str(
+            st.session_state.get(f"manualcost_{token}_{site_key}", "") or ""
+        ).strip()
+        return RoutingSnapshot(
+            contract, True, site, category_label, cost_code, site_key
+        )
+
+    sites = contracts.sites_for_contract(contract)
+    if sites:
+        stored_site = str(
+            st.session_state.get(f"gsite_{token}_{contract}", "") or ""
+        )
+        site = (
+            stored_site
+            if stored_site in sites
+            else detected_site
+            if contract == detected_contract and detected_site in sites
+            else sites[0]
+            if len(sites) == 1
+            else ""
+        )
+    else:
+        site = str(
+            st.session_state.get(f"gsitetxt_{token}_{contract}", "") or ""
+        ).strip()
+    category_label = str(
+        st.session_state.get(
+            f"gcat_{token}_{contract}",
+            WORK_CATEGORY_DISPLAY.get(
+                analysis.work_category, analysis.work_category or ""
+            ),
+        )
+        or ""
+    ).strip()
+    cost_code = str(
+        st.session_state.get(f"gcost_{token}_{contract}", "") or ""
+    ).strip()
+    return RoutingSnapshot(
+        contract, False, site, category_label, cost_code, None
+    )
+
+
+def _asset_control_data(
+    *,
+    analysis: QuoteAnalysis,
+    quote_text: str,
+    contract: str,
+    rrh: bool,
+    site: str,
+    rrh_site_key: str | None,
+) -> tuple[list[dict[str, str]], dict[str, str], str | None]:
+    """Return the current site assets, labels, and unique-best suggestion."""
+    if not contract or not site:
+        return [], {}, None
+    if rrh:
+        site_assets = assets_for_facility(rrh_site_key) if rrh_site_key else []
+        exact_guess = (
+            guess_asset_id(quote_text, rrh_site_key, hint=analysis.asset_reference)
+            if rrh_site_key
+            else None
+        )
+    else:
+        site_assets = contracts.assets_for_site(contract, site)
+        exact_guess = contracts.guess_uid(
+            quote_text, contract, site, hint=analysis.asset_reference
+        )
+    uids = [asset["uid"] for asset in site_assets]
+    labels = {asset["uid"]: contracts.asset_label(asset) for asset in site_assets}
+    broad_guess = guess_asset_uid(
+        site_assets,
+        quote_text=quote_text,
+        hint=analysis.asset_reference,
+    )
+    guess = exact_guess if exact_guess in uids else broad_guess
+    return site_assets, labels, guess
+
+
+def _render_tax_alert(status: object) -> None:
+    """Render the one prominent non-blocking alert when tax was not included."""
+    message = tax_alert_message(status)
+    if not message:
+        return
+    st.markdown(
+        '<div class="tax-alert" role="alert">'
+        '<span class="tax-alert-label">TAX CHECK</span>'
+        f'<strong>{_h(message)}</strong></div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _build_test_analysis() -> QuoteAnalysis:
@@ -546,37 +847,36 @@ def _render_asset_control(
     """Show one AI-suggested asset dropdown and export the full registry UID."""
     if not contract or not site:
         return ASSET_NONE
-
-    if rrh:
-        site_assets = assets_for_facility(rrh_site_key) if rrh_site_key else []
-        exact_guess = (
-            guess_asset_id(quote_text, rrh_site_key, hint=analysis.asset_reference)
-            if rrh_site_key
-            else None
-        )
-    else:
-        site_assets = contracts.assets_for_site(contract, site)
-        exact_guess = contracts.guess_uid(
-            quote_text, contract, site, hint=analysis.asset_reference
-        )
-
+    site_assets, labels, guess = _asset_control_data(
+        analysis=analysis,
+        quote_text=quote_text,
+        contract=contract,
+        rrh=rrh,
+        site=site,
+        rrh_site_key=rrh_site_key,
+    )
     uids = [asset["uid"] for asset in site_assets]
     if not uids:
         st.caption(
             "No asset registry is configured for this site; Asset ID will be blank."
         )
         return ASSET_NONE
-
-    labels = {asset["uid"]: contracts.asset_label(asset) for asset in site_assets}
-    broad_guess = guess_asset_uid(
-        site_assets,
-        quote_text=quote_text,
-        hint=analysis.asset_reference,
-    )
-    guess = exact_guess if exact_guess in uids else broad_guess
-    options = [ASSET_NONE, *uids]
     asset_state_key = f"asset_{token}_{contract}_{site}"
-    default_asset = guess if guess in options else ASSET_NONE
+    resolved_options = [ASSET_NONE, *uids]
+    stored_asset = st.session_state.get(asset_state_key)
+    needs_choice = guess not in uids and stored_asset not in resolved_options
+    options = (
+        [ASSET_PLACEHOLDER, *resolved_options]
+        if needs_choice or stored_asset == ASSET_PLACEHOLDER
+        else resolved_options
+    )
+    default_asset = (
+        guess
+        if guess in uids
+        else ASSET_PLACEHOLDER
+        if needs_choice
+        else ASSET_NONE
+    )
     # A registry update can remove an asset while an older Streamlit session
     # still holds its UID.  Never pass that stale value back to selectbox: it
     # can otherwise render a choice that is no longer valid or raise during a
@@ -587,7 +887,9 @@ def _render_asset_control(
         "Specific asset",
         options,
         format_func=lambda uid: (
-            "No asset applies"
+            "Choose the asset, or confirm that no asset applies"
+            if uid == ASSET_PLACEHOLDER
+            else "No asset applies"
             if uid == ASSET_NONE
             else f"{labels[uid]} · {uid}"
         ),
@@ -638,30 +940,31 @@ def main() -> None:
     st.markdown(
         """
         <div class="hero">
-            <span class="hero-emoji">📋</span>
+            <p class="brand-kicker">ENFRA WORKFLOW</p>
             <h1>Purchase Order <span class="zing">Process Control</span></h1>
             <p class="hero-subtitle">
-                Upload a vendor quote, confirm the PO rules, build the two-file
-                supporting package, and open a prefilled Smartsheet request.
+                Upload the quote, answer only what the tool could not determine,
+                then create both files and open the prefilled Smartsheet request.
             </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    _, center, _ = st.columns([2, 3, 2])
-    with center:
-        if st.button(
-            "Built by Evan Roden",
-            key="name_test",
-            use_container_width=True,
-            help="Click to load a synthetic sample.",
-        ):
-            _load_test_into_state()
-            st.session_state["uploader_nonce"] = (
-                st.session_state.get("uploader_nonce", 0) + 1
-            )
-            st.rerun()
+    if _synthetic_sample_enabled():
+        _, center, _ = st.columns([2, 3, 2])
+        with center:
+            if st.button(
+                "Load synthetic sample (testing)",
+                key="load_synthetic_test",
+                width="stretch",
+                help="Testing only. Loads no real customer or vendor data.",
+            ):
+                _load_test_into_state()
+                st.session_state["uploader_nonce"] = (
+                    st.session_state.get("uploader_nonce", 0) + 1
+                )
+                st.rerun()
 
     st.markdown(
         """
@@ -825,44 +1128,173 @@ def main() -> None:
     token = st.session_state.get("analysis_token", "x")
     cached_quote = st.session_state.get("quote_text", "")
 
+    routing_snapshot = _routing_snapshot(analysis, cached_quote, token)
+
+    request_type_key = f"request_type_{token}"
+    request_type_guess = str(
+        getattr(analysis, "request_type_guess", "") or "PO"
+    ).strip()
+    if request_type_guess not in REQUEST_TYPE_LABELS:
+        request_type_guess = "PO"
+    if st.session_state.get(request_type_key) not in REQUEST_TYPE_LABELS:
+        st.session_state[request_type_key] = request_type_guess
+    request_type = str(st.session_state[request_type_key])
+
+    original_po_key = f"original_po_{token}"
+    original_po_guess = str(
+        getattr(analysis, "original_po_number", "") or ""
+    ).strip()
+    if original_po_key not in st.session_state:
+        st.session_state[original_po_key] = original_po_guess
+
+    route_key = f"purchase_route_{token}"
+    route_guess = str(
+        getattr(analysis, "purchase_route_guess", "") or ""
+    ).strip()
+    if route_guess not in PURCHASE_ROUTES:
+        route_guess = infer_purchase_route(
+            " ".join(
+                (
+                    cached_quote,
+                    str(getattr(analysis, "project_description", "") or ""),
+                    str(getattr(analysis, "scope_of_work", "") or ""),
+                )
+            )
+        )
+    if st.session_state.get(route_key) not in PURCHASE_ROUTES:
+        st.session_state[route_key] = route_guess
+    purchase_route = str(st.session_state[route_key])
+
+    total_key = f"total_{token}"
+    if total_key not in st.session_state:
+        st.session_state[total_key] = analysis.total_amount or ""
+    total_value = str(st.session_state.get(total_key, "") or "").strip()
+
+    vendor_key = f"vendor_{token}"
+    if vendor_key not in st.session_state:
+        st.session_state[vendor_key] = analysis.vendor_name or ""
+    vendor_value = str(st.session_state.get(vendor_key, "") or "").strip()
+
+    contact_key = f"contact_{token}"
+    if contact_key not in st.session_state:
+        st.session_state[contact_key] = analysis.contact_name or ""
+    contact_value = str(st.session_state.get(contact_key, "") or "").strip()
+
+    email_key = f"cemail_{token}"
+    if email_key not in st.session_state:
+        st.session_state[email_key] = analysis.contact_email or ""
+    email_value = str(st.session_state.get(email_key, "") or "").strip()
+
+    description_key = f"desc_{token}"
+    if description_key not in st.session_state:
+        st.session_state[description_key] = (
+            analysis.short_description or ""
+        )[:20]
+    elif len(str(st.session_state.get(description_key, "") or "")) > 20:
+        st.session_state[description_key] = str(
+            st.session_state.get(description_key, "") or ""
+        )[:20]
+    description_value = str(
+        st.session_state.get(description_key, "") or ""
+    ).strip()[:20]
+
+    instructions_key = f"instructions_{token}"
+    instructions_value = str(
+        st.session_state.get(instructions_key, "") or ""
+    ).strip()
+
+    job_key = ""
+    job_value = ""
+    if routing_snapshot.contract:
+        job_key = f"job_number_{token}_{routing_snapshot.contract}"
+        if routing_snapshot.rrh:
+            if st.session_state.get(job_key) not in RRH_JOB_NUMBERS:
+                st.session_state[job_key] = RRH_JOB_NUMBERS[0]
+        job_value = str(st.session_state.get(job_key, "") or "").strip()
+
+    site_assets, _, asset_guess = _asset_control_data(
+        analysis=analysis,
+        quote_text=cached_quote,
+        contract=routing_snapshot.contract,
+        rrh=routing_snapshot.rrh,
+        site=routing_snapshot.site,
+        rrh_site_key=routing_snapshot.rrh_site_key,
+    )
+    asset_uids = [asset["uid"] for asset in site_assets]
+    asset_key = (
+        f"asset_{token}_{routing_snapshot.contract}_{routing_snapshot.site}"
+        if routing_snapshot.contract and routing_snapshot.site
+        else ""
+    )
+    stored_asset = st.session_state.get(asset_key) if asset_key else None
+    asset_resolved = (
+        not asset_uids
+        or stored_asset in [ASSET_NONE, *asset_uids]
+        or asset_guess in asset_uids
+    )
+
+    current_needs = review_needs(
+        routing_ready=bool(
+            routing_snapshot.contract
+            and routing_snapshot.site
+            and routing_snapshot.category_label
+            and routing_snapshot.cost_code
+        ),
+        request_type=request_type,
+        original_po_number=st.session_state.get(original_po_key, ""),
+        job_number=job_value,
+        asset_resolved=asset_resolved,
+        total=total_value,
+        vendor=vendor_value,
+        description=description_value,
+        contact_email=email_value,
+    )
+    review_needs_key = f"review_needs_{token}"
+    needs: ReviewNeeds = retain_review_needs(
+        st.session_state.get(review_needs_key),
+        current_needs,
+    )
+    st.session_state[review_needs_key] = needs
+
     st.markdown(
         """
         <div class="step-header">
-            <div class="step-num mint">2</div>
-            <p class="step-title">Review the extracted work</p>
+            <div class="step-num">2</div>
+            <p class="step-title">Review and complete the request</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    _render_tax_alert(getattr(analysis, "tax_status", ""))
+
     metrics = st.columns(3)
-    with metrics[0]:
-        st.markdown(
-            f'<div class="metric-card"><div class="metric-label">Vendor</div>'
-            f'<div class="metric-value">{_h(analysis.vendor_name or "—")}</div></div>',
-            unsafe_allow_html=True,
-        )
-    with metrics[1]:
-        st.markdown(
-            f'<div class="metric-card"><div class="metric-label">Site found</div>'
-            f'<div class="metric-value">{_h(analysis.facility_name or "—")}</div></div>',
-            unsafe_allow_html=True,
-        )
-    with metrics[2]:
-        st.markdown(
-            f'<div class="metric-card"><div class="metric-label">Quote total</div>'
-            f'<div class="metric-value">{_h(analysis.total_amount or "—")}</div></div>',
-            unsafe_allow_html=True,
-        )
+    metric_values = (
+        ("Vendor", vendor_value or "Needs your input"),
+        (
+            "Site",
+            routing_snapshot.site
+            or analysis.facility_name
+            or "Needs your input",
+        ),
+        ("Final amount", total_value or "Needs your input"),
+    )
+    for column, (label, value) in zip(metrics, metric_values):
+        with column:
+            st.markdown(
+                f'<div class="metric-card"><div class="metric-label">{_h(label)}</div>'
+                f'<div class="metric-value">{_h(value)}</div></div>',
+                unsafe_allow_html=True,
+            )
 
     if analysis.facility_name:
         st.markdown(
-            f'<div class="facility-banner"><div class="facility-icon">🏥</div>'
-            f'<div><div class="facility-name">{_h(analysis.facility_name)}</div>'
-            f'<div class="facility-address">{_h(analysis.facility_address)}</div></div></div>',
+            f'<div class="facility-banner"><div>'
+            f'<div class="facility-name">{_h(analysis.facility_name)}</div>'
+            f'<div class="facility-address">{_h(analysis.facility_address)}</div>'
+            f'</div></div>',
             unsafe_allow_html=True,
         )
-    if analysis.tax_warning:
-        st.warning(analysis.tax_warning)
 
     final_inclusions: list[str] = []
     final_exclusions: list[str] = []
@@ -889,7 +1321,7 @@ def main() -> None:
             )
             for index, (text_value, is_ai) in enumerate(unified_inclusions):
                 if st.checkbox(
-                    f"{'✎ ' if is_ai else ''}{text_value}",
+                    f"{'Suggested: ' if is_ai else ''}{text_value}",
                     key=f"inc_{token}_{index}",
                     value=True,
                 ):
@@ -901,84 +1333,42 @@ def main() -> None:
             )
             for index, (text_value, is_ai) in enumerate(unified_exclusions):
                 if st.checkbox(
-                    f"{'✎ ' if is_ai else ''}{text_value}",
+                    f"{'Suggested: ' if is_ai else ''}{text_value}",
                     key=f"exc_{token}_{index}",
                     value=True,
                 ):
                     final_exclusions.append(text_value)
         if any(is_ai for _, is_ai in unified_inclusions + unified_exclusions):
-            st.caption("✎ = suggested by the tool rather than stated in the quote")
+            st.caption(
+                "Items marked Suggested were inferred by the tool rather than "
+                "stated in the quote."
+            )
 
-    st.markdown(
-        """
-        <div class="step-header">
-            <div class="step-num orange">3</div>
-            <p class="step-title">Confirm the PO details</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    detected_contract, detected_site = contracts.match_facility(
-        analysis.facility_name, cached_quote
-    )
-    request_type_guess = str(
-        getattr(analysis, "request_type_guess", "") or "PO"
-    ).strip()
-    if request_type_guess not in REQUEST_TYPE_LABELS:
-        request_type_guess = "PO"
-    original_po_guess = str(
-        getattr(analysis, "original_po_number", "") or ""
-    ).strip()
-    route_guess_from_model = str(
-        getattr(analysis, "purchase_route_guess", "") or ""
-    ).strip()
-    work_category_guess = str(
-        getattr(analysis, "work_category", "") or ""
-    ).strip()
-    contact_email_guess = str(
-        getattr(analysis, "contact_email", "") or ""
-    ).strip()
-    detected_site_key = facility_key_from_name(analysis.facility_name)
-    detected_cost_code = (
-        lookup_cost_code(detected_site_key, work_category_guess)
-        if contracts.is_rrh(detected_contract)
-        else ""
-    )
-    analyzed_total = parse_amount(getattr(analysis, "total_amount", ""))
-    review_expanded = bool(
-        not detected_contract
-        or not detected_site
-        or route_guess_from_model not in PURCHASE_ROUTES
-        or not work_category_guess
-        or not detected_cost_code
-        or not str(getattr(analysis, "vendor_name", "") or "").strip()
-        or analyzed_total is None
-        or analyzed_total <= 0
-        or not str(getattr(analysis, "short_description", "") or "").strip()
-        or bool(
-            contact_email_guess
-            and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", contact_email_guess)
+    if needs.any:
+        st.markdown(
+            '<div class="needs-banner"><strong>Needed from you</strong><br>'
+            'The tool could not safely determine one or more values below. '
+            'Complete only the questions shown here.</div>',
+            unsafe_allow_html=True,
         )
-        or (request_type_guess == "CHANGE ORDER" and not original_po_guess)
-    )
 
-    with st.expander(
-        "Review or change the tool's selections",
-        expanded=review_expanded,
-    ):
+    questions = st.container()
+    corrections = st.expander(
+        "Change a value the tool already filled",
+        expanded=False,
+    )
+    with corrections:
         st.caption(
-            "Most RRH requests can leave these selections as-is. Open this "
-            "section only when the summary below is wrong or a required value "
-            "was not found."
+            "This panel contains only values the tool filled or defaulted. "
+            "Unresolved questions stay visible above it."
         )
+
+    with questions if needs.routing else corrections:
         contract, rrh, site, category_label, cost_code, rrh_site_key = (
             _render_routing_controls(analysis, cached_quote, token)
         )
 
-        request_type_key = f"request_type_{token}"
-        if st.session_state.get(request_type_key) not in REQUEST_TYPE_LABELS:
-            st.session_state[request_type_key] = request_type_guess
+    with corrections:
         request_type = st.selectbox(
             "What kind of request is this? *",
             tuple(REQUEST_TYPE_LABELS),
@@ -986,18 +1376,18 @@ def main() -> None:
             key=request_type_key,
             help="The tool guesses this from the quote. Change it only if needed.",
         )
-        original_po_key = f"original_po_{token}"
-        if request_type == "CHANGE ORDER":
-            if original_po_key not in st.session_state:
-                st.session_state[original_po_key] = original_po_guess
+
+    if request_type == "CHANGE ORDER":
+        with questions if needs.original_po_number else corrections:
             st.text_input(
                 "Original PO number *",
                 key=original_po_key,
-                placeholder="Required for a change order",
+                placeholder="Enter the existing PO number",
             )
 
-        if contract:
-            job_key = f"job_number_{token}_{contract}"
+    if contract:
+        job_key = f"job_number_{token}_{contract}"
+        with questions if needs.job_number else corrections:
             if rrh:
                 if st.session_state.get(job_key) not in RRH_JOB_NUMBERS:
                     st.session_state[job_key] = RRH_JOB_NUMBERS[0]
@@ -1013,36 +1403,22 @@ def main() -> None:
                     key=job_key,
                     placeholder="Enter the account job number",
                 )
-        else:
-            job_key = ""
+    else:
+        job_key = ""
 
-        route_key = f"purchase_route_{token}"
-        route_guess = str(
-            getattr(analysis, "purchase_route_guess", "") or ""
-        ).strip()
-        if route_guess not in PURCHASE_ROUTES:
-            route_guess = infer_purchase_route(
-                " ".join(
-                    (
-                        cached_quote,
-                        str(getattr(analysis, "project_description", "") or ""),
-                        str(getattr(analysis, "scope_of_work", "") or ""),
-                    )
-                )
-            )
-        if st.session_state.get(route_key) not in PURCHASE_ROUTES:
-            st.session_state[route_key] = route_guess
+    with corrections:
         purchase_route = st.selectbox(
             "How will this work or purchase be handled? *",
             PURCHASE_ROUTES,
             format_func=lambda route: PURCHASE_ROUTE_LABELS[route],
             key=route_key,
             help=(
-                "The tool guesses from the quote. Labor and rentals take priority; "
-                "equipment applies only to complete Group A equipment purchases."
+                "Labor and rentals take priority. Equipment applies only to "
+                "complete Group A equipment purchases."
             ),
         )
 
+    with questions if needs.asset else corrections:
         selected_asset = _render_asset_control(
             analysis=analysis,
             quote_text=cached_quote,
@@ -1053,9 +1429,7 @@ def main() -> None:
             rrh_site_key=rrh_site_key,
         )
 
-        total_key = f"total_{token}"
-        if total_key not in st.session_state:
-            st.session_state[total_key] = analysis.total_amount or ""
+    with questions if needs.total else corrections:
         total_value = st.text_input(
             "PO/CO amount — final total including every fee and tax *",
             key=total_key,
@@ -1063,44 +1437,39 @@ def main() -> None:
                 "Use the final amount payable, including sales tax, freight, "
                 "delivery, surcharges, and any other quoted fees."
             ),
-        )
+        ).strip()
 
-        vendor_key = f"vendor_{token}"
-        if vendor_key not in st.session_state:
-            st.session_state[vendor_key] = analysis.vendor_name or ""
+    with questions if needs.vendor else corrections:
         st.text_input("Vendor name *", key=vendor_key)
 
-        contact_key = f"contact_{token}"
-        if contact_key not in st.session_state:
-            st.session_state[contact_key] = analysis.contact_name or ""
-        st.text_input("Vendor contact name", key=contact_key)
+    if contact_value:
+        with corrections:
+            st.text_input("Vendor contact name", key=contact_key)
 
-        email_key = f"cemail_{token}"
-        if email_key not in st.session_state:
-            st.session_state[email_key] = analysis.contact_email or ""
-        st.text_input("Vendor contact email", key=email_key)
+    if needs.contact_email:
+        with questions:
+            st.text_input(
+                "Vendor contact email — correct it or clear it",
+                key=email_key,
+            )
+    elif email_value:
+        with corrections:
+            st.text_input("Vendor contact email", key=email_key)
 
-        description_key = f"desc_{token}"
-        if description_key not in st.session_state:
-            st.session_state[description_key] = (
-                analysis.short_description or ""
-            )[:20]
+    with questions if needs.description else corrections:
         st.text_input(
-            "Short description (≤20 chars)",
+            "Short description (20 characters maximum)",
             max_chars=20,
             key=description_key,
         )
 
-        st.text_area(
-            "Additional information (optional)",
-            key=f"instructions_{token}",
-            placeholder="Leave blank unless Smartsheet needs another note",
-            help="Only add a note that the Smartsheet reviewer needs to see.",
-        )
-        st.caption(
-            "Request Completed, PO #, and Work Order # stay blank. Dispatch to "
-            "Service Center is NA. Original PO Number is sent only for a change order."
-        )
+    if instructions_value:
+        with corrections:
+            st.text_area(
+                "Additional information (optional)",
+                key=instructions_key,
+                help="Only add a note the Smartsheet reviewer needs to see.",
+            )
 
     requester_value = ""
     requester_key = ""
@@ -1110,15 +1479,41 @@ def main() -> None:
             st.session_state[requester_key] = remembered_device_account_manager(
                 browser_token, contract
             )
-        requester_value = st.text_input(
-            "Your name (Requester / Asset Manager) *",
-            key=requester_key,
-            placeholder="Enter your name once",
-            help=(
-                "After a successful package, this browser remembers the most "
-                "recent name for this ENFRA account."
-            ),
-        ).strip()
+        with questions:
+            requester_value = st.text_input(
+                "Your name (Requester / Asset Manager) *",
+                key=requester_key,
+                placeholder="Enter your name once",
+                help=(
+                    "After a successful package, this browser remembers the most "
+                    "recent name for this ENFRA account."
+                ),
+            ).strip()
+
+    missing_optional_details = (
+        not contact_value or not email_value or not instructions_value
+    )
+    if missing_optional_details and st.toggle(
+        "Add an optional vendor contact or Smartsheet note",
+        key=f"show_optional_{token}",
+        help="Leave this closed for the usual RRH request.",
+    ):
+        if not contact_value:
+            st.text_input("Vendor contact name (optional)", key=contact_key)
+        if not email_value:
+            st.text_input("Vendor contact email (optional)", key=email_key)
+        if not instructions_value:
+            st.text_area(
+                "Additional information (optional)",
+                key=instructions_key,
+                placeholder="Only enter something the Smartsheet reviewer needs",
+            )
+
+    with corrections:
+        st.caption(
+            "Request Completed, PO #, and Work Order # stay blank. Dispatch to "
+            "Service Center is NA. Original PO Number is sent only for a change order."
+        )
 
     classification = None
     classification_error = ""
@@ -1129,17 +1524,21 @@ def main() -> None:
 
     asset_id = normalize_asset_id(selected_asset)
     summary_route = PURCHASE_ROUTE_LABELS.get(purchase_route, "Route not found")
-    summary_line = (
-        f"**{REQUEST_TYPE_LABELS.get(request_type, request_type)}** · "
-        f"**{contract or 'Account needed'}** · **{site or 'Site needed'}** · "
+    summary_primary = (
+        f"{REQUEST_TYPE_LABELS.get(request_type, request_type)} · "
+        f"{contract or 'Account needed'} · {site or 'Site needed'} · "
         f"{category_label or 'Category needed'} / {cost_code or 'Cost code needed'}"
     )
-    st.info(summary_line)
-    st.caption(
+    summary_detail = (
         f"{summary_route} · "
         f"{classification.object_account if classification else 'Account pending'} · "
         f"{classification.agreement_type if classification else 'Agreement pending'} · "
         f"Asset: {asset_id or 'None'} · Total: {total_value or 'Needed'}"
+    )
+    st.markdown(
+        f'<div class="request-summary"><strong>{_h(summary_primary)}</strong>'
+        f'<span class="request-summary-detail">{_h(summary_detail)}</span></div>',
+        unsafe_allow_html=True,
     )
 
     draft_problems: list[str] = []
@@ -1161,15 +1560,23 @@ def main() -> None:
         draft_problems.append("confirm the vendor name")
     if not str(st.session_state.get(description_key, "")).strip():
         draft_problems.append("confirm the short description")
+    if selected_asset == ASSET_PLACEHOLDER:
+        draft_problems.append("choose the specific asset or No asset applies")
     contact_email = str(st.session_state.get(email_key, "")).strip()
-    if contact_email and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", contact_email):
+    if not email_is_valid_or_blank(contact_email):
         draft_problems.append("correct or clear the vendor contact email")
-    if classification_error:
+    parsed_total = parse_amount(total_value)
+    if parsed_total is None or parsed_total <= 0:
+        draft_problems.append("enter a valid final PO/CO amount greater than zero")
+    if classification_error and parsed_total is not None and parsed_total > 0:
         draft_problems.append(classification_error)
 
     if draft_problems:
+        concise_problems = [
+            problem.rstrip(". ") for problem in dict.fromkeys(draft_problems)
+        ]
         st.warning(
-            "Before generating: " + "; ".join(dict.fromkeys(draft_problems)) + "."
+            "Before generating: " + "; ".join(concise_problems) + "."
         )
 
     selected_contract, selected_site, facility_name, _ = _routing_for_generation(
@@ -1198,8 +1605,8 @@ def main() -> None:
     st.markdown(
         """
         <div class="step-header">
-            <div class="step-num grape">4</div>
-            <p class="step-title">Generate both files and the Smartsheet link</p>
+            <div class="step-num yellow">3</div>
+            <p class="step-title">Generate files and open Smartsheet</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1212,7 +1619,7 @@ def main() -> None:
     if st.button(
         "Generate both files and Smartsheet link",
         type="primary",
-        use_container_width=True,
+        width="stretch",
         key=f"generate_package_{token}",
         disabled=bool(draft_problems),
     ):

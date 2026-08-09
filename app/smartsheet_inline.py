@@ -63,7 +63,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         )
         return
 
-    st.markdown("##### 1. Download both files")
+    st.markdown("##### 1. Save both files")
     renamed_files = download_names(context.attachments, context.attachment_base)
     if len(renamed_files) != 2:
         st.error("The package must contain exactly the original quote and one scope PDF.")
@@ -76,15 +76,25 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
             file_name=filename,
             mime=mimetypes.guess_type(filename)[0] or "application/octet-stream",
             key=f"{prefix}download_{index}",
-            use_container_width=True,
+            width="stretch",
         )
+        columns[index].caption(filename)
     st.warning(
-        "Keep both downloads. Near the end of the Smartsheet form, upload the original quote and the Scope/Inclusions/Exclusions PDF."
+        "Keep both files. Near the end of the Smartsheet form, upload the original quote "
+        "and the Scope/Inclusions/Exclusions PDF."
+    )
+    st.caption(
+        "Windows Chrome/Edge: save both files, open the Downloads folder in "
+        "File Explorer, select both, and drag them together onto Smartsheet's "
+        "attachment box. iPhone/iPad: choose both files from Files."
     )
 
     st.markdown("##### 2. Open the prefilled Smartsheet form")
     st.info(
-        "Smartsheet needs to have been opened or signed into in this browser within the last few hours. If the link opens without the values the first time, open/sign back into Smartsheet, return here, and tap the same link again."
+        "Smartsheet needs to have been opened or signed into within the last few hours. "
+        "The button opens a new browser tab; on iPhone or iPad, iOS may "
+        "hand the same link to the signed-in Smartsheet app. If the values do "
+        "not appear, sign back in, return here, and use the same button again."
     )
     if not manual_enabled(config):
         st.error("The Smartsheet form link is not configured.")
@@ -120,7 +130,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
 
     render_prefilled_link(prefilled.url)
     st.caption(
-        "The link fills the form but does not submit it and cannot upload files."
+        "The link fills the form but does not submit it or attach the two files."
     )
 
     with st.expander("Troubleshooting: show manual field values", expanded=False):
@@ -137,5 +147,5 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
             rows,
             prefilled.url,
             key=f"{context.context_id}-manual-fallback",
-            link_label="Open prefilled Smartsheet form ↗",
+            link_label="Open Smartsheet in a new tab ↗",
         )

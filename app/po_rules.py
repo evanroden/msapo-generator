@@ -169,7 +169,11 @@ def normalize_asset_id(value: object) -> str:
     site. Keep the historical function name for compatibility with callers.
     """
     text = str(value or "").strip()
-    if not text or text.casefold() in {"none applicable", "n/a", "na"}:
+    if (
+        not text
+        or text.casefold() in {"none applicable", "n/a", "na"}
+        or text.startswith("— Choose an asset")
+    ):
         return ""
     return " ".join(text.split())
 

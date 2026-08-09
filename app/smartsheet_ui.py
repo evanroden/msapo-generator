@@ -11,36 +11,18 @@ import streamlit as st
 def render_prefilled_link(
     form_url: str,
     *,
-    link_label: str = "Open prefilled Smartsheet form ↗",
+    link_label: str = "Open Smartsheet in a new tab ↗",
 ) -> None:
-    """Render only the primary link; manual copy rows stay hidden elsewhere."""
-    payload = json.dumps(
-        {"formUrl": form_url, "linkLabel": link_label},
-        ensure_ascii=False,
-    ).replace("<", "\\u003c")
-    html = r"""
-<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-  <a id="ss-open" target="_blank" rel="noopener noreferrer"
-     referrerpolicy="no-referrer"
-     style="display:block;text-align:center;background:#6D5AE6;color:#fff;
-            text-decoration:none;border-radius:11px;padding:13px;
-            font-weight:800;">
-    Open prefilled Smartsheet form &#8599;
-  </a>
-</div>
-<script>
-(() => {
-  const D = __PAYLOAD__;
-  const link = document.getElementById('ss-open');
-  link.href = D.formUrl;
-  link.textContent = D.linkLabel;
-})();
-</script>
-"""
-    st.iframe(
-        html.replace("__PAYLOAD__", payload),
-        height=58,
-        tab_index=0,
+    """Render the primary handoff with Streamlit's native new-tab control."""
+    st.link_button(
+        link_label,
+        form_url,
+        type="primary",
+        width="stretch",
+        help=(
+            "Opens the prefilled form in a new browser tab. On iPhone or iPad, "
+            "iOS may hand the same link to the signed-in Smartsheet app."
+        ),
     )
 
 
@@ -75,25 +57,25 @@ def render_manual_handoff(
     ).replace("<", "\\u003c")
 
     html = r"""
-<div id="ss-root" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#12233B;">
+<div id="ss-root" style="font-family:Arial,Helvetica,sans-serif;color:#092B24;">
   <div style="display:flex;gap:8px;margin-bottom:10px;">
     <a id="ss-open" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"
-       style="flex:1;text-align:center;background:#6D5AE6;color:#fff;text-decoration:none;border-radius:11px;padding:12px;font-weight:800;">
+       style="flex:1;text-align:center;background:#092B24;color:#fff;text-decoration:none;border-radius:4px;padding:12px;font-weight:700;">
        Open Smartsheet form &#8599;
     </a>
-    <button id="ss-reset" type="button" style="border:1px solid #CBD5E1;background:#F8FAFC;border-radius:10px;padding:0 13px;font-weight:700;color:#475569;">Reset</button>
+    <button id="ss-reset" type="button" style="border:1px solid #D3CCC4;background:#D3E7E0;border-radius:4px;padding:0 13px;font-weight:700;color:#092B24;">Reset</button>
   </div>
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-    <div style="flex:1;height:7px;background:#E2E8F0;border-radius:99px;overflow:hidden;">
-      <div id="ss-bar" style="height:100%;width:0;background:#16A34A;transition:width .2s;"></div>
+    <div style="flex:1;height:7px;background:#D3CCC4;border-radius:99px;overflow:hidden;">
+      <div id="ss-bar" style="height:100%;width:0;background:#D6EF4B;transition:width .2s;"></div>
     </div>
-    <div id="ss-count" style="font-size:12px;font-weight:800;color:#64748B;"></div>
+    <div id="ss-count" style="font-size:12px;font-weight:700;color:#557F7F;"></div>
   </div>
   <div id="ss-list"></div>
-  <button id="ss-copy-all" type="button" style="width:100%;margin-top:8px;border:1px solid #DDD6F3;background:#F5F3FF;color:#6D5AE6;border-radius:10px;padding:10px;font-weight:750;">
+  <button id="ss-copy-all" type="button" style="width:100%;margin-top:8px;border:1px solid #557F7F;background:#D3E7E0;color:#092B24;border-radius:4px;padding:10px;font-weight:700;">
     Copy all fields as a list
   </button>
-  <div id="ss-status" role="status" aria-live="polite" style="min-height:20px;margin-top:7px;font-size:12px;color:#64748B;"></div>
+  <div id="ss-status" role="status" aria-live="polite" style="min-height:20px;margin-top:7px;font-size:12px;color:#557F7F;"></div>
 </div>
 <script>
 (() => {
@@ -143,12 +125,12 @@ def render_manual_handoff(
     list.innerHTML = D.rows.map((row, index) => {
       const complete = done.has(index);
       const active = next === index;
-      return `<div style="display:flex;gap:9px;align-items:center;padding:9px 10px;margin-bottom:6px;border-radius:10px;border:${active ? '2px solid #6D5AE6' : '1px solid #E2E8F0'};background:${complete ? '#F0FDF4' : '#fff'};opacity:${complete ? '.75' : '1'};">
+      return `<div style="display:flex;gap:9px;align-items:center;padding:9px 10px;margin-bottom:6px;border-radius:4px;border:${active ? '2px solid #557F7F' : '1px solid #D3CCC4'};background:${complete ? '#D3E7E0' : '#fff'};opacity:${complete ? '.78' : '1'};">
         <div style="flex:1;min-width:0;">
-          <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:#94A3B8;">${complete ? '&#10003; ' : ''}${escapeHtml(row.label)}</div>
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#557F7F;">${complete ? '&#10003; ' : ''}${escapeHtml(row.label)}</div>
           <div style="font-size:13px;font-weight:600;overflow-wrap:anywhere;white-space:pre-wrap;">${escapeHtml(row.value)}</div>
         </div>
-        <button type="button" data-index="${index}" style="border:1px solid ${active ? '#6D5AE6' : '#DDD6F3'};background:${active ? '#6D5AE6' : '#F5F3FF'};color:${active ? '#fff' : '#6D5AE6'};border-radius:8px;padding:7px 12px;font-weight:750;white-space:nowrap;">Copy</button>
+        <button type="button" data-index="${index}" style="border:1px solid #092B24;background:${active ? '#D6EF4B' : '#D3E7E0'};color:#092B24;border-radius:4px;padding:7px 12px;font-weight:700;white-space:nowrap;">Copy</button>
       </div>`;
     }).join('');
     const percent = D.rows.length ? done.size / D.rows.length * 100 : 0;

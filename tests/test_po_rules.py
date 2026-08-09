@@ -142,6 +142,7 @@ def test_group_a_source_recognizes_complete_equipment_but_not_loose_parts():
         ("  EEA-CWP-07   NORTH  ", "EEA-CWP-07 NORTH"),
         ("None Applicable", ""),
         ("N/A", ""),
+        ("— Choose an asset or No asset —", ""),
     ],
 )
 def test_asset_id_preserves_the_full_configured_code(raw, expected):
