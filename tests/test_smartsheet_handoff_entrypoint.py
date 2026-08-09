@@ -41,17 +41,18 @@ def test_main_has_one_final_generation_route_and_no_separate_submit_or_email_rou
     assert "Apple Mail" not in source
 
 
-def test_four_step_screen_follows_actual_interaction_order():
+def test_three_step_screen_combines_review_and_po_details_in_interaction_order():
     source = WEB_UI.read_text(encoding="utf-8")
     labels = (
         "Provide the vendor quote",
-        "Review the extracted work",
-        "Confirm the PO details",
-        "Generate both files and the Smartsheet link",
+        "Review and complete the request",
+        "Generate files and open Smartsheet",
     )
     positions = [source.index(label) for label in labels]
     assert positions == sorted(positions)
-    assert source.count('class="step-num') == 4
+    assert source.count('class="step-num') == 3
+    assert "Review the extracted work" not in source
+    assert "Confirm the PO details" not in source
 
 
 def test_main_generates_exactly_the_quote_and_scope_pdf_from_one_action():
@@ -79,10 +80,14 @@ def test_streamlined_controls_guess_and_remember_without_obsolete_buttons():
     assert "forget_device_requester" not in source
     assert "Forget requester" not in source
     assert "max_chars=20" in source
-    assert '"Review or change the tool\'s selections"' in source
+    assert '"Change a value the tool already filled"' in source
+    assert "Unresolved questions stay visible above it" in source
+    assert "with questions if needs.routing else corrections" in source
+    assert "with questions if needs.asset else corrections" in source
+    assert "Add an optional vendor contact or Smartsheet note" in source
     assert "disabled=bool(draft_problems)" in source
     assert "st.session_state.get(asset_state_key) not in options" in source
-    assert source.index("Review or change the tool's selections") < source.index(
+    assert source.index("Change a value the tool already filled") < source.index(
         "Your name (Requester / Asset Manager) *"
     )
 
@@ -128,10 +133,13 @@ def test_inline_handoff_contains_recent_login_retry_and_upload_reminders():
     inline = (ROOT / "app" / "smartsheet_inline.py").read_text(encoding="utf-8")
 
     assert "within the last few hours" in inline
-    assert "same link again" in inline
+    assert "same button again" in inline
     assert "upload the original quote" in inline
     assert "Scope/Inclusions/Exclusions PDF" in inline
-    assert "does not submit it and cannot upload files" in inline
+    assert "does not submit it or attach the two files" in inline
+    assert "Downloads folder in" in inline
+    assert "File Explorer" in inline
+    assert "iPhone/iPad" in inline
 
 
 def test_legacy_destination_is_non_submitting_compatibility_notice():
@@ -142,13 +150,44 @@ def test_legacy_destination_is_non_submitting_compatibility_notice():
     assert "submit_po" not in page
 
 
-def test_prefilled_link_is_labeled_and_suppresses_referrer_data():
+def test_prefilled_link_uses_native_new_tab_control_and_manual_fallback_is_sandboxed():
     component = (ROOT / "app" / "smartsheet_ui.py").read_text(encoding="utf-8")
     assert 'link_label: str = "Open Smartsheet form ↗"' in component
-    assert 'link_label: str = "Open prefilled Smartsheet form ↗"' in component
+    assert 'link_label: str = "Open Smartsheet in a new tab ↗"' in component
     assert 'referrerpolicy="no-referrer"' in component
-    assert component.count("st.iframe(") == 2
+    assert component.count("st.link_button(") == 1
+    assert 'type="primary"' in component
+    assert 'width="stretch"' in component
+    assert component.count("st.iframe(") == 1
     assert "components.html(" not in component
+
+
+def test_enfra_brand_and_responsive_mobile_controls_are_present():
+    source = WEB_UI.read_text(encoding="utf-8")
+    config = (ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+
+    for color in ("#092B24", "#557F7F", "#D3E7E0", "#D3CCC4", "#D6EF4B"):
+        assert color in source
+    assert "font-family: Arial" in source
+    assert "@media (max-width: 640px)" in source
+    assert "@media (pointer: coarse)" in source
+    assert "font-size: 16px !important" in source
+    assert 'input, textarea, [role="combobox"]' in source
+    assert "min-height: 44px" in source
+    assert "safe-area-inset-left" in source
+    assert 'primaryColor = "#D6EF4B"' in config
+    assert 'secondaryBackgroundColor = "#D3E7E0"' in config
+    assert 'textColor = "#092B24"' in config
+
+
+def test_tax_warning_is_prominent_but_not_a_confirmation_control():
+    source = WEB_UI.read_text(encoding="utf-8")
+
+    assert 'class="tax-alert" role="alert"' in source
+    assert "tax_alert_message(" in source
+    assert "TAX CHECK" in source
+    assert "total_confirmed" not in source
+    assert "quote includes taxes" not in source.lower()
 
 
 def test_streamlit_runtime_security_controls_are_not_contradictory():
