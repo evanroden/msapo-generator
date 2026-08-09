@@ -22,6 +22,10 @@ _TOP = 54.0
 _BOTTOM = 54.0
 _BODY_SIZE = 10.5
 _BODY_LEADING = 15.0
+_OCEAN_STEEL = (9 / 255, 43 / 255, 36 / 255)
+_BLUE_STEEL = (85 / 255, 127 / 255, 127 / 255)
+_SAFETY_YELLOW = (214 / 255, 239 / 255, 75 / 255)
+_DARK_IRON = (0.0, 0.0, 0.0)
 
 
 def _pdf_text(value: object) -> str:
@@ -88,12 +92,25 @@ class _Writer:
         self.page = self.document.new_page(width=_PAGE_WIDTH, height=_PAGE_HEIGHT)
         self.page_number += 1
         self.y = _TOP
+        self.page.draw_rect(
+            fitz.Rect(_LEFT, 31, _PAGE_WIDTH - _RIGHT, 36),
+            color=_SAFETY_YELLOW,
+            fill=_SAFETY_YELLOW,
+            width=0,
+        )
+        self.page.insert_text(
+            (_LEFT, 47),
+            "ENFRA | PURCHASE ORDER SUPPORT",
+            fontname="helv",
+            fontsize=7.5,
+            color=_BLUE_STEEL,
+        )
         self.page.insert_text(
             (_PAGE_WIDTH - _RIGHT - 38, _PAGE_HEIGHT - 24),
             f"Page {self.page_number}",
             fontname="helv",
             fontsize=8,
-            color=(0.38, 0.44, 0.52),
+            color=_BLUE_STEEL,
         )
 
     def _ensure(self, height: float) -> None:
@@ -110,7 +127,7 @@ class _Writer:
         *,
         size: float = _BODY_SIZE,
         font: str = "helv",
-        color: tuple[float, float, float] = (0.12, 0.18, 0.25),
+        color: tuple[float, float, float] = _DARK_IRON,
         leading: float = _BODY_LEADING,
         prefix: str = "",
     ) -> None:
@@ -142,14 +159,14 @@ class _Writer:
             title,
             size=13,
             font="hebo",
-            color=(0.07, 0.19, 0.31),
+            color=_OCEAN_STEEL,
             leading=18,
         )
         self.spacer(2)
         if bullets:
             items = [str(item).strip() for item in content if str(item).strip()]
             if not items:
-                self.paragraph("None stated.", color=(0.38, 0.44, 0.52))
+                self.paragraph("None stated.", color=_BLUE_STEEL)
             for item in items:
                 self.paragraph(item, prefix="- ")
                 self.spacer(2)
@@ -182,7 +199,7 @@ def build_scope_pdf(
             "Scope, Inclusions, and Exclusions",
             size=18,
             font="hebo",
-            color=(0.07, 0.19, 0.31),
+            color=_OCEAN_STEEL,
             leading=23,
         )
         if vendor:
