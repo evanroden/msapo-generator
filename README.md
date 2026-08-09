@@ -6,26 +6,25 @@ Streamlit application deployed on Render. The repository retains its historical
 `msapo-generator` name, but the active product is no longer an email or MSAPO
 document generator.
 
-The authoritative business and implementation handoff is
+The authoritative business policy handoff is
 [`docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
 Read that document before changing routing, field mappings, attachments, or the
-Smartsheet handoff. The second-pass usability and reliability changes are
-documented in
+Smartsheet handoff. The current three-step UI, ENFRA brand, browser matrix, and
+release hardening are documented in
+[`docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md).
+Earlier quick-path reliability history remains in
 [`docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md).
 
 ## Current workflow
 
 1. Choose Upload or Paste and provide one quote. The inactive source can never
    silently override the selected source.
-2. Glance at the AI-extracted vendor, site, amount, Scope, Inclusions, and
-   Exclusions.
-3. Enter or confirm the requester name and read one compact summary of the
-   request type, routing, cost code, account/agreement, full asset, and total.
-   AI/defaulted controls stay inside a collapsed review section unless a value
-   is missing or invalid.
-4. Press one button to create the scope PDF and reveal both downloads plus the
-   prefilled Smartsheet link. Upload both files near the end of the form, review,
-   and submit it manually.
+2. Review one compact summary, enter or confirm the requester name, and answer
+   only fields the tool could not determine. AI/defaulted values stay in a
+   collapsed correction panel; unresolved fields stay visible and stable.
+3. Press one button to create the scope PDF and reveal both downloads plus the
+   native new-tab Smartsheet link. Upload both files near the end of the form,
+   review, and submit it manually.
 
 There is no email-submission route in the active UI.
 
@@ -69,6 +68,8 @@ Every route requires exactly two files:
 The active workflow does not generate or request the old MSAPO DOCX/form. The
 custom URL can prefill fields but cannot place local files in Smartsheet's upload
 control, so the user downloads both verified files and uploads them in the form.
+On Windows, both downloaded files can be selected in File Explorer and dragged
+together onto the form's attachment box.
 
 ## Project structure
 
@@ -88,12 +89,15 @@ app/smartsheet_ui.py           Prefilled-link and copy controls
 app/device_identity.py         Opaque first-party browser identity cookie
 app/memory.py                  Contract and anonymous-browser learning
 app/workflow_state.py          Active-source and stale-analysis state controls
+app/workflow_review.py         Exception-only question and tax-alert rules
 app/smartsheet_store.py        Leased/idempotent future API state
 pages/2_Smartsheet_PO.py       Non-submitting legacy bookmark notice
 docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md
                                Authoritative policy and successor handoff
 docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md
                                Quick-path and reliability hardening notes
+docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md
+                               Current UI, brand, browser, and release notes
 tests/                         Pytest regression suite
 ```
 
@@ -112,6 +116,9 @@ python -m pip install -r requirements-dev.txt
 cp .env.example .env
 streamlit run run_web.py
 ```
+
+Synthetic quote data is disabled by default. For a controlled local test only,
+set `EPC_ENABLE_SYNTHETIC_SAMPLE=true`; production must leave it false.
 
 Required local secret:
 
