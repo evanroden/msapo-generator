@@ -322,6 +322,22 @@ def account_manager_memory_context_id(context: POContext) -> str:
     return _context_id(fields, context.attachments)
 
 
+def vendor_contact_memory_context_id(context: POContext) -> str:
+    """Return a stable package identity while correcting vendor/contact data.
+
+    Vendor-contact memory records one event for the underlying request. The
+    excluded fields can therefore be corrected without teaching both the old
+    and new representative, vendor spelling, or requester assignment.
+    """
+    excluded = {"requester_name", "vendor", "contact_name", "contact_email"}
+    fields = {
+        field: value
+        for field, value in context.fields.items()
+        if field not in excluded
+    }
+    return _context_id(fields, context.attachments)
+
+
 def build_po_context(
     state: Mapping[str, Any], env: Mapping[str, str] | None = None
 ) -> POContext | None:
@@ -487,6 +503,10 @@ def build_po_context(
         warnings.append("Enter the original PO number for this change order.")
     if not fields["vendor"]:
         warnings.append("Confirm the vendor name before submission.")
+    if not fields["contact_name"]:
+        warnings.append("Confirm the vendor representative name before submission.")
+    if not fields["contact_email"]:
+        warnings.append("Confirm the vendor representative email before submission.")
     if not description:
         warnings.append("Confirm a Description of Work of 20 characters or fewer.")
     if not fields["total"]:
