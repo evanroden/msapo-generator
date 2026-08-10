@@ -100,7 +100,7 @@ class _Writer:
         )
         self.page.insert_text(
             (_LEFT, 47),
-            "ENFRA | PURCHASE ORDER SUPPORT",
+            "PURCHASE ORDER SUPPORT",
             fontname="helv",
             fontsize=7.5,
             color=_BLUE_STEEL,

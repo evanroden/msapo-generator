@@ -944,7 +944,7 @@ def main() -> None:
     st.markdown(
         """
         <div class="hero">
-            <p class="brand-kicker">ENFRA WORKFLOW</p>
+            <p class="brand-kicker">PURCHASE ORDER WORKFLOW</p>
             <h1>Purchase Order <span class="zing">Process Control</span></h1>
             <p class="hero-subtitle">
                 Upload the quote, answer only what the tool could not determine,
