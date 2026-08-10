@@ -84,6 +84,8 @@ def test_live_form_schema_and_rrh_choices_are_exact():
         "agreement_type",
         "total",
         "vendor",
+        "contact_name",
+        "contact_email",
         "description_of_work",
         "dispatch_service_center",
     )
