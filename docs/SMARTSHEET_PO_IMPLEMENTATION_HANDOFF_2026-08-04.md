@@ -204,8 +204,8 @@ The current PO flow always uses `NA`.
 | `original_po_number` | `ORIGIONAL PO NUMBER` | No | Blank | Reserved for future change-order support |
 | `total` | `PO/CO AMOUNT` | Yes | Reviewed quote total | Locked and amount-validated |
 | `vendor` | `VENDOR NAME` | No | Reviewed analysis | Locked |
-| `contact_name` | `VENDOR CONTACT NAME` | No | Reviewed contact | Locked |
-| `contact_email` | `VENDOR CONTACT EMAIL` | No | Reviewed contact email | Locked and email-validated when present |
+| `contact_name` | `VENDOR CONTACT NAME` | Yes | Reviewed or remembered representative | Locked |
+| `contact_email` | `VENDOR CONTACT EMAIL` | Yes | Reviewed or remembered representative email | Locked and email-validated |
 | `description_of_work` | `DESCRIPTION OF WORK` | Yes | Reviewed scope plus approved inclusions/exclusions | Locked |
 | `asset_id` | `ASSET ID` | No | Selected verified asset | Locked; blank for no asset/EPO |
 | `dispatch_service_center` | `DISPATCH WO TO SERVICE CENTER?` | Yes | Constant `NA` | Locked |
