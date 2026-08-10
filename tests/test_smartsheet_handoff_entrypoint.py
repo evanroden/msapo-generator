@@ -171,6 +171,8 @@ def test_enfra_brand_and_responsive_mobile_controls_are_present():
     source = WEB_UI.read_text(encoding="utf-8")
     config = (ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
 
+    assert '<p class="brand-kicker">PURCHASE ORDER WORKFLOW</p>' in source
+    assert '<p class="brand-kicker">ENFRA WORKFLOW</p>' not in source
     for color in ("#092B24", "#557F7F", "#D3E7E0", "#D3CCC4", "#D6EF4B"):
         assert color in source
     assert "font-family: Arial" in source
