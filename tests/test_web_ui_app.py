@@ -27,7 +27,7 @@ def test_synthetic_rrh_quick_path_generates_two_files_and_native_new_tab_link(
     app.button[0].click().run()
     assert not app.exception
     assert [item.label for item in app.expander] == [
-        "Review scope, inclusions, and exclusions (optional)",
+        "Review scope, inclusions, and exclusions",
         "Change a value the tool already filled",
     ]
     assert app.button[1].disabled
@@ -87,7 +87,9 @@ def test_unresolved_fields_are_visible_stable_and_not_in_correction_panel(
     unresolved_labels = {
         "PO/CO amount — final total including every fee and tax *",
         "Vendor name *",
-        "Short description (20 characters maximum)",
+        "Vendor representative name *",
+        "Vendor representative email *",
+        "Short description (20 characters maximum) *",
     }
     assert unresolved_labels <= {item.label for item in app.text_input}
     assert not unresolved_labels & {
@@ -103,3 +105,55 @@ def test_unresolved_fields_are_visible_stable_and_not_in_correction_panel(
     warnings = [item.value for item in app.warning]
     assert not any("all-in PO/CO amount" in message for message in warnings)
     assert not any(".." in message for message in warnings)
+
+
+def test_vendor_representative_is_filled_from_account_vendor_memory(monkeypatch):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setattr(
+        web_ui,
+        "analyze_quote",
+        lambda _text: QuoteAnalysis(
+            vendor_name="Trane",
+            project_description="Repair steam boiler B-1.",
+            facility_name="St. Mary's Medical Campus",
+            facility_address="89 Genesee St, Rochester, NY 14611",
+            scope_of_work="Repair steam boiler B-1.",
+            inclusions=["Labor"],
+            exclusions=["Unquoted work"],
+            contact_name=None,
+            contact_email=None,
+            total_amount="$1,819.80",
+            short_description="Boiler Repair",
+            work_category="repairs",
+            asset_reference="B-1",
+            purchase_route_guess="onsite_labor",
+            request_type_guess="PO",
+            tax_status="included",
+        ),
+    )
+    monkeypatch.setattr(
+        web_ui,
+        "remembered_vendor_contact",
+        lambda contract, vendor, **_kwargs: (
+            "Ashley Representative",
+            "ashley@example.com",
+        ),
+    )
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+
+    app.radio[0].set_value("Paste text").run()
+    app.text_area[0].set_value("Trane boiler B-1 quote for St. Mary's").run()
+
+    assert not app.exception
+    correction_values = {
+        item.label: item.value for item in app.expander[1].text_input
+    }
+    assert correction_values["Vendor representative name *"] == (
+        "Ashley Representative"
+    )
+    assert correction_values["Vendor representative email *"] == (
+        "ashley@example.com"
+    )
+    assert any(
+        "filled from prior requests" in item.value for item in app.caption
+    )

@@ -1,6 +1,6 @@
 from app.workflow_review import (
     ReviewNeeds,
-    email_is_valid_or_blank,
+    required_email_is_valid,
     retain_review_needs,
     review_needs,
     tax_alert_message,
@@ -17,7 +17,8 @@ def _complete_needs(**overrides):
         "total": "$1,250.00",
         "vendor": "Vendor",
         "description": "Pump Repair",
-        "contact_email": "",
+        "contact_name": "Vendor Representative",
+        "contact_email": "representative@example.com",
     }
     values.update(overrides)
     return review_needs(**values)
@@ -43,6 +44,7 @@ def test_complete_guesses_leave_no_visible_exception_questions():
             needs.total,
             needs.vendor,
             needs.description,
+            needs.contact_name,
             needs.contact_email,
         )
     )
@@ -58,6 +60,7 @@ def test_unresolved_or_invalid_values_are_moved_out_of_corrections():
         total="$0.00",
         vendor="",
         description="",
+        contact_name="",
         contact_email="not-an-email",
     )
 
@@ -69,13 +72,14 @@ def test_unresolved_or_invalid_values_are_moved_out_of_corrections():
     assert needs.total
     assert needs.vendor
     assert needs.description
+    assert needs.contact_name
     assert needs.contact_email
 
 
-def test_optional_email_accepts_blank_and_rejects_malformed_values():
-    assert email_is_valid_or_blank("")
-    assert email_is_valid_or_blank("manager@example.com")
-    assert not email_is_valid_or_blank("manager@example")
+def test_required_email_rejects_blank_and_malformed_values():
+    assert not required_email_is_valid("")
+    assert required_email_is_valid("manager@example.com")
+    assert not required_email_is_valid("manager@example")
 
 
 def test_review_questions_stay_visible_and_accumulate_new_dependency_gaps():
@@ -87,6 +91,7 @@ def test_review_questions_stay_visible_and_accumulate_new_dependency_gaps():
         total=True,
         vendor=False,
         description=False,
+        contact_name=False,
         contact_email=False,
     )
     current = ReviewNeeds(
@@ -97,6 +102,7 @@ def test_review_questions_stay_visible_and_accumulate_new_dependency_gaps():
         total=False,
         vendor=False,
         description=False,
+        contact_name=True,
         contact_email=False,
     )
 
@@ -106,4 +112,5 @@ def test_review_questions_stay_visible_and_accumulate_new_dependency_gaps():
     assert retained.job_number
     assert retained.total
     assert retained.asset
+    assert retained.contact_name
     assert not retained.vendor

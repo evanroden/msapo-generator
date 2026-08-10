@@ -30,13 +30,16 @@ from app.config import (
 from app.device_identity import device_token, ensure_device_cookie
 from app.memory import (
     record_device_account_manager,
+    record_vendor_contact,
     remembered_device_account_manager,
+    remembered_vendor_contact,
 )
 from app.ocr import extract_text
 from app.po_context import (
     _document_signature,
     account_manager_memory_context_id,
     build_po_context,
+    vendor_contact_memory_context_id,
 )
 from app.po_rules import (
     PURCHASE_ROUTE_LABELS,
@@ -65,7 +68,7 @@ from app.workflow_state import (
 )
 from app.workflow_review import (
     ReviewNeeds,
-    email_is_valid_or_blank,
+    required_email_is_valid,
     retain_review_needs,
     review_needs,
     tax_alert_message,
@@ -346,9 +349,10 @@ CUSTOM_CSS = """
     }
     div[data-testid="stFileUploader"] section:hover { border-color: var(--enfra-ocean); }
     div[data-testid="stExpander"] {
-        background: #FFFFFF;
-        border: 1px solid var(--enfra-concrete);
-        border-radius: 4px;
+        background: transparent !important;
+        border: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
     }
 
     .app-footer { color: var(--enfra-blue); font-size: 0.78rem; padding: 2rem 1rem 0.5rem; text-align: center; }
@@ -884,7 +888,7 @@ def _render_asset_control(
     if st.session_state.get(asset_state_key) not in options:
         st.session_state[asset_state_key] = default_asset
     raw_asset = st.selectbox(
-        "Specific asset",
+        "Specific asset *",
         options,
         format_func=lambda uid: (
             "Choose the asset, or confirm that no asset applies"
@@ -1176,14 +1180,81 @@ def main() -> None:
     vendor_value = str(st.session_state.get(vendor_key, "") or "").strip()
 
     contact_key = f"contact_{token}"
+    analysis_contact_name = str(analysis.contact_name or "").strip()
     if contact_key not in st.session_state:
-        st.session_state[contact_key] = analysis.contact_name or ""
-    contact_value = str(st.session_state.get(contact_key, "") or "").strip()
+        st.session_state[contact_key] = analysis_contact_name
 
     email_key = f"cemail_{token}"
+    analysis_contact_email = str(analysis.contact_email or "").strip()
     if email_key not in st.session_state:
-        st.session_state[email_key] = analysis.contact_email or ""
+        st.session_state[email_key] = analysis_contact_email
+
+    contact_seed_key = f"vendor_contact_seed_{token}"
+    seeded_name_key = f"vendor_contact_seeded_name_{token}"
+    seeded_email_key = f"vendor_contact_seeded_email_{token}"
+    contact_seed_context = ""
+    if routing_snapshot.contract and vendor_value:
+        contact_seed_context = (
+            f"{routing_snapshot.contract}\x00{vendor_value.casefold()}"
+        )
+    previous_seed_context = str(
+        st.session_state.get(contact_seed_key, "") or ""
+    )
+    if contact_seed_context and previous_seed_context != contact_seed_context:
+        previous_seeded_name = str(
+            st.session_state.get(seeded_name_key, "") or ""
+        )
+        previous_seeded_email = str(
+            st.session_state.get(seeded_email_key, "") or ""
+        )
+        if previous_seed_context:
+            if (
+                previous_seeded_name
+                and st.session_state.get(contact_key) == previous_seeded_name
+            ):
+                st.session_state[contact_key] = analysis_contact_name
+            if (
+                previous_seeded_email
+                and st.session_state.get(email_key) == previous_seeded_email
+            ):
+                st.session_state[email_key] = analysis_contact_email
+
+        current_name = str(st.session_state.get(contact_key, "") or "").strip()
+        current_email = str(st.session_state.get(email_key, "") or "").strip()
+        remembered_name, remembered_email = remembered_vendor_contact(
+            routing_snapshot.contract,
+            vendor_value,
+            contact_name=current_name,
+            contact_email=current_email,
+        )
+        seeded_name = ""
+        seeded_email = ""
+        if not current_name and remembered_name:
+            st.session_state[contact_key] = remembered_name
+            seeded_name = remembered_name
+        if not current_email and remembered_email:
+            st.session_state[email_key] = remembered_email
+            seeded_email = remembered_email
+        st.session_state[contact_seed_key] = contact_seed_context
+        st.session_state[seeded_name_key] = seeded_name
+        st.session_state[seeded_email_key] = seeded_email
+
+    contact_value = str(st.session_state.get(contact_key, "") or "").strip()
     email_value = str(st.session_state.get(email_key, "") or "").strip()
+    remembered_contact_active = bool(
+        contact_seed_context
+        and st.session_state.get(contact_seed_key) == contact_seed_context
+        and (
+            (
+                st.session_state.get(seeded_name_key)
+                and contact_value == st.session_state.get(seeded_name_key)
+            )
+            or (
+                st.session_state.get(seeded_email_key)
+                and email_value == st.session_state.get(seeded_email_key)
+            )
+        )
+    )
 
     description_key = f"desc_{token}"
     if description_key not in st.session_state:
@@ -1247,6 +1318,7 @@ def main() -> None:
         total=total_value,
         vendor=vendor_value,
         description=description_value,
+        contact_name=contact_value,
         contact_email=email_value,
     )
     review_needs_key = f"review_needs_{token}"
@@ -1300,8 +1372,9 @@ def main() -> None:
     final_exclusions: list[str] = []
     unified_inclusions, unified_exclusions = _build_unified_lists(analysis)
     with st.expander(
-        "Review scope, inclusions, and exclusions (optional)",
+        "Review scope, inclusions, and exclusions",
         expanded=False,
+        type="compact",
     ):
         st.caption(
             "The tool selected everything below for the supporting PDF. "
@@ -1348,7 +1421,7 @@ def main() -> None:
         st.markdown(
             '<div class="needs-banner"><strong>Needed from you</strong><br>'
             'The tool could not safely determine one or more values below. '
-            'Complete only the questions shown here.</div>',
+            'Every question shown below is required before generation.</div>',
             unsafe_allow_html=True,
         )
 
@@ -1356,6 +1429,7 @@ def main() -> None:
     corrections = st.expander(
         "Change a value the tool already filled",
         expanded=False,
+        type="compact",
     )
     with corrections:
         st.caption(
@@ -1442,23 +1516,25 @@ def main() -> None:
     with questions if needs.vendor else corrections:
         st.text_input("Vendor name *", key=vendor_key)
 
-    if contact_value:
-        with corrections:
-            st.text_input("Vendor contact name", key=contact_key)
+    with questions if needs.contact_name else corrections:
+        st.text_input("Vendor representative name *", key=contact_key)
 
-    if needs.contact_email:
-        with questions:
-            st.text_input(
-                "Vendor contact email — correct it or clear it",
-                key=email_key,
-            )
-    elif email_value:
-        with corrections:
-            st.text_input("Vendor contact email", key=email_key)
+    with questions if needs.contact_email else corrections:
+        st.text_input(
+            "Vendor representative email *",
+            key=email_key,
+            help="Enter the representative's complete email address.",
+        )
+
+    if remembered_contact_active:
+        st.caption(
+            "Vendor representative filled from prior requests for this vendor "
+            "on this account."
+        )
 
     with questions if needs.description else corrections:
         st.text_input(
-            "Short description (20 characters maximum)",
+            "Short description (20 characters maximum) *",
             max_chars=20,
             key=description_key,
         )
@@ -1490,24 +1566,16 @@ def main() -> None:
                 ),
             ).strip()
 
-    missing_optional_details = (
-        not contact_value or not email_value or not instructions_value
-    )
-    if missing_optional_details and st.toggle(
-        "Add an optional vendor contact or Smartsheet note",
+    if not instructions_value and st.toggle(
+        "Add Additional Information",
         key=f"show_optional_{token}",
-        help="Leave this closed for the usual RRH request.",
+        help="Use this only when the Smartsheet reviewer needs an extra note.",
     ):
-        if not contact_value:
-            st.text_input("Vendor contact name (optional)", key=contact_key)
-        if not email_value:
-            st.text_input("Vendor contact email (optional)", key=email_key)
-        if not instructions_value:
-            st.text_area(
-                "Additional information (optional)",
-                key=instructions_key,
-                placeholder="Only enter something the Smartsheet reviewer needs",
-            )
+        st.text_area(
+            "Additional information (optional)",
+            key=instructions_key,
+            placeholder="Only enter something the Smartsheet reviewer needs",
+        )
 
     with corrections:
         st.caption(
@@ -1562,9 +1630,11 @@ def main() -> None:
         draft_problems.append("confirm the short description")
     if selected_asset == ASSET_PLACEHOLDER:
         draft_problems.append("choose the specific asset or No asset applies")
+    if not str(st.session_state.get(contact_key, "")).strip():
+        draft_problems.append("enter the vendor representative name")
     contact_email = str(st.session_state.get(email_key, "")).strip()
-    if not email_is_valid_or_blank(contact_email):
-        draft_problems.append("correct or clear the vendor contact email")
+    if not required_email_is_valid(contact_email):
+        draft_problems.append("enter a valid vendor representative email")
     parsed_total = parse_amount(total_value)
     if parsed_total is None or parsed_total <= 0:
         draft_problems.append("enter a valid final PO/CO amount greater than zero")
@@ -1650,6 +1720,13 @@ def main() -> None:
                         account=contract,
                         manager_name=context.fields.get("requester_name"),
                         context_id=account_manager_memory_context_id(context),
+                    )
+                    record_vendor_contact(
+                        contract=contract,
+                        vendor=context.fields.get("vendor"),
+                        contact_name=context.fields.get("contact_name"),
+                        contact_email=context.fields.get("contact_email"),
+                        context_id=vendor_contact_memory_context_id(context),
                     )
 
     context = build_po_context(st.session_state)

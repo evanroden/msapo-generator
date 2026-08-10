@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
@@ -60,6 +61,15 @@ CREATE TABLE IF NOT EXISTS vendor_contacts (
     count    INTEGER NOT NULL DEFAULT 0,
     last_used REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (contract, vendor, name, email)
+);
+CREATE TABLE IF NOT EXISTS vendor_contact_events (
+    contract   TEXT NOT NULL,
+    context_id TEXT NOT NULL,
+    vendor     TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    email      TEXT NOT NULL,
+    recorded_at REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (contract, context_id)
 );
 CREATE TABLE IF NOT EXISTS device_requesters (
     device_hash   TEXT NOT NULL,
@@ -150,6 +160,31 @@ def _norm_vendor(vendor: str | None) -> str:
     return " ".join((vendor or "").split()).lower()
 
 
+_LEGAL_VENDOR_SUFFIXES = frozenset(
+    {
+        "co",
+        "company",
+        "corp",
+        "corporation",
+        "inc",
+        "incorporated",
+        "llc",
+        "lp",
+        "ltd",
+        "limited",
+        "plc",
+    }
+)
+
+
+def _vendor_match_key(vendor: str | None) -> str:
+    """Normalize punctuation and legal suffixes without fuzzy name guessing."""
+    words = re.findall(r"[a-z0-9]+", _norm_vendor(vendor))
+    while words and words[-1] in _LEGAL_VENDOR_SUFFIXES:
+        words.pop()
+    return " ".join(words)
+
+
 def _looks_like_email(email: str) -> bool:
     return "@" in email and "." in email.split("@")[-1] and " " not in email
 
@@ -202,6 +237,107 @@ def record_send(
         conn.close()
 
 
+def record_vendor_contact(
+    *,
+    contract: str,
+    vendor: str | None,
+    contact_name: str | None,
+    contact_email: str | None,
+    context_id: str | None,
+) -> int:
+    """Remember one verified vendor representative for an account and vendor.
+
+    A generated package counts once. Regenerating the same package is
+    idempotent, while correcting its vendor representative moves the event to
+    the corrected pair instead of teaching both values.
+    """
+    vend = _norm_vendor(vendor)
+    name = _norm_name(contact_name)
+    email = _norm_email(contact_email)
+    context = (context_id or "").strip()
+    if (
+        not contract
+        or not vend
+        or not name
+        or not email
+        or not _looks_like_email(email)
+        or not context
+        or len(vend) > 240
+        or len(name) > 160
+        or len(context) > 200
+    ):
+        return 0
+
+    conn = _connect()
+    if conn is None:
+        return 0
+    now = time.time()
+    current = (vend, name, email)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        prior = conn.execute(
+            "SELECT vendor,name,email FROM vendor_contact_events "
+            "WHERE contract=? AND context_id=?",
+            (contract, context),
+        ).fetchone()
+
+        if prior and tuple(prior) != current:
+            conn.execute(
+                "UPDATE vendor_contacts SET count=count-1 "
+                "WHERE contract=? AND vendor=? AND name=? AND email=?",
+                (contract, prior[0], prior[1], prior[2]),
+            )
+            conn.execute(
+                "DELETE FROM vendor_contacts WHERE contract=? AND vendor=? "
+                "AND name=? AND email=? AND count<=0",
+                (contract, prior[0], prior[1], prior[2]),
+            )
+
+        if not prior or tuple(prior) != current:
+            conn.execute(
+                "INSERT INTO vendor_contact_events "
+                "(contract,context_id,vendor,name,email,recorded_at) "
+                "VALUES (?,?,?,?,?,?) ON CONFLICT(contract,context_id) DO UPDATE SET "
+                "vendor=excluded.vendor,name=excluded.name,email=excluded.email,"
+                "recorded_at=excluded.recorded_at",
+                (contract, context, vend, name, email, now),
+            )
+            conn.execute(
+                "INSERT INTO vendor_contacts "
+                "(contract,vendor,name,email,count,last_used) VALUES (?,?,?,?,1,?) "
+                "ON CONFLICT(contract,vendor,name,email) DO UPDATE SET "
+                "count=count+1,last_used=excluded.last_used",
+                (contract, vend, name, email, now),
+            )
+        else:
+            conn.execute(
+                "UPDATE vendor_contact_events SET recorded_at=? "
+                "WHERE contract=? AND context_id=?",
+                (now, contract, context),
+            )
+            conn.execute(
+                "UPDATE vendor_contacts SET last_used=? WHERE contract=? "
+                "AND vendor=? AND name=? AND email=?",
+                (now, contract, vend, name, email),
+            )
+
+        row = conn.execute(
+            "SELECT count FROM vendor_contacts WHERE contract=? AND vendor=? "
+            "AND name=? AND email=?",
+            (contract, vend, name, email),
+        ).fetchone()
+        conn.commit()
+        return int(row[0]) if row else 0
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        conn.close()
+
+
 def suggest_admin_emails(contract: str) -> list[str]:
     """Admin emails used >= SUGGEST_THRESHOLD times on THIS contract only."""
     conn = _connect()
@@ -247,15 +383,61 @@ def vendor_reps(contract: str, vendor: str | None) -> list[tuple[str, str]]:
         return []
     try:
         rows = conn.execute(
-            "SELECT name, email FROM vendor_contacts WHERE contract=? AND vendor=? "
-            "ORDER BY count DESC, last_used DESC",
-            (contract, vend),
+            "SELECT vendor,name,email,count,last_used FROM vendor_contacts "
+            "WHERE contract=? ORDER BY count DESC, last_used DESC",
+            (contract,),
         ).fetchall()
-        return [(r[0], r[1]) for r in rows]
+        exact = [row for row in rows if row[0] == vend]
+        if exact:
+            matched = exact
+        else:
+            match_key = _vendor_match_key(vend)
+            matched = [
+                row
+                for row in rows
+                if match_key and _vendor_match_key(row[0]) == match_key
+            ]
+        seen: set[tuple[str, str]] = set()
+        result: list[tuple[str, str]] = []
+        for _, name, email, _, _ in matched:
+            pair = (str(name), str(email))
+            if pair not in seen:
+                seen.add(pair)
+                result.append(pair)
+        return result
     except Exception:
         return []
     finally:
         conn.close()
+
+
+def remembered_vendor_contact(
+    contract: str,
+    vendor: str | None,
+    *,
+    contact_name: str | None = None,
+    contact_email: str | None = None,
+) -> tuple[str, str]:
+    """Return the best verified representative for this account and vendor.
+
+    A contact value extracted from the current quote can select the matching
+    historical pair. Otherwise the most-used, most-recent pair wins. No result
+    is ever borrowed from another account or a merely similar vendor name.
+    """
+    reps = vendor_reps(contract, vendor)
+    if not reps:
+        return "", ""
+    wanted_email = _norm_email(contact_email)
+    wanted_name = _requester_key(contact_name)
+    if wanted_email:
+        for name, email in reps:
+            if _norm_email(email) == wanted_email:
+                return name, email
+    if wanted_name:
+        for name, email in reps:
+            if _requester_key(name) == wanted_name:
+                return name, email
+    return reps[0]
 
 
 def record_device_account_manager(

@@ -22,6 +22,8 @@ Earlier quick-path reliability history remains in
 2. Review one compact summary, enter or confirm the requester name, and answer
    only fields the tool could not determine. AI/defaulted values stay in a
    collapsed correction panel; unresolved fields stay visible and stable.
+   Vendor representative name and email are required and are recalled from
+   prior verified requests for the same account and vendor when available.
 3. Press one button to create the scope PDF and reveal both downloads plus the
    native new-tab Smartsheet link. Upload both files near the end of the form,
    review, and submit it manually.

@@ -1,7 +1,7 @@
 # Unified RRH review, ENFRA brand, and browser hardening
 
 **Date:** 2026-08-09  
-**Status:** current implementation and release notes  
+**Status:** current implementation and release notes; corrected 2026-08-10  
 **Audience:** ENFRA RRH operators, maintainers, reviewers, and future coding agents  
 **Builds on:**
 [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md)
@@ -37,9 +37,10 @@ fixed list of always-visible controls.
 |---|---|---|
 | Missing or invalid required value | Visible under **Needed from you** | Generation remains disabled |
 | Ambiguous asset at a configured site | Visible explicit asset/No asset choice | A placeholder can never be exported |
-| Invalid optional vendor email | Visible correction-or-clear question | Blank remains valid because the field is optional |
+| Missing vendor representative name | Visible under **Needed from you** | Generation remains disabled |
+| Missing or invalid vendor representative email | Visible under **Needed from you** | Generation remains disabled |
 | AI/deterministic value already available | **Change a value the tool already filled** expander | Remains editable without cluttering the normal path |
-| Blank optional contact or note | Not rendered | One deliberate optional-details toggle can expose it |
+| Blank Additional Information note | Not rendered | One deliberate note toggle can expose it |
 | Requester / Asset Manager | Always visible | Device-and-account memory normally prepopulates it |
 
 Questions are sticky for the life of the analyzed quote. If the operator fills
@@ -64,6 +65,21 @@ defaulted. Blank unresolved boxes are never stranded there.
 | Specific asset | Quote clue plus selected-site asset registry | Only a unique configured UID is selected |
 | Vendor, contact, final total, description | Structured quote extraction | Required gaps are visible and block generation |
 | Requester / Asset Manager | Current browser plus exact account memory | Stored only after a verified package |
+
+### Vendor representative memory
+
+Vendor representative name and email are required workflow fields. The tool
+uses the current quote first. When either value is absent, it looks up the
+most-used, most-recent verified name/email pair for the exact account and
+normalized vendor. Case, punctuation, whitespace, and legal suffix differences
+such as `Inc.` do not prevent a match; a merely similar company name does.
+
+The remembered pair is seeded only into blank values and remains editable in
+the correction panel. Each successfully generated package records one
+idempotent vendor-contact event. Regenerating the same package does not inflate
+the count, and correcting the representative moves that package's event to the
+corrected pair. Legacy vendor history remains readable. Contact memory never
+crosses account boundaries.
 
 The active asset field exports the complete configured asset UID, including all
 letters, prefixes, and separators. It does not shorten the UID to the unknown
@@ -161,7 +177,7 @@ controlled acceptance test.
 
 ### Automated application tests
 
-The locally available Python suite has **141 passing tests**. It includes a real Streamlit AppTest
+The locally available Python suite has **148 passing tests**. It includes a real Streamlit AppTest
 quick path that loads synthetic quote data, enters the requester, generates both
 downloads, and verifies the encoded native Smartsheet link without submitting
 anything. A second AppTest supplies an intentionally incomplete analysis and
@@ -189,6 +205,11 @@ Every profile completed the same synthetic interaction and verified:
 - a 46-pixel primary target; and
 - 16-pixel form text on touch profiles to prevent iOS focus zoom.
 
+The 2026-08-10 correction reran all four profiles on Chromium 149 and also
+verified zero expander border widths, no expander shadow, no optional wording
+on required contact fields, both required representative labels, and no page
+errors or horizontal overflow.
+
 A separate browser test downloaded both artifacts and verified non-empty quote
 and PDF files. It safely intercepted the Smartsheet URL, clicked the handoff,
 and confirmed that a separate page opened with the expected prefilled URL.
@@ -215,7 +236,7 @@ or expected app handoff, prefilled values, and attachment selection.
 | UBR-02 | Medium | A completed visible field could jump into the collapsed panel after rerun | Per-quote sticky question placement |
 | UBR-03 | Critical | Ambiguous asset could silently become no asset or leak a placeholder | Explicit visible choice, generation block, export normalization |
 | UBR-04 | High | No visible tax cue when the quote did not mention tax | Prominent accessible Safety Yellow alert |
-| UBR-05 | Medium | Blank optional fields added noise to every request | Omitted until one optional-details toggle is opened |
+| UBR-05 | Medium | Blank Additional Information added noise to every request | Omitted until its deliberate note toggle is opened |
 | UBR-06 | Medium | Invalid total produced two overlapping messages and double punctuation | One normalized amount instruction |
 | UBR-07 | High | A generic iframe/link implementation could fail to open a stable new tab | Native `st.link_button` plus target regression and browser test |
 | UBR-08 | High | Operator could assume URL prefilling also uploads or submits | Explicit non-submit/non-attach wording and two-file reminder |
@@ -226,6 +247,9 @@ or expected app handoff, prefilled values, and attachment selection.
 | UBR-13 | High | A current catalog could remove an asset still stored in an old session | Sanitize asset state against fresh options before rendering |
 | UBR-14 | Critical | Required value could be skipped by URL length/mapping but link still shown | Existing required-encoded-field gate withholds the link |
 | UBR-15 | Critical | A field edit could leave old files/link visible | Existing PDF signature and context ID require regeneration |
+| UBR-16 | High | Missing vendor representative fields were mislabeled optional | Both fields are required, visible when unresolved, and block generation |
+| UBR-17 | Medium | Custom and native expander borders created doubled mobile edges | Compact native expanders plus removal of the custom outer border |
+| UBR-18 | High | Vendor history was stored but the active UI neither recalled nor updated it | Account/vendor lookup during review plus idempotent recording after verified generation |
 
 ## 9. Residual risks
 
@@ -285,14 +309,17 @@ anonymous device memory.
 **Safety tests:** account isolation, browser isolation, correction of the same
 package, storage failure, name length, and multiple users on one device.
 
-### Priority 4 — Reuse verified recurring vendor details
+### Delivered 2026-08-10 — Reuse verified recurring vendor details
 
 **Operator effect:** a missing vendor contact can be supplied from prior verified
 requests for the same normalized vendor and account.
 
-**Implementation:** quote data always wins. Use memory only when the quote omits
-the field; never cross accounts; expose the remembered source; and stop using a
-value after repeated operator corrections.
+**Implementation:** quote data wins, memory fills only missing values, exact
+account isolation is enforced, the remembered source is disclosed, legal vendor
+suffixes are normalized conservatively, and package events are idempotent.
+
+**Remaining enhancement:** when a vendor has several active representatives,
+show a compact ranked selector instead of silently taking only the leading pair.
 
 ### Priority 5 — Learn asset preference carefully
 
@@ -341,6 +368,9 @@ creation as a health check.
 - `app/web_ui.py` — unified review step, exception-only placement, sticky
   questions, ENFRA UI, touch/responsive rules, guarded synthetic sample.
 - `app/workflow_review.py` — pure gap, email, tax, and sticky-placement rules.
+- `app/memory.py` — account/vendor representative recall and idempotent learning.
+- `app/po_context.py` — required representative warnings and stable memory event ID.
+- `app/smartsheet.py` — representative fields added to required form prefills.
 - `app/smartsheet_ui.py` — native new-tab link.
 - `app/smartsheet_inline.py` — simplified two-file/new-tab handoff and platform
   attachment guidance.
@@ -375,3 +405,15 @@ Recommended commit grouping:
 - add sticky-question, tax, asset-placeholder, full AppTest, and browser-contract
   regressions; and
 - record the rendered Chromium matrix and remaining physical-device acceptance.
+
+### Commit 3 — Require and recall vendor representatives; repair mobile expanders
+
+- make vendor representative name and email required instead of optional;
+- keep unresolved representative fields visible and generation-blocking;
+- fill missing representative data from verified account/vendor history;
+- record one correction-safe, idempotent memory event per generated package;
+- retain legacy vendor-contact history and enforce account isolation;
+- remove the combined optional-contact/note toggle while retaining the genuinely
+  optional Additional Information toggle;
+- remove misleading optional wording from the scope review disclosure; and
+- use compact native expanders and remove the duplicated custom mobile border.

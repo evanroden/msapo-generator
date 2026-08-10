@@ -7,6 +7,7 @@ from app.po_context import (
     _document_signature,
     account_manager_memory_context_id,
     build_po_context,
+    vendor_contact_memory_context_id,
 )
 from app.po_rules import (
     EQUIPMENT_ACCOUNT,
@@ -228,6 +229,46 @@ def test_requester_memory_identity_stays_stable_while_correcting_the_name():
     assert first is not None and second is not None
     assert first.context_id != second.context_id
     assert account_manager_memory_context_id(first) == account_manager_memory_context_id(second)
+
+
+def test_vendor_contact_memory_identity_stays_stable_while_correcting_contact():
+    first_state = _state(route=ONSITE_LABOR)
+    second_state = _state(route=ONSITE_LABOR)
+    token = first_state["analysis_token"]
+    second_state[f"vendor_{token}"] = "Corrected Vendor Name"
+    second_state[f"contact_{token}"] = "Corrected Representative"
+    second_state[f"cemail_{token}"] = "corrected@example.com"
+    second_state["scope_pdf_signature"] = _document_signature(
+        token,
+        "Tulane",
+        "Tulane",
+        ["Labor", "Startup testing"],
+        ["Painting"],
+        vendor="Corrected Vendor Name",
+        scope="Repair the chilled water pump and test operation.",
+    )
+
+    first = build_po_context(first_state, {})
+    second = build_po_context(second_state, {})
+
+    assert first is not None and second is not None
+    assert first.context_id != second.context_id
+    assert vendor_contact_memory_context_id(
+        first
+    ) == vendor_contact_memory_context_id(second)
+
+
+def test_vendor_representative_name_and_email_are_required():
+    state = _state(route=ONSITE_LABOR)
+    token = state["analysis_token"]
+    state[f"contact_{token}"] = ""
+    state[f"cemail_{token}"] = ""
+
+    context = build_po_context(state, {})
+
+    assert context is not None and not context.ready
+    assert any("representative name" in warning for warning in context.warnings)
+    assert any("representative email" in warning for warning in context.warnings)
 
 
 def test_pasted_quote_becomes_the_original_text_attachment():
