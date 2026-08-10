@@ -84,7 +84,12 @@ def test_streamlined_controls_guess_and_remember_without_obsolete_buttons():
     assert "Unresolved questions stay visible above it" in source
     assert "with questions if needs.routing else corrections" in source
     assert "with questions if needs.asset else corrections" in source
-    assert "Add an optional vendor contact or Smartsheet note" in source
+    assert "with questions if needs.contact_name else corrections" in source
+    assert "with questions if needs.contact_email else corrections" in source
+    assert "Add an optional vendor contact or Smartsheet note" not in source
+    assert "remembered_vendor_contact(" in source
+    assert "record_vendor_contact(" in source
+    assert 'type="compact"' in source
     assert "disabled=bool(draft_problems)" in source
     assert "st.session_state.get(asset_state_key) not in options" in source
     assert source.index("Change a value the tool already filled") < source.index(
