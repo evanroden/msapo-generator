@@ -171,8 +171,8 @@ route ordinary work to it.
 | `original_po_number` | `ORIGIONAL PO NUMBER` in current live schema | none | Ignored, always blank, and omitted. Preserve the external misspelling only if referencing the historical live column. |
 | `total` | `PO/CO AMOUNT` | operator-confirmed quote total | Grand total including taxes and every fee. |
 | `vendor` | `VENDOR NAME` | quote analysis/review | Reviewed vendor name. |
-| `contact_name` | `VENDOR CONTACT NAME` | quote analysis/review | Reviewed contact. |
-| `contact_email` | `VENDOR CONTACT EMAIL` | quote analysis/review | Validated when populated. |
+| `contact_name` | `VENDOR CONTACT NAME` | quote analysis or account/vendor memory | Required reviewed representative. |
+| `contact_email` | `VENDOR CONTACT EMAIL` | quote analysis or account/vendor memory | Required and validated. |
 | `description_of_work` | `DESCRIPTION OF WORK` | reviewed Scope/Inclusions/Exclusions | Same reviewed content represented in the support PDF. |
 | `asset_id` | `ASSET ID` | selected asset | Numeric portion only; blank when no applicable numeric asset exists. |
 | `dispatch_service_center` | `DISPATCH WO TO SERVICE CENTER?` | constant | Always exact value `NA`. |
