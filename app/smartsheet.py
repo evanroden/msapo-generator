@@ -103,6 +103,8 @@ DEFAULT_FORM_REQUIRED_FIELDS: tuple[str, ...] = (
     "agreement_type",
     "total",
     "vendor",
+    "contact_name",
+    "contact_email",
     "description_of_work",
     "dispatch_service_center",
 )
