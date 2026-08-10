@@ -28,6 +28,7 @@ class ReviewNeeds:
     total: bool
     vendor: bool
     description: bool
+    contact_name: bool
     contact_email: bool
 
     @property
@@ -41,6 +42,7 @@ class ReviewNeeds:
                 self.total,
                 self.vendor,
                 self.description,
+                self.contact_name,
                 self.contact_email,
             )
         )
@@ -70,14 +72,14 @@ def retain_review_needs(
         total=previous.total or current.total,
         vendor=previous.vendor or current.vendor,
         description=previous.description or current.description,
+        contact_name=previous.contact_name or current.contact_name,
         contact_email=previous.contact_email or current.contact_email,
     )
 
 
-def email_is_valid_or_blank(value: object) -> bool:
-    """Return whether an optional email is empty or conservatively well formed."""
-    text = str(value or "").strip()
-    return not text or _EMAIL_RE.fullmatch(text) is not None
+def required_email_is_valid(value: object) -> bool:
+    """Return whether a required email is present and conservatively valid."""
+    return _EMAIL_RE.fullmatch(str(value or "").strip()) is not None
 
 
 def tax_alert_message(status: object) -> str:
@@ -106,6 +108,7 @@ def review_needs(
     total: object,
     vendor: object,
     description: object,
+    contact_name: object,
     contact_email: object,
 ) -> ReviewNeeds:
     """Classify unresolved/invalid values for exception-only visible prompts."""
@@ -121,5 +124,6 @@ def review_needs(
         total=amount is None or amount <= 0,
         vendor=not str(vendor or "").strip(),
         description=not str(description or "").strip(),
-        contact_email=not email_is_valid_or_blank(contact_email),
+        contact_name=not str(contact_name or "").strip(),
+        contact_email=not required_email_is_valid(contact_email),
     )
