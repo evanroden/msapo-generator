@@ -309,8 +309,8 @@ matrix above. It does not automatically choose `NA`, `5490-OTHER`, or CSAPO.
 | `original_po_number` | `ORIGINAL PO NUMBER` | Required for change order; omitted for PO |
 | `total` | `PO/CO AMOUNT` | Final all-in amount |
 | `vendor` | `VENDOR NAME` | AI-suggested, operator-correctable |
-| `contact_name` | `VENDOR CONTACT NAME` | Suggested, optional correction |
-| `contact_email` | `VENDOR CONTACT EMAIL` | Suggested, optional correction |
+| `contact_name` | `VENDOR CONTACT NAME` | Required; quote first, then exact account/vendor memory |
+| `contact_email` | `VENDOR CONTACT EMAIL` | Required, validated; quote first, then exact account/vendor memory |
 | `description_of_work` | `DESCRIPTION OF WORK` | Hard-capped at 20 characters |
 | `asset_id` | `ASSET ID` | Complete selected registry UID |
 | `dispatch_service_center` | `DISPATCH WO TO SERVICE CENTER?` | Always `NA` for this application |
