@@ -109,9 +109,12 @@ final PO/CO amount: it must be a conventional positive currency value on every
 purchase route. Additional Information remains blank unless the operator adds
 a reviewer-relevant note; tax wording is not copied there.
 
-## 5. ENFRA brand treatment
+## 5. Brand-aligned alpha treatment
 
-The supplied brand guide is applied without adding the ENFRA logo.
+The supplied ENFRA brand guide is applied without adding the logo or presenting
+the alpha workflow as an official ENFRA application. The visible page kicker is
+the neutral `PURCHASE ORDER WORKFLOW`, and the PDF running header is the neutral
+`PURCHASE ORDER SUPPORT`. The browser title is also neutral.
 
 | Brand token | Value | Use |
 |---|---|---|
@@ -125,7 +128,8 @@ The supplied brand guide is applied without adding the ENFRA logo.
 Arial is the approved system fallback and avoids a render-blocking external-font
 dependency. The same palette is used in the generated PDF: Safety Yellow top
 rule, Blue Steel running label/page number, and Ocean Steel section headings.
-No logo file, approximation, or unapproved font is embedded.
+No ENFRA name, logo file, logo approximation, or unapproved font is embedded in
+those visible top-level brand positions during alpha.
 
 ## 6. Smartsheet and attachments
 
@@ -366,7 +370,8 @@ creation as a health check.
 ## 11. Files changed in this release
 
 - `app/web_ui.py` — unified review step, exception-only placement, sticky
-  questions, ENFRA UI, touch/responsive rules, guarded synthetic sample.
+  questions, brand-aligned alpha UI, touch/responsive rules, guarded synthetic
+  sample.
 - `app/workflow_review.py` — pure gap, email, tax, and sticky-placement rules.
 - `app/memory.py` — account/vendor representative recall and idempotent learning.
 - `app/po_context.py` — required representative warnings and stable memory event ID.
@@ -375,8 +380,8 @@ creation as a health check.
 - `app/smartsheet_inline.py` — simplified two-file/new-tab handoff and platform
   attachment guidance.
 - `app/po_rules.py` — unresolved asset placeholder cannot export.
-- `app/scope_pdf.py` — ENFRA-branded supporting PDF without logo.
-- `.streamlit/config.toml` — ENFRA theme palette.
+- `app/scope_pdf.py` — brand-aligned supporting PDF with a neutral alpha header.
+- `.streamlit/config.toml` — brand-guide theme palette.
 - `.env.example` — disabled-by-default synthetic-test control.
 - tests — pure rule, AppTest, URL, PDF, brand, responsive, and handoff regressions.
 
@@ -417,3 +422,16 @@ Recommended commit grouping:
   optional Additional Information toggle;
 - remove misleading optional wording from the scope review disclosure; and
 - use compact native expanders and remove the duplicated custom mobile border.
+
+### Commit 4 — Neutralize alpha-facing product labels
+
+- replace the top-of-page `ENFRA WORKFLOW` kicker with the neutral
+  `PURCHASE ORDER WORKFLOW` label;
+- replace the generated PDF's `ENFRA | PURCHASE ORDER SUPPORT` running header
+  with `PURCHASE ORDER SUPPORT`;
+- keep the supplied palette, Arial fallback, hierarchy, and layout unchanged;
+- retain operational ENFRA references where they identify actual account data,
+  policies, configuration, or implementation ownership rather than product
+  branding; and
+- add regressions proving the visible alpha headers remain neutral while the
+  approved visual tokens remain applied.
