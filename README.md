@@ -9,8 +9,8 @@ document generator.
 The authoritative business policy handoff is
 [`docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
 Read that document before changing routing, field mappings, attachments, or the
-Smartsheet handoff. The current three-step UI, ENFRA brand, browser matrix, and
-release hardening are documented in
+Smartsheet handoff. The current three-step UI, brand-aligned alpha theme,
+browser matrix, and release hardening are documented in
 [`docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md).
 Earlier quick-path reliability history remains in
 [`docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md).
