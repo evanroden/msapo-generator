@@ -47,7 +47,7 @@ case. It does not remove the operator's ability to correct any exported value.
 | Object Account and Agreement Type | Canonical deterministic route matrix | Amount/route cannot be validated |
 | Specific asset | Unique match in the selected site's registry | No unique match is allowed to remain “No asset” |
 | PO/CO amount | Extracted final all-in total | Missing, malformed, zero, or negative |
-| Vendor and vendor contacts | Quote extraction | Vendor missing or optional email malformed |
+| Vendor and vendor representative | Quote extraction, then verified account/vendor memory | Any value missing or email malformed |
 | Description of Work | Quote extraction | Missing; export is always capped at 20 characters |
 | Requester / Asset Manager | Anonymous browser + exact ENFRA account memory | First use, blocked cookie, or new account |
 
