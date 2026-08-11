@@ -457,18 +457,35 @@ def _routing_for_generation(
     quote_text: str,
     token: str,
 ) -> tuple[str, str, str | None, str | None]:
-    """Resolve the reviewed contract/site for the generated scope PDF."""
+    """Resolve the reviewed contract/site for the generated scope PDF.
+
+    Streamlit deletes widget keys when a widget is absent during a rerun. The
+    confirmed values are therefore mirrored into a plain session key and take
+    precedence over both stale widget state and the original AI suggestion.
+    """
     detected_contract, detected_site = contracts.match_facility(
         analysis.facility_name, quote_text
     )
-    contract = st.session_state.get(f"contract_{token}") or detected_contract or ""
+    raw_confirmed = st.session_state.get(f"routing_{token}")
+    confirmed = raw_confirmed if isinstance(raw_confirmed, dict) else {}
+    contract = (
+        confirmed.get("contract")
+        or st.session_state.get(f"contract_{token}")
+        or detected_contract
+        or ""
+    )
     if contract == CONTRACT_PLACEHOLDER:
         contract = ""
 
     if contracts.is_rrh(contract):
         facility_key = facility_key_from_name(analysis.facility_name)
         default_site = FACILITY_SHORT_NAMES.get(facility_key) if facility_key else ""
-        site = st.session_state.get(f"site_{token}") or default_site or ""
+        site = (
+            confirmed.get("site")
+            or st.session_state.get(f"site_{token}")
+            or default_site
+            or ""
+        )
         if site == SITE_PLACEHOLDER:
             site = ""
         selected_key = SITE_LABEL_TO_KEY.get(site)
@@ -480,7 +497,8 @@ def _routing_for_generation(
     if contract:
         sites = contracts.sites_for_contract(contract)
         site = (
-            st.session_state.get(f"gsite_{token}_{contract}")
+            confirmed.get("site")
+            or st.session_state.get(f"gsite_{token}_{contract}")
             or st.session_state.get(f"gsitetxt_{token}_{contract}")
             or (detected_site if contract == detected_contract else "")
             or (sites[0] if len(sites) == 1 else "")
@@ -503,12 +521,16 @@ def _routing_snapshot(
         analysis.facility_name, quote_text
     )
     contract_options = set(contracts.contract_names())
+    raw_confirmed = st.session_state.get(f"routing_{token}")
+    confirmed = raw_confirmed if isinstance(raw_confirmed, dict) else {}
     stored_contract = str(st.session_state.get(f"contract_{token}", "") or "")
-    contract = (
-        stored_contract
-        if stored_contract in contract_options
-        else detected_contract if detected_contract in contract_options else ""
-    )
+    confirmed_contract = str(confirmed.get("contract", "") or "")
+    if stored_contract in contract_options:
+        contract = stored_contract
+    elif confirmed_contract in contract_options:
+        contract = confirmed_contract
+    else:
+        contract = detected_contract if detected_contract in contract_options else ""
     if not contract:
         return RoutingSnapshot("", False, "", "", "", None)
 
@@ -519,7 +541,13 @@ def _routing_snapshot(
             FACILITY_SHORT_NAMES.get(detected_site_key) if detected_site_key else ""
         )
         stored_site = str(st.session_state.get(f"site_{token}", "") or "")
-        site = stored_site if stored_site in SITE_LABELS else default_site or ""
+        confirmed_site = str(confirmed.get("site", "") or "")
+        if stored_site in SITE_LABELS:
+            site = stored_site
+        elif confirmed_contract == contract and confirmed_site in SITE_LABELS:
+            site = confirmed_site
+        else:
+            site = default_site or ""
         site_key = SITE_LABEL_TO_KEY.get(site)
         if not site_key:
             return RoutingSnapshot(contract, True, site, "", "", None)
@@ -553,9 +581,12 @@ def _routing_snapshot(
         stored_site = str(
             st.session_state.get(f"gsite_{token}_{contract}", "") or ""
         )
+        confirmed_site = str(confirmed.get("site", "") or "")
         site = (
             stored_site
             if stored_site in sites
+            else confirmed_site
+            if confirmed_contract == contract and confirmed_site in sites
             else detected_site
             if contract == detected_contract and detected_site in sites
             else sites[0]
@@ -564,7 +595,13 @@ def _routing_snapshot(
         )
     else:
         site = str(
-            st.session_state.get(f"gsitetxt_{token}_{contract}", "") or ""
+            st.session_state.get(f"gsitetxt_{token}_{contract}")
+            or (
+                confirmed.get("site")
+                if confirmed_contract == contract
+                else ""
+            )
+            or ""
         ).strip()
     category_label = str(
         st.session_state.get(
@@ -734,10 +771,14 @@ def _render_routing_controls(
         analysis.facility_name, quote_text
     )
     contract_options = [CONTRACT_PLACEHOLDER] + contracts.contract_names()
+    raw_confirmed = st.session_state.get(f"routing_{token}")
+    confirmed = raw_confirmed if isinstance(raw_confirmed, dict) else {}
     contract_key = f"contract_{token}"
     if st.session_state.get(contract_key) not in contract_options:
         st.session_state[contract_key] = (
-            detected_contract
+            confirmed.get("contract")
+            if confirmed.get("contract") in contract_options
+            else detected_contract
             if detected_contract in contract_options
             else CONTRACT_PLACEHOLDER
         )
@@ -747,6 +788,7 @@ def _render_routing_controls(
         key=contract_key,
     )
     if contract == CONTRACT_PLACEHOLDER:
+        st.session_state.pop(f"routing_{token}", None)
         return "", False, "", "", "", None
 
     rrh = contracts.is_rrh(contract)
@@ -757,19 +799,30 @@ def _render_routing_controls(
         site_key_name = f"site_{token}"
         if st.session_state.get(site_key_name) not in site_options:
             st.session_state[site_key_name] = (
-                default_site if default_site in site_options else SITE_PLACEHOLDER
+                confirmed.get("site")
+                if confirmed.get("contract") == contract
+                and confirmed.get("site") in site_options
+                else default_site
+                if default_site in site_options
+                else SITE_PLACEHOLDER
             )
         site = st.selectbox("Site *", site_options, key=site_key_name)
         if site == SITE_PLACEHOLDER:
+            st.session_state.pop(f"routing_{token}", None)
             return contract, rrh, "", "", "", None
         site_key = SITE_LABEL_TO_KEY.get(site)
         if not site_key:
+            st.session_state.pop(f"routing_{token}", None)
             return contract, rrh, "", "", "", None
         valid_categories = valid_categories_for_site(site_key)
         category_labels = [
             WORK_CATEGORY_DISPLAY.get(item, item) for item in valid_categories
         ]
         if not category_labels:
+            st.session_state[f"routing_{token}"] = {
+                "contract": contract,
+                "site": site,
+            }
             return contract, rrh, site, "", "", site_key
         default_category = (
             WORK_CATEGORY_DISPLAY.get(analysis.work_category, analysis.work_category)
@@ -801,6 +854,10 @@ def _render_routing_controls(
                 key=f"manualcost_{token}_{site_key}",
                 placeholder="Enter the site cost code",
             )
+        st.session_state[f"routing_{token}"] = {
+            "contract": contract,
+            "site": site,
+        }
         return contract, rrh, site, category_label, cost_code, site_key
 
     sites = contracts.sites_for_contract(contract)
@@ -813,7 +870,12 @@ def _render_routing_controls(
             else (sites[0] if len(sites) == 1 else SITE_PLACEHOLDER)
         )
         if st.session_state.get(site_state_key) not in site_options:
-            st.session_state[site_state_key] = site_default
+            st.session_state[site_state_key] = (
+                confirmed.get("site")
+                if confirmed.get("contract") == contract
+                and confirmed.get("site") in site_options
+                else site_default
+            )
         site = st.selectbox("Site *", site_options, key=site_state_key)
         if site == SITE_PLACEHOLDER:
             site = ""
@@ -835,6 +897,13 @@ def _render_routing_controls(
         key=f"gcost_{token}_{contract}",
         placeholder="Paste the cost code",
     )
+    if site:
+        st.session_state[f"routing_{token}"] = {
+            "contract": contract,
+            "site": site,
+        }
+    else:
+        st.session_state.pop(f"routing_{token}", None)
     return contract, rrh, site, category_label, cost_code, None
 
 

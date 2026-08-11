@@ -60,7 +60,7 @@ def clear_active_analysis(state: MutableMapping[str, Any]) -> None:
     for key in _ANALYSIS_KEYS:
         state.pop(key, None)
     for key in tuple(state):
-        if str(key).startswith("generated_context_"):
+        if str(key).startswith(("generated_context_", "routing_")):
             state.pop(key, None)
 
 

@@ -40,6 +40,7 @@ def test_clearing_source_removes_old_analysis_and_generated_package_state():
         "last_sig": "old-signature",
         "scope_pdf_bytes": b"old pdf",
         "scope_pdf_signature": "old-pdf-signature",
+        "routing_old": {"contract": "Tulane", "site": "Tulane"},
         "generated_context_old": "old-context",
         "uploaded_file_name": "preserved-source.pdf",
     }
