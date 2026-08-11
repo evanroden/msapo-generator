@@ -1,10 +1,17 @@
 from pathlib import Path
+from datetime import date
+from decimal import Decimal
+from io import BytesIO
 
 from dotenv import dotenv_values
+from PIL import Image
 from streamlit.testing.v1 import AppTest
 
+import app.expense_ui as expense_ui
 import app.web_ui as web_ui
+from app.expense_report import ExpensePackage
 from app.quote_analyzer import QuoteAnalysis
+from app.receipt_analyzer import ReceiptAnalysis
 
 
 ROOT = Path(__file__).parents[1]
@@ -156,4 +163,83 @@ def test_vendor_representative_is_filled_from_account_vendor_memory(monkeypatch)
     )
     assert any(
         "filled from prior requests" in item.value for item in app.caption
+    )
+
+
+def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
+    monkeypatch, tmp_path
+):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        expense_ui,
+        "analyze_receipt",
+        lambda *_args: ReceiptAnalysis(
+            merchant_name="Test Parking",
+            transaction_date=date(2026, 8, 10),
+            total_amount="31.25",
+            suggested_description="Business parking",
+            confidence="high",
+        ),
+    )
+    monkeypatch.setattr(
+        expense_ui,
+        "build_expense_package",
+        lambda _details, _items: ExpensePackage(
+            basename="expense-test",
+            workbook_bytes=b"xlsx-test",
+            pdf_bytes=b"%PDF-test",
+            total=Decimal("31.25"),
+            receipt_count=1,
+        ),
+    )
+    image = Image.new("RGB", (120, 220), "white")
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG")
+
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    app.file_uploader[0].upload(
+        "parking.jpg", buffer.getvalue(), "image/jpeg"
+    ).run()
+
+    def text_field(label):
+        return next(field for field in app.text_input if field.label == label)
+
+    text_field("Employee name *").set_value("Evan Roden").run()
+    text_field("Employee number *").set_value("133509").run()
+    text_field("Employee home BU *").set_value("1234").run()
+
+    # Switching workflows hides every expense widget for one rerun. The plain
+    # draft mirror must retain both the uploads and typed fields.
+    app.segmented_control[0].set_value("Purchase order").run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    assert not app.exception
+    assert text_field("Employee name *").value == "Evan Roden"
+    assert text_field("Merchant").value == "Test Parking"
+
+    next(
+        field for field in app.selectbox if field.label == "Job number *"
+    ).set_value("RRH-695400022-O&M").run()
+    text_field("Account / cost type *").set_value("5490").run()
+    text_field("Cost code *").set_value("01ASTART").run()
+
+    generate = next(
+        button
+        for button in app.button
+        if button.label == "Generate expense report and email draft"
+    )
+    assert not generate.disabled
+    generate.click().run()
+
+    assert not app.exception
+    assert [button.label for button in app.get("download_button")] == [
+        "Download completed Excel report",
+        "Download combined PDF packet",
+        "Download Outlook email draft with attachments",
+    ]
+    mail_links = app.get("link_button")
+    assert len(mail_links) == 1
+    assert mail_links[0].url.startswith(
+        "mailto:david.siegal@enfrasolutions.com?"
     )

@@ -3,6 +3,7 @@ from app.job_numbers import (
     JOB_NUMBER_OPTIONS,
     RRH_JOB_NUMBERS,
     UNITY_DISAMBIGUATION_GUIDANCE,
+    job_number_identifier,
     job_numbers_for_contract,
     suggest_job_number,
 )
@@ -62,3 +63,9 @@ def test_analyzer_prompt_contains_the_unity_disambiguation_policy():
     assert "Unity Health System in Arkansas" in compact_prompt
     assert "Rochester Regional Health (RRH)" in compact_prompt
     assert "Never" in compact_prompt
+
+
+def test_expense_form_identifier_comes_from_the_verified_job_option():
+    assert job_number_identifier("RRH-695400022-O&M") == "695400022"
+    assert job_number_identifier("TULANE EA- VI100018-O&M") == "VI100018"
+    assert job_number_identifier("not a catalog option") is None

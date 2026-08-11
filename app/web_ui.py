@@ -28,6 +28,12 @@ from app.config import (
     valid_categories_for_site,
 )
 from app.device_identity import device_token, ensure_device_cookie
+from app.expense_ui import (
+    EXPENSE_WORKFLOW,
+    PURCHASE_WORKFLOW,
+    preserve_expense_draft_state,
+    render_expense_workflow,
+)
 from app.job_numbers import (
     RRH_JOB_NUMBERS,
     job_numbers_for_contract,
@@ -1021,6 +1027,20 @@ def main() -> None:
     except Exception:
         browser_token = ""
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+    preserve_expense_draft_state()
+
+    workflow_mode = st.segmented_control(
+        "Choose workflow",
+        (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW),
+        default=PURCHASE_WORKFLOW,
+        key="workflow_mode",
+        label_visibility="collapsed",
+        width="stretch",
+    )
+    if workflow_mode == EXPENSE_WORKFLOW:
+        render_expense_workflow(browser_token)
+        _render_footer()
+        return
 
     st.markdown(
         """

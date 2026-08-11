@@ -17,6 +17,11 @@ different ENFRA account while removing repeated name entry for the same user.
 The older three-use device_requesters tables/functions remain readable for
 backward compatibility, but the active UI no longer uses or exposes them.
 
+After a valid reimbursement package is generated, the same browser/account
+pair also remembers the reviewed employee number, home BU, administrator, mail
+choice, and default JDE coding. Receipt files and transaction data are never
+written to this store.
+
 Nothing learned on one contract is ever surfaced on another — the same way
 David is only relevant to RRH.
 
@@ -102,6 +107,29 @@ CREATE TABLE IF NOT EXISTS device_account_manager_events (
     manager_key TEXT NOT NULL,
     recorded_at REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (device_hash, account_key, context_id)
+);
+CREATE TABLE IF NOT EXISTS device_expense_profiles (
+    device_hash          TEXT NOT NULL,
+    account_key          TEXT NOT NULL,
+    employee_name        TEXT NOT NULL,
+    employee_number      TEXT NOT NULL,
+    employee_home_bu     TEXT NOT NULL,
+    approver_name        TEXT NOT NULL,
+    approver_email       TEXT NOT NULL,
+    mail_destination     TEXT NOT NULL,
+    satellite_office     TEXT NOT NULL,
+    allocation_kind      TEXT NOT NULL,
+    job_number           TEXT NOT NULL,
+    service_center       TEXT NOT NULL,
+    account_cost_type    TEXT NOT NULL,
+    cost_code_or_wo_type TEXT NOT NULL,
+    work_order_number    TEXT NOT NULL,
+    company_number       TEXT NOT NULL,
+    department_number    TEXT NOT NULL,
+    ou_number            TEXT NOT NULL,
+    gl_account_number    TEXT NOT NULL,
+    last_used            REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (device_hash, account_key)
 );
 """
 
@@ -556,6 +584,110 @@ def remembered_device_account_manager(
         return str(row[0]) if row else ""
     except Exception:
         return ""
+    finally:
+        conn.close()
+
+
+_EXPENSE_PROFILE_FIELDS = (
+    "employee_name",
+    "employee_number",
+    "employee_home_bu",
+    "approver_name",
+    "approver_email",
+    "mail_destination",
+    "satellite_office",
+    "allocation_kind",
+    "job_number",
+    "service_center",
+    "account_cost_type",
+    "cost_code_or_wo_type",
+    "work_order_number",
+    "company_number",
+    "department_number",
+    "ou_number",
+    "gl_account_number",
+)
+
+
+def record_expense_profile(
+    *,
+    device_token: str | None,
+    account: str | None,
+    values: dict[str, object],
+) -> bool:
+    """Remember reviewed employee/admin/default coding for this browser+account.
+
+    Receipt images, merchants, dates, descriptions, and amounts are deliberately
+    excluded. The profile is written only after the operator generates a valid
+    package and the latest verified values replace the prior defaults.
+    """
+    device = _device_hash(device_token)
+    account_key = _account_key(account)
+    if not device or not account_key:
+        return False
+    cleaned = {
+        field: " ".join(str(values.get(field, "") or "").split())
+        for field in _EXPENSE_PROFILE_FIELDS
+    }
+    if any(len(value) > 240 for value in cleaned.values()):
+        return False
+    if cleaned["approver_email"] and not _looks_like_email(
+        cleaned["approver_email"].lower()
+    ):
+        return False
+
+    conn = _connect()
+    if conn is None:
+        return False
+    columns = ",".join(_EXPENSE_PROFILE_FIELDS)
+    placeholders = ",".join("?" for _ in _EXPENSE_PROFILE_FIELDS)
+    assignments = ",".join(f"{field}=excluded.{field}" for field in _EXPENSE_PROFILE_FIELDS)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO device_expense_profiles "
+                f"(device_hash,account_key,{columns},last_used) "
+                f"VALUES (?,?,{placeholders},?) "
+                "ON CONFLICT(device_hash,account_key) DO UPDATE SET "
+                f"{assignments},last_used=excluded.last_used",
+                (
+                    device,
+                    account_key,
+                    *(cleaned[field] for field in _EXPENSE_PROFILE_FIELDS),
+                    time.time(),
+                ),
+            )
+        return True
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
+def remembered_expense_profile(
+    device_token: str | None,
+    account: str | None,
+) -> dict[str, str]:
+    """Return the latest expense defaults for this exact browser+account."""
+    device = _device_hash(device_token)
+    account_key = _account_key(account)
+    if not device or not account_key:
+        return {}
+    conn = _connect()
+    if conn is None:
+        return {}
+    columns = ",".join(_EXPENSE_PROFILE_FIELDS)
+    try:
+        row = conn.execute(
+            f"SELECT {columns} FROM device_expense_profiles "
+            "WHERE device_hash=? AND account_key=?",
+            (device, account_key),
+        ).fetchone()
+        if not row:
+            return {}
+        return dict(zip(_EXPENSE_PROFILE_FIELDS, map(str, row)))
+    except Exception:
+        return {}
     finally:
         conn.close()
 

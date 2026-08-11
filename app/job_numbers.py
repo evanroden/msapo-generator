@@ -190,3 +190,15 @@ def suggest_job_number(
     if len(options) == 1:
         return str(options[0])
     return None
+
+
+def job_number_identifier(option: str | None) -> str | None:
+    """Return the exact JDE job identifier embedded in a catalog option.
+
+    The Smartsheet-facing catalog keeps its descriptive account label, while
+    the reimbursement workbook accepts only the numeric/VI identifier in the
+    ``Job or Service Center #`` column.  Keeping this extraction beside the
+    verified catalog prevents a second, drifting list.
+    """
+    match = _JOB_IDENTIFIER_RE.search(str(option or ""))
+    return match.group(0).upper() if match else None
