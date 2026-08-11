@@ -1,6 +1,10 @@
 import sqlite3
 
-from app.memory import record_expense_profile, remembered_expense_profile
+from app.memory import (
+    record_expense_profile,
+    remembered_expense_employee_number,
+    remembered_expense_profile,
+)
 
 
 def _profile(name: str = "Synthetic Employee") -> dict[str, str]:
@@ -93,3 +97,60 @@ def test_expense_profile_rejects_invalid_identity_or_email(monkeypatch, tmp_path
         values=_profile(),
     )
     assert not (tmp_path / "epc_memory.db").exists()
+
+
+def test_employee_number_is_recalled_by_name_not_just_latest_profile(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    first = _profile("First Employee")
+    first["employee_number"] = "TEST-1001"
+    second = _profile("Second Employee")
+    second["employee_number"] = "TEST-2002"
+
+    assert record_expense_profile(
+        device_token="browser-a",
+        account="Rochester Regional Health",
+        values=first,
+    )
+    assert record_expense_profile(
+        device_token="browser-a",
+        account="Rochester Regional Health",
+        values=second,
+    )
+
+    assert remembered_expense_employee_number(
+        "browser-a", "Rochester Regional Health", "  FIRST employee "
+    ) == "TEST-1001"
+    assert remembered_expense_employee_number(
+        "browser-a", "Rochester Regional Health", "Second Employee"
+    ) == "TEST-2002"
+    assert remembered_expense_employee_number(
+        "browser-b", "Rochester Regional Health", "First Employee"
+    ) == ""
+    assert remembered_expense_employee_number(
+        "browser-a", "Tulane", "First Employee"
+    ) == ""
+
+
+def test_employee_number_mapping_is_corrected_after_confirmed_regeneration(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    original = _profile("Synthetic Employee")
+    corrected = dict(original, employee_number="TEST-9999")
+
+    record_expense_profile(
+        device_token="browser-a",
+        account="Rochester Regional Health",
+        values=original,
+    )
+    record_expense_profile(
+        device_token="browser-a",
+        account="Rochester Regional Health",
+        values=corrected,
+    )
+
+    assert remembered_expense_employee_number(
+        "browser-a", "Rochester Regional Health", "Synthetic Employee"
+    ) == "TEST-9999"

@@ -259,6 +259,7 @@ or expected app handoff, prefilled values, and attachment selection.
 | UBR-16 | High | Missing vendor representative fields were mislabeled optional | Both fields are required, visible when unresolved, and block generation |
 | UBR-17 | Medium | Custom and native expander borders created doubled mobile edges | Compact native expanders plus removal of the custom outer border |
 | UBR-18 | High | Vendor history was stored but the active UI neither recalled nor updated it | Account/vendor lookup during review plus idempotent recording after verified generation |
+| UBR-19 | Medium | Safety Yellow primary styling made the selected workflow label nearly unreadable | Selected segment uses white on Ocean Steel with a Safety Yellow underline; idle segment uses Ocean Steel on white |
 
 ## 9. Residual risks
 

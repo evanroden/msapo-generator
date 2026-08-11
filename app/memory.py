@@ -18,11 +18,14 @@ The older three-use device_requesters tables/functions remain readable for
 backward compatibility, but the active UI no longer uses or exposes them.
 
 After a valid reimbursement package is generated, the same browser/account
-pair also remembers the reviewed employee number, administrator, and mail
-choice. Employee Home Business Unit and baseline coding are derived from the
-account in the active UI. Receipt files, transaction data, mileage entries, and
-signature confirmation are never written to this store. Legacy coding columns
-remain in the table for backward-compatible reads.
+pair also remembers the reviewed administrator and mail choice. Each confirmed
+employee name/number pair is kept separately for that browser and account, so
+returning to an employee's exact normalized name recalls the right number even
+after another employee prepares a report. Employee Home Business Unit and
+baseline coding are derived from the account in the active UI. Receipt files,
+transaction data, mileage entries, and signature confirmation are never written
+to this store. Legacy coding columns remain in the table for backward-compatible
+reads.
 
 Nothing learned on one contract is ever surfaced on another; even administrator
 details remain scoped to the exact account.
@@ -132,6 +135,15 @@ CREATE TABLE IF NOT EXISTS device_expense_profiles (
     gl_account_number    TEXT NOT NULL,
     last_used            REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (device_hash, account_key)
+);
+CREATE TABLE IF NOT EXISTS device_expense_employees (
+    device_hash    TEXT NOT NULL,
+    account_key    TEXT NOT NULL,
+    employee_key   TEXT NOT NULL,
+    employee_name  TEXT NOT NULL,
+    employee_number TEXT NOT NULL,
+    last_used      REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (device_hash, account_key, employee_key)
 );
 """
 
@@ -644,6 +656,9 @@ def record_expense_profile(
     columns = ",".join(_EXPENSE_PROFILE_FIELDS)
     placeholders = ",".join("?" for _ in _EXPENSE_PROFILE_FIELDS)
     assignments = ",".join(f"{field}=excluded.{field}" for field in _EXPENSE_PROFILE_FIELDS)
+    employee_name = cleaned["employee_name"]
+    employee_number = cleaned["employee_number"]
+    employee_key = _requester_key(employee_name)
     try:
         with conn:
             conn.execute(
@@ -659,6 +674,24 @@ def record_expense_profile(
                     time.time(),
                 ),
             )
+            if employee_key and employee_number:
+                conn.execute(
+                    "INSERT INTO device_expense_employees "
+                    "(device_hash,account_key,employee_key,employee_name,"
+                    "employee_number,last_used) VALUES (?,?,?,?,?,?) "
+                    "ON CONFLICT(device_hash,account_key,employee_key) DO UPDATE SET "
+                    "employee_name=excluded.employee_name,"
+                    "employee_number=excluded.employee_number,"
+                    "last_used=excluded.last_used",
+                    (
+                        device,
+                        account_key,
+                        employee_key,
+                        employee_name,
+                        employee_number,
+                        time.time(),
+                    ),
+                )
         return True
     except Exception:
         return False
@@ -690,6 +723,48 @@ def remembered_expense_profile(
         return dict(zip(_EXPENSE_PROFILE_FIELDS, map(str, row)))
     except Exception:
         return {}
+    finally:
+        conn.close()
+
+
+def remembered_expense_employee_number(
+    device_token: str | None,
+    account: str | None,
+    employee_name: str | None,
+) -> str:
+    """Return the number confirmed for this employee/browser/account.
+
+    Matching is exact after case and whitespace normalization. The legacy
+    latest-profile row remains a fallback so existing deployments gain recall
+    before their first report is generated with the new mapping table.
+    """
+    device = _device_hash(device_token)
+    account_key = _account_key(account)
+    employee_key = _requester_key(employee_name)
+    if not device or not account_key or not employee_key:
+        return ""
+    conn = _connect()
+    if conn is None:
+        return ""
+    try:
+        row = conn.execute(
+            "SELECT employee_number FROM device_expense_employees "
+            "WHERE device_hash=? AND account_key=? AND employee_key=?",
+            (device, account_key, employee_key),
+        ).fetchone()
+        if row:
+            return str(row[0])
+
+        legacy = conn.execute(
+            "SELECT employee_name,employee_number FROM device_expense_profiles "
+            "WHERE device_hash=? AND account_key=?",
+            (device, account_key),
+        ).fetchone()
+        if legacy and _requester_key(str(legacy[0])) == employee_key:
+            return str(legacy[1])
+        return ""
+    except Exception:
+        return ""
     finally:
         conn.close()
 

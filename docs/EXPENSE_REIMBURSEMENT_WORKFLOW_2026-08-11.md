@@ -276,12 +276,20 @@ prefill with only the business-reimbursable portion when appropriate.
 
 ## Memory and privacy boundary
 
-After a valid package, SQLite stores only the latest profile for the exact
+After a valid package, SQLite stores the latest defaults for the exact
 hashed-browser-token/account pair:
 
 - Employee name and number
 - Administrator name and email
 - Mail destination/satellite office
+
+It also stores a separate employee-name/employee-number mapping for that same
+browser and account. Entering a previously confirmed employee name recalls that
+employee's number even if another employee generated the most recent report.
+Matching ignores case and repeated whitespace but does not use fuzzy matching.
+Changing to an unknown name clears the prior employee's number instead of
+silently carrying it forward. Recalled numbers stay visible and editable, and a
+corrected number replaces the old mapping only after a valid report is generated.
 
 Employee Home Business Unit and RRH baseline coding come from account policy,
 not another employee's remembered transaction. Legacy allocation columns remain
@@ -335,6 +343,7 @@ disable only the memory convenience.
 | Employee edits the optional Excel download | UI directs the employee to export the edited workbook to PDF and replace the draft's attached PDF before sending. |
 | Outlook/mobile incompatibility | Windows gets a PDF-attached `.eml`; mobile/web gets the PDF download plus `mailto:` and explicit attachment instructions. |
 | Signature confirmed for a different name | Changing the employee name clears confirmation and blocks generation until the new preview is confirmed. |
+| Employee name changes after a number was filled | Exact browser/account/name recall supplies the confirmed number; an unknown name clears the stale number. |
 | Template drift | Anchor cells are verified before any write; a changed template fails closed. |
 
 ## Browser and platform behavior

@@ -43,6 +43,7 @@ from app.job_numbers import job_numbers_for_contract
 from app.memory import (
     record_expense_profile,
     remembered_device_account_manager,
+    remembered_expense_employee_number,
     remembered_expense_profile,
 )
 from app.receipt_analyzer import ReceiptAnalysis, analyze_receipt
@@ -214,14 +215,39 @@ def render_expense_workflow(browser_token: str) -> None:
 
     detail_columns = st.columns(2)
     with detail_columns[0]:
+        employee_name_key = f"expense_employee_name_{account_token}"
+        employee_number_key = f"expense_employee_number_{account_token}"
+        employee_number_recall_key = (
+            f"expense_employee_number_recalled_for_{account_token}"
+        )
         employee_name = st.text_input(
             "Employee name *",
-            key=f"expense_employee_name_{account_token}",
+            key=employee_name_key,
+            on_change=_recall_employee_number_for_name,
+            args=(
+                browser_token,
+                account,
+                employee_name_key,
+                employee_number_key,
+                employee_number_recall_key,
+            ),
         ).strip()
         employee_number = st.text_input(
             "Employee number *",
-            key=f"expense_employee_number_{account_token}",
+            key=employee_number_key,
+            help=(
+                "After a confirmed report, this is recalled for the same employee "
+                "name on this browser and account. It remains editable."
+            ),
+            on_change=_clear_employee_number_recall,
+            args=(employee_number_recall_key,),
         ).strip()
+        if st.session_state.get(employee_number_recall_key) == _employee_name_key(
+            employee_name
+        ):
+            st.caption(
+                "Employee number recalled from this employee's last confirmed report."
+            )
         employee_home_bu = _employee_home_business_unit(account)
         home_bu_display_key = f"expense_employee_home_bu_display_{account_token}"
         st.session_state[home_bu_display_key] = employee_home_bu
@@ -856,6 +882,38 @@ def _employee_home_business_unit(account: str) -> str:
     return "695" if contracts.is_rrh(account) else account.strip()
 
 
+def _employee_name_key(name: object) -> str:
+    return " ".join(str(name or "").split()).casefold()
+
+
+def _recall_employee_number_for_name(
+    browser_token: str,
+    account: str,
+    employee_name_key: str,
+    employee_number_key: str,
+    recall_marker_key: str,
+) -> None:
+    """Replace a stale number when the employee identity changes."""
+    employee_name = str(st.session_state.get(employee_name_key, "") or "")
+    remembered = remembered_expense_employee_number(
+        browser_token,
+        account,
+        employee_name,
+    )
+    # A number belongs to one employee. Leaving the prior employee's value in
+    # place when the name changes is a more dangerous default than a blank.
+    st.session_state[employee_number_key] = remembered
+    if remembered:
+        st.session_state[recall_marker_key] = _employee_name_key(employee_name)
+    else:
+        st.session_state.pop(recall_marker_key, None)
+
+
+def _clear_employee_number_recall(recall_marker_key: str) -> None:
+    """Stop labeling a number as recalled after the operator edits it."""
+    st.session_state.pop(recall_marker_key, None)
+
+
 def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
     profile = remembered_expense_profile(browser_token, account)
     account_token = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
@@ -887,6 +945,11 @@ def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
         }
         for key, value in defaults.items():
             st.session_state.setdefault(key, value)
+        if employee_name and profile.get("employee_number"):
+            st.session_state.setdefault(
+                f"expense_employee_number_recalled_for_{account_token}",
+                _employee_name_key(employee_name),
+            )
         st.session_state[seed_key] = True
     return profile
 

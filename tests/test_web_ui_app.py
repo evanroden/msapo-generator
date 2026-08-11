@@ -115,6 +115,60 @@ def test_scope_draft_is_an_editable_text_field(monkeypatch):
     assert captured["scope"].startswith("Edited scope:")
 
 
+def test_expense_employee_number_is_recalled_when_employee_name_changes(monkeypatch):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setattr(
+        expense_ui,
+        "remembered_expense_employee_number",
+        lambda _device, account, name: (
+            "TEST-4242"
+            if account == "Rochester Regional Health"
+            and " ".join(name.split()).casefold() == "dane example"
+            else ""
+        ),
+    )
+
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    employee_name = next(
+        field for field in app.text_input if field.label == "Employee name *"
+    )
+    employee_name.set_value("Dane Example").run()
+
+    employee_number = next(
+        field for field in app.text_input if field.label == "Employee number *"
+    )
+    assert employee_number.value == "TEST-4242"
+    assert any(
+        "recalled from this employee's last confirmed report" in caption.value
+        for caption in app.caption
+    )
+
+    employee_name = next(
+        field for field in app.text_input if field.label == "Employee name *"
+    )
+    employee_name.set_value("Unknown Employee").run()
+    employee_number = next(
+        field for field in app.text_input if field.label == "Employee number *"
+    )
+    assert employee_number.value == ""
+
+
+def test_workflow_selector_css_uses_high_contrast_active_and_idle_states():
+    css = web_ui.CUSTOM_CSS
+    active = css.split(
+        '.st-key-workflow_mode button[kind="segmented_controlActive"] {', 1
+    )[1].split("}", 1)[0]
+    idle = css.split(
+        '.st-key-workflow_mode button[kind="segmented_control"] {', 1
+    )[1].split("}", 1)[0]
+
+    assert "background: var(--enfra-ocean) !important" in active
+    assert "color: #FFFFFF !important" in active
+    assert "background: #FFFFFF !important" in idle
+    assert "color: var(--enfra-ocean) !important" in idle
+
+
 def test_nondescript_synthetic_trigger_is_available_without_an_env_flag(monkeypatch):
     _configure_smartsheet(monkeypatch)
 

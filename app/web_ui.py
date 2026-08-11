@@ -135,6 +135,41 @@ CUSTOM_CSS = """
         padding-left: max(1rem, env(safe-area-inset-left)) !important;
     }
 
+    /* The default Streamlit active segment uses the primary color at low
+       opacity and repeats that color for its text. With Safety Yellow as the
+       primary color, that produces yellow-on-pale-yellow text. Use the dark
+       brand surface for the selected workflow and retain a yellow underline. */
+    .st-key-workflow_mode div[data-testid="stSegmentedControl"] button {
+        font-size: 1rem !important;
+        font-weight: 700 !important;
+        min-height: 52px !important;
+    }
+    .st-key-workflow_mode button[kind="segmented_control"] {
+        background: #FFFFFF !important;
+        border-color: var(--enfra-concrete) !important;
+        color: var(--enfra-ocean) !important;
+    }
+    .st-key-workflow_mode button[kind="segmented_control"]:hover {
+        background: var(--enfra-iced) !important;
+        border-color: var(--enfra-blue) !important;
+        color: var(--enfra-ocean) !important;
+    }
+    .st-key-workflow_mode button[kind="segmented_controlActive"] {
+        background: var(--enfra-ocean) !important;
+        border-color: var(--enfra-ocean) !important;
+        box-shadow: inset 0 -4px 0 var(--enfra-yellow) !important;
+        color: #FFFFFF !important;
+    }
+    .st-key-workflow_mode button[kind="segmented_controlActive"]:hover {
+        background: #174B41 !important;
+        color: #FFFFFF !important;
+    }
+    .st-key-workflow_mode button[kind^="segmented_control"] p,
+    .st-key-workflow_mode button[kind^="segmented_control"] span {
+        color: inherit !important;
+        font-weight: inherit !important;
+    }
+
     .hero {
         background: var(--enfra-ocean);
         border-left: 8px solid var(--enfra-yellow);
