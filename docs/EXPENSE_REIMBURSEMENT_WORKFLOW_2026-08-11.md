@@ -40,9 +40,10 @@ The supplied files represented three different stages:
   15 receipt pages.
 
 The completed examples were treated as examples, not policy. One example placed
-a home address in **Employee Home BU**, which may be incorrect. The workflow
-therefore leaves that field required and remembered only after review; it does
-not hard-code the address. The help text calls out the uncertainty.
+a home address in **Employee Home Business Unit**, which is not valid for this
+field. The workflow requires the employee's assigned JDE business-unit number,
+remembers it only after review, and explicitly tells the user not to enter an
+address.
 
 The form itself is the authority for layout, row capacity, formulas, and JDE
 column placement. Business-policy values that were not provided—such as a full
@@ -69,7 +70,7 @@ Required report values:
 - Account / contract
 - Employee name
 - Employee number
-- Employee home BU
+- Employee Home Business Unit
 - Report date
 - Contract administrator name and email
 - Mail destination; satellite office becomes required when selected
@@ -142,7 +143,7 @@ same order so the packet remains auditable.
 |---|---|
 | Employee name | `C5` |
 | Employee number | `G5` |
-| Employee home BU | `K5` |
+| Employee Home Business Unit | `K5` |
 | Report date | `P5` |
 | Mail home selection | `B62` |
 | Mail satellite selection | `B64` |
@@ -215,7 +216,7 @@ After a valid package, SQLite stores only the latest profile for the exact
 hashed-browser-token/account pair:
 
 - Employee name and number
-- Employee home BU
+- Employee Home Business Unit
 - Administrator name and email
 - Mail destination/satellite office
 - Default allocation type and coding fields
@@ -304,8 +305,8 @@ Coverage includes:
 
 ## Unresolved policy inputs — do not guess
 
-1. Confirm what **Employee Home BU** must contain. The example's home address is
-   not treated as authoritative.
+1. Supply or confirm each employee's assigned **Employee Home Business Unit**
+   number. The workflow does not accept a home address for this field.
 2. Confirm whether administrators want both Excel and PDF, Excel only, or PDF
    only. The current email draft includes both when size permits.
 3. Confirm whether a typed/digital signature workflow is permitted. The current

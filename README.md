@@ -47,11 +47,11 @@ There is no email-submission route in the active UI.
    image or PDF per receipt. Exact duplicate files are ignored. HEIC phone
    photos, screenshots, common image formats, and multi-page PDF receipts are
    supported without modifying the uploaded files.
-2. Confirm employee number, employee home BU, report date, administrator, mail
+2. Confirm employee number, Employee Home Business Unit, report date, administrator, mail
    destination, and one default JDE allocation. RRH defaults to David Siegal;
    other accounts remain blank until reviewed. The examples are not treated as
-   accounting policy: the UI specifically warns that the example's home address
-   may not be a valid Employee Home BU.
+   accounting policy: a home address is not accepted as the Employee Home
+   Business Unit.
 3. Review the editable merchant, transaction date, description/business
    purpose, reimbursable amount, and Miscellaneous/Entertainment selection below
    every receipt. Required values remain visible when AI cannot determine them.
@@ -227,8 +227,8 @@ count, account memories do not cross, and there is no Forget button in the
 active flow. Blocked cookies disable only this convenience.
 
 After a valid expense package is generated, the same browser/account pair also
-remembers the reviewed employee name/number, home BU, administrator, mail
-destination, and default JDE allocation. It never persists receipt files,
+remembers the reviewed employee name/number, Employee Home Business Unit,
+administrator, mail destination, and default JDE allocation. It never persists receipt files,
 merchant names, transaction dates, descriptions, or amounts. An in-progress
 draft is mirrored in the current Streamlit session so switching workflows does
 not discard typed values; **Clear receipts and start over** explicitly removes

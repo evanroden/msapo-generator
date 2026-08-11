@@ -209,11 +209,11 @@ def render_expense_workflow(browser_token: str) -> None:
             key=f"expense_employee_number_{account_token}",
         ).strip()
         employee_home_bu = st.text_input(
-            "Employee home BU *",
+            "Employee Home Business Unit *",
             key=f"expense_employee_home_bu_{account_token}",
             help=(
-                "Enter the JDE home business-unit value. The completed example "
-                "used a home address here and may not be a reliable precedent."
+                "Enter the employee's assigned JDE Home Business Unit number. "
+                "Do not enter a home address."
             ),
         ).strip()
     with detail_columns[1]:

@@ -18,9 +18,9 @@ The older three-use device_requesters tables/functions remain readable for
 backward compatibility, but the active UI no longer uses or exposes them.
 
 After a valid reimbursement package is generated, the same browser/account
-pair also remembers the reviewed employee number, home BU, administrator, mail
-choice, and default JDE coding. Receipt files and transaction data are never
-written to this store.
+pair also remembers the reviewed employee number, Employee Home Business Unit,
+administrator, mail choice, and default JDE coding. Receipt files and
+transaction data are never written to this store.
 
 Nothing learned on one contract is ever surfaced on another — the same way
 David is only relevant to RRH.

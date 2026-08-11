@@ -208,7 +208,7 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
 
     text_field("Employee name *").set_value("Evan Roden").run()
     text_field("Employee number *").set_value("133509").run()
-    text_field("Employee home BU *").set_value("1234").run()
+    text_field("Employee Home Business Unit *").set_value("1234").run()
 
     # Switching workflows hides every expense widget for one rerun. The plain
     # draft mirror must retain both the uploads and typed fields.

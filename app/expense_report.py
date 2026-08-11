@@ -198,7 +198,10 @@ def validate_expense_report(
         (details.account, "choose the account / contract"),
         (details.employee_name, "enter the employee name"),
         (details.employee_number, "enter the employee number"),
-        (details.employee_home_bu, "enter the employee home BU"),
+        (
+            details.employee_home_bu,
+            "enter the Employee Home Business Unit",
+        ),
         (details.approver_name, "enter the contract administrator's name"),
         (details.approver_email, "enter the contract administrator's email"),
     ):
