@@ -1,9 +1,9 @@
 # Expense reimbursement workflow handoff
 
-**Feature commit:** `2504c23` — `Add employee expense report workflow`  
-**Documentation commit:** this handoff's repository commit  
-**Date:** 2026-08-11  
-**Source template:** `Employee Reimbursement Expense Report _JDE_10012025.xlsx`  
+**Feature commit:** `9f7b1f9` — `Add employee expense report workflow`
+**Documentation commit:** `b057e0b` — `Document expense reimbursement controls`
+**Date:** 2026-08-11
+**Source template:** `Employee Reimbursement Expense Report _JDE_10012025.xlsx`
 **Source-template SHA-256:** `9bc532c2d55b0600450d51e23eb1517c243ece614722aa8365b5879a8920bc33`
 
 ## Outcome
