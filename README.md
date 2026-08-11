@@ -1,10 +1,16 @@
-# Purchase Order Process Control
+# Process Control
 
-Purchase Order Process Control turns a vendor quote into a reviewed, prefilled
-Smartsheet PO request and a two-file supporting package. It is a Dockerized
-Streamlit application deployed on Render. The repository retains its historical
-`msapo-generator` name, but the active product is no longer an email or MSAPO
-document generator.
+Process Control provides two workflows in one Dockerized Streamlit application:
+
+1. Purchase Order Process Control turns a vendor quote into a reviewed,
+   prefilled Smartsheet request and a two-file supporting package.
+2. Expense Report Process Control turns receipt images/PDFs into the official
+   employee-reimbursement workbook, a combined PDF packet, and a ready-to-review
+   email draft.
+
+The repository retains its historical `msapo-generator` name. The PO workflow
+is no longer an email or MSAPO document generator; email-draft generation is
+used only by the separately approved expense-reimbursement workflow.
 
 The authoritative business policy handoff is
 [`docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
@@ -16,8 +22,11 @@ Earlier quick-path reliability history remains in
 [`docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md).
 The verified 87-value job catalog and the Arkansas-versus-RRH Unity rule are in
 [`docs/JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md`](docs/JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md).
+The expense form mapping, receipt controls, AI boundary, failure modes, and
+open policy questions are in
+[`docs/EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md`](docs/EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md).
 
-## Current workflow
+## Purchase-order workflow
 
 1. Choose Upload or Paste and provide one quote. The inactive source can never
    silently override the selected source.
@@ -31,6 +40,41 @@ The verified 87-value job catalog and the Arkansas-versus-RRH Unity rule are in
    review, and submit it manually.
 
 There is no email-submission route in the active UI.
+
+## Expense-reimbursement workflow
+
+1. Choose **Expense reimbursement** in the top workflow switch and upload one
+   image or PDF per receipt. Exact duplicate files are ignored. HEIC phone
+   photos, screenshots, common image formats, and multi-page PDF receipts are
+   supported without modifying the uploaded files.
+2. Confirm employee number, employee home BU, report date, administrator, mail
+   destination, and one default JDE allocation. RRH defaults to David Siegal;
+   other accounts remain blank until reviewed. The examples are not treated as
+   accounting policy: the UI specifically warns that the example's home address
+   may not be a valid Employee Home BU.
+3. Review the editable merchant, transaction date, description/business
+   purpose, reimbursable amount, and Miscellaneous/Entertainment selection below
+   every receipt. Required values remain visible when AI cannot determine them.
+   Every receipt uses the report-level coding unless its explicit override is
+   enabled.
+4. Generate three artifacts from one action: the official `.xlsx` workbook with
+   a printable `RECEIPTS` worksheet, one `.pdf` with the form first and receipt
+   pages afterward, and an Outlook `.eml` draft with the generated files
+   attached. A `mailto:` fallback is provided for iPhone/iPad and webmail; it
+   cannot carry attachments.
+
+The report supports all three allocation layouts in the supplied JDE form:
+
+| Allocation | Required coding | Workbook columns |
+|---|---|---|
+| Job expense | Verified job number, account/cost type, cost code | Job/Service Center, Account/Cost Type, Cost Code |
+| Work-order expense | Service center, account/cost type, WO type, work-order number | Job/Service Center, Account/Cost Type, Cost Code/WO Type, Work Order # |
+| Overhead/other | Company, department, OU, GL account | Other Expenses columns |
+
+The Smartsheet job-number description is converted to its exact numeric or `VI`
+identifier in the JDE form. Leading zeros in every accounting code are preserved
+as text. Rows are grouped by section and coding, and the appended receipt pages
+follow that same order.
 
 ## Canonical classification matrix
 
@@ -98,6 +142,11 @@ app/memory.py                  Contract and anonymous-browser learning
 app/workflow_state.py          Active-source and stale-analysis state controls
 app/workflow_review.py         Exception-only question and tax-alert rules
 app/smartsheet_store.py        Leased/idempotent future API state
+app/expense_ui.py              Receipt review and reimbursement workflow
+app/receipt_analyzer.py        Structured receipt OCR/extraction
+app/expense_report.py          JDE workbook, receipt sheet, and PDF packet
+templates/Employee_Reimbursement_Expense_Report_JDE_10012025.xlsx
+                               Supplied official reimbursement template
 pages/2_Smartsheet_PO.py       Non-submitting legacy bookmark notice
 docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md
                                Authoritative policy and successor handoff
@@ -108,10 +157,9 @@ docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md
 tests/                         Pytest regression suite
 ```
 
-`app/document_generator.py`, `app/pdf_converter.py`, and `app/eml_builder.py`
-remain only as dormant historical compatibility modules. The active UI does not
-import or call them. Do not reconnect them without a new approved business
-requirement.
+`app/document_generator.py` and `app/pdf_converter.py` remain dormant historical
+compatibility modules. `app/eml_builder.py` is used only to create the approved
+expense-report draft; the PO workflow does not import or call it.
 
 ## Local development
 
@@ -143,8 +191,10 @@ Pull requests and pushes to `main` run the same suite in GitHub Actions.
 
 ## Deployment
 
-Render runs one Docker web service on port 8501. Production stores contract
-learning, anonymous-browser requester learning, and guarded Smartsheet API state
+Render runs one Docker web service on port 8501. The image includes LibreOffice
+Calc so the completed workbook and receipt worksheet can be rendered as one
+PDF. Production stores contract learning, anonymous-browser requester learning,
+and guarded Smartsheet API state
 on the persistent disk at `EPC_DATA_DIR=/test1`.
 
 Render dashboard values override `render.yaml`. When form behavior differs from
@@ -154,11 +204,18 @@ the repository, compare `SMARTSHEET_FORM_URL`,
 
 ## Input support
 
-The UI accepts PDF, TXT, PNG, JPEG, WebP, TIFF/TIF, BMP, and HEIC/HEIF/HIF up
+The PO UI accepts PDF, TXT, PNG, JPEG, WebP, TIFF/TIF, BMP, and HEIC/HEIF/HIF up
 to 30 MB. Text PDFs are extracted locally. Scans and images use the configured
 analysis path. The original uploaded bytes are retained for the attachment
 package. File-reading and model failures expose explicit retry actions instead
 of leaving an older analysis visible or retrying on every rerun.
+
+The expense uploader accepts PDF and the same image formats, up to 15 MB per
+receipt and 60 MB for the in-progress report. The official form holds 15
+Miscellaneous and 14 Entertainment rows; generation blocks with a split-report
+instruction rather than silently dropping overflow. A PDF receipt may contain
+up to 10 pages. Receipt images embedded in output files are bounded and
+compressed for email while the uploaded source remains unchanged.
 
 ## Requester memory
 
@@ -168,6 +225,14 @@ data. After the first verified package, that browser remembers the latest
 requester for that exact ENFRA account. Streamlit reruns do not increase the
 count, account memories do not cross, and there is no Forget button in the
 active flow. Blocked cookies disable only this convenience.
+
+After a valid expense package is generated, the same browser/account pair also
+remembers the reviewed employee name/number, home BU, administrator, mail
+destination, and default JDE allocation. It never persists receipt files,
+merchant names, transaction dates, descriptions, or amounts. An in-progress
+draft is mirrored in the current Streamlit session so switching workflows does
+not discard typed values; **Clear receipts and start over** explicitly removes
+that session draft.
 
 ## Smartsheet modes
 
@@ -200,12 +265,22 @@ ambiguous-write controls for possible future use.
 | Prefilled fields are blank | Sign back into/open Smartsheet, return to the tool, and use the same link again; then verify exact labels and `%20` encoding. |
 | Requester is not remembered | Complete one ready package for the same account in the same browser and verify cookies are permitted. |
 | API mode is blocked | Leave it disabled until the complete activation gate in the handoff document is satisfied. |
+| A receipt could not be read | Use the visible retry once, then complete every required field beside that receipt manually. |
+| Expense generation is blocked | Resolve the visible receipt/profile/coding fields; the official form also requires a total over $20.00. |
+| Combined expense PDF is unavailable | Download the completed Excel workbook; it still contains the form and all receipt pages. Restore LibreOffice/Gotenberg before relying on the PDF. |
+| iPhone/iPad email has no attachments | Expected for `mailto:`. Download the Excel/PDF files, open the mobile email draft, and attach the files manually. |
 
 ## Security cautions
 
 - Quotes can contain pricing, contacts, facility, and asset information.
+- Receipts can contain employee, location, purchase, payment, and customer
+  information. Image/PDF receipts are sent to the configured AI analysis
+  endpoint; generated artifacts remain in the user's active session.
 - Do not commit API keys, service tokens, production credentials, or real quotes.
+- Do not commit real receipts or generated employee expense reports.
 - Review every prefilled form and both attachments before submission.
+- Review every extracted receipt value and complete the employee signature only
+  outside the generator; the tool never creates or copies a signature.
 - Do not add an automatic submit action to the custom-URL route.
 - Migrate SQLite state to a shared transactional database before running more
   than one application instance.
