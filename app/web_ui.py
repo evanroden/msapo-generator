@@ -12,6 +12,7 @@ import html
 import re
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 
 import streamlit as st
 
@@ -1075,8 +1076,12 @@ def _render_footer() -> None:
 
 def main() -> None:
     st.set_page_config(
-        page_title="Purchase Order Process Control",
-        page_icon="📋",
+        page_title="Process Control",
+        page_icon=str(
+            Path(__file__).resolve().parents[1]
+            / "branding"
+            / "process-control-icon.png"
+        ),
         layout="wide",
         initial_sidebar_state="collapsed",
     )

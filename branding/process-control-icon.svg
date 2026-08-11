@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">Process Control icon</title>
+  <desc id="description">White PC monogram on an ocean-green square with a safety-yellow accent.</desc>
+  <defs>
+    <clipPath id="rounded-square">
+      <rect width="512" height="512" rx="92" ry="92"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#rounded-square)">
+    <rect width="512" height="512" fill="#092B24"/>
+    <rect width="30" height="512" fill="#D6EF4B"/>
+    <circle cx="426" cy="86" r="30" fill="#D6EF4B"/>
+  </g>
+  <text x="256" y="306" text-anchor="middle" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="188" font-weight="800" letter-spacing="-14">PC</text>
+  <rect x="145" y="356" width="222" height="18" rx="9" fill="#D6EF4B"/>
+</svg>

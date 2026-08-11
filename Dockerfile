@@ -25,6 +25,8 @@ RUN python -m pip install --upgrade pip \
 
 COPY . .
 
+RUN python scripts/patch_streamlit_metadata.py
+
 RUN mkdir -p output
 
 EXPOSE 8501

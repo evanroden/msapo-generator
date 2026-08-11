@@ -30,6 +30,9 @@ regression guidance for the attached Outlook/iOS expense-email handoff are in
 [`docs/COMMIT_NOTES_2026-08-11_EXPENSE_EMAIL_ATTACHMENT_HANDOFF.md`](docs/COMMIT_NOTES_2026-08-11_EXPENSE_EMAIL_ATTACHMENT_HANDOFF.md).
 The ready-to-send IT review email and exact AI call-path summary are in
 [`docs/ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md`](docs/ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md).
+The crawler-visible page title, favicon, Open Graph/Twitter card, build-time
+patch, cache behavior, and production verification contract are documented in
+[`docs/LINK_PREVIEW_METADATA_2026-08-11.md`](docs/LINK_PREVIEW_METADATA_2026-08-11.md).
 
 ## Purchase-order workflow
 
@@ -162,6 +165,9 @@ app/smartsheet_store.py        Leased/idempotent future API state
 app/expense_ui.py              Receipt review and reimbursement workflow
 app/receipt_analyzer.py        Structured receipt OCR/extraction
 app/expense_report.py          JDE workbook, receipt sheet, and PDF packet
+branding/                       Public favicon and social-preview sources/assets
+scripts/patch_streamlit_metadata.py
+                               Build-time crawler metadata installation
 templates/Employee_Reimbursement_Expense_Report_JDE_10012025.xlsx
                                Supplied official reimbursement template
 pages/2_Smartsheet_PO.py       Non-submitting legacy bookmark notice

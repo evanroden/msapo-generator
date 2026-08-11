@@ -7,6 +7,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_BINARY_SOURCE_FILES = {
+    "branding/process-control-icon.png",
+    "branding/process-control-preview.png",
     "templates/Employee_Reimbursement_Expense_Report_JDE_10012025.xlsx",
     "templates/Master_MSAPO_Template.docx",
 }

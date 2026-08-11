@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">Process Control link preview</title>
+  <desc id="description">Process Control, purchase orders and expense reports, in an ocean-green and safety-yellow branded layout.</desc>
+  <rect width="1200" height="630" fill="#E7F2EE"/>
+  <rect x="46" y="46" width="1108" height="538" rx="34" fill="#092B24"/>
+  <path d="M80 46h24v538H80c-18.8 0-34-15.2-34-34V80c0-18.8 15.2-34 34-34z" fill="#D6EF4B"/>
+
+  <text x="154" y="153" fill="#D6EF4B" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="700" letter-spacing="8">PROCESS CONTROL</text>
+  <text x="150" y="281" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="68" font-weight="800">Purchase orders &amp;</text>
+  <text x="150" y="365" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="68" font-weight="800">expense reports</text>
+  <rect x="150" y="410" width="92" height="10" rx="5" fill="#D6EF4B"/>
+  <text x="150" y="490" fill="#D3E7E0" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="400">Upload  •  Review  •  Generate  •  Hand off</text>
+
+  <g transform="translate(920 108)">
+    <rect width="146" height="146" rx="28" fill="#FFFFFF"/>
+    <rect width="12" height="146" rx="6" fill="#D6EF4B"/>
+    <text x="76" y="91" text-anchor="middle" fill="#092B24" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800" letter-spacing="-5">PC</text>
+    <rect x="43" y="106" width="66" height="7" rx="3.5" fill="#D6EF4B"/>
+  </g>
+</svg>
