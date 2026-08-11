@@ -9,15 +9,16 @@ the caller decides exactly which fields appear — MSAPO vs. Equipment-Only PO,
 with or without a subtotal/tax breakdown.
 
 The user downloads the .eml, opens it in Outlook, reviews the pre-filled
-draft, and hits Send.  On iPhone/iPad the same bullets feed a plain-text
-body used by the share sheet and mailto: links.
+draft, and hits Send. On iPhone/iPad the same bullets feed the plain-text
+body passed to the attachment-bearing share sheet. A separate mailto: link
+is retained only as an explicitly attachment-free fallback.
 """
 
 from __future__ import annotations
 
 import mimetypes
 from email.message import EmailMessage
-from urllib.parse import quote, urlencode
+from urllib.parse import quote
 
 # The app now supports many contracts. A neutral default is safe for every
 # administrator and avoids addressing a recipient by the wrong name.
@@ -28,8 +29,7 @@ Bullet = tuple[str, str]
 
 
 def build_plain_body(bullets: list[Bullet], greeting: str = GREETING) -> str:
-    """Plain-text body for mailto: links and the iOS share sheet (neither
-    can take HTML)."""
+    """Plain-text body for mailto: links and the iOS share sheet."""
     lines = [greeting, ""]
     for label, value in bullets:
         lines.append(f"- {label}: {value}")
@@ -94,24 +94,10 @@ def build_eml(
 def build_mailto_url(*, to: str, subject: str, body: str) -> str:
     """mailto: URL that opens a pre-filled draft in the default mail app.
 
-    Attachments cannot be passed through mailto: — on iOS they are shared to
-    Mail separately via the share sheet.
+    Attachments cannot be passed through mailto:. The primary iOS action uses
+    Web Share instead and passes the completed PDF directly.
     """
     return f"mailto:{quote(to, safe='@')}?subject={quote(subject)}&body={quote(body)}"
-
-
-def build_outlook_web_url(*, to: str, subject: str, body: str) -> str:
-    """Return an Outlook-on-the-web URL with a prefilled compose draft.
-
-    Browser compose URLs cannot accept an in-memory local attachment. The UI
-    keeps the combined PDF available beside this fallback and tells the user to
-    attach it before sending.
-    """
-    query = urlencode(
-        {"to": to, "subject": subject, "body": body},
-        quote_via=quote,
-    )
-    return f"https://outlook.office.com/mail/deeplink/compose?{query}"
 
 
 def _esc(text: str) -> str:

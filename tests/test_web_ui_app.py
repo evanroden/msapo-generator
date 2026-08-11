@@ -1,3 +1,4 @@
+import base64
 import inspect
 from pathlib import Path
 from datetime import date
@@ -252,12 +253,42 @@ def test_expense_email_destination_defaults_are_platform_appropriate():
     ) == "Outlook for Windows (PDF attached)"
     assert expense_ui._preferred_email_destination(
         "Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) Mobile/15E148"
-    ) == "Default mail app (iPhone / iPad)"
+    ) == "Mail on iPhone / iPad (PDF attached)"
     # iPadOS desktop-site mode commonly identifies itself as Macintosh while
     # retaining the Mobile token.
     assert expense_ui._preferred_email_destination(
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) Mobile/15E148"
-    ) == "Default mail app (iPhone / iPad)"
+    ) == "Mail on iPhone / iPad (PDF attached)"
+
+
+def test_ios_mail_share_embeds_the_pdf_and_message_for_web_share():
+    payload = expense_ui._ios_mail_share_payload(
+        to="approver@example.invalid",
+        subject="Expense report & receipts",
+        body="Good afternoon.\n\n- Total: $31.25\n",
+        attachments=[("expense.pdf", b"%PDF-direct-share")],
+    )
+    source = (
+        expense_ui._IOS_MAIL_SHARE_FRONTEND / "index.html"
+    ).read_text(encoding="utf-8")
+    renderer = inspect.getsource(expense_ui._render_ios_mail_share)
+
+    assert payload["to"] == "approver@example.invalid"
+    assert payload["subject"] == "Expense report & receipts"
+    assert payload["body"].endswith("- Total: $31.25\n")
+    assert payload["files"][0]["name"] == "expense.pdf"
+    assert payload["files"][0]["mime"] == "application/pdf"
+    assert base64.b64decode(payload["files"][0]["b64"]) == b"%PDF-direct-share"
+    assert "navigator.canShare({files})" in source
+    assert "await navigator.share" in source
+    assert "files: current.files" in source
+    assert 'document.execCommand("copy")' in source
+    assert "PDF attached" in source
+    assert "streamlit:componentReady" in source
+    assert "streamlit:setFrameHeight" in source
+    assert "_IOS_MAIL_SHARE_COMPONENT" in renderer
+    assert "components.html" not in renderer
+    assert "event.source !== window.parent" in source
 
 
 def test_nondescript_synthetic_trigger_is_available_without_an_env_flag(monkeypatch):
@@ -463,27 +494,31 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
         "Open a new email without attachments ↗"
     ]
 
-    email_destination.set_value("Outlook on the web").run()
-    web_link = next(
-        link
-        for link in app.get("link_button")
-        if link.label == "Open approval email in Outlook on the web ↗"
+    email_destination.set_value("Outlook on the web (PDF attached)").run()
+    web_draft = next(
+        button
+        for button in app.get("download_button")
+        if button.label == "Open approval email in Outlook on the web"
     )
-    assert web_link.url.startswith(
-        "https://outlook.office.com/mail/deeplink/compose?"
+    assert web_draft.label.endswith("Outlook on the web")
+    assert any(
+        "combined PDF is already attached" in caption.value
+        and "Outlook on the web" in caption.value
+        for caption in app.caption
     )
-    assert "rrh.approver%40example.invalid" in web_link.url
 
     email_destination = next(
         field for field in app.selectbox if field.label == "Open approval email in"
     )
-    email_destination.set_value("Default mail app (iPhone / iPad)").run()
-    local_link = next(
-        link
-        for link in app.get("link_button")
-        if link.label == "Open approval email in the default mail app ↗"
+    email_destination.set_value("Mail on iPhone / iPad (PDF attached)").run()
+    assert not any(
+        button.label.startswith("Open approval email")
+        for button in app.get("download_button")
     )
-    assert local_link.url.startswith("mailto:rrh.approver@example.invalid?")
+    assert not any(
+        link.label.startswith("Open approval email")
+        for link in app.get("link_button")
+    )
 
 
 def test_primary_workflows_do_not_use_blue_information_callouts():

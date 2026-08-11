@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    html, body {
+      background: transparent;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+    #share-email {
+      -webkit-tap-highlight-color: transparent;
+      background: #D6EF4B;
+      border: 2px solid #092B24;
+      border-radius: 4px;
+      color: #092B24;
+      cursor: pointer;
+      font-size: 16px;
+      font-weight: 700;
+      min-height: 48px;
+      padding: 0.7rem 1rem;
+      touch-action: manipulation;
+      width: 100%;
+    }
+    #share-email:disabled { cursor: not-allowed; opacity: 0.58; }
+    #share-status {
+      color: #31554D;
+      font-size: 13px;
+      line-height: 1.35;
+      margin: 8px 2px 0;
+    }
+  </style>
+</head>
+<body>
+  <button id="share-email" type="button" disabled>
+    Open approval email in Mail — PDF attached
+  </button>
+  <p id="share-status" role="status">Preparing the attached PDF…</p>
+
+  <script>
+    const button = document.getElementById("share-email");
+    const status = document.getElementById("share-status");
+    let current = null;
+
+    let parentOrigin = "*";
+    try {
+      const streamlitUrl = new URLSearchParams(location.search).get("streamlitUrl");
+      if (streamlitUrl) parentOrigin = new URL(streamlitUrl).origin;
+    } catch (error) {
+      parentOrigin = "*";
+    }
+
+    const sendToStreamlit = (type, extra = {}) => window.parent.postMessage(
+      {isStreamlitMessage: true, type, ...extra},
+      parentOrigin
+    );
+
+    const decode = (value, mime) => {
+      const binary = atob(value);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return new Blob([bytes], {type: mime});
+    };
+
+    const browserFiles = (sourceFiles) => sourceFiles.map((file) => new File(
+      [decode(file.b64, file.mime)],
+      file.name,
+      {type: file.mime}
+    ));
+
+    const directShareIsAvailable = (files) => {
+      try {
+        return files.length > 0 && Boolean(
+          navigator.canShare && navigator.canShare({files})
+        );
+      } catch (error) {
+        return false;
+      }
+    };
+
+    const render = (args) => {
+      try {
+        const files = browserFiles(Array.isArray(args.files) ? args.files : []);
+        current = {
+          to: String(args.to || ""),
+          subject: String(args.subject || ""),
+          body: String(args.body || ""),
+          files,
+        };
+        if (directShareIsAvailable(files)) {
+          button.disabled = false;
+          status.textContent = "The approver email will be copied; choose Mail or Outlook in the share sheet.";
+        } else {
+          button.disabled = true;
+          status.textContent = "This browser cannot share the PDF directly. Choose an Outlook option above, or use the files under Other file and email options.";
+        }
+      } catch (error) {
+        current = null;
+        button.disabled = true;
+        status.textContent = "The PDF could not be prepared for sharing. Choose an Outlook option above, or use Other file and email options.";
+      }
+      sendToStreamlit("streamlit:setFrameHeight", {height: 112});
+    };
+
+    window.addEventListener("message", (event) => {
+      if (parentOrigin !== "*" && event.origin !== parentOrigin) return;
+      if (event.source !== window.parent) return;
+      if (event.data?.type === "streamlit:render") render(event.data.args || {});
+    });
+
+    button.addEventListener("click", async () => {
+      if (!current || button.disabled) return;
+
+      const copyField = document.createElement("textarea");
+      copyField.value = current.to;
+      copyField.setAttribute("readonly", "");
+      copyField.style.position = "fixed";
+      copyField.style.opacity = "0";
+      document.body.appendChild(copyField);
+      copyField.focus();
+      copyField.select();
+      copyField.setSelectionRange(0, copyField.value.length);
+      let copied = false;
+      try { copied = document.execCommand("copy"); } catch (error) {}
+      copyField.remove();
+
+      status.textContent = copied
+        ? "Approver email copied. Choose Mail or Outlook, then paste it into To."
+        : `Choose Mail or Outlook, then address the message to ${current.to}.`;
+
+      try {
+        await navigator.share({
+          files: current.files,
+          title: current.subject,
+          text: current.body,
+        });
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          status.textContent = "The share sheet could not open. Choose an Outlook option above, or use Other file and email options.";
+        }
+      }
+    });
+
+    sendToStreamlit("streamlit:componentReady", {apiVersion: 1});
+  </script>
+</body>
+</html>

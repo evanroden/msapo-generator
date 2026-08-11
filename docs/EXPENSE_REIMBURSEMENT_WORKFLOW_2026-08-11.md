@@ -21,12 +21,11 @@ One generation action creates:
    afterward.
 3. A platform-aware approval action addressed to the reviewed administrator.
    Windows defaults to an Outlook `.eml` draft with only the submission PDF
-   attached. Outlook on the web gets its own prefilled compose link. iPhone and
-   iPad default to a `mailto:` draft in the local default mail app.
+   attached; Outlook on the web uses the same attachment-bearing draft. iPhone
+   and iPad use Web Share Level 2 to pass the PDF and message directly to Mail
+   or Outlook, reusing the proven purchase-workflow handoff.
 4. A collapsed **Other file and email options** area containing the editable
-   Excel file, combined PDF, and generic attachment-free email fallback. Web and
-   mobile compose URLs cannot include an in-memory local attachment, so those
-   routes explicitly direct the employee to add the generated PDF before send.
+   Excel file, combined PDF, and generic attachment-free email fallback.
 
 The tool prepares a draft. It does not email, approve, sign, reimburse, or post
 anything to JDE.
@@ -165,11 +164,46 @@ signature, printed name, and report date are then placed on the form.
 
 The normal path exposes one **Open approval email** action. Browser identity
 selects the initial destination: attached-PDF Outlook draft on Windows and the
-local default mail app on iPhone/iPad. A visible selector also supports Outlook
-on the web. The editable Excel file, submission PDF, and generic
+iOS/iPadOS attachment share on iPhone/iPad. A visible selector also supports
+Outlook on the web using the attachment-bearing `.eml`. The mobile action turns
+the generated PDF bytes into a browser `File`, verifies `navigator.canShare`
+for that file, and calls `navigator.share` with the file, subject, and message.
+The approver email is copied for the employee to paste into the share-sheet
+draft's To field. The editable Excel file, submission PDF, and generic
 attachment-free fallback stay collapsed under **Other file and email options**.
-The `.eml` contains the PDF only. Any edit changes the content fingerprint and
-suppresses stale actions and downloads until regeneration.
+Any edit changes the content fingerprint and suppresses stale actions and
+downloads until regeneration.
+
+The attachment handoff deliberately follows the earlier purchase-request
+mechanism instead of treating browser email links as attachment-free:
+
+- **Outlook for Windows:** the button downloads an RFC 5322/MIME `.eml` marked
+  `X-Unsent: 1`; the completed PDF is already encoded as its only attachment.
+- **Outlook on the web:** the same attachment-bearing `.eml` is used. If the
+  browser does not open it automatically, Microsoft documents dragging the
+  `.eml` onto Outlook on the web's reading pane:
+  <https://support.microsoft.com/en-us/outlook/mail/open-eml-msg-and-oft-files-in-new-outlook-and-outlook-on-the-web>.
+- **iPhone/iPad:** a static custom component served from Streamlit's own origin
+  constructs a browser `File` from the generated PDF and calls Web Share from
+  the user's tap. The first-party origin matters because the Web Share feature's
+  default permissions-policy allowlist is `self`; [WebKit documents that a
+  third-party iframe otherwise needs explicit `web-share`
+  permission](https://webkit.org/blog/13708/allowing-web-share-on-third-party-sites/).
+  The earlier generic HTML embed had an opaque origin and was therefore not a
+  safe iPad assumption.
+- **Recipient handling on iOS/iPadOS:** Web Share carries files, title, and text,
+  but has no recipient field. The component copies the reviewed approver email
+  synchronously before opening the share sheet and displays it if copying is
+  unavailable.
+- **Fallback:** if the browser lacks `navigator.canShare({files})`, the primary
+  share button disables itself with a visible explanation. The attached Outlook
+  routes and collapsed PDF/attachment-free email controls remain available.
+
+All component content is local and dependency-free. Dynamic values arrive
+through Streamlit's structured component message rather than being interpolated
+into executable HTML; status messages use `textContent`. The component accepts
+messages only from its parent and, when the parent origin is available, only
+from that exact origin.
 
 ## JDE allocation rules
 
@@ -380,8 +414,8 @@ disable only the memory convenience.
 | PDF attachment is large | The `.eml` still contains the required PDF and shows a size warning instead of silently substituting Excel. |
 | PDF renderer unavailable | Excel remains downloadable, but the approval `.eml` is withheld because the PDF is the submission artifact. |
 | Employee edits the optional Excel download | UI directs the employee to export the edited workbook to PDF and replace the draft's attached PDF before sending. |
-| Wrong email route for the current device | User-agent and client-platform hints default Windows to the attached-PDF Outlook draft and iPhone/iPad—including iPad desktop-site identity—to the local mail app; all routes remain selectable. |
-| Browser compose link loses the required attachment | Outlook web and `mailto:` routes state that the PDF must be attached; the combined PDF stays in the collapsed options. No route falsely claims that a URL can attach local bytes. |
+| Wrong email route for the current device | User-agent and client-platform hints default Windows to the attached-PDF Outlook draft and iPhone/iPad—including iPad desktop-site identity—to attachment-bearing Web Share; all routes remain selectable. |
+| Browser handoff loses the required attachment | Windows and Outlook web use the MIME attachment inside `.eml`; iOS/iPadOS creates a browser `File` and checks `navigator.canShare({files})` before enabling the share action. The combined PDF remains in collapsed fallback options. |
 | Too many competing completion buttons | The normal path shows one destination selector and one email action. Excel, PDF, and generic attachment-free email controls are collapsed. |
 | Approver name selected from history | Exact-account fuzzy suggestions fill the paired email; a new name clears a stale email and remains editable. |
 | Same report generated repeatedly | Approver event uses a stable report context and counts once; a correction moves the event instead of duplicating it. |
@@ -395,31 +429,33 @@ Automated Streamlit coverage verifies the workflow switch, multi-file uploader,
 AI-filled editable fields, required default coding, draft preservation across a
 hidden-widget rerun, restored-plus-new receipt merging, individual receipt
 removal, split reimbursement lines, the generation gate, collapsed file
-options, attached-PDF Outlook draft, Outlook-web compose URL, local-mail URL,
+options, attached-PDF Outlook app/web drafts, attachment-bearing iOS share,
 platform defaults, and administrator recall.
 
 Expected platform handoff:
 
 | Platform | Receipt input | Approval handoff |
 |---|---|---|
-| iOS/iPadOS | Photos, Files, screenshots, HEIC, PDF; responsive single-column review | Defaults to the local mail app; attach the PDF from collapsed options; Excel remains optional |
-| Windows Chrome | Multi-select or drag receipts into uploader | Defaults to download/open `.eml` in Outlook with the submission PDF included; Outlook-web route is selectable |
-| Windows Edge | Same web controls and downloads as Chrome | Defaults to download/open `.eml` in Outlook with the submission PDF included; Outlook-web route is selectable |
+| iOS/iPadOS | Photos, Files, screenshots, HEIC, PDF; responsive single-column review | Defaults to system share; PDF and message are passed to Mail or Outlook, and the approver email is copied for the To field |
+| Windows Chrome | Multi-select or drag receipts into uploader | Defaults to download/open `.eml` in Outlook with the submission PDF included; the attached Outlook-web draft is selectable |
+| Windows Edge | Same web controls and downloads as Chrome | Defaults to download/open `.eml` in Outlook with the submission PDF included; the attached Outlook-web draft is selectable |
 
 A rendered Chromium 149 acceptance fixture exercised Windows Chrome identity,
 Windows Edge identity, and iPad Safari identity against the generated-package
 screen. Each profile showed exactly one visible email action, kept all secondary
 files/actions inside a closed expander, used the expected platform default,
 retained Ocean-Steel-on-Safety-Yellow button contrast, and had no horizontal
-overflow. A second rendered 820×1180 touch fixture exercised the itemized
+overflow. The iPad fixture also verified that the share component was served
+from the same origin as the app, invoked the button under a user gesture, and
+received one nonempty `application/pdf` browser `File` plus the expected subject
+and message. A second rendered 820×1180 touch fixture exercised the itemized
 receipt selector: both checkbox rows were 44 pixels high, unchecking a $10 item
 from a $33 receipt changed the field to $22, and the explanatory calculation
 updated without overflow.
 
 Physical device acceptance remains required before production promotion,
-particularly Outlook's local `.eml` association and the iOS download/attach
-sequence. The code does not claim that `mailto:` or an Outlook-web compose URL
-can attach local files.
+particularly Outlook's local `.eml` association and the iOS system share target.
+The generic `mailto:` fallback remains explicitly attachment-free.
 
 ## Automated verification
 
@@ -457,7 +493,7 @@ Coverage includes:
 - Employee-number recall plus account-scoped approver type-ahead/email recall
 - Renderer/deployment dependencies
 - Full Streamlit expense generation path
-- Platform-aware Outlook app, Outlook web, and iPhone/iPad mail actions with
+- Attachment-bearing Outlook app/web and iPhone/iPad Web Share actions with
   collapsed secondary downloads
 - All pre-existing purchase-order regressions
 

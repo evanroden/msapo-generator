@@ -47,9 +47,9 @@ There are three model-call paths:
    subtotal, total, tax, tip, service-charge, discount/coupon, tender, change,
    loyalty, and suggested-tip rows from the item list. Receipt content is
    explicitly marked untrusted, and the model is told to ignore any instructions,
-   code, prompts,
-   or requested output formats printed inside it. The prompt forbids inventing
-   business purpose, attendees, job numbers, or accounting codes. The employee
+   code, prompts, or requested output formats printed inside it. The prompt
+   forbids inventing business purpose, attendees, job numbers, or accounting
+   codes. The employee
    can uncheck nonreimbursable detected items, override the calculated amount,
    and replace every receipt-level field; the approved RRH codes and
    item-selection arithmetic come from deterministic application policy, not
@@ -65,6 +65,14 @@ No AI response sends an email, creates a Smartsheet row, approves an expense, or
 posts to JDE. It only creates an editable draft. Model/transport failures fall
 back to visible required fields or an explicit retry, and optional Smartsheet API
 mode remains disabled independently.
+
+Email attachment handoff does not call the AI endpoint. Outlook receives a
+standards-based `.eml` whose MIME attachment is the generated PDF. On iPhone and
+iPad, client-side Web Share converts that same PDF to a browser `File`, checks
+file-sharing support, and passes the file and message to the selected Mail or
+Outlook app. The share control is a same-origin component served by the
+application itself; it loads no third-party scripts or services. The attachment
+bytes are not sent to a separate email service.
 
 For an internal Copilot integration, could you confirm:
 

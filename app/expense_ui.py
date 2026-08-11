@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import html
+import mimetypes
 import uuid
 from dataclasses import replace
 from datetime import date
@@ -11,13 +13,13 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from app import contracts
 from app.config import RRH_APPROVER_EMAIL, RRH_APPROVER_NAME
 from app.eml_builder import (
     build_eml,
     build_mailto_url,
-    build_outlook_web_url,
     build_plain_body,
 )
 from app.expense_report import (
@@ -89,12 +91,19 @@ _RRH_DEFAULT_JOB = "RRH-695400022-O&M"
 _RRH_ACCOUNT_COST_TYPE_SUFFIX = "AMA"
 _RRH_DEFAULT_COST_CODE = "5490"
 _EMAIL_OUTLOOK_APP = "Outlook for Windows (PDF attached)"
-_EMAIL_OUTLOOK_WEB = "Outlook on the web"
-_EMAIL_DEFAULT_APP = "Default mail app (iPhone / iPad)"
+_EMAIL_OUTLOOK_WEB = "Outlook on the web (PDF attached)"
+_EMAIL_DEFAULT_APP = "Mail on iPhone / iPad (PDF attached)"
 _EMAIL_DESTINATIONS = (
     _EMAIL_OUTLOOK_APP,
     _EMAIL_OUTLOOK_WEB,
     _EMAIL_DEFAULT_APP,
+)
+_IOS_MAIL_SHARE_FRONTEND = (
+    Path(__file__).resolve().parent / "components" / "expense_ios_mail_share"
+)
+_IOS_MAIL_SHARE_COMPONENT = components.declare_component(
+    "expense_ios_mail_share",
+    path=_IOS_MAIL_SHARE_FRONTEND,
 )
 
 
@@ -539,8 +548,8 @@ def render_expense_workflow(browser_token: str) -> None:
     if email_error:
         st.error(
             "The attached-PDF Outlook draft could not be created: "
-            f"{email_error} Choose Outlook on the web or the default mail app "
-            "below, then attach the PDF manually."
+            f"{email_error} The iPhone/iPad share option can still pass the "
+            "generated PDF directly to Mail or Outlook."
         )
 
     package = st.session_state.get("expense_generated_package")
@@ -1384,16 +1393,21 @@ def _render_generated_package(
         _EMAIL_DESTINATIONS,
         key=destination_key,
         help=(
-            "Windows Outlook can use the attached-PDF draft. Outlook on the web "
-            "and iPhone/iPad use a prefilled compose link, then need the PDF "
-            "added from Other file and email options."
+            "Both Outlook choices use the attachment-bearing email draft. On "
+            "iPhone/iPad, the browser share sheet passes the PDF and message "
+            "directly to Mail or Outlook."
         ),
     )
 
-    if destination == _EMAIL_OUTLOOK_APP:
+    if destination in {_EMAIL_OUTLOOK_APP, _EMAIL_OUTLOOK_WEB}:
         if eml_bytes:
+            destination_name = (
+                "Outlook on the web"
+                if destination == _EMAIL_OUTLOOK_WEB
+                else "Outlook"
+            )
             st.download_button(
-                "Open approval email in Outlook",
+                f"Open approval email in {destination_name}",
                 data=eml_bytes,
                 file_name=f"{package.basename}_Approval_Email.eml",
                 mime="message/rfc822",
@@ -1401,44 +1415,28 @@ def _render_generated_package(
                 on_click="ignore",
                 width="stretch",
             )
-            st.caption(
-                "The combined PDF is already attached. If the browser saves the "
-                "draft, open that .eml file once to continue in Outlook."
-            )
+            if destination == _EMAIL_OUTLOOK_WEB:
+                st.caption(
+                    "The combined PDF is already attached. If the draft does not "
+                    "open automatically, drag the downloaded .eml onto Outlook "
+                    "on the web's reading pane, then review and send."
+                )
+            else:
+                st.caption(
+                    "The combined PDF is already attached. If the browser saves "
+                    "the draft, open that .eml file once to continue in Outlook."
+                )
         else:
             st.warning(
                 "The Outlook draft is unavailable. Generate the report again, or "
-                "choose another email destination."
+                "use the iPhone/iPad share option if you are on that device."
             )
-    elif destination == _EMAIL_OUTLOOK_WEB:
-        st.link_button(
-            "Open approval email in Outlook on the web ↗",
-            build_outlook_web_url(
-                to=details.approver_email,
-                subject=subject,
-                body=body,
-            ),
-            type="primary",
-            width="stretch",
-        )
-        st.caption(
-            "The email is prefilled. Before sending, download the combined PDF "
-            "under Other file and email options and attach it."
-        )
     else:
-        st.link_button(
-            "Open approval email in the default mail app ↗",
-            build_mailto_url(
-                to=details.approver_email,
-                subject=subject,
-                body=body,
-            ),
-            type="primary",
-            width="stretch",
-        )
-        st.caption(
-            "On iPhone/iPad this opens the default local mail app. Before sending, "
-            "download the combined PDF under Other file and email options and attach it."
+        _render_ios_mail_share(
+            to=details.approver_email,
+            subject=subject,
+            body=body,
+            attachments=email_attachments_for_package(package),
         )
 
     with st.expander("Other file and email options", expanded=False):
@@ -1475,6 +1473,50 @@ def _render_generated_package(
             ),
             width="stretch",
         )
+
+
+def _render_ios_mail_share(
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    attachments: list[tuple[str, bytes]],
+) -> None:
+    """Pass the completed PDF to an iOS/iPadOS mail app through Web Share."""
+    _IOS_MAIL_SHARE_COMPONENT(
+        **_ios_mail_share_payload(
+            to=to, subject=subject, body=body, attachments=attachments
+        ),
+        height=112,
+        key="expense_ios_mail_share",
+        tab_index=0,
+    )
+
+
+def _ios_mail_share_payload(
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    attachments: list[tuple[str, bytes]],
+) -> dict[str, object]:
+    """Serialize an attachment-bearing iOS share request for the component."""
+    return {
+        "to": to,
+        "subject": subject,
+        "body": body,
+        "files": [
+            {
+                "name": name,
+                "mime": (
+                    mimetypes.guess_type(name)[0]
+                    or "application/octet-stream"
+                ),
+                "b64": base64.b64encode(data).decode("ascii"),
+            }
+            for name, data in attachments
+        ],
+    }
 
 
 def _expense_email_subject_and_body(

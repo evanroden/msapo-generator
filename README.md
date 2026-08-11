@@ -75,10 +75,11 @@ There is no email-submission route in the active UI.
    selects the applicable IRS business-mileage rate.
 5. Confirm the generated cursive employee signature and printed name, then
    generate the editable `.xlsx`, submission `.pdf`, and email draft. Windows
-   defaults to an Outlook `.eml` containing only the PDF. iPhone/iPad defaults
-   to the local mail app, and Outlook on the web is selectable. Excel, PDF, and
-   the generic attachment-free fallback remain collapsed under **Other file and
-   email options**; web/mobile users attach the PDF manually.
+   defaults to an Outlook `.eml` containing only the PDF; the same attached
+   draft can be opened/imported in Outlook on the web. iPhone/iPad uses the
+   browser share sheet to pass the PDF and message directly to Mail or Outlook.
+   Excel, PDF, and the generic attachment-free fallback remain collapsed under
+   **Other file and email options**.
 
 The expense workflow uses only the Job or Service Center, Account / Cost Type,
 and Cost Code columns (`I:K`). Work Order (`L`) and Other Expenses (`N:Q`) are
@@ -287,7 +288,7 @@ ambiguous-write controls for possible future use.
 | Expense generation is blocked | Resolve the visible receipt, mileage, coding, and signature-confirmation fields; the official form also requires a total over $20.00. |
 | A future mileage date is blocked | Add the newly published IRS business rate to the dated rate table; the tool never carries an old rate into an unknown period. |
 | Combined expense PDF is unavailable | Download the completed Excel workbook for edits. The Outlook approval draft remains withheld until the submission PDF can be generated. |
-| iPhone/iPad email has no attachment | Expected for `mailto:`. Download the generated PDF, open the mobile email draft, and attach that PDF manually. |
+| iPhone/iPad share button is unavailable | Switch to an Outlook destination, or open **Other file and email options** for the attachment-free fallback and combined PDF. Supported iOS/iPadOS browsers receive the PDF directly through the system share sheet. |
 
 ## Security cautions
 
