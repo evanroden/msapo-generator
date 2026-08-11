@@ -338,17 +338,7 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
             "finalizing this agreement."
         )
 
-    # Default tax_note if not provided
-    if "tax_note" not in data:
-        data["tax_note"] = None
-
-    # Defaults for email / cost-code fields
-    for key in ("contact_name", "contact_email", "subtotal_amount",
-                "tax_amount", "total_amount", "short_description",
-                "work_category", "asset_reference", "purchase_route_guess",
-                "request_type_guess", "original_po_number"):
-        if key not in data:
-            data[key] = None
+    # analysis_schema is the single source of truth for the complete field set.
 
     # Convert raw JSON dicts to AIAssumption objects
     raw_assumptions = data.get("ai_assumptions", [])

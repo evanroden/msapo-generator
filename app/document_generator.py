@@ -49,40 +49,14 @@ def _add_bullet_paragraph(doc: Document, text: str) -> "Paragraph":
     return para, text
 
 
-def _filter_items(items: list[str], approved_assumptions: list[str] | None) -> list[str]:
-    """
-    Filter a list of inclusion/exclusion items for the final document.
-    - Explicit (non-AI) items: always kept
-    - AI items that were approved: kept, with [AI ESTIMATE:] wrapper stripped
-    - AI items that were NOT approved: dropped entirely
-    """
-    result = []
-    for item in items:
-        if "[AI ESTIMATE:" not in item:
-            # Explicit item from the quote — always include
-            result.append(item)
-        else:
-            # AI-estimated item — only include if user approved it
-            inner = re.search(r"\[AI ESTIMATE:\s*(.+?)\]", item)
-            if inner and approved_assumptions is not None:
-                clean_text = inner.group(1)
-                if clean_text in approved_assumptions:
-                    result.append(clean_text)  # stripped of wrapper
-            # If not approved, it's simply dropped
-    return result
-
-
-def _add_bullet(doc, item_text: str, is_ai: bool = False):
-    """Add a single bullet item, highlighted if AI-estimated."""
+def _add_bullet(doc, item_text: str):
+    """Add a single reviewed bullet item."""
     try:
         para = doc.add_paragraph(style="List Bullet")
     except KeyError:
         para = doc.add_paragraph()
         item_text = f"•  {item_text}"
     run = para.add_run(item_text)
-    if is_ai:
-        run.font.color.rgb = RGBColor(0xCC, 0x66, 0x00)
-        run.bold = True
     return para
 
 
@@ -159,18 +133,15 @@ def _insert_paragraph_after(paragraph, text: str, style=None):
 def _append_scope_content(
     doc: Document,
     analysis: QuoteAnalysis,
-    approved_assumptions: list[str] | None = None,
-    final_inclusions: list[str] | None = None,
-    final_exclusions: list[str] | None = None,
+    final_inclusions: list[str],
+    final_exclusions: list[str],
     facility_display: str | None = None,
     facility_address_display: str | None = None,
 ) -> None:
     """
     Append scope content after the sentinel paragraph.
 
-    If final_inclusions / final_exclusions are provided (from the web UI),
-    they are used as-is.  Otherwise falls back to _filter_items() with
-    approved_assumptions (backward compat for the webhook path).
+    The web review supplies the final inclusion and exclusion lists as-is.
 
     facility_display and facility_address_display, when given, override the
     facility values written into the document. This ensures a user's corrected
@@ -221,29 +192,21 @@ def _append_scope_content(
     doc.add_paragraph("")  # spacer
 
     # -- Inclusions --
-    if final_inclusions is not None:
-        incl_items = final_inclusions
-    else:
-        incl_items = _filter_items(analysis.inclusions, approved_assumptions)
-    if incl_items:
+    if final_inclusions:
         p = doc.add_paragraph()
         run = p.add_run("Inclusions")
         run.bold = True
         run.font.size = Pt(11)
-        for item in incl_items:
+        for item in final_inclusions:
             _add_bullet(doc, item)
 
     # -- Exclusions --
-    if final_exclusions is not None:
-        excl_items = final_exclusions
-    else:
-        excl_items = _filter_items(analysis.exclusions, approved_assumptions)
-    if excl_items:
+    if final_exclusions:
         p = doc.add_paragraph()
         run = p.add_run("Exclusions")
         run.bold = True
         run.font.size = Pt(11)
-        for item in excl_items:
+        for item in final_exclusions:
             _add_bullet(doc, item)
 
     doc.add_paragraph("")  # spacer
@@ -287,10 +250,9 @@ def _cleanup_old_outputs() -> None:
 
 def generate_docx(
     analysis: QuoteAnalysis,
+    final_inclusions: list[str],
+    final_exclusions: list[str],
     output_name: str | None = None,
-    approved_assumptions: list[str] | None = None,
-    final_inclusions: list[str] | None = None,
-    final_exclusions: list[str] | None = None,
     facility_display: str | None = None,
     facility_address_display: str | None = None,
 ) -> Path:
@@ -300,11 +262,9 @@ def generate_docx(
 
     Args:
         analysis: The structured quote analysis from the AI.
+        final_inclusions: Inclusion items retained in the web review.
+        final_exclusions: Exclusion items retained in the web review.
         output_name: Optional filename stem (without extension).
-        approved_assumptions: (Legacy) List of AI assumption strings the user
-                              approved. Used by the webhook path.
-        final_inclusions: Pre-filtered inclusion list from the web UI.
-        final_exclusions: Pre-filtered exclusion list from the web UI.
 
     Returns the path to the generated .docx file.
     """
@@ -324,7 +284,7 @@ def generate_docx(
 
     # Append all scope content after the existing template content
     _append_scope_content(
-        doc, analysis, approved_assumptions,
+        doc, analysis,
         final_inclusions=final_inclusions,
         final_exclusions=final_exclusions,
         facility_display=facility_display,

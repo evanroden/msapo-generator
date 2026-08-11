@@ -476,6 +476,13 @@ def _routing_for_generation(
     )
     if contract == CONTRACT_PLACEHOLDER:
         contract = ""
+    if contract and not contracts.is_known_contract(contract):
+        confirmed = {}
+        contract = (
+            detected_contract
+            if contracts.is_known_contract(detected_contract)
+            else ""
+        )
 
     if contracts.is_rrh(contract):
         facility_key = facility_key_from_name(analysis.facility_name)

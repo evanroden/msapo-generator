@@ -25,6 +25,11 @@ def test_generation_prefers_confirmed_routing_when_widget_keys_are_missing(
         lambda contract: ["Tulane Medical Center"] if contract == "Tulane" else [],
     )
     monkeypatch.setattr(
+        web_ui.contracts,
+        "is_known_contract",
+        lambda contract: contract in {"Rochester Regional Health", "Tulane"},
+    )
+    monkeypatch.setattr(
         web_ui,
         "st",
         SimpleNamespace(
@@ -67,3 +72,31 @@ def test_generation_falls_back_to_detected_routing_before_confirmation(monkeypat
     assert site == "UMMC"
     assert facility == "United Memorial Medical Center"
     assert address == "127 North St, Batavia, NY 14020"
+
+
+def test_unconfigured_mirrored_contract_is_rejected(monkeypatch):
+    monkeypatch.setattr(
+        web_ui.contracts,
+        "match_facility",
+        lambda *_args: ("Rochester Regional Health", "UMMC"),
+    )
+    monkeypatch.setattr(
+        web_ui,
+        "st",
+        SimpleNamespace(
+            session_state={
+                "routing_quote123": {
+                    "contract": "Unconfigured Contract",
+                    "site": "Invented Site",
+                }
+            }
+        ),
+    )
+
+    contract, site, facility, _ = web_ui._routing_for_generation(
+        _analysis(), "Batavia quote", "quote123"
+    )
+
+    assert contract == "Rochester Regional Health"
+    assert site == "UMMC"
+    assert facility == "United Memorial Medical Center"
