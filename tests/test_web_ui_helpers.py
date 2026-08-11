@@ -84,3 +84,27 @@ def test_typed_total_survives_a_site_change(monkeypatch):
     )
     assert not app.exception
     assert retained_total.value == "1900.00"
+
+
+def test_unmapped_rrh_cost_code_blocks_generation(monkeypatch):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setenv("EPC_ENABLE_SYNTHETIC_SAMPLE", "true")
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.button[0].click().run()
+
+    site = next(field for field in app.selectbox if field.label == "Site *")
+    site.set_value("Unity Specialty").run()
+
+    manual_cost = next(
+        field for field in app.text_input if field.label == "Job cost code *"
+    )
+    generate = next(
+        button
+        for button in app.button
+        if button.label == "Generate both files and Smartsheet link"
+    )
+
+    assert not app.exception
+    assert manual_cost.value == ""
+    assert generate.disabled
+    assert any("enter the job cost code" in item.value for item in app.warning)

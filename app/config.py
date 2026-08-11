@@ -95,6 +95,11 @@ SITE_COST_CODE_LETTERS: dict[str, str] = {
     "gouverneur": "J",
 }
 
+# Appendix A has not supplied a cost-code letter for these configured sites.
+# They remain selectable, but the operator must enter a code and generation is
+# blocked while it is blank. Do not invent or infer a letter here.
+MANUAL_COST_CODE_SITES: frozenset[str] = frozenset({"unity_specialty"})
+
 WORK_CATEGORY_SUFFIXES: dict[str, str] = {
     "chemical_treatment": "CHEM",
     "building_automation": "EABA",
