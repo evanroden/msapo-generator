@@ -14,6 +14,8 @@ browser matrix, and release hardening are documented in
 [`docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md`](docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md).
 Earlier quick-path reliability history remains in
 [`docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md`](docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md).
+The verified 87-value job catalog and the Arkansas-versus-RRH Unity rule are in
+[`docs/JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md`](docs/JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md).
 
 ## Current workflow
 
@@ -56,6 +58,9 @@ by this classification policy.
   surcharges, and every other fee.
 - Description of Work is capped at 20 characters during export.
 - Asset ID is the complete configured site asset UID, with prefixes preserved.
+- Job Number must be one of the 87 verified Smartsheet dropdown values. Values
+  beginning `Unity` belong to Unity Health System in Arkansas; Rochester-area
+  Unity facilities use RRH-prefixed job numbers.
 - Additional Information is blank unless the operator enters a note; tax notes
   are not copied into it.
 

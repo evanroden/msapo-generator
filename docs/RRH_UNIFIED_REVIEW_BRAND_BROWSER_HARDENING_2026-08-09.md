@@ -61,10 +61,15 @@ defaulted. Blank unresolved boxes are never stranded there.
 | New PO vs. change order | Quote language | Change order requires Original PO Number |
 | How work is performed | Analyzer route guess | Negation-aware labor/rental/Group A/material fallback |
 | Object Account and Agreement Type | Canonical route-and-amount matrix | Operator cannot manually create an unsupported pairing |
-| Job number | RRH O&M default | Other configured RRH choices remain correctable |
+| Job number | Exact account-filtered Smartsheet catalog; RRH O&M default | Free text is rejected; an exact quoted identifier may select one unique option |
 | Specific asset | Quote clue plus selected-site asset registry | Only a unique configured UID is selected |
 | Vendor, contact, final total, description | Structured quote extraction | Required gaps are visible and block generation |
 | Requester / Asset Manager | Current browser plus exact account memory | Stored only after a verified package |
+
+The three job options beginning `Unity` belong to Unity Health System in
+Arkansas. Rochester-area Unity Hospital and Unity Specialty Hospital remain RRH
+sites and use RRH-prefixed job values. See
+[`JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md`](JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md).
 
 ### Vendor representative memory
 

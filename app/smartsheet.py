@@ -1,6 +1,6 @@
 """Fail-closed three-mode Smartsheet handoff for ENFRA PO intake.
 
-The live PO form's labels, required inputs, and RRH job choices are represented
+The live PO form's labels, required inputs, and job choices are represented
 exactly. Manual copy/paste is enabled when the verified form URL is configured;
 URL prefilling and direct API submission remain independently gated. Production
 API writes require explicit column IDs, exact titles/types, a submission-key
@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import requests
 
+from app.job_numbers import JOB_NUMBER_OPTIONS, RRH_JOB_NUMBERS
 from app.smartsheet_store import SubmissionStore, SubmissionStoreError
 from app.po_rules import (
     EQUIPMENT_ACCOUNT,
@@ -109,12 +110,6 @@ DEFAULT_FORM_REQUIRED_FIELDS: tuple[str, ...] = (
     "dispatch_service_center",
 )
 
-RRH_JOB_NUMBERS: tuple[str, ...] = (
-    "RRH-695400022-O&M",
-    "RRH-695400023-START UP",
-    "RRH-695400030-ISDC",
-    "RRH-695400034-ES JOB CCJ",
-)
 OBJECT_ACCOUNT_OPTIONS: tuple[str, ...] = (
     "NA",
     MATERIALS_ACCOUNT,
@@ -135,6 +130,7 @@ AGREEMENT_TYPE_OPTIONS: tuple[str, ...] = (
 REQUEST_TYPE_OPTIONS: tuple[str, ...] = ("PO", "CHANGE ORDER")
 _EXACT_OPTIONS: dict[str, tuple[str, ...]] = {
     "request_type": REQUEST_TYPE_OPTIONS,
+    "job_number": JOB_NUMBER_OPTIONS,
     "object_account": OBJECT_ACCOUNT_OPTIONS,
     "agreement_type": AGREEMENT_TYPE_OPTIONS,
     "dispatch_service_center": ("NA",),

@@ -22,6 +22,7 @@ import anthropic
 from app.analysis_schema import AnalysisResponseError, normalize_analysis_response
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES
 from app.equipment_policy import GROUP_A_PROMPT_LIST
+from app.job_numbers import UNITY_DISAMBIGUATION_GUIDANCE
 
 SYSTEM_PROMPT = """\
 You are an expert construction and facilities project analyst supporting \
@@ -91,6 +92,8 @@ STRICT RULES:
    - Massena Hospital, 1 Hospital Dr, Massena, NY 13662
    If none match, use whatever facility/location the quote references. \
    If no location is given, set facility fields to null.
+
+__UNITY_DISAMBIGUATION__
 
 5. For scope_of_work, write a thorough and detailed description of ALL work \
    items. Organize by numbered task if the quote has numbered sections. \
@@ -194,7 +197,9 @@ Return your answer as a JSON object with exactly these keys:
 }
 
 Return ONLY the JSON object, no markdown fences, no extra text.
-""".replace("__GROUP_A_EQUIPMENT__", GROUP_A_PROMPT_LIST)
+""".replace("__GROUP_A_EQUIPMENT__", GROUP_A_PROMPT_LIST).replace(
+    "__UNITY_DISAMBIGUATION__", UNITY_DISAMBIGUATION_GUIDANCE
+)
 
 
 @dataclass

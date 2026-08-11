@@ -80,7 +80,7 @@ def _state(
         f"request_type_{token}": request_type,
         f"original_po_{token}": original_po,
         f"requester_{token}_Tulane": "Final Requester",
-        f"job_number_{token}_Tulane": "TUL-100",
+        f"job_number_{token}_Tulane": "TULANE-695000028-ES JOB CCJ",
         f"vendor_{token}": "Corrected Vendor Co",
         f"contact_{token}": "Final Contact",
         f"cemail_{token}": "final@example.com",

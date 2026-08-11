@@ -24,6 +24,7 @@ from app.config import (
     WORK_CATEGORY_DISPLAY,
     lookup_cost_code,
 )
+from app.job_numbers import JOB_NUMBER_OPTIONS, RRH_JOB_NUMBERS
 from app.po_rules import (
     PURCHASE_ROUTE_LABELS,
     classify_po,
@@ -64,7 +65,7 @@ _LOCKED_FIELDS = (
     "dispatch_service_center",
 )
 
-RRH_DEFAULT_JOB_NUMBER = "RRH-695400022-O&M"
+RRH_DEFAULT_JOB_NUMBER = RRH_JOB_NUMBERS[0]
 PREPARED_PO_CONTEXT_STATE_KEY = "_prepared_smartsheet_po_context"
 
 
@@ -427,11 +428,12 @@ def build_po_context(
         else ""
     )
     requester_name = _state_text(state, f"requester_{token}_{contract}")
-    job_number = _state_text(
+    raw_job_number = _state_text(
         state,
         f"job_number_{token}_{contract}",
         RRH_DEFAULT_JOB_NUMBER if rrh else "",
     )
+    job_number = raw_job_number if raw_job_number in JOB_NUMBER_OPTIONS else ""
     fields = {
         "requester_name": requester_name,
         "request_type": request_type,

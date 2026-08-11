@@ -28,6 +28,11 @@ from app.config import (
     valid_categories_for_site,
 )
 from app.device_identity import device_token, ensure_device_cookie
+from app.job_numbers import (
+    RRH_JOB_NUMBERS,
+    job_numbers_for_contract,
+    suggest_job_number,
+)
 from app.memory import (
     record_device_account_manager,
     record_vendor_contact,
@@ -53,7 +58,6 @@ from app.quote_analyzer import AIAssumption, QuoteAnalysis, analyze_quote
 from app.scope_pdf import build_scope_pdf
 from app.smartsheet import (
     MAX_ATTACHMENT_BYTES,
-    RRH_JOB_NUMBERS,
     preflight_attachments,
     validate_submission_fields,
 )
@@ -79,6 +83,7 @@ SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
 SITE_LABELS = list(FACILITY_SHORT_NAMES.values())
 CONTRACT_PLACEHOLDER = "— Select a contract —"
 SITE_PLACEHOLDER = "— Select a site —"
+JOB_NUMBER_PLACEHOLDER = "— Select a job number —"
 ASSET_NONE = "None Applicable"
 ASSET_PLACEHOLDER = "— Choose an asset or No asset —"
 REQUEST_TYPE_LABELS = {
@@ -1359,10 +1364,19 @@ def main() -> None:
     job_value = ""
     if routing_snapshot.contract:
         job_key = f"job_number_{token}_{routing_snapshot.contract}"
-        if routing_snapshot.rrh:
-            if st.session_state.get(job_key) not in RRH_JOB_NUMBERS:
-                st.session_state[job_key] = RRH_JOB_NUMBERS[0]
+        job_options = job_numbers_for_contract(routing_snapshot.contract)
+        job_suggestion = suggest_job_number(job_options, cached_quote)
+        valid_job_values = {JOB_NUMBER_PLACEHOLDER, *job_options}
+        if st.session_state.get(job_key) not in valid_job_values:
+            st.session_state[job_key] = (
+                job_suggestion
+                or RRH_JOB_NUMBERS[0]
+                if routing_snapshot.rrh
+                else job_suggestion or JOB_NUMBER_PLACEHOLDER
+            )
         job_value = str(st.session_state.get(job_key, "") or "").strip()
+        if job_value == JOB_NUMBER_PLACEHOLDER:
+            job_value = ""
 
     site_assets, _, asset_guess = _asset_control_data(
         analysis=analysis,
@@ -1542,22 +1556,31 @@ def main() -> None:
 
     if contract:
         job_key = f"job_number_{token}_{contract}"
+        job_options = job_numbers_for_contract(contract)
+        job_suggestion = suggest_job_number(job_options, cached_quote)
+        selectable_job_options = (
+            job_options
+            if rrh
+            else (JOB_NUMBER_PLACEHOLDER, *job_options)
+        )
+        if st.session_state.get(job_key) not in selectable_job_options:
+            st.session_state[job_key] = (
+                job_suggestion
+                or RRH_JOB_NUMBERS[0]
+                if rrh
+                else job_suggestion or JOB_NUMBER_PLACEHOLDER
+            )
         with questions if needs.job_number else corrections:
-            if rrh:
-                if st.session_state.get(job_key) not in RRH_JOB_NUMBERS:
-                    st.session_state[job_key] = RRH_JOB_NUMBERS[0]
-                st.selectbox(
-                    "Job number *",
-                    RRH_JOB_NUMBERS,
-                    key=job_key,
-                    help="RRH O&M is selected automatically for most requests.",
-                )
-            else:
-                st.text_input(
-                    "Job number *",
-                    key=job_key,
-                    placeholder="Enter the account job number",
-                )
+            st.selectbox(
+                "Job number *",
+                selectable_job_options,
+                key=job_key,
+                help=(
+                    "The choices match Smartsheet exactly. Unity choices are "
+                    "for Unity Health System in Arkansas; Rochester-area "
+                    "Unity hospitals use RRH job numbers."
+                ),
+            )
     else:
         job_key = ""
 
@@ -1699,7 +1722,11 @@ def main() -> None:
         draft_problems.append("enter the job cost code")
     if not requester_value:
         draft_problems.append("enter your name")
-    if not job_key or not str(st.session_state.get(job_key, "")).strip():
+    if (
+        not job_key
+        or str(st.session_state.get(job_key, "") or "").strip()
+        in {"", JOB_NUMBER_PLACEHOLDER}
+    ):
         draft_problems.append("confirm the job number")
     if request_type == "CHANGE ORDER" and not str(
         st.session_state.get(original_po_key, "")
