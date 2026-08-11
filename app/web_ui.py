@@ -1363,6 +1363,11 @@ def main() -> None:
         st.session_state.get(description_key, "") or ""
     ).strip()[:20]
 
+    scope_key = f"scope_{token}"
+    if scope_key not in st.session_state:
+        st.session_state[scope_key] = str(analysis.scope_of_work or "").strip()
+    scope_value = str(st.session_state.get(scope_key, "") or "").strip()
+
     instructions_key = f"instructions_{token}"
     instructions_value = str(
         st.session_state.get(instructions_key, "") or ""
@@ -1747,6 +1752,8 @@ def main() -> None:
         draft_problems.append("confirm the vendor name")
     if not str(st.session_state.get(description_key, "")).strip():
         draft_problems.append("confirm the short description")
+    if not scope_value:
+        draft_problems.append("confirm the scope of work")
     if selected_asset == ASSET_PLACEHOLDER:
         draft_problems.append("choose the specific asset or No asset applies")
     if not str(st.session_state.get(contact_key, "")).strip():
@@ -1778,7 +1785,7 @@ def main() -> None:
         final_inclusions,
         final_exclusions,
         vendor=str(st.session_state.get(vendor_key, "") or "").strip(),
-        scope=str(getattr(analysis, "scope_of_work", "") or "").strip(),
+        scope=scope_value,
     )
     if (
         st.session_state.get("scope_pdf_bytes")
@@ -1814,7 +1821,7 @@ def main() -> None:
     ):
         try:
             scope_pdf = build_scope_pdf(
-                scope=analysis.scope_of_work,
+                scope=scope_value,
                 inclusions=final_inclusions,
                 exclusions=final_exclusions,
                 vendor=str(st.session_state.get(vendor_key, "") or ""),

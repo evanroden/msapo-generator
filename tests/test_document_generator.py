@@ -28,8 +28,18 @@ def test_repeated_generations_use_distinct_paths(tmp_path, monkeypatch):
         scope_of_work="Repair the pump.",
     )
 
-    first = document_generator.generate_docx(analysis, output_name="Test MSAPO")
-    second = document_generator.generate_docx(analysis, output_name="Test MSAPO")
+    first = document_generator.generate_docx(
+        analysis,
+        final_inclusions=[],
+        final_exclusions=[],
+        output_name="Test MSAPO",
+    )
+    second = document_generator.generate_docx(
+        analysis,
+        final_inclusions=[],
+        final_exclusions=[],
+        output_name="Test MSAPO",
+    )
 
     assert first != second
     assert first.exists()
