@@ -35,17 +35,16 @@ The supplied files represented three different stages:
 - The three `Employee Reimbursement Expense Report _JDE_10012025*.xlsx` files
   are byte-identical blank templates.
 - `2026.03.19 Expense Report 2.xlsx` is a completed workbook example.
-- `May Expenses.pdf` is a one-page rendering of a completed form.
-- `Evan Roden Expenses.pdf` is a 16-page packet: the completed form followed by
-  15 receipt pages.
-- `Employee Reimbursement Expense Report - JDE - Dane 27JUL26.pdf` is the RRH
-  approved-reference report: signed form first, one receipt second, job-only
-  coding, and a receipt reimbursement smaller than the full receipt total.
-- Dane confirmed that the submitted artifact is the PDF. Excel remains useful
-  only as an editable download and is not attached to the approval email.
+- One example is a one-page rendering of a completed form.
+- One example is a 16-page packet: the completed form followed by 15 receipt
+  pages.
+- The approved RRH reference report contains the signed form first, one receipt
+  second, job-only coding, and a reimbursement smaller than the receipt total.
+- The approved submission artifact is the PDF. Excel remains useful only as an
+  editable download and is not attached to the approval email.
 
-The earlier completed examples remain non-authoritative where Dane's approved
-RRH report or a later product-owner direction conflicts with them. RRH now
+The earlier completed examples remain non-authoritative where the approved RRH
+report or a later product-owner direction conflicts with them. RRH now
 derives Employee Home Business Unit from the account instead of asking the
 employee to type it.
 
@@ -79,12 +78,13 @@ Required report values:
 - Contract administrator name and email
 - Mail destination; satellite office becomes required when selected
 
-For RRH, Employee Home Business Unit is derived from the account, and David
-Siegal at the existing configured address is the default administrator. A
+For RRH, Employee Home Business Unit is derived from the account as `695`,
+matching the approved Dane report. The default administrator name and email
+come from private deployment configuration rather than public source. A
 different reviewed administrator can still be entered.
 
-RRH service year controls the cost-code default: `01AMA` for year 1, `02AMA`
-for year 2, `03AMA` for year 3, and so on.
+RRH service year controls the Account / Cost Type default: `01AMA` for year 1,
+`02AMA` for year 2, `03AMA` for year 3, and so on. Cost Code defaults to `5490`.
 
 ### 3. Review each receipt
 
@@ -105,9 +105,20 @@ purpose that the receipt cannot support. If automatic reading fails, blank
 required fields stay visible beside the receipt; they are never relabeled as
 optional or moved into a hidden panel.
 
-Job number, cost type, and cost code appear directly under every receipt. RRH
-starts with `695400022`, `5490`, and the service-year `AMA` code. All three are
-editable for that receipt; `695400023` is the usual Startup alternative.
+Job number, Account / Cost Type, and Cost Code appear directly under every
+receipt. Following the confirmed report, RRH starts with `695400022`, the
+service-year `AMA` value in Account / Cost Type, and `5490` in Cost Code. All
+three are editable for that receipt; `695400023` is the usual Startup
+alternative.
+
+When one source receipt contains several applicable purchases, the employee can
+split it into independently editable reimbursement lines. Each line has its own
+description, reimbursable amount, section/contact, and JDE coding. The first
+line begins with the receipt-wide AI draft; later lines deliberately begin
+blank so a full receipt total cannot be duplicated accidentally. Nonbusiness
+items receive no line. The workbook attaches the unchanged source receipt only
+once and labels how many reimbursement lines it supports. A visible warning
+appears when the reviewed line sum exceeds the amount the analyzer read.
 
 Entertainment requires a contact name. Miscellaneous is the conservative
 default because the supplied completed packet placed ordinary employee travel
@@ -121,11 +132,13 @@ Mileage is optional and supports up to eight form rows. Each entry collects:
 - Business miles
 - Business purpose
 - Destination
-- Editable job number, cost type, and cost code
+- Editable job number, Account / Cost Type, and Cost Code
 
 The travel date selects the IRS business rate. The dated table uses `$0.725`
-through June 30, 2026 and `$0.76` beginning July 1, 2026. Unknown future dates
-block instead of silently reusing an expired rate.
+through June 30, 2026 and `$0.76` beginning July 1, 2026, matching the
+[initial 2026 IRS rate](https://www.irs.gov/newsroom/irs-sets-2026-business-standard-mileage-rate-at-725-cents-per-mile-up-25-cents)
+and the [July 2026 IRS revision](https://www.irs.gov/irb/2026-29_irb).
+Unknown future dates block instead of silently reusing an expired rate.
 
 ### 5. Confirm signature, generate, and open the approval draft
 
@@ -145,8 +158,8 @@ The RRH workflow uses one allocation route:
 | Required UI field | Form column |
 |---|---|
 | Job / Service Center | `I` |
-| Account / Cost Type | `J` |
-| Cost Code | `K` |
+| Account / Cost Type | `J` — `01AMA` in service year 1 |
+| Cost Code | `K` — `5490` by default |
 
 Work Order (`L`) and Other Expenses (`N:Q`) are never populated. The data model
 rejects those routes even if a stale session or direct function call attempts to
@@ -192,13 +205,13 @@ employee name; changing the name clears the confirmation.
 - Mileage rows: 10–17, maximum 8 entries.
 - `B`: travel date; `C`: purpose; `F`: destination; `G`: miles.
 - `H`: rounded `miles × dated IRS rate` formula.
-- `I:K`: job, cost type, and cost code.
+- `I:K`: job, Account / Cost Type, and Cost Code.
 - Mileage total: `H18 = SUM(H10:H17)`.
 
 ### Expense rows and totals
 
-- Miscellaneous rows: 24–38, maximum 15 receipts.
-- Entertainment rows: 45–58, maximum 14 receipts.
+- Miscellaneous rows: 24–38, maximum 15 reimbursement lines.
+- Entertainment rows: 45–58, maximum 14 reimbursement lines.
 - Miscellaneous total: `H39 = SUM(H24:H38)`.
 - Entertainment total: `H59 = SUM(H45:H58)`.
 - Total reimbursement: `Q60 = H18+H39+H59`.
@@ -212,12 +225,17 @@ text. When mileage rows span multiple rate periods, the heading says
 ## Receipt attachment rendering
 
 - Each image frame or PDF page becomes a separate printed page in `RECEIPTS`.
-- A receipt PDF may contain up to 10 pages.
-- Each page gets a header with receipt number, date, merchant, amount, and source
-  filename.
+- A receipt PDF may contain up to 10 pages. The first-page preview validates the
+  complete source limit without rejecting a valid multipage receipt or rendering
+  every page twice.
+- Each page gets a header with source-receipt number, date, merchant, total
+  reviewed reimbursement across its lines, and source filename.
+- Split lines never duplicate the source image; one upload produces one receipt
+  attachment group regardless of how many form rows it supports.
 - Images are EXIF-rotated, converted to RGB, bounded to 1200×1600, and encoded
   as quality-78 JPEG for legibility and mail size.
-- Images over 40 million decoded pixels are rejected before workbook insertion.
+- Images and PDF pages over 40 million raster pixels are rejected before a
+  large decode/raster allocation or workbook insertion.
 - Multi-page attachments receive manual row page breaks and Letter/portrait
   print settings.
 - The PDF renderer uses an isolated LibreOffice user profile per generation to
@@ -252,7 +270,7 @@ degrades to required manual fields.
 The analyzer is instructed to select the final paid/charged total—including
 charged tax and tip—not subtotal, change due, loyalty points, a suggested tip,
 or an unpaid balance. Parser validation rejects arbitrary text that merely
-contains digits. Dane's approved example reimburses only one business line item
+contains digits. The approved example reimburses only one business line item
 from a larger receipt, so the UI explicitly tells the employee to replace the
 prefill with only the business-reimbursable portion when appropriate.
 
@@ -291,14 +309,20 @@ disable only the memory convenience.
 | AI cannot read a receipt | Error is cached instead of retried on every rerun; required manual fields remain visible; explicit retry is available. |
 | Same file uploaded twice | Exact SHA-256 duplicate is ignored. |
 | Cropped/re-encoded duplicate | Same merchant/date/amount produces a non-blocking confirmation warning; it is not auto-deleted because legitimate repeated purchases exist. |
+| Receipt contains several applicable purposes/codes | Optional split control creates independent reviewed rows while attaching the source once. Later lines start blank. |
+| Receipt contains many items but only some are business expenses | Employee enters only applicable lines/amounts; nonbusiness items are omitted. The original source stays attached for audit. |
+| Split line sum exceeds the tool-read receipt total | Prominent review warning identifies both totals; generation still requires valid line-level values because tips, currency conversion, or analyzer error may explain the difference. |
+| Image/PDF declares enormous dimensions | Pixel estimate is checked before frame copy or PDF rasterization, preventing a small compressed file from causing an unbounded memory allocation. |
+| Receipt PDF exceeds 10 pages | Preflight rejects it before constructing the AI client; the employee gets a split-file instruction instead of an expensive failed request. |
 | Invalid or ambiguous total | Strict positive currency parser; generation remains blocked. |
 | Foreign currency | Currency warning requires the user to enter the approved USD reimbursement amount. No exchange rate is invented. |
 | Receipt dated after report | Visible review warning. |
 | Receipt more than one year old | Visible review warning. |
-| Missing job/cost coding | Job, cost type, and cost code stay visible on the affected receipt or mileage row and block generation. |
+| Missing job/cost coding | Job, Account / Cost Type, and Cost Code stay visible on the affected receipt or mileage row and block generation. |
 | Work Order or Other Expenses route reaches the generator | Validation rejects it; columns `L` and `N:Q` remain blank. |
 | Leading-zero accounting code | All coding cells use Excel text format. |
-| Wrong RRH service-year cost code | One service-year selector updates untouched receipt/mileage defaults from `01AMA` to `02AMA`, `03AMA`, etc.; manual row edits are preserved. |
+| Employee/receipt text begins with an Excel formula character | Every user-editable text and code cell is forced to Excel string type; formulas exist only in the fixed total/mileage cells written by the generator. |
+| Wrong RRH service-year Account / Cost Type | One service-year selector updates untouched receipt/mileage defaults from `01AMA` to `02AMA`, `03AMA`, etc.; manual row edits are preserved. |
 | Stale job number survives an account change | UI choices reset and generator validation rejects any catalog job outside the selected account. |
 | Mileage crosses the July 2026 IRS change | Rate is selected per travel date: `$0.725` through June 30 and `$0.76` beginning July 1. |
 | Future IRS rate is unknown | Generation blocks with the exact unconfigured travel date rather than carrying a prior rate forward. |
@@ -317,8 +341,9 @@ disable only the memory convenience.
 
 Automated Streamlit coverage verifies the workflow switch, multi-file uploader,
 AI-filled editable fields, required default coding, draft preservation across a
-hidden-widget rerun, the generation gate, three downloads, and administrator
-mailto link.
+hidden-widget rerun, restored-plus-new receipt merging, individual receipt
+removal, split reimbursement lines, the generation gate, three downloads, and
+administrator mailto link.
 
 Expected platform handoff:
 
@@ -338,7 +363,7 @@ Verification for this RRH policy revision:
 
 ```text
 python -m pytest -q
-205 passed
+232 passed
 
 python -m py_compile app/*.py
 silent success
@@ -350,6 +375,10 @@ Coverage includes:
 - Field/cell mapping and leading zeros
 - Formula preservation and recalculation settings
 - Receipt image normalization and ordering
+- Split and partially applicable receipts with one source attachment
+- Restored-plus-new uploader merging and individual receipt removal
+- Formula-injection-safe workbook text fields
+- Oversized/corrupt image and PDF preflight rejection
 - Two-sheet Excel integrity
 - Form-first multi-page PDF rendering
 - Strict amount/response parsing
@@ -363,20 +392,15 @@ Coverage includes:
 - Full Streamlit expense generation path
 - All pre-existing purchase-order regressions
 
-## Remaining RRH coding conflict — product-owner confirmation required
-
-One source conflict remains. The written direction identifies `5490` as
-Account / Cost Type and `01AMA` as Cost Code. Dane's PDF visually places
-`01AMA` in column `J` and `5490` in column `K`, the reverse of the form headers
-and written labels. The implementation currently follows the explicitly labeled
-written values while awaiting confirmation.
-
-Resolved decisions:
+## Confirmed RRH policy decisions
 
 - Outlook email contains only the submission PDF; Excel is an optional editable
   download.
-- Employee Home Business Unit is `RRH`, following the explicit product-owner
-  direction even though Dane's reference PDF displays `695`.
+- Employee Home Business Unit is `695`, matching the approved Dane RRH report
+  that the product owner identified as authoritative.
+- The approved report controls the coding order: `01AMA` is written to
+  Account / Cost Type in column `J`, and `5490` is written to Cost Code in
+  column `K`.
 - Employee cursive signature and printed name are generated after confirmation.
 - Work Order and Other Expenses are never used.
 - Mileage uses the official IRS business rate for each travel date.

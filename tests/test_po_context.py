@@ -131,7 +131,7 @@ def _state(
         ),
     ],
 )
-def test_context_applies_ashleys_classification_matrix(
+def test_context_applies_approved_classification_matrix(
     route, total, expected_account, expected_agreement
 ):
     context = build_po_context(

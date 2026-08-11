@@ -1,27 +1,24 @@
-# Environment
+# Environment and local tooling
 .env
 .venv/
 venv/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# Output files (generated docs)
-output/*.docx
-output/*.pdf
-output/*.txt
-!output/.gitkeep
-
-# IDE
 .vscode/
 .idea/
+.claude/
 
-# OS
+# Python/runtime output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Generated application state and evidence
+data_store/
+output/
+upload/
+equipment_render/
+test_support/
+
+# Operating-system files
 .DS_Store
 Thumbs.db
-
-# Claude Code
-.claude/
-data_store/

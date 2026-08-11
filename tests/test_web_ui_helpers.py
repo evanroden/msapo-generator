@@ -62,7 +62,6 @@ def test_review_path_does_not_return_before_rendering_correctable_fields():
 
 def test_typed_total_survives_a_site_change(monkeypatch):
     _configure_smartsheet(monkeypatch)
-    monkeypatch.setenv("EPC_ENABLE_SYNTHETIC_SAMPLE", "true")
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     app.button[0].click().run()
 
@@ -88,7 +87,6 @@ def test_typed_total_survives_a_site_change(monkeypatch):
 
 def test_unmapped_rrh_cost_code_blocks_generation(monkeypatch):
     _configure_smartsheet(monkeypatch)
-    monkeypatch.setenv("EPC_ENABLE_SYNTHETIC_SAMPLE", "true")
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     app.button[0].click().run()
 

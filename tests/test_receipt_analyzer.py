@@ -1,8 +1,15 @@
+import fitz
+import pytest
+
 from app.expense_report import (
     EXPENSE_SECTION_ENTERTAINMENT,
     EXPENSE_SECTION_MISC,
 )
-from app.receipt_analyzer import ReceiptAnalysisError, normalize_receipt_response
+from app.receipt_analyzer import (
+    ReceiptAnalysisError,
+    analyze_receipt,
+    normalize_receipt_response,
+)
 
 
 def test_receipt_response_normalizes_editable_fields():
@@ -70,3 +77,19 @@ def test_genuinely_malformed_receipt_response_still_raises():
     else:
         raise AssertionError("malformed receipt JSON should fail")
 
+
+def test_overlong_pdf_is_rejected_before_an_api_client_is_created(monkeypatch):
+    document = fitz.open()
+    for _ in range(11):
+        document.new_page(width=100, height=100)
+    payload = document.tobytes()
+    document.close()
+
+    def unexpected_client(**_kwargs):
+        raise AssertionError("invalid receipt must not reach the AI client")
+
+    monkeypatch.setattr("app.receipt_analyzer.ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setattr("app.receipt_analyzer.anthropic.Anthropic", unexpected_client)
+
+    with pytest.raises(ReceiptAnalysisError, match="11 pages; the limit is 10"):
+        analyze_receipt(payload, "overlong.pdf")

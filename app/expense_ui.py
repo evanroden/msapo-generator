@@ -11,12 +11,14 @@ from pathlib import Path
 import streamlit as st
 
 from app import contracts
-from app.eml_builder import DAVID_EMAIL, build_eml, build_mailto_url, build_plain_body
+from app.config import RRH_APPROVER_EMAIL, RRH_APPROVER_NAME
+from app.eml_builder import build_eml, build_mailto_url, build_plain_body
 from app.expense_report import (
     ALLOCATION_JOB,
     EXPENSE_SECTION_ENTERTAINMENT,
     EXPENSE_SECTION_MISC,
     MAX_MILEAGE_ITEMS,
+    MAX_MISCELLANEOUS_ITEMS,
     ExpenseAllocation,
     ExpenseItem,
     ExpenseReportError,
@@ -73,10 +75,9 @@ _MAIL_LABELS = {
     "home": "Mail check to home address",
     "satellite": "Mail check to a satellite office",
 }
-_RRH_ADMIN_NAME = "David Siegal"
 _RRH_DEFAULT_JOB = "RRH-695400022-O&M"
-_RRH_DEFAULT_COST_TYPE = "5490"
-_RRH_COST_CODE_SUFFIX = "AMA"
+_RRH_ACCOUNT_COST_TYPE_SUFFIX = "AMA"
+_RRH_DEFAULT_COST_CODE = "5490"
 
 
 def render_expense_workflow(browser_token: str) -> None:
@@ -125,20 +126,28 @@ def render_expense_workflow(browser_token: str) -> None:
             (upload.name, upload.getvalue(), upload.type or "application/octet-stream")
             for upload in uploads
         ]
-        if st.session_state.pop("expense_restored_without_uploader", False):
-            upload_sources = [*mirrored_uploads, *current_uploads]
-        else:
-            upload_sources = current_uploads
+        _, duplicate_names = _unique_receipts(current_uploads)
+        # File-uploader values cannot be restored programmatically after that
+        # widget is hidden by a workflow switch. Merge its current additions
+        # into the bounded byte mirror so the restored files do not disappear
+        # on the next ordinary rerun.
+        upload_sources = _merge_receipt_sources(
+            mirrored_uploads,
+            current_uploads,
+        )
         st.session_state["expense_receipt_files"] = upload_sources
+        st.session_state.pop("expense_restored_without_uploader", None)
     else:
         upload_sources = mirrored_uploads
+        duplicate_names = []
         if upload_sources:
             st.session_state["expense_restored_without_uploader"] = True
             st.info(
-                "Your in-progress receipts were restored. Use Clear receipts and "
-                "start over when you intend to remove the entire draft."
+                "Your in-progress receipts were restored. Add more files above, "
+                "remove one beside its preview, or clear the entire report."
             )
-    unique_uploads, duplicate_names = _unique_receipts(upload_sources or [])
+    unique_uploads, stored_duplicate_names = _unique_receipts(upload_sources or [])
+    duplicate_names.extend(stored_duplicate_names)
     active_ids = {receipt_id for receipt_id, _, _ in unique_uploads}
     _clear_removed_receipts(active_ids)
     if duplicate_names:
@@ -259,13 +268,13 @@ def render_expense_workflow(browser_token: str) -> None:
                 tuple(range(1, 10)),
                 key=f"expense_service_year_{account_token}",
                 help=(
-                    "The service year sets the editable receipt cost-code default: "
+                    "The service year sets the editable Account / Cost Type default: "
                     "year 1 = 01AMA, year 2 = 02AMA, and so on."
                 ),
             )
         )
         st.caption(
-            f"Receipt coding starts with 695400022 · 5490 · {service_year:02d}AMA. "
+            f"Receipt coding starts with 695400022 · {service_year:02d}AMA · 5490. "
             "Each receipt can be changed independently."
         )
     allocation_seed = _default_job_allocation(account, service_year)
@@ -294,11 +303,11 @@ def render_expense_workflow(browser_token: str) -> None:
     )
     st.caption(
         "Every required value stays with the receipt or mileage entry it belongs "
-        "to. Job number, cost type, and cost code are prefilled but editable."
+        "to. Job number, Account / Cost Type, and Cost Code are prefilled but editable."
     )
     items: list[ExpenseItem] = []
     for index, (receipt_id, filename, file_bytes) in enumerate(unique_uploads, 1):
-        item = _render_receipt(
+        receipt_items = _render_receipt(
             index=index,
             receipt_id=receipt_id,
             filename=filename,
@@ -307,7 +316,7 @@ def render_expense_workflow(browser_token: str) -> None:
             account=account,
             allocation_seed=allocation_seed,
         )
-        items.append(item)
+        items.extend(receipt_items)
 
     mileage_items = _render_mileage_entries(
         account=account,
@@ -318,7 +327,7 @@ def render_expense_workflow(browser_token: str) -> None:
 
     total = total_reimbursement(items, mileage_items)
     summary_columns = st.columns(3)
-    summary_columns[0].metric("Receipts", len(items))
+    summary_columns[0].metric("Receipts", len(unique_uploads))
     summary_columns[1].metric("Mileage entries", len(mileage_items))
     summary_columns[2].metric("Total reimbursement", f"${total:,.2f}")
 
@@ -484,7 +493,7 @@ def _render_receipt(
     analysis: ReceiptAnalysis,
     account: str,
     allocation_seed: ExpenseAllocation,
-) -> ExpenseItem:
+) -> list[ExpenseItem]:
     token = receipt_id[:12]
     _seed_receipt_fields(token, analysis)
     error_key = f"expense_receipt_error_{receipt_id}"
@@ -520,6 +529,13 @@ def _render_receipt(
         preview = st.session_state.get(preview_key, b"")
         if preview:
             st.image(preview, caption=f"Receipt {index}", width="stretch")
+        if st.button(
+            "Remove this receipt",
+            key=f"expense_remove_receipt_{token}",
+            width="stretch",
+        ):
+            _remove_receipt_from_draft(receipt_id)
+            st.rerun()
         if automatic_error:
             st.warning(
                 "The tool could not read this receipt automatically. The fields "
@@ -541,6 +557,7 @@ def _render_receipt(
                 f"Receipt currency appears to be {analysis.currency}. Enter the approved U.S.-dollar reimbursement amount."
             )
 
+    items: list[ExpenseItem] = []
     with fields_column:
         merchant = st.text_input(
             "Merchant",
@@ -551,60 +568,129 @@ def _render_receipt(
         if date_key not in st.session_state:
             date_kwargs["value"] = None
         transaction_date = st.date_input("Transaction date *", **date_kwargs)
-        description = st.text_input(
-            "Description / business purpose *",
-            key=description_key,
-            help="Edit the receipt-based draft to state the actual business purpose without including accounting codes.",
-        ).strip()
-        amount = st.text_input(
-            "Reimbursable amount *",
-            key=amount_key,
+        split_receipt = st.toggle(
+            "Split this receipt into multiple reimbursement lines",
+            key=f"expense_split_{token}",
             help=(
-                "Enter only the business-reimbursable portion. It may be less than "
-                "the receipt total, as in Dane's approved RRH example. Include "
-                "applicable charged tax and tip for that portion."
-            ),
-        ).strip()
-        section = st.selectbox(
-            "Expense section *",
-            tuple(_SECTION_LABELS),
-            format_func=lambda value: _SECTION_LABELS[value],
-            key=section_key,
-            help=(
-                "Entertainment requires a business purpose and contact name. "
-                "Ordinary travel, parking, supplies, and employee meals normally remain Miscellaneous."
+                "Use this when one receipt contains reimbursable items with "
+                "different business purposes, sections, or job coding. The "
+                "receipt image will still be attached only once."
             ),
         )
-        contact_name = ""
-        if section == EXPENSE_SECTION_ENTERTAINMENT:
-            contact_name = st.text_input(
-                "Entertainment contact name *",
-                key=contact_key,
+        line_count = 1
+        if split_receipt:
+            line_count = int(
+                st.number_input(
+                    "Number of reimbursement lines",
+                    min_value=2,
+                    max_value=MAX_MISCELLANEOUS_ITEMS,
+                    value=2,
+                    step=1,
+                    key=f"expense_split_count_{token}",
+                    help=(
+                        "Create one line for each distinct reimbursable purpose "
+                        "or coding combination. Nonbusiness items need no line."
+                    ),
+                )
+            )
+            st.info(
+                "Enter only the applicable amount on each line. Replace the "
+                "first line's full-receipt prefill and do not enter nonbusiness items."
+            )
+
+        for line_index in range(1, line_count + 1):
+            line_token = token if line_index == 1 else f"{token}_line_{line_index}"
+            if line_index > 1:
+                _seed_additional_receipt_line_fields(line_token)
+            line_description_key = f"expense_description_{line_token}"
+            line_amount_key = f"expense_amount_{line_token}"
+            line_section_key = f"expense_section_{line_token}"
+            line_contact_key = f"expense_contact_{line_token}"
+            if line_count > 1:
+                st.markdown(f"**Reimbursement line {line_index}**")
+            description = st.text_input(
+                "Description / business purpose *",
+                key=line_description_key,
+                help=(
+                    "State the actual business purpose without accounting codes. "
+                    "For a split receipt, describe only this reimbursement line."
+                ),
             ).strip()
+            amount = st.text_input(
+                "Reimbursable amount *",
+                key=line_amount_key,
+                help=(
+                    "Enter only the business-reimbursable portion for this line. "
+                    "It may be less than the receipt total. Include applicable "
+                    "charged tax and tip for that portion."
+                ),
+            ).strip()
+            section = st.selectbox(
+                "Expense section *",
+                tuple(_SECTION_LABELS),
+                format_func=lambda value: _SECTION_LABELS[value],
+                key=line_section_key,
+                help=(
+                    "Entertainment requires a business purpose and contact name. "
+                    "Ordinary travel, parking, supplies, and employee meals "
+                    "normally remain Miscellaneous."
+                ),
+            )
+            contact_name = ""
+            if section == EXPENSE_SECTION_ENTERTAINMENT:
+                contact_name = st.text_input(
+                    "Entertainment contact name *",
+                    key=line_contact_key,
+                ).strip()
 
-        st.markdown("**JDE coding for this receipt**")
-        allocation = _render_job_allocation_fields(
-            prefix=f"expense_receipt_allocation_{token}",
-            account=account,
-            seed=allocation_seed,
-        )
+            st.markdown("**JDE coding for this reimbursement line**")
+            allocation = _render_job_allocation_fields(
+                prefix=f"expense_receipt_allocation_{line_token}",
+                account=account,
+                seed=allocation_seed,
+            )
+            items.append(
+                ExpenseItem(
+                    receipt_id=f"{receipt_id}:{line_index}",
+                    source_receipt_id=receipt_id,
+                    filename=filename,
+                    file_bytes=file_bytes,
+                    transaction_date=transaction_date,
+                    description=description,
+                    amount=amount,
+                    section=section,
+                    allocation=allocation,
+                    merchant_name=merchant,
+                    contact_name=contact_name,
+                )
+            )
 
-    item = ExpenseItem(
-        receipt_id=receipt_id,
-        filename=filename,
-        file_bytes=file_bytes,
-        transaction_date=transaction_date,
-        description=description,
-        amount=amount,
-        section=section,
-        allocation=allocation,
-        merchant_name=merchant,
-        contact_name=contact_name,
+    for line_index, item in enumerate(items, 1):
+        receipt_problems = _receipt_visible_problems(index, item)
+        if receipt_problems:
+            line_label = (
+                f"Receipt {index}, line {line_index}"
+                if len(items) > 1
+                else f"Receipt {index}"
+            )
+            st.warning(
+                f"Needed for {line_label}: "
+                + "; ".join(receipt_problems)
+                + "."
+            )
+
+    analyzed_total = parse_expense_amount(analysis.total_amount)
+    reviewed_total = sum(
+        (parse_expense_amount(item.amount) or 0 for item in items),
+        0,
     )
-    receipt_problems = _receipt_visible_problems(index, item)
-    if receipt_problems:
-        st.warning("Needed for this receipt: " + "; ".join(receipt_problems) + ".")
-    return item
+    if len(items) > 1 and analyzed_total is not None and reviewed_total > analyzed_total:
+        st.warning(
+            f"The split lines total ${reviewed_total:,.2f}, which exceeds the "
+            f"tool-read receipt total of ${analyzed_total:,.2f}. Verify the "
+            "receipt and line amounts before generating."
+        )
+    return items
 
 
 def _render_job_allocation_fields(
@@ -632,7 +718,7 @@ def _render_job_allocation_fields(
         )
     with coding_columns[1]:
         account_cost_type = st.text_input(
-            "Cost type *",
+            "Account / cost type *",
             key=f"{prefix}_account_cost_type",
         ).strip()
     with coding_columns[2]:
@@ -752,8 +838,10 @@ def _default_job_allocation(account: str, service_year: int) -> ExpenseAllocatio
         return ExpenseAllocation(
             kind=ALLOCATION_JOB,
             job_number=_RRH_DEFAULT_JOB,
-            account_cost_type=_RRH_DEFAULT_COST_TYPE,
-            cost_code_or_wo_type=f"{service_year:02d}{_RRH_COST_CODE_SUFFIX}",
+            account_cost_type=(
+                f"{service_year:02d}{_RRH_ACCOUNT_COST_TYPE_SUFFIX}"
+            ),
+            cost_code_or_wo_type=_RRH_DEFAULT_COST_CODE,
         )
     options = tuple(job_numbers_for_contract(account))
     return ExpenseAllocation(
@@ -763,7 +851,9 @@ def _default_job_allocation(account: str, service_year: int) -> ExpenseAllocatio
 
 
 def _employee_home_business_unit(account: str) -> str:
-    return "RRH" if contracts.is_rrh(account) else account.strip()
+    # The approved Dane RRH report is authoritative: RRH employees use home
+    # business unit 695 even though the user-facing account name is RRH.
+    return "695" if contracts.is_rrh(account) else account.strip()
 
 
 def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
@@ -780,11 +870,11 @@ def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
             f"expense_report_date_{account_token}": date.today(),
             f"expense_approver_name_{account_token}": (
                 profile.get("approver_name")
-                or (_RRH_ADMIN_NAME if contracts.is_rrh(account) else "")
+                or (RRH_APPROVER_NAME if contracts.is_rrh(account) else "")
             ),
             f"expense_approver_email_{account_token}": (
                 profile.get("approver_email")
-                or (DAVID_EMAIL if contracts.is_rrh(account) else "")
+                or (RRH_APPROVER_EMAIL if contracts.is_rrh(account) else "")
             ),
             f"expense_mail_destination_{account_token}": (
                 profile.get("mail_destination")
@@ -832,6 +922,18 @@ def _seed_receipt_fields(token: str, analysis: ReceiptAnalysis) -> None:
             if value not in {None, ""} and st.session_state.get(key) in {None, ""}:
                 st.session_state[key] = value
         st.session_state[seeded_key] = True
+
+
+def _seed_additional_receipt_line_fields(line_token: str) -> None:
+    """Seed a split line without copying the receipt-wide AI total."""
+    defaults = {
+        f"expense_description_{line_token}": "",
+        f"expense_amount_{line_token}": "",
+        f"expense_section_{line_token}": EXPENSE_SECTION_MISC,
+        f"expense_contact_{line_token}": "",
+    }
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
 
 
 def _seed_job_allocation(prefix: str, seed: ExpenseAllocation) -> None:
@@ -1008,6 +1110,43 @@ def _unique_receipts(uploads) -> tuple[list[tuple[str, str, bytes]], list[str]]:
     return unique, duplicates
 
 
+def _merge_receipt_sources(*groups) -> list[tuple[str, bytes, str]]:
+    """Merge uploader additions into the receipt mirror without byte growth."""
+    merged: list[tuple[str, bytes, str]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for upload in group:
+            if isinstance(upload, tuple):
+                filename, payload, mime_type = upload
+            else:
+                filename = upload.name
+                payload = upload.getvalue()
+                mime_type = upload.type or "application/octet-stream"
+            receipt_id = hashlib.sha256(payload).hexdigest()
+            if receipt_id in seen:
+                continue
+            seen.add(receipt_id)
+            merged.append((filename, payload, mime_type))
+    return merged
+
+
+def _remove_receipt_from_draft(receipt_id: str) -> None:
+    """Remove one mirrored source and clear the uploader's stale file list."""
+    retained = []
+    for filename, payload, mime_type in list(
+        st.session_state.get("expense_receipt_files", []) or []
+    ):
+        if hashlib.sha256(payload).hexdigest() != receipt_id:
+            retained.append((filename, payload, mime_type))
+    st.session_state["expense_receipt_files"] = retained
+    st.session_state["expense_uploader_nonce"] = int(
+        st.session_state.get("expense_uploader_nonce", 0) or 0
+    ) + 1
+    st.session_state.pop("expense_generated_package", None)
+    st.session_state.pop("expense_generated_eml", None)
+    st.session_state.pop("expense_generated_signature", None)
+
+
 def _clear_removed_receipts(active_ids: set[str]) -> None:
     prior = set(st.session_state.get("expense_active_receipt_ids", set()) or set())
     removed = prior - active_ids
@@ -1050,6 +1189,7 @@ def preserve_expense_draft_state() -> None:
         "active_receipt_ids",
         "clear_report",
         "generate_expense_package",
+        "remove_receipt",
         "retry_receipt",
     )
     for key, value in list(st.session_state.items()):

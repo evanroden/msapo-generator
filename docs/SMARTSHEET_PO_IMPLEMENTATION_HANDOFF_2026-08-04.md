@@ -40,9 +40,8 @@ The requested behavior was:
 3. Always use `PO` as Request Type because Email Process Control currently creates only purchase orders.
 4. Always use `NA` for `DISPATCH WO TO SERVICE CENTER?` because service-center dispatch applies only to work orders.
 5. Prioritize RRH job numbers and use the supplied RRH subset rather than rendering the entire Smartsheet job catalog.
-6. Use the completed live form URL:
-
-   `https://app.smartsheet.com/b/form/019e8e6717c471628f9a02280a892100`
+6. Configure the completed live form URL privately as `SMARTSHEET_FORM_URL`.
+   Never commit the production form identifier to a public repository.
 
 7. Use the uploaded internal-sheet workbook and screenshots as the source for exact field labels, required fields, and option text.
 
@@ -381,7 +380,7 @@ Never restore the old alias-based title matching or `strict:false` coercion.
 `render.yaml` now sets:
 
 - `EPC_DATA_DIR=/test1`
-- `SMARTSHEET_FORM_URL=https://app.smartsheet.com/b/form/019e8e6717c471628f9a02280a892100`
+- `SMARTSHEET_FORM_URL=<private production form URL>`
 - `SMARTSHEET_URL_PREFILL_ENABLED=false`
 - `SMARTSHEET_PREFILL_MAX_URL_LENGTH=7000`
 - `SMARTSHEET_API_MODE=disabled`

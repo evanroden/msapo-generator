@@ -3,20 +3,20 @@ import sqlite3
 from app.memory import record_expense_profile, remembered_expense_profile
 
 
-def _profile(name: str = "Evan Roden") -> dict[str, str]:
+def _profile(name: str = "Synthetic Employee") -> dict[str, str]:
     return {
         "employee_name": name,
-        "employee_number": "00133509",
-        "employee_home_bu": "RRH",
-        "approver_name": "David Siegal",
-        "approver_email": "david.siegal@enfrasolutions.com",
+        "employee_number": "TEST-1001",
+        "employee_home_bu": "695",
+        "approver_name": "RRH Test Administrator",
+        "approver_email": "rrh.approver@example.invalid",
         "mail_destination": "home",
         "satellite_office": "",
         "allocation_kind": "job",
         "job_number": "RRH-695400022-O&M",
         "service_center": "",
-        "account_cost_type": "5490",
-        "cost_code_or_wo_type": "01AMA",
+        "account_cost_type": "01AMA",
+        "cost_code_or_wo_type": "5490",
         "work_order_number": "",
         "company_number": "",
         "department_number": "",
@@ -39,8 +39,8 @@ def test_expense_profile_is_remembered_only_for_same_browser_and_account(
     result = remembered_expense_profile(
         "browser-a", "Rochester Regional Health"
     )
-    assert result["employee_name"] == "Evan Roden"
-    assert result["employee_number"] == "00133509"
+    assert result["employee_name"] == "Synthetic Employee"
+    assert result["employee_number"] == "TEST-1001"
     assert result["job_number"] == "RRH-695400022-O&M"
     assert remembered_expense_profile("browser-b", "Rochester Regional Health") == {}
     assert remembered_expense_profile("browser-a", "Tulane") == {}

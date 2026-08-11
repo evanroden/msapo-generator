@@ -50,7 +50,7 @@ from app.po_rules import (
         ),
     ],
 )
-def test_ashley_classification_matrix_is_exact(route, amount, account, agreement):
+def test_approved_classification_matrix_is_exact(route, amount, account, agreement):
     result = classify_po(route, amount)
     assert result.object_account == account
     assert result.agreement_type == agreement

@@ -1,6 +1,6 @@
 """Canonical purchase-order routing rules for the Smartsheet handoff.
 
-Ashley Connolly's August 2026 correction supersedes both historical EPO logic
+The August 2026 product-owner correction supersedes both historical EPO logic
 and the delivery-method version deployed in PR #33. Labor and rental take
 priority. With neither present, items on the supplied Group A list are
 Equipment and every other purchase is Materials; who delivers the item does
@@ -163,7 +163,7 @@ def infer_purchase_route(text: object) -> str:
 def normalize_asset_id(value: object) -> str:
     """Return the complete configured Asset ID, preserving every prefix.
 
-    Ashley referenced a five-digit JDE code, but the account team does not have
+    An earlier review referenced a five-digit JDE code, but the account team does not have
     a verified mapping for it. The product owner explicitly directed the tool
     to continue exporting the full asset codes already configured for every
     site. Keep the historical function name for compatibility with callers.

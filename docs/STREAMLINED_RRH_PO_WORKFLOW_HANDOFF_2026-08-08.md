@@ -19,14 +19,14 @@ for the current operator experience.
 
 ## 1. Why this revision exists
 
-Ashley reviewed the previous tool and corrected several business assumptions.
+The product owner reviewed the previous tool and corrected several business assumptions.
 The product owner also asked for a substantially simpler workflow for people on
 the ENFRA RRH account who may not know PO terminology or be comfortable with
 technical tools.
 
 The implementation uses the following supplied evidence:
 
-- Ashley's annotated follow-up screenshots;
+- the product owner's annotated follow-up screenshots;
 - live Smartsheet dropdown screenshots for Object Account and Agreement Type;
 - the live Smartsheet form, inspected without submitting a request;
 - the supplied `EQUIPMENT LIST - EQPO GROUP A` document; and
@@ -39,7 +39,7 @@ No real Smartsheet request was submitted while validating the form.
 These are non-negotiable unless the product owner changes them later:
 
 1. Continue exporting the complete configured asset code at every site.
-   Ashley referenced a five- or six-digit asset/JDE code, but no trusted mapping
+   An earlier review referenced a five- or six-digit asset/JDE code, but no trusted mapping
    was supplied and the product owner does not know which code she meant. Do not
    strip prefixes, keep only digits, invent a mapping, or shorten the registry UID.
 2. Description of Work is capped at 20 characters during export. The full scope
@@ -371,7 +371,7 @@ the prefilled link fails after the user refreshes their Smartsheet session.
 - `app/asset_guess.py`: unique-best registry asset suggestion.
 - `app/quote_analyzer.py`: expanded route, asset, and change-order extraction prompt.
 - `app/analysis_schema.py`: validates the new guesses and 20-character description.
-- `app/po_rules.py`: Ashley's route matrix and full asset-code preservation.
+- `app/po_rules.py`: approved route matrix and full asset-code preservation.
 - `app/memory.py`: anonymous device+account requester/asset-manager memory.
 - `app/web_ui.py`: three-step interaction, exception-only questions, suggestion defaults, and one final action.
 - `app/po_context.py`: change-order, 20-character, requester/job, full asset, and
@@ -448,7 +448,7 @@ for an operational outage and keep API mode disabled.
 Suggested squash title:
 
 ```text
-Streamline RRH PO generation and apply Ashley's routing corrections
+Streamline RRH PO generation and apply product-owner routing corrections
 ```
 
 Suggested body:

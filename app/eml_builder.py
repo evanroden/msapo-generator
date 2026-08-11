@@ -19,9 +19,8 @@ import mimetypes
 from email.message import EmailMessage
 from urllib.parse import quote
 
-DAVID_EMAIL = "david.siegal@enfrasolutions.com"
 # The app now supports many contracts. A neutral default is safe for every
-# administrator and avoids addressing non-RRH recipients as David.
+# administrator and avoids addressing a recipient by the wrong name.
 GREETING = "Good afternoon. Please see below."
 
 # A bullet is a (label, value) pair, e.g. ("Job cost code", "01GCHEM").
@@ -55,7 +54,7 @@ def _html_body(bullets: list[Bullet], greeting: str = GREETING) -> str:
 
 def build_eml(
     *,
-    to: str = DAVID_EMAIL,
+    to: str,
     subject: str,
     bullets: list[Bullet],
     attachments: list[tuple[str, bytes]],  # [(filename, data), ...]
@@ -92,7 +91,7 @@ def build_eml(
     return msg.as_bytes()
 
 
-def build_mailto_url(*, to: str = DAVID_EMAIL, subject: str, body: str) -> str:
+def build_mailto_url(*, to: str, subject: str, body: str) -> str:
     """mailto: URL that opens a pre-filled draft in the default mail app.
 
     Attachments cannot be passed through mailto: — on iOS they are shared to

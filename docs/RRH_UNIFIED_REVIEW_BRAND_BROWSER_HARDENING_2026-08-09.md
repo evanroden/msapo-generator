@@ -10,7 +10,7 @@ and
 
 This document is authoritative for the current three-step page, exception-only
 questions, ENFRA visual treatment, browser behavior, and Smartsheet handoff.
-The underlying Ashley routing matrix and full-asset-code policy remain unchanged.
+The underlying approved routing matrix and full-asset-code policy remain unchanged.
 
 ## 1. Result
 
@@ -251,7 +251,7 @@ or expected app handoff, prefilled values, and attachment selection.
 | UBR-08 | High | Operator could assume URL prefilling also uploads or submits | Explicit non-submit/non-attach wording and two-file reminder |
 | UBR-09 | Medium | Chrome Downloads bubble drag behavior is inconsistent | File Explorer drag guidance; no direct-drag promise |
 | UBR-10 | Medium | iOS input text remained 14px and could trigger focus zoom | Coarse-pointer 16px form-control rule found by rendered test |
-| UBR-11 | High | Innocuous author credit secretly loaded synthetic quote data | Synthetic control is explicit and disabled by default |
+| UBR-11 | High | A hidden test path could load real customer data or accidentally submit | The owner-requested discreet control loads only a static synthetic quote, calls no AI service, and never submits |
 | UBR-12 | Medium | External brand fonts could block or vary rendering | Approved Arial fallback with no font-network dependency |
 | UBR-13 | High | A current catalog could remove an asset still stored in an old session | Sanitize asset state against fresh options before rendering |
 | UBR-14 | Critical | Required value could be skipped by URL length/mapping but link still shown | Existing required-encoded-field gate withholds the link |
@@ -375,8 +375,8 @@ creation as a health check.
 ## 11. Files changed in this release
 
 - `app/web_ui.py` — unified review step, exception-only placement, sticky
-  questions, brand-aligned alpha UI, touch/responsive rules, guarded synthetic
-  sample.
+  questions, brand-aligned alpha UI, touch/responsive rules, and a static
+  synthetic workflow check containing no customer data.
 - `app/workflow_review.py` — pure gap, email, tax, and sticky-placement rules.
 - `app/memory.py` — account/vendor representative recall and idempotent learning.
 - `app/po_context.py` — required representative warnings and stable memory event ID.
@@ -387,7 +387,8 @@ creation as a health check.
 - `app/po_rules.py` — unresolved asset placeholder cannot export.
 - `app/scope_pdf.py` — brand-aligned supporting PDF with a neutral alpha header.
 - `.streamlit/config.toml` — brand-guide theme palette.
-- `.env.example` — disabled-by-default synthetic-test control.
+- `.env.example` — non-secret deployment examples only; no synthetic-test
+  setting is required because the built-in sample is static and local.
 - tests — pure rule, AppTest, URL, PDF, brand, responsive, and handoff regressions.
 
 ## 12. Commit notes
@@ -403,7 +404,8 @@ Recommended commit grouping:
 - add prominent nonblocking tax alert;
 - preserve full configured Asset IDs and the 20-character export cap;
 - apply the approved ENFRA palette and Arial fallback to page and PDF; and
-- gate synthetic test data behind an explicit disabled-by-default flag.
+- provide the owner-requested discreet static test trigger without customer
+  data, an AI request, or automatic submission.
 
 ### Commit 2 — Harden browser and Smartsheet handoff
 

@@ -158,9 +158,8 @@ made the reviewed PO values, attachment downloads, and exact-label copy helper
 visible.
 
 However, the purple **Open Smartsheet form** control still received
-`config.form_url`, the bare form URL:
-
-`https://app.smartsheet.com/b/form/019e8e6717c471628f9a02280a892100`
+`config.form_url`, the privately configured bare production form URL. The form
+identifier is intentionally omitted from this public repository.
 
 Consequently, Smartsheet opened a blank form. The copy controls were technically
 available in the original tab, but the user reasonably expected the action to

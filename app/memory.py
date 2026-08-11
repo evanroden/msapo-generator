@@ -24,8 +24,8 @@ account in the active UI. Receipt files, transaction data, mileage entries, and
 signature confirmation are never written to this store. Legacy coding columns
 remain in the table for backward-compatible reads.
 
-Nothing learned on one contract is ever surfaced on another — the same way
-David is only relevant to RRH.
+Nothing learned on one contract is ever surfaced on another; even administrator
+details remain scoped to the exact account.
 
 Storage is a SQLite file on the Render persistent disk (mounted at /test1).
 Falls back to a repo-local ./data_store for local dev, and degrades gracefully

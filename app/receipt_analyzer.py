@@ -17,6 +17,7 @@ from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
 from app.expense_report import (
     EXPENSE_SECTION_ENTERTAINMENT,
     EXPENSE_SECTION_MISC,
+    ExpenseReportError,
     parse_expense_amount,
     receipt_preview_bytes,
 )
@@ -91,6 +92,13 @@ def analyze_receipt(file_bytes: bytes, filename: str) -> ReceiptAnalysis:
 
     suffix = Path(filename).suffix.casefold()
     if suffix == ".pdf":
+        # Validate the receipt's page count/dimensions and readability before
+        # sending the full document. The returned first-page preview is not
+        # persisted here; the UI builds its own bounded session preview.
+        try:
+            receipt_preview_bytes(file_bytes, filename)
+        except ExpenseReportError as exc:
+            raise ReceiptAnalysisError(str(exc)) from exc
         content: list[dict[str, Any]] = [
             {
                 "type": "document",
@@ -104,7 +112,10 @@ def analyze_receipt(file_bytes: bytes, filename: str) -> ReceiptAnalysis:
     else:
         # Normalize every receipt image before analysis. This handles EXIF
         # rotation and keeps ordinary 12 MP phone photos below vision limits.
-        preview = receipt_preview_bytes(file_bytes, filename)
+        try:
+            preview = receipt_preview_bytes(file_bytes, filename)
+        except ExpenseReportError as exc:
+            raise ReceiptAnalysisError(str(exc)) from exc
         content = image_blocks_for_vision(preview, ".jpg")
     content.append({"type": "text", "text": RECEIPT_PROMPT})
 

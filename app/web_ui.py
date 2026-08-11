@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import html
-import os
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -401,16 +400,6 @@ CUSTOM_CSS = """
 
 def _h(value: object) -> str:
     return html.escape(str(value or ""))
-
-
-def _synthetic_sample_enabled() -> bool:
-    """Keep test data off the production operator path by default."""
-    return os.getenv("EPC_ENABLE_SYNTHETIC_SAMPLE", "").strip().casefold() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _parse_amount(value: object) -> Decimal | None:
@@ -1005,7 +994,7 @@ def _render_footer() -> None:
         """
         <div class="app-footer">
             <div class="footer-divider"></div>
-            Built by <a href="mailto:evan.roden@ENFRAsolutions.com">Evan Roden</a>
+            Built by Evan Roden
             &nbsp;•&nbsp; purchase-order prep without duplicate entry
         </div>
         """,
@@ -1056,20 +1045,19 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    if _synthetic_sample_enabled():
-        _, center, _ = st.columns([2, 3, 2])
-        with center:
-            if st.button(
-                "Load synthetic sample (testing)",
-                key="load_synthetic_test",
-                width="stretch",
-                help="Testing only. Loads no real customer or vendor data.",
-            ):
-                _load_test_into_state()
-                st.session_state["uploader_nonce"] = (
-                    st.session_state.get("uploader_nonce", 0) + 1
-                )
-                st.rerun()
+    _, center, _ = st.columns([2, 3, 2])
+    with center:
+        if st.button(
+            "Built by Evan Roden",
+            key="load_synthetic_test",
+            width="stretch",
+            help="Load the built-in synthetic quote for a safe workflow test.",
+        ):
+            _load_test_into_state()
+            st.session_state["uploader_nonce"] = (
+                st.session_state.get("uploader_nonce", 0) + 1
+            )
+            st.rerun()
 
     st.markdown(
         """
@@ -1495,12 +1483,15 @@ def main() -> None:
             "The tool selected everything below for the supporting PDF. "
             "Only change an item if the quote was interpreted incorrectly."
         )
-        st.markdown(
-            f'<div class="scope-section"><div class="scope-label">Scope</div>'
-            f'<p class="scope-text" style="white-space:pre-line;">'
-            f'{_h(analysis.scope_of_work)}</p></div>',
-            unsafe_allow_html=True,
-        )
+        scope_value = st.text_area(
+            "Scope of Work",
+            key=scope_key,
+            height=160,
+            help=(
+                "Edit the tool's draft when the quote was interpreted "
+                "incorrectly. This exact text is used in the supporting PDF."
+            ),
+        ).strip()
         inclusion_column, exclusion_column = st.columns(2)
         with inclusion_column:
             st.markdown(

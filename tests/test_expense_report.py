@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import shutil
 from dataclasses import replace
 from datetime import date
@@ -19,9 +20,12 @@ from app.expense_report import (
     ALLOCATION_WORK_ORDER,
     EXPENSE_SECTION_ENTERTAINMENT,
     EXPENSE_SECTION_MISC,
+    MAX_ENTERTAINMENT_ITEMS,
+    MAX_MISCELLANEOUS_ITEMS,
     ExpenseAllocation,
     ExpenseItem,
     ExpensePackage,
+    ExpenseReportError,
     ExpenseReportDetails,
     MileageItem,
     build_expense_package,
@@ -34,6 +38,7 @@ from app.expense_report import (
     parse_expense_amount,
     parse_mileage,
     receipt_attachment_pages,
+    receipt_preview_bytes,
     total_reimbursement,
     validate_expense_report,
 )
@@ -54,12 +59,12 @@ def _receipt_bytes(text: str = "TOTAL $31.25") -> bytes:
 def _details(**changes) -> ExpenseReportDetails:
     values = {
         "account": "Rochester Regional Health",
-        "employee_name": "Evan Roden",
-        "employee_number": "00133509",
-        "employee_home_bu": "RRH",
+        "employee_name": "Synthetic Employee",
+        "employee_number": "TEST-1001",
+        "employee_home_bu": "695",
         "report_date": date(2026, 8, 11),
-        "approver_name": "David Siegal",
-        "approver_email": "david.siegal@enfrasolutions.com",
+        "approver_name": "RRH Test Administrator",
+        "approver_email": "rrh.approver@example.invalid",
         "mail_destination": "home",
         "satellite_office": "",
         "employee_signature_confirmed": True,
@@ -71,8 +76,8 @@ def _details(**changes) -> ExpenseReportDetails:
 def _job_allocation(
     *,
     job: str = RRH_JOB_NUMBERS[0],
-    cost_type: str = "5490",
-    cost_code: str = "01AMA",
+    cost_type: str = "01AMA",
+    cost_code: str = "5490",
 ) -> ExpenseAllocation:
     return ExpenseAllocation(
         kind=ALLOCATION_JOB,
@@ -122,7 +127,7 @@ def _mileage(
 
 
 def test_workbook_matches_approved_rrh_job_only_layout_and_receipt_order():
-    startup = _job_allocation(job=RRH_JOB_NUMBERS[1], cost_code="02AMA")
+    startup = _job_allocation(job=RRH_JOB_NUMBERS[1], cost_type="02AMA")
     items = [
         _item("parking"),
         _item(
@@ -142,12 +147,12 @@ def test_workbook_matches_approved_rrh_job_only_layout_and_receipt_order():
     assert workbook.sheetnames == ["EXPENSE REIMBURSEMENT", "RECEIPTS"]
     assert form["B2"].value == "REIMBURSEMENT OF EXPENSES - 01.01.2026"
     assert form["B6"].value == "GAS MILEAGE @ $0.76 PER MILE"
-    assert form["C5"].value == "Evan Roden"
-    assert form["G5"].value == "00133509"
-    assert form["K5"].value == "RRH"
+    assert form["C5"].value == "Synthetic Employee"
+    assert form["G5"].value == "TEST-1001"
+    assert form["K5"].value == "695"
     assert form["P5"].value.date() == date(2026, 8, 11)
     assert form["B62"].value == "x"
-    assert form["C68"].value == "Evan Roden"
+    assert form["C68"].value == "Synthetic Employee"
     assert form["D66"].value == "Date: 8/11/26"
     assert len(form._images) == 1
 
@@ -155,15 +160,15 @@ def test_workbook_matches_approved_rrh_job_only_layout_and_receipt_order():
     assert form["C24"].value == "Business travel parking"
     assert form["H24"].value == 31.25
     assert form["I24"].value == "695400022"
-    assert form["J24"].value == "5490"
-    assert form["K24"].value == "01AMA"
+    assert form["J24"].value == "01AMA"
+    assert form["K24"].value == "5490"
     assert form["J24"].number_format == "@"
 
     assert form["C45"].value == "Business travel parking"
     assert form["F45"].value == "Customer Contact"
     assert form["I45"].value == "695400023"
-    assert form["J45"].value == "5490"
-    assert form["K45"].value == "02AMA"
+    assert form["J45"].value == "02AMA"
+    assert form["K45"].value == "5490"
     for row in (24, 45):
         assert form.cell(row, 12).value is None
         assert all(form.cell(row, column).value is None for column in range(14, 18))
@@ -175,6 +180,56 @@ def test_workbook_matches_approved_rrh_job_only_layout_and_receipt_order():
     assert len(receipts._images) == 2
     assert receipts["A1"].value == "Receipt 1 of 2"
     assert receipts["A59"].value == "Receipt 2 of 2"
+
+
+def test_user_text_and_editable_codes_are_never_written_as_excel_formulas():
+    details = _details(
+        employee_name="=HYPERLINK(\"https://example.invalid\",\"name\")",
+        employee_number="@SUM(1+1)",
+        employee_home_bu="+RRH",
+        mail_destination="satellite",
+        satellite_office="-1+1",
+    )
+    allocation = _job_allocation(
+        cost_type="=1+1",
+        cost_code="@malicious",
+    )
+    item = replace(
+        _item(
+            "formula",
+            section=EXPENSE_SECTION_ENTERTAINMENT,
+            allocation=allocation,
+            contact_name="+cmd",
+        ),
+        description="=HYPERLINK(\"https://example.invalid\",\"click\")",
+    )
+    mileage = replace(
+        _mileage(allocation=allocation),
+        purpose="=1+1",
+        destination="@destination",
+    )
+
+    payload = build_expense_workbook(details, [item], mileage_items=[mileage])
+    form = load_workbook(BytesIO(payload), data_only=False)["EXPENSE REIMBURSEMENT"]
+
+    expected = {
+        "C5": details.employee_name,
+        "G5": details.employee_number,
+        "K5": details.employee_home_bu,
+        "F64": details.satellite_office,
+        "C68": details.employee_name,
+        "C10": mileage.purpose,
+        "F10": mileage.destination,
+        "J10": allocation.account_cost_type,
+        "K10": allocation.cost_code_or_wo_type,
+        "C45": item.description,
+        "F45": item.contact_name,
+        "J45": allocation.account_cost_type,
+        "K45": allocation.cost_code_or_wo_type,
+    }
+    for coordinate, value in expected.items():
+        assert form[coordinate].value == value
+        assert form[coordinate].data_type == "s"
 
 
 def test_multiple_job_codes_are_grouped_and_receipts_follow_form_order():
@@ -242,7 +297,150 @@ def test_duplicate_receipt_is_blocked_even_when_other_fields_are_valid():
         _details(),
         [_item("same"), _item("same", amount="22.00")],
     )
-    assert "Receipt 2: remove the duplicate receipt" in problems
+    assert "Receipt 2: remove the duplicate reimbursement line" in problems
+
+
+def test_split_receipt_writes_multiple_lines_but_attaches_source_once():
+    receipt = _receipt_bytes(
+        "MARKET RECEIPT\nTeam refreshments  $20.00\nOffice supplies  $15.00\n"
+        "Personal items  $33.99\nTOTAL $68.99"
+    )
+    first = replace(
+        _item("market-line-1", amount="20.00"),
+        source_receipt_id="market-upload",
+        filename="market.jpg",
+        file_bytes=receipt,
+        description="Refreshments for RRH team",
+    )
+    second = replace(
+        _item("market-line-2", amount="15.00"),
+        source_receipt_id="market-upload",
+        filename="market.jpg",
+        file_bytes=receipt,
+        description="Office supplies",
+    )
+
+    payload = build_expense_workbook(_details(), [first, second])
+    workbook = load_workbook(BytesIO(payload), data_only=False)
+    form = workbook["EXPENSE REIMBURSEMENT"]
+    receipts = workbook["RECEIPTS"]
+    package = build_expense_package(
+        _details(),
+        [first, second],
+        include_pdf=False,
+    )
+
+    assert form["C24"].value == "Refreshments for RRH team"
+    assert form["H24"].value == 20
+    assert form["C25"].value == "Office supplies"
+    assert form["H25"].value == 15
+    assert len(receipts._images) == 1
+    assert receipts["A1"].value == "Receipt 1 of 1 · 2 reimbursement lines"
+    assert "$35.00 reimbursable" in receipts["A2"].value
+    assert package.receipt_count == 1
+    assert package.total == Decimal("35.00")
+
+
+def test_split_lines_do_not_trigger_a_false_duplicate_receipt_warning():
+    source = _receipt_bytes("TWO APPLICABLE ITEMS $25.00 EACH")
+    first = replace(
+        _item("split-line-1", amount="25.00"),
+        source_receipt_id="one-source",
+        filename="one-source.jpg",
+        file_bytes=source,
+    )
+    second = replace(
+        _item("split-line-2", amount="25.00"),
+        source_receipt_id="one-source",
+        filename="one-source.jpg",
+        file_bytes=source,
+    )
+
+    warnings = expense_report_warnings(_details(), [first, second])
+
+    assert not any("same merchant, date, and amount" in item for item in warnings)
+
+
+def test_split_lines_must_reference_the_same_source_bytes_and_filename():
+    first = replace(
+        _item("line-one"),
+        source_receipt_id="shared-source",
+        filename="shared.jpg",
+    )
+    second = replace(
+        _item("line-two"),
+        source_receipt_id="shared-source",
+        filename="different.jpg",
+    )
+
+    problems = validate_expense_report(_details(), [first, second])
+
+    assert "Receipt 2: split lines must use the same uploaded receipt" in problems
+
+
+def test_official_section_row_limits_block_without_truncating_split_lines():
+    allowed_misc = [
+        _item(f"misc-{index}", amount="2.00")
+        for index in range(MAX_MISCELLANEOUS_ITEMS)
+    ]
+    too_many_misc = [
+        *allowed_misc,
+        _item("misc-overflow", amount="2.00"),
+    ]
+    allowed_entertainment = [
+        _item(
+            f"entertainment-{index}",
+            section=EXPENSE_SECTION_ENTERTAINMENT,
+            amount="2.00",
+            contact_name="Test Contact",
+        )
+        for index in range(MAX_ENTERTAINMENT_ITEMS)
+    ]
+    too_many_entertainment = [
+        *allowed_entertainment,
+        _item(
+            "entertainment-overflow",
+            section=EXPENSE_SECTION_ENTERTAINMENT,
+            amount="2.00",
+            contact_name="Test Contact",
+        ),
+    ]
+
+    assert not any(
+        "official form allows" in item
+        for item in validate_expense_report(_details(), allowed_misc)
+    )
+    assert any(
+        f"allows {MAX_MISCELLANEOUS_ITEMS} Miscellaneous" in item
+        for item in validate_expense_report(_details(), too_many_misc)
+    )
+    assert not any(
+        "official form allows" in item
+        for item in validate_expense_report(_details(), allowed_entertainment)
+    )
+    assert any(
+        f"allows {MAX_ENTERTAINMENT_ITEMS} Entertainment" in item
+        for item in validate_expense_report(_details(), too_many_entertainment)
+    )
+
+
+def test_partial_receipt_uses_only_reviewed_business_amount():
+    original = _receipt_bytes(
+        "ITEM A $12.00\nBUSINESS ITEM $25.00\nITEM C $31.99\nTOTAL $68.99"
+    )
+    digest = hashlib.sha256(original).hexdigest()
+    item = replace(
+        _item("partial", amount="25.00"),
+        file_bytes=original,
+        description="Approved business item only",
+    )
+
+    payload = build_expense_workbook(_details(), [item])
+    workbook = load_workbook(BytesIO(payload), data_only=False)
+
+    assert workbook["EXPENSE REIMBURSEMENT"]["H24"].value == 25
+    assert "$25.00 reimbursable" in workbook["RECEIPTS"]["A2"].value
+    assert hashlib.sha256(item.file_bytes).hexdigest() == digest
 
 
 def test_amount_mileage_parsers_and_irs_rate_boundaries():
@@ -276,8 +474,8 @@ def test_mileage_rows_use_travel_date_rate_and_leave_prohibited_columns_blank():
     assert form["H10"].value == "=ROUND(G10*0.725,2)"
     assert form["H11"].value == "=ROUND(G11*0.76,2)"
     assert form["I10"].value == "695400022"
-    assert form["J10"].value == "5490"
-    assert form["K10"].value == "01AMA"
+    assert form["J10"].value == "01AMA"
+    assert form["K10"].value == "5490"
     for row in (10, 11):
         assert form.cell(row, 12).value is None
         assert all(form.cell(row, column).value is None for column in range(14, 18))
@@ -320,7 +518,7 @@ def test_content_signature_changes_with_mileage_and_signature_confirmation():
 
 
 def test_generated_signature_is_a_bounded_transparent_png():
-    payload = employee_signature_png("Dane Bertolet")
+    payload = employee_signature_png("Test Employee")
     image = Image.open(BytesIO(payload))
     assert image.format == "PNG"
     assert image.mode == "RGBA"
@@ -329,16 +527,113 @@ def test_generated_signature_is_a_bounded_transparent_png():
 
 
 def test_receipt_image_is_rotated_bounded_and_not_upscaled():
-    source = Image.new("RGB", (2400, 3200), "white")
+    source = Image.new("RGB", (600, 900), "white")
+    exif = Image.Exif()
+    exif[274] = 6
     payload = BytesIO()
-    source.save(payload, format="JPEG", quality=90)
+    source.save(payload, format="JPEG", quality=90, exif=exif)
 
     pages = receipt_attachment_pages(payload.getvalue(), "phone-photo.jpg")
     normalized = Image.open(BytesIO(pages[0]))
 
     assert len(pages) == 1
     assert max(normalized.size) <= 1600
-    assert normalized.size == (1200, 1600)
+    assert normalized.size == (900, 600)
+
+
+@pytest.mark.parametrize(
+    ("format_name", "suffix"),
+    (
+        ("PNG", ".png"),
+        ("BMP", ".bmp"),
+        ("TIFF", ".tiff"),
+        ("WEBP", ".webp"),
+        ("HEIF", ".heic"),
+    ),
+)
+def test_receipt_picture_formats_normalize_to_printable_jpeg(format_name, suffix):
+    if format_name == "HEIF":
+        from pillow_heif import register_heif_opener
+
+        register_heif_opener()
+    source = Image.new("RGB", (480, 720), "white")
+    ImageDraw.Draw(source).text((30, 30), "TOTAL $42.50", fill="black")
+    payload = BytesIO()
+    source.save(payload, format=format_name)
+
+    pages = receipt_attachment_pages(payload.getvalue(), f"receipt{suffix}")
+    normalized = Image.open(BytesIO(pages[0]))
+
+    assert len(pages) == 1
+    assert normalized.format == "JPEG"
+    assert normalized.size == (480, 720)
+
+
+def test_multi_page_pdf_receipt_is_attached_once_per_source_page():
+    document = fitz.open()
+    for label in ("PAGE ONE TOTAL $31.25", "PAGE TWO DETAIL"):
+        page = document.new_page(width=612, height=792)
+        page.insert_text((72, 72), label)
+    pdf_bytes = document.tobytes()
+    document.close()
+    item = replace(
+        _item("pdf-receipt"),
+        filename="receipt.pdf",
+        file_bytes=pdf_bytes,
+    )
+
+    pages = receipt_attachment_pages(pdf_bytes, "receipt.pdf")
+    payload = build_expense_workbook(_details(), [item])
+    workbook = load_workbook(BytesIO(payload), data_only=False)
+
+    assert len(pages) == 2
+    assert len(workbook["RECEIPTS"]._images) == 2
+    assert workbook["RECEIPTS"]["A1"].value == "Receipt 1 of 1 · page 1 of 2"
+    assert workbook["RECEIPTS"]["A59"].value == "Receipt 1 of 1 · page 2 of 2"
+
+
+def test_multi_page_pdf_preview_returns_first_page_without_rejecting_source():
+    document = fitz.open()
+    first = document.new_page(width=612, height=792)
+    first.insert_text((72, 72), "FIRST RECEIPT PAGE")
+    second = document.new_page(width=612, height=792)
+    second.insert_text((72, 72), "SECOND RECEIPT PAGE")
+    pdf_bytes = document.tobytes()
+    document.close()
+
+    preview = receipt_preview_bytes(pdf_bytes, "two-page-receipt.pdf")
+
+    image = Image.open(BytesIO(preview))
+    assert image.format == "JPEG"
+    assert image.width > 0 and image.height > 0
+
+
+def test_corrupt_and_over_page_limit_pdfs_fail_with_actionable_errors():
+    with pytest.raises(ExpenseReportError, match="not a readable PDF receipt"):
+        receipt_attachment_pages(b"not-a-pdf", "broken.pdf")
+
+    document = fitz.open()
+    for _ in range(11):
+        document.new_page(width=100, height=100)
+    oversized = document.tobytes()
+    document.close()
+    with pytest.raises(ExpenseReportError, match="11 pages; the limit is 10"):
+        receipt_attachment_pages(oversized, "eleven-pages.pdf")
+
+
+def test_oversized_image_and_pdf_page_fail_before_large_raster_allocation():
+    image = Image.new("1", (7000, 7000), 1)
+    image_payload = BytesIO()
+    image.save(image_payload, format="PNG")
+    with pytest.raises(ExpenseReportError, match="7000×7000"):
+        receipt_attachment_pages(image_payload.getvalue(), "huge.png")
+
+    document = fitz.open()
+    document.new_page(width=20_000, height=20_000)
+    pdf_payload = document.tobytes()
+    document.close()
+    with pytest.raises(ExpenseReportError, match="huge.pdf page 1 is too large"):
+        receipt_attachment_pages(pdf_payload, "huge.pdf")
 
 
 def test_email_uses_pdf_only_and_excel_remains_in_package():
@@ -357,7 +652,7 @@ def test_email_uses_pdf_only_and_excel_remains_in_package():
     message = BytesParser(policy=policy.default).parsebytes(
         _build_expense_eml(_details(), package)
     )
-    assert message["To"] == "david.siegal@enfrasolutions.com"
+    assert message["To"] == "rrh.approver@example.invalid"
     assert message["X-Unsent"] == "1"
     assert [part.get_filename() for part in message.iter_attachments()] == [
         "expense.pdf"
@@ -379,6 +674,6 @@ def test_combined_pdf_places_signed_form_before_each_receipt():
     with fitz.open(stream=package.pdf_bytes, filetype="pdf") as document:
         assert document.page_count == 3
         assert "REIMBURSEMENT OF EXPENSES" in document[0].get_text()
-        assert "Evan Roden" in document[0].get_text()
+        assert "Synthetic Employee" in document[0].get_text()
         assert "Receipt 1 of 2" in document[1].get_text()
         assert "Receipt 2 of 2" in document[2].get_text()

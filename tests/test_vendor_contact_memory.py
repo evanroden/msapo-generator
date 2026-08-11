@@ -16,14 +16,14 @@ def test_verified_vendor_representative_is_recalled_only_for_vendor_and_account(
     record_vendor_contact(
         contract="Rochester Regional Health",
         vendor="Acme Mechanical, Inc.",
-        contact_name="Ashley Vendor",
-        contact_email="ashley@example.com",
+        contact_name="Test Vendor Representative",
+        contact_email="representative@example.invalid",
         context_id="package-1",
     )
 
     assert remembered_vendor_contact(
         "Rochester Regional Health", "ACME Mechanical"
-    ) == ("Ashley Vendor", "ashley@example.com")
+    ) == ("Test Vendor Representative", "representative@example.invalid")
     assert remembered_vendor_contact("Another Account", "Acme Mechanical") == (
         "",
         "",

@@ -21,6 +21,10 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # ANTHROPIC_MODEL environment variable (e.g. in .env or Render dashboard).
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
+# Contract administrators are deployment data, not source-code constants.
+RRH_APPROVER_NAME = os.getenv("RRH_APPROVER_NAME", "").strip()
+RRH_APPROVER_EMAIL = os.getenv("RRH_APPROVER_EMAIL", "").strip()
+
 # ── PDF Conversion Backend ────────────────────────────────────────────
 # Options: "libreoffice", "gotenberg", "docx2pdf"
 PDF_BACKEND = os.getenv("PDF_BACKEND", "libreoffice")

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
+from math import ceil
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -27,7 +28,7 @@ from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.styles import Alignment, Font
 from openpyxl.worksheet.pagebreak import Break
-from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageSequence
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from app.config import GOTENBERG_URL, PDF_BACKEND
 from app.job_numbers import (
@@ -107,7 +108,7 @@ class ExpenseAllocation:
 
 @dataclass(frozen=True)
 class ExpenseItem:
-    """Reviewed data for one uploaded receipt."""
+    """One reviewed reimbursement line from an uploaded receipt."""
 
     receipt_id: str
     filename: str
@@ -119,6 +120,9 @@ class ExpenseItem:
     allocation: ExpenseAllocation
     merchant_name: str = ""
     contact_name: str = ""
+    # Split receipts use one unique receipt_id per reimbursement line while
+    # sharing source_receipt_id. The source image is attached only once.
+    source_receipt_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -287,16 +291,26 @@ def validate_expense_report(
         problems.append("include at least one receipt or mileage entry")
         return _deduplicate(problems)
 
-    seen_receipts: set[str] = set()
+    seen_lines: set[str] = set()
+    source_fingerprints: dict[str, tuple[str, bytes]] = {}
     allowed_job_numbers = job_numbers_for_contract(details.account)
     misc_count = 0
     entertainment_count = 0
     total = Decimal("0")
     for index, item in enumerate(items, 1):
         prefix = f"Receipt {index}"
-        if not item.receipt_id or item.receipt_id in seen_receipts:
-            problems.append(f"{prefix}: remove the duplicate receipt")
-        seen_receipts.add(item.receipt_id)
+        if not item.receipt_id or item.receipt_id in seen_lines:
+            problems.append(f"{prefix}: remove the duplicate reimbursement line")
+        seen_lines.add(item.receipt_id)
+        source_id = _receipt_source_id(item)
+        fingerprint = (item.filename, hashlib.sha256(item.file_bytes).digest())
+        if source_id in source_fingerprints:
+            if source_fingerprints[source_id] != fingerprint:
+                problems.append(
+                    f"{prefix}: split lines must use the same uploaded receipt"
+                )
+        else:
+            source_fingerprints[source_id] = fingerprint
         if item.transaction_date is None:
             problems.append(f"{prefix}: enter the transaction date")
         if not item.description.strip():
@@ -403,27 +417,39 @@ def expense_report_warnings(
 ) -> list[str]:
     """Return non-blocking checks that require human confirmation."""
     warnings: list[str] = []
-    possible_duplicates: dict[tuple[date, Decimal, str], list[int]] = {}
-    for index, item in enumerate(items, 1):
-        if item.transaction_date:
+    possible_duplicates: dict[
+        tuple[date, Decimal, str], list[tuple[str, int]]
+    ] = {}
+    source_numbers: dict[str, int] = {}
+    date_checked: set[str] = set()
+    for item in items:
+        source_id = _receipt_source_id(item)
+        source_number = source_numbers.setdefault(source_id, len(source_numbers) + 1)
+        if item.transaction_date and source_id not in date_checked:
             if item.transaction_date > details.report_date:
                 warnings.append(
-                    f"Receipt {index} is dated after the report date"
+                    f"Receipt {source_number} is dated after the report date"
                 )
             elif (details.report_date - item.transaction_date).days > 366:
                 warnings.append(
-                    f"Receipt {index} is more than one year older than the report date"
+                    f"Receipt {source_number} is more than one year older than the report date"
                 )
+            date_checked.add(source_id)
         amount = parse_expense_amount(item.amount)
         merchant = re.sub(
             r"[^a-z0-9]+", "", item.merchant_name.casefold()
         )
         if item.transaction_date and amount is not None and merchant:
             key = (item.transaction_date, amount, merchant)
-            possible_duplicates.setdefault(key, []).append(index)
-    for indices in possible_duplicates.values():
-        if len(indices) > 1:
-            labels = ", ".join(str(index) for index in indices)
+            possible_duplicates.setdefault(key, []).append(
+                (source_id, source_number)
+            )
+    for matches in possible_duplicates.values():
+        distinct_sources = dict(matches)
+        if len(distinct_sources) > 1:
+            labels = ", ".join(
+                str(number) for number in distinct_sources.values()
+            )
             warnings.append(
                 f"Receipts {labels} have the same merchant, date, and amount; "
                 "confirm they are separate purchases"
@@ -455,6 +481,7 @@ def expense_report_signature(
                     item.allocation,
                     item.merchant_name,
                     item.contact_name,
+                    item.source_receipt_id,
                 )
             ).encode("utf-8")
         )
@@ -547,8 +574,9 @@ def build_expense_package(
         try:
             pdf_bytes = convert_expense_workbook_to_pdf(workbook_bytes)
         except ExpenseReportError as exc:
-            # The official workbook is still a complete submission artifact.
-            # A renderer outage must not force the operator to re-enter data.
+            # Preserve the editable workbook so a renderer outage never forces
+            # re-entry, but the UI withholds the approval draft because RRH's
+            # approved email submission artifact is the PDF.
             pdf_error = str(exc)
     basename = expense_report_basename(details)
     return ExpensePackage(
@@ -556,7 +584,7 @@ def build_expense_package(
         workbook_bytes=workbook_bytes,
         pdf_bytes=pdf_bytes,
         total=total_reimbursement(items, mileage_items),
-        receipt_count=len(items),
+        receipt_count=_unique_receipt_count(items),
         pdf_error=pdf_error,
         mileage_count=len(mileage_items),
     )
@@ -657,7 +685,7 @@ def email_attachment_size_warning(package: ExpensePackage) -> str:
 
 def receipt_preview_bytes(file_bytes: bytes, filename: str) -> bytes:
     """Return a bounded JPEG preview of the first receipt page/frame."""
-    pages = receipt_attachment_pages(file_bytes, filename, max_pages=1)
+    pages = receipt_attachment_pages(file_bytes, filename, render_limit=1)
     if not pages:
         raise ExpenseReportError("The receipt did not contain a readable page.")
     return pages[0]
@@ -668,8 +696,14 @@ def receipt_attachment_pages(
     filename: str,
     *,
     max_pages: int = _MAX_RECEIPT_PAGES_PER_FILE,
+    render_limit: int | None = None,
 ) -> list[bytes]:
-    """Normalize all receipt pages/frames to compact, print-readable JPEGs."""
+    """Validate and normalize receipt pages to compact, print-readable JPEGs.
+
+    ``max_pages`` is the security/business limit for the source. ``render_limit``
+    only limits returned pages, allowing a first-page preview without weakening
+    validation of a multipage source.
+    """
     suffix = Path(filename).suffix.casefold()
     if suffix == ".pdf":
         import fitz
@@ -681,7 +715,16 @@ def receipt_attachment_pages(
                     raise ExpenseReportError(
                         f"{filename} has {document.page_count} pages; the limit is {max_pages}."
                     )
-                for page in document:
+                for page_number, page in enumerate(document, 1):
+                    width = ceil(page.rect.width * 150 / 72)
+                    height = ceil(page.rect.height * 150 / 72)
+                    _validate_receipt_dimensions(
+                        width,
+                        height,
+                        label=f"{filename} page {page_number}",
+                    )
+                    if render_limit is not None and len(pages) >= render_limit:
+                        continue
                     pixmap = page.get_pixmap(dpi=150, alpha=False)
                     image = Image.open(BytesIO(pixmap.tobytes("png")))
                     pages.append(_compact_receipt_image(image))
@@ -705,8 +748,15 @@ def receipt_attachment_pages(
                 raise ExpenseReportError(
                     f"{filename} has {frame_count} frames; the limit is {max_pages}."
                 )
-            for frame in ImageSequence.Iterator(image):
-                pages.append(_compact_receipt_image(frame.copy()))
+            for frame_index in range(frame_count):
+                image.seek(frame_index)
+                _validate_receipt_dimensions(
+                    image.width,
+                    image.height,
+                    label=filename,
+                )
+                if render_limit is None or len(pages) < render_limit:
+                    pages.append(_compact_receipt_image(image.copy()))
         if not pages:
             raise ExpenseReportError(f"{filename} does not contain a receipt image.")
         return pages
@@ -717,11 +767,8 @@ def receipt_attachment_pages(
 
 
 def _compact_receipt_image(source: Image.Image) -> bytes:
+    _validate_receipt_dimensions(source.width, source.height)
     image = ImageOps.exif_transpose(source)
-    if image.width * image.height > _MAX_RECEIPT_PIXELS:
-        raise ExpenseReportError(
-            f"Receipt image is too large ({image.width}×{image.height})."
-        )
     if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
         background = Image.new("RGB", image.size, "white")
         alpha = image.getchannel("A") if "A" in image.getbands() else None
@@ -729,10 +776,29 @@ def _compact_receipt_image(source: Image.Image) -> bytes:
         image = background
     else:
         image = image.convert("RGB")
-    image = ImageOps.contain(image, _ATTACHMENT_MAX_SIZE)
+    if (
+        image.width > _ATTACHMENT_MAX_SIZE[0]
+        or image.height > _ATTACHMENT_MAX_SIZE[1]
+    ):
+        image = ImageOps.contain(image, _ATTACHMENT_MAX_SIZE)
     buffer = BytesIO()
     image.save(buffer, format="JPEG", quality=78, optimize=True, progressive=True)
     return buffer.getvalue()
+
+
+def _validate_receipt_dimensions(
+    width: int,
+    height: int,
+    *,
+    label: str = "Receipt image",
+) -> None:
+    """Reject invalid or decompression-heavy pages before raster allocation."""
+    if width <= 0 or height <= 0:
+        raise ExpenseReportError(f"{label} has invalid dimensions.")
+    if width * height > _MAX_RECEIPT_PIXELS:
+        raise ExpenseReportError(
+            f"{label} is too large ({width}×{height}); use a smaller image or PDF page."
+        )
 
 
 def _verify_template_anchors(sheet) -> None:
@@ -756,9 +822,9 @@ def _fill_report_header(
     image_buffers: list[BytesIO],
 ) -> None:
     sheet["B2"] = f"REIMBURSEMENT OF EXPENSES - 01.01.{details.report_date:%Y}"
-    sheet["C5"] = details.employee_name.strip()
-    sheet["G5"] = details.employee_number.strip()
-    sheet["K5"] = details.employee_home_bu.strip()
+    _write_excel_text(sheet["C5"], details.employee_name)
+    _write_excel_text(sheet["G5"], details.employee_number)
+    _write_excel_text(sheet["K5"], details.employee_home_bu)
     sheet["P5"] = details.report_date
     sheet["P5"].number_format = "m/d/yyyy"
 
@@ -789,7 +855,7 @@ def _fill_report_header(
     sheet["B62"] = "x" if details.mail_destination == "home" else ""
     sheet["B64"] = "x" if details.mail_destination == "satellite" else ""
     if details.mail_destination == "satellite":
-        sheet["F64"] = details.satellite_office.strip()
+        _write_excel_text(sheet["F64"], details.satellite_office)
 
     signature_buffer = BytesIO(employee_signature_png(details.employee_name))
     image_buffers.append(signature_buffer)
@@ -804,7 +870,7 @@ def _fill_report_header(
     sheet["D66"].font = Font(name="Arial", size=8)
     sheet["D66"].alignment = Alignment(shrinkToFit=True)
     sheet["E66"] = ""
-    sheet["C68"] = details.employee_name.strip()
+    _write_excel_text(sheet["C68"], details.employee_name)
     sheet["C68"].font = Font(name="Arial", size=12)
     sheet["C68"].alignment = Alignment(shrinkToFit=True)
 
@@ -859,8 +925,8 @@ def _fill_mileage_row(sheet, row: int, item: MileageItem) -> None:
     rate = irs_business_mileage_rate(item.transaction_date)
     assert item.transaction_date is not None and miles is not None and rate is not None
     sheet.cell(row=row, column=2, value=item.transaction_date).number_format = "m/d/yyyy"
-    sheet.cell(row=row, column=3, value=item.purpose.strip())
-    sheet.cell(row=row, column=6, value=item.destination.strip())
+    _write_excel_text(sheet.cell(row=row, column=3), item.purpose)
+    _write_excel_text(sheet.cell(row=row, column=6), item.destination)
     sheet.cell(row=row, column=7, value=float(miles)).number_format = "0.00"
     sheet.cell(
         row=row,
@@ -900,9 +966,9 @@ def _fill_expense_row(sheet, row: int, item: ExpenseItem, *, entertainment: bool
     amount = parse_expense_amount(item.amount)
     assert item.transaction_date is not None and amount is not None
     sheet.cell(row=row, column=2, value=item.transaction_date).number_format = "m/d/yyyy"
-    sheet.cell(row=row, column=3, value=item.description.strip())
+    _write_excel_text(sheet.cell(row=row, column=3), item.description)
     if entertainment:
-        sheet.cell(row=row, column=6, value=item.contact_name.strip())
+        _write_excel_text(sheet.cell(row=row, column=6), item.contact_name)
     sheet.cell(row=row, column=8, value=float(amount)).number_format = '"$"#,##0.00'
     _fill_allocation(sheet, row, item.allocation)
 
@@ -922,8 +988,15 @@ def _fill_allocation(sheet, row: int, allocation: ExpenseAllocation) -> None:
 
 
 def _write_code(sheet, row: int, column: int, value: str) -> None:
-    cell = sheet.cell(row=row, column=column, value=str(value or "").strip())
+    cell = sheet.cell(row=row, column=column)
+    _write_excel_text(cell, value)
     cell.number_format = "@"
+
+
+def _write_excel_text(cell, value: object) -> None:
+    """Write an explicit string so user text can never become an Excel formula."""
+    cell.value = str(value or "").strip()
+    cell.data_type = "s"
 
 
 def _build_receipt_sheet(sheet, items: list[ExpenseItem], buffers: list[BytesIO]) -> None:
@@ -940,15 +1013,22 @@ def _build_receipt_sheet(sheet, items: list[ExpenseItem], buffers: list[BytesIO]
     for column in range(1, 13):
         sheet.column_dimensions[chr(64 + column)].width = 8.2
 
+    receipt_groups = _receipt_groups(items)
     block_index = 0
-    for receipt_number, item in enumerate(items, 1):
+    for receipt_number, group in enumerate(receipt_groups, 1):
+        item = group[0]
         pages = receipt_attachment_pages(item.file_bytes, item.filename)
         for page_number, image_bytes in enumerate(pages, 1):
             start = block_index * _RECEIPT_PAGE_ROWS + 1
             end = start + _RECEIPT_PAGE_ROWS - 1
             sheet.merge_cells(start_row=start, start_column=1, end_row=start, end_column=12)
             sheet.cell(start, 1).value = (
-                f"Receipt {receipt_number} of {len(items)}"
+                f"Receipt {receipt_number} of {len(receipt_groups)}"
+                + (
+                    f" · {len(group)} reimbursement lines"
+                    if len(group) > 1
+                    else ""
+                )
                 + (f" · page {page_number} of {len(pages)}" if len(pages) > 1 else "")
             )
             header_font = copy(sheet.cell(start, 1).font)
@@ -962,13 +1042,16 @@ def _build_receipt_sheet(sheet, items: list[ExpenseItem], buffers: list[BytesIO]
                 end_row=start + 1,
                 end_column=12,
             )
-            amount = parse_expense_amount(item.amount)
+            amount = sum(
+                (parse_expense_amount(line.amount) or Decimal("0") for line in group),
+                Decimal("0"),
+            )
             detail = " · ".join(
                 part
                 for part in (
                     item.transaction_date.strftime("%m/%d/%Y") if item.transaction_date else "",
                     item.merchant_name.strip(),
-                    f"${amount:,.2f}" if amount is not None else "",
+                    f"${amount:,.2f} reimbursable",
                     Path(item.filename).name,
                 )
                 if part
@@ -1004,6 +1087,23 @@ def _build_receipt_sheet(sheet, items: list[ExpenseItem], buffers: list[BytesIO]
     sheet.print_area = f"A1:L{last_row}"
     sheet.oddFooter.center.text = "Receipt attachments"
     sheet.oddFooter.right.text = "Page &P of &N"
+
+
+def _receipt_source_id(item: ExpenseItem) -> str:
+    """Return the uploaded-receipt identity shared by split lines."""
+    return str(item.source_receipt_id or item.receipt_id or "").strip()
+
+
+def _receipt_groups(items: Sequence[ExpenseItem]) -> list[list[ExpenseItem]]:
+    """Group reimbursement lines by source receipt, preserving first use order."""
+    grouped: dict[str, list[ExpenseItem]] = {}
+    for item in items:
+        grouped.setdefault(_receipt_source_id(item), []).append(item)
+    return list(grouped.values())
+
+
+def _unique_receipt_count(items: Sequence[ExpenseItem]) -> int:
+    return len({_receipt_source_id(item) for item in items})
 
 
 def _looks_like_email(value: str) -> bool:

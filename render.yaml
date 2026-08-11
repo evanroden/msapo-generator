@@ -11,6 +11,10 @@ services:
         value: libreoffice
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-4-6
+      - key: RRH_APPROVER_NAME
+        sync: false
+      - key: RRH_APPROVER_EMAIL
+        sync: false
       # Persistent disk is created in the Render dashboard and mounted at /test1.
       # It stores contract learning, anonymous browser requester learning, and
       # fail-closed Smartsheet idempotency state.
@@ -19,7 +23,7 @@ services:
       # The verified PO form accepts exact-label query parameters. Custom-URL
       # prefill is enabled; direct API row creation remains independently disabled.
       - key: SMARTSHEET_FORM_URL
-        value: https://app.smartsheet.com/b/form/019e8e6717c471628f9a02280a892100
+        sync: false
       - key: SMARTSHEET_FORM_FIELD_MAP_JSON
         # REQUEST COMPLETED, PO #, and WORK ORDER # stay absent/blank.
         # ORIGINAL PO NUMBER is included only for CHANGE ORDER requests.

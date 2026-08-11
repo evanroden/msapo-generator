@@ -1,4 +1,4 @@
-"""Ashley Connolly's Group A equipment policy for no-labor PO routing.
+"""The approved Group A equipment policy for no-labor PO routing.
 
 The August 2026 process no longer decides Equipment versus Materials from the
 delivery method.  If a vendor is not providing onsite labor or an onsite

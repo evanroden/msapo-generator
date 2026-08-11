@@ -27,6 +27,7 @@ _OCR_PROMPT = (
     "extracted text, no commentary."
 )
 _MAX_IMAGE_FRAMES = 20
+_MAX_PDF_PAGES = 20
 _MAX_PIXELS_PER_FRAME = 40_000_000
 # The vision API downsamples anything larger than this on the long edge, so
 # sending full-resolution frames only inflates the payload past the per-image
@@ -127,6 +128,11 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     text_parts: list[str] = []
     ocr_bytes = file_bytes
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
+        if pdf.page_count > _MAX_PDF_PAGES:
+            raise ValueError(
+                f"This PDF contains {pdf.page_count} pages; the maximum is "
+                f"{_MAX_PDF_PAGES}. Split it into smaller quotes before uploading."
+            )
         # Vendors often owner-lock a quote while leaving it openable. Re-serialize
         # a decrypted copy for OCR only; the original upload remains unchanged.
         if pdf.is_encrypted:
@@ -179,13 +185,25 @@ def _ocr_pdf_via_page_images(file_bytes: bytes) -> str:
     """OCR a PDF by rasterizing each page to PNG and reading the images."""
     import fitz  # PyMuPDF
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     content: list[dict] = []
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
-        for page in pdf:
+        if pdf.page_count > _MAX_PDF_PAGES:
+            raise ValueError(
+                f"This PDF contains {pdf.page_count} pages; the maximum is "
+                f"{_MAX_PDF_PAGES}. Split it into smaller quotes before uploading."
+            )
+        for page_number, page in enumerate(pdf, 1):
+            width = round(page.rect.width * 150 / 72)
+            height = round(page.rect.height * 150 / 72)
+            if width <= 0 or height <= 0 or width * height > _MAX_PIXELS_PER_FRAME:
+                raise ValueError(
+                    f"PDF page {page_number} is too large to read safely "
+                    f"({width}×{height} pixels at OCR resolution)."
+                )
             png = page.get_pixmap(dpi=150).tobytes("png")
             content.append(_image_block(png, "image/png"))
     content.append({"type": "text", "text": _OCR_PROMPT})
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=8192,

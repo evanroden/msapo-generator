@@ -158,6 +158,17 @@ Control states:
   analysis.
 - **State:** Implemented and tested.
 
+#### FM-A13 — Small compressed PDF causes unbounded OCR work
+- **Severity:** High
+- **Trigger:** a quote PDF has more than 20 pages or declares a page whose OCR
+  raster would exceed 40 million pixels.
+- **Impact:** excessive model cost, request payload, CPU, or memory before the
+  user reaches review.
+- **Control:** validate page count before text/OCR work and validate each page's
+  raster dimensions before the page-image fallback allocates a pixmap. Invalid
+  documents never instantiate the OCR API client.
+- **State:** Implemented and tested.
+
 ### B. Document and attachment integrity
 
 #### FM-B01 — A PDF-bearing value changes after generation

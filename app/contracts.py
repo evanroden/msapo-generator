@@ -2,8 +2,8 @@
 Multi-contract asset registry for the project-agnostic flow.
 
 Rochester Regional Health (RRH) keeps its own dedicated flow — short site
-names, autofilled cost codes, David as the recipient — driven by app/config.py
-and app/assets.py, and is intentionally NOT stored here.
+names, autofilled cost codes, and a privately configured administrator — driven
+by app/config.py and app/assets.py, and intentionally NOT stored here.
 
 Every other ENFRA contract is loaded from app/data/contracts.json
 (generated from the All-ENFRA asset export) and gets the generic flow:

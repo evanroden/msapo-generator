@@ -722,7 +722,7 @@ active upload/pasted quote identity
 ## 22. Phone-change confirmation checklist
 
 This checklist mirrors the business conversation and can be reused when
-confirming the rollout with Ashley and Chris:
+confirming the rollout with the account team:
 
 - [ ] Leave Request Completed stays blank.
 - [ ] PO # stays blank.

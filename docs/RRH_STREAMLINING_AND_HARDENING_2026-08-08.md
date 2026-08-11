@@ -1,7 +1,7 @@
 # RRH Streamlining and Reliability Hardening
 
 **Date:** 2026-08-08
-**Scope:** second-pass usability and failure-mode hardening after the Ashley
+**Scope:** second-pass usability and failure-mode hardening after the product-owner
 workflow correction
 **Parent specification:**
 [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md)
@@ -301,7 +301,7 @@ without adding state or confirmation controls to the generator.
 ## 6. Verification
 
 The focused local suite contains **130 passing tests** after this hardening pass.
-It covers the Ashley routing matrix, strict amount parsing, negation-aware route
+It covers the approved routing matrix, strict amount parsing, negation-aware route
 fallback, Group A parts handling, bounded Asset ID matching, source selection,
 stale-state clearing, vendor-bearing PDF signatures, required URL inclusion,
 20-character export, two-file handoff, device/account memory, and the quick-path

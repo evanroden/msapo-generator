@@ -25,6 +25,8 @@ The verified 87-value job catalog and the Arkansas-versus-RRH Unity rule are in
 The expense form mapping, receipt controls, AI boundary, failure modes, and
 open policy questions are in
 [`docs/EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md`](docs/EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md).
+The ready-to-send IT review email and exact AI call-path summary are in
+[`docs/ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md`](docs/ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md).
 
 ## Purchase-order workflow
 
@@ -49,14 +51,18 @@ There is no email-submission route in the active UI.
    supported without modifying the uploaded files. Receipt upload is optional
    for a mileage-only report.
 2. Confirm the employee, report date, administrator, mail destination, and RRH
-   service year. RRH derives Employee Home Business Unit from the account and
-   defaults the approval recipient to David Siegal.
+   service year. RRH derives Employee Home Business Unit `695` from the account
+   and defaults the approval recipient from private deployment configuration.
 3. Review the editable merchant, transaction date, description/business
    purpose, reimbursable amount, and Miscellaneous/Entertainment selection below
    every receipt. Required values remain visible when AI cannot determine them.
-   Job number, cost type, and cost code appear under every receipt with RRH
-   defaults of `695400022`, `5490`, and `01AMA`; each remains editable. Service
-   year 2 changes the default to `02AMA`, year 3 to `03AMA`, and so on.
+   A receipt containing several reimbursable purposes can be split into
+   independently editable lines; nonbusiness items are simply omitted, and the
+   source receipt is attached only once.
+   Job number, Account / Cost Type, and Cost Code appear under every receipt
+   with the confirmed RRH defaults of `695400022`, `01AMA`, and `5490`;
+   each remains editable. Service year 2 changes the Account / Cost Type default
+   to `02AMA`, year 3 to `03AMA`, and so on.
 4. Add up to eight mileage entries when needed. Each trip records date, miles,
    purpose, destination, and the same editable job coding. The travel date
    selects the applicable IRS business-mileage rate.
@@ -126,7 +132,7 @@ app/web_ui.py                 Active quote-to-Smartsheet workflow
 app/quote_analyzer.py          Structured quote extraction
 app/analysis_schema.py         Model-response validation
 app/ocr.py                     PDF/image extraction and normalization
-app/equipment_policy.py        Ashley's exact Group A equipment policy
+app/equipment_policy.py        Approved Group A equipment policy
 app/asset_guess.py             Unique-best site asset suggestion
 app/po_rules.py                Canonical route/account/agreement rules
 app/scope_pdf.py               Lightweight supporting PDF generation
@@ -169,8 +175,10 @@ cp .env.example .env
 streamlit run run_web.py
 ```
 
-Synthetic quote data is disabled by default. For a controlled local test only,
-set `EPC_ENABLE_SYNTHETIC_SAMPLE=true`; production must leave it false.
+The discreet **Built by Evan Roden** control below the purchase-workflow header
+loads a static synthetic quote for a safe end-to-end test. It contains no
+customer/vendor data, makes no AI request, and does not submit the resulting
+Smartsheet form.
 
 Required local secret:
 
@@ -209,12 +217,13 @@ of leaving an older analysis visible or retrying on every rerun.
 
 The expense uploader accepts PDF and the same image formats, up to 15 MB per
 receipt and 60 MB for the in-progress report. The official form holds 15
-Miscellaneous and 14 Entertainment rows; generation blocks with a split-report
-instruction rather than silently dropping overflow. A PDF receipt may contain
-up to 10 pages. Receipt images embedded in output files are bounded and
-compressed for email while the uploaded source remains unchanged. Up to eight
-mileage rows are supported; the travel date selects the configured IRS business
-rate and an unknown future rate blocks generation.
+Miscellaneous and 14 Entertainment reimbursement lines; a single source
+receipt may supply several lines but is attached only once. Generation blocks
+with a split-report instruction rather than silently dropping overflow. A PDF
+receipt may contain up to 10 pages. Receipt images embedded in output files are
+bounded and compressed for email while the uploaded source remains unchanged.
+Up to eight mileage rows are supported; the travel date selects the configured
+IRS business rate and an unknown future rate blocks generation.
 
 ## Requester memory
 
