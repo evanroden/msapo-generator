@@ -363,7 +363,7 @@ Verification for this RRH policy revision:
 
 ```text
 python -m pytest -q
-232 passed
+251 passed
 
 python -m py_compile app/*.py
 silent success

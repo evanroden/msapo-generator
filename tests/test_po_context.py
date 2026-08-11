@@ -85,6 +85,7 @@ def _state(
         f"contact_{token}": "Final Contact",
         f"cemail_{token}": "final@example.com",
         f"desc_{token}": "Final Pump Repair",
+        f"scope_{token}": "Repair the chilled water pump and test operation.",
         f"total_{token}": total,
         f"instructions_{token}": "Escort required",
         "scope_pdf_bytes": b"%PDF-1.7\nsynthetic scope pdf",
@@ -178,6 +179,38 @@ def test_description_of_work_is_hard_capped_at_twenty_characters():
     assert context.fields["description_of_work"] == "Replace cooling towe"
     assert len(context.fields["description_of_work"]) == 20
     assert "Repair the chilled water pump" in context.fields["scope_of_work"]
+
+
+def test_edited_scope_is_exported_and_invalidates_the_previous_pdf():
+    state = _state(route=ONSITE_LABOR)
+    token = state["analysis_token"]
+    state[f"scope_{token}"] = (
+        "Replace the pump and verify operation with Facilities."
+    )
+
+    stale = build_po_context(state, {})
+
+    assert stale is not None and not stale.ready
+    assert stale.fields["scope_of_work"].startswith(
+        "Replace the pump and verify operation with Facilities."
+    )
+    assert any("Regenerate" in warning for warning in stale.warnings)
+
+    state["scope_pdf_signature"] = _document_signature(
+        token,
+        "Tulane",
+        "Tulane",
+        ["Labor", "Startup testing"],
+        ["Painting"],
+        vendor="Corrected Vendor Co",
+        scope=state[f"scope_{token}"],
+    )
+    refreshed = build_po_context(state, {})
+
+    assert refreshed is not None and refreshed.ready
+    assert refreshed.fields["scope_of_work"].startswith(
+        "Replace the pump and verify operation with Facilities."
+    )
 
 
 def test_change_order_requires_and_exports_the_original_po_number():

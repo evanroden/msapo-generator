@@ -225,8 +225,10 @@ def _document_signature(
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _reviewed_scope(analysis: Any, inclusions: list[str], exclusions: list[str]) -> str:
-    sections = [str(getattr(analysis, "scope_of_work", "") or "").strip()]
+def _reviewed_scope(
+    scope: str, inclusions: list[str], exclusions: list[str]
+) -> str:
+    sections = [scope.strip()]
     if inclusions:
         sections.append("Inclusions:\n" + "\n".join(f"- {item}" for item in inclusions))
     if exclusions:
@@ -361,6 +363,11 @@ def build_po_context(
         state, token, contract, site, analysis
     )
     inclusions, exclusions = _reviewed_lists(state, token, analysis)
+    scope = _state_text(
+        state,
+        f"scope_{token}",
+        str(getattr(analysis, "scope_of_work", "") or ""),
+    ).strip()
 
     description = _state_text(
         state,
@@ -383,7 +390,7 @@ def build_po_context(
         inclusions,
         exclusions,
         vendor=vendor,
-        scope=str(getattr(analysis, "scope_of_work", "") or "").strip(),
+        scope=scope,
     )
     stored_document_signature = _state_text(state, "scope_pdf_signature")
     scope_pdf_bytes = state.get("scope_pdf_bytes")
@@ -401,7 +408,7 @@ def build_po_context(
 
     raw_asset_id = _asset_value(state, token, contract, site)
     asset_id = normalize_asset_id(raw_asset_id)
-    reviewed_scope = _reviewed_scope(analysis, inclusions, exclusions)
+    reviewed_scope = _reviewed_scope(scope, inclusions, exclusions)
     total_value = _state_text(
         state, f"total_{token}", str(getattr(analysis, "total_amount", "") or "")
     )
@@ -511,6 +518,8 @@ def build_po_context(
         warnings.append("Confirm the vendor representative email before submission.")
     if not description:
         warnings.append("Confirm a Description of Work of 20 characters or fewer.")
+    if not scope:
+        warnings.append("Confirm the scope of work before submission.")
     if not fields["total"]:
         warnings.append("Confirm the total amount before submission.")
     if not attachments:
