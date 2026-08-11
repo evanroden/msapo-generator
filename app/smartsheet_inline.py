@@ -90,7 +90,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     )
 
     st.markdown("##### 2. Open the prefilled Smartsheet form")
-    st.info(
+    st.caption(
         "Smartsheet needs to have been opened or signed into within the last few hours. "
         "The button opens a new browser tab; on iPhone or iPad, iOS may "
         "hand the same link to the signed-in Smartsheet app. If the values do "

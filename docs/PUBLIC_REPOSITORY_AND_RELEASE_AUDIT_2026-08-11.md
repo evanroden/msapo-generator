@@ -64,6 +64,15 @@ or truncated replacement cannot silently remove all-account functionality.
 
 ## Git-history and incident boundary
 
+The 2026-08-11 release audit scanned 776 reachable Git objects across the local
+references. It found no Anthropic key, GitHub token, AWS access key, private-key
+block, committed `.env`, receipt image, completed report, email draft, or SQLite
+database. Historical commits do contain ENFRA email addresses and earlier
+non-placeholder Smartsheet form identifiers; the product owner reviewed and
+explicitly accepted those specific historical disclosures. The current tree
+continues to prohibit both categories. The only historical `output` path was an
+empty `.gitkeep`, not generated customer data.
+
 A clean current tree does not erase identifiers from commits that were already
 published. Before a rewritten history is force-pushed, repository owners must
 assume any previously committed endpoint or business contact was copied. Rotate

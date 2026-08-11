@@ -219,6 +219,42 @@ verified zero expander border widths, no expander shadow, no optional wording
 on required contact fields, both required representative labels, and no page
 errors or horizontal overflow.
 
+### 2026-08-11 workflow-selector and iPad correction
+
+An iPad screenshot showed that the selected workflow still rendered as pale
+yellow text on a translucent yellow background. The first CSS correction used
+Streamlit's internal `kind="segmented_controlActive"` component property, but
+that property is consumed by the styling layer and is not emitted into the
+browser DOM. The rule therefore matched nothing.
+
+The correction now targets the rendered single-select accessibility contract:
+`button[role="radio"][aria-checked="true"]` for the selected workflow and
+`aria-checked="false"` for the other workflow. The group uses two equal-width
+grid tracks and each segment uses a 52-pixel minimum height, normal text
+wrapping, and `touch-action: manipulation`. Hover changes are limited to
+fine-pointer devices, preventing iPadOS from retaining a mouse-hover color after
+a tap. At phone widths the target grows to 56 pixels and the label remains
+wrappable. Existing safe-area padding, 16-pixel touch form controls, workflow
+switching, and draft preservation remain unchanged.
+
+Regression coverage asserts the DOM-state selectors, selected and idle color
+pairs, equal-width layout, minimum target height, touch behavior, and absence of
+the ineffective internal-`kind` selector. Streamlit AppTests continue to switch
+both directions while retaining an in-progress expense draft.
+
+The rendered Chromium 149 correction pass exercised iPad portrait (820×1180)
+and landscape (1180×820) touch profiles after the page finished rendering. In
+both orientations, the segments were exactly equal width, at least 52 pixels
+tall, white-on-Ocean-Steel when selected, Ocean-Steel-on-white when idle, and
+produced no horizontal overflow. Every form input inspected in the expense view
+remained at least 16 pixels. This is rendered evidence, not a claim of physical
+WebKit testing.
+
+Routine guidance previously rendered as large blue information callouts has
+been reduced to captions in both workflows. Conditions requiring action—such
+as changed generated data—remain warnings. This preserves safety cues while
+removing the upload-page clutter visible in the iPad screenshots.
+
 A separate browser test downloaded both artifacts and verified non-empty quote
 and PDF files. It safely intercepted the Smartsheet URL, clicked the handoff,
 and confirmed that a separate page opened with the expected prefilled URL.
@@ -259,7 +295,10 @@ or expected app handoff, prefilled values, and attachment selection.
 | UBR-16 | High | Missing vendor representative fields were mislabeled optional | Both fields are required, visible when unresolved, and block generation |
 | UBR-17 | Medium | Custom and native expander borders created doubled mobile edges | Compact native expanders plus removal of the custom outer border |
 | UBR-18 | High | Vendor history was stored but the active UI neither recalled nor updated it | Account/vendor lookup during review plus idempotent recording after verified generation |
-| UBR-19 | Medium | Safety Yellow primary styling made the selected workflow label nearly unreadable | Selected segment uses white on Ocean Steel with a Safety Yellow underline; idle segment uses Ocean Steel on white |
+| UBR-19 | Medium | Safety Yellow primary styling made the selected workflow label nearly unreadable; the first fix targeted Streamlit's non-rendered internal `kind` prop | Accessible `role="radio"` / `aria-checked` state now drives white-on-Ocean-Steel selection, a Safety Yellow underline, Ocean-Steel-on-white idle state, equal-width segments, and coarse-pointer-safe hover behavior |
+| UBR-20 | Medium | Routine blue information boxes dominated both empty workflows | Non-blocking guidance now uses captions; stale-output and other actionable states use warnings |
+| UBR-21 | High | Expense approvers had to be retyped and a stale email could remain after changing the name | Exact-account type-ahead directory fills the paired email, accepts new names, clears stale recall, and records only valid generated reports |
+| UBR-22 | Medium | Excel, PDF, Outlook draft, and generic email fallback competed as equal completion actions | One platform-aware email destination/action is primary; Excel, PDF, and attachment-free fallback are collapsed |
 
 ## 9. Residual risks
 

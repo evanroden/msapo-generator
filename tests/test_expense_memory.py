@@ -1,6 +1,8 @@
 import sqlite3
 
 from app.memory import (
+    expense_approvers,
+    record_expense_approver,
     record_expense_profile,
     remembered_expense_employee_number,
     remembered_expense_profile,
@@ -154,3 +156,111 @@ def test_employee_number_mapping_is_corrected_after_confirmed_regeneration(
     assert remembered_expense_employee_number(
         "browser-a", "Rochester Regional Health", "Synthetic Employee"
     ) == "TEST-9999"
+
+
+def test_expense_approver_directory_is_account_scoped_and_available_after_one_use(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+
+    assert record_expense_approver(
+        account="Rochester Regional Health",
+        approver_name="First Administrator",
+        approver_email="first@example.invalid",
+        context_id="report-1",
+    ) == 1
+    assert expense_approvers("Rochester Regional Health") == [
+        ("First Administrator", "first@example.invalid")
+    ]
+    assert expense_approvers("Tulane") == []
+
+
+def test_expense_approver_reruns_are_idempotent_and_corrections_replace_history(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+
+    for _ in range(3):
+        assert record_expense_approver(
+            account="Rochester Regional Health",
+            approver_name="Wrong Administrator",
+            approver_email="wrong@example.invalid",
+            context_id="same-report",
+        ) == 1
+    assert record_expense_approver(
+        account="Rochester Regional Health",
+        approver_name="Correct Administrator",
+        approver_email="correct@example.invalid",
+        context_id="same-report",
+    ) == 1
+
+    assert expense_approvers("Rochester Regional Health") == [
+        ("Correct Administrator", "correct@example.invalid")
+    ]
+    with sqlite3.connect(tmp_path / "epc_memory.db") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM expense_approver_events"
+        ).fetchone()[0] == 1
+
+
+def test_expense_approver_email_correction_updates_the_name_mapping(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    record_expense_approver(
+        account="Rochester Regional Health",
+        approver_name="Known Administrator",
+        approver_email="old@example.invalid",
+        context_id="same-report",
+    )
+    record_expense_approver(
+        account="Rochester Regional Health",
+        approver_name="Known Administrator",
+        approver_email="new@example.invalid",
+        context_id="same-report",
+    )
+
+    assert expense_approvers("Rochester Regional Health") == [
+        ("Known Administrator", "new@example.invalid")
+    ]
+
+
+def test_expense_approver_rejects_incomplete_or_malformed_values(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+
+    assert record_expense_approver(
+        account="Rochester Regional Health",
+        approver_name="Known Administrator",
+        approver_email="not-an-email",
+        context_id="report-1",
+    ) == 0
+    assert record_expense_approver(
+        account="",
+        approver_name="Known Administrator",
+        approver_email="known@example.invalid",
+        context_id="report-1",
+    ) == 0
+    assert not (tmp_path / "epc_memory.db").exists()
+
+
+def test_expense_approver_event_recovers_if_its_directory_row_is_missing(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    values = {
+        "account": "Rochester Regional Health",
+        "approver_name": "Known Administrator",
+        "approver_email": "known@example.invalid",
+        "context_id": "same-report",
+    }
+    assert record_expense_approver(**values) == 1
+    with sqlite3.connect(tmp_path / "epc_memory.db") as connection:
+        connection.execute("DELETE FROM expense_approvers")
+        connection.commit()
+
+    assert record_expense_approver(**values) == 1
+    assert expense_approvers("Rochester Regional Health") == [
+        ("Known Administrator", "known@example.invalid")
+    ]

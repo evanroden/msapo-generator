@@ -27,6 +27,12 @@ transaction data, mileage entries, and signature confirmation are never written
 to this store. Legacy coding columns remain in the table for backward-compatible
 reads.
 
+Confirmed expense approver name/email pairs form a separate account-scoped
+directory. They are shared across authorized browsers using the same account so
+employees can search a familiar approver by name; they never cross account
+boundaries. A per-draft event key prevents reruns from inflating history and
+moves a corrected draft away from an obsolete approver.
+
 Nothing learned on one contract is ever surfaced on another; even administrator
 details remain scoped to the exact account.
 
@@ -144,6 +150,22 @@ CREATE TABLE IF NOT EXISTS device_expense_employees (
     employee_number TEXT NOT NULL,
     last_used      REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (device_hash, account_key, employee_key)
+);
+CREATE TABLE IF NOT EXISTS expense_approvers (
+    account_key    TEXT NOT NULL,
+    approver_key   TEXT NOT NULL,
+    display_name   TEXT NOT NULL,
+    email          TEXT NOT NULL,
+    use_count      INTEGER NOT NULL DEFAULT 0,
+    last_used      REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_key, approver_key)
+);
+CREATE TABLE IF NOT EXISTS expense_approver_events (
+    account_key  TEXT NOT NULL,
+    context_id   TEXT NOT NULL,
+    approver_key TEXT NOT NULL,
+    recorded_at  REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (account_key, context_id)
 );
 """
 
@@ -765,6 +787,129 @@ def remembered_expense_employee_number(
         return ""
     except Exception:
         return ""
+    finally:
+        conn.close()
+
+
+def record_expense_approver(
+    *,
+    account: str | None,
+    approver_name: str | None,
+    approver_email: str | None,
+    context_id: str | None,
+) -> int:
+    """Remember one confirmed expense approver for an exact account.
+
+    Re-generating one in-progress report is idempotent. Correcting its approver
+    moves that event to the corrected person, and correcting an email for the
+    same normalized name replaces the older email. Returns the current use
+    count, or zero when validation/storage is unavailable.
+    """
+    account_key = _account_key(account)
+    name = _norm_name(approver_name)
+    approver_key = _requester_key(name)
+    email = _norm_email(approver_email)
+    context = (context_id or "").strip()
+    if (
+        not account_key
+        or not approver_key
+        or not _looks_like_email(email)
+        or not context
+        or len(account_key) > 240
+        or len(name) > 160
+        or len(email) > 240
+        or len(context) > 200
+    ):
+        return 0
+
+    conn = _connect()
+    if conn is None:
+        return 0
+    now = time.time()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        prior = conn.execute(
+            "SELECT approver_key FROM expense_approver_events "
+            "WHERE account_key=? AND context_id=?",
+            (account_key, context),
+        ).fetchone()
+        if prior and prior[0] != approver_key:
+            conn.execute(
+                "UPDATE expense_approvers SET use_count=use_count-1 "
+                "WHERE account_key=? AND approver_key=?",
+                (account_key, prior[0]),
+            )
+            conn.execute(
+                "DELETE FROM expense_approvers WHERE account_key=? "
+                "AND approver_key=? AND use_count<=0",
+                (account_key, prior[0]),
+            )
+
+        if not prior or prior[0] != approver_key:
+            conn.execute(
+                "INSERT INTO expense_approver_events "
+                "(account_key,context_id,approver_key,recorded_at) "
+                "VALUES (?,?,?,?) "
+                "ON CONFLICT(account_key,context_id) DO UPDATE SET "
+                "approver_key=excluded.approver_key,"
+                "recorded_at=excluded.recorded_at",
+                (account_key, context, approver_key, now),
+            )
+            conn.execute(
+                "INSERT INTO expense_approvers "
+                "(account_key,approver_key,display_name,email,use_count,last_used) "
+                "VALUES (?,?,?,?,1,?) "
+                "ON CONFLICT(account_key,approver_key) DO UPDATE SET "
+                "display_name=excluded.display_name,email=excluded.email,"
+                "use_count=use_count+1,last_used=excluded.last_used",
+                (account_key, approver_key, name, email, now),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO expense_approvers "
+                "(account_key,approver_key,display_name,email,use_count,last_used) "
+                "VALUES (?,?,?,?,1,?) "
+                "ON CONFLICT(account_key,approver_key) DO UPDATE SET "
+                "display_name=excluded.display_name,email=excluded.email,"
+                "last_used=excluded.last_used",
+                (account_key, approver_key, name, email, now),
+            )
+
+        row = conn.execute(
+            "SELECT use_count FROM expense_approvers "
+            "WHERE account_key=? AND approver_key=?",
+            (account_key, approver_key),
+        ).fetchone()
+        conn.commit()
+        return int(row[0]) if row else 0
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        conn.close()
+
+
+def expense_approvers(account: str | None) -> list[tuple[str, str]]:
+    """Return confirmed approver name/email pairs for this account only."""
+    account_key = _account_key(account)
+    if not account_key:
+        return []
+    conn = _connect()
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT display_name,email FROM expense_approvers "
+            "WHERE account_key=? AND use_count>=1 "
+            "ORDER BY use_count DESC,last_used DESC,display_name COLLATE NOCASE",
+            (account_key,),
+        ).fetchall()
+        return [(str(name), str(email)) for name, email in rows]
+    except Exception:
+        return []
     finally:
         conn.close()
 

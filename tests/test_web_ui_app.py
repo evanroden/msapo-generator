@@ -1,3 +1,4 @@
+import inspect
 from pathlib import Path
 from datetime import date
 from decimal import Decimal
@@ -11,7 +12,7 @@ import app.expense_ui as expense_ui
 import app.web_ui as web_ui
 from app.expense_report import ExpensePackage
 from app.quote_analyzer import QuoteAnalysis
-from app.receipt_analyzer import ReceiptAnalysis
+from app.receipt_analyzer import ReceiptAnalysis, ReceiptLineItem
 
 
 ROOT = Path(__file__).parents[1]
@@ -154,19 +155,109 @@ def test_expense_employee_number_is_recalled_when_employee_name_changes(monkeypa
     assert employee_number.value == ""
 
 
+def test_expense_approver_name_suggestions_fill_the_paired_email(monkeypatch):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setattr(
+        expense_ui,
+        "expense_approvers",
+        lambda account: (
+            [
+                ("Remembered Administrator", "remembered@example.invalid"),
+                ("Second Administrator", "second@example.invalid"),
+            ]
+            if account == "Rochester Regional Health"
+            else []
+        ),
+    )
+
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    approver = next(
+        field
+        for field in app.selectbox
+        if field.label == "Contract administrator / approver name *"
+    )
+    assert "Remembered Administrator" in approver.options
+    assert "Second Administrator" in approver.options
+
+    approver.set_value("Remembered Administrator").run()
+    email = next(
+        field
+        for field in app.text_input
+        if field.label == "Contract administrator / approver email *"
+    )
+    assert email.value == "remembered@example.invalid"
+    assert any(
+        "Approver email recalled from this account's confirmed history"
+        in caption.value
+        for caption in app.caption
+    )
+
+
+def test_expense_approver_control_supports_typeahead_and_new_names():
+    source = inspect.getsource(expense_ui.render_expense_workflow)
+
+    assert 'placeholder="Type or select an approver"' in source
+    assert "accept_new_options=True" in source
+    assert 'filter_mode="fuzzy"' in source
+
+
 def test_workflow_selector_css_uses_high_contrast_active_and_idle_states():
     css = web_ui.CUSTOM_CSS
     active = css.split(
-        '.st-key-workflow_mode button[kind="segmented_controlActive"] {', 1
+        '.st-key-workflow_mode button[role="radio"][aria-checked="true"] {', 1
     )[1].split("}", 1)[0]
     idle = css.split(
-        '.st-key-workflow_mode button[kind="segmented_control"] {', 1
+        '.st-key-workflow_mode button[role="radio"][aria-checked="false"] {', 1
     )[1].split("}", 1)[0]
 
     assert "background: var(--enfra-ocean) !important" in active
     assert "color: #FFFFFF !important" in active
     assert "background: #FFFFFF !important" in idle
     assert "color: var(--enfra-ocean) !important" in idle
+    assert 'button[kind="segmented_controlActive"]' not in css
+
+
+def test_workflow_selector_css_has_ipad_safe_touch_and_layout_rules():
+    css = web_ui.CUSTOM_CSS
+    group = css.split(
+        '.st-key-workflow_mode div[role="radiogroup"] {', 1
+    )[1].split("}", 1)[0]
+    button = css.split(
+        '.st-key-workflow_mode button[role="radio"] {', 1
+    )[1].split("}", 1)[0]
+
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr)) !important" in group
+    assert "width: 100% !important" in group
+    assert "box-sizing: border-box !important" in group
+    assert "min-height: 52px !important" in button
+    assert "box-sizing: border-box !important" in button
+    assert "touch-action: manipulation" in button
+    assert "-webkit-tap-highlight-color: transparent" in button
+    assert "@media (hover: hover) and (pointer: fine)" in css
+    assert 'div[data-testid="stCheckbox"] label { min-height: 44px; }' in css
+
+
+def test_primary_email_actions_use_brand_contrast_for_links_and_downloads():
+    css = web_ui.CUSTOM_CSS
+
+    assert '[data-testid="stDownloadButton"] button[kind="primary"]' in css
+    assert '[data-testid="stLinkButton"] a[kind="primary"]' in css
+    assert "color: var(--enfra-ocean)" in css
+
+
+def test_expense_email_destination_defaults_are_platform_appropriate():
+    assert expense_ui._preferred_email_destination(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140"
+    ) == "Outlook for Windows (PDF attached)"
+    assert expense_ui._preferred_email_destination(
+        "Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) Mobile/15E148"
+    ) == "Default mail app (iPhone / iPad)"
+    # iPadOS desktop-site mode commonly identifies itself as Macintosh while
+    # retaining the Mobile token.
+    assert expense_ui._preferred_email_destination(
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) Mobile/15E148"
+    ) == "Default mail app (iPhone / iPad)"
 
 
 def test_nondescript_synthetic_trigger_is_available_without_an_env_flag(monkeypatch):
@@ -349,16 +440,144 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
     generate.click().run()
 
     assert not app.exception
+    email_destination = next(
+        field for field in app.selectbox if field.label == "Open approval email in"
+    )
+    assert email_destination.value == "Outlook for Windows (PDF attached)"
     assert [button.label for button in app.get("download_button")] == [
+        "Open approval email in Outlook",
         "Download completed Excel report",
         "Download combined PDF packet",
-        "Download Outlook email draft with PDF attached",
     ]
-    mail_links = app.get("link_button")
-    assert len(mail_links) == 1
-    assert mail_links[0].url.startswith(
-        "mailto:rrh.approver@example.invalid?"
+    other_options = next(
+        expander
+        for expander in app.expander
+        if expander.label == "Other file and email options"
     )
+    assert not other_options.proto.expanded
+    assert [button.label for button in other_options.download_button] == [
+        "Download completed Excel report",
+        "Download combined PDF packet",
+    ]
+    assert [button.label for button in other_options.get("link_button")] == [
+        "Open a new email without attachments ↗"
+    ]
+
+    email_destination.set_value("Outlook on the web").run()
+    web_link = next(
+        link
+        for link in app.get("link_button")
+        if link.label == "Open approval email in Outlook on the web ↗"
+    )
+    assert web_link.url.startswith(
+        "https://outlook.office.com/mail/deeplink/compose?"
+    )
+    assert "rrh.approver%40example.invalid" in web_link.url
+
+    email_destination = next(
+        field for field in app.selectbox if field.label == "Open approval email in"
+    )
+    email_destination.set_value("Default mail app (iPhone / iPad)").run()
+    local_link = next(
+        link
+        for link in app.get("link_button")
+        if link.label == "Open approval email in the default mail app ↗"
+    )
+    assert local_link.url.startswith("mailto:rrh.approver@example.invalid?")
+
+
+def test_primary_workflows_do_not_use_blue_information_callouts():
+    assert "st.info(" not in inspect.getsource(expense_ui.render_expense_workflow)
+    assert "st.info(" not in inspect.getsource(expense_ui._render_generated_package)
+    assert "st.info(" not in inspect.getsource(web_ui.main)
+
+
+def test_itemized_receipt_selection_recalculates_reimbursable_amount(
+    monkeypatch, tmp_path
+):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        expense_ui,
+        "analyze_receipt",
+        lambda *_args: ReceiptAnalysis(
+            merchant_name="Synthetic Store",
+            transaction_date=date(2026, 8, 10),
+            total_amount="33.00",
+            tax_amount="3.00",
+            suggested_description="Business supplies",
+            confidence="high",
+            line_items=(
+                ReceiptLineItem("Business notebook", "20.00"),
+                ReceiptLineItem("Personal snack", "10.00"),
+            ),
+        ),
+    )
+    image = Image.new("RGB", (180, 280), "white")
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    app.file_uploader[0].upload(
+        "itemized.png", buffer.getvalue(), "image/png"
+    ).run()
+
+    def amount_field():
+        return next(
+            field
+            for field in app.text_input
+            if field.label == "Reimbursable amount *"
+        )
+
+    assert amount_field().value == "33.00"
+    personal_item = next(
+        box for box in app.checkbox if "Personal snack — $10.00" in box.label
+    )
+    personal_item.set_value(False).run()
+
+    # The $3 final-total adjustment is allocated in proportion to selected
+    # purchased items: $20 / $30 × $33 = $22.
+    assert amount_field().value == "22.00"
+    assert any(
+        "Selected 1 of 2 items; reimbursable amount $22.00" in caption.value
+        for caption in app.caption
+    )
+
+    amount_field().set_value("21.50").run()
+    next(
+        field for field in app.text_input if field.label == "Merchant"
+    ).set_value("Synthetic Store corrected").run()
+    assert amount_field().value == "21.50"
+
+    personal_item = next(
+        box for box in app.checkbox if "Personal snack — $10.00" in box.label
+    )
+    personal_item.set_value(True).run()
+    assert amount_field().value == "33.00"
+
+
+def test_selected_receipt_item_amount_handles_missing_total_and_empty_selection():
+    analysis = ReceiptAnalysis(
+        line_items=(
+            ReceiptLineItem("Parking", "12.00"),
+            ReceiptLineItem("Toll", "4.25"),
+        )
+    )
+
+    assert expense_ui._selected_receipt_item_amount(analysis, {1}) == "4.25"
+    assert expense_ui._selected_receipt_item_amount(analysis, set()) == ""
+
+    taxed = ReceiptAnalysis(
+        total_amount="10.00",
+        line_items=(
+            ReceiptLineItem("Item A", "3.00"),
+            ReceiptLineItem("Item B", "3.00"),
+            ReceiptLineItem("Item C", "3.00"),
+        ),
+    )
+    assert expense_ui._selected_receipt_item_amount(taxed, {0}) == "3.33"
+    assert expense_ui._selected_receipt_item_amount(taxed, {0, 1, 2}) == "10.00"
 
 
 def test_expense_receipt_can_split_into_independently_editable_lines(

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import mimetypes
 from email.message import EmailMessage
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 # The app now supports many contracts. A neutral default is safe for every
 # administrator and avoids addressing a recipient by the wrong name.
@@ -98,6 +98,20 @@ def build_mailto_url(*, to: str, subject: str, body: str) -> str:
     Mail separately via the share sheet.
     """
     return f"mailto:{quote(to, safe='@')}?subject={quote(subject)}&body={quote(body)}"
+
+
+def build_outlook_web_url(*, to: str, subject: str, body: str) -> str:
+    """Return an Outlook-on-the-web URL with a prefilled compose draft.
+
+    Browser compose URLs cannot accept an in-memory local attachment. The UI
+    keeps the combined PDF available beside this fallback and tells the user to
+    attach it before sending.
+    """
+    query = urlencode(
+        {"to": to, "subject": subject, "body": body},
+        quote_via=quote,
+    )
+    return f"https://outlook.office.com/mail/deeplink/compose?{query}"
 
 
 def _esc(text: str) -> str:

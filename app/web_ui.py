@@ -135,39 +135,60 @@ CUSTOM_CSS = """
         padding-left: max(1rem, env(safe-area-inset-left)) !important;
     }
 
-    /* The default Streamlit active segment uses the primary color at low
-       opacity and repeats that color for its text. With Safety Yellow as the
-       primary color, that produces yellow-on-pale-yellow text. Use the dark
-       brand surface for the selected workflow and retain a yellow underline. */
-    .st-key-workflow_mode div[data-testid="stSegmentedControl"] button {
+    /* Streamlit does not render its internal `kind` prop into the browser DOM.
+       Single-select segments do expose stable radio semantics, including
+       aria-checked, so style that accessible state directly. */
+    .st-key-workflow_mode div[role="radiogroup"] {
+        background: rgba(255,255,255,0.82) !important;
+        border: 1px solid var(--enfra-concrete) !important;
+        border-radius: 8px !important;
+        box-sizing: border-box !important;
+        column-gap: 4px !important;
+        display: grid !important;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        padding: 4px !important;
+        row-gap: 0 !important;
+        width: 100% !important;
+    }
+    .st-key-workflow_mode button[role="radio"] {
+        -webkit-tap-highlight-color: transparent;
+        border: 0 !important;
+        border-radius: 5px !important;
+        box-sizing: border-box !important;
         font-size: 1rem !important;
         font-weight: 700 !important;
+        line-height: 1.2 !important;
+        margin: 0 !important;
+        max-width: none !important;
         min-height: 52px !important;
+        min-width: 0 !important;
+        padding: 0.7rem 0.85rem !important;
+        touch-action: manipulation;
+        white-space: normal !important;
+        width: 100% !important;
     }
-    .st-key-workflow_mode button[kind="segmented_control"] {
+    .st-key-workflow_mode button[role="radio"][aria-checked="false"] {
         background: #FFFFFF !important;
-        border-color: var(--enfra-concrete) !important;
+        box-shadow: none !important;
         color: var(--enfra-ocean) !important;
     }
-    .st-key-workflow_mode button[kind="segmented_control"]:hover {
-        background: var(--enfra-iced) !important;
-        border-color: var(--enfra-blue) !important;
-        color: var(--enfra-ocean) !important;
-    }
-    .st-key-workflow_mode button[kind="segmented_controlActive"] {
+    .st-key-workflow_mode button[role="radio"][aria-checked="true"] {
         background: var(--enfra-ocean) !important;
-        border-color: var(--enfra-ocean) !important;
         box-shadow: inset 0 -4px 0 var(--enfra-yellow) !important;
         color: #FFFFFF !important;
     }
-    .st-key-workflow_mode button[kind="segmented_controlActive"]:hover {
-        background: #174B41 !important;
-        color: #FFFFFF !important;
-    }
-    .st-key-workflow_mode button[kind^="segmented_control"] p,
-    .st-key-workflow_mode button[kind^="segmented_control"] span {
+    .st-key-workflow_mode button[role="radio"] p,
+    .st-key-workflow_mode button[role="radio"] span {
         color: inherit !important;
         font-weight: inherit !important;
+    }
+    @media (hover: hover) and (pointer: fine) {
+        .st-key-workflow_mode button[role="radio"][aria-checked="false"]:hover {
+            background: var(--enfra-iced) !important;
+        }
+        .st-key-workflow_mode button[role="radio"][aria-checked="true"]:hover {
+            background: #174B41 !important;
+        }
     }
 
     .hero {
@@ -367,7 +388,9 @@ CUSTOM_CSS = """
     }
     .field-label { color: var(--enfra-ocean); font-size: 0.8rem; font-weight: 700; margin-bottom: 0.15rem; }
 
-    .stButton > button[kind="primary"] {
+    .stButton > button[kind="primary"],
+    [data-testid="stDownloadButton"] button[kind="primary"],
+    [data-testid="stLinkButton"] a[kind="primary"] {
         background: var(--enfra-yellow);
         border: 2px solid var(--enfra-ocean);
         border-radius: 4px;
@@ -377,7 +400,14 @@ CUSTOM_CSS = """
         font-weight: 700;
         min-height: 46px;
     }
-    .stButton > button[kind="primary"]:hover {
+    .stButton > button[kind="primary"] p,
+    [data-testid="stDownloadButton"] button[kind="primary"] p,
+    [data-testid="stLinkButton"] a[kind="primary"] p {
+        color: inherit !important;
+    }
+    .stButton > button[kind="primary"]:hover,
+    [data-testid="stDownloadButton"] button[kind="primary"]:hover,
+    [data-testid="stLinkButton"] a[kind="primary"]:hover {
         background: #C6DF3E;
         border-color: var(--enfra-ocean);
         color: var(--enfra-ocean);
@@ -423,10 +453,16 @@ CUSTOM_CSS = """
         textarea { font-size: 16px !important; }
         .tax-alert { display: block; }
         .tax-alert-label { display: inline-block; margin-bottom: 0.55rem; }
+        .st-key-workflow_mode button[role="radio"] {
+            font-size: 0.94rem !important;
+            min-height: 56px !important;
+            padding: 0.6rem 0.35rem !important;
+        }
     }
 
     @media (pointer: coarse) {
         button, a[role="button"] { min-height: 44px; }
+        div[data-testid="stCheckbox"] label { min-height: 44px; }
         input, textarea, [role="combobox"] { font-size: 16px !important; }
     }
 </style>
@@ -1207,7 +1243,7 @@ def main() -> None:
     if not quote_text:
         if st.session_state.get("analysis") is not None:
             clear_active_analysis(st.session_state)
-        st.info("Upload or paste a quote above. It will be analyzed automatically.")
+        st.caption("Upload or paste a quote above. It will be analyzed automatically.")
         _render_footer()
         return
 
@@ -1895,7 +1931,9 @@ def main() -> None:
     if context is not None and generated_context == context.context_id:
         render_inline_smartsheet_handoff(context)
     elif generated_context:
-        st.info("A detail changed. Use the button again to refresh both files and the link.")
+        st.warning(
+            "A detail changed. Use the button again to refresh both files and the link."
+        )
 
     _render_footer()
 

@@ -41,11 +41,19 @@ There are three model-call paths:
    sent as a bounded, orientation-corrected image or a preflighted PDF with the
    `RECEIPT_PROMPT` constant in that file. The requested JSON keys are
    `merchant_name`, `transaction_date`, `total_amount`, `tax_amount`, `currency`,
-   `suggested_description`, `expense_section_guess`, `confidence`, and
-   `review_notes`. The prompt explicitly forbids inventing business purpose,
-   attendees, job numbers, or accounting codes. The employee must review and
-   can replace every extracted value; the approved RRH codes come from
-   deterministic application policy, not the model.
+   `suggested_description`, `line_items` (purchased-item description and extended
+   line amount), `expense_section_guess`, `confidence`, and `review_notes`. The
+   prompt tells the model to keep repeated purchased items separate and exclude
+   subtotal, total, tax, tip, service-charge, discount/coupon, tender, change,
+   loyalty, and suggested-tip rows from the item list. Receipt content is
+   explicitly marked untrusted, and the model is told to ignore any instructions,
+   code, prompts,
+   or requested output formats printed inside it. The prompt forbids inventing
+   business purpose, attendees, job numbers, or accounting codes. The employee
+   can uncheck nonreimbursable detected items, override the calculated amount,
+   and replace every receipt-level field; the approved RRH codes and
+   item-selection arithmetic come from deterministic application policy, not
+   the model.
 
 The content sent to the model can include confidential operational information
 already present in a quote or receipt, such as vendor/contact details, facility,

@@ -1,3 +1,5 @@
+import json
+
 import fitz
 import pytest
 
@@ -6,6 +8,7 @@ from app.expense_report import (
     EXPENSE_SECTION_MISC,
 )
 from app.receipt_analyzer import (
+    RECEIPT_PROMPT,
     ReceiptAnalysisError,
     analyze_receipt,
     normalize_receipt_response,
@@ -23,6 +26,10 @@ def test_receipt_response_normalizes_editable_fields():
           "tax_amount": " 12.34 ",
           "currency": "usd",
           "suggested_description": "Business meal",
+          "line_items": [
+            {"description": "Guest meal", "amount": "600.00"},
+            {"description": "Employee meal", "amount": "622.16"}
+          ],
           "expense_section_guess": "entertainment",
           "confidence": "HIGH",
           "review_notes": ["Confirm attendee"]
@@ -40,6 +47,12 @@ def test_receipt_response_normalizes_editable_fields():
     assert result.expense_section_guess == EXPENSE_SECTION_ENTERTAINMENT
     assert result.confidence == "high"
     assert result.review_notes == ["Confirm attendee"]
+    assert [
+        (item.description, item.amount) for item in result.line_items
+    ] == [
+        ("Guest meal", "600.00"),
+        ("Employee meal", "622.16"),
+    ]
 
 
 def test_bad_hints_degrade_to_visible_manual_review():
@@ -51,6 +64,14 @@ def test_bad_hints_degrade_to_visible_manual_review():
           "tax_amount": -4,
           "currency": "dollars",
           "suggested_description": null,
+          "line_items": [
+            {"description": "", "amount": "12.00"},
+            {"description": "Usable item", "amount": "3.50"},
+            {"description": "TOTAL", "amount": "18.00"},
+            {"description": "Total Due", "amount": "18.00"},
+            {"description": "Coupon", "amount": "2.00"},
+            "not an object"
+          ],
           "expense_section_guess": "meal",
           "confidence": "certain",
           "review_notes": "not a list"
@@ -64,9 +85,49 @@ def test_bad_hints_degrade_to_visible_manual_review():
     assert result.suggested_description == "Parking"
     assert result.expense_section_guess == EXPENSE_SECTION_MISC
     assert result.confidence == "low"
+    assert len(result.line_items) == 1
+    assert result.line_items[0].description == "Usable item"
+    assert result.line_items[0].amount == "3.50"
     assert "The receipt date could not be read reliably." in result.review_notes
     assert "Confirm the final amount paid." in result.review_notes
     assert "Confirm the receipt currency." in result.review_notes
+    assert "One or more unreadable receipt-item rows were omitted." in result.review_notes
+
+
+def test_detected_receipt_items_are_bounded_without_collapsing_repeated_items():
+    line_items = [
+        {"description": f"Repeated item {index % 3}", "amount": "1.00"}
+        for index in range(65)
+    ]
+    result = normalize_receipt_response(json.dumps({"line_items": line_items}))
+
+    assert len(result.line_items) == 60
+    assert result.line_items[0].description == "Repeated item 0"
+    assert result.line_items[3].description == "Repeated item 0"
+    assert "Only the first 60 detected receipt items are shown." in result.review_notes
+
+
+def test_large_item_total_mismatch_requires_visible_review_note():
+    result = normalize_receipt_response(
+        json.dumps(
+            {
+                "total_amount": "120.00",
+                "line_items": [
+                    {"description": "Only readable item", "amount": "20.00"}
+                ],
+            }
+        )
+    )
+
+    assert any(
+        "differ substantially from the final charged total" in note
+        for note in result.review_notes
+    )
+
+
+def test_receipt_prompt_treats_document_instructions_as_untrusted():
+    assert "untrusted document content" in RECEIPT_PROMPT
+    assert "instructions, code, prompts" in RECEIPT_PROMPT
 
 
 def test_genuinely_malformed_receipt_response_still_raises():

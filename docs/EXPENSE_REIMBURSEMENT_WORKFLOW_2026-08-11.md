@@ -19,11 +19,14 @@ One generation action creates:
    worksheet when receipts are present. This remains available for edits.
 2. A single `.pdf` packet with the official form first and each receipt page
    afterward.
-3. An Outlook `.eml` approval draft addressed to the reviewed administrator,
-   with only the submission PDF attached.
-4. A `mailto:` fallback for iPhone/iPad, Outlook web, and other mail clients.
-   `mailto:` cannot include local attachments, so the UI directs the employee
-   to attach the generated PDF manually.
+3. A platform-aware approval action addressed to the reviewed administrator.
+   Windows defaults to an Outlook `.eml` draft with only the submission PDF
+   attached. Outlook on the web gets its own prefilled compose link. iPhone and
+   iPad default to a `mailto:` draft in the local default mail app.
+4. A collapsed **Other file and email options** area containing the editable
+   Excel file, combined PDF, and generic attachment-free email fallback. Web and
+   mobile compose URLs cannot include an in-memory local attachment, so those
+   routes explicitly direct the employee to add the generated PDF before send.
 
 The tool prepares a draft. It does not email, approve, sign, reimburse, or post
 anything to JDE.
@@ -97,6 +100,7 @@ extract:
 - Separately printed tax, for review only
 - Currency
 - Short receipt-based description
+- Individually priced purchased items and extended line amounts
 - Miscellaneous versus Entertainment suggestion
 - Confidence and ambiguity notes
 
@@ -111,14 +115,26 @@ service-year `AMA` value in Account / Cost Type, and `5490` in Cost Code. All
 three are editable for that receipt; `695400023` is the usual Startup
 alternative.
 
-When one source receipt contains several applicable purchases, the employee can
-split it into independently editable reimbursement lines. Each line has its own
-description, reimbursable amount, section/contact, and JDE coding. The first
-line begins with the receipt-wide AI draft; later lines deliberately begin
-blank so a full receipt total cannot be duplicated accidentally. Nonbusiness
-items receive no line. The workbook attaches the unchanged source receipt only
-once and labels how many reimbursement lines it supports. A visible warning
-appears when the reviewed line sum exceeds the amount the analyzer read.
+When two or more individually priced purchases are readable, the page shows
+each detected item as its own checkbox. All purchased items begin selected.
+Unchecking a personal or otherwise nonreimbursable item immediately recalculates
+the first reimbursable-amount field. The deterministic calculation allocates the
+receipt's final charged total in proportion to selected item prices, so a partial
+selection receives a proportional share of receipt-level tax, tip, fees, or
+discounts and selecting everything exactly matches the final total. If no final
+total was readable, selected item prices are summed directly. The employee can
+still override the resulting amount; that override survives ordinary reruns and
+is replaced only when the item selection deliberately changes.
+
+When one source receipt also needs several business purposes or coding routes,
+the employee can split it into independently editable reimbursement lines. Each
+line has its own description, reimbursable amount, section/contact, and JDE
+coding. The first line begins with the selected-item aggregate; later lines
+deliberately begin blank so a full receipt total cannot be duplicated
+accidentally. The employee divides the selected aggregate across those lines.
+Nonbusiness items remain unchecked. The workbook attaches the unchanged source
+receipt only once and labels how many reimbursement lines it supports. A visible
+warning appears when the reviewed line sum exceeds the amount the analyzer read.
 
 Entertainment requires a contact name. Miscellaneous is the conservative
 default because the supplied completed packet placed ordinary employee travel
@@ -147,9 +163,13 @@ the printed name beneath it. Generation remains disabled until the employee
 confirms that signature and agrees to review it again before sending. The
 signature, printed name, and report date are then placed on the form.
 
-The page exposes the editable Excel file, submission PDF, Outlook draft, and
-mail-client fallback. The `.eml` contains the PDF only. Any edit changes the
-content fingerprint and suppresses stale downloads until regeneration.
+The normal path exposes one **Open approval email** action. Browser identity
+selects the initial destination: attached-PDF Outlook draft on Windows and the
+local default mail app on iPhone/iPad. A visible selector also supports Outlook
+on the web. The editable Excel file, submission PDF, and generic
+attachment-free fallback stay collapsed under **Other file and email options**.
+The `.eml` contains the PDF only. Any edit changes the content fingerprint and
+suppresses stale actions and downloads until regeneration.
 
 ## JDE allocation rules
 
@@ -242,8 +262,9 @@ text. When mileage rows span multiple rate periods, the heading says
   prevent cross-session profile locks.
 
 If LibreOffice/Gotenberg fails, the official Excel workbook still succeeds and
-the page explains that the PDF was unavailable. The email draft then contains
-the workbook rather than crashing or requiring re-entry.
+the page explains that the PDF was unavailable. The approval email is withheld
+because the confirmed submission artifact is the PDF; the Excel file remains
+available in the collapsed options without crashing or requiring re-entry.
 
 ## Receipt-analysis request
 
@@ -257,6 +278,7 @@ total_amount
 tax_amount
 currency
 suggested_description
+line_items: [{description, amount}, ...]
 expense_section_guess
 confidence
 review_notes
@@ -274,6 +296,12 @@ contains digits. The approved example reimburses only one business line item
 from a larger receipt, so the UI explicitly tells the employee to replace the
 prefill with only the business-reimbursable portion when appropriate.
 
+Receipt text is untrusted input. The model prompt explicitly ignores
+instructions/code printed inside a receipt. Deterministic normalization removes
+obvious summary, discount/coupon, and tender rows from the selectable item list,
+caps it at 60, keeps repeated purchased items separate, and adds a review note when detected item
+prices differ substantially from the final charged total.
+
 ## Memory and privacy boundary
 
 After a valid package, SQLite stores the latest defaults for the exact
@@ -290,6 +318,14 @@ Matching ignores case and repeated whitespace but does not use fuzzy matching.
 Changing to an unknown name clears the prior employee's number instead of
 silently carrying it forward. Recalled numbers stay visible and editable, and a
 corrected number replaces the old mapping only after a valid report is generated.
+
+Approvers have a separate exact-account directory. The name control performs a
+fuzzy type-ahead over people confirmed for the selected account and still
+accepts a new name. Selecting a remembered person fills the paired email;
+typing an unknown person clears a stale recalled email. A valid generation adds
+one idempotent event, so Streamlit reruns do not inflate ranking. Correcting the
+person on the same draft moves that event, and correcting the email updates the
+stored pair. No approver suggestion crosses an account boundary.
 
 Employee Home Business Unit and RRH baseline coding come from account policy,
 not another employee's remembered transaction. Legacy allocation columns remain
@@ -318,7 +354,10 @@ disable only the memory convenience.
 | Same file uploaded twice | Exact SHA-256 duplicate is ignored. |
 | Cropped/re-encoded duplicate | Same merchant/date/amount produces a non-blocking confirmation warning; it is not auto-deleted because legitimate repeated purchases exist. |
 | Receipt contains several applicable purposes/codes | Optional split control creates independent reviewed rows while attaching the source once. Later lines start blank. |
-| Receipt contains many items but only some are business expenses | Employee enters only applicable lines/amounts; nonbusiness items are omitted. The original source stays attached for audit. |
+| Receipt contains many items but only some are business expenses | AI returns a bounded item list; all detected purchased items begin selected, the employee unchecks nonbusiness items, and the amount recalculates deterministically. The original source stays attached for audit. |
+| Item prices omit tax/tip/fees or include a receipt-wide discount | Partial selections receive a proportional share of the final charged total; all-selected remains exactly equal to that total. The amount stays editable. |
+| Item OCR is incomplete or wrong | Invalid rows are omitted with a review note; manual description/amount remain editable and the original receipt remains visible. |
+| Receipt has more than 60 detected item rows | The selector is capped at 60 with a visible note; the employee uses the reviewed aggregate/manual amount rather than accepting silent truncation. |
 | Split line sum exceeds the tool-read receipt total | Prominent review warning identifies both totals; generation still requires valid line-level values because tips, currency conversion, or analyzer error may explain the difference. |
 | Image/PDF declares enormous dimensions | Pixel estimate is checked before frame copy or PDF rasterization, preventing a small compressed file from causing an unbounded memory allocation. |
 | Receipt PDF exceeds 10 pages | Preflight rejects it before constructing the AI client; the employee gets a split-file instruction instead of an expensive failed request. |
@@ -341,7 +380,11 @@ disable only the memory convenience.
 | PDF attachment is large | The `.eml` still contains the required PDF and shows a size warning instead of silently substituting Excel. |
 | PDF renderer unavailable | Excel remains downloadable, but the approval `.eml` is withheld because the PDF is the submission artifact. |
 | Employee edits the optional Excel download | UI directs the employee to export the edited workbook to PDF and replace the draft's attached PDF before sending. |
-| Outlook/mobile incompatibility | Windows gets a PDF-attached `.eml`; mobile/web gets the PDF download plus `mailto:` and explicit attachment instructions. |
+| Wrong email route for the current device | User-agent and client-platform hints default Windows to the attached-PDF Outlook draft and iPhone/iPad—including iPad desktop-site identity—to the local mail app; all routes remain selectable. |
+| Browser compose link loses the required attachment | Outlook web and `mailto:` routes state that the PDF must be attached; the combined PDF stays in the collapsed options. No route falsely claims that a URL can attach local bytes. |
+| Too many competing completion buttons | The normal path shows one destination selector and one email action. Excel, PDF, and generic attachment-free email controls are collapsed. |
+| Approver name selected from history | Exact-account fuzzy suggestions fill the paired email; a new name clears a stale email and remains editable. |
+| Same report generated repeatedly | Approver event uses a stable report context and counts once; a correction moves the event instead of duplicating it. |
 | Signature confirmed for a different name | Changing the employee name clears confirmation and blocks generation until the new preview is confirmed. |
 | Employee name changes after a number was filled | Exact browser/account/name recall supplies the confirmed number; an unknown name clears the stale number. |
 | Template drift | Anchor cells are verified before any write; a changed template fails closed. |
@@ -351,20 +394,32 @@ disable only the memory convenience.
 Automated Streamlit coverage verifies the workflow switch, multi-file uploader,
 AI-filled editable fields, required default coding, draft preservation across a
 hidden-widget rerun, restored-plus-new receipt merging, individual receipt
-removal, split reimbursement lines, the generation gate, three downloads, and
-administrator mailto link.
+removal, split reimbursement lines, the generation gate, collapsed file
+options, attached-PDF Outlook draft, Outlook-web compose URL, local-mail URL,
+platform defaults, and administrator recall.
 
 Expected platform handoff:
 
 | Platform | Receipt input | Approval handoff |
 |---|---|---|
-| iOS/iPadOS | Photos, Files, screenshots, HEIC, PDF; responsive single-column review | Download PDF, open mailto draft, attach PDF manually; Excel remains optional |
-| Windows Chrome | Multi-select or drag receipts into uploader | Download/open `.eml` in Outlook; submission PDF included |
-| Windows Edge | Same web controls and downloads as Chrome | Download/open `.eml` in Outlook; submission PDF included |
+| iOS/iPadOS | Photos, Files, screenshots, HEIC, PDF; responsive single-column review | Defaults to the local mail app; attach the PDF from collapsed options; Excel remains optional |
+| Windows Chrome | Multi-select or drag receipts into uploader | Defaults to download/open `.eml` in Outlook with the submission PDF included; Outlook-web route is selectable |
+| Windows Edge | Same web controls and downloads as Chrome | Defaults to download/open `.eml` in Outlook with the submission PDF included; Outlook-web route is selectable |
+
+A rendered Chromium 149 acceptance fixture exercised Windows Chrome identity,
+Windows Edge identity, and iPad Safari identity against the generated-package
+screen. Each profile showed exactly one visible email action, kept all secondary
+files/actions inside a closed expander, used the expected platform default,
+retained Ocean-Steel-on-Safety-Yellow button contrast, and had no horizontal
+overflow. A second rendered 820×1180 touch fixture exercised the itemized
+receipt selector: both checkbox rows were 44 pixels high, unchecking a $10 item
+from a $33 receipt changed the field to $22, and the explanatory calculation
+updated without overflow.
 
 Physical device acceptance remains required before production promotion,
-particularly Outlook's local `.eml` association and the iOS share/download
-sequence. The code does not claim that `mailto:` can attach local files.
+particularly Outlook's local `.eml` association and the iOS download/attach
+sequence. The code does not claim that `mailto:` or an Outlook-web compose URL
+can attach local files.
 
 ## Automated verification
 
@@ -372,7 +427,7 @@ Verification for this RRH policy revision:
 
 ```text
 python -m pytest -q
-251 passed
+272 passed
 
 python -m py_compile app/*.py
 silent success
@@ -385,6 +440,8 @@ Coverage includes:
 - Formula preservation and recalculation settings
 - Receipt image normalization and ordering
 - Split and partially applicable receipts with one source attachment
+- Itemized receipt selection, proportional final-total allocation, manual
+  override preservation, summary-row filtering, and long-list bounds
 - Restored-plus-new uploader merging and individual receipt removal
 - Formula-injection-safe workbook text fields
 - Oversized/corrupt image and PDF preflight rejection
@@ -397,8 +454,11 @@ Coverage includes:
 - PDF-only Outlook attachment
 - Duplicate/date warnings
 - Account/browser profile isolation
+- Employee-number recall plus account-scoped approver type-ahead/email recall
 - Renderer/deployment dependencies
 - Full Streamlit expense generation path
+- Platform-aware Outlook app, Outlook web, and iPhone/iPad mail actions with
+  collapsed secondary downloads
 - All pre-existing purchase-order regressions
 
 ## Confirmed RRH policy decisions

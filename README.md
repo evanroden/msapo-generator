@@ -53,12 +53,19 @@ There is no email-submission route in the active UI.
 2. Confirm the employee, report date, administrator, mail destination, and RRH
    service year. RRH derives Employee Home Business Unit `695` from the account
    and defaults the approval recipient from private deployment configuration.
+   Confirmed employee numbers are recalled by employee name. Administrator
+   names are searchable per account, and selecting one fills the remembered
+   email without carrying contacts between accounts.
 3. Review the editable merchant, transaction date, description/business
    purpose, reimbursable amount, and Miscellaneous/Entertainment selection below
    every receipt. Required values remain visible when AI cannot determine them.
    A receipt containing several reimbursable purposes can be split into
    independently editable lines; nonbusiness items are simply omitted, and the
    source receipt is attached only once.
+   When the receipt itself lists multiple priced purchases, each detected item
+   is selectable. Unchecking a personal/nonreimbursable item recalculates the
+   amount and proportionally carries through receipt-level tax, tip, fees, or
+   discounts; the calculated total remains editable.
    Job number, Account / Cost Type, and Cost Code appear under every receipt
    with the confirmed RRH defaults of `695400022`, `01AMA`, and `5490`;
    each remains editable. Service year 2 changes the Account / Cost Type default
@@ -67,8 +74,11 @@ There is no email-submission route in the active UI.
    purpose, destination, and the same editable job coding. The travel date
    selects the applicable IRS business-mileage rate.
 5. Confirm the generated cursive employee signature and printed name, then
-   generate the editable `.xlsx`, submission `.pdf`, and Outlook `.eml` draft.
-   The email contains only the PDF; Excel remains an optional download for edits.
+   generate the editable `.xlsx`, submission `.pdf`, and email draft. Windows
+   defaults to an Outlook `.eml` containing only the PDF. iPhone/iPad defaults
+   to the local mail app, and Outlook on the web is selectable. Excel, PDF, and
+   the generic attachment-free fallback remain collapsed under **Other file and
+   email options**; web/mobile users attach the PDF manually.
 
 The expense workflow uses only the Job or Service Center, Account / Cost Type,
 and Cost Code columns (`I:K`). Work Order (`L`) and Other Expenses (`N:Q`) are

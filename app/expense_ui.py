@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import html
+import uuid
 from dataclasses import replace
 from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 
 import streamlit as st
 
 from app import contracts
 from app.config import RRH_APPROVER_EMAIL, RRH_APPROVER_NAME
-from app.eml_builder import build_eml, build_mailto_url, build_plain_body
+from app.eml_builder import (
+    build_eml,
+    build_mailto_url,
+    build_outlook_web_url,
+    build_plain_body,
+)
 from app.expense_report import (
     ALLOCATION_JOB,
     EXPENSE_SECTION_ENTERTAINMENT,
@@ -41,7 +48,9 @@ from app.expense_report import (
 )
 from app.job_numbers import job_numbers_for_contract
 from app.memory import (
+    expense_approvers,
     record_expense_profile,
+    record_expense_approver,
     remembered_device_account_manager,
     remembered_expense_employee_number,
     remembered_expense_profile,
@@ -79,11 +88,22 @@ _MAIL_LABELS = {
 _RRH_DEFAULT_JOB = "RRH-695400022-O&M"
 _RRH_ACCOUNT_COST_TYPE_SUFFIX = "AMA"
 _RRH_DEFAULT_COST_CODE = "5490"
+_EMAIL_OUTLOOK_APP = "Outlook for Windows (PDF attached)"
+_EMAIL_OUTLOOK_WEB = "Outlook on the web"
+_EMAIL_DEFAULT_APP = "Default mail app (iPhone / iPad)"
+_EMAIL_DESTINATIONS = (
+    _EMAIL_OUTLOOK_APP,
+    _EMAIL_OUTLOOK_WEB,
+    _EMAIL_DEFAULT_APP,
+)
 
 
 def render_expense_workflow(browser_token: str) -> None:
     """Render the complete receipt-to-email-draft workflow."""
     restore_expense_draft_state()
+    report_memory_context = str(
+        st.session_state.setdefault("expense_report_memory_context", uuid.uuid4().hex)
+    )
     st.markdown(
         """
         <div class="hero">
@@ -91,7 +111,7 @@ def render_expense_workflow(browser_token: str) -> None:
             <h1>Expense Report <span class="zing">Process Control</span></h1>
             <p class="hero-subtitle">
                 Add receipts and mileage, review the prefilled fields, then create
-                the completed Excel form, combined PDF, and Outlook email draft.
+                the completed Excel form, combined PDF, and approval email draft.
             </p>
         </div>
         """,
@@ -143,7 +163,7 @@ def render_expense_workflow(browser_token: str) -> None:
         duplicate_names = []
         if upload_sources:
             st.session_state["expense_restored_without_uploader"] = True
-            st.info(
+            st.caption(
                 "Your in-progress receipts were restored. Add more files above, "
                 "remove one beside its preview, or clear the entire report."
             )
@@ -189,7 +209,7 @@ def render_expense_workflow(browser_token: str) -> None:
             "Original uploads remain unchanged; compact copies are used only in the workbook."
         )
     else:
-        st.info(
+        st.caption(
             "No receipt is required for mileage-only reimbursement. You can add "
             "business mileage below or upload receipts now."
         )
@@ -208,7 +228,10 @@ def render_expense_workflow(browser_token: str) -> None:
         "Account / contract *",
         accounts,
         key="expense_account",
-        help="This filters the verified job-number choices and remembers the correct administrator.",
+        help=(
+            "This filters the verified job-number choices and remembers the "
+            "correct administrator."
+        ),
     )
     _seed_profile(browser_token, account)
     account_token = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
@@ -263,14 +286,47 @@ def render_expense_workflow(browser_token: str) -> None:
             key=f"expense_report_date_{account_token}",
             format="MM/DD/YYYY",
         )
-        approver_name = st.text_input(
-            "Contract administrator / approver name *",
-            key=f"expense_approver_name_{account_token}",
+        approver_name_key = f"expense_approver_name_{account_token}"
+        approver_email_key = f"expense_approver_email_{account_token}"
+        approver_recall_key = f"expense_approver_recalled_{account_token}"
+        remembered_approvers = tuple(expense_approvers(account))
+        current_approver = str(
+            st.session_state.get(approver_name_key, "") or ""
         ).strip()
+        approver_names = _approver_name_options(
+            current_approver,
+            remembered_approvers,
+        )
+        approver_name = str(st.selectbox(
+            "Contract administrator / approver name *",
+            approver_names,
+            index=None,
+            key=approver_name_key,
+            placeholder="Type or select an approver",
+            accept_new_options=True,
+            filter_mode="fuzzy",
+            help=(
+                "Start typing to search approvers confirmed for this account, "
+                "or enter a new name. Selecting a remembered name fills the email."
+            ),
+            on_change=_recall_approver_email,
+            args=(
+                approver_name_key,
+                approver_email_key,
+                approver_recall_key,
+                remembered_approvers,
+            ),
+        ) or "").strip()
         approver_email = st.text_input(
             "Contract administrator / approver email *",
-            key=f"expense_approver_email_{account_token}",
+            key=approver_email_key,
+            on_change=_clear_approver_recall,
+            args=(approver_recall_key,),
         ).strip()
+        if st.session_state.get(approver_recall_key) == _employee_name_key(
+            approver_name
+        ):
+            st.caption("Approver email recalled from this account's confirmed history.")
 
     mail_destination = st.radio(
         "Where should the reimbursement check be mailed? *",
@@ -377,8 +433,9 @@ def render_expense_workflow(browser_token: str) -> None:
     st.caption(
         "The Excel file contains the completed official form and, when receipts "
         "are present, a printable RECEIPTS worksheet. The PDF places the form "
-        "first and each receipt after it. The Outlook draft includes the PDF and "
-        "opens for a final review; nothing is sent automatically."
+        "first and each receipt after it. Windows Outlook receives that PDF in "
+        "the draft; web and iPad mail routes provide a prefilled email and an "
+        "attachment reminder. Nothing is sent automatically."
     )
 
     signature_confirmed = False
@@ -423,7 +480,9 @@ def render_expense_workflow(browser_token: str) -> None:
     signature = expense_report_signature(details, items, mileage_items)
     generated_signature = str(st.session_state.get("expense_generated_signature", ""))
     if generated_signature and generated_signature != signature:
-        st.info("A report detail changed. Generate again to refresh the files and email draft.")
+        st.warning(
+            "A report detail changed. Generate again to refresh the files and email draft."
+        )
 
     if st.button(
         "Generate expense report and email draft",
@@ -463,6 +522,7 @@ def render_expense_workflow(browser_token: str) -> None:
                 _remember_profile(
                     browser_token=browser_token,
                     details=details,
+                    approver_context_id=report_memory_context,
                     allocation=(
                         items[0].allocation
                         if items
@@ -477,7 +537,11 @@ def render_expense_workflow(browser_token: str) -> None:
         st.error(f"The expense package could not be generated: {generation_error}")
     email_error = str(st.session_state.get("expense_email_error", "") or "")
     if email_error:
-        st.error(f"The Outlook draft could not be created: {email_error}")
+        st.error(
+            "The attached-PDF Outlook draft could not be created: "
+            f"{email_error} Choose Outlook on the web or the default mail app "
+            "below, then attach the PDF manually."
+        )
 
     package = st.session_state.get("expense_generated_package")
     if (
@@ -531,6 +595,11 @@ def _render_receipt(
     amount_key = f"expense_amount_{token}"
     section_key = f"expense_section_{token}"
     contact_key = f"expense_contact_{token}"
+    selected_item_indices, calculated_item_amount = _sync_detected_item_amount(
+        token,
+        analysis,
+        amount_key,
+    )
 
     title_amount = str(st.session_state.get(amount_key, "") or "").strip()
     title_merchant = str(st.session_state.get(merchant_key, "") or "").strip()
@@ -580,7 +649,8 @@ def _render_receipt(
             st.caption(f"Tax printed on receipt: ${analysis.tax_amount}")
         if analysis.currency and analysis.currency != "USD":
             st.error(
-                f"Receipt currency appears to be {analysis.currency}. Enter the approved U.S.-dollar reimbursement amount."
+                f"Receipt currency appears to be {analysis.currency}. Enter the "
+                "approved U.S.-dollar reimbursement amount."
             )
 
     items: list[ExpenseItem] = []
@@ -588,12 +658,22 @@ def _render_receipt(
         merchant = st.text_input(
             "Merchant",
             key=merchant_key,
-            help="Used as a receipt label; the Description / business purpose is what appears on the form.",
+            help=(
+                "Used as a receipt label; the Description / business purpose is "
+                "what appears on the form."
+            ),
         ).strip()
         date_kwargs = {"key": date_key, "format": "MM/DD/YYYY"}
         if date_key not in st.session_state:
             date_kwargs["value"] = None
         transaction_date = st.date_input("Transaction date *", **date_kwargs)
+        _render_detected_receipt_items(
+            token=token,
+            analysis=analysis,
+            selected_indices=selected_item_indices,
+            calculated_amount=calculated_item_amount,
+            amount_key=amount_key,
+        )
         split_receipt = st.toggle(
             "Split this receipt into multiple reimbursement lines",
             key=f"expense_split_{token}",
@@ -619,7 +699,7 @@ def _render_receipt(
                     ),
                 )
             )
-            st.info(
+            st.caption(
                 "Enter only the applicable amount on each line. Replace the "
                 "first line's full-receipt prefill and do not enter nonbusiness items."
             )
@@ -647,8 +727,9 @@ def _render_receipt(
                 key=line_amount_key,
                 help=(
                     "Enter only the business-reimbursable portion for this line. "
-                    "It may be less than the receipt total. Include applicable "
-                    "charged tax and tip for that portion."
+                    "Detected item selections update the first line automatically. "
+                    "You can still edit it for tax, tip, fees, currency conversion, "
+                    "or a receipt-reading correction."
                 ),
             ).strip()
             section = st.selectbox(
@@ -717,6 +798,143 @@ def _render_receipt(
             "receipt and line amounts before generating."
         )
     return items
+
+
+def _detected_item_entries(
+    token: str,
+    analysis: ReceiptAnalysis,
+) -> list[tuple[int, str]]:
+    """Return stable checkbox keys for the current detected item list."""
+    entries: list[tuple[int, str]] = []
+    for index, item in enumerate(analysis.line_items):
+        digest = hashlib.sha256(
+            f"{index}\0{item.description}\0{item.amount}".encode("utf-8")
+        ).hexdigest()[:12]
+        entries.append((index, f"expense_item_selected_{token}_{digest}"))
+    return entries
+
+
+def _selected_receipt_item_amount(
+    analysis: ReceiptAnalysis,
+    selected_indices: set[int],
+) -> str:
+    """Allocate the final charged total across the selected purchased items.
+
+    When the receipt has tax, tip, discounts, or fees outside its item lines,
+    proportional allocation makes all-selected equal the final charged total
+    while a partial selection receives a fair share of those adjustments.
+    """
+    indexed_amounts = [
+        (index, amount)
+        for index, item in enumerate(analysis.line_items)
+        if (amount := parse_expense_amount(item.amount)) is not None
+    ]
+    selected_amount = sum(
+        (amount for index, amount in indexed_amounts if index in selected_indices),
+        Decimal("0"),
+    )
+    if selected_amount <= 0:
+        return ""
+    item_total = sum((amount for _, amount in indexed_amounts), Decimal("0"))
+    charged_total = parse_expense_amount(analysis.total_amount)
+    calculated = selected_amount
+    if charged_total is not None and item_total > 0:
+        calculated = charged_total * selected_amount / item_total
+    calculated = calculated.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{calculated:.2f}" if calculated > 0 else ""
+
+
+def _sync_detected_item_amount(
+    token: str,
+    analysis: ReceiptAnalysis,
+    amount_key: str,
+) -> tuple[set[int], str]:
+    """Update the editable amount only when detected-item selection changes."""
+    if len(analysis.line_items) < 2:
+        return set(), ""
+    entries = _detected_item_entries(token, analysis)
+    selected = {
+        index
+        for index, checkbox_key in entries
+        if bool(st.session_state.get(checkbox_key, True))
+    }
+    calculated = _selected_receipt_item_amount(analysis, selected)
+    fingerprint = hashlib.sha256(
+        repr(
+            (
+                analysis.total_amount,
+                tuple(
+                    (item.description, item.amount)
+                    for item in analysis.line_items
+                ),
+                tuple(sorted(selected)),
+            )
+        ).encode("utf-8")
+    ).hexdigest()
+    fingerprint_key = f"expense_item_selection_fingerprint_{token}"
+    prior_fingerprint = st.session_state.get(fingerprint_key)
+    current_amount = str(st.session_state.get(amount_key, "") or "").strip()
+    if prior_fingerprint is None:
+        if not current_amount or current_amount == analysis.total_amount:
+            st.session_state[amount_key] = calculated
+    elif prior_fingerprint != fingerprint:
+        # A deliberate item-selection change supersedes the prior automatic or
+        # manual amount; the resulting field remains editable afterward.
+        st.session_state[amount_key] = calculated
+    st.session_state[fingerprint_key] = fingerprint
+    return selected, calculated
+
+
+def _render_detected_receipt_items(
+    *,
+    token: str,
+    analysis: ReceiptAnalysis,
+    selected_indices: set[int],
+    calculated_amount: str,
+    amount_key: str,
+) -> None:
+    """Render item-level reimbursement choices for an itemized receipt."""
+    if len(analysis.line_items) < 2:
+        return
+    st.markdown("**Select the reimbursable receipt items**")
+    st.caption(
+        "All detected purchased items start selected. Uncheck personal or other "
+        "nonreimbursable items; the reimbursable amount below recalculates."
+    )
+    for index, checkbox_key in _detected_item_entries(token, analysis):
+        item = analysis.line_items[index]
+        st.checkbox(
+            f"{index + 1}. {item.description} — ${item.amount}",
+            value=True,
+            key=checkbox_key,
+        )
+
+    if not selected_indices:
+        st.warning(
+            "No detected receipt items are selected. Select a reimbursable item, "
+            "or enter a corrected description and amount manually if the reader "
+            "missed the applicable purchase. Otherwise remove this receipt."
+        )
+        return
+    selected_count = len(selected_indices)
+    current_amount = str(st.session_state.get(amount_key, "") or "").strip()
+    allocation_note = (
+        " Receipt-level tax, tip, discounts, and fees are allocated "
+        "proportionally from the final charged total."
+        if parse_expense_amount(analysis.total_amount) is not None
+        else ""
+    )
+    if current_amount and current_amount != calculated_amount:
+        st.caption(
+            f"Selected {selected_count} of {len(analysis.line_items)} items; "
+            f"calculated amount ${calculated_amount}. Your edited amount is "
+            f"preserved until the selection changes.{allocation_note}"
+        )
+    else:
+        st.caption(
+            f"Selected {selected_count} of {len(analysis.line_items)} items; "
+            f"reimbursable amount ${calculated_amount}.{allocation_note}"
+        )
 
 
 def _render_job_allocation_fields(
@@ -914,6 +1132,45 @@ def _clear_employee_number_recall(recall_marker_key: str) -> None:
     st.session_state.pop(recall_marker_key, None)
 
 
+def _approver_name_options(
+    current_name: str,
+    remembered: tuple[tuple[str, str], ...],
+) -> tuple[str, ...]:
+    """Return de-duplicated searchable names with the current value retained."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for name in (current_name, *(pair[0] for pair in remembered)):
+        cleaned = " ".join(str(name or "").split())
+        key = _employee_name_key(cleaned)
+        if cleaned and key not in seen:
+            seen.add(key)
+            names.append(cleaned)
+    return tuple(names)
+
+
+def _recall_approver_email(
+    approver_name_key: str,
+    approver_email_key: str,
+    recall_marker_key: str,
+    remembered: tuple[tuple[str, str], ...],
+) -> None:
+    """Fill the paired email or clear a stale one when the name changes."""
+    selected = str(st.session_state.get(approver_name_key, "") or "")
+    selected_key = _employee_name_key(selected)
+    for name, email in remembered:
+        if _employee_name_key(name) == selected_key:
+            st.session_state[approver_email_key] = email
+            st.session_state[recall_marker_key] = selected_key
+            return
+    st.session_state[approver_email_key] = ""
+    st.session_state.pop(recall_marker_key, None)
+
+
+def _clear_approver_recall(recall_marker_key: str) -> None:
+    """Stop labeling an approver email as recalled after a manual edit."""
+    st.session_state.pop(recall_marker_key, None)
+
+
 def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
     profile = remembered_expense_profile(browser_token, account)
     account_token = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
@@ -1019,6 +1276,7 @@ def _remember_profile(
     *,
     browser_token: str,
     details: ExpenseReportDetails,
+    approver_context_id: str,
     allocation: ExpenseAllocation,
 ) -> None:
     record_expense_profile(
@@ -1043,6 +1301,12 @@ def _remember_profile(
             "ou_number": allocation.ou_number,
             "gl_account_number": allocation.gl_account_number,
         },
+    )
+    record_expense_approver(
+        account=details.account,
+        approver_name=details.approver_name,
+        approver_email=details.approver_email,
+        context_id=approver_context_id,
     )
 
 
@@ -1087,16 +1351,109 @@ def _render_generated_package(
     st.success(
         "The expense report is ready. Review the files before sending them for approval."
     )
-    download_columns = st.columns(2 if package.pdf_bytes else 1)
-    with download_columns[0]:
-        st.download_button(
-            "Download completed Excel report",
-            data=package.workbook_bytes,
-            file_name=f"{package.basename}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    if not package.pdf_bytes:
+        if package.pdf_error:
+            st.warning(package.pdf_error)
+        with st.expander("Other file and email options", expanded=False):
+            st.download_button(
+                "Download completed Excel report",
+                data=package.workbook_bytes,
+                file_name=f"{package.basename}.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                width="stretch",
+            )
+        return
+
+    size_warning = email_attachment_size_warning(package)
+    if size_warning:
+        st.warning(size_warning)
+
+    subject, body = _expense_email_subject_and_body(details, package)
+    preferred_destination = _preferred_email_destination(
+        _request_user_agent(),
+        _request_platform_hint(),
+    )
+    destination_key = "expense_email_destination"
+    if st.session_state.get(destination_key) not in _EMAIL_DESTINATIONS:
+        st.session_state[destination_key] = preferred_destination
+    destination = st.selectbox(
+        "Open approval email in",
+        _EMAIL_DESTINATIONS,
+        key=destination_key,
+        help=(
+            "Windows Outlook can use the attached-PDF draft. Outlook on the web "
+            "and iPhone/iPad use a prefilled compose link, then need the PDF "
+            "added from Other file and email options."
+        ),
+    )
+
+    if destination == _EMAIL_OUTLOOK_APP:
+        if eml_bytes:
+            st.download_button(
+                "Open approval email in Outlook",
+                data=eml_bytes,
+                file_name=f"{package.basename}_Approval_Email.eml",
+                mime="message/rfc822",
+                type="primary",
+                on_click="ignore",
+                width="stretch",
+            )
+            st.caption(
+                "The combined PDF is already attached. If the browser saves the "
+                "draft, open that .eml file once to continue in Outlook."
+            )
+        else:
+            st.warning(
+                "The Outlook draft is unavailable. Generate the report again, or "
+                "choose another email destination."
+            )
+    elif destination == _EMAIL_OUTLOOK_WEB:
+        st.link_button(
+            "Open approval email in Outlook on the web ↗",
+            build_outlook_web_url(
+                to=details.approver_email,
+                subject=subject,
+                body=body,
+            ),
+            type="primary",
             width="stretch",
         )
-    if package.pdf_bytes:
+        st.caption(
+            "The email is prefilled. Before sending, download the combined PDF "
+            "under Other file and email options and attach it."
+        )
+    else:
+        st.link_button(
+            "Open approval email in the default mail app ↗",
+            build_mailto_url(
+                to=details.approver_email,
+                subject=subject,
+                body=body,
+            ),
+            type="primary",
+            width="stretch",
+        )
+        st.caption(
+            "On iPhone/iPad this opens the default local mail app. Before sending, "
+            "download the combined PDF under Other file and email options and attach it."
+        )
+
+    with st.expander("Other file and email options", expanded=False):
+        download_columns = st.columns(2)
+        with download_columns[0]:
+            st.download_button(
+                "Download completed Excel report",
+                data=package.workbook_bytes,
+                file_name=f"{package.basename}.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                width="stretch",
+            )
         with download_columns[1]:
             st.download_button(
                 "Download combined PDF packet",
@@ -1107,52 +1464,73 @@ def _render_generated_package(
             )
         st.caption(
             "Excel is optional and is not attached to the approval email. If you "
-            "edit the Excel file, export the edited workbook to PDF and replace "
-            "the PDF already attached to the Outlook draft before sending."
-        )
-    elif package.pdf_error:
-        st.warning(package.pdf_error)
-
-    if eml_bytes and package.pdf_bytes:
-        st.download_button(
-            "Download Outlook email draft with PDF attached",
-            data=eml_bytes,
-            file_name=f"{package.basename}_Approval_Email.eml",
-            mime="message/rfc822",
-            width="stretch",
-        )
-
-    if package.pdf_bytes:
-        size_warning = email_attachment_size_warning(package)
-        if size_warning:
-            st.warning(size_warning)
-        subject = f"{details.employee_name} expense report - {details.report_date:%Y-%m-%d}"
-        body = build_plain_body(
-            [
-                ("Employee", details.employee_name),
-                ("Account", details.account),
-                ("Total reimbursement", f"${package.total:,.2f}"),
-            ],
-            greeting=(
-                f"Good afternoon, {details.approver_name.split()[0]}. Please review and approve the attached expense report."
-                if details.approver_name.split()
-                else "Good afternoon. Please review and approve the attached expense report."
-            ),
+            "edit it, export the edited workbook to PDF and send that PDF instead."
         )
         st.link_button(
             "Open a new email without attachments ↗",
-            build_mailto_url(to=details.approver_email, subject=subject, body=body),
+            build_mailto_url(
+                to=details.approver_email,
+                subject=subject,
+                body=body,
+            ),
             width="stretch",
         )
-        attached_names = [name for name, _ in email_attachments_for_package(package)]
-        st.info(
-            "Windows Outlook: open the downloaded .eml draft; it already contains "
-            + " and ".join(attached_names)
-            + ". The Excel file remains available above for optional edits but is "
-            "not attached. On iPhone/iPad or Outlook web, download the PDF, use "
-            "the new-email button, and attach the PDF manually. Review the "
-            "confirmed cursive signature and printed name before sending."
-        )
+
+
+def _expense_email_subject_and_body(
+    details: ExpenseReportDetails,
+    package: ExpensePackage,
+) -> tuple[str, str]:
+    """Return the shared subject/body used by web and local compose links."""
+    subject = f"{details.employee_name} expense report - {details.report_date:%Y-%m-%d}"
+    first_name = details.approver_name.split()[0] if details.approver_name.split() else ""
+    greeting = (
+        f"Good afternoon, {first_name}. Please review and approve the attached expense report."
+        if first_name
+        else "Good afternoon. Please review and approve the attached expense report."
+    )
+    body = build_plain_body(
+        [
+            ("Employee", details.employee_name),
+            ("Account", details.account),
+            ("Total reimbursement", f"${package.total:,.2f}"),
+        ],
+        greeting=greeting,
+    )
+    return subject, body
+
+
+def _preferred_email_destination(user_agent: str, platform_hint: str = "") -> str:
+    """Choose the least-friction email route without hiding alternatives."""
+    identity = f"{platform_hint} {user_agent}".casefold()
+    if (
+        "iphone" in identity
+        or "ipad" in identity
+        or ("macintosh" in identity and "mobile" in identity)
+        or "ios" in identity
+    ):
+        return _EMAIL_DEFAULT_APP
+    if "windows" in identity:
+        return _EMAIL_OUTLOOK_APP
+    # The attached-PDF draft is the safest default when browser identity is
+    # unavailable (including Streamlit's test runner).
+    return _EMAIL_OUTLOOK_APP
+
+
+def _request_header(name: str) -> str:
+    try:
+        headers = st.context.headers
+        return str(headers.get(name) or headers.get(name.casefold()) or "")
+    except Exception:
+        return ""
+
+
+def _request_user_agent() -> str:
+    return _request_header("User-Agent")
+
+
+def _request_platform_hint() -> str:
+    return _request_header("Sec-CH-UA-Platform")
 
 
 def _unique_receipts(uploads) -> tuple[list[tuple[str, str, bytes]], list[str]]:
