@@ -19,7 +19,7 @@ from typing import Optional
 
 import anthropic
 
-from app.analysis_schema import normalize_analysis_response
+from app.analysis_schema import AnalysisResponseError, normalize_analysis_response
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES
 from app.equipment_policy import GROUP_A_PROMPT_LIST
 
@@ -300,9 +300,20 @@ def analyze_quote(quote_text: str) -> QuoteAnalysis:
     """Send quote text to the Anthropic API and return structured analysis."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    raw = _call_api_with_retry(client, quote_text)
-
-    data = normalize_analysis_response(raw)
+    # Transport retries do not cover a syntactically malformed model response.
+    # Re-roll that response once before exposing the parse failure to the user.
+    data = None
+    parse_error: AnalysisResponseError | None = None
+    for _ in range(2):
+        raw = _call_api_with_retry(client, quote_text)
+        try:
+            data = normalize_analysis_response(raw)
+            break
+        except AnalysisResponseError as exc:
+            parse_error = exc
+    if data is None:
+        assert parse_error is not None
+        raise parse_error
 
     # Post-process: strip any residual pricing from every string field
     for key in ("project_description", "scope_of_work"):

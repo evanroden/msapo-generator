@@ -86,11 +86,8 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
             f"Claude returned malformed JSON near character {exc.pos}."
         ) from exc
 
-    trailing = text[start + end :].strip()
-    if trailing and trailing not in {"```"}:
-        raise AnalysisResponseError(
-            "Claude returned extra text after the JSON object; analysis was not used."
-        )
+    # ``raw_decode`` already captured one complete object. Models commonly add
+    # a closing code fence or short remark; neither invalidates that object.
     if not isinstance(value, dict):
         raise AnalysisResponseError("Claude's analysis response was not a JSON object.")
     return value
@@ -148,10 +145,11 @@ def _assumptions(value: Any) -> list[dict[str, str]]:
             raise AnalysisResponseError(
                 f"AI assumption {index + 1} is missing usable text."
             )
-        if not isinstance(section, str) or section not in _ALLOWED_ASSUMPTION_SECTIONS:
-            raise AnalysisResponseError(
-                f"AI assumption {index + 1} has an invalid section."
-            )
+        section = section.strip().lower() if isinstance(section, str) else ""
+        if section.endswith("s"):
+            section = section[:-1]
+        if section not in _ALLOWED_ASSUMPTION_SECTIONS:
+            section = "exclusion"
         result.append({"text": text.strip(), "section": section})
     return result
 
@@ -168,17 +166,21 @@ def normalize_analysis_response(raw: str) -> dict[str, Any]:
     for field in _LIST_FIELDS:
         normalized[field] = _string_list(source.get(field), field)
 
-    tax_status = source.get("tax_status", "unclear")
-    if not isinstance(tax_status, str) or tax_status not in _ALLOWED_TAX_STATUSES:
-        raise AnalysisResponseError(
-            "Field 'tax_status' must be included, excluded, or unclear."
-        )
-    normalized["tax_status"] = tax_status
+    raw_tax = source.get("tax_status", "unclear")
+    tax_status = raw_tax.strip().lower() if isinstance(raw_tax, str) else ""
+    # ``unclear`` triggers the visible tax alert, so an unsupported hint safely
+    # degrades to human review instead of discarding the complete extraction.
+    normalized["tax_status"] = (
+        tax_status if tax_status in _ALLOWED_TAX_STATUSES else "unclear"
+    )
 
+    # This is only a UI default. The site-specific control already falls back
+    # when the model does not return one of its configured categories.
     work_category = normalized.get("work_category")
-    if work_category is not None and work_category not in _ALLOWED_WORK_CATEGORIES:
-        raise AnalysisResponseError(
-            f"Field 'work_category' contains an unsupported value: {work_category!r}."
+    if work_category is not None:
+        candidate = work_category.strip().lower().replace(" ", "_")
+        normalized["work_category"] = (
+            candidate if candidate in _ALLOWED_WORK_CATEGORIES else None
         )
 
     short_description = normalized.get("short_description")

@@ -2,11 +2,12 @@ import json
 
 import pytest
 
+from app import quote_analyzer
 from app.analysis_schema import AnalysisResponseError, normalize_analysis_response
 
 
-def _valid_payload() -> dict:
-    return {
+def _payload(**overrides) -> dict:
+    values = {
         "vendor_name": "Vendor",
         "project_description": "Pump repair",
         "facility_name": None,
@@ -17,7 +18,9 @@ def _valid_payload() -> dict:
         "tax_status": "included",
         "tax_warning": None,
         "tax_note": None,
-        "ai_assumptions": [{"text": "After-hours work", "section": "exclusion"}],
+        "ai_assumptions": [
+            {"text": "After-hours work", "section": "exclusion"}
+        ],
         "contact_name": None,
         "contact_email": None,
         "subtotal_amount": "$100.00",
@@ -26,11 +29,15 @@ def _valid_payload() -> dict:
         "short_description": "Pump repair",
         "work_category": "repairs",
         "asset_reference": "P-1",
+        "purchase_route_guess": "onsite_labor",
+        "request_type_guess": "PO",
     }
+    values.update(overrides)
+    return values
 
 
 def test_valid_fenced_response_is_normalized():
-    raw = "```json\n" + json.dumps(_valid_payload()) + "\n```"
+    raw = "```json\n" + json.dumps(_payload()) + "\n```"
     result = normalize_analysis_response(raw)
 
     assert result["vendor_name"] == "Vendor"
@@ -59,26 +66,17 @@ def test_missing_optional_fields_receive_safe_defaults():
 
 
 def test_invalid_list_item_is_rejected():
-    payload = _valid_payload()
+    payload = _payload()
     payload["inclusions"] = ["Labor", {"unexpected": "object"}]
 
     with pytest.raises(AnalysisResponseError, match="item 2"):
         normalize_analysis_response(json.dumps(payload))
 
 
-def test_invalid_enum_is_rejected():
-    payload = _valid_payload()
-    payload["tax_status"] = "maybe"
+def test_unsupported_tax_value_degrades_to_unclear():
+    result = normalize_analysis_response(json.dumps(_payload(tax_status="maybe")))
 
-    with pytest.raises(AnalysisResponseError, match="tax_status"):
-        normalize_analysis_response(json.dumps(payload))
-
-
-def test_extra_text_after_json_is_rejected():
-    raw = json.dumps(_valid_payload()) + " This is an explanation."
-
-    with pytest.raises(AnalysisResponseError, match="extra text"):
-        normalize_analysis_response(raw)
+    assert result["tax_status"] == "unclear"
 
 
 def test_non_object_json_is_rejected():
@@ -87,9 +85,83 @@ def test_non_object_json_is_rejected():
 
 
 def test_short_description_is_bounded():
-    payload = _valid_payload()
-    payload["short_description"] = "A description that is too long"
-
-    result = normalize_analysis_response(json.dumps(payload))
+    result = normalize_analysis_response(
+        json.dumps(_payload(short_description="A description that is too long"))
+    )
 
     assert len(result["short_description"]) == 20
+
+
+@pytest.mark.parametrize("tax_value", ["Included", " included "])
+def test_tax_status_is_normalized(tax_value):
+    result = normalize_analysis_response(json.dumps(_payload(tax_status=tax_value)))
+
+    assert result["tax_status"] == "included"
+
+
+@pytest.mark.parametrize(
+    ("category", "expected"),
+    [("hvac", None), ("Repairs", "repairs")],
+)
+def test_work_category_is_a_normalized_soft_hint(category, expected):
+    result = normalize_analysis_response(
+        json.dumps(_payload(work_category=category))
+    )
+
+    assert result["work_category"] == expected
+
+
+@pytest.mark.parametrize(
+    ("section", "expected"),
+    [("exclusions", "exclusion"), ("nonsense", "exclusion")],
+)
+def test_assumption_section_uses_a_conservative_fallback(section, expected):
+    result = normalize_analysis_response(
+        json.dumps(
+            _payload(
+                ai_assumptions=[
+                    {"text": "Unquoted restoration", "section": section}
+                ]
+            )
+        )
+    )
+
+    assert result["ai_assumptions"][0]["section"] == expected
+
+
+def test_valid_json_with_trailing_remark_is_accepted():
+    raw = json.dumps(_payload()) + "\nNote: done."
+
+    assert normalize_analysis_response(raw)["vendor_name"] == "Vendor"
+
+
+def test_fenced_json_with_trailing_remark_is_accepted():
+    raw = "```json\n" + json.dumps(_payload()) + "\n```\nAnalysis complete."
+
+    assert normalize_analysis_response(raw)["vendor_name"] == "Vendor"
+
+
+def test_genuinely_broken_json_still_raises():
+    with pytest.raises(AnalysisResponseError):
+        normalize_analysis_response("{not json")
+
+
+def test_analyzer_rerolls_one_malformed_response(monkeypatch):
+    responses = iter(("{not json", json.dumps(_payload())))
+    calls = []
+    monkeypatch.setattr(
+        quote_analyzer.anthropic,
+        "Anthropic",
+        lambda **_kwargs: object(),
+    )
+
+    def fake_call(_client, _quote_text):
+        calls.append(True)
+        return next(responses)
+
+    monkeypatch.setattr(quote_analyzer, "_call_api_with_retry", fake_call)
+
+    result = quote_analyzer.analyze_quote("quote")
+
+    assert result.vendor_name == "Vendor"
+    assert len(calls) == 2
