@@ -1201,6 +1201,11 @@ def main() -> None:
     token = st.session_state.get("analysis_token", "x")
     cached_quote = st.session_state.get("quote_text", "")
 
+    # Keep the analyzed-quote path free of early returns from here onward.
+    # Streamlit removes keys for widgets that do not render during a rerun, so
+    # package invalidation must suppress only generation/handoff—not the fields
+    # where the operator entered corrections.
+
     routing_snapshot = _routing_snapshot(analysis, cached_quote, token)
 
     request_type_key = f"request_type_{token}"
