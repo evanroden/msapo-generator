@@ -46,30 +46,27 @@ There is no email-submission route in the active UI.
 1. Choose **Expense reimbursement** in the top workflow switch and upload one
    image or PDF per receipt. Exact duplicate files are ignored. HEIC phone
    photos, screenshots, common image formats, and multi-page PDF receipts are
-   supported without modifying the uploaded files.
-2. Confirm employee number, Employee Home Business Unit, report date, administrator, mail
-   destination, and one default JDE allocation. RRH defaults to David Siegal;
-   other accounts remain blank until reviewed. The examples are not treated as
-   accounting policy: a home address is not accepted as the Employee Home
-   Business Unit.
+   supported without modifying the uploaded files. Receipt upload is optional
+   for a mileage-only report.
+2. Confirm the employee, report date, administrator, mail destination, and RRH
+   service year. RRH derives Employee Home Business Unit from the account and
+   defaults the approval recipient to David Siegal.
 3. Review the editable merchant, transaction date, description/business
    purpose, reimbursable amount, and Miscellaneous/Entertainment selection below
    every receipt. Required values remain visible when AI cannot determine them.
-   Every receipt uses the report-level coding unless its explicit override is
-   enabled.
-4. Generate three artifacts from one action: the official `.xlsx` workbook with
-   a printable `RECEIPTS` worksheet, one `.pdf` with the form first and receipt
-   pages afterward, and an Outlook `.eml` draft with the generated files
-   attached. A `mailto:` fallback is provided for iPhone/iPad and webmail; it
-   cannot carry attachments.
+   Job number, cost type, and cost code appear under every receipt with RRH
+   defaults of `695400022`, `5490`, and `01AMA`; each remains editable. Service
+   year 2 changes the default to `02AMA`, year 3 to `03AMA`, and so on.
+4. Add up to eight mileage entries when needed. Each trip records date, miles,
+   purpose, destination, and the same editable job coding. The travel date
+   selects the applicable IRS business-mileage rate.
+5. Confirm the generated cursive employee signature and printed name, then
+   generate the editable `.xlsx`, submission `.pdf`, and Outlook `.eml` draft.
+   The email contains only the PDF; Excel remains an optional download for edits.
 
-The report supports all three allocation layouts in the supplied JDE form:
-
-| Allocation | Required coding | Workbook columns |
-|---|---|---|
-| Job expense | Verified job number, account/cost type, cost code | Job/Service Center, Account/Cost Type, Cost Code |
-| Work-order expense | Service center, account/cost type, WO type, work-order number | Job/Service Center, Account/Cost Type, Cost Code/WO Type, Work Order # |
-| Overhead/other | Company, department, OU, GL account | Other Expenses columns |
+The expense workflow uses only the Job or Service Center, Account / Cost Type,
+and Cost Code columns (`I:K`). Work Order (`L`) and Other Expenses (`N:Q`) are
+never populated and are rejected by validation.
 
 The Smartsheet job-number description is converted to its exact numeric or `VI`
 identifier in the JDE form. Leading zeros in every accounting code are preserved
@@ -215,7 +212,9 @@ receipt and 60 MB for the in-progress report. The official form holds 15
 Miscellaneous and 14 Entertainment rows; generation blocks with a split-report
 instruction rather than silently dropping overflow. A PDF receipt may contain
 up to 10 pages. Receipt images embedded in output files are bounded and
-compressed for email while the uploaded source remains unchanged.
+compressed for email while the uploaded source remains unchanged. Up to eight
+mileage rows are supported; the travel date selects the configured IRS business
+rate and an unknown future rate blocks generation.
 
 ## Requester memory
 
@@ -227,12 +226,12 @@ count, account memories do not cross, and there is no Forget button in the
 active flow. Blocked cookies disable only this convenience.
 
 After a valid expense package is generated, the same browser/account pair also
-remembers the reviewed employee name/number, Employee Home Business Unit,
-administrator, mail destination, and default JDE allocation. It never persists receipt files,
-merchant names, transaction dates, descriptions, or amounts. An in-progress
-draft is mirrored in the current Streamlit session so switching workflows does
-not discard typed values; **Clear receipts and start over** explicitly removes
-that session draft.
+remembers the reviewed employee name/number, administrator, and mail destination.
+Employee Home Business Unit and baseline coding are derived from account policy.
+It never persists receipt files, merchant names, transaction dates, descriptions,
+amounts, or mileage. An in-progress draft is mirrored in the current Streamlit
+session so switching workflows does not discard typed values; **Clear expense
+report and start over** explicitly removes that session draft.
 
 ## Smartsheet modes
 
@@ -266,9 +265,10 @@ ambiguous-write controls for possible future use.
 | Requester is not remembered | Complete one ready package for the same account in the same browser and verify cookies are permitted. |
 | API mode is blocked | Leave it disabled until the complete activation gate in the handoff document is satisfied. |
 | A receipt could not be read | Use the visible retry once, then complete every required field beside that receipt manually. |
-| Expense generation is blocked | Resolve the visible receipt/profile/coding fields; the official form also requires a total over $20.00. |
-| Combined expense PDF is unavailable | Download the completed Excel workbook; it still contains the form and all receipt pages. Restore LibreOffice/Gotenberg before relying on the PDF. |
-| iPhone/iPad email has no attachments | Expected for `mailto:`. Download the Excel/PDF files, open the mobile email draft, and attach the files manually. |
+| Expense generation is blocked | Resolve the visible receipt, mileage, coding, and signature-confirmation fields; the official form also requires a total over $20.00. |
+| A future mileage date is blocked | Add the newly published IRS business rate to the dated rate table; the tool never carries an old rate into an unknown period. |
+| Combined expense PDF is unavailable | Download the completed Excel workbook for edits. The Outlook approval draft remains withheld until the submission PDF can be generated. |
+| iPhone/iPad email has no attachment | Expected for `mailto:`. Download the generated PDF, open the mobile email draft, and attach that PDF manually. |
 
 ## Security cautions
 
@@ -278,9 +278,10 @@ ambiguous-write controls for possible future use.
   endpoint; generated artifacts remain in the user's active session.
 - Do not commit API keys, service tokens, production credentials, or real quotes.
 - Do not commit real receipts or generated employee expense reports.
-- Review every prefilled form and both attachments before submission.
-- Review every extracted receipt value and complete the employee signature only
-  outside the generator; the tool never creates or copies a signature.
+- Review every prefilled PO form and both PO attachments before submission.
+- Review every expense form and its submission PDF before emailing it.
+- Review every extracted receipt value and the generated employee signature.
+  Signature confirmation is required before the report and email draft are built.
 - Do not add an automatic submit action to the custom-URL route.
 - Migrate SQLite state to a shared transactional database before running more
   than one application instance.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -13,23 +14,27 @@ from app import contracts
 from app.eml_builder import DAVID_EMAIL, build_eml, build_mailto_url, build_plain_body
 from app.expense_report import (
     ALLOCATION_JOB,
-    ALLOCATION_KINDS,
-    ALLOCATION_OVERHEAD,
-    ALLOCATION_WORK_ORDER,
     EXPENSE_SECTION_ENTERTAINMENT,
     EXPENSE_SECTION_MISC,
+    MAX_MILEAGE_ITEMS,
     ExpenseAllocation,
     ExpenseItem,
+    ExpenseReportError,
     ExpensePackage,
     ExpenseReportDetails,
+    MileageItem,
     allocation_problems,
     build_expense_package,
+    email_attachment_size_warning,
     email_attachments_for_package,
+    employee_signature_png,
     expense_report_signature,
-    expense_report_total,
     expense_report_warnings,
+    irs_business_mileage_rate,
     parse_expense_amount,
+    parse_mileage,
     receipt_preview_bytes,
+    total_reimbursement,
     validate_expense_report,
 )
 from app.job_numbers import job_numbers_for_contract
@@ -60,11 +65,6 @@ _RECEIPT_TYPES = [
 _MAX_RECEIPT_BYTES = 15 * 1024 * 1024
 _MAX_REPORT_UPLOAD_BYTES = 60 * 1024 * 1024
 _JOB_PLACEHOLDER = "— Select the job number —"
-_ALLOCATION_LABELS = {
-    ALLOCATION_JOB: "Job expense",
-    ALLOCATION_WORK_ORDER: "Work-order expense",
-    ALLOCATION_OVERHEAD: "Overhead / other expense",
-}
 _SECTION_LABELS = {
     EXPENSE_SECTION_MISC: "Miscellaneous",
     EXPENSE_SECTION_ENTERTAINMENT: "Entertainment",
@@ -74,6 +74,9 @@ _MAIL_LABELS = {
     "satellite": "Mail check to a satellite office",
 }
 _RRH_ADMIN_NAME = "David Siegal"
+_RRH_DEFAULT_JOB = "RRH-695400022-O&M"
+_RRH_DEFAULT_COST_TYPE = "5490"
+_RRH_COST_CODE_SUFFIX = "AMA"
 
 
 def render_expense_workflow(browser_token: str) -> None:
@@ -85,8 +88,8 @@ def render_expense_workflow(browser_token: str) -> None:
             <p class="brand-kicker">EXPENSE REPORT WORKFLOW</p>
             <h1>Expense Report <span class="zing">Process Control</span></h1>
             <p class="hero-subtitle">
-                Upload each receipt once, review what the tool reads, then create
-                the completed Excel form, combined receipt packet, and email draft.
+                Add receipts and mileage, review the prefilled fields, then create
+                the completed Excel form, combined PDF, and Outlook email draft.
             </p>
         </div>
         """,
@@ -97,7 +100,7 @@ def render_expense_workflow(browser_token: str) -> None:
         """
         <div class="step-header">
             <div class="step-num">1</div>
-            <p class="step-title">Upload all receipts</p>
+            <p class="step-title">Upload receipts</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -135,12 +138,7 @@ def render_expense_workflow(browser_token: str) -> None:
                 "Your in-progress receipts were restored. Use Clear receipts and "
                 "start over when you intend to remove the entire draft."
             )
-    if not upload_sources:
-        _clear_removed_receipts(set())
-        st.info("Add the receipts above to begin the reimbursement report.")
-        return
-
-    unique_uploads, duplicate_names = _unique_receipts(upload_sources)
+    unique_uploads, duplicate_names = _unique_receipts(upload_sources or [])
     active_ids = {receipt_id for receipt_id, _, _ in unique_uploads}
     _clear_removed_receipts(active_ids)
     if duplicate_names:
@@ -149,13 +147,14 @@ def render_expense_workflow(browser_token: str) -> None:
             + ", ".join(duplicate_names)
             + "."
         )
-    if st.button(
-        "Clear receipts and start over",
-        key="expense_clear_report",
-        help="Removes this in-progress expense report from the current browser session.",
-    ):
-        _reset_expense_report()
-        st.rerun()
+    if upload_sources:
+        if st.button(
+            "Clear expense report and start over",
+            key="expense_clear_report",
+            help="Removes this in-progress expense report from the current browser session.",
+        ):
+            _reset_expense_report()
+            st.rerun()
     total_upload_bytes = sum(len(data) for _, _, data in unique_uploads)
     if total_upload_bytes > _MAX_REPORT_UPLOAD_BYTES:
         st.error(
@@ -173,17 +172,23 @@ def render_expense_workflow(browser_token: str) -> None:
             index=index,
         )
 
-    st.caption(
-        f"{len(unique_uploads)} unique receipt"
-        f"{'s' if len(unique_uploads) != 1 else ''} ready for review. "
-        "Original uploads remain unchanged; compact copies are used only in the workbook."
-    )
+    if unique_uploads:
+        st.caption(
+            f"{len(unique_uploads)} unique receipt"
+            f"{'s' if len(unique_uploads) != 1 else ''} ready for review. "
+            "Original uploads remain unchanged; compact copies are used only in the workbook."
+        )
+    else:
+        st.info(
+            "No receipt is required for mileage-only reimbursement. You can add "
+            "business mileage below or upload receipts now."
+        )
 
     st.markdown(
         """
         <div class="step-header">
             <div class="step-num">2</div>
-            <p class="step-title">Confirm report details and default coding</p>
+            <p class="step-title">Confirm report details</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -195,7 +200,7 @@ def render_expense_workflow(browser_token: str) -> None:
         key="expense_account",
         help="This filters the verified job-number choices and remembers the correct administrator.",
     )
-    profile = _seed_profile(browser_token, account)
+    _seed_profile(browser_token, account)
     account_token = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
 
     detail_columns = st.columns(2)
@@ -208,14 +213,15 @@ def render_expense_workflow(browser_token: str) -> None:
             "Employee number *",
             key=f"expense_employee_number_{account_token}",
         ).strip()
-        employee_home_bu = st.text_input(
-            "Employee Home Business Unit *",
-            key=f"expense_employee_home_bu_{account_token}",
-            help=(
-                "Enter the employee's assigned JDE Home Business Unit number. "
-                "Do not enter a home address."
-            ),
-        ).strip()
+        employee_home_bu = _employee_home_business_unit(account)
+        home_bu_display_key = f"expense_employee_home_bu_display_{account_token}"
+        st.session_state[home_bu_display_key] = employee_home_bu
+        st.text_input(
+            "Employee Home Business Unit",
+            disabled=True,
+            key=home_bu_display_key,
+            help="Filled automatically from the selected ENFRA account.",
+        )
     with detail_columns[1]:
         report_date = st.date_input(
             "Report date *",
@@ -245,22 +251,24 @@ def render_expense_workflow(browser_token: str) -> None:
             key=f"expense_satellite_office_{account_token}",
         ).strip()
 
-    st.markdown("#### Default receipt coding")
-    st.caption(
-        "Set the coding once. Every receipt uses it unless you turn on a "
-        "receipt-specific override below."
-    )
-    default_allocation = _render_allocation_fields(
-        prefix=f"expense_default_{account_token}",
-        account=account,
-        seed=_allocation_from_profile(profile),
-    )
-    default_problems = allocation_problems(default_allocation)
-    if default_problems:
-        st.caption(
-            "Complete the default coding below each receipt that uses it. "
-            "These fields are required, not optional."
+    service_year = 1
+    if contracts.is_rrh(account):
+        service_year = int(
+            st.selectbox(
+                "RRH service year *",
+                tuple(range(1, 10)),
+                key=f"expense_service_year_{account_token}",
+                help=(
+                    "The service year sets the editable receipt cost-code default: "
+                    "year 1 = 01AMA, year 2 = 02AMA, and so on."
+                ),
+            )
         )
+        st.caption(
+            f"Receipt coding starts with 695400022 · 5490 · {service_year:02d}AMA. "
+            "Each receipt can be changed independently."
+        )
+    allocation_seed = _default_job_allocation(account, service_year)
 
     details = ExpenseReportDetails(
         account=account,
@@ -272,20 +280,21 @@ def render_expense_workflow(browser_token: str) -> None:
         approver_email=approver_email,
         mail_destination=mail_destination,
         satellite_office=satellite_office,
+        employee_signature_confirmed=False,
     )
 
     st.markdown(
         """
         <div class="step-header">
             <div class="step-num">3</div>
-            <p class="step-title">Review each receipt</p>
+            <p class="step-title">Review expenses and coding</p>
         </div>
         """,
         unsafe_allow_html=True,
     )
     st.caption(
-        "Every required value stays visible on the receipt it belongs to. "
-        "The tool's guesses are editable and accounting codes are never inferred from the image."
+        "Every required value stays with the receipt or mileage entry it belongs "
+        "to. Job number, cost type, and cost code are prefilled but editable."
     )
     items: list[ExpenseItem] = []
     for index, (receipt_id, filename, file_bytes) in enumerate(unique_uploads, 1):
@@ -296,28 +305,28 @@ def render_expense_workflow(browser_token: str) -> None:
             file_bytes=file_bytes,
             analysis=analyses[receipt_id],
             account=account,
-            default_allocation=default_allocation,
+            allocation_seed=allocation_seed,
         )
         items.append(item)
 
-    total = expense_report_total(items)
-    summary_columns = st.columns(2)
-    summary_columns[0].metric("Receipts", len(items))
-    summary_columns[1].metric("Total reimbursement", f"${total:,.2f}")
+    mileage_items = _render_mileage_entries(
+        account=account,
+        account_token=account_token,
+        report_date=report_date,
+        allocation_seed=allocation_seed,
+    )
 
-    review_warnings = expense_report_warnings(details, items)
+    total = total_reimbursement(items, mileage_items)
+    summary_columns = st.columns(3)
+    summary_columns[0].metric("Receipts", len(items))
+    summary_columns[1].metric("Mileage entries", len(mileage_items))
+    summary_columns[2].metric("Total reimbursement", f"${total:,.2f}")
+
+    review_warnings = expense_report_warnings(details, items, mileage_items)
     if review_warnings:
         st.warning(
             "Review before sending: "
             + "; ".join(warning.rstrip(". ") for warning in review_warnings)
-            + "."
-        )
-
-    problems = validate_expense_report(details, items)
-    if problems:
-        st.warning(
-            "Before generating: "
-            + "; ".join(problem.rstrip(". ") for problem in problems)
             + "."
         )
 
@@ -331,12 +340,52 @@ def render_expense_workflow(browser_token: str) -> None:
         unsafe_allow_html=True,
     )
     st.caption(
-        "The Excel file contains the completed official form followed by a "
-        "printable RECEIPTS worksheet. The PDF packet places the form first and "
-        "each receipt after it. Nothing is emailed automatically."
+        "The Excel file contains the completed official form and, when receipts "
+        "are present, a printable RECEIPTS worksheet. The PDF places the form "
+        "first and each receipt after it. The Outlook draft includes the PDF and "
+        "opens for a final review; nothing is sent automatically."
     )
 
-    signature = expense_report_signature(details, items)
+    signature_confirmed = False
+    if employee_name:
+        try:
+            signature_preview = employee_signature_png(employee_name)
+        except ExpenseReportError as exc:
+            st.error(str(exc))
+        else:
+            confirmation_key = f"expense_signature_confirmed_{account_token}"
+            confirmed_name_key = f"expense_signature_confirmed_name_{account_token}"
+            if (
+                st.session_state.get(confirmation_key)
+                and st.session_state.get(confirmed_name_key)
+                and st.session_state.get(confirmed_name_key) != employee_name
+            ):
+                st.session_state[confirmation_key] = False
+            signature_columns = st.columns([1, 2])
+            with signature_columns[0]:
+                st.image(signature_preview, width=320)
+                st.caption(f"Printed name: {employee_name}")
+            with signature_columns[1]:
+                signature_confirmed = st.checkbox(
+                    "I confirm this generated signature represents me and will "
+                    "review it again before sending the Outlook draft.",
+                    key=confirmation_key,
+                )
+                if signature_confirmed:
+                    st.session_state[confirmed_name_key] = employee_name
+    details = replace(
+        details,
+        employee_signature_confirmed=signature_confirmed,
+    )
+    problems = validate_expense_report(details, items, mileage_items)
+    if problems:
+        st.warning(
+            "Before generating: "
+            + "; ".join(problem.rstrip(". ") for problem in problems)
+            + "."
+        )
+
+    signature = expense_report_signature(details, items, mileage_items)
     generated_signature = str(st.session_state.get("expense_generated_signature", ""))
     if generated_signature and generated_signature != signature:
         st.info("A report detail changed. Generate again to refresh the files and email draft.")
@@ -350,27 +399,50 @@ def render_expense_workflow(browser_token: str) -> None:
     ):
         with st.spinner("Creating the Excel report, receipt packet, and email draft…"):
             try:
-                package = build_expense_package(details, items)
-                eml_bytes = _build_expense_eml(details, package)
+                package = build_expense_package(
+                    details,
+                    items,
+                    mileage_items=mileage_items,
+                )
             except Exception as exc:
                 st.session_state["expense_generation_error"] = str(exc)[:500]
                 st.session_state.pop("expense_generated_package", None)
                 st.session_state.pop("expense_generated_eml", None)
                 st.session_state.pop("expense_generated_signature", None)
             else:
+                eml_bytes = b""
+                email_error = ""
+                if package.pdf_bytes:
+                    try:
+                        eml_bytes = _build_expense_eml(details, package)
+                    except Exception as exc:
+                        email_error = str(exc)[:500]
                 st.session_state["expense_generated_package"] = package
                 st.session_state["expense_generated_eml"] = eml_bytes
                 st.session_state["expense_generated_signature"] = signature
+                if email_error:
+                    st.session_state["expense_email_error"] = email_error
+                else:
+                    st.session_state.pop("expense_email_error", None)
                 st.session_state.pop("expense_generation_error", None)
                 _remember_profile(
                     browser_token=browser_token,
                     details=details,
-                    allocation=default_allocation,
+                    allocation=(
+                        items[0].allocation
+                        if items
+                        else mileage_items[0].allocation
+                        if mileage_items
+                        else allocation_seed
+                    ),
                 )
 
     generation_error = str(st.session_state.get("expense_generation_error", "") or "")
     if generation_error:
         st.error(f"The expense package could not be generated: {generation_error}")
+    email_error = str(st.session_state.get("expense_email_error", "") or "")
+    if email_error:
+        st.error(f"The Outlook draft could not be created: {email_error}")
 
     package = st.session_state.get("expense_generated_package")
     if (
@@ -411,7 +483,7 @@ def _render_receipt(
     file_bytes: bytes,
     analysis: ReceiptAnalysis,
     account: str,
-    default_allocation: ExpenseAllocation,
+    allocation_seed: ExpenseAllocation,
 ) -> ExpenseItem:
     token = receipt_id[:12]
     _seed_receipt_fields(token, analysis)
@@ -424,7 +496,6 @@ def _render_receipt(
     amount_key = f"expense_amount_{token}"
     section_key = f"expense_section_{token}"
     contact_key = f"expense_contact_{token}"
-    override_key = f"expense_override_{token}"
 
     title_amount = str(st.session_state.get(amount_key, "") or "").strip()
     title_merchant = str(st.session_state.get(merchant_key, "") or "").strip()
@@ -488,7 +559,11 @@ def _render_receipt(
         amount = st.text_input(
             "Reimbursable amount *",
             key=amount_key,
-            help="Use the final amount paid, including charged tip and tax. For foreign currency, enter the approved USD amount.",
+            help=(
+                "Enter only the business-reimbursable portion. It may be less than "
+                "the receipt total, as in Dane's approved RRH example. Include "
+                "applicable charged tax and tip for that portion."
+            ),
         ).strip()
         section = st.selectbox(
             "Expense section *",
@@ -507,20 +582,12 @@ def _render_receipt(
                 key=contact_key,
             ).strip()
 
-        use_override = st.toggle(
-            "Use different coding for this receipt",
-            key=override_key,
-            help="Leave off to use the report-level default coding above.",
+        st.markdown("**JDE coding for this receipt**")
+        allocation = _render_job_allocation_fields(
+            prefix=f"expense_receipt_allocation_{token}",
+            account=account,
+            seed=allocation_seed,
         )
-        if use_override:
-            allocation = _render_allocation_fields(
-                prefix=f"expense_receipt_allocation_{token}",
-                account=account,
-                seed=default_allocation,
-            )
-        else:
-            allocation = default_allocation
-            st.caption(f"Coding: {_allocation_summary(default_allocation)}")
 
     item = ExpenseItem(
         receipt_id=receipt_id,
@@ -540,89 +607,163 @@ def _render_receipt(
     return item
 
 
-def _render_allocation_fields(
+def _render_job_allocation_fields(
     *,
     prefix: str,
     account: str,
     seed: ExpenseAllocation,
 ) -> ExpenseAllocation:
-    _seed_allocation(prefix, seed)
-    kind = st.selectbox(
-        "Allocation type *",
-        ALLOCATION_KINDS,
-        format_func=lambda value: _ALLOCATION_LABELS[value],
-        key=f"{prefix}_kind",
-    )
-    values = {
-        "kind": kind,
-        "job_number": str(st.session_state.get(f"{prefix}_job_number", "") or ""),
-        "service_center": str(st.session_state.get(f"{prefix}_service_center", "") or ""),
-        "account_cost_type": str(st.session_state.get(f"{prefix}_account_cost_type", "") or ""),
-        "cost_code_or_wo_type": str(st.session_state.get(f"{prefix}_cost_code", "") or ""),
-        "work_order_number": str(st.session_state.get(f"{prefix}_work_order", "") or ""),
-        "company_number": str(st.session_state.get(f"{prefix}_company", "") or ""),
-        "department_number": str(st.session_state.get(f"{prefix}_department", "") or ""),
-        "ou_number": str(st.session_state.get(f"{prefix}_ou", "") or ""),
-        "gl_account_number": str(st.session_state.get(f"{prefix}_gl_account", "") or ""),
-    }
-    if kind == ALLOCATION_JOB:
-        options = tuple(job_numbers_for_contract(account))
-        selectable = (_JOB_PLACEHOLDER, *options)
-        if st.session_state.get(f"{prefix}_job_number") not in selectable:
-            st.session_state[f"{prefix}_job_number"] = _JOB_PLACEHOLDER
+    _seed_job_allocation(prefix, seed)
+    options = tuple(job_numbers_for_contract(account))
+    selectable = (_JOB_PLACEHOLDER, *options)
+    if st.session_state.get(f"{prefix}_job_number") not in selectable:
+        st.session_state[f"{prefix}_job_number"] = _JOB_PLACEHOLDER
+
+    coding_columns = st.columns(3)
+    with coding_columns[0]:
         selected = st.selectbox(
             "Job number *",
             selectable,
             key=f"{prefix}_job_number",
             help=(
-                "The descriptive choice is converted to the JDE job identifier in "
-                "the Excel form. Rochester Unity sites use RRH choices; choices "
-                "beginning Unity refer to Arkansas."
+                "RRH normally uses 695400022 (O&M) or 695400023 (Startup). "
+                "The selected description is exported as its numeric identifier."
             ),
         )
-        values["job_number"] = "" if selected == _JOB_PLACEHOLDER else selected
-        values["account_cost_type"] = st.text_input(
-            "Account / cost type *",
+    with coding_columns[1]:
+        account_cost_type = st.text_input(
+            "Cost type *",
             key=f"{prefix}_account_cost_type",
         ).strip()
-        values["cost_code_or_wo_type"] = st.text_input(
+    with coding_columns[2]:
+        cost_code = st.text_input(
             "Cost code *",
             key=f"{prefix}_cost_code",
         ).strip()
-    elif kind == ALLOCATION_WORK_ORDER:
-        values["service_center"] = st.text_input(
-            "Service center number *",
-            key=f"{prefix}_service_center",
-        ).strip()
-        values["account_cost_type"] = st.text_input(
-            "Account / cost type *",
-            key=f"{prefix}_account_cost_type",
-        ).strip()
-        values["cost_code_or_wo_type"] = st.text_input(
-            "Work-order type *",
-            key=f"{prefix}_cost_code",
-        ).strip()
-        values["work_order_number"] = st.text_input(
-            "Work-order number *",
-            key=f"{prefix}_work_order",
-        ).strip()
-    else:
-        overhead_columns = st.columns(2)
-        with overhead_columns[0]:
-            values["company_number"] = st.text_input(
-                "Company number *", key=f"{prefix}_company"
+    return ExpenseAllocation(
+        kind=ALLOCATION_JOB,
+        job_number="" if selected == _JOB_PLACEHOLDER else selected,
+        account_cost_type=account_cost_type,
+        cost_code_or_wo_type=cost_code,
+    )
+
+
+def _render_mileage_entries(
+    *,
+    account: str,
+    account_token: str,
+    report_date: date,
+    allocation_seed: ExpenseAllocation,
+) -> list[MileageItem]:
+    st.markdown("#### Mileage")
+    include_mileage = st.toggle(
+        "Include reimbursable business mileage",
+        key=f"expense_include_mileage_{account_token}",
+    )
+    if not include_mileage:
+        return []
+    entry_count = int(
+        st.number_input(
+            "Number of mileage entries",
+            min_value=1,
+            max_value=MAX_MILEAGE_ITEMS,
+            value=1,
+            step=1,
+            key=f"expense_mileage_count_{account_token}",
+        )
+    )
+    entries: list[MileageItem] = []
+    for index in range(1, entry_count + 1):
+        prefix = f"expense_mileage_{account_token}_{index}"
+        prior_default = st.session_state.get(f"{prefix}_default_date")
+        if (
+            f"{prefix}_date" not in st.session_state
+            or st.session_state.get(f"{prefix}_date") == prior_default
+        ):
+            st.session_state[f"{prefix}_date"] = report_date
+        st.session_state[f"{prefix}_default_date"] = report_date
+
+        st.markdown(
+            f'<div class="request-summary"><strong>Mileage {index}</strong></div>',
+            unsafe_allow_html=True,
+        )
+        date_column, miles_column = st.columns(2)
+        with date_column:
+            travel_date = st.date_input(
+                "Travel date *",
+                key=f"{prefix}_date",
+                format="MM/DD/YYYY",
+            )
+        with miles_column:
+            miles = st.number_input(
+                "Business miles *",
+                min_value=0.0,
+                max_value=100000.0,
+                step=0.1,
+                format="%.2f",
+                key=f"{prefix}_miles",
+            )
+        purpose_column, destination_column = st.columns(2)
+        with purpose_column:
+            purpose = st.text_input(
+                "Mileage business purpose *",
+                key=f"{prefix}_purpose",
             ).strip()
-            values["ou_number"] = st.text_input(
-                "OU number *", key=f"{prefix}_ou"
+        with destination_column:
+            destination = st.text_input(
+                "Destination *",
+                key=f"{prefix}_destination",
             ).strip()
-        with overhead_columns[1]:
-            values["department_number"] = st.text_input(
-                "Department number *", key=f"{prefix}_department"
-            ).strip()
-            values["gl_account_number"] = st.text_input(
-                "GL account number *", key=f"{prefix}_gl_account"
-            ).strip()
-    return ExpenseAllocation(**values)
+
+        rate = irs_business_mileage_rate(travel_date)
+        if rate is None:
+            st.error(
+                f"The IRS business-mileage rate for {travel_date:%Y-%m-%d} "
+                "has not been configured yet."
+            )
+        else:
+            reimbursement = (parse_mileage(miles) or 0) * rate
+            st.caption(
+                f"IRS business rate: ${rate} per mile · "
+                f"Calculated reimbursement: ${reimbursement:,.2f}"
+            )
+        allocation = _render_job_allocation_fields(
+            prefix=f"{prefix}_allocation",
+            account=account,
+            seed=allocation_seed,
+        )
+        entry = MileageItem(
+            entry_id=f"{account_token}-{index}",
+            transaction_date=travel_date,
+            purpose=purpose,
+            destination=destination,
+            miles=miles,
+            allocation=allocation,
+        )
+        visible = _mileage_visible_problems(index, entry)
+        if visible:
+            st.warning("Needed for this mileage entry: " + "; ".join(visible) + ".")
+        entries.append(entry)
+    return entries
+
+
+def _default_job_allocation(account: str, service_year: int) -> ExpenseAllocation:
+    if contracts.is_rrh(account):
+        return ExpenseAllocation(
+            kind=ALLOCATION_JOB,
+            job_number=_RRH_DEFAULT_JOB,
+            account_cost_type=_RRH_DEFAULT_COST_TYPE,
+            cost_code_or_wo_type=f"{service_year:02d}{_RRH_COST_CODE_SUFFIX}",
+        )
+    options = tuple(job_numbers_for_contract(account))
+    return ExpenseAllocation(
+        kind=ALLOCATION_JOB,
+        job_number=options[0] if len(options) == 1 else "",
+    )
+
+
+def _employee_home_business_unit(account: str) -> str:
+    return "RRH" if contracts.is_rrh(account) else account.strip()
 
 
 def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
@@ -636,7 +777,6 @@ def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
         defaults = {
             f"expense_employee_name_{account_token}": employee_name,
             f"expense_employee_number_{account_token}": profile.get("employee_number", ""),
-            f"expense_employee_home_bu_{account_token}": profile.get("employee_home_bu", ""),
             f"expense_report_date_{account_token}": date.today(),
             f"expense_approver_name_{account_token}": (
                 profile.get("approver_name")
@@ -668,7 +808,6 @@ def _seed_receipt_fields(token: str, analysis: ReceiptAnalysis) -> None:
         f"expense_amount_{token}": "",
         f"expense_section_{token}": EXPENSE_SECTION_MISC,
         f"expense_contact_{token}": "",
-        f"expense_override_{token}": False,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -695,36 +834,20 @@ def _seed_receipt_fields(token: str, analysis: ReceiptAnalysis) -> None:
         st.session_state[seeded_key] = True
 
 
-def _seed_allocation(prefix: str, seed: ExpenseAllocation) -> None:
+def _seed_job_allocation(prefix: str, seed: ExpenseAllocation) -> None:
+    """Refresh changing defaults without overwriting a manual receipt edit."""
     defaults = {
-        f"{prefix}_kind": seed.kind if seed.kind in ALLOCATION_KINDS else ALLOCATION_JOB,
-        f"{prefix}_job_number": seed.job_number or _JOB_PLACEHOLDER,
-        f"{prefix}_service_center": seed.service_center,
-        f"{prefix}_account_cost_type": seed.account_cost_type,
-        f"{prefix}_cost_code": seed.cost_code_or_wo_type,
-        f"{prefix}_work_order": seed.work_order_number,
-        f"{prefix}_company": seed.company_number,
-        f"{prefix}_department": seed.department_number,
-        f"{prefix}_ou": seed.ou_number,
-        f"{prefix}_gl_account": seed.gl_account_number,
+        "job_number": seed.job_number or _JOB_PLACEHOLDER,
+        "account_cost_type": seed.account_cost_type,
+        "cost_code": seed.cost_code_or_wo_type,
     }
-    for key, value in defaults.items():
-        st.session_state.setdefault(key, value)
-
-
-def _allocation_from_profile(profile: dict[str, str]) -> ExpenseAllocation:
-    return ExpenseAllocation(
-        kind=profile.get("allocation_kind", ALLOCATION_JOB),
-        job_number=profile.get("job_number", ""),
-        service_center=profile.get("service_center", ""),
-        account_cost_type=profile.get("account_cost_type", ""),
-        cost_code_or_wo_type=profile.get("cost_code_or_wo_type", ""),
-        work_order_number=profile.get("work_order_number", ""),
-        company_number=profile.get("company_number", ""),
-        department_number=profile.get("department_number", ""),
-        ou_number=profile.get("ou_number", ""),
-        gl_account_number=profile.get("gl_account_number", ""),
-    )
+    for suffix, value in defaults.items():
+        key = f"{prefix}_{suffix}"
+        prior_key = f"{prefix}_prior_default_{suffix}"
+        prior_default = st.session_state.get(prior_key)
+        if key not in st.session_state or st.session_state.get(key) == prior_default:
+            st.session_state[key] = value
+        st.session_state[prior_key] = value
 
 
 def _remember_profile(
@@ -759,6 +882,10 @@ def _remember_profile(
 
 
 def _build_expense_eml(details: ExpenseReportDetails, package: ExpensePackage) -> bytes:
+    if not package.pdf_bytes:
+        raise ExpenseReportError(
+            "The PDF is unavailable, so an approval email draft was not created."
+        )
     subject = f"{details.employee_name} expense report - {details.report_date:%Y-%m-%d}"
     bullets = [
         ("Employee", details.employee_name),
@@ -768,6 +895,7 @@ def _build_expense_eml(details: ExpenseReportDetails, package: ExpensePackage) -
             f"{details.report_date:%B} {details.report_date.day}, {details.report_date:%Y}",
         ),
         ("Receipts", str(package.receipt_count)),
+        ("Mileage entries", str(package.mileage_count)),
         ("Total reimbursement", f"${package.total:,.2f}"),
     ]
     first_name = details.approver_name.split()[0] if details.approver_name.split() else ""
@@ -812,44 +940,54 @@ def _render_generated_package(
                 mime="application/pdf",
                 width="stretch",
             )
+        st.caption(
+            "Excel is optional and is not attached to the approval email. If you "
+            "edit the Excel file, export the edited workbook to PDF and replace "
+            "the PDF already attached to the Outlook draft before sending."
+        )
     elif package.pdf_error:
         st.warning(package.pdf_error)
 
-    if eml_bytes:
+    if eml_bytes and package.pdf_bytes:
         st.download_button(
-            "Download Outlook email draft with attachments",
+            "Download Outlook email draft with PDF attached",
             data=eml_bytes,
             file_name=f"{package.basename}_Approval_Email.eml",
             mime="message/rfc822",
             width="stretch",
         )
 
-    subject = f"{details.employee_name} expense report - {details.report_date:%Y-%m-%d}"
-    body = build_plain_body(
-        [
-            ("Employee", details.employee_name),
-            ("Account", details.account),
-            ("Total reimbursement", f"${package.total:,.2f}"),
-        ],
-        greeting=(
-            f"Good afternoon, {details.approver_name.split()[0]}. Please review and approve the attached expense report."
-            if details.approver_name.split()
-            else "Good afternoon. Please review and approve the attached expense report."
-        ),
-    )
-    st.link_button(
-        "Open a new email without attachments ↗",
-        build_mailto_url(to=details.approver_email, subject=subject, body=body),
-        width="stretch",
-    )
-    attached_names = [name for name, _ in email_attachments_for_package(package)]
-    st.info(
-        "Windows Outlook: open the downloaded .eml draft; it already contains "
-        + " and ".join(attached_names)
-        + ". On iPhone/iPad or Outlook web, download the generated files, use the "
-        "new-email button, and attach them manually. The report's signature line "
-        "is intentionally blank and should be completed only by the employee."
-    )
+    if package.pdf_bytes:
+        size_warning = email_attachment_size_warning(package)
+        if size_warning:
+            st.warning(size_warning)
+        subject = f"{details.employee_name} expense report - {details.report_date:%Y-%m-%d}"
+        body = build_plain_body(
+            [
+                ("Employee", details.employee_name),
+                ("Account", details.account),
+                ("Total reimbursement", f"${package.total:,.2f}"),
+            ],
+            greeting=(
+                f"Good afternoon, {details.approver_name.split()[0]}. Please review and approve the attached expense report."
+                if details.approver_name.split()
+                else "Good afternoon. Please review and approve the attached expense report."
+            ),
+        )
+        st.link_button(
+            "Open a new email without attachments ↗",
+            build_mailto_url(to=details.approver_email, subject=subject, body=body),
+            width="stretch",
+        )
+        attached_names = [name for name, _ in email_attachments_for_package(package)]
+        st.info(
+            "Windows Outlook: open the downloaded .eml draft; it already contains "
+            + " and ".join(attached_names)
+            + ". The Excel file remains available above for optional edits but is "
+            "not attached. On iPhone/iPad or Outlook web, download the PDF, use "
+            "the new-email button, and attach the PDF manually. Review the "
+            "confirmed cursive signature and printed name before sending."
+        )
 
 
 def _unique_receipts(uploads) -> tuple[list[tuple[str, str, bytes]], list[str]]:
@@ -960,34 +1098,20 @@ def _receipt_visible_problems(index: int, item: ExpenseItem) -> list[str]:
     return list(dict.fromkeys(problems))
 
 
-def _allocation_summary(allocation: ExpenseAllocation) -> str:
-    if allocation.kind == ALLOCATION_JOB:
-        return " · ".join(
-            value
-            for value in (
-                _ALLOCATION_LABELS[allocation.kind],
-                allocation.job_number or "job number needed",
-                allocation.account_cost_type or "account needed",
-                allocation.cost_code_or_wo_type or "cost code needed",
-            )
-            if value
-        )
-    if allocation.kind == ALLOCATION_WORK_ORDER:
-        return " · ".join(
-            value
-            for value in (
-                _ALLOCATION_LABELS[allocation.kind],
-                allocation.service_center or "service center needed",
-                allocation.work_order_number or "work order needed",
-            )
-            if value
-        )
-    return " · ".join(
-        value
-        for value in (
-            _ALLOCATION_LABELS[allocation.kind],
-            allocation.company_number or "company needed",
-            allocation.gl_account_number or "GL account needed",
-        )
-        if value
+def _mileage_visible_problems(index: int, item: MileageItem) -> list[str]:
+    problems: list[str] = []
+    if item.transaction_date is None:
+        problems.append("travel date")
+    if not item.purpose:
+        problems.append("business purpose")
+    if not item.destination:
+        problems.append("destination")
+    if parse_mileage(item.miles) is None:
+        problems.append("business miles")
+    if item.transaction_date and irs_business_mileage_rate(item.transaction_date) is None:
+        problems.append("configured IRS mileage rate")
+    problems.extend(
+        problem.split(": ", 1)[-1]
+        for problem in allocation_problems(item.allocation, prefix=f"Mileage {index}")
     )
+    return list(dict.fromkeys(problems))

@@ -22,5 +22,5 @@ def test_runtime_includes_workbook_writer_and_pdf_renderer():
     assert "openpyxl>=3.1.5" in requirements
     assert "defusedxml>=0.7.1" in requirements
     assert "libreoffice-calc" in dockerfile
+    assert "fonts-urw-base35" in dockerfile
     assert 'CMD ["streamlit", "run", "run_web.py"' in dockerfile
-

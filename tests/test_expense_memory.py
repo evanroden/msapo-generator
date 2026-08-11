@@ -7,7 +7,7 @@ def _profile(name: str = "Evan Roden") -> dict[str, str]:
     return {
         "employee_name": name,
         "employee_number": "00133509",
-        "employee_home_bu": "02037",
+        "employee_home_bu": "RRH",
         "approver_name": "David Siegal",
         "approver_email": "david.siegal@enfrasolutions.com",
         "mail_destination": "home",
@@ -15,8 +15,8 @@ def _profile(name: str = "Evan Roden") -> dict[str, str]:
         "allocation_kind": "job",
         "job_number": "RRH-695400022-O&M",
         "service_center": "",
-        "account_cost_type": "05490",
-        "cost_code_or_wo_type": "01ASTART",
+        "account_cost_type": "5490",
+        "cost_code_or_wo_type": "01AMA",
         "work_order_number": "",
         "company_number": "",
         "department_number": "",
@@ -93,4 +93,3 @@ def test_expense_profile_rejects_invalid_identity_or_email(monkeypatch, tmp_path
         values=_profile(),
     )
     assert not (tmp_path / "epc_memory.db").exists()
-

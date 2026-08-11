@@ -185,7 +185,7 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
     monkeypatch.setattr(
         expense_ui,
         "build_expense_package",
-        lambda _details, _items: ExpensePackage(
+        lambda _details, _items, **_kwargs: ExpensePackage(
             basename="expense-test",
             workbook_bytes=b"xlsx-test",
             pdf_bytes=b"%PDF-test",
@@ -208,7 +208,8 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
 
     text_field("Employee name *").set_value("Evan Roden").run()
     text_field("Employee number *").set_value("133509").run()
-    text_field("Employee Home Business Unit *").set_value("1234").run()
+    assert text_field("Employee Home Business Unit").value == "RRH"
+    assert text_field("Employee Home Business Unit").disabled
 
     # Switching workflows hides every expense widget for one rerun. The plain
     # draft mirror must retain both the uploads and typed fields.
@@ -218,11 +219,14 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
     assert text_field("Employee name *").value == "Evan Roden"
     assert text_field("Merchant").value == "Test Parking"
 
-    next(
+    assert next(
         field for field in app.selectbox if field.label == "Job number *"
-    ).set_value("RRH-695400022-O&M").run()
-    text_field("Account / cost type *").set_value("5490").run()
-    text_field("Cost code *").set_value("01ASTART").run()
+    ).value == "RRH-695400022-O&M"
+    assert text_field("Cost type *").value == "5490"
+    assert text_field("Cost code *").value == "01AMA"
+    next(
+        box for box in app.checkbox if box.label.startswith("I confirm this generated")
+    ).set_value(True).run()
 
     generate = next(
         button
@@ -236,10 +240,82 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
     assert [button.label for button in app.get("download_button")] == [
         "Download completed Excel report",
         "Download combined PDF packet",
-        "Download Outlook email draft with attachments",
+        "Download Outlook email draft with PDF attached",
     ]
     mail_links = app.get("link_button")
     assert len(mail_links) == 1
     assert mail_links[0].url.startswith(
         "mailto:david.siegal@enfrasolutions.com?"
     )
+
+
+def test_rrh_mileage_only_flow_uses_service_year_defaults_and_job_columns(
+    monkeypatch, tmp_path
+):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    captured = {}
+
+    def fake_package(details, items, *, mileage_items):
+        captured["details"] = details
+        captured["items"] = items
+        captured["mileage"] = mileage_items
+        return ExpensePackage(
+            basename="mileage-test",
+            workbook_bytes=b"xlsx-test",
+            pdf_bytes=b"%PDF-test",
+            total=Decimal("22.80"),
+            receipt_count=0,
+            mileage_count=1,
+        )
+
+    monkeypatch.setattr(expense_ui, "build_expense_package", fake_package)
+
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+
+    def text_field(label):
+        return next(field for field in app.text_input if field.label == label)
+
+    text_field("Employee name *").set_value("Evan Roden").run()
+    text_field("Employee number *").set_value("133509").run()
+    next(
+        toggle for toggle in app.toggle
+        if toggle.label == "Include reimbursable business mileage"
+    ).set_value(True).run()
+    next(
+        field for field in app.number_input if field.label == "Business miles *"
+    ).set_value(30.0).run()
+    text_field("Mileage business purpose *").set_value("RRH site visit").run()
+    text_field("Destination *").set_value("UMMC").run()
+
+    service_year = next(
+        field for field in app.selectbox if field.label == "RRH service year *"
+    )
+    service_year.set_value(2).run()
+    assert text_field("Cost type *").value == "5490"
+    assert text_field("Cost code *").value == "02AMA"
+    assert next(
+        field for field in app.selectbox if field.label == "Job number *"
+    ).value == "RRH-695400022-O&M"
+    assert not any(field.label == "Allocation type *" for field in app.selectbox)
+    assert not any("Work-order" in field.label for field in app.text_input)
+    assert not any(field.label == "Company number *" for field in app.text_input)
+
+    next(
+        box for box in app.checkbox if box.label.startswith("I confirm this generated")
+    ).set_value(True).run()
+    generate = next(
+        button for button in app.button
+        if button.label == "Generate expense report and email draft"
+    )
+    assert not generate.disabled
+    generate.click().run()
+
+    assert not app.exception
+    assert captured["items"] == []
+    assert captured["details"].employee_home_bu == "RRH"
+    assert captured["details"].approver_email == "david.siegal@enfrasolutions.com"
+    assert len(captured["mileage"]) == 1
+    assert captured["mileage"][0].allocation.account_cost_type == "5490"
+    assert captured["mileage"][0].allocation.cost_code_or_wo_type == "02AMA"
