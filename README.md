@@ -25,6 +25,9 @@ The verified 87-value job catalog and the Arkansas-versus-RRH Unity rule are in
 The expense form mapping, receipt controls, AI boundary, failure modes, and
 open policy questions are in
 [`docs/EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md`](docs/EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md).
+The commit-level architecture, invariants, failure matrix, test evidence, and
+regression guidance for the attached Outlook/iOS expense-email handoff are in
+[`docs/COMMIT_NOTES_2026-08-11_EXPENSE_EMAIL_ATTACHMENT_HANDOFF.md`](docs/COMMIT_NOTES_2026-08-11_EXPENSE_EMAIL_ATTACHMENT_HANDOFF.md).
 The ready-to-send IT review email and exact AI call-path summary are in
 [`docs/ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md`](docs/ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md).
 
