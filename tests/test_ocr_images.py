@@ -10,6 +10,19 @@ def _decoded(block: dict) -> bytes:
     return base64.b64decode(block["source"]["data"])
 
 
+def _tiff_bytes(image: Image.Image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="TIFF")
+    return buffer.getvalue()
+
+
+def _decoded_png(block: dict) -> tuple[bytes, Image.Image]:
+    payload = base64.standard_b64decode(block["source"]["data"])
+    image = Image.open(BytesIO(payload))
+    image.load()
+    return payload, image
+
+
 def test_claude_native_png_passes_through():
     original = b"\x89PNG\r\n\x1a\nexample"
     blocks = image_blocks_for_vision(original, ".png")
@@ -46,3 +59,24 @@ def test_multiframe_tiff_preserves_page_order():
 
 def test_iphone_heic_extensions_are_supported():
     assert {".heic", ".heif", ".hif"}.issubset(SUPPORTED_IMAGE_SUFFIXES)
+
+
+def test_large_phone_sized_tiff_is_downscaled_below_vision_limit():
+    source = Image.effect_noise((4032, 3024), 80).convert("RGB")
+
+    blocks = image_blocks_for_vision(_tiff_bytes(source), ".tiff")
+    payload, normalized = _decoded_png(blocks[0])
+
+    assert len(blocks) == 1
+    assert len(payload) < 5 * 1024 * 1024
+    assert max(normalized.size) <= 1568
+    assert normalized.size == (1568, 1176)
+
+
+def test_small_normalized_image_is_not_upscaled():
+    source = Image.new("RGB", (800, 600), "white")
+
+    blocks = image_blocks_for_vision(_tiff_bytes(source), ".tiff")
+    _, normalized = _decoded_png(blocks[0])
+
+    assert normalized.size == (800, 600)

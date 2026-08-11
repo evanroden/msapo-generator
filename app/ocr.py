@@ -28,6 +28,10 @@ _OCR_PROMPT = (
 )
 _MAX_IMAGE_FRAMES = 20
 _MAX_PIXELS_PER_FRAME = 40_000_000
+# The vision API downsamples anything larger than this on the long edge, so
+# sending full-resolution frames only inflates the payload past the per-image
+# size limit. Downscale before encoding.
+_VISION_MAX_EDGE = (1568, 1568)
 
 DIRECT_IMAGE_MEDIA_TYPES = {
     ".png": "image/png",
@@ -98,8 +102,13 @@ def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
                     f"{_MAX_PIXELS_PER_FRAME:,} pixels before uploading."
                 )
             normalized = oriented.convert("RGB")
+            if (
+                normalized.width > _VISION_MAX_EDGE[0]
+                or normalized.height > _VISION_MAX_EDGE[1]
+            ):
+                normalized = ImageOps.contain(normalized, _VISION_MAX_EDGE)
             buffer = BytesIO()
-            normalized.save(buffer, format="PNG", optimize=True)
+            normalized.save(buffer, format="PNG")
             blocks.append(_image_block(buffer.getvalue(), "image/png"))
 
     if not blocks:
