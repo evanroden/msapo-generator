@@ -35,6 +35,7 @@ from app.quote_analyzer import QuoteAnalysis
 # The sentinel text that marks where scope content begins
 SCOPE_SENTINEL = "Subcontractor shall execute the following Scope of Work in strict accordance with this MSAPO:"
 _OUTPUT_MAX_AGE_SECONDS = 24 * 60 * 60
+_cleanup_done = False
 
 
 def _add_bullet_paragraph(doc: Document, text: str) -> "Paragraph":
@@ -264,10 +265,13 @@ def _append_scope_content(
 def _cleanup_old_outputs() -> None:
     """Best-effort cleanup of generated files older than one day.
 
-    Generated files are transient email attachments. Keeping a short window is
-    enough for active sessions while preventing unbounded growth on long-running
-    Render containers.
+    Run once per process: this is housekeeping rather than per-request work,
+    and the sweep cost grows with the output directory.
     """
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
     cutoff = time.time() - _OUTPUT_MAX_AGE_SECONDS
     try:
         for path in OUTPUT_DIR.iterdir():
