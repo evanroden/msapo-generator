@@ -33,6 +33,10 @@ _MAX_PIXELS_PER_FRAME = 40_000_000
 # sending full-resolution frames only inflates the payload past the per-image
 # size limit. Downscale before encoding.
 _VISION_MAX_EDGE = (1568, 1568)
+# Aggregate base64 budget for one vision request across all frames, kept well
+# under the API's overall request ceiling. Per-frame size is bounded by the
+# downscale above; this bounds their sum, which _MAX_IMAGE_FRAMES alone does not.
+_MAX_TOTAL_ENCODED_BYTES = 24 * 1024 * 1024
 
 DIRECT_IMAGE_MEDIA_TYPES = {
     ".png": "image/png",
@@ -95,25 +99,72 @@ def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
             )
 
         for frame in ImageSequence.Iterator(image):
-            oriented = ImageOps.exif_transpose(frame.copy())
-            width, height = oriented.size
+            # Check the declared frame size BEFORE copy()/exif_transpose(), both
+            # of which materialize the full raster. Pillow's own decompression
+            # guard only trips near 178 MP, so validating afterwards let every
+            # frame in the 40-178 MP band allocate hundreds of MB on a shared
+            # Render container before being rejected — once per frame, up to
+            # _MAX_IMAGE_FRAMES times. expense_report._validate_receipt_dimensions
+            # already orders this correctly; this path now matches it.
+            width, height = frame.size
             if width * height > _MAX_PIXELS_PER_FRAME:
                 raise ValueError(
                     f"Image frame is too large ({width}×{height}). Resize it below "
                     f"{_MAX_PIXELS_PER_FRAME:,} pixels before uploading."
                 )
-            normalized = oriented.convert("RGB")
+            oriented = ImageOps.exif_transpose(frame.copy())
+            # Flatten transparency onto WHITE before dropping the alpha channel.
+            # A bare .convert("RGB") discards alpha and leaves whatever RGB the
+            # transparent pixels happened to carry, which for a scanned or
+            # screenshotted receipt is usually black — turning the page
+            # background into a black field that hides the text we are about to
+            # ask the model to read. JPEG has no alpha at all, so this must be
+            # explicit rather than left to the encoder.
+            if oriented.mode in {"RGBA", "LA", "PA"} or (
+                oriented.mode == "P" and "transparency" in oriented.info
+            ):
+                flattened = Image.new("RGB", oriented.size, (255, 255, 255))
+                rgba = oriented.convert("RGBA")
+                flattened.paste(rgba, mask=rgba.split()[-1])
+                normalized = flattened
+            else:
+                normalized = oriented.convert("RGB")
             if (
                 normalized.width > _VISION_MAX_EDGE[0]
                 or normalized.height > _VISION_MAX_EDGE[1]
             ):
                 normalized = ImageOps.contain(normalized, _VISION_MAX_EDGE)
             buffer = BytesIO()
-            normalized.save(buffer, format="PNG")
-            blocks.append(_image_block(buffer.getvalue(), "image/png"))
+            # JPEG, not PNG. Downscaling to 1568px alone is NOT sufficient:
+            # measured at that size, photographic content encodes to ~5.4 MB of
+            # lossless PNG (~7.2 MB once base64-encoded), which still exceeds the
+            # vision API's ~5 MB per-image limit that the downscale was meant to
+            # solve. The same frame is ~0.9 MB as JPEG q85 (~1.2 MB base64), and
+            # a photographed text page drops from 2.8 MB to 0.2 MB. These are
+            # camera photos of paper, so JPEG's lossy artifacts are far below the
+            # noise already present, and the API re-encodes server-side anyway.
+            # receipt_preview_bytes already made this choice.
+            # q90 rather than a smaller default: the model has to READ this, so
+            # compression ringing around small glyphs costs extraction accuracy,
+            # and the payload is already an order of magnitude inside the limit.
+            normalized.save(buffer, format="JPEG", quality=90, optimize=True)
+            blocks.append(_image_block(buffer.getvalue(), "image/jpeg"))
 
     if not blocks:
         raise ValueError("The image did not contain a readable frame.")
+
+    # Per-image size is bounded by the downscale, but a multi-frame file can
+    # still breach the REQUEST budget in aggregate: _MAX_IMAGE_FRAMES allows 20
+    # frames, and base64 inflates each by ~4/3. Fail here with something the
+    # operator can act on instead of surfacing an opaque API rejection after the
+    # upload has already been paid for.
+    encoded_total = sum(len(block["source"]["data"]) for block in blocks)
+    if encoded_total > _MAX_TOTAL_ENCODED_BYTES:
+        raise ValueError(
+            f"These {len(blocks)} pages are too large to analyze together "
+            f"({encoded_total / 1_000_000:.0f} MB encoded). Split the file into "
+            "smaller uploads."
+        )
     return blocks
 
 
