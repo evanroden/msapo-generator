@@ -12,9 +12,26 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      # The runner image ships no LibreOffice, so every test that renders a
+      # document silently SKIPPED here and the paths went unverified: the
+      # expense combined-PDF has been skipping since it was written, and the
+      # purchase-order flow now depends on Writer too (it renders the MSAPO
+      # form). Install the same renderers and fonts the Dockerfile does, so CI
+      # exercises what production actually runs instead of quietly stepping
+      # over it.
+      - name: Install document renderers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer \
+            libreoffice-calc \
+            fonts-dejavu-core \
+            fonts-dejavu-extra \
+            fonts-liberation \
+            fonts-urw-base35
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
