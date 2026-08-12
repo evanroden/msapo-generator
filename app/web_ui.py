@@ -1085,12 +1085,24 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="collapsed",
     )
+    # Split deliberately. Previously one try/except wrapped BOTH the cookie read
+    # and the bootstrap, which caused two problems: a read failure skipped
+    # bootstrap entirely (so the cookie could never be created), and a bootstrap
+    # failure was indistinguishable from "no cookie yet" -- which is how an
+    # invalid height=0 silently disabled every device-scoped memory feature on
+    # both workflows for the life of the deployment.
     try:
         browser_token = device_token(st.context.cookies)
-        if not browser_token:
-            ensure_device_cookie()
     except Exception:
         browser_token = ""
+    if not browser_token:
+        try:
+            ensure_device_cookie()
+        except Exception as exc:  # noqa: BLE001 - convenience feature, never fatal
+            # Still non-blocking: memory is a convenience and must not take the
+            # page down. But it is now visible in the server log rather than
+            # vanishing, so a regression cannot hide again.
+            print(f"device cookie bootstrap failed: {exc.__class__.__name__}: {exc}")
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     preserve_expense_draft_state()
 
