@@ -49,6 +49,29 @@ def test_new_po_discards_a_model_hallucinated_original_po_number():
         ("request_type_guess", "BOTH PO&WO"),
     ],
 )
-def test_analysis_rejects_unsupported_guesses(field, value):
-    with pytest.raises(AnalysisResponseError):
-        normalize_analysis_response(_response(**{field: value}))
+def test_unsupported_guesses_degrade_instead_of_sinking_the_analysis(field, value):
+    """These two fields are *guesses* with deterministic fallbacks downstream.
+
+    Previously an unsupported value raised, so a complete and otherwise usable
+    extraction was thrown away and the operator saw "The quote could not be
+    analyzed" -- for a field the UI was about to re-derive anyway (web_ui calls
+    infer_purchase_route when the route is absent, and an absent request type
+    means a plain PO). Degrading to None keeps the rest of the extraction while
+    still refusing to act on a value the schema does not recognize.
+    """
+    result = normalize_analysis_response(_response(**{field: value}))
+
+    assert result[field] is None
+    # The rest of the extraction survives intact.
+    assert result["vendor_name"] == "Vendor"
+    assert result["asset_reference"] == "CWP-7"
+
+
+def test_degraded_request_type_does_not_leak_an_original_po_number():
+    """Safety property preserved: only a CONFIRMED change order keeps the PO."""
+    result = normalize_analysis_response(
+        _response(request_type_guess="BOTH PO&WO", original_po_number="4500123456")
+    )
+
+    assert result["request_type_guess"] is None
+    assert result["original_po_number"] is None
