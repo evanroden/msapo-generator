@@ -84,6 +84,15 @@ _SIGNATURE_FONT_CANDIDATES = (
     Path("/usr/share/fonts/opentype/urw-base35/Z003-MediumItalic.otf"),
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf"),
 )
+# Signature layout. The font is fitted to this canvas at render time rather than
+# fixed, so a long name shrinks instead of being clipped.
+_SIGNATURE_CANVAS = (1600, 260)
+_SIGNATURE_MARGIN = (24, 18)
+_SIGNATURE_MAX_FONT_SIZE = 112
+# Absolute floor. If a name still does not fit at this size the renderer raises
+# rather than emitting a clipped signature — see employee_signature_png.
+_SIGNATURE_MIN_FONT_SIZE = 12
+_SIGNATURE_MAX_NAME_CHARS = 160
 
 
 class ExpenseReportError(ValueError):
@@ -573,11 +582,23 @@ def build_expense_package(
     if include_pdf:
         try:
             pdf_bytes = convert_expense_workbook_to_pdf(workbook_bytes)
-        except ExpenseReportError as exc:
+        except Exception as exc:  # noqa: BLE001 - see below; this must not re-raise
             # Preserve the editable workbook so a renderer outage never forces
             # re-entry, but the UI withholds the approval draft because RRH's
             # approved email submission artifact is the PDF.
-            pdf_error = str(exc)
+            #
+            # This deliberately catches Exception rather than ExpenseReportError.
+            # The workbook above is already built and validated; the ONLY thing
+            # that can fail here is the renderer, and every renderer failure must
+            # degrade to "Excel ready, PDF unavailable" rather than discarding
+            # work the operator already typed. ExpenseReportError alone was not
+            # sufficient: subprocess.run(..., timeout=120) raises
+            # subprocess.TimeoutExpired (a receipt-heavy workbook is exactly the
+            # case that exceeds the budget), and the Gotenberg backend can raise
+            # requests.ConnectionError before any wrapping runs. Both escaped,
+            # the caller's generic handler dropped the package, and the
+            # Excel-only fallback this block exists to enable became unreachable.
+            pdf_error = str(exc) or exc.__class__.__name__
     basename = expense_report_basename(details)
     return ExpensePackage(
         basename=basename,
@@ -876,27 +897,74 @@ def _fill_report_header(
 
 
 def employee_signature_png(employee_name: str) -> bytes:
-    """Render a deterministic cursive employee-name signature preview."""
+    """Render a deterministic cursive employee-name signature preview.
+
+    The font is shrunk to fit the canvas rather than left at a fixed size and
+    clipped. This is a correctness property, not an aesthetic one: the rendered
+    image is embedded at C66 of the official JDE reimbursement form that goes to
+    the approver, and the employee attests to it via "I confirm this generated
+    signature represents me". A fixed 112pt size drew any long name straight
+    past the 1600px canvas edge, and the subsequent crop clamp silently returned
+    a cut-off signature — so the employee could attest to a truncated version of
+    their own name on a financial document.
+    """
     name = " ".join(str(employee_name or "").split())
-    if not name or len(name) > 160:
+    if not name or len(name) > _SIGNATURE_MAX_NAME_CHARS:
         raise ExpenseReportError("Enter a valid employee name for the signature.")
-    font = None
-    for candidate in _SIGNATURE_FONT_CANDIDATES:
-        if candidate.is_file():
-            font = ImageFont.truetype(str(candidate), 112)
-            break
-    if font is None:
+    font_path = next(
+        (candidate for candidate in _SIGNATURE_FONT_CANDIDATES if candidate.is_file()),
+        None,
+    )
+    if font_path is None:
         raise ExpenseReportError(
             "The cursive signature font is unavailable in this deployment."
         )
 
-    canvas = Image.new("RGBA", (1600, 260), (255, 255, 255, 0))
+    canvas = Image.new("RGBA", _SIGNATURE_CANVAS, (255, 255, 255, 0))
     drawing = ImageDraw.Draw(canvas)
-    box = drawing.textbbox((0, 0), name, font=font)
-    width = max(1, box[2] - box[0])
-    height = max(1, box[3] - box[1])
-    drawing.text((24 - box[0], 18 - box[1]), name, font=font, fill=(0, 0, 0, 255))
-    cropped = canvas.crop((0, 0, min(1599, width + 56), min(259, height + 42)))
+    max_width = _SIGNATURE_CANVAS[0] - _SIGNATURE_MARGIN[0] * 2
+    max_height = _SIGNATURE_CANVAS[1] - _SIGNATURE_MARGIN[1] * 2
+
+    size = _SIGNATURE_MAX_FONT_SIZE
+    while True:
+        font = ImageFont.truetype(str(font_path), size)
+        box = drawing.textbbox((0, 0), name, font=font)
+        width = max(1, box[2] - box[0])
+        height = max(1, box[3] - box[1])
+        if size <= _SIGNATURE_MIN_FONT_SIZE or (
+            width <= max_width and height <= max_height
+        ):
+            break
+        # Step toward a proportional fit, but always shrink by at least 1pt so a
+        # pathological metric can never stall this loop.
+        scale = min(max_width / width, max_height / height)
+        size = max(_SIGNATURE_MIN_FONT_SIZE, min(size - 1, int(size * scale)))
+
+    if width > max_width or height > max_height:
+        # Reached the legibility floor and it still does not fit. Refuse rather
+        # than emit a clipped signature: a visible error the employee can act on
+        # is always better than a financial document carrying a silently
+        # truncated attestation of their name.
+        raise ExpenseReportError(
+            "That name is too long to render as a signature. Use a shorter form "
+            "of the name (for example, a middle initial instead of full middle "
+            "names)."
+        )
+
+    drawing.text(
+        (_SIGNATURE_MARGIN[0] - box[0], _SIGNATURE_MARGIN[1] - box[1]),
+        name,
+        font=font,
+        fill=(0, 0, 0, 255),
+    )
+    cropped = canvas.crop(
+        (
+            0,
+            0,
+            min(_SIGNATURE_CANVAS[0] - 1, width + _SIGNATURE_MARGIN[0] * 2),
+            min(_SIGNATURE_CANVAS[1] - 1, height + _SIGNATURE_MARGIN[1] * 2),
+        )
+    )
     if cropped.width > 1100:
         cropped = ImageOps.contain(cropped, (1100, 190))
     payload = BytesIO()

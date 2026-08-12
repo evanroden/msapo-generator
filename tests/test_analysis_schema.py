@@ -113,7 +113,23 @@ def test_work_category_is_a_normalized_soft_hint(category, expected):
 
 @pytest.mark.parametrize(
     ("section", "expected"),
-    [("exclusions", "exclusion"), ("nonsense", "exclusion")],
+    [
+        ("exclusions", "exclusion"),
+        ("nonsense", "exclusion"),
+        # An unrecognized value must not be coerced to the OPPOSITE meaning.
+        # These strings are rendered verbatim as bullets on the PO scope PDF, so
+        # mapping "included"/"inclusions" onto "exclusion" told the vendor they
+        # were excluding work the model meant to include.
+        ("included", "inclusion"),
+        ("inclusions", "inclusion"),
+        ("Inclusion ", "inclusion"),
+        ("including", "inclusion"),
+        ("excluded", "exclusion"),
+        ("Scope", "scope"),
+        ("scopes", "scope"),
+        (None, "exclusion"),
+        (123, "exclusion"),
+    ],
 )
 def test_assumption_section_uses_a_conservative_fallback(section, expected):
     result = normalize_analysis_response(
@@ -165,3 +181,57 @@ def test_analyzer_rerolls_one_malformed_response(monkeypatch):
 
     assert result.vendor_name == "Vendor"
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("onsite_labor", "onsite_labor"),
+        ("onsite labor", "onsite_labor"),
+        ("Onsite-Labor", "onsite_labor"),
+        ("teleportation", None),
+        ("", None),
+    ],
+)
+def test_purchase_route_guess_degrades_instead_of_failing(raw, expected):
+    """A guess with a deterministic UI fallback must never sink the analysis.
+
+    web_ui re-derives the route via infer_purchase_route when it is absent, so
+    raising here discarded a complete extraction and showed the operator "The
+    quote could not be analyzed" over a space-versus-underscore deviation.
+    """
+    result = normalize_analysis_response(json.dumps(_payload(purchase_route_guess=raw)))
+
+    assert result["purchase_route_guess"] == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("PO", "PO"),
+        ("po", "PO"),
+        ("  change   order ", "CHANGE ORDER"),
+        ("something else", None),
+    ],
+)
+def test_request_type_guess_degrades_instead_of_failing(raw, expected):
+    result = normalize_analysis_response(json.dumps(_payload(request_type_guess=raw)))
+
+    assert result["request_type_guess"] == expected
+
+
+def test_unrecognized_request_type_still_clears_the_original_po_number():
+    """Degrading must not weaken the change-order safety property.
+
+    original_po_number may only survive for a CONFIRMED change order; an
+    unrecognized guess is treated as "not a change order", which is the
+    conservative direction.
+    """
+    result = normalize_analysis_response(
+        json.dumps(
+            _payload(request_type_guess="gibberish", original_po_number="PO-12345")
+        )
+    )
+
+    assert result["request_type_guess"] is None
+    assert result["original_po_number"] is None

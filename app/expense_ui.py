@@ -1660,6 +1660,24 @@ def preserve_expense_draft_state() -> None:
     workflow switch therefore needs a non-widget mirror just like the PO routing
     controls do. Uploaded bytes have their own bounded mirror and are excluded.
     """
+    # The mirror must only ever hold values the OPERATOR entered. Transient UI
+    # state that handler code pops (errors, "recalled from history" captions)
+    # must never be mirrored: setdefault() in restore_expense_draft_state would
+    # put it straight back, so a one-off failure message became permanent and
+    # sat next to a subsequently-good package forever.
+    #
+    # The mirror is only ever ADDED to, never rebuilt from the live session.
+    # Rebuilding was tried and is unsafe: there is no reliable "the expense
+    # widgets rendered on the previous run" signal. workflow_mode is updated
+    # before the rerun (so it is already "expense" on the run that switches in,
+    # before any widget exists), and a completion marker still breaks when the
+    # operator visits pages/2_Smartsheet_PO.py — that page renders no expense
+    # widgets, so Streamlit collects them while the marker still reads true, and
+    # the rebuild would wipe a half-finished report.
+    #
+    # Correctness therefore rests on the exclusion list below covering every
+    # transient key, which is enforced statically by
+    # tests/test_expense_draft_state.py::test_every_popped_expense_key_is_excluded.
     snapshot = dict(st.session_state.get("expense_draft_snapshot", {}) or {})
     excluded_fragments = (
         "receipt_uploader",
@@ -1674,7 +1692,17 @@ def preserve_expense_draft_state() -> None:
         "generate_expense_package",
         "remove_receipt",
         "retry_receipt",
+        # Transient, handler-popped state — never operator input:
+        "_error",
+        "_recalled",
+        "restored_without_uploader",
     )
+    # If the expense workflow rendered on the previous run then every one of its
+    # widget keys is currently present, so the live session IS the truth and the
+    # snapshot can be rebuilt from scratch. That drops any key popped since the
+    # last mirror. When another workflow was showing we must NOT rebuild:
+    # Streamlit has already deleted the un-rendered expense widgets, and the
+    # stale snapshot is precisely what restores them.
     for key, value in list(st.session_state.items()):
         if not key.startswith("expense_") or any(
             fragment in key for fragment in excluded_fragments

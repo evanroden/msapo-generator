@@ -7,12 +7,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Calc renders the official reimbursement workbook plus receipt worksheet as a
 # single PDF. Writer retains the existing MSAPO conversion path. Fonts keep the
 # supplied templates and generated signature layout stable in the container.
+#
+# Both signature fonts in app.expense_report._SIGNATURE_FONT_CANDIDATES must be
+# installable here or the fallback is a fiction. fonts-urw-base35 supplies
+# Z003-MediumItalic.otf (the preferred cursive face). DejaVuSerif-Italic.ttf is
+# in fonts-dejavu-EXTRA, not -core: with only -core installed the second
+# candidate could never resolve, so signature rendering silently depended on a
+# single package and would have failed closed with "The cursive signature font
+# is unavailable in this deployment" had it ever been dropped.
+# tests/test_expense_deployment.py enforces that this list stays in sync.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         libreoffice-calc \
         libreoffice-writer \
         curl \
         fonts-dejavu-core \
+        fonts-dejavu-extra \
         fonts-liberation \
         fonts-urw-base35 \
     && rm -rf /var/lib/apt/lists/*

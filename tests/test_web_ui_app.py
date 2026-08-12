@@ -829,3 +829,29 @@ def test_rrh_mileage_only_flow_uses_service_year_defaults_and_job_columns(
     assert len(captured["mileage"]) == 1
     assert captured["mileage"][0].allocation.account_cost_type == "02AMA"
     assert captured["mileage"][0].allocation.cost_code_or_wo_type == "5490"
+
+
+def test_workflow_selector_cannot_be_deselected_into_an_empty_state():
+    """A single-select segmented_control defaults to required=False, which lets
+    the operator DESELECT the active segment. Deselecting yielded None, which is
+    neither workflow, so the expense report silently vanished and the Purchase
+    Order page rendered with no segment highlighted -- trivially triggered by
+    double-tapping the segment on a phone."""
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+
+    control = app.segmented_control[0]
+    assert control.proto.required is True
+
+    control.set_value("Expense reimbursement").run()
+    assert app.session_state["workflow_mode"] == "Expense reimbursement"
+
+
+def test_unrecognized_workflow_mode_falls_back_to_the_purchase_order_page():
+    """Defence in depth: even if a stale or hand-set session value is not a
+    known workflow, the page must resolve to a real one rather than rendering a
+    half-empty hybrid."""
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20)
+    app.session_state["workflow_mode"] = None
+    app.run()
+
+    assert not app.exception

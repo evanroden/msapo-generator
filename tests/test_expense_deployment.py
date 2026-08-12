@@ -1,7 +1,37 @@
 from pathlib import Path
 
+from app.expense_report import _SIGNATURE_FONT_CANDIDATES
+
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Debian package that ships each font directory the signature renderer looks in.
+# Every candidate path must map to a package the image installs, otherwise the
+# "fallback" is a fiction: DejaVuSerif-Italic.ttf lives in fonts-dejavu-EXTRA,
+# so an image installing only fonts-dejavu-core silently had one real font and
+# one dead entry.
+_FONT_DIRECTORY_PACKAGES = {
+    "/usr/share/fonts/opentype/urw-base35": "fonts-urw-base35",
+    "/usr/share/fonts/truetype/dejavu": "fonts-dejavu-extra",
+}
+
+
+def test_every_signature_font_candidate_is_installed_by_the_image():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert _SIGNATURE_FONT_CANDIDATES, "the renderer must declare at least one font"
+    for candidate in _SIGNATURE_FONT_CANDIDATES:
+        directory = str(candidate.parent)
+        package = _FONT_DIRECTORY_PACKAGES.get(directory)
+        assert package is not None, (
+            f"{candidate} lives in {directory}, which is not mapped to a Debian "
+            "package here. Add the mapping and install the package in the "
+            "Dockerfile, or the fallback can never resolve at runtime."
+        )
+        assert package in dockerfile, (
+            f"{candidate} requires {package}, which the Dockerfile does not "
+            "install. Signature rendering would fail closed in production."
+        )
 
 
 def test_official_expense_template_is_packaged_unchanged():

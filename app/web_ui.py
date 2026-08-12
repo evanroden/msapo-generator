@@ -1094,6 +1094,13 @@ def main() -> None:
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     preserve_expense_draft_state()
 
+    # required=True is load-bearing, not cosmetic. A single-select
+    # segmented_control defaults to required=False, which lets the operator
+    # DESELECT the active segment — easy to do by accident on a phone, where the
+    # segment is a 56px tap target. Deselecting returns None, which is neither
+    # workflow, so the expense report silently vanished and the Purchase Order
+    # page rendered with no segment highlighted. Forcing a selection makes the
+    # control unable to represent "no workflow" at all.
     workflow_mode = st.segmented_control(
         "Choose workflow",
         (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW),
@@ -1101,7 +1108,13 @@ def main() -> None:
         key="workflow_mode",
         label_visibility="collapsed",
         width="stretch",
+        required=True,
     )
+    # Defence in depth: required=True prevents deselection, but a stale or
+    # hand-set session value could still be None/unknown. Never let an
+    # unrecognized mode fall through to the PO branch by accident.
+    if workflow_mode not in (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW):
+        workflow_mode = PURCHASE_WORKFLOW
     if workflow_mode == EXPENSE_WORKFLOW:
         render_expense_workflow(browser_token)
         _render_footer()

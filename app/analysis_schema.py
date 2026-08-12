@@ -121,6 +121,31 @@ def _string_list(value: Any, field: str) -> list[str]:
     return result
 
 
+def _assumption_section(value: Any) -> str:
+    """Map a model-supplied assumption section onto a section the UI renders.
+
+    Matching on the stem rather than the exact token matters for correctness,
+    not just tolerance. These strings are rendered verbatim as bullets on the
+    Scope/Inclusions/Exclusions PDF attached to the purchase order, so coercing
+    an unrecognized value straight to "exclusion" inverts the meaning of a model
+    answer like "included" or "inclusions" — the attachment would then tell the
+    vendor they are excluding work the model meant to include.
+
+    "inclu*" covers inclusion/included/including; "exclu*" covers the exclusion
+    forms; anything genuinely unrecognizable still falls back to "exclusion",
+    which is the conservative bucket because an over-stated exclusion is visible
+    to the reviewer while a silently dropped one is not.
+    """
+    text = value.strip().lower() if isinstance(value, str) else ""
+    if text.startswith("inclu"):
+        return "inclusion"
+    if text.startswith("exclu"):
+        return "exclusion"
+    if text.startswith("scope"):
+        return "scope"
+    return text if text in _ALLOWED_ASSUMPTION_SECTIONS else "exclusion"
+
+
 def _assumptions(value: Any) -> list[dict[str, str]]:
     if value is None:
         return []
@@ -145,12 +170,7 @@ def _assumptions(value: Any) -> list[dict[str, str]]:
             raise AnalysisResponseError(
                 f"AI assumption {index + 1} is missing usable text."
             )
-        section = section.strip().lower() if isinstance(section, str) else ""
-        if section.endswith("s"):
-            section = section[:-1]
-        if section not in _ALLOWED_ASSUMPTION_SECTIONS:
-            section = "exclusion"
-        result.append({"text": text.strip(), "section": section})
+        result.append({"text": text.strip(), "section": _assumption_section(section)})
     return result
 
 
@@ -187,18 +207,29 @@ def normalize_analysis_response(raw: str) -> dict[str, Any]:
     if short_description:
         normalized["short_description"] = short_description[:20]
 
+    # Both remaining enums are *guesses* with deterministic fallbacks in the UI
+    # (web_ui re-derives the route via infer_purchase_route, and an absent
+    # request type defaults to PO). Hard-failing the response therefore threw
+    # away a complete, usable extraction over a cosmetic deviation such as
+    # "onsite labor" for "onsite_labor" — the operator saw "The quote could not
+    # be analyzed" and got nothing. Degrade to None and let the UI decide, the
+    # same way tax_status and work_category already do.
     purchase_route = normalized.get("purchase_route_guess")
-    if purchase_route is not None and purchase_route not in _ALLOWED_PURCHASE_ROUTES:
-        raise AnalysisResponseError(
-            "Field 'purchase_route_guess' contains an unsupported value: "
-            f"{purchase_route!r}."
+    if purchase_route is not None:
+        candidate = purchase_route.strip().lower().replace(" ", "_").replace("-", "_")
+        normalized["purchase_route_guess"] = (
+            candidate if candidate in _ALLOWED_PURCHASE_ROUTES else None
         )
 
     request_type = normalized.get("request_type_guess")
-    if request_type is not None and request_type not in _ALLOWED_REQUEST_TYPES:
-        raise AnalysisResponseError(
-            "Field 'request_type_guess' must be PO or CHANGE ORDER."
-        )
+    if request_type is not None:
+        candidate = " ".join(request_type.strip().upper().split())
+        request_type = candidate if candidate in _ALLOWED_REQUEST_TYPES else None
+        normalized["request_type_guess"] = request_type
+    # Unchanged safety property: original_po_number survives ONLY for a
+    # confirmed CHANGE ORDER. Because an unrecognized guess now degrades to
+    # None rather than raising, it lands here as "not a change order" and the
+    # PO number is still cleared — the conservative direction.
     if request_type != "CHANGE ORDER":
         normalized["original_po_number"] = None
 

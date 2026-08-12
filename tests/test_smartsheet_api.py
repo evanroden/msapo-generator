@@ -150,3 +150,55 @@ def test_live_schema_drift_blocks_before_row_write(monkeypatch, tmp_path):
     assert result["ok"] is False
     assert result["error"] == "Live sheet mapping changed."
     assert any("expected title" in problem for problem in result["problems"])
+
+
+def test_attachment_name_is_sent_unescaped_so_dedup_can_match():
+    """Content-Disposition must carry the same name the dedup check compares.
+
+    _api_attachment_name already constrains the result to safe ASCII, so
+    percent-encoding it turned every space and bracket into %20/%5B. Smartsheet
+    listed the escaped form, _remote_has_attachment compared the unescaped one,
+    the match never succeeded, and each idempotent resume re-uploaded the quote
+    and scope PDF until the row carried duplicates.
+    """
+    sent: dict[str, str] = {}
+
+    class _Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {"result": {"id": 9}}
+
+    def _capture(url, headers=None, data=None, timeout=None, **kwargs):
+        sent.update(headers or {})
+        return _Response()
+
+    original_post = smartsheet.requests.post
+    smartsheet.requests.post = _capture
+    try:
+        smartsheet._attach_file(_config(), 5, "Quote 1 [EPC].pdf", b"%PDF-1.4 x")
+    finally:
+        smartsheet.requests.post = original_post
+
+    disposition = sent["Content-Disposition"]
+    assert "%20" not in disposition and "%5B" not in disposition
+    expected = smartsheet._api_attachment_name("Quote 1 [EPC].pdf", b"%PDF-1.4 x")
+    assert f'filename="{expected}"' == disposition.split("; ", 1)[1]
+
+
+def test_remote_dedup_still_matches_previously_escaped_names():
+    """Rows written before the fix hold escaped names; they must still match."""
+    from urllib.parse import quote
+
+    attachment = ("Quote 1 [EPC].pdf", b"%PDF-1.4 x")
+    expected = smartsheet._api_attachment_name(*attachment)
+
+    assert smartsheet._remote_has_attachment({expected}, *attachment)
+    assert smartsheet._remote_has_attachment({quote(expected, safe="")}, *attachment)
+    assert not smartsheet._remote_has_attachment({"Something Else.pdf"}, *attachment)
