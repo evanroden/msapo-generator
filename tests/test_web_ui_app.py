@@ -855,3 +855,29 @@ def test_unrecognized_workflow_mode_falls_back_to_the_purchase_order_page():
     app.run()
 
     assert not app.exception
+
+
+def test_touch_devices_get_single_tap_caret_placement_on_fields():
+    """One tap must place the caret in a text field on a touch device.
+
+    Without touch-action, WebKit holds the first tap while it watches for a
+    second (double-tap-to-zoom). On a text field that is indistinguishable from
+    the tap being ignored: the field shows a tap highlight but no caret or
+    keyboard until the operator taps again. Both flows are used from an iPad, so
+    this is the difference between usable and not.
+
+    The rule already existed on the workflow selector buttons and was never
+    applied to the inputs; this pins it so it cannot be dropped again.
+    """
+    from app.web_ui import CUSTOM_CSS
+
+    coarse = CUSTOM_CSS.split("@media (pointer: coarse)", 1)
+    assert len(coarse) == 2, "the coarse-pointer block disappeared"
+    block = coarse[1]
+
+    assert "touch-action: manipulation" in block, (
+        "text fields have no touch-action rule for touch devices"
+    )
+    # The rule has to cover the real input elements, not only buttons.
+    for selector in ("input", "textarea", 'div[data-baseweb="input"]'):
+        assert selector in block, f"{selector} missing from the touch rules"
