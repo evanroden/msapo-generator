@@ -76,6 +76,14 @@ protect. It is inverted, with a comment recording why.
 
 ## 3. New production dependency — read before trimming the image
 
+> **Follow-up:** this dependency produced two production defects within hours,
+> both fixed in `COMMIT_NOTES_2026-08-12_TOUCH_AND_RENDERER_RELIABILITY.md`: the
+> generate button had no progress indicator (an instant in-memory render became a
+> multi-second subprocess), and `_convert_libreoffice` shared one LibreOffice
+> user profile across conversions, which fails under concurrency and stays broken
+> after any interrupted run. Read that document alongside this one before
+> touching the render path.
+
 The former scope PDF was built in-memory with PyMuPDF: no external process, and
 it could not fail for environmental reasons.
 
