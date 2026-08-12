@@ -677,3 +677,72 @@ def test_combined_pdf_places_signed_form_before_each_receipt():
         assert "Synthetic Employee" in document[0].get_text()
         assert "Receipt 1 of 2" in document[1].get_text()
         assert "Receipt 2 of 2" in document[2].get_text()
+
+
+def test_long_employee_name_signature_is_fitted_rather_than_clipped():
+    """A long name must shrink to fit, never be silently cut off.
+
+    The image is embedded on the official JDE form and the employee attests to
+    it ("I confirm this generated signature represents me"), so a clipped
+    rendering is an attestation to a truncated version of their own name.
+    """
+    short = employee_signature_png("Evan Roden")
+    long_name = employee_signature_png(
+        "Maria de los Angeles Fernandez-Villalobos"
+    )
+
+    for payload in (short, long_name):
+        assert payload.startswith(b"\x89PNG\r\n\x1a\n")
+        image = Image.open(BytesIO(payload))
+        image.load()
+        # Nothing may touch the right edge: a fitted render always leaves the
+        # trailing margin, whereas a clipped one runs to the boundary.
+        assert image.width <= 1100
+        assert image.getbbox() is not None
+
+
+def test_unrenderable_employee_name_is_refused_not_truncated():
+    """When even the minimum size cannot fit, fail loudly instead of clipping."""
+    with pytest.raises(ExpenseReportError, match="too long to render"):
+        employee_signature_png("W" * 160)
+
+
+def test_pdf_renderer_timeout_preserves_the_completed_workbook(monkeypatch):
+    """A renderer outage must degrade to Excel-only, never discard the report.
+
+    subprocess.run(..., timeout=...) raises TimeoutExpired, which is not an
+    ExpenseReportError; catching only the latter let it escape and the caller
+    dropped the whole validated package, forcing full re-entry.
+    """
+    import subprocess
+
+    def _timeout(_workbook: bytes) -> bytes:
+        raise subprocess.TimeoutExpired(cmd="soffice", timeout=120)
+
+    monkeypatch.setattr(
+        "app.expense_report.convert_expense_workbook_to_pdf", _timeout
+    )
+
+    package = build_expense_package(_details(), [_item()])
+
+    assert package.workbook_bytes.startswith(b"PK")
+    assert package.pdf_bytes is None
+    assert package.pdf_error
+
+
+def test_pdf_renderer_connection_failure_preserves_the_completed_workbook(monkeypatch):
+    """Same guarantee for the Gotenberg backend's transport errors."""
+    import requests
+
+    def _unreachable(_workbook: bytes) -> bytes:
+        raise requests.ConnectionError("gotenberg unreachable")
+
+    monkeypatch.setattr(
+        "app.expense_report.convert_expense_workbook_to_pdf", _unreachable
+    )
+
+    package = build_expense_package(_details(), [_item()])
+
+    assert package.workbook_bytes.startswith(b"PK")
+    assert package.pdf_bytes is None
+    assert "unreachable" in package.pdf_error
