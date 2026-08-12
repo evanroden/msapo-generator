@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsplit
 
 import requests
 
@@ -930,14 +930,20 @@ def _attach_file(
 ) -> None:
     api_name = _api_attachment_name(filename, data)
     mime = mimetypes.guess_type(api_name)[0] or "application/octet-stream"
-    encoded_name = quote(api_name, safe="")
+    # Send the name verbatim, NOT percent-encoded. _api_attachment_name already
+    # constrains the result to safe ASCII (see _SAFE_FILENAME_RE), so RFC 6266
+    # needs no escaping here — while quote(..., safe="") turned every space and
+    # bracket into %20/%5B. Smartsheet then stored and listed the escaped form,
+    # so _remote_has_attachment (which compares the UNescaped name) could never
+    # match, and the idempotent-resume path re-uploaded the same quote and scope
+    # PDF on every retry until the row accumulated duplicates.
     response = requests.post(
         f"{config.api_base_url}/sheets/{config.sheet_id}/rows/{row_id}/attachments",
         headers=_headers(
             config,
             {
                 "Content-Type": mime,
-                "Content-Disposition": f'attachment; filename="{encoded_name}"',
+                "Content-Disposition": f'attachment; filename="{api_name}"',
                 "Content-Length": str(len(data)),
             },
         ),
@@ -963,7 +969,17 @@ def _row_attachment_names(config: SmartsheetConfig, row_id: str | int) -> set[st
 
 
 def _remote_has_attachment(names: set[str], filename: str, data: bytes) -> bool:
-    return _api_attachment_name(filename, data) in names
+    """Whether this exact attachment already exists on the row.
+
+    Compares against the percent-decoded remote name as well as the raw one so
+    that rows written before the Content-Disposition fix (whose stored names are
+    percent-escaped) still de-duplicate instead of accumulating a second copy on
+    the next resume.
+    """
+    expected = _api_attachment_name(filename, data)
+    if expected in names:
+        return True
+    return any(unquote(name) == expected for name in names)
 
 
 def submission_fingerprint(
