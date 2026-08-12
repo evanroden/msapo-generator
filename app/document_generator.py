@@ -313,3 +313,61 @@ def generate_docx(
     docx_path = OUTPUT_DIR / f"{output_name}-{unique}.docx"
     doc.save(str(docx_path))
     return docx_path
+
+
+def build_msapo_pdf(
+    *,
+    analysis: QuoteAnalysis,
+    scope: str,
+    inclusions: list[str],
+    exclusions: list[str],
+    facility_display: str | None = None,
+    facility_address_display: str | None = None,
+) -> bytes:
+    """Render the official MSAPO form to PDF bytes for the PO attachment.
+
+    Contract administration asked for the full MSAPO agreement form rather than
+    the simplified Scope/Inclusions/Exclusions sheet, so this fills the real
+    template and converts it, returning bytes so the caller's session-state and
+    attachment plumbing is unchanged.
+
+    ``scope`` is the operator's REVIEWED text, not ``analysis.scope_of_work``.
+    The two differ whenever the scope box was edited, and rendering the raw
+    analysis would silently discard those edits -- the document is the artifact
+    the administrator acts on, so it must carry what the operator approved.
+
+    Both intermediate files are removed before returning: only the PDF bytes
+    travel onward, so a long-running container does not accumulate a .docx and
+    .pdf per generation.
+    """
+    from dataclasses import replace
+
+    from app.pdf_converter import PDFConversionError, convert_to_pdf
+
+    reviewed = replace(analysis, scope_of_work=scope or "")
+    docx_path: Path | None = None
+    pdf_path: Path | None = None
+    try:
+        docx_path = generate_docx(
+            reviewed,
+            list(inclusions),
+            list(exclusions),
+            facility_display=facility_display,
+            facility_address_display=facility_address_display,
+        )
+        pdf_path = convert_to_pdf(docx_path)
+        payload = pdf_path.read_bytes()
+    finally:
+        for path in (docx_path, pdf_path):
+            if path is not None:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    if not payload.startswith(b"%PDF-"):
+        raise PDFConversionError(
+            "The MSAPO form did not convert to a valid PDF. The .docx renderer "
+            "may be unavailable in this deployment."
+        )
+    return payload

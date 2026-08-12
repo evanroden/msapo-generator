@@ -155,7 +155,7 @@ def test_context_applies_approved_classification_matrix(
     assert context.fields["instructions"] == "Escort required"
     assert [name for name, _ in context.attachments] == [
         "vendor original.pdf",
-        "Tulane Tulane Repair chilled water pump Scope.pdf",
+        "Tulane Tulane Repair chilled water pump MSAPO.pdf",
     ]
 
 
@@ -309,7 +309,7 @@ def test_pasted_quote_becomes_the_original_text_attachment():
     context = build_po_context(state, {})
     assert context is not None and context.ready
     assert context.attachments[0] == ("Vendor Quote.txt", b"quote text")
-    assert context.attachments[1][0].endswith("Scope.pdf")
+    assert context.attachments[1][0].endswith("MSAPO.pdf")
 
 
 def test_explicit_paste_source_never_reuses_a_stale_upload_with_identical_text():

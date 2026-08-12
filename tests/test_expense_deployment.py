@@ -57,3 +57,29 @@ def test_runtime_includes_workbook_writer_and_pdf_renderer():
     assert "fonts-urw-base35" in dockerfile
     assert "HEALTHCHECK" in dockerfile
     assert 'CMD ["streamlit", "run", "run_web.py"' in dockerfile
+
+
+def test_ci_installs_the_same_document_renderers_as_the_image():
+    """CI must render documents the same way production does.
+
+    The runner image ships no LibreOffice. Every renderer-dependent test
+    therefore SKIPPED rather than failed, which reads identically to "passing"
+    in a summary line -- the expense combined-PDF test skipped silently from the
+    day it was written, and the purchase-order MSAPO render would have done the
+    same. Pinning the two package lists together means a renderer can never be
+    added to the image, or dropped from CI, without this failing loudly.
+    """
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+
+    renderers = {"libreoffice-writer", "libreoffice-calc"}
+    for package in renderers:
+        assert package in dockerfile, f"{package} missing from the image"
+        assert package in workflow, (
+            f"{package} is installed in the image but not in CI, so every test "
+            "that needs it will skip instead of verifying the behavior."
+        )
+
+    # Signature fonts must match too -- see the candidate-path test above.
+    for package in set(_FONT_DIRECTORY_PACKAGES.values()):
+        assert package in workflow, f"{package} missing from CI"

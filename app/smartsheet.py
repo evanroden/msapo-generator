@@ -683,7 +683,12 @@ def download_names(
     for index, (filename, data) in enumerate(attachments, 1):
         safe_original = _safe_filename(filename)
         extension = Path(safe_original).suffix.lower()
-        kind = "Quote" if index == 1 else "Scope"
+        # The second attachment is the MSAPO agreement form, not the former
+        # simplified scope sheet, so the file the operator hands to Smartsheet
+        # is named for what it actually is. The stem regex above already
+        # tolerates either word, so a base built before this change still
+        # normalizes correctly.
+        kind = "Quote" if index == 1 else "MSAPO"
         label = f"{kind} · {extension.lstrip('.').upper()}" if extension else kind
         result.append((label, f"{stem} {index} {kind}{extension}", data))
     return result

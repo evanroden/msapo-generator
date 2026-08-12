@@ -485,6 +485,6 @@ def test_download_names_sanitize_untrusted_names_without_changing_data():
     files = [("../original\nquote.pdf", b"quote"), ("scope.pdf", b"pdf")]
     result = download_names(files, "RRH UMMC Pump Scope")
     assert result[0][1] == "RRH UMMC Pump 1 Quote.pdf"
-    assert result[1][1] == "RRH UMMC Pump 2 Scope.pdf"
+    assert result[1][1] == "RRH UMMC Pump 2 MSAPO.pdf"
     assert result[0][2] == b"quote"
     assert result[1][2] == b"pdf"

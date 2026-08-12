@@ -2,7 +2,7 @@
 
 The application converts a reviewed vendor quote into a prefilled Smartsheet PO
 request and a two-file supporting package: the unchanged quote plus a concise
-Scope/Inclusions/Exclusions PDF. It does not create or send email.
+MSAPO form PDF. It does not create or send email.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ from app.po_rules import (
     parse_amount,
 )
 from app.quote_analyzer import AIAssumption, QuoteAnalysis, analyze_quote
-from app.scope_pdf import build_scope_pdf
+from app.document_generator import build_msapo_pdf
 from app.smartsheet import (
     MAX_ATTACHMENT_BYTES,
     preflight_attachments,
@@ -1909,7 +1909,7 @@ def main() -> None:
         unsafe_allow_html=True,
     )
     st.caption(
-        "One button creates the Scope/Inclusions/Exclusions PDF, keeps the "
+        "One button creates the MSAPO form PDF, keeps the "
         "unchanged quote, and prepares the prefilled Smartsheet link."
     )
     generated_key = f"generated_context_{token}"
@@ -1921,12 +1921,17 @@ def main() -> None:
         disabled=bool(draft_problems),
     ):
         try:
-            scope_pdf = build_scope_pdf(
+            # Contract administration requires the full MSAPO agreement form,
+            # not the simplified Scope/Inclusions/Exclusions sheet. Only the
+            # bytes' ORIGIN changes here: the session key, attachment plumbing,
+            # and signature checks below are deliberately untouched.
+            scope_pdf = build_msapo_pdf(
+                analysis=analysis,
                 scope=scope_value,
                 inclusions=final_inclusions,
                 exclusions=final_exclusions,
-                vendor=str(st.session_state.get(vendor_key, "") or ""),
-                site=facility_name or selected_site,
+                facility_display=facility_name or selected_site,
+                facility_address_display=analysis.facility_address,
             )
         except Exception as exc:
             st.error(f"PDF generation failed: {exc}")
