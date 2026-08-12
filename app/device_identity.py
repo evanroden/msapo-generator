@@ -64,8 +64,15 @@ def ensure_device_cookie(*, reload_parent: bool = True) -> None:
     handoffs use ``reload_parent=False`` because a full mobile reload can create
     a fresh Streamlit session and discard in-memory PO values and attachments.
     """
+    # height must be a POSITIVE integer. Streamlit rejects height=0 with
+    # StreamlitInvalidHeightError, and because the caller wraps this in a
+    # non-blocking try/except that failure was invisible: the bootstrap iframe
+    # was never rendered, the cookie was never created, device_token() always
+    # returned "", and every device-scoped memory feature on BOTH workflows was
+    # silently inert. 1px is the smallest value the API accepts and is not
+    # perceptible; the iframe carries only a script.
     st.iframe(
         cookie_bootstrap_html(reload_parent=reload_parent),
-        height=0,
+        height=1,
         tab_index=-1,
     )
