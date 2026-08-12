@@ -135,3 +135,53 @@ def test_end_to_end_render_produces_a_pdf_and_leaves_no_intermediates():
 
     after = {p.name for p in Path(OUTPUT_DIR).iterdir()}
     assert after == before, f"left intermediates behind: {sorted(after - before)}"
+
+
+def test_each_conversion_gets_an_isolated_libreoffice_profile(monkeypatch):
+    """Concurrency and crash-recovery both depend on this argument.
+
+    Sharing the default profile under $HOME fails in production in ways a
+    single-threaded test run never shows: two concurrent conversions contend for
+    the same profile and the second never converts, and a run killed mid-flight
+    leaves a lock that poisons the profile for every later run -- so the feature
+    works once and then fails for the life of the container. The Calc path
+    already isolates; this pins the Writer path to the same rule.
+    """
+    import subprocess
+
+    from app import pdf_converter
+
+    captured: dict[str, list[str]] = {}
+
+    class _Result:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    def _fake_run(cmd, **kwargs):
+        captured["cmd"] = list(cmd)
+        # Produce the file the converter expects so it does not raise.
+        (OUTPUT_DIR / f"{Path(cmd[-1]).stem}.pdf").write_bytes(b"%PDF-1.7\nstub")
+        return _Result()
+
+    monkeypatch.setattr(pdf_converter, "PDF_BACKEND", "libreoffice")
+    monkeypatch.setattr(pdf_converter.shutil, "which", lambda _n: "/usr/bin/soffice")
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    source = OUTPUT_DIR / "_profile_probe.docx"
+    document = Document()
+    document.add_paragraph("probe")
+    document.save(str(source))
+    try:
+        produced = pdf_converter.convert_to_pdf(source)
+    finally:
+        source.unlink(missing_ok=True)
+    produced.unlink(missing_ok=True)
+
+    profile_args = [a for a in captured["cmd"] if a.startswith("-env:UserInstallation=")]
+    assert profile_args, (
+        "no -env:UserInstallation argument: conversions would share the default "
+        f"profile. command was: {captured['cmd']}"
+    )
+    assert profile_args[0].startswith("-env:UserInstallation=file://")
+    assert "--headless" in captured["cmd"]

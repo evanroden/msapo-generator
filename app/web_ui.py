@@ -1925,16 +1925,28 @@ def main() -> None:
             # not the simplified Scope/Inclusions/Exclusions sheet. Only the
             # bytes' ORIGIN changes here: the session key, attachment plumbing,
             # and signature checks below are deliberately untouched.
-            scope_pdf = build_msapo_pdf(
-                analysis=analysis,
-                scope=scope_value,
-                inclusions=final_inclusions,
-                exclusions=final_exclusions,
-                facility_display=facility_name or selected_site,
-                facility_address_display=analysis.facility_address,
-            )
+            #
+            # The spinner is not decoration. The former scope sheet was built
+            # in-memory with PyMuPDF and returned instantly, so no progress
+            # indicator was needed. Rendering the MSAPO form shells out to
+            # LibreOffice, which takes seconds -- longer on a cold start on a
+            # small container -- and with no feedback the button reads as dead
+            # and invites repeat taps.
+            with st.spinner("Building the MSAPO form PDF…"):
+                scope_pdf = build_msapo_pdf(
+                    analysis=analysis,
+                    scope=scope_value,
+                    inclusions=final_inclusions,
+                    exclusions=final_exclusions,
+                    facility_display=facility_name or selected_site,
+                    facility_address_display=analysis.facility_address,
+                )
         except Exception as exc:
-            st.error(f"PDF generation failed: {exc}")
+            st.error(
+                f"The MSAPO form PDF could not be generated: {exc} "
+                "Nothing was submitted. Use the button again, and if it keeps "
+                "failing report this message."
+            )
         else:
             st.session_state["scope_pdf_bytes"] = scope_pdf
             st.session_state["scope_pdf_signature"] = current_pdf_signature

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import shutil
+import tempfile
 from pathlib import Path
 
 import requests
@@ -32,20 +33,38 @@ def _convert_libreoffice(docx_path: Path) -> Path:
             "Install it with: sudo apt install libreoffice-writer"
         )
 
-    result = subprocess.run(
-        [
-            lo_bin,
-            "--headless",
-            "--convert-to",
-            "pdf:writer_pdf_Export",
-            "--outdir",
-            str(OUTPUT_DIR),
-            str(docx_path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    # Every conversion gets its OWN LibreOffice user profile. Without
+    # -env:UserInstallation each run shares the default profile under $HOME,
+    # which fails in production in ways that never show up in a single-threaded
+    # test run:
+    #   * two concurrent conversions contend for the same profile, and the
+    #     second either refuses to start or attaches to the first instance and
+    #     never performs the conversion -- surfacing as "LibreOffice ran but the
+    #     PDF was not found";
+    #   * a conversion killed mid-flight (timeout, container restart, OOM)
+    #     leaves a lock file behind that poisons the shared profile for every
+    #     later run, so the feature works once and then fails for the life of
+    #     the container;
+    #   * $HOME may not be writable at all in a container.
+    # app/expense_report.convert_expense_workbook_to_pdf already does this for
+    # the Calc path; the Writer path now matches it.
+    with tempfile.TemporaryDirectory(prefix="msapo-libreoffice-") as profile_dir:
+        profile_uri = (Path(profile_dir) / "profile").resolve().as_uri()
+        result = subprocess.run(
+            [
+                lo_bin,
+                "--headless",
+                f"-env:UserInstallation={profile_uri}",
+                "--convert-to",
+                "pdf:writer_pdf_Export",
+                "--outdir",
+                str(OUTPUT_DIR),
+                str(docx_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
 
     if result.returncode != 0:
         raise PDFConversionError(
