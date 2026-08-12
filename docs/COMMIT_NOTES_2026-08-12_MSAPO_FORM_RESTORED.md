@@ -100,9 +100,22 @@ failing later inside Smartsheet validation.
   self-contained module is far lower than the cost of rebuilding it if contract
   administration changes direction again. Do not wire it back in without a
   documented instruction.
-- The DOCX is **not** attached, only the PDF. The request was specifically for a
-  PDF. If administration also wants the editable `.docx`, that is a small
-  follow-up: `build_msapo_pdf` already produces one internally.
+- The DOCX is **not** attached, only the PDF — and this is **settled, not an
+  open question**. Confirmed with the product owner on 2026-08-12: *"the PDF
+  itself is fine. The editing portion is happening earlier in the process, since
+  the scope of work, inclusions, and exclusions in the website are all
+  editable."*
+
+  Do not add the `.docx` attachment as a convenience. The editing surface is the
+  web UI, deliberately: the operator reviews and edits scope, inclusions and
+  exclusions there, and the PDF is the frozen record of what they approved.
+  Shipping an editable copy alongside it would create a second, divergent source
+  of truth for a document the administrator acts on.
+
+  This is also precisely why §2.2 matters. Because editing happens upstream and
+  the PDF is the only artifact that travels, a PDF rendered from
+  `analysis.scope_of_work` instead of the reviewed text would silently discard
+  the entire review step -- the one the whole workflow is built around.
 
 ## 5. Verification
 
