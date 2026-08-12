@@ -55,14 +55,19 @@ def test_three_step_screen_combines_review_and_po_details_in_interaction_order()
     assert "Confirm the PO details" not in source
 
 
-def test_main_generates_exactly_the_quote_and_scope_pdf_from_one_action():
+def test_main_generates_exactly_the_quote_and_msapo_pdf_from_one_action():
     source = WEB_UI.read_text(encoding="utf-8")
 
-    assert source.count("build_scope_pdf(") == 1
+    # Contract administration reversed the earlier policy and now requires the
+    # full MSAPO agreement form rather than the simplified scope sheet, so the
+    # single generation call is build_msapo_pdf. The former guard here asserted
+    # "generate_msapo" was absent -- that guard encoded the superseded policy
+    # and would now fail the requirement it was written to protect.
+    assert source.count("build_msapo_pdf(") == 1
+    assert source.count("build_scope_pdf(") == 0
     assert "unchanged quote" in source
     assert "scope_pdf_bytes" in source
     assert "uploaded_file_bytes" in source
-    assert "generate_msapo" not in source
     assert "convert_docx" not in source
     assert "download_button(" not in source
 
@@ -140,7 +145,7 @@ def test_inline_handoff_contains_recent_login_retry_and_upload_reminders():
     assert "within the last few hours" in inline
     assert "same button again" in inline
     assert "upload the original quote" in inline
-    assert "Scope/Inclusions/Exclusions PDF" in inline
+    assert "MSAPO form PDF" in inline
     assert "does not submit it or attach the two files" in inline
     assert "Downloads folder in" in inline
     assert "File Explorer" in inline

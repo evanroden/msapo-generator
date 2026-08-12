@@ -1,5 +1,18 @@
 # Purchase Order Workflow Policy and Attachment Handoff
 
+> **PARTIALLY REVERSED 2026-08-12 — PO attachment format.** Contract
+> administration now requires the **full MSAPO agreement form rendered to
+> PDF** as the second PO attachment, not the simplified
+> Scope/Inclusions/Exclusions sheet. Statements in this file that the tool
+> "no longer generates the old full MSAPO form", or that filling the MSAPO
+> template and generating an MSAPO document are prohibited, **no longer
+> apply**. Everything else in this document still stands: routing, Object
+> Account, Agreement Type, amounts, assets, requester behavior, the
+> two-file package, and the no-email rule are unchanged. Only the format of
+> the generated attachment changed. See
+> `COMMIT_NOTES_2026-08-12_MSAPO_FORM_RESTORED.md`.
+
+
 > **Superseded business policy.** The authoritative workflow as of 2026-08-08
 > is [`STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
 > This file remains historical context. Its delivery-based Equipment rule,

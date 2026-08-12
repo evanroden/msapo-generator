@@ -74,11 +74,11 @@ def test_scope_draft_is_an_editable_text_field(monkeypatch):
     _configure_smartsheet(monkeypatch)
     captured = {}
 
-    def fake_scope_pdf(**kwargs):
+    def fake_msapo_pdf(**kwargs):
         captured.update(kwargs)
         return b"%PDF-1.7\nsynthetic edited scope"
 
-    monkeypatch.setattr(web_ui, "build_scope_pdf", fake_scope_pdf)
+    monkeypatch.setattr(web_ui, "build_msapo_pdf", fake_msapo_pdf)
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
 
     app.button[0].click().run()

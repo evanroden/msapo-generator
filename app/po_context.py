@@ -105,10 +105,10 @@ def _safe_basename(contract: str, site: str, description: str, rrh: bool) -> str
     clean_description = re.sub(r"[^\w\s-]", "", description or "SOW")[:50]
     if len(clean_description) == 50 and " " in clean_description:
         clean_description = clean_description.rsplit(" ", 1)[0]
-    parts = [prefix, site.strip(), clean_description.strip(), "Scope"]
+    parts = [prefix, site.strip(), clean_description.strip(), "MSAPO"]
     name = " ".join(part for part in parts if part)
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name)
-    return re.sub(r"\s+", " ", name).strip() or "PO Scope"
+    return re.sub(r"\s+", " ", name).strip() or "PO MSAPO"
 
 
 def _selected_contract(state: Mapping[str, Any], token: str) -> str:
@@ -526,13 +526,13 @@ def build_po_context(
         warnings.append("No verified quote and scope PDF package is available to attach.")
     if not document_valid:
         warnings.append(
-            "The Scope/Inclusions/Exclusions PDF is missing or no longer matches the reviewed contract, site, inclusions, and exclusions. Regenerate it."
+            "The MSAPO form PDF is missing or no longer matches the reviewed contract, site, inclusions, and exclusions. Regenerate it."
         )
     if len(attachments) != 2 or not any(
         name.lower().endswith(".pdf") for name, _ in attachments
     ):
         warnings.append(
-            "The attachment package must contain the original quote and one Scope/Inclusions/Exclusions PDF."
+            "The attachment package must contain the original quote and one MSAPO form PDF."
         )
     if len(asset_id) > 160:
         warnings.append("The selected full Asset ID is unexpectedly long.")

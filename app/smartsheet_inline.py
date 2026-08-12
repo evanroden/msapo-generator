@@ -81,7 +81,7 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         columns[index].caption(filename)
     st.warning(
         "Keep both files. Near the end of the Smartsheet form, upload the original quote "
-        "and the Scope/Inclusions/Exclusions PDF."
+        "and the MSAPO form PDF."
     )
     st.caption(
         "Windows Chrome/Edge: save both files, open the Downloads folder in "
