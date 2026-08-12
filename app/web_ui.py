@@ -465,6 +465,29 @@ CUSTOM_CSS = """
         button, a[role="button"] { min-height: 44px; }
         div[data-testid="stCheckbox"] label { min-height: 44px; }
         input, textarea, [role="combobox"] { font-size: 16px !important; }
+
+        /* One tap must place the caret. Without touch-action, WebKit holds the
+           first tap while it watches for a second (double-tap-to-zoom), and on
+           a text field that reads as the tap being ignored: the field shows the
+           tap highlight but no caret or keyboard arrives until you tap again.
+           "manipulation" keeps scrolling and pinch-zoom while dropping the
+           double-tap gesture, which nothing here relies on.
+
+           This already existed on the workflow selector buttons and was simply
+           never applied to the inputs. */
+        input, textarea, [role="combobox"],
+        div[data-baseweb="input"], div[data-baseweb="base-input"],
+        div[data-baseweb="textarea"], div[data-baseweb="select"] {
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
+        }
+        /* The visible box is a BaseWeb wrapper around a smaller input. Make the
+           whole box read and behave as a text target so a tap near its edge
+           lands on the field rather than on inert padding. */
+        div[data-baseweb="input"], div[data-baseweb="base-input"],
+        div[data-baseweb="textarea"] { cursor: text; }
+        div[data-baseweb="input"] input,
+        div[data-baseweb="base-input"] input { width: 100%; }
     }
 </style>
 """
