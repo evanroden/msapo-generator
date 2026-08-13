@@ -128,6 +128,67 @@ _NEGATION_AFTER_RE = re.compile(
 )
 
 
+# A labour word used as a NOUN MODIFIER names a product, not vendor work:
+# "valve repair kits", "service parts", "installation hardware". Measured
+# against a corpus of realistic quotes, these were the only false onsite_labor
+# results, and both sent a materials purchase to 5511-SUBCONTRACTOR.
+_LABOR_AS_PRODUCT_RE = re.compile(
+    r"\b(?:install(?:ation)?|repair|service|maintenance)\s+"
+    r"(?:kit|kits|part|parts|component|components|hardware|material|materials|"
+    r"manual|manuals|contract|agreement)\b"
+)
+
+# A document-level disclaimer that the vendor supplies no labour. Unlike the
+# window-based negation below, these carry across a sentence boundary: "Supply
+# replacement service parts for the boiler. Labor by others." negates the whole
+# quote, not just the clause it sits in.
+_LABOR_DISCLAIMED_RE = re.compile(
+    r"\b(?:labou?r|installation|install|rigging|start-?up|commissioning)\s+"
+    r"(?:is\s+)?(?:to be\s+)?(?:by\s+(?:others|owner|customer)|"
+    r"not\s+included|excluded|by\s+owner)\b"
+    r"|\bby\s+others\b"
+    r"|\bno\s+(?:onsite\s+)?labou?r\b"
+)
+
+
+# Group A covers a COMPLETE equipment item. Parts, kits and components FOR such
+# an item are materials, but the equipment noun still appears in the text, so a
+# bare Group A keyword search sends "service parts for the boiler" to
+# 5302-EQUIPMENT. Detected against the same corpus that exposed the labour bias.
+_PARTS_OF_EQUIPMENT_RE = re.compile(
+    r"\b(?:parts?|kits?|components?|spares?|consumables?|filters?|gaskets?|"
+    r"seals?|belts?|bearings?)\b\s*(?:for|to suit|to fit)?\b"
+    r"|\b(?:replacement|service|repair|spare)\s+(?:parts?|kits?|components?)\b"
+)
+
+
+# "part of the quoted scope" is an idiom, not a component. Without this the
+# phrase turns "Installation is not part of the scope. Supply one new boiler."
+# into a materials purchase.
+_PART_OF_IDIOM_RE = re.compile(r"\bparts?\s+of\b")
+
+
+def _is_parts_purchase(source: str) -> bool:
+    """Whether the quote buys components rather than a complete unit."""
+    return bool(_PARTS_OF_EQUIPMENT_RE.search(_PART_OF_IDIOM_RE.sub(" ", source)))
+
+
+def _labor_signal(source: str) -> bool:
+    """Whether the vendor is affirmatively providing onsite labour.
+
+    Two corrections over a plain keyword search, both driven by measured
+    misclassifications rather than theory:
+
+    * product phrases are removed first, so "repair kits" cannot read as repair
+      work;
+    * a document-level disclaimer ("labor by others") suppresses the signal even
+      when it sits in a different sentence from the labour word.
+    """
+    if _LABOR_DISCLAIMED_RE.search(source):
+        return False
+    return _has_affirmative_match(_LABOR_AS_PRODUCT_RE.sub(" ", source), _LABOR_RE)
+
+
 def _has_affirmative_match(source: str, pattern: re.Pattern[str]) -> bool:
     """Return true when a routing term is not locally negated.
 
@@ -153,9 +214,10 @@ def infer_purchase_route(text: object) -> str:
     source = " ".join(str(text or "").lower().split())
     if _has_affirmative_match(source, _RENTAL_RE):
         return ONSITE_RENTAL
-    if _has_affirmative_match(source, _LABOR_RE):
+    if _labor_signal(source):
         return ONSITE_LABOR
-    if group_a_equipment_match(source):
+    # Parts for a Group A item are materials, not the item itself.
+    if group_a_equipment_match(source) and not _is_parts_purchase(source):
         return EQUIPMENT_PURCHASE
     return MATERIALS_PURCHASE
 
