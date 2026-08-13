@@ -147,3 +147,56 @@ def test_group_a_source_recognizes_complete_equipment_but_not_loose_parts():
 )
 def test_asset_id_preserves_the_full_configured_code(raw, expected):
     assert normalize_asset_id(raw) == expected
+
+
+# --- Routing corpus: the misclassifications that sent quotes to the wrong
+# --- Object Account and Agreement Type in production.
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # Onsite labour, correctly detected before and after.
+        ("Technician will be onsite to replace pump seals and commission the unit.",
+         "onsite_labor"),
+        ("Vendor technician performs annual inspection and service of the boiler.",
+         "onsite_labor"),
+        # Rental keeps priority over the equipment noun it mentions.
+        ("Emergency rental chiller brought onsite and hooked up for the duration.",
+         "onsite_rental"),
+        ("Rental scissor lift provided for the duration of the repair.",
+         "onsite_rental"),
+        # A complete Group A item with no vendor labour.
+        ("Supply and deliver one replacement air handling unit. Installation by others.",
+         "equipment_purchase"),
+        ("Furnish one new centrifugal chiller, freight included. No installation.",
+         "equipment_purchase"),
+        # REGRESSION: a labour word used as a noun modifier names a product.
+        # "repair kits" and "service parts" both routed to 5511-SUBCONTRACTOR.
+        ("Quote for pipe fittings and valve repair kits, shipped to site.",
+         "materials_purchase"),
+        ("Supply replacement service parts for the boiler. Labor by others.",
+         "materials_purchase"),
+        # REGRESSION: parts FOR a Group A item are materials, not the item.
+        # "boiler" alone previously carried this to 5302-EQUIPMENT.
+        ("Replacement gaskets and bearings for the chiller, shipped.",
+         "materials_purchase"),
+        # A disclaimer in a LATER sentence still negates the labour signal.
+        ("Ship 40 replacement filters and 12 gaskets. No labor included.",
+         "materials_purchase"),
+        ("Provide maintenance contract documentation only; no onsite labor.",
+         "materials_purchase"),
+        ("Deliver 6 drums of water treatment chemical. Customer to apply.",
+         "materials_purchase"),
+        # "part of" is an idiom, not a component -- this must stay equipment.
+        ("Installation is not part of the quoted scope. Supply one new boiler.",
+         "equipment_purchase"),
+    ],
+)
+def test_route_inference_over_a_realistic_quote_corpus(text, expected):
+    """Every route reachable, and the two false-labour patterns pinned.
+
+    Object Account and Agreement Type derive entirely from this answer, and a
+    wrong answer is invisible downstream: it simply appears in Smartsheet as a
+    confident 5511-SUBCONTRACTOR / 03 - MSAPO (SERVICE).
+    """
+    assert infer_purchase_route(text) == expected

@@ -87,3 +87,75 @@ def guess_asset_uid(
     if best_score < 45 or best_score == runner_up:
         return None
     return best_uid
+
+
+def _tag_sort_key(tag: str) -> tuple:
+    """Order asset tags by their unit NUMBER, not their text.
+
+    Registries are inconsistent about padding -- Rochester General uses CH-01
+    while United Memorial uses CH-2 -- so a string sort would rank "CH-10"
+    before "CH-2". Sort on the trailing integer, falling back to the text when a
+    tag carries no number at all.
+    """
+    numbers = re.findall(r"\d+", tag or "")
+    return (0, int(numbers[-1]), tag) if numbers else (1, 0, tag or "")
+
+
+def lowest_numbered_of_type(
+    assets: Sequence[Mapping[str, str]], *, quote_text: object = "", hint: object = ""
+) -> str | None:
+    """Pick the lowest-numbered unit when the TYPE is clear but the unit is not.
+
+    Scope text routinely identifies equipment without naming a unit -- "repair
+    the chiller", "boiler teardown". The scorer deliberately refuses to break
+    those ties, which left the operator with no asset at all in exactly the
+    cases where the type was obvious. Product direction is to default to the
+    lowest-numbered unit of that type and let the operator change it.
+
+    "Lowest-numbered" means the lowest that EXISTS at the site, not the number
+    one: United Memorial's chillers are CH-2 and CH-3, so chiller work there
+    resolves to CH-2.
+
+    Only fires when exactly ONE equipment type matches, so a quote touching both
+    a chiller and a cooling tower still resolves to nothing rather than guessing
+    between them. Matching is on the registry's equipment description appearing
+    in the text, which keeps "cooling tower" off "Cooling Tower Fill" and
+    "chiller" off "Chiller VFD".
+    """
+    rows = [
+        row
+        for row in assets
+        if str(row.get("uid", "")).strip() and str(row.get("equipment", "")).strip()
+    ]
+    if not rows:
+        return None
+
+    haystack = _norm(f"{hint or ''} {quote_text or ''}")
+    if not haystack:
+        return None
+
+    # Group by the equipment's HEAD NOUN rather than its full description.
+    # Scope text says "chiller", never "Centrifugal Chiller", so requiring the
+    # whole description to appear matched nothing -- which is precisely why the
+    # tool kept coming back with no asset. The head noun also keeps the
+    # near-misses apart, because theirs differ: "Centrifugal Chiller" -> CHILLER
+    # but "Chiller VFD" -> VFD, and "Cooling Tower" -> TOWER but "Cooling Tower
+    # Fill" -> FILL. Grouping by noun rather than description also means a site
+    # with both a Centrifugal and an Absorption Chiller still resolves to one
+    # chiller group.
+    matched: dict[str, list[Mapping[str, str]]] = {}
+    for row in rows:
+        words = _norm(row.get("equipment")).split()
+        if not words:
+            continue
+        head = words[-1]
+        if _bounded_contains(haystack, head):
+            matched.setdefault(head, []).append(row)
+    # More than one type in play (a chiller AND a cooling tower) is genuinely
+    # ambiguous; guessing between them is worse than leaving it unset.
+    if len(matched) != 1:
+        return None
+
+    candidates = next(iter(matched.values()))
+    candidates.sort(key=lambda row: _tag_sort_key(str(row.get("asset", ""))))
+    return str(candidates[0].get("uid", "")).strip() or None

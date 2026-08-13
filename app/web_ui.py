@@ -18,7 +18,7 @@ import streamlit as st
 
 from app import contracts
 from app.ui_highlight import highlight_needed_fields
-from app.asset_guess import guess_asset_uid
+from app.asset_guess import guess_asset_uid, lowest_numbered_of_type
 from app.assets import assets_for_facility, guess_asset_id
 from app.config import (
     FACILITIES,
@@ -769,7 +769,26 @@ def _asset_control_data(
         quote_text=quote_text,
         hint=analysis.asset_reference,
     )
-    guess = exact_guess if exact_guess in uids else broad_guess
+    # Third stage, only when the first two decline. The scorer refuses to break
+    # a tie between units of the same type, which left the operator with nothing
+    # in exactly the cases where the scope made the type obvious ("repair the
+    # chiller"). Fall back to the lowest-numbered unit of that type.
+    type_guess = (
+        None
+        if (exact_guess in uids or broad_guess)
+        else lowest_numbered_of_type(
+            site_assets,
+            quote_text=" ".join(
+                (
+                    str(quote_text or ""),
+                    str(getattr(analysis, "project_description", "") or ""),
+                    str(getattr(analysis, "scope_of_work", "") or ""),
+                )
+            ),
+            hint=analysis.asset_reference,
+        )
+    )
+    guess = exact_guess if exact_guess in uids else (broad_guess or type_guess)
     return site_assets, labels, guess
 
 
@@ -1386,19 +1405,27 @@ def main() -> None:
         st.session_state[original_po_key] = original_po_guess
 
     route_key = f"purchase_route_{token}"
-    route_guess = str(
-        getattr(analysis, "purchase_route_guess", "") or ""
-    ).strip()
-    if route_guess not in PURCHASE_ROUTES:
-        route_guess = infer_purchase_route(
-            " ".join(
-                (
-                    cached_quote,
-                    str(getattr(analysis, "project_description", "") or ""),
-                    str(getattr(analysis, "scope_of_work", "") or ""),
-                )
+    model_route = str(getattr(analysis, "purchase_route_guess", "") or "").strip()
+    inferred_route = infer_purchase_route(
+        " ".join(
+            (
+                cached_quote,
+                str(getattr(analysis, "project_description", "") or ""),
+                str(getattr(analysis, "scope_of_work", "") or ""),
             )
         )
+    )
+    route_guess = model_route if model_route in PURCHASE_ROUTES else inferred_route
+    # Object Account and Agreement Type are derived entirely from this one
+    # answer, and a wrong answer is invisible downstream -- it just appears in
+    # Smartsheet as a confident 5511-SUBCONTRACTOR. Two independent signals are
+    # available, so treat their DISAGREEMENT as the confidence measure: when the
+    # analyzer and the deterministic text rules reach different conclusions, or
+    # the analyzer offered nothing at all, put the control in front of the
+    # operator instead of leaving it inside the collapsed corrections panel.
+    route_uncertain = (
+        model_route not in PURCHASE_ROUTES or model_route != inferred_route
+    )
     if st.session_state.get(route_key) not in PURCHASE_ROUTES:
         st.session_state[route_key] = route_guess
     purchase_route = str(st.session_state[route_key])
@@ -1745,7 +1772,7 @@ def main() -> None:
     else:
         job_key = ""
 
-    with corrections:
+    with questions if route_uncertain else corrections:
         purchase_route = st.selectbox(
             "How will this work or purchase be handled? *",
             PURCHASE_ROUTES,
@@ -1756,6 +1783,12 @@ def main() -> None:
                 "complete Group A equipment purchases."
             ),
         )
+        if route_uncertain:
+            st.caption(
+                "This one drives Object Account and Agreement Type, and the "
+                "quote did not read clearly either way. Confirm it before "
+                "generating."
+            )
 
     with questions if needs.asset else corrections:
         selected_asset = _render_asset_control(
