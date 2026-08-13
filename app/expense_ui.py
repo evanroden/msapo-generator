@@ -58,6 +58,7 @@ from app.memory import (
     remembered_expense_profile,
 )
 from app.receipt_analyzer import ReceiptAnalysis, analyze_receipt
+from app.ui_highlight import highlight_needed_fields
 
 
 EXPENSE_WORKFLOW = "Expense reimbursement"
@@ -273,6 +274,31 @@ def render_expense_workflow(browser_token: str) -> None:
             ),
         )
     )
+    # Highlight the specific fields still needing a value. The expense block is
+    # not split into resolved/unresolved containers the way the purchase-order
+    # page is, so the keys are named directly. Recomputed every rerun, so a
+    # field stops being highlighted on the run after it is filled.
+    _needs_value_keys = [
+        key
+        for key, missing in (
+            (f"expense_employee_name_{account_token}",
+             _detail_unset(f"expense_employee_name_{account_token}")),
+            (f"expense_employee_number_{account_token}",
+             _detail_unset(f"expense_employee_number_{account_token}")),
+            (f"expense_approver_name_{account_token}",
+             _detail_unset(f"expense_approver_name_{account_token}")),
+            (f"expense_approver_email_{account_token}",
+             _detail_unset(f"expense_approver_email_{account_token}")),
+            (f"expense_satellite_office_{account_token}",
+             st.session_state.get(f"expense_mail_destination_{account_token}")
+             == "satellite"
+             and _detail_unset(f"expense_satellite_office_{account_token}")),
+        )
+        if missing
+    ]
+    if _needs_value_keys:
+        highlight_needed_fields(_needs_value_keys)
+
     if _outstanding_details:
         _details_panel = st.container()
     else:

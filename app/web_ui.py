@@ -17,6 +17,7 @@ from pathlib import Path
 import streamlit as st
 
 from app import contracts
+from app.ui_highlight import highlight_needed_fields
 from app.asset_guess import guess_asset_uid
 from app.assets import assets_for_facility, guess_asset_id
 from app.config import (
@@ -326,6 +327,21 @@ CUSTOM_CSS = """
         letter-spacing: 0.08em;
         padding: 0.25rem 0.4rem;
     }
+    /* A field the operator still has to fill. Reuses the needs-banner idiom --
+       a yellow left bar -- so the banner and the individual fields it refers to
+       read as one system. Deliberately a LEFT BAR rather than a full outline,
+       because a full outline in the same colour is the focus ring; the two must
+       stay visually distinct or "needs a value" and "currently editing" become
+       the same signal. The highlight disappears on the rerun after the field is
+       filled, because placement/emission is recomputed from the live values. */
+    .epc-needs-value {
+        background: #FCFCF3;
+        border-left: 4px solid var(--enfra-yellow);
+        border-radius: 4px;
+        padding: 0.35rem 0 0.35rem 0.7rem;
+        margin: 0.25rem 0;
+    }
+
     .needs-banner {
         background: #F5F9F7;
         border: 1px solid var(--enfra-blue);
@@ -1660,7 +1676,12 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-    questions = st.container()
+    # Only unresolved fields render inside this container -- each field goes
+    # to `questions if needs.X else corrections` -- so highlighting the
+    # container highlights exactly the fields that still need a value, and a
+    # field stops being highlighted the moment it moves to corrections. The
+    # key is what Streamlit turns into the st-key- class the rule targets.
+    questions = st.container(key="po_needs_you")
     corrections = st.expander(
         "Change a value the tool already filled",
         expanded=False,
@@ -1809,6 +1830,23 @@ def main() -> None:
                     "recent name for this ENFRA account."
                 ),
             ).strip()
+
+    # Emitted AFTER the fields render, because the requester's value is not
+    # known until then and CSS applies regardless of emission order.
+    #
+    # The container holds exactly the values still in question -- every other
+    # field goes to `corrections` once resolved -- plus the requester, which is
+    # always required and has no resolved/unresolved split of its own. So:
+    # highlight the whole group while the tool is still asking for something,
+    # otherwise highlight just the requester while it is blank. Never both, so a
+    # field never carries two nested bars.
+    # Uses the container's STATIC key rather than the requester's, whose key
+    # embeds the contract name and so depends on class-name normalisation.
+    # When nothing is in question the container holds only the requester --
+    # every other field has moved to `corrections` -- so highlighting the
+    # container is precise in both cases.
+    if needs.any or (requester_key and not requester_value):
+        highlight_needed_fields(["po_needs_you"])
 
     if not instructions_value and st.toggle(
         "Add Additional Information",
