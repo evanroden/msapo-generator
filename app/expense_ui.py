@@ -58,6 +58,7 @@ from app.memory import (
     remembered_expense_profile,
 )
 from app.receipt_analyzer import ReceiptAnalysis, analyze_receipt
+from app.ui_highlight import highlight_needed_fields
 
 
 EXPENSE_WORKFLOW = "Expense reimbursement"
@@ -245,129 +246,196 @@ def render_expense_workflow(browser_token: str) -> None:
     _seed_profile(browser_token, account)
     account_token = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
 
-    detail_columns = st.columns(2)
-    with detail_columns[0]:
-        employee_name_key = f"expense_employee_name_{account_token}"
-        employee_number_key = f"expense_employee_number_{account_token}"
-        employee_number_recall_key = (
-            f"expense_employee_number_recalled_for_{account_token}"
-        )
-        employee_name = st.text_input(
-            "Employee name *",
-            key=employee_name_key,
-            on_change=_recall_employee_number_for_name,
-            args=(
-                browser_token,
-                account,
-                employee_name_key,
-                employee_number_key,
-                employee_number_recall_key,
-            ),
-        ).strip()
-        employee_number = st.text_input(
-            "Employee number *",
-            key=employee_number_key,
-            help=(
-                "After a confirmed report, this is recalled for the same employee "
-                "name on this browser and account. It remains editable."
-            ),
-            on_change=_clear_employee_number_recall,
-            args=(employee_number_recall_key,),
-        ).strip()
-        if st.session_state.get(employee_number_recall_key) == _employee_name_key(
-            employee_name
-        ):
-            st.caption(
-                "Employee number recalled from this employee's last confirmed report."
-            )
-        employee_home_bu = _employee_home_business_unit(account)
-        home_bu_display_key = f"expense_employee_home_bu_display_{account_token}"
-        st.session_state[home_bu_display_key] = employee_home_bu
-        st.text_input(
-            "Employee Home Business Unit",
-            disabled=True,
-            key=home_bu_display_key,
-            help="Filled automatically from the selected ENFRA account.",
-        )
-    with detail_columns[1]:
-        report_date = st.date_input(
-            "Report date *",
-            key=f"expense_report_date_{account_token}",
-            format="MM/DD/YYYY",
-        )
-        approver_name_key = f"expense_approver_name_{account_token}"
-        approver_email_key = f"expense_approver_email_{account_token}"
-        approver_recall_key = f"expense_approver_recalled_{account_token}"
-        remembered_approvers = tuple(expense_approvers(account))
-        current_approver = str(
-            st.session_state.get(approver_name_key, "") or ""
-        ).strip()
-        approver_names = _approver_name_options(
-            current_approver,
-            remembered_approvers,
-        )
-        approver_name = str(st.selectbox(
-            "Contract administrator / approver name *",
-            approver_names,
-            index=None,
-            key=approver_name_key,
-            placeholder="Type or select an approver",
-            accept_new_options=True,
-            filter_mode="fuzzy",
-            help=(
-                "Start typing to search approvers confirmed for this account, "
-                "or enter a new name. Selecting a remembered name fills the email."
-            ),
-            on_change=_recall_approver_email,
-            args=(
-                approver_name_key,
-                approver_email_key,
-                approver_recall_key,
-                remembered_approvers,
-            ),
-        ) or "").strip()
-        approver_email = st.text_input(
-            "Contract administrator / approver email *",
-            key=approver_email_key,
-            on_change=_clear_approver_recall,
-            args=(approver_recall_key,),
-        ).strip()
-        if st.session_state.get(approver_recall_key) == _employee_name_key(
-            approver_name
-        ):
-            st.caption("Approver email recalled from this account's confirmed history.")
+    # Progressive disclosure, matching the purchase-order flow. Every field
+    # below is still rendered exactly once and stays fully editable -- nothing
+    # is removed and nothing becomes read-only. Only PLACEMENT changes: once the
+    # account's confirmed history has supplied every detail, the block collapses
+    # behind one line instead of presenting ten controls the operator does not
+    # need to touch.
+    #
+    # Placement is decided from session_state BEFORE rendering, because a
+    # widget's value does not exist until it renders. The account selector above
+    # stays visible deliberately: it has no placeholder and silently defaults to
+    # the first contract, so hiding it would repeat the unknown-facility hazard
+    # already fixed on the purchase-order side.
+    def _detail_unset(state_key: str) -> bool:
+        return not str(st.session_state.get(state_key, "") or "").strip()
 
-    mail_destination = st.radio(
-        "Where should the reimbursement check be mailed? *",
-        tuple(_MAIL_LABELS),
-        format_func=lambda value: _MAIL_LABELS[value],
-        horizontal=True,
-        key=f"expense_mail_destination_{account_token}",
+    _outstanding_details = sum(
+        (
+            _detail_unset(f"expense_employee_name_{account_token}"),
+            _detail_unset(f"expense_employee_number_{account_token}"),
+            _detail_unset(f"expense_approver_name_{account_token}"),
+            _detail_unset(f"expense_approver_email_{account_token}"),
+            (
+                st.session_state.get(f"expense_mail_destination_{account_token}")
+                == "satellite"
+                and _detail_unset(f"expense_satellite_office_{account_token}")
+            ),
+        )
     )
-    satellite_office = ""
-    if mail_destination == "satellite":
-        satellite_office = st.text_input(
-            "Satellite office *",
-            key=f"expense_satellite_office_{account_token}",
-        ).strip()
+    # Highlight the specific fields still needing a value. The expense block is
+    # not split into resolved/unresolved containers the way the purchase-order
+    # page is, so the keys are named directly. Recomputed every rerun, so a
+    # field stops being highlighted on the run after it is filled.
+    _needs_value_keys = [
+        key
+        for key, missing in (
+            (f"expense_employee_name_{account_token}",
+             _detail_unset(f"expense_employee_name_{account_token}")),
+            (f"expense_employee_number_{account_token}",
+             _detail_unset(f"expense_employee_number_{account_token}")),
+            (f"expense_approver_name_{account_token}",
+             _detail_unset(f"expense_approver_name_{account_token}")),
+            (f"expense_approver_email_{account_token}",
+             _detail_unset(f"expense_approver_email_{account_token}")),
+            (f"expense_satellite_office_{account_token}",
+             st.session_state.get(f"expense_mail_destination_{account_token}")
+             == "satellite"
+             and _detail_unset(f"expense_satellite_office_{account_token}")),
+        )
+        if missing
+    ]
+    if _needs_value_keys:
+        highlight_needed_fields(_needs_value_keys)
 
-    service_year = 1
-    if contracts.is_rrh(account):
-        service_year = int(
-            st.selectbox(
-                "RRH service year *",
-                tuple(range(1, 10)),
-                key=f"expense_service_year_{account_token}",
-                help=(
-                    "The service year sets the editable Account / Cost Type default: "
-                    "year 1 = 01AMA, year 2 = 02AMA, and so on."
-                ),
+    if _outstanding_details:
+        _details_panel = st.container()
+    else:
+        _details_panel = st.expander(
+            "Report details \u2014 filled from this account's confirmed history",
+            expanded=False,
+        )
+
+    with _details_panel:
+        if not _outstanding_details:
+            st.caption(
+                "Every detail below stays editable. Open this panel to change "
+                "anything the tool filled for you."
             )
+        detail_columns = st.columns(2)
+        with detail_columns[0]:
+            employee_name_key = f"expense_employee_name_{account_token}"
+            employee_number_key = f"expense_employee_number_{account_token}"
+            employee_number_recall_key = (
+                f"expense_employee_number_recalled_for_{account_token}"
+            )
+            employee_name = st.text_input(
+                "Employee name *",
+                key=employee_name_key,
+                on_change=_recall_employee_number_for_name,
+                args=(
+                    browser_token,
+                    account,
+                    employee_name_key,
+                    employee_number_key,
+                    employee_number_recall_key,
+                ),
+            ).strip()
+            employee_number = st.text_input(
+                "Employee number *",
+                key=employee_number_key,
+                help=(
+                    "After a confirmed report, this is recalled for the same employee "
+                    "name on this browser and account. It remains editable."
+                ),
+                on_change=_clear_employee_number_recall,
+                args=(employee_number_recall_key,),
+            ).strip()
+            if st.session_state.get(employee_number_recall_key) == _employee_name_key(
+                employee_name
+            ):
+                st.caption(
+                    "Employee number recalled from this employee's last confirmed report."
+                )
+            employee_home_bu = _employee_home_business_unit(account)
+            home_bu_display_key = f"expense_employee_home_bu_display_{account_token}"
+            st.session_state[home_bu_display_key] = employee_home_bu
+            st.text_input(
+                "Employee Home Business Unit",
+                disabled=True,
+                key=home_bu_display_key,
+                help="Filled automatically from the selected ENFRA account.",
+            )
+        with detail_columns[1]:
+            report_date = st.date_input(
+                "Report date *",
+                key=f"expense_report_date_{account_token}",
+                format="MM/DD/YYYY",
+            )
+            approver_name_key = f"expense_approver_name_{account_token}"
+            approver_email_key = f"expense_approver_email_{account_token}"
+            approver_recall_key = f"expense_approver_recalled_{account_token}"
+            remembered_approvers = tuple(expense_approvers(account))
+            current_approver = str(
+                st.session_state.get(approver_name_key, "") or ""
+            ).strip()
+            approver_names = _approver_name_options(
+                current_approver,
+                remembered_approvers,
+            )
+            approver_name = str(st.selectbox(
+                "Contract administrator / approver name *",
+                approver_names,
+                index=None,
+                key=approver_name_key,
+                placeholder="Type or select an approver",
+                accept_new_options=True,
+                filter_mode="fuzzy",
+                help=(
+                    "Start typing to search approvers confirmed for this account, "
+                    "or enter a new name. Selecting a remembered name fills the email."
+                ),
+                on_change=_recall_approver_email,
+                args=(
+                    approver_name_key,
+                    approver_email_key,
+                    approver_recall_key,
+                    remembered_approvers,
+                ),
+            ) or "").strip()
+            approver_email = st.text_input(
+                "Contract administrator / approver email *",
+                key=approver_email_key,
+                on_change=_clear_approver_recall,
+                args=(approver_recall_key,),
+            ).strip()
+            if st.session_state.get(approver_recall_key) == _employee_name_key(
+                approver_name
+            ):
+                st.caption("Approver email recalled from this account's confirmed history.")
+
+        mail_destination = st.radio(
+            "Where should the reimbursement check be mailed? *",
+            tuple(_MAIL_LABELS),
+            format_func=lambda value: _MAIL_LABELS[value],
+            horizontal=True,
+            key=f"expense_mail_destination_{account_token}",
         )
-        st.caption(
-            f"Receipt coding starts with 695400022 · {service_year:02d}AMA · 5490. "
-            "Each receipt can be changed independently."
-        )
+        satellite_office = ""
+        if mail_destination == "satellite":
+            satellite_office = st.text_input(
+                "Satellite office *",
+                key=f"expense_satellite_office_{account_token}",
+            ).strip()
+
+        service_year = 1
+        if contracts.is_rrh(account):
+            service_year = int(
+                st.selectbox(
+                    "RRH service year *",
+                    tuple(range(1, 10)),
+                    key=f"expense_service_year_{account_token}",
+                    help=(
+                        "The service year sets the editable Account / Cost Type default: "
+                        "year 1 = 01AMA, year 2 = 02AMA, and so on."
+                    ),
+                )
+            )
+            st.caption(
+                f"Receipt coding starts with 695400022 · {service_year:02d}AMA · 5490. "
+                "Each receipt can be changed independently."
+            )
     allocation_seed = _default_job_allocation(account, service_year)
 
     details = ExpenseReportDetails(
