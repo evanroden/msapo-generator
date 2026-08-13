@@ -18,7 +18,7 @@ import streamlit as st
 
 from app import contracts
 from app.ui_highlight import highlight_needed_fields
-from app.asset_guess import guess_asset_uid
+from app.asset_guess import guess_asset_uid, lowest_numbered_of_type
 from app.assets import assets_for_facility, guess_asset_id
 from app.config import (
     FACILITIES,
@@ -769,7 +769,26 @@ def _asset_control_data(
         quote_text=quote_text,
         hint=analysis.asset_reference,
     )
-    guess = exact_guess if exact_guess in uids else broad_guess
+    # Third stage, only when the first two decline. The scorer refuses to break
+    # a tie between units of the same type, which left the operator with nothing
+    # in exactly the cases where the scope made the type obvious ("repair the
+    # chiller"). Fall back to the lowest-numbered unit of that type.
+    type_guess = (
+        None
+        if (exact_guess in uids or broad_guess)
+        else lowest_numbered_of_type(
+            site_assets,
+            quote_text=" ".join(
+                (
+                    str(quote_text or ""),
+                    str(getattr(analysis, "project_description", "") or ""),
+                    str(getattr(analysis, "scope_of_work", "") or ""),
+                )
+            ),
+            hint=analysis.asset_reference,
+        )
+    )
+    guess = exact_guess if exact_guess in uids else (broad_guess or type_guess)
     return site_assets, labels, guess
 
 
