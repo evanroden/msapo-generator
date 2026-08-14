@@ -1,6 +1,10 @@
+import os
 from pathlib import Path
 
+import pytest
+
 from app.expense_report import _SIGNATURE_FONT_CANDIDATES
+from tests.conftest import libreoffice_can_convert
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +61,29 @@ def test_runtime_includes_workbook_writer_and_pdf_renderer():
     assert "fonts-urw-base35" in dockerfile
     assert "HEALTHCHECK" in dockerfile
     assert 'CMD ["streamlit", "run", "run_web.py"' in dockerfile
+
+
+def test_the_renderer_probe_agrees_that_ci_can_render():
+    """The skip guard must never be the thing that silences CI.
+
+    ``requires_libreoffice`` skips when the writer/calc import filters are
+    absent, which is correct on a developer machine carrying only
+    ``libreoffice-core``. On CI it must never fire: the workflow installs both
+    packages, so a False here means the PROBE is wrong, and the renderer tests
+    would go back to skipping silently -- the precise failure the package pin
+    below was written to end.
+
+    Asserted only under GITHUB_ACTIONS, because the probe returning False is the
+    expected and useful answer everywhere else.
+    """
+    if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
+        pytest.skip("only meaningful on the CI runner")
+
+    assert libreoffice_can_convert(), (
+        "CI installs libreoffice-writer and libreoffice-calc, but the probe in "
+        "tests/conftest.py reports it cannot render. The renderer tests are "
+        "skipping on CI. Fix the probe -- do not relax the guard."
+    )
 
 
 def test_ci_installs_the_same_document_renderers_as_the_image():
