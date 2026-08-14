@@ -8,9 +8,15 @@ Process Control provides two workflows in one Dockerized Streamlit application:
    employee-reimbursement workbook, a combined PDF packet, and a ready-to-review
    email draft.
 
-The repository retains its historical `msapo-generator` name. The PO workflow
-is no longer an email or MSAPO document generator; email-draft generation is
-used only by the separately approved expense-reimbursement workflow.
+The repository retains its historical `msapo-generator` name. The PO workflow is
+no longer an email generator; email-draft generation is used only by the
+separately approved expense-reimbursement workflow. It **does** generate the
+MSAPO form — as a PDF, restored 2026-08-12 at contract administration's request.
+
+**Start with [`docs/README.md`](docs/README.md)** if you are picking this project
+up. It orders every document, records which ones have been superseded and on
+what narrow subject, and is pinned by `tests/test_docs_index.py` so it cannot
+quietly fall behind the directory.
 
 The authoritative business policy handoff is
 [`docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md`](docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md).
@@ -43,7 +49,8 @@ patch, cache behavior, and production verification contract are documented in
    collapsed correction panel; unresolved fields stay visible and stable.
    Vendor representative name and email are required and are recalled from
    prior verified requests for the same account and vendor when available.
-3. Press one button to create the scope PDF and reveal both downloads plus the
+3. Press one button to render the MSAPO form to PDF and reveal both downloads
+   plus the
    native new-tab Smartsheet link. Upload both files near the end of the form,
    review, and submit it manually.
 
@@ -134,10 +141,14 @@ Every route requires exactly two files:
 
 1. The original quote, byte-for-byte unchanged when uploaded, or a TXT snapshot
    when the user supplied pasted quote text.
-2. One generated PDF containing Scope, Inclusions, and Exclusions.
+2. The MSAPO agreement form, populated with the reviewed Scope, Inclusions, and
+   Exclusions and rendered to PDF.
 
-The active workflow does not generate or request the old MSAPO DOCX/form. The
-custom URL can prefill fields but cannot place local files in Smartsheet's upload
+The reviewed values are edited upstream in the web UI, so the form is delivered
+as a PDF only — no DOCX is offered. This reverses the 2026-08-08 policy of
+attaching a lightweight scope-only PDF; see
+[`docs/COMMIT_NOTES_2026-08-12_MSAPO_FORM_RESTORED.md`](docs/COMMIT_NOTES_2026-08-12_MSAPO_FORM_RESTORED.md).
+The custom URL can prefill fields but cannot place local files in Smartsheet's upload
 control, so the user downloads both verified files and uploads them in the form.
 On Windows, both downloaded files can be selected in File Explorer and dragged
 together onto the form's attachment box.
@@ -152,7 +163,10 @@ app/ocr.py                     PDF/image extraction and normalization
 app/equipment_policy.py        Approved Group A equipment policy
 app/asset_guess.py             Unique-best site asset suggestion
 app/po_rules.py                Canonical route/account/agreement rules
-app/scope_pdf.py               Lightweight supporting PDF generation
+app/document_generator.py      MSAPO form population and PDF build (LIVE)
+app/pdf_converter.py           Headless LibreOffice DOCX/XLSX to PDF (LIVE)
+app/ui_highlight.py            Transient highlighting of fields needing a value
+app/scope_pdf.py               Scope-only PDF; dormant since 2026-08-12
 app/po_context.py              Verified PO fields and two-file snapshot
 app/smartsheet.py              Manual/prefill/API validation and adapters
 app/smartsheet_inline.py       Two downloads, prefilled link, and hidden fallback
@@ -171,17 +185,18 @@ scripts/patch_streamlit_metadata.py
 templates/Employee_Reimbursement_Expense_Report_JDE_10012025.xlsx
                                Supplied official reimbursement template
 pages/2_Smartsheet_PO.py       Non-submitting legacy bookmark notice
+docs/README.md                 Index of every document, reading order, and
+                               what supersedes what
 docs/STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08.md
                                Authoritative policy and successor handoff
-docs/RRH_STREAMLINING_AND_HARDENING_2026-08-08.md
-                               Quick-path and reliability hardening notes
-docs/RRH_UNIFIED_REVIEW_BRAND_BROWSER_HARDENING_2026-08-09.md
-                               Current UI, brand, browser, and release notes
+docs/COMMIT_NOTES_*.md         Per-change engineering notes, newest first
 tests/                         Pytest regression suite
 ```
 
-`app/document_generator.py` and `app/pdf_converter.py` remain dormant historical
-compatibility modules. `app/eml_builder.py` is used only to create the approved
+`app/document_generator.py` and `app/pdf_converter.py` were dormant until
+2026-08-12 and are now the live PO attachment path — do not treat them as
+removable. `app/scope_pdf.py` took the opposite trip and is now reached only by
+its own tests. `app/eml_builder.py` is used only to create the approved
 expense-report draft; the PO workflow does not import or call it.
 
 ## Local development

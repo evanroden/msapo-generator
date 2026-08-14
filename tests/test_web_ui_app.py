@@ -14,6 +14,7 @@ import app.web_ui as web_ui
 from app.expense_report import ExpensePackage
 from app.quote_analyzer import QuoteAnalysis
 from app.receipt_analyzer import ReceiptAnalysis, ReceiptLineItem
+from tests.conftest import requires_libreoffice
 
 
 ROOT = Path(__file__).parents[1]
@@ -39,9 +40,14 @@ def _configure_smartsheet(monkeypatch):
     )
 
 
+@requires_libreoffice
 def test_synthetic_rrh_quick_path_generates_two_files_and_native_new_tab_link(
     monkeypatch,
 ):
+    """Covers the full quick path INCLUDING the MSAPO render, so it needs a real
+    LibreOffice. Guarded rather than mocked: mocking the renderer here would have
+    hidden the profile-contention bug that this path actually hit in production.
+    CI installs the filters, so this always runs where it counts."""
     _configure_smartsheet(monkeypatch)
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
 
