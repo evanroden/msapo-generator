@@ -128,6 +128,60 @@ _NEGATION_AFTER_RE = re.compile(
 )
 
 
+# Vendor boilerplate -- terms and conditions, warranty, indemnity -- is not the
+# quoted scope, and on a real quote it DWARFS the scope. The Trane quote that
+# exposed this is 45,866 characters of which the actual proposal is 3,563: the
+# remaining 92% is standard legal text that happens to contain "by others",
+# "parts", "repairs" and "materials".
+#
+# Classifying the whole document therefore classifies Trane's lawyers rather
+# than the job. Two independent misreads came from that single cause:
+#
+#   * "modifications made by others to Company's equipment" -- inside the
+#     warranty exclusions, three pages after the scope -- tripped the
+#     document-level labour disclaimer and silenced the labour signal for the
+#     entire quote;
+#   * "the cost of transporting a part requiring service" and thirteen similar
+#     phrases made _is_parts_purchase true.
+#
+# The realistic-quote corpus never caught this because its entries are scope
+# text with no attached terms, which is not what OCR hands us in production.
+#
+# Cut at the first boilerplate heading, but only when a substantial proposal
+# precedes it -- a document whose scope follows its terms keeps everything.
+_BOILERPLATE_HEADING_RE = re.compile(
+    r"\b(?:terms\s+(?:and|&)\s+conditions"
+    r"|standard\s+terms"
+    r"|general\s+terms"
+    r"|limited\s+warranty"
+    r"|warranty\s+(?:and\s+)?(?:disclaimer|limitations?|exclusions?)"
+    r"|limitation\s+of\s+liability"
+    r"|indemnif(?:y|ication)|indemnit(?:y|ies))\b",
+    re.IGNORECASE,
+)
+
+# Below this, the "scope" is too short to be a proposal and the cut is more
+# likely to have removed real content than boilerplate.
+_MIN_SCOPE_CHARS = 200
+
+
+def scope_region(text: object) -> str:
+    """The proposal, with trailing vendor boilerplate removed.
+
+    Routing reads what the vendor is selling. Terms and conditions describe what
+    happens if it goes wrong, in language that reuses every keyword the routing
+    rules depend on, so leaving them in lets the boilerplate outvote the scope.
+
+    Conservative in both directions: no heading found, or too little text before
+    the first one, and the original is returned unchanged.
+    """
+    source = str(text or "")
+    match = _BOILERPLATE_HEADING_RE.search(source)
+    if not match or match.start() < _MIN_SCOPE_CHARS:
+        return source
+    return source[: match.start()]
+
+
 # A labour word used as a NOUN MODIFIER names a product, not vendor work:
 # "valve repair kits", "service parts", "installation hardware". Measured
 # against a corpus of realistic quotes, these were the only false onsite_labor
@@ -211,7 +265,7 @@ def _has_affirmative_match(source: str, pattern: re.Pattern[str]) -> bool:
 
 def infer_purchase_route(text: object) -> str:
     """Make a reviewable fallback guess when the analyzer has no route value."""
-    source = " ".join(str(text or "").lower().split())
+    source = " ".join(scope_region(text).lower().split())
     if _has_affirmative_match(source, _RENTAL_RE):
         return ONSITE_RENTAL
     if _labor_signal(source):
