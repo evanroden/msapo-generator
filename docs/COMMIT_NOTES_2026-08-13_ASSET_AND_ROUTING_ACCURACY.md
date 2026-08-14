@@ -2,13 +2,17 @@
 document_type: implementation_commit_handoff
 repository: evanroden/msapo-generator
 branch: main
+merge_commit: d8d317331d9f6ac6dce7a7e1cb1125275ec37186
+merge_commit_subject: "Fix asset identification and PO routing defaults (#46)"
 pull_request: 46
 base_commit: 15c478a7852a16d736948b21dcc88585d4e3a62d
 date: 2026-08-13
 workflow: purchase_order
 change_type: extraction_accuracy
 status: shipped
+merge_method: merge_commit_not_squash
 reported_by: product owner, from production use
+follows: COMMIT_NOTES_2026-08-13_EXPENSE_DISCLOSURE_AND_NEEDS_YOU_HIGHLIGHT.md
 implementation_commits:
   - sha: e89795ccf07afb69e1df76c2e92d510cb2dd5016
     subject: Resolve a named equipment type to the lowest-numbered unit at that site

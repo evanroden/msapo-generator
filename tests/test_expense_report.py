@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
@@ -44,6 +43,7 @@ from app.expense_report import (
 )
 from app.job_numbers import RRH_JOB_NUMBERS
 from app.expense_ui import _build_expense_eml
+from tests.conftest import requires_libreoffice
 
 
 def _receipt_bytes(text: str = "TOTAL $31.25") -> bytes:
@@ -659,10 +659,7 @@ def test_email_uses_pdf_only_and_excel_remains_in_package():
     ]
 
 
-@pytest.mark.skipif(
-    not (shutil.which("libreoffice") or shutil.which("soffice")),
-    reason="LibreOffice is not installed in this test environment",
-)
+@requires_libreoffice
 def test_combined_pdf_places_signed_form_before_each_receipt():
     package = build_expense_package(
         _details(),
