@@ -1,9 +1,16 @@
 """Routing reads the quoted scope, not the vendor's terms and conditions.
 
-Reported from production: a Trane service quote for chiller oil-pump repair --
-mobilize, troubleshoot, repair wiring, start up, demobilize, travel included --
-classified as 5301-MATERIALS / ON - STANDARD PO UNDER $25K. The contract
-administrator flagged it as 5511, which is correct: it is nothing but labour.
+Found while checking a real Trane service quote for chiller oil-pump repair --
+mobilize, troubleshoot, repair wiring, start up, demobilize, travel included.
+It is nothing but labour, and infer_purchase_route returned 5301-MATERIALS /
+ON - STANDARD PO UNDER $25K for it.
+
+No wrong PO resulted: the submitted account was already 5511, and the analyzer's
+own guess -- which outranks this fallback -- was never in doubt on a scope this
+blatant. What the bad fallback DOES do is disagree with the analyzer on nearly
+every real vendor quote, and that disagreement is what route_uncertain uses to
+decide whether to interrupt the operator. See
+docs/COMMIT_NOTES_2026-08-14_SCOPE_REGION_ROUTING.md section 1.1.
 
 The cause was not the labour rules. It was WHAT THEY READ. That quote extracts
 to 45,866 characters of which the proposal is the first 3,563; the other 92% is
@@ -65,7 +72,9 @@ Company, and modifications made by others to Company's equipment.
 
 
 def test_the_reported_quote_shape_routes_to_labor_not_materials():
-    """The end-to-end assertion: what the operator would have been shown."""
+    """The end-to-end assertion for the fallback path -- what the operator sees
+    when the analyzer returns no usable route, and what route_uncertain compares
+    the analyzer against when it does."""
     document = LABOR_SCOPE + BOILERPLATE
 
     assert infer_purchase_route(document) == ONSITE_LABOR

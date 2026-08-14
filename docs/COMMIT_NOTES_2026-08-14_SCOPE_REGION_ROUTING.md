@@ -7,28 +7,63 @@ date: 2026-08-14
 workflow: purchase_order
 change_type: extraction_accuracy
 status: shipped
-reported_by: David Siegal (contract administration), relayed by the product owner
+reported_by: found while investigating a query from contract administration
 evidence: one real Trane service quote, UMMC CH-3, quote ID 377277
 follows: COMMIT_NOTES_2026-08-13_ASSET_AND_ROUTING_ACCURACY.md
-closes: "the open question in section 4 of the 2026-08-13 notes"
+supersedes_claim: "an earlier draft of these notes claimed the submitted PO was wrong; it was not"
 ---
 
 # Commit notes: routing reads the scope, not the terms and conditions
 
 ## 1. LLM quick context
 
-A contract administrator questioned a submitted PO:
+**Read this section before the rest. The reported symptom turned out to be a
+false alarm; the defect found underneath it is real but narrower than the
+investigation first concluded.**
 
-> *"Just to confirm, this new Trane quote is Labor, since I think scope says
-> so?" … "It'll be an object account (OA) of 5511 then."*
+A contract administrator asked whether a Trane quote should be Labor / `5511`.
+It should, and **the operator had already entered `5511`** — the administrator
+had misread an adjacent row and corrected himself:
 
-The operator had entered `5301 - ON`. **The tool produced that same wrong
-answer**, so this was a tool defect, not a data-entry slip. Confirmed by running
-the actual quote through `infer_purchase_route`.
+> *"I may have missed a row though … all bunched together. You probably had it
+> right first time."*
 
-The 2026-08-13 notes ended by saying the remaining unknown needed *"one real
-quote plus what it should have been."* This is that quote. **It closes that
-question**, and the answer was not what those notes predicted.
+So no wrong PO was ever submitted.
+
+### 1.1 What is nonetheless a real defect
+
+While checking the quote, `infer_purchase_route` was measured on the actual
+extracted text and returned `materials_purchase` → `5301`. That is reproducible
+and wrong. But `infer_purchase_route` is the **fallback**, not the answer:
+
+```python
+route_guess = model_route if model_route in PURCHASE_ROUTES else inferred_route
+```
+
+The analyzer's `purchase_route_guess` wins whenever it is valid, and on a scope
+this blatant it almost certainly said `onsite_labor`. **What the operator was
+shown was never verified** — that needs an API key this environment does not
+have. The honest scope of the finding is therefore:
+
+1. The fallback is wrong on boilerplate-heavy input, and it is the *sole*
+   decider whenever the analyzer returns nothing — an API failure, a timeout, an
+   unparseable response.
+2. **The fallback also feeds `route_uncertain`** (added 2026-08-13), which
+   compares it against the model. A fallback that misreads nearly every real
+   vendor quote makes the two signals disagree constantly, pushing the route
+   selector into the "Needs You" panel on quotes the tool actually got right.
+   That converts a correct confident answer into a nag, and it degrades the
+   disagreement heuristic to noise on exactly the documents it was built for.
+
+The second point is the stronger justification for this change, and it was not
+the reason the change was originally made.
+
+### 1.2 On the 2026-08-13 open question
+
+Those notes asked for *"one real quote plus what it should have been"* to
+distinguish a model error from a rules error. This quote does **not** close that
+question: it is a case where the model and the operator were both right, so it
+says nothing about the model. The question stays open.
 
 ### 1.1 Invariants
 
@@ -90,7 +125,9 @@ BEFORE  materials_purchase  ->  5301-MATERIALS      / ON - STANDARD PO UNDER $25
 AFTER   onsite_labor        ->  5511-SUBCONTRACTOR  / 03 - MSAPO (SERVICE)
 ```
 
-which is what the contract administrator said it should be.
+That is the **fallback's** answer, which now matches both the correct account and
+the analyzer — so `route_uncertain` no longer fires on this quote and the
+selector stays out of the "Needs You" panel (§1.1, point 2).
 
 ## 4. Why the existing corpus could not have caught this
 
