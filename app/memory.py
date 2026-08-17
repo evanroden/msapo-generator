@@ -39,6 +39,24 @@ details remain scoped to the exact account.
 Storage is a SQLite file on the Render persistent disk (mounted at /test1).
 Falls back to a repo-local ./data_store for local dev, and degrades gracefully
 (no learning, no crash) if the database can't be opened at all.
+
+EVERY public function here is failure-swallowing by design: memory is a
+convenience and must never take down a PO or an expense report the operator has
+already produced. The cost of that choice is that ALL failures in this module
+are silent -- an unwritable disk, a schema mismatch and "nothing learned yet"
+are indistinguishable to every caller, and none of them logs. When device
+recall stops working in production, suspect this module even though nothing
+raised. See _SCHEMA for the specific silent failure that schema drift causes.
+
+Callers: app/web_ui.py (account-manager and vendor-representative recall on the
+PO flow) and app/expense_ui.py (expense profile, employee number, and the
+account-scoped approver directory). Both feed the browser token produced by
+app/device_identity.py; "" is a valid token meaning "no device", and every
+device-scoped function returns empty for it rather than sharing one bucket.
+
+Single-instance only. The idempotency guarantees below rest on SQLite
+transactions against one local file (FM-G05); learning must move to a shared
+transactional database before this app is ever scaled past one instance.
 """
 
 from __future__ import annotations
@@ -50,9 +68,29 @@ import sqlite3
 import time
 from pathlib import Path
 
+# Read only by suggest_admin_emails/suggest_contacts, which have no caller in
+# the app today. Not a live tuning knob -- changing it changes nothing visible.
 SUGGEST_THRESHOLD = 5
+# The LEGACY requester threshold, still read by remembered_device_requester.
+# The active flow uses record_device_account_manager, which remembers after ONE
+# ready package for a device+account pair; that reversal is deliberate (see the
+# module docstring and FM-C07) and must not be "restored" to a threshold.
 REQUESTER_SUGGEST_THRESHOLD = 3
 
+# Re-executed on EVERY connection, which is why every statement is
+# CREATE TABLE IF NOT EXISTS.
+#
+# There is no migration step anywhere in this module -- contrast
+# app/smartsheet_store.py, which guards its ALTER TABLE with PRAGMA table_info
+# precisely because it needed one. CREATE TABLE IF NOT EXISTS is a NO-OP on a
+# table that already exists with different columns, so adding a column to a
+# table below (for instance a new field in _EXPENSE_PROFILE_FIELDS) is a SILENT
+# production outage: on the Render disk the old table survives, every SELECT of
+# the new column raises OperationalError, every caller's except-branch converts
+# that to {} / "" / False, and the whole feature reads as "nothing remembered".
+# Tests never see it, because they build the database fresh in a tmp_path.
+# Verified by hand against a drifted table. Adding a column REQUIRES an
+# ALTER TABLE migration here, not just an edit to the CREATE statement.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS admin_emails (
     contract TEXT NOT NULL,
@@ -171,6 +209,11 @@ CREATE TABLE IF NOT EXISTS expense_approver_events (
 
 
 def _data_dir() -> Path:
+    # EPC_DATA_DIR wins over the mount so every test can point the whole module
+    # at a tmp_path. The /test1 probe is is_dir(), not exists(): when the Render
+    # disk is not attached the path is simply absent and the repo-local
+    # data_store keeps local development working. A Render dashboard value can
+    # shadow render.yaml for this variable -- confirm both during deployment.
     env = os.getenv("EPC_DATA_DIR")
     if env:
         return Path(env)
@@ -181,13 +224,28 @@ def _data_dir() -> Path:
 
 
 def _db_path() -> Path:
+    # Creates the directory as a side effect, so callers must not invoke this
+    # before their own validation. Every public function below rejects invalid
+    # identity arguments BEFORE calling _connect(), which is what lets
+    # tests assert that a rejected input leaves no database file behind at all.
     d = _data_dir()
     d.mkdir(parents=True, exist_ok=True)
     return d / "epc_memory.db"
 
 
 def _connect() -> sqlite3.Connection | None:
-    """Open (and initialize) the database; None if storage is unavailable."""
+    """Open (and initialize) the database; None if storage is unavailable.
+
+    Returns an open connection the CALLER must close -- every public function
+    below does so in a ``finally``. Returns None instead of raising when the
+    disk is missing, read-only, full or corrupt (FM-G04), so learning degrades
+    without touching the workflow.
+
+    WAL is set per connection because there is no separate init step; the pragma
+    is a no-op once the file is already in WAL mode. Note that a failure inside
+    this try -- the pragma or the schema script -- leaves the just-opened
+    connection unclosed and relies on garbage collection to release it.
+    """
     try:
         conn = sqlite3.connect(_db_path(), timeout=5)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -198,22 +256,49 @@ def _connect() -> sqlite3.Connection | None:
 
 
 def _norm_email(email: str | None) -> str:
+    # Ends-only strip, deliberately NOT the whitespace collapse _norm_name does:
+    # an address is stored as the operator confirmed it. The consequence is that
+    # an interior newline or tab survives normalization AND survives
+    # _looks_like_email below -- see the note there.
     return (email or "").strip().lower()
 
 
 def _norm_name(name: str | None) -> str:
+    # Collapses interior runs so "  Evan   Roden " and "Evan Roden" are one
+    # person. This is the DISPLAY form that gets written back into the widget;
+    # _requester_key is the comparison form.
     return " ".join((name or "").split())
 
 
 def _requester_key(name: str | None) -> str:
+    # casefold(), not lower(): this is a matching key for human names, and
+    # app/expense_ui.py's _employee_name_key derives its own key the same way.
+    # The two must stay equivalent or a remembered employee number stops pairing
+    # with the name in the field -- silently, as a blank rather than an error.
     return _norm_name(name).casefold()
 
 
 def _account_key(account: str | None) -> str:
+    # Account/contract values come from contracts.contract_names(), so this
+    # normally changes nothing. It exists so a re-exported contracts.json that
+    # merely re-cases or re-spaces an account name does not orphan every
+    # device-scoped row already learned under the old spelling.
+    #
+    # NOTE the asymmetry: the contract-scoped tables (admin_emails, contacts,
+    # vendor_contacts) key on the RAW contract string instead, so they do not
+    # get that protection. Do not "unify" it without migrating those rows.
     return " ".join((account or "").split()).casefold()
 
 
 def _device_hash(device_token: str | None) -> str:
+    # The raw browser token is NEVER persisted -- that is the privacy boundary
+    # documented in the 2026-08-04 handoff, and tests assert the stored value is
+    # a 64-character digest rather than the token.
+    #
+    # No format validation on purpose: device_identity.device_token() already
+    # allow-lists the real cookie, and keeping this permissive is what lets the
+    # tests drive the whole module with readable tokens like "browser-a". The
+    # 200-character cap is only a guard against hashing an absurd input.
     token = (device_token or "").strip()
     if not token or len(token) > 200:
         return ""
@@ -221,9 +306,18 @@ def _device_hash(device_token: str | None) -> str:
 
 
 def _norm_vendor(vendor: str | None) -> str:
+    # The STORED key, punctuation intact: "acme mechanical, inc." is written to
+    # vendor_contacts exactly like this. _vendor_match_key is a second, looser
+    # key computed only at read time, so history is never rewritten by a change
+    # to the suffix list below.
     return " ".join((vendor or "").split()).lower()
 
 
+# Suffixes stripped only from the END of a vendor name, so "LP Gas Co" keeps its
+# leading "LP". A name that is nothing but suffixes ("LP", "Limited") collapses
+# to "" -- vendor_reps() guards on that explicitly, because an empty match key
+# would otherwise equal the empty key of every other suffix-only vendor and hand
+# one vendor's representatives to another.
 _LEGAL_VENDOR_SUFFIXES = frozenset(
     {
         "co",
@@ -242,7 +336,16 @@ _LEGAL_VENDOR_SUFFIXES = frozenset(
 
 
 def _vendor_match_key(vendor: str | None) -> str:
-    """Normalize punctuation and legal suffixes without fuzzy name guessing."""
+    """Normalize punctuation and legal suffixes without fuzzy name guessing.
+
+    Lets "Acme Mechanical, Inc." and "ACME Mechanical" resolve to the same
+    representatives. It is intentionally NOT fuzzy: "Trane" and "Trane U.S.
+    Inc." do not match, because the alternative is offering one vendor's contact
+    for another's quote, which the operator has no reason to double-check.
+    """
+    # The findall drops every non-alphanumeric character, so "St. Mary's Supply"
+    # and "St Marys Supply" agree. The loop pops repeatedly because real names
+    # end in stacked suffixes ("Foo Services Co Inc").
     words = re.findall(r"[a-z0-9]+", _norm_vendor(vendor))
     while words and words[-1] in _LEGAL_VENDOR_SUFFIXES:
         words.pop()
@@ -250,6 +353,22 @@ def _vendor_match_key(vendor: str | None) -> str:
 
 
 def _looks_like_email(email: str) -> bool:
+    """Cheap plausibility check before an address is worth remembering.
+
+    NOT a validator, and deliberately weaker than the three real ones in this
+    codebase (smartsheet._EMAIL_RE, workflow_review._EMAIL_RE and
+    expense_report._looks_like_email, which all require a non-space run either
+    side of the "@" and a dot in the domain).
+
+    It accepts "@.", "a@b@c.d", and -- because it tests only for a literal
+    SPACE, while _norm_email does not collapse interior whitespace -- an address
+    carrying a newline or tab, which is exactly the shape a PDF-wrapped address
+    arrives in. Those get stored and later prefilled, and the strict validator
+    downstream then blocks the submission with no hint that memory is to blame.
+
+    On the PO path this is a second gate only: web_ui teaches vendor contacts
+    solely from a package that already passed validate_submission_fields.
+    """
     return "@" in email and "." in email.split("@")[-1] and " " not in email
 
 
@@ -262,7 +381,19 @@ def record_send(
     contact_email: str | None = None,
 ) -> bool:
     """Record one send's details for a contract. Returns False if storage is
-    unavailable (the app keeps working, it just doesn't learn)."""
+    unavailable (the app keeps working, it just doesn't learn).
+
+    LEGACY, and the only writer of admin_emails/contacts. No production caller
+    remains -- the active flow calls record_vendor_contact instead. Keep it: it
+    also increments vendor_contacts, which vendor_reps() and therefore the live
+    representative recall still read, so historical rows written by this
+    function are still surfaced today (pinned by
+    test_legacy_vendor_history_remains_available).
+
+    Unlike record_vendor_contact this has NO context_id, so it counts once per
+    call -- a Streamlit rerun would inflate it. That is the defect that made the
+    event-keyed replacement necessary; do not re-wire this into the UI.
+    """
     if not contract:
         return False
     conn = _connect()
@@ -314,6 +445,19 @@ def record_vendor_contact(
     A generated package counts once. Regenerating the same package is
     idempotent, while correcting its vendor representative moves the event to
     the corrected pair instead of teaching both values.
+
+    Returns the current use count, or 0 for invalid input or unavailable
+    storage -- the caller cannot distinguish those, and does not need to.
+
+    ``context_id`` carries the whole guarantee. It comes from
+    po_context.vendor_contact_memory_context_id, which hashes the package with
+    the vendor/contact/requester fields EXCLUDED, so correcting a
+    representative on an otherwise identical package hits the same event row.
+    Passing a per-rerun value here would restore the rerun inflation this
+    design exists to prevent, and nothing would look wrong.
+
+    ``contract`` is used RAW (not _account_key'd) because it is the primary key
+    of this table's existing rows; see the note on _account_key.
     """
     vend = _norm_vendor(vendor)
     name = _norm_name(contact_name)
@@ -338,6 +482,13 @@ def record_vendor_contact(
     now = time.time()
     current = (vend, name, email)
     try:
+        # BEGIN IMMEDIATE, not the implicit transaction: the read of the prior
+        # event and the counter update that depends on it must not interleave
+        # with another writer, or a correction can decrement a count that a
+        # concurrent write already moved. Taking the write lock up front also
+        # turns contention into the 5s busy timeout rather than a mid-flight
+        # "database is locked". Every "BEGIN IMMEDIATE" block in this module
+        # owns its own commit/rollback and must not be wrapped in "with conn".
         conn.execute("BEGIN IMMEDIATE")
         prior = conn.execute(
             "SELECT vendor,name,email FROM vendor_contact_events "
@@ -345,6 +496,12 @@ def record_vendor_contact(
             (contract, context),
         ).fetchone()
 
+        # Correction path. The decrement-then-delete pair is what makes a
+        # corrected package stop teaching the WRONG representative: without it,
+        # fixing a typo'd contact would leave both the wrong and the right pair
+        # in vendor_reps(), and the wrong one would keep the higher count and so
+        # keep winning remembered_vendor_contact(). The DELETE is guarded on
+        # count<=0 so a pair still earned by OTHER packages survives.
         if prior and tuple(prior) != current:
             conn.execute(
                 "UPDATE vendor_contacts SET count=count-1 "
@@ -374,6 +531,18 @@ def record_vendor_contact(
                 (contract, vend, name, email, now),
             )
         else:
+            # Pure rerun of an already-recorded package: refresh recency only,
+            # never the count. This is the branch that makes Streamlit's
+            # constant re-execution harmless.
+            #
+            # UPDATE-only, so it cannot RECREATE a vendor_contacts row that went
+            # missing while its event row survived; the count then reads 0
+            # forever for this package. record_expense_approver was changed to
+            # an upsert for exactly that reason -- see the
+            # "..._recovers_if_its_directory_row_is_missing" test in
+            # tests/test_expense_memory.py -- but this function,
+            # record_device_account_manager and record_device_requester
+            # were not.
             conn.execute(
                 "UPDATE vendor_contact_events SET recorded_at=? "
                 "WHERE contract=? AND context_id=?",
@@ -403,7 +572,13 @@ def record_vendor_contact(
 
 
 def suggest_admin_emails(contract: str) -> list[str]:
-    """Admin emails used >= SUGGEST_THRESHOLD times on THIS contract only."""
+    """Admin emails used >= SUGGEST_THRESHOLD times on THIS contract only.
+
+    UNREFERENCED: no caller in app/, pages/, scripts/ or tests. Its only writer
+    is record_send, which is itself no longer called in production, so it
+    returns [] on any current deployment. Reported as a dead-code candidate
+    rather than removed -- removal is a separate verified phase.
+    """
     conn = _connect()
     if conn is None or not contract:
         return []
@@ -421,7 +596,13 @@ def suggest_admin_emails(contract: str) -> list[str]:
 
 
 def suggest_contacts(contract: str) -> list[tuple[str, str]]:
-    """(name, email) pairs used >= SUGGEST_THRESHOLD times on THIS contract."""
+    """(name, email) pairs used >= SUGGEST_THRESHOLD times on THIS contract.
+
+    UNREFERENCED, same as suggest_admin_emails: no caller anywhere, and its only
+    writer (record_send) is no longer called in production. The live equivalent
+    is vendor_reps/remembered_vendor_contact, which are vendor-scoped and
+    event-deduplicated. Dead-code candidate, not removed here.
+    """
     conn = _connect()
     if conn is None or not contract:
         return []
@@ -440,7 +621,17 @@ def suggest_contacts(contract: str) -> list[tuple[str, str]]:
 
 def vendor_reps(contract: str, vendor: str | None) -> list[tuple[str, str]]:
     """Every rep we've EVER seen for this vendor on THIS contract (no
-    threshold — a vendor rarely has more than a few reps)."""
+    threshold — a vendor rarely has more than a few reps).
+
+    Ordered most-used then most-recent, de-duplicated on (name, email), and
+    never crossing a contract boundary. Returns [] for an unknown contract or
+    vendor and for unavailable storage -- the caller cannot tell those apart.
+
+    Exact vendor spelling is tried FIRST and the suffix-normalized fallback runs
+    only when it finds nothing. Reversing that would let history stored under
+    "Acme Mechanical, Inc." and "Acme Mechanical LLC" -- genuinely different
+    legal entities in some markets -- merge into one list.
+    """
     vend = _norm_vendor(vendor)
     conn = _connect()
     if conn is None or not contract or not vend:
@@ -451,11 +642,20 @@ def vendor_reps(contract: str, vendor: str | None) -> list[tuple[str, str]]:
             "WHERE contract=? ORDER BY count DESC, last_used DESC",
             (contract,),
         ).fetchall()
+        # One SELECT for the whole contract, then filtered in Python, because
+        # the fallback below has to compute _vendor_match_key over the STORED
+        # spellings -- SQL cannot express it, and a per-vendor query would miss
+        # every row whose stored name differs only by a legal suffix.
         exact = [row for row in rows if row[0] == vend]
         if exact:
             matched = exact
         else:
             match_key = _vendor_match_key(vend)
+            # ``match_key and`` is not defensive noise. A vendor named only by a
+            # legal suffix ("LP", "Limited") normalizes to "", and without this
+            # guard "" would equal the key of every other suffix-only vendor and
+            # return the wrong company's representatives -- confidently, with no
+            # sign to the operator that the name did not really match.
             matched = [
                 row
                 for row in rows
@@ -487,12 +687,21 @@ def remembered_vendor_contact(
     A contact value extracted from the current quote can select the matching
     historical pair. Otherwise the most-used, most-recent pair wins. No result
     is ever borrowed from another account or a merely similar vendor name.
+
+    Returns ("", "") -- never a half pair -- when nothing is known. Name and
+    email are ONE identity here, as they are in the expense approver recall:
+    returning a remembered email beside a different name is the failure this
+    shape prevents.
     """
     reps = vendor_reps(contract, vendor)
     if not reps:
         return "", ""
     wanted_email = _norm_email(contact_email)
     wanted_name = _requester_key(contact_name)
+    # Email before name before frequency. An address is the near-unique
+    # identifier, a name is not: two reps at one vendor can share a name, and
+    # falling back to reps[0] on a name collision would attach the busier rep's
+    # address to the person the quote actually names.
     if wanted_email:
         for name, email in reps:
             if _norm_email(email) == wanted_email:
@@ -516,6 +725,20 @@ def record_device_account_manager(
     A verified PO context counts once. Correcting the name on the same context
     moves that event instead of double-counting. The latest valid name becomes
     the next default for this exact device+account pair after the first use.
+
+    Returns the current use count, or 0 for invalid input or unavailable
+    storage. Callers ignore the number; it exists for the tests that pin the
+    idempotency and correction behaviour.
+
+    ONE ready package is enough -- there is no threshold here, unlike the legacy
+    record_device_requester below. That reversal is deliberate (FM-C07): a
+    shared browser is handled by "the latest verified user wins" rather than by
+    making the first user earn a default over three packages.
+
+    web_ui only calls this when the package passed ready + Smartsheet field
+    validation + attachment preflight, so an abandoned or rejected draft never
+    teaches a name. Loosening that gate is what would let a bad draft train the
+    default for the next person on the same browser.
     """
     device = _device_hash(device_token)
     account_key = _account_key(account)
@@ -576,6 +799,14 @@ def record_device_account_manager(
                 (device, account_key, manager, name, now),
             )
         else:
+            # Rerun of an already-counted package. display_name is refreshed
+            # even though manager_key is unchanged, so a capitalization fix
+            # ("evan roden" -> "Evan Roden") reaches the prefill; the KEY is
+            # casefolded, so that is not a new person.
+            #
+            # UPDATE-only: if the directory row were missing while its event row
+            # survived, this silently restores nothing and the count stays 0.
+            # See the matching note in record_vendor_contact.
             conn.execute(
                 "UPDATE device_account_managers SET display_name=?, last_used=? "
                 "WHERE device_hash=? AND account_key=? AND manager_key=?",
@@ -602,7 +833,17 @@ def record_device_account_manager(
 def remembered_device_account_manager(
     device_token: str | None, account: str | None
 ) -> str:
-    """Return the latest requester for this exact browser and account."""
+    """Return the latest requester for this exact browser and account.
+
+    "" when this browser has never completed a package for this account, when
+    the cookie is absent, or when storage is unavailable -- the caller seeds a
+    blank field either way and cannot distinguish them.
+
+    ORDER BY last_used before use_count, deliberately inverted from what a
+    "most trusted" ranking would do. On a shared tablet the person who last
+    completed a package IS the likely next requester; ranking by use_count
+    first would keep prefilling a departed colleague's name for months.
+    """
     device = _device_hash(device_token)
     account_key = _account_key(account)
     if not device or not account_key:
@@ -624,6 +865,18 @@ def remembered_device_account_manager(
         conn.close()
 
 
+# The single source of truth for the device_expense_profiles column list: it
+# builds the INSERT columns, the ON CONFLICT assignments, the SELECT list, and
+# the keys of the dict remembered_expense_profile() returns. Every name here
+# MUST exist as a column in _SCHEMA under the same spelling.
+#
+# Adding a field is not a one-line change. There is no migration in this module,
+# so on an existing deployment the new column will not exist, the SELECT raises,
+# the except-branch returns {}, and ALL expense recall stops with no error --
+# while a fresh tmp_path database makes every test pass. Read the _SCHEMA note.
+#
+# Order within the tuple is free (columns and placeholders are generated from
+# it together), but it must stay consistent within a single call.
 _EXPENSE_PROFILE_FIELDS = (
     "employee_name",
     "employee_number",
@@ -656,6 +909,21 @@ def record_expense_profile(
     Receipt images, merchants, dates, descriptions, and amounts are deliberately
     excluded. The profile is written only after the operator generates a valid
     package and the latest verified values replace the prior defaults.
+
+    Returns True only when both writes committed. False covers an absent
+    cookie, an absent account, an over-long value, an implausible approver
+    address, and unavailable storage -- indistinguishable to the caller, which
+    ignores the result because a failed remember must never disturb a report the
+    operator already has in hand.
+
+    The exclusion list is a PRIVACY boundary, not an optimization: this table
+    holds only what the operator would otherwise retype. Do not add a receipt,
+    merchant, amount or signature field to _EXPENSE_PROFILE_FIELDS.
+
+    Two rows are written -- the latest-profile row (one per device+account) and
+    a per-employee row. The second exists because the first is overwritten by
+    whoever files most recently, which used to hand the next employee the
+    previous employee's number.
     """
     device = _device_hash(device_token)
     account_key = _account_key(account)
@@ -665,8 +933,15 @@ def record_expense_profile(
         field: " ".join(str(values.get(field, "") or "").split())
         for field in _EXPENSE_PROFILE_FIELDS
     }
+    # All-or-nothing: one over-long value abandons the WHOLE profile rather than
+    # truncating it. A truncated employee number or job number would be written
+    # back into the form on the next report and submitted as if confirmed.
     if any(len(value) > 240 for value in cleaned.values()):
         return False
+    # Lowercased only for the check; the stored value keeps the operator's
+    # casing, because it is redisplayed in the approver field rather than used
+    # as a key. An EMPTY approver email is allowed through -- the field is
+    # optional here and required by the report generator, not by memory.
     if cleaned["approver_email"] and not _looks_like_email(
         cleaned["approver_email"].lower()
     ):
@@ -696,6 +971,10 @@ def record_expense_profile(
                     time.time(),
                 ),
             )
+            # Only a NAMED employee with a number earns a mapping row. Writing a
+            # row keyed on "" would make every unnamed draft overwrite one
+            # shared bucket, and remembered_expense_employee_number() would then
+            # hand that number to the next employee who left the name blank.
             if employee_key and employee_number:
                 conn.execute(
                     "INSERT INTO device_expense_employees "
@@ -725,7 +1004,16 @@ def remembered_expense_profile(
     device_token: str | None,
     account: str | None,
 ) -> dict[str, str]:
-    """Return the latest expense defaults for this exact browser+account."""
+    """Return the latest expense defaults for this exact browser+account.
+
+    Returns {} -- never a partially populated dict -- for an absent cookie or
+    account, no stored row, or unavailable storage. expense_ui._seed_profile
+    relies on that: it seeds through ``setdefault`` so a missing profile simply
+    leaves the fields blank.
+
+    Keys are exactly _EXPENSE_PROFILE_FIELDS and every value is a str. A schema
+    drift makes this return {} silently rather than raising; see _SCHEMA.
+    """
     device = _device_hash(device_token)
     account_key = _account_key(account)
     if not device or not account_key:
@@ -759,6 +1047,16 @@ def remembered_expense_employee_number(
     Matching is exact after case and whitespace normalization. The legacy
     latest-profile row remains a fallback so existing deployments gain recall
     before their first report is generated with the new mapping table.
+
+    Returns "" for an unknown employee, and expense_ui treats that as "clear the
+    number field". Exact matching is the point: a fuzzy match would attach one
+    employee's number to a similarly named colleague's reimbursement, and
+    neither the operator nor the form would flag it.
+
+    The legacy branch is NOT redundant with the mapping table. Every browser
+    that filed a report before device_expense_employees existed has a profile
+    row and no mapping row; deleting the fallback silently drops recall for
+    those users until they file once more.
     """
     device = _device_hash(device_token)
     account_key = _account_key(account)
@@ -804,6 +1102,18 @@ def record_expense_approver(
     moves that event to the corrected person, and correcting an email for the
     same normalized name replaces the older email. Returns the current use
     count, or zero when validation/storage is unavailable.
+
+    ACCOUNT-scoped, NOT device-scoped -- the only store here that is shared
+    between browsers. That is the feature: an employee on a new phone can search
+    an administrator their colleague already confirmed. It also means one row
+    per NORMALIZED NAME per account, so two distinct administrators with the
+    same name collapse into one entry and the most recently confirmed email wins
+    for both. Reported, not fixed.
+
+    An approver email is REQUIRED here (unlike in record_expense_profile): this
+    directory exists to pair a name with an address, and a nameless or
+    address-less entry would let expense_ui offer a name that blanks the email
+    when selected.
     """
     account_key = _account_key(account)
     name = _norm_name(approver_name)
@@ -865,6 +1175,18 @@ def record_expense_approver(
                 (account_key, approver_key, name, email, now),
             )
         else:
+            # Same approver, same report: an UPSERT, not the plain UPDATE its
+            # three sibling functions use. Two reasons, both load-bearing.
+            #
+            # It RECOVERS a directory row that went missing while its event row
+            # survived; a plain UPDATE would match nothing and this account
+            # would never see that approver again, silently. Pinned by the
+            # "..._recovers_if_its_directory_row_is_missing" test in
+            # tests/test_expense_memory.py.
+            #
+            # And it re-applies display_name/email WITHOUT touching use_count,
+            # which is how correcting only the address on an unchanged name
+            # replaces the old address instead of creating a second entry.
             conn.execute(
                 "INSERT INTO expense_approvers "
                 "(account_key,approver_key,display_name,email,use_count,last_used) "
@@ -893,7 +1215,18 @@ def record_expense_approver(
 
 
 def expense_approvers(account: str | None) -> list[tuple[str, str]]:
-    """Return confirmed approver name/email pairs for this account only."""
+    """Return confirmed approver name/email pairs for this account only.
+
+    Only approvers CONFIRMED by a generated report appear. In particular the
+    RRH administrator that _seed_profile fills from deployment configuration is
+    absent until the first report is filed -- expense_ui compensates by
+    prepending the current field value to its option list, and that compensation
+    is required, not belt-and-braces.
+
+    Ordering feeds a fuzzy-search selectbox: most-used, then most-recent, then
+    NOCASE alphabetical so the list is stable rather than reshuffling between
+    reruns for approvers with equal counts.
+    """
     account_key = _account_key(account)
     if not account_key:
         return []
@@ -923,6 +1256,19 @@ def record_device_requester(
     once, so Streamlit reruns and repeated page visits do not inflate the threshold.
     Correcting the requester on the same context moves that one use to the corrected
     name. Returns the current use count, or 0 when memory is unavailable/invalid.
+
+    LEGACY and DELIBERATELY UNWIRED. This is the original browser-wide,
+    three-use requester memory; the active flow uses
+    record_device_account_manager, which is scoped to device+account and
+    remembers after one package. The reversal was intentional -- one manager's
+    name must not become the default on a different ENFRA account -- and
+    tests/test_smartsheet_handoff_entrypoint.py asserts that web_ui does NOT
+    call this function. Reconnecting it would reintroduce the cross-account
+    leak, and nothing in the UI would look wrong.
+
+    Kept because the device_requesters rows on the production disk are still
+    readable and the behaviour is regression-tested. Do not delete without a
+    verified removal pass.
     """
     device = _device_hash(device_token)
     name = _norm_name(requester_name)
@@ -996,7 +1342,14 @@ def record_device_requester(
 
 
 def remembered_device_requester(device_token: str | None) -> str:
-    """Most-recent requester with at least three distinct PO contexts."""
+    """Most-recent requester with at least three distinct PO contexts.
+
+    LEGACY reader for record_device_requester, browser-wide and NOT scoped to an
+    account. Exercised only by tests/test_requester_memory.py; the active flow
+    reads remembered_device_account_manager instead. Not dead in the removable
+    sense -- it still documents and pins the superseded behaviour -- but it must
+    not be reintroduced into the UI.
+    """
     device = _device_hash(device_token)
     if not device:
         return ""
@@ -1018,7 +1371,26 @@ def remembered_device_requester(device_token: str | None) -> str:
 
 
 def forget_device_requester(device_token: str | None) -> bool:
-    """Forget requester learning for this browser without affecting other memory."""
+    """Forget requester learning for this browser without affecting other memory.
+
+    Clears BOTH legacy requester tables together. Deleting only the
+    device_requesters rows would leave orphaned event rows, and a later
+    re-record on one of those contexts would take the "already counted" branch
+    and never rebuild the directory row.
+
+    True means the statements ran, NOT that anything was deleted -- there is no
+    "nothing to forget" signal. False means an absent token or unavailable
+    storage.
+
+    Touches only the legacy tables: device_account_managers,
+    device_expense_profiles and the approver directory are untouched.
+
+    The active UI exposes no forget control at all
+    (tests/test_smartsheet_handoff_entrypoint.py asserts web_ui never names this
+    function), because a shared browser is handled by latest-user-wins instead.
+    Called only from tests today; keep it for operator support and for any
+    future removal pass.
+    """
     device = _device_hash(device_token)
     if not device:
         return False

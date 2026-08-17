@@ -41,6 +41,8 @@ PO routing / Object Account / Agreement Type
   STREAMLINED_RRH_PO_WORKFLOW_HANDOFF_2026-08-08         (the matrix itself, UNCHANGED)
     -> COMMIT_NOTES_2026-08-13_ASSET_AND_ROUTING_ACCURACY (which route gets picked, and
                                                            whether the operator sees it)
+      -> COMMIT_NOTES_2026-08-14_SCOPE_REGION_ROUTING      (what the rules READ -- scope
+                                                           only, not the vendor's terms)
 
 Expense workflow
   EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11              (form mapping and controls)
@@ -59,6 +61,8 @@ what was **not** verified, and what was deliberately left alone.
 
 | Date | Document | PR | Subject |
 |---|---|---|---|
+| 2026-08-14 | [`CODE_REVIEW_FINDINGS_2026-08-14.md`](CODE_REVIEW_FINDINGS_2026-08-14.md) | #48 | Line-by-line review and annotation pass. 23 bugs, 21 dead-code candidates, 16 duplications — **all unactioned**. Records which 12 modules were NOT reviewed. |
+| 2026-08-14 | [`COMMIT_NOTES_2026-08-14_SCOPE_REGION_ROUTING.md`](COMMIT_NOTES_2026-08-14_SCOPE_REGION_ROUTING.md) | #48 | Routing was classifying the vendor's terms and conditions — 92% of a real quote's text — instead of the scope. Closes the open question left by the 2026-08-13 notes. |
 | 2026-08-13 | [`COMMIT_NOTES_2026-08-13_ASSET_AND_ROUTING_ACCURACY.md`](COMMIT_NOTES_2026-08-13_ASSET_AND_ROUTING_ACCURACY.md) | #46 | Lowest-numbered asset resolution; three separate causes of Object Account / Agreement Type always reading Subcontractor/MSAPO. |
 | 2026-08-13 | [`COMMIT_NOTES_2026-08-13_EXPENSE_DISCLOSURE_AND_NEEDS_YOU_HIGHLIGHT.md`](COMMIT_NOTES_2026-08-13_EXPENSE_DISCLOSURE_AND_NEEDS_YOU_HIGHLIGHT.md) | #45 | Expense step 2 collapsed behind one line; unfilled required fields highlighted in both workflows. Includes two reverted attempts and why they failed. |
 | 2026-08-12 | [`COMMIT_NOTES_2026-08-12_TOUCH_AND_RENDERER_RELIABILITY.md`](COMMIT_NOTES_2026-08-12_TOUCH_AND_RENDERER_RELIABILITY.md) | #43, #44 | iPad double-tap to focus a field; the generate button appearing to do nothing; LibreOffice profile contention; CI never exercising the renderers. |
