@@ -127,7 +127,11 @@ def test_inline_handoff_shows_two_downloads_link_and_only_hidden_copy_fallback()
     assert helper_source is not None
     assert "render_prefilled_link(prefilled.url)" in helper_source
     assert "render_manual_handoff(" in helper_source
-    assert '.expander("Troubleshooting: show manual field values", expanded=False)' in helper_source
+    assert '"Troubleshooting: show manual field values"' in helper_source
+    assert "expanded=bool(prefilled.skipped)" in helper_source
+    assert helper_source.index("if prefilled.skipped:") < helper_source.index(
+        "render_prefilled_link(prefilled.url)"
+    )
     assert ".download_button(" in helper_source
     assert "len(renamed_files) != 2" in helper_source
     assert "record_device_requester(" not in helper_source

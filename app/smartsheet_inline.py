@@ -201,6 +201,12 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         st.error("No populated fields are available for the Smartsheet link.")
         return
 
+    if prefilled.skipped:
+        st.warning(
+            "The prefilled link omitted these optional values: "
+            + ", ".join(prefilled.skipped)
+            + ". Add them manually in Smartsheet using the values below."
+        )
     render_prefilled_link(prefilled.url)
     # Stated explicitly because the opposite is the natural assumption once the
     # form appears already filled in (FM-D05). A URL cannot carry files, and
@@ -214,12 +220,10 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     # the copy list next to a working link was FM-C09: operators re-entered
     # fields the link had already filled, which is slower and introduces the
     # transcription errors the prefill route exists to remove.
-    with st.expander("Troubleshooting: show manual field values", expanded=False):
-        if prefilled.skipped:
-            st.warning(
-                "These values did not fit in the custom URL: "
-                + ", ".join(prefilled.skipped)
-            )
+    with st.expander(
+        "Troubleshooting: show manual field values",
+        expanded=bool(prefilled.skipped),
+    ):
         st.caption(
             "Use these copy controls only if a field remains blank after reopening "
             "Smartsheet and tapping the link again."

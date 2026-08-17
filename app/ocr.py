@@ -3,11 +3,11 @@
 Supported inputs:
 - Plain text
 - PDF: embedded text first, then Claude PDF vision, then rendered page images
-- Claude-native images: JPEG, PNG, GIF, WebP
-- Normalized images: HEIC/HEIF, TIFF and BMP converted to PNG in memory
+- Images: JPEG, PNG, GIF, WebP, HEIC/HEIF, TIFF and BMP
 
 The original uploaded bytes are never modified; normalization is used only for
-analysis. Multi-frame TIFF/HEIF files are sent as ordered PNG image blocks.
+analysis. Every image format is decoded, orientation-corrected, bounded, and
+sent as ordered JPEG image blocks.
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ _VISION_MAX_EDGE = (1568, 1568)
 # under the API's overall request ceiling. Per-frame size is bounded by the
 # downscale above; this bounds their sum, which _MAX_IMAGE_FRAMES alone does not.
 _MAX_TOTAL_ENCODED_BYTES = 24 * 1024 * 1024
+_MAX_ENCODED_BYTES_PER_IMAGE = 5 * 1024 * 1024
 
 DIRECT_IMAGE_MEDIA_TYPES = {
     ".png": "image/png",
@@ -67,19 +68,41 @@ def _image_block(data: bytes, media_type: str) -> dict:
     }
 
 
+def _enforce_vision_payload_budget(blocks: list[dict], *, label: str) -> None:
+    """Reject oversized image payloads before making a paid API request."""
+    encoded_sizes = [
+        len(block.get("source", {}).get("data", ""))
+        for block in blocks
+        if block.get("type") == "image"
+    ]
+    oversized = next(
+        (size for size in encoded_sizes if size > _MAX_ENCODED_BYTES_PER_IMAGE),
+        None,
+    )
+    if oversized is not None:
+        raise ValueError(
+            f"One {label} page is too large to analyze "
+            f"({oversized / 1_000_000:.0f} MB encoded). Resize or split it."
+        )
+    encoded_total = sum(encoded_sizes)
+    if encoded_total > _MAX_TOTAL_ENCODED_BYTES:
+        raise ValueError(
+            f"These {len(encoded_sizes)} {label} pages are too large to analyze "
+            f"together ({encoded_total / 1_000_000:.0f} MB encoded). Split the "
+            "file into smaller uploads."
+        )
+
+
 def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
     """Return Claude-compatible image blocks for one uploaded image file.
 
-    Claude-native formats pass through unchanged. HEIC/HEIF, TIFF and BMP are
-    decoded with Pillow and re-encoded as ordered PNG frames. This also prevents
-    the app from claiming support for media types the vision API does not accept.
+    Every supported format is decoded with Pillow and re-encoded as bounded,
+    ordered JPEG frames. Native formats are normalized too: passing their raw
+    bytes through left PNG/GIF/WebP uploads outside both the pixel and request
+    size guards.
     """
     suffix = suffix.lower()
-    media_type = DIRECT_IMAGE_MEDIA_TYPES.get(suffix)
-    if media_type:
-        return [_image_block(file_bytes, media_type)]
-
-    if suffix not in NORMALIZED_IMAGE_SUFFIXES:
+    if suffix not in SUPPORTED_IMAGE_SUFFIXES:
         raise ValueError(f"Unsupported image type: {suffix or '(no extension)'}")
 
     if suffix in {".heic", ".heif", ".hif"}:
@@ -153,18 +176,7 @@ def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
     if not blocks:
         raise ValueError("The image did not contain a readable frame.")
 
-    # Per-image size is bounded by the downscale, but a multi-frame file can
-    # still breach the REQUEST budget in aggregate: _MAX_IMAGE_FRAMES allows 20
-    # frames, and base64 inflates each by ~4/3. Fail here with something the
-    # operator can act on instead of surfacing an opaque API rejection after the
-    # upload has already been paid for.
-    encoded_total = sum(len(block["source"]["data"]) for block in blocks)
-    if encoded_total > _MAX_TOTAL_ENCODED_BYTES:
-        raise ValueError(
-            f"These {len(blocks)} pages are too large to analyze together "
-            f"({encoded_total / 1_000_000:.0f} MB encoded). Split the file into "
-            "smaller uploads."
-        )
+    _enforce_vision_payload_budget(blocks, label="image")
     return blocks
 
 
@@ -207,8 +219,13 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
 def _ocr_pdf_via_document(file_bytes: bytes) -> str:
     """OCR a PDF by sending it to Claude as a native document block."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     b64 = base64.standard_b64encode(file_bytes).decode("ascii")
+    if len(b64) > _MAX_TOTAL_ENCODED_BYTES:
+        raise ValueError(
+            "This PDF is too large for direct document OCR; trying bounded "
+            "page images instead."
+        )
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=8192,
@@ -233,7 +250,7 @@ def _ocr_pdf_via_document(file_bytes: bytes) -> str:
 
 
 def _ocr_pdf_via_page_images(file_bytes: bytes) -> str:
-    """OCR a PDF by rasterizing each page to PNG and reading the images."""
+    """OCR a PDF through bounded, normalized page images."""
     import fitz  # PyMuPDF
 
     content: list[dict] = []
@@ -252,7 +269,8 @@ def _ocr_pdf_via_page_images(file_bytes: bytes) -> str:
                     f"({width}×{height} pixels at OCR resolution)."
                 )
             png = page.get_pixmap(dpi=150).tobytes("png")
-            content.append(_image_block(png, "image/png"))
+            content.extend(image_blocks_for_vision(png, ".png"))
+    _enforce_vision_payload_budget(content, label="PDF")
     content.append({"type": "text", "text": _OCR_PROMPT})
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     message = client.messages.create(

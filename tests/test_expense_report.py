@@ -34,6 +34,7 @@ from app.expense_report import (
     expense_report_signature,
     expense_report_warnings,
     irs_business_mileage_rate,
+    mileage_reimbursement,
     parse_expense_amount,
     parse_mileage,
     receipt_attachment_pages,
@@ -481,6 +482,24 @@ def test_mileage_rows_use_travel_date_rate_and_leave_prohibited_columns_blank():
         assert form.cell(row, 12).value is None
         assert all(form.cell(row, column).value is None for column in range(14, 18))
     assert total_reimbursement([], mileage) == Decimal("148.50")
+
+
+def test_mileage_half_cent_matches_excels_round_half_up():
+    mileage = _mileage(
+        "half-cent",
+        travel_date=date(2025, 12, 31),
+        miles="1.15",
+    )
+
+    assert mileage_reimbursement(mileage) == Decimal("0.81")
+    assert total_reimbursement([], [mileage]) == Decimal("0.81")
+    payload = build_expense_workbook(
+        _details(),
+        [_item("minimum-total", amount="$20.00")],
+        mileage_items=[mileage],
+    )
+    form = load_workbook(BytesIO(payload), data_only=False)["EXPENSE REIMBURSEMENT"]
+    assert form["H10"].value == "=ROUND(G10*0.70,2)"
 
 
 def test_unknown_future_mileage_rate_blocks_instead_of_guessing():

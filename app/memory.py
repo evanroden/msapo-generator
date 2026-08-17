@@ -80,17 +80,10 @@ REQUESTER_SUGGEST_THRESHOLD = 3
 # Re-executed on EVERY connection, which is why every statement is
 # CREATE TABLE IF NOT EXISTS.
 #
-# There is no migration step anywhere in this module -- contrast
-# app/smartsheet_store.py, which guards its ALTER TABLE with PRAGMA table_info
-# precisely because it needed one. CREATE TABLE IF NOT EXISTS is a NO-OP on a
-# table that already exists with different columns, so adding a column to a
-# table below (for instance a new field in _EXPENSE_PROFILE_FIELDS) is a SILENT
-# production outage: on the Render disk the old table survives, every SELECT of
-# the new column raises OperationalError, every caller's except-branch converts
-# that to {} / "" / False, and the whole feature reads as "nothing remembered".
-# Tests never see it, because they build the database fresh in a tmp_path.
-# Verified by hand against a drifted table. Adding a column REQUIRES an
-# ALTER TABLE migration here, not just an edit to the CREATE statement.
+# CREATE TABLE IF NOT EXISTS is a NO-OP on an older table, so changing a schema
+# below still requires a migration. _migrate_expense_approver_identity handles
+# the one historical change this module has needed; any future field or key
+# change needs an equivalent guarded migration, not only an edit here.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS admin_emails (
     contract TEXT NOT NULL,
@@ -196,16 +189,89 @@ CREATE TABLE IF NOT EXISTS expense_approvers (
     email          TEXT NOT NULL,
     use_count      INTEGER NOT NULL DEFAULT 0,
     last_used      REAL NOT NULL DEFAULT 0,
-    PRIMARY KEY (account_key, approver_key)
+    PRIMARY KEY (account_key, approver_key, email)
 );
 CREATE TABLE IF NOT EXISTS expense_approver_events (
     account_key  TEXT NOT NULL,
     context_id   TEXT NOT NULL,
     approver_key TEXT NOT NULL,
+    email        TEXT NOT NULL,
     recorded_at  REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (account_key, context_id)
 );
 """
+
+
+def _migrate_expense_approver_identity(conn: sqlite3.Connection) -> None:
+    """Upgrade the name-only approver key without losing confirmed history."""
+    def _shape() -> tuple[tuple[str, ...], set[str]]:
+        directory_info = conn.execute(
+            "PRAGMA table_info(expense_approvers)"
+        ).fetchall()
+        event_info = conn.execute(
+            "PRAGMA table_info(expense_approver_events)"
+        ).fetchall()
+        primary_key = tuple(
+            row[1]
+            for row in sorted(directory_info, key=lambda row: row[5])
+            if row[5]
+        )
+        return primary_key, {row[1] for row in event_info}
+
+    expected_key = ("account_key", "approver_key", "email")
+    primary_key, event_columns = _shape()
+    if primary_key == expected_key and "email" in event_columns:
+        return
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # Another connection may have completed the migration while this one
+        # waited for the write lock. Re-read under the lock before renaming.
+        primary_key, event_columns = _shape()
+        if primary_key == expected_key and "email" in event_columns:
+            conn.commit()
+            return
+        if primary_key != ("account_key", "approver_key") or "email" in event_columns:
+            raise sqlite3.OperationalError("Unsupported expense approver schema")
+        conn.execute("ALTER TABLE expense_approvers RENAME TO expense_approvers_legacy")
+        conn.execute(
+            "ALTER TABLE expense_approver_events "
+            "RENAME TO expense_approver_events_legacy"
+        )
+        conn.execute(
+            "CREATE TABLE expense_approvers ("
+            "account_key TEXT NOT NULL,approver_key TEXT NOT NULL,"
+            "display_name TEXT NOT NULL,email TEXT NOT NULL,"
+            "use_count INTEGER NOT NULL DEFAULT 0,last_used REAL NOT NULL DEFAULT 0,"
+            "PRIMARY KEY (account_key,approver_key,email))"
+        )
+        conn.execute(
+            "CREATE TABLE expense_approver_events ("
+            "account_key TEXT NOT NULL,context_id TEXT NOT NULL,"
+            "approver_key TEXT NOT NULL,email TEXT NOT NULL,"
+            "recorded_at REAL NOT NULL DEFAULT 0,"
+            "PRIMARY KEY (account_key,context_id))"
+        )
+        conn.execute(
+            "INSERT INTO expense_approvers "
+            "(account_key,approver_key,display_name,email,use_count,last_used) "
+            "SELECT account_key,approver_key,display_name,email,use_count,last_used "
+            "FROM expense_approvers_legacy"
+        )
+        conn.execute(
+            "INSERT INTO expense_approver_events "
+            "(account_key,context_id,approver_key,email,recorded_at) "
+            "SELECT e.account_key,e.context_id,e.approver_key,a.email,e.recorded_at "
+            "FROM expense_approver_events_legacy AS e "
+            "JOIN expense_approvers_legacy AS a "
+            "ON a.account_key=e.account_key AND a.approver_key=e.approver_key"
+        )
+        conn.execute("DROP TABLE expense_approver_events_legacy")
+        conn.execute("DROP TABLE expense_approvers_legacy")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def _data_dir() -> Path:
@@ -242,16 +308,18 @@ def _connect() -> sqlite3.Connection | None:
     without touching the workflow.
 
     WAL is set per connection because there is no separate init step; the pragma
-    is a no-op once the file is already in WAL mode. Note that a failure inside
-    this try -- the pragma or the schema script -- leaves the just-opened
-    connection unclosed and relies on garbage collection to release it.
+    is a no-op once the file is already in WAL mode.
     """
+    conn: sqlite3.Connection | None = None
     try:
         conn = sqlite3.connect(_db_path(), timeout=5)
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
+        _migrate_expense_approver_identity(conn)
         return conn
     except Exception:
+        if conn is not None:
+            conn.close()
         return None
 
 
@@ -870,7 +938,7 @@ def remembered_device_account_manager(
 # the keys of the dict remembered_expense_profile() returns. Every name here
 # MUST exist as a column in _SCHEMA under the same spelling.
 #
-# Adding a field is not a one-line change. There is no migration in this module,
+# Adding a field is not a one-line change. There is no expense-profile migration,
 # so on an existing deployment the new column will not exist, the SELECT raises,
 # the except-branch returns {}, and ALL expense recall stops with no error --
 # while a fresh tmp_path database makes every test pass. Read the _SCHEMA note.
@@ -1099,16 +1167,15 @@ def record_expense_approver(
     """Remember one confirmed expense approver for an exact account.
 
     Re-generating one in-progress report is idempotent. Correcting its approver
-    moves that event to the corrected person, and correcting an email for the
-    same normalized name replaces the older email. Returns the current use
-    count, or zero when validation/storage is unavailable.
+    moves that event to the corrected identity. Correcting an email on that
+    same report replaces its older identity; two different people with the same
+    normalized name and different emails remain distinct. Returns the current
+    use count, or zero when validation/storage is unavailable.
 
     ACCOUNT-scoped, NOT device-scoped -- the only store here that is shared
     between browsers. That is the feature: an employee on a new phone can search
-    an administrator their colleague already confirmed. It also means one row
-    per NORMALIZED NAME per account, so two distinct administrators with the
-    same name collapse into one entry and the most recently confirmed email wins
-    for both. Reported, not fixed.
+    an administrator their colleague already confirmed. Identity is the
+    normalized name plus email, scoped to the account.
 
     An approver email is REQUIRED here (unlike in record_expense_profile): this
     directory exists to pair a name with an address, and a nameless or
@@ -1136,41 +1203,43 @@ def record_expense_approver(
     if conn is None:
         return 0
     now = time.time()
+    current = (approver_key, email)
     try:
         conn.execute("BEGIN IMMEDIATE")
         prior = conn.execute(
-            "SELECT approver_key FROM expense_approver_events "
+            "SELECT approver_key,email FROM expense_approver_events "
             "WHERE account_key=? AND context_id=?",
             (account_key, context),
         ).fetchone()
-        if prior and prior[0] != approver_key:
+        if prior and tuple(prior) != current:
             conn.execute(
                 "UPDATE expense_approvers SET use_count=use_count-1 "
-                "WHERE account_key=? AND approver_key=?",
-                (account_key, prior[0]),
+                "WHERE account_key=? AND approver_key=? AND email=?",
+                (account_key, prior[0], prior[1]),
             )
             conn.execute(
                 "DELETE FROM expense_approvers WHERE account_key=? "
-                "AND approver_key=? AND use_count<=0",
-                (account_key, prior[0]),
+                "AND approver_key=? AND email=? AND use_count<=0",
+                (account_key, prior[0], prior[1]),
             )
 
-        if not prior or prior[0] != approver_key:
+        if not prior or tuple(prior) != current:
             conn.execute(
                 "INSERT INTO expense_approver_events "
-                "(account_key,context_id,approver_key,recorded_at) "
-                "VALUES (?,?,?,?) "
+                "(account_key,context_id,approver_key,email,recorded_at) "
+                "VALUES (?,?,?,?,?) "
                 "ON CONFLICT(account_key,context_id) DO UPDATE SET "
                 "approver_key=excluded.approver_key,"
+                "email=excluded.email,"
                 "recorded_at=excluded.recorded_at",
-                (account_key, context, approver_key, now),
+                (account_key, context, approver_key, email, now),
             )
             conn.execute(
                 "INSERT INTO expense_approvers "
                 "(account_key,approver_key,display_name,email,use_count,last_used) "
                 "VALUES (?,?,?,?,1,?) "
-                "ON CONFLICT(account_key,approver_key) DO UPDATE SET "
-                "display_name=excluded.display_name,email=excluded.email,"
+                "ON CONFLICT(account_key,approver_key,email) DO UPDATE SET "
+                "display_name=excluded.display_name,"
                 "use_count=use_count+1,last_used=excluded.last_used",
                 (account_key, approver_key, name, email, now),
             )
@@ -1184,23 +1253,21 @@ def record_expense_approver(
             # "..._recovers_if_its_directory_row_is_missing" test in
             # tests/test_expense_memory.py.
             #
-            # And it re-applies display_name/email WITHOUT touching use_count,
-            # which is how correcting only the address on an unchanged name
-            # replaces the old address instead of creating a second entry.
+            # It also re-applies the display spelling without touching use_count.
             conn.execute(
                 "INSERT INTO expense_approvers "
                 "(account_key,approver_key,display_name,email,use_count,last_used) "
                 "VALUES (?,?,?,?,1,?) "
-                "ON CONFLICT(account_key,approver_key) DO UPDATE SET "
-                "display_name=excluded.display_name,email=excluded.email,"
+                "ON CONFLICT(account_key,approver_key,email) DO UPDATE SET "
+                "display_name=excluded.display_name,"
                 "last_used=excluded.last_used",
                 (account_key, approver_key, name, email, now),
             )
 
         row = conn.execute(
             "SELECT use_count FROM expense_approvers "
-            "WHERE account_key=? AND approver_key=?",
-            (account_key, approver_key),
+            "WHERE account_key=? AND approver_key=? AND email=?",
+            (account_key, approver_key, email),
         ).fetchone()
         conn.commit()
         return int(row[0]) if row else 0
