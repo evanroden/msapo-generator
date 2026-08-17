@@ -521,6 +521,20 @@ def render_expense_workflow(browser_token: str) -> None:
             current_approver = str(
                 st.session_state.get(approver_name_key, "") or ""
             ).strip()
+            current_approver_email = str(
+                st.session_state.get(approver_email_key, "") or ""
+            ).strip()
+            fallback_key = f"expense_approver_fallback_{account_token}"
+            fallback = st.session_state.get(fallback_key)
+            if not (
+                isinstance(fallback, tuple)
+                and len(fallback) == 2
+                and all(isinstance(value, str) for value in fallback)
+            ):
+                fallback = None
+            if fallback is None and current_approver and current_approver_email:
+                fallback = (current_approver, current_approver_email)
+                st.session_state[fallback_key] = fallback
             # The CURRENT value is prepended, not merely offered. This selectbox
             # uses index=None with accept_new_options=True, so a name the
             # operator typed -- or the RRH default seeded from config, which has
@@ -528,11 +542,15 @@ def render_expense_workflow(browser_token: str) -> None:
             # -- exists only in session_state. Building the option list from the
             # remembered pairs alone drops that value out of options on the very
             # next rerun and the field empties itself.
-            approver_names = _approver_name_options(
+            approver_names, approver_identities, current_option = _approver_options(
                 current_approver,
+                current_approver_email,
                 remembered_approvers,
+                fallback,
             )
-            approver_name = str(st.selectbox(
+            if current_approver and current_option != current_approver:
+                st.session_state[approver_name_key] = current_option
+            selected_approver_option = str(st.selectbox(
                 "Contract administrator / approver name *",
                 approver_names,
                 index=None,
@@ -549,17 +567,23 @@ def render_expense_workflow(browser_token: str) -> None:
                     approver_name_key,
                     approver_email_key,
                     approver_recall_key,
-                    remembered_approvers,
+                    approver_identities,
                 ),
             ) or "").strip()
+            selected_identity = approver_identities.get(selected_approver_option)
+            approver_name = (
+                selected_identity[0]
+                if selected_identity is not None
+                else selected_approver_option
+            )
             approver_email = st.text_input(
                 "Contract administrator / approver email *",
                 key=approver_email_key,
                 on_change=_clear_approver_recall,
                 args=(approver_recall_key,),
             ).strip()
-            if st.session_state.get(approver_recall_key) == _employee_name_key(
-                approver_name
+            if st.session_state.get(approver_recall_key) == _approver_identity_key(
+                approver_name, approver_email
             ):
                 st.caption("Approver email recalled from this account's confirmed history.")
 
@@ -1600,36 +1624,69 @@ def _clear_employee_number_recall(recall_marker_key: str) -> None:
     st.session_state.pop(recall_marker_key, None)
 
 
-def _approver_name_options(
-    current_name: str,
-    remembered: tuple[tuple[str, str], ...],
-) -> tuple[str, ...]:
-    """Return de-duplicated searchable names with the current value retained.
+def _approver_identity_key(name: str, email: str) -> str:
+    return f"{_employee_name_key(name)}\0{str(email or '').strip().casefold()}"
 
-    ``current_name`` is FIRST and unconditional. The approver selectbox stores
-    the operator's typed or seeded value in session_state, and Streamlit needs
-    that value to be present in ``options`` on the following rerun; if it is
-    absent the field empties itself with no error. De-duplication is by
-    ``_employee_name_key``, so a remembered "dane example" does not appear
-    alongside a typed "Dane Example", and the operator's own capitalisation wins
-    because it was added first.
-    """
-    names: list[str] = []
-    seen: set[str] = set()
-    for name in (current_name, *(pair[0] for pair in remembered)):
-        cleaned = " ".join(str(name or "").split())
-        key = _employee_name_key(cleaned)
-        if cleaned and key not in seen:
-            seen.add(key)
-            names.append(cleaned)
-    return tuple(names)
+
+def _approver_options(
+    current_value: str,
+    current_email: str,
+    remembered: tuple[tuple[str, str], ...],
+    fallback: tuple[str, str] | None,
+) -> tuple[tuple[str, ...], dict[str, tuple[str, str]], str]:
+    """Build unambiguous options while retaining typed and seeded identities."""
+    identities: list[tuple[str, str]] = []
+    seen_identities: set[str] = set()
+    for raw_name, raw_email in (*remembered, *((fallback,) if fallback else ())):
+        name = " ".join(str(raw_name or "").split())
+        email = str(raw_email or "").strip().lower()
+        identity_key = _approver_identity_key(name, email)
+        if name and email and identity_key not in seen_identities:
+            seen_identities.add(identity_key)
+            identities.append((name, email))
+
+    name_counts: dict[str, int] = {}
+    for name, _email in identities:
+        key = _employee_name_key(name)
+        name_counts[key] = name_counts.get(key, 0) + 1
+
+    by_option: dict[str, tuple[str, str]] = {}
+    option_for_identity: dict[str, str] = {}
+    for name, email in identities:
+        option = (
+            f"{name} — {email}"
+            if name_counts[_employee_name_key(name)] > 1
+            else name
+        )
+        by_option[option] = (name, email)
+        option_for_identity[_approver_identity_key(name, email)] = option
+
+    cleaned_current = " ".join(str(current_value or "").split())
+    if cleaned_current in by_option:
+        current_option = cleaned_current
+    else:
+        current_option = option_for_identity.get(
+            _approver_identity_key(cleaned_current, current_email),
+            cleaned_current,
+        )
+        if cleaned_current and current_option == cleaned_current:
+            by_option[current_option] = (
+                cleaned_current,
+                str(current_email or "").strip().lower(),
+            )
+
+    options: list[str] = []
+    for option in (current_option, *by_option):
+        if option and option not in options:
+            options.append(option)
+    return tuple(options), by_option, current_option
 
 
 def _recall_approver_email(
     approver_name_key: str,
     approver_email_key: str,
     recall_marker_key: str,
-    remembered: tuple[tuple[str, str], ...],
+    identities: dict[str, tuple[str, str]],
 ) -> None:
     """Fill the paired email or clear a stale one when the name changes.
 
@@ -1637,19 +1694,16 @@ def _recall_approver_email(
     approver's address under a newly chosen name is the failure this prevents,
     so an unrecognised name blanks the email rather than leaving it.
 
-    KNOWN WART: ``remembered`` only holds approvers confirmed by a completed
-    report, so re-selecting the RRH approver that ``_seed_profile`` filled from
-    configuration clears that seeded address until the first report is
-    generated. Blanking a required field is loud (validation blocks generation);
-    keeping a mismatched address would not be.
+    Seeded identities are included alongside confirmed history, so re-selecting
+    the configured RRH approver restores its paired email as well.
     """
     selected = str(st.session_state.get(approver_name_key, "") or "")
-    selected_key = _employee_name_key(selected)
-    for name, email in remembered:
-        if _employee_name_key(name) == selected_key:
-            st.session_state[approver_email_key] = email
-            st.session_state[recall_marker_key] = selected_key
-            return
+    identity = identities.get(selected)
+    if identity is not None:
+        name, email = identity
+        st.session_state[approver_email_key] = email
+        st.session_state[recall_marker_key] = _approver_identity_key(name, email)
+        return
     st.session_state[approver_email_key] = ""
     st.session_state.pop(recall_marker_key, None)
 

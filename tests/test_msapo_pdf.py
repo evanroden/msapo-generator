@@ -85,6 +85,26 @@ def test_document_uses_the_reviewed_scope_not_the_raw_analysis():
     assert "After-hours work" in text
 
 
+def test_document_uses_reviewed_facility_address_and_vendor_overrides():
+    path = generate_docx(
+        _analysis(),
+        [],
+        [],
+        facility_display="Unity Hospital",
+        facility_address_display="1555 Long Pond Rd, Rochester, NY 14626",
+        vendor_display="Reviewed Vendor LLC",
+    )
+    try:
+        text = "\n".join(p.text for p in Document(str(path)).paragraphs)
+    finally:
+        path.unlink(missing_ok=True)
+
+    assert "Facility: Unity Hospital" in text
+    assert "1555 Long Pond Rd, Rochester, NY 14626" in text
+    assert "Vendor: Reviewed Vendor LLC" in text
+    assert "Crosby-Brownlie" not in text
+
+
 def test_renderer_failure_is_reported_rather_than_returning_junk(monkeypatch):
     """A renderer that 'succeeds' without producing a PDF must not pass through.
 

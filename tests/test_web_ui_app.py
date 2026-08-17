@@ -113,6 +113,9 @@ def test_scope_draft_is_an_editable_text_field(monkeypatch):
         field for field in app.text_input
         if field.label == "Your name (Requester / Asset Manager) *"
     ).set_value("Synthetic Asset Manager").run()
+    next(
+        field for field in app.text_input if field.label == "Vendor name *"
+    ).set_value("Reviewed Vendor LLC").run()
     generate = next(
         button for button in app.button
         if button.label == "Generate both files and Smartsheet link"
@@ -121,6 +124,11 @@ def test_scope_draft_is_an_editable_text_field(monkeypatch):
     generate.click().run()
 
     assert captured["scope"].startswith("Edited scope:")
+    assert captured["facility_display"] == "Clifton Springs Hospital & Clinic"
+    assert captured["facility_address_display"] == (
+        "2 Coulter Rd, Clifton Springs, NY 14432"
+    )
+    assert captured["vendor_display"] == "Reviewed Vendor LLC"
 
 
 def test_expense_employee_number_is_recalled_when_employee_name_changes(monkeypatch):
@@ -199,6 +207,52 @@ def test_expense_approver_name_suggestions_fill_the_paired_email(monkeypatch):
         in caption.value
         for caption in app.caption
     )
+
+    approver = next(
+        field
+        for field in app.selectbox
+        if field.label == "Contract administrator / approver name *"
+    )
+    assert "RRH Test Administrator" in approver.options
+    approver.set_value("RRH Test Administrator").run()
+    email = next(
+        field
+        for field in app.text_input
+        if field.label == "Contract administrator / approver email *"
+    )
+    assert email.value == "rrh.approver@example.invalid"
+
+
+def test_same_name_approvers_are_labeled_and_recalled_by_email(monkeypatch):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setattr(
+        expense_ui,
+        "expense_approvers",
+        lambda _account: [
+            ("Alex Smith", "alex.one@example.invalid"),
+            ("Alex Smith", "alex.two@example.invalid"),
+        ],
+    )
+
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    approver = next(
+        field
+        for field in app.selectbox
+        if field.label == "Contract administrator / approver name *"
+    )
+    first = "Alex Smith — alex.one@example.invalid"
+    second = "Alex Smith — alex.two@example.invalid"
+    assert first in approver.options
+    assert second in approver.options
+
+    approver.set_value(second).run()
+    email = next(
+        field
+        for field in app.text_input
+        if field.label == "Contract administrator / approver email *"
+    )
+    assert email.value == "alex.two@example.invalid"
 
 
 def test_expense_approver_control_supports_typeahead_and_new_names():
@@ -352,6 +406,44 @@ def test_unresolved_fields_are_visible_stable_and_not_in_correction_panel(
     warnings = [item.value for item in app.warning]
     assert not any("all-in PO/CO amount" in message for message in warnings)
     assert not any(".." in message for message in warnings)
+
+
+def test_missing_rrh_work_category_requires_an_explicit_selection(monkeypatch):
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setattr(
+        web_ui,
+        "analyze_quote",
+        lambda _text: QuoteAnalysis(
+            vendor_name="Category Test Vendor",
+            project_description="Test repair",
+            facility_name="Clifton Springs Hospital & Clinic",
+            facility_address="2 Coulter Rd, Clifton Springs, NY 14432",
+            scope_of_work="Repair configured equipment.",
+            contact_name="Vendor Contact",
+            contact_email="contact@example.invalid",
+            total_amount="$100.00",
+            purchase_route_guess="materials_purchase",
+            request_type_guess="PO",
+            work_category=None,
+            tax_status="included",
+        ),
+    )
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+
+    app.radio[0].set_value("Paste text").run()
+    app.text_area[0].set_value("Clifton Springs category test quote").run()
+
+    category = next(
+        field for field in app.selectbox if field.label == "Work category *"
+    )
+    assert category.value == web_ui.CATEGORY_PLACEHOLDER
+    assert any("choose the work category" in warning.value for warning in app.warning)
+    generate = next(
+        button
+        for button in app.button
+        if button.label == "Generate both files and Smartsheet link"
+    )
+    assert generate.disabled
 
 
 def test_vendor_representative_is_filled_from_account_vendor_memory(monkeypatch):

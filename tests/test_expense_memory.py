@@ -225,6 +225,29 @@ def test_expense_approver_email_correction_updates_the_name_mapping(
     ]
 
 
+def test_same_name_with_two_emails_remains_two_approver_identities(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    record_expense_approver(
+        account="Rochester Regional Health",
+        approver_name="Alex Smith",
+        approver_email="alex.one@example.invalid",
+        context_id="report-one",
+    )
+    record_expense_approver(
+        account="Rochester Regional Health",
+        approver_name="Alex Smith",
+        approver_email="alex.two@example.invalid",
+        context_id="report-two",
+    )
+
+    assert set(expense_approvers("Rochester Regional Health")) == {
+        ("Alex Smith", "alex.one@example.invalid"),
+        ("Alex Smith", "alex.two@example.invalid"),
+    }
+
+
 def test_expense_approver_rejects_incomplete_or_malformed_values(
     monkeypatch, tmp_path
 ):
@@ -264,3 +287,54 @@ def test_expense_approver_event_recovers_if_its_directory_row_is_missing(
     assert expense_approvers("Rochester Regional Health") == [
         ("Known Administrator", "known@example.invalid")
     ]
+
+
+def test_legacy_name_only_approver_schema_is_migrated_in_place(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    database = tmp_path / "epc_memory.db"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE expense_approvers (
+                account_key TEXT NOT NULL,
+                approver_key TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                use_count INTEGER NOT NULL DEFAULT 0,
+                last_used REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (account_key, approver_key)
+            );
+            CREATE TABLE expense_approver_events (
+                account_key TEXT NOT NULL,
+                context_id TEXT NOT NULL,
+                approver_key TEXT NOT NULL,
+                recorded_at REAL NOT NULL DEFAULT 0,
+                PRIMARY KEY (account_key, context_id)
+            );
+            INSERT INTO expense_approvers VALUES
+                ('rochester regional health','alex smith','Alex Smith',
+                 'alex@example.invalid',2,100);
+            INSERT INTO expense_approver_events VALUES
+                ('rochester regional health','old-report','alex smith',100);
+            """
+        )
+
+    assert expense_approvers("Rochester Regional Health") == [
+        ("Alex Smith", "alex@example.invalid")
+    ]
+    with sqlite3.connect(database) as connection:
+        primary_key = tuple(
+            row[1]
+            for row in sorted(
+                connection.execute("PRAGMA table_info(expense_approvers)"),
+                key=lambda row: row[5],
+            )
+            if row[5]
+        )
+        event_email = connection.execute(
+            "SELECT email FROM expense_approver_events WHERE context_id='old-report'"
+        ).fetchone()[0]
+    assert primary_key == ("account_key", "approver_key", "email")
+    assert event_email == "alex@example.invalid"
