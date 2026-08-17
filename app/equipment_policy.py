@@ -77,7 +77,8 @@ _PARTS_ONLY_RE = re.compile(
 
 _EXPLICIT_WHOLE_UNIT_RE = re.compile(
     r"\b(?:new|complete|packaged|modular|purchase|buy|furnish|supply|provide)\b"
-    r".{0,60}\b(?:air handling unit|ahu|"
+    r"(?:(?![.;:\n]|\b(?:purchase|buy|furnish|supply|provide)\b).){0,60}?"
+    r"\b(?:air handling unit|ahu|"
     r"rooftop unit|rtu|chiller|boiler|cooling tower|heat exchanger|pump|vfd|"
     r"generator|solar panel|switchgear|transformer|ups|automatic transfer "
     r"switch|motor control center|bms|battery energy storage|microgrid|chp|"
@@ -100,6 +101,14 @@ def _has_explicit_whole_unit(source: str) -> bool:
     global "any part phrase" check incorrectly downgraded that mixed quote.
     """
     for match in _EXPLICIT_WHOLE_UNIT_RE.finditer(source):
+        # A purchase verb followed by component language and only then an
+        # equipment noun is still a parts purchase: "supply replacement service
+        # parts for the boiler". The broad explicit-unit pattern necessarily
+        # spans that whole phrase, so reject component words inside this match.
+        # Mixed quotes remain safe because every later purchase phrase is
+        # evaluated independently.
+        if _PARTS_ONLY_RE.search(match.group(0)):
+            continue
         tail = source[match.end() : match.end() + 40]
         if not _PART_AFTER_UNIT_RE.search(tail):
             return True
@@ -111,7 +120,7 @@ _GROUP_A_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("Boiler", re.compile(r"\bboilers?\b", re.I)),
     ("Cooling Tower", re.compile(r"\bcooling towers?\b", re.I)),
     ("Heat Exchanger", re.compile(r"\bheat exchangers?\b", re.I)),
-    ("Pump", re.compile(r"\b(?:chilled water|condenser water|heating water)?\s*pumps?\b", re.I)),
+    ("Pump", re.compile(r"\b(?:chilled water|condenser water|heating water)\s+pumps?\b", re.I)),
     ("VFD", re.compile(r"\b(?:vfd|variable frequency drive)s?\b", re.I)),
     ("Terminal Unit", re.compile(r"\bterminal units?\b", re.I)),
     ("Generator", re.compile(r"\b(?:linear )?generators?\b", re.I)),
