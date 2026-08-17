@@ -1241,18 +1241,29 @@ def _compact_receipt_image(source: Image.Image) -> bytes:
     # the page background becomes a black field and the text disappears, with
     # no error anywhere. app/ocr.py carries the same fix for the same reason.
     #
-    # KNOWN GAP, verified: this covers "RGBA" and "LA" only. A PALETTE image
-    # with transparency ("P" plus info["transparency"], i.e. any GIF or PNG-8
-    # receipt) enters this branch, but "A" is not among its bands, so `alpha`
-    # is None and paste(..., mask=None) is a plain overwrite -- the flatten
-    # never happens and the page still comes out black. Mode "PA" misses the
-    # branch entirely. ocr.py handles both by converting to RGBA first and
-    # using rgba.split()[-1] as the mask. Do not "tidy" this branch without
-    # closing that; it is a silent, all-black receipt in a submitted packet.
-    if image.mode in {"RGBA", "LA"} or "transparency" in image.info:
+    # Convert to RGBA FIRST, then use its alpha as the mask. That is what makes
+    # this work for a palette receipt, and it is why the mode test and the mask
+    # must not be split apart again.
+    #
+    # The previous version tested `image.mode in {"RGBA", "LA"} or
+    # "transparency" in image.info` and then took the mask from
+    # `image.getchannel("A") if "A" in image.getbands() else None`. A PNG-8 or
+    # GIF receipt is mode "P": it PASSED the test via info["transparency"], but
+    # its bands are ("P",) with no "A", so the mask was None and
+    # paste(..., mask=None) is a plain overwrite. The flatten silently did not
+    # happen. Measured on a transparent-background palette receipt: 100% of the
+    # output was near-black -- the text destroyed along with the background --
+    # and it went into the approver's submission PDF with no error anywhere.
+    # Mode "PA" missed the old test entirely.
+    #
+    # Keep this identical to the flatten in app/ocr.py. The two are the same fix
+    # for the same reason, and they had already drifted apart once.
+    if image.mode in {"RGBA", "LA", "PA"} or (
+        image.mode == "P" and "transparency" in image.info
+    ):
         background = Image.new("RGB", image.size, "white")
-        alpha = image.getchannel("A") if "A" in image.getbands() else None
-        background.paste(image.convert("RGB"), mask=alpha)
+        rgba = image.convert("RGBA")
+        background.paste(rgba, mask=rgba.split()[-1])
         image = background
     else:
         image = image.convert("RGB")
