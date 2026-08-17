@@ -68,3 +68,25 @@ def test_asset_uid_must_be_a_complete_bounded_identifier():
         )
         is None
     )
+
+
+def test_no_asset_uid_is_a_substring_of_another():
+    """guess_asset_id matches UIDs with a BARE substring test and returns on the
+    first hit, so this property is what keeps it correct.
+
+    If an export ever produced a UID contained inside another one, the shorter
+    would match inside the longer and win -- selecting the wrong asset with no
+    error. The property holds today because every UID carries both a tag and a
+    site suffix ("EEA-CH-1-CSHC" cannot sit inside "EEA-CH-1STR-CSHC").
+    """
+    from app.assets import ASSETS
+
+    uids = [row["uid"].upper() for row in ASSETS]
+    assert len(uids) == len(set(uids)), "duplicate UID in the registry"
+    offenders = [
+        (short, long)
+        for short in uids
+        for long in uids
+        if short != long and short in long
+    ]
+    assert not offenders, f"UID contained inside another: {offenders[:3]}"

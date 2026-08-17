@@ -1,4 +1,26 @@
-"""Verified Smartsheet JOB NUMBER options and account-scoped suggestions."""
+"""Verified Smartsheet JOB NUMBER options and account-scoped suggestions.
+
+JOB_NUMBER_OPTIONS is DEPLOYMENT DATA transcribed from the live Smartsheet
+dropdown, not a list this project is free to tidy. Every string must stay
+byte-for-byte as the form has it: Smartsheet rejects a value that is not an exact
+option, and the prefill URL carries the literal text. That is why the spacing and
+punctuation are inconsistent across entries -- "ACU 69500001 - ES JOB CCJ" with
+spaces around the dash, "ADVENTIST-695000002-ES JOB CCJ" without, "BAPTIST
+KY-695400041 ISDC" with no dash before ISDC. Those are faithful transcriptions.
+Normalising them would produce values the form silently refuses.
+
+tests/test_job_numbers.py pins the exact count for the same reason
+app/data/contracts.json is pinned: a truncated re-transcription would not raise
+anywhere, it would just stop offering job numbers.
+
+UNITY_DISAMBIGUATION_GUIDANCE is injected into the analyzer's system prompt by
+quote_analyzer, and exists because two unrelated accounts collide on the word
+"Unity" -- Unity Health in Arkansas and RRH's Unity Hospital in Rochester. See
+docs/JOB_NUMBER_CATALOG_AND_UNITY_DISAMBIGUATION_2026-08-10.md. That collision is
+the same word-in-two-registers hazard that produced the 2026-08-17
+"Community Hospital" -> Unity Hospital defect; this module handles it by telling
+the model, config.alias_matches handles it by requiring whole words.
+"""
 
 from __future__ import annotations
 
