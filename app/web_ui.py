@@ -119,7 +119,7 @@ from app.workflow_review import (
 
 SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
 SITE_LABELS = list(FACILITY_SHORT_NAMES.values())
-# The four em-dash strings below are "the operator has not chosen yet" sentinels
+# The five em-dash strings below are "the operator has not chosen yet" sentinels
 # that ride inside real option lists, because a Streamlit selectbox has no empty
 # state. Two properties are load-bearing:
 #
@@ -138,6 +138,7 @@ SITE_LABELS = list(FACILITY_SHORT_NAMES.values())
 # ``po_context._asset_value`` writes this exact spelling as its own default.
 CONTRACT_PLACEHOLDER = "— Select a contract —"
 SITE_PLACEHOLDER = "— Select a site —"
+CATEGORY_PLACEHOLDER = "— Select a work category —"
 JOB_NUMBER_PLACEHOLDER = "— Select a job number —"
 ASSET_NONE = "None Applicable"
 ASSET_PLACEHOLDER = "— Choose an asset or No asset —"
@@ -725,9 +726,8 @@ def _routing_for_generation(
 
     The last two are what belong ON the generated document, and they are NOT the
     analyzer's values: when the operator corrects the site to a different RRH
-    facility, both are re-read from FACILITIES for the site actually chosen. The
-    caller currently discards the address element -- see the note at the
-    generation call in main() before assuming that is intentional.
+    facility, both are re-read from FACILITIES for the site actually chosen and
+    passed to the MSAPO builder.
 
     Unlike :func:`_routing_snapshot`, an unrecognised mirrored contract is
     rejected here (``is_known_contract``) and the whole confirmation is dropped,
@@ -802,17 +802,9 @@ def _routing_snapshot(
     read-only twin: it must not call any ``st.*`` widget, since instantiating a
     widget here would claim the key and leave a duplicate control on the page.
 
-    KNOWN DIVERGENCE from the renderer, and the reason this docstring is long:
-    the placeholder sentinels are not in ``contract_options`` or ``SITE_LABELS``,
-    so a stored placeholder reads here as "nothing stored" and this function
-    falls through to the analyzer's detected contract/site. The renderer instead
-    treats a placeholder as an explicit "not chosen" and returns empty strings.
-    So when an operator deliberately DESELECTS the contract or the site to force
-    a re-pick, this snapshot still reports the detected routing as complete,
-    ``needs.routing`` stays False, and the controls stay inside the collapsed
-    corrections panel -- while the pre-generation warning tells the operator to
-    choose the contract. The tool asks for a value and hides the control that
-    supplies it. Reported, not fixed here.
+    Placeholder values are explicit unresolved choices. They must not fall back
+    to analyzer detections here: doing that would mark routing complete and hide
+    the very selector the operator deliberately cleared.
     """
     detected_contract, detected_site = contracts.match_facility(
         analysis.facility_name, quote_text
@@ -822,7 +814,9 @@ def _routing_snapshot(
     confirmed = raw_confirmed if isinstance(raw_confirmed, dict) else {}
     stored_contract = str(st.session_state.get(f"contract_{token}", "") or "")
     confirmed_contract = str(confirmed.get("contract", "") or "")
-    if stored_contract in contract_options:
+    if stored_contract == CONTRACT_PLACEHOLDER:
+        contract = ""
+    elif stored_contract in contract_options:
         contract = stored_contract
     elif confirmed_contract in contract_options:
         contract = confirmed_contract
@@ -839,7 +833,9 @@ def _routing_snapshot(
         )
         stored_site = str(st.session_state.get(f"site_{token}", "") or "")
         confirmed_site = str(confirmed.get("site", "") or "")
-        if stored_site in SITE_LABELS:
+        if stored_site == SITE_PLACEHOLDER:
+            site = ""
+        elif stored_site in SITE_LABELS:
             site = stored_site
         elif confirmed_contract == contract and confirmed_site in SITE_LABELS:
             site = confirmed_site
@@ -857,14 +853,21 @@ def _routing_snapshot(
         guessed_category = (
             WORK_CATEGORY_DISPLAY.get(analysis.work_category, analysis.work_category)
             if analysis.work_category in valid_categories
-            else category_labels[0]
+            else ""
         )
         stored_category = str(
             st.session_state.get(f"cat_{token}_{site_key}", "") or ""
         )
-        category_label = (
-            stored_category if stored_category in category_labels else guessed_category
-        )
+        if stored_category == CATEGORY_PLACEHOLDER:
+            category_label = ""
+        else:
+            category_label = (
+                stored_category
+                if stored_category in category_labels
+                else guessed_category
+            )
+        if not category_label:
+            return RoutingSnapshot(contract, True, site, "", "", site_key)
         category_key = valid_categories[category_labels.index(category_label)]
         # Same two-source rule the renderer uses: a mapped site+category yields
         # a fixed code shown as a read-only pill, and ONLY an unmapped pair falls
@@ -885,17 +888,20 @@ def _routing_snapshot(
             st.session_state.get(f"gsite_{token}_{contract}", "") or ""
         )
         confirmed_site = str(confirmed.get("site", "") or "")
-        site = (
-            stored_site
-            if stored_site in sites
-            else confirmed_site
-            if confirmed_contract == contract and confirmed_site in sites
-            else detected_site
-            if contract == detected_contract and detected_site in sites
-            else sites[0]
-            if len(sites) == 1
-            else ""
-        )
+        if stored_site == SITE_PLACEHOLDER:
+            site = ""
+        else:
+            site = (
+                stored_site
+                if stored_site in sites
+                else confirmed_site
+                if confirmed_contract == contract and confirmed_site in sites
+                else detected_site
+                if contract == detected_contract and detected_site in sites
+                else sites[0]
+                if len(sites) == 1
+                else ""
+            )
     else:
         site = str(
             st.session_state.get(f"gsitetxt_{token}_{contract}")
@@ -1278,16 +1284,23 @@ def _render_routing_controls(
         default_category = (
             WORK_CATEGORY_DISPLAY.get(analysis.work_category, analysis.work_category)
             if analysis.work_category in valid_categories
-            else category_labels[0]
+            else CATEGORY_PLACEHOLDER
         )
+        category_options = [CATEGORY_PLACEHOLDER] + category_labels
         category_state_key = f"cat_{token}_{site_key}"
-        if st.session_state.get(category_state_key) not in category_labels:
+        if st.session_state.get(category_state_key) not in category_options:
             st.session_state[category_state_key] = default_category
         category_label = st.selectbox(
-            "Work category",
-            category_labels,
+            "Work category *",
+            category_options,
             key=category_state_key,
         )
+        if category_label == CATEGORY_PLACEHOLDER:
+            st.session_state[f"routing_{token}"] = {
+                "contract": contract,
+                "site": site,
+            }
+            return contract, rrh, site, "", "", site_key
         category_key = valid_categories[category_labels.index(category_label)]
         cost_code = lookup_cost_code(site_key, category_key) or ""
         if cost_code:
@@ -2078,27 +2091,16 @@ def main() -> None:
         contact_name=contact_value,
         contact_email=email_value,
     )
-    # ``needs`` is STICKY: retain_review_needs ORs the live answer with the one
-    # stored for this quote, so a field that has ever been unresolved keeps its
-    # visible placement for the rest of the quote's life. That is deliberate --
-    # Streamlit reruns the moment a field is committed, and without stickiness
-    # the field the operator just answered would jump into the collapsed
-    # corrections panel, reading as though the answer had been thrown away.
-    #
-    # KNOWN CONSEQUENCE, reported not fixed: because ``needs.any`` can never go
-    # back to False, the "Needed from you" banner below and the highlight bar at
-    # the end of this function also stay on for the rest of the quote, on fields
-    # that are now filled and while the generate button is enabled. On the
-    # synthetic sample nothing is ever unresolved, which is why the highlight
-    # test does not see this. Do not "fix" it by making retention conditional
-    # without re-reading the paragraph above -- the jumping-field behaviour is
-    # what retention exists to prevent.
+    # Retain the previous placement for ONE rerun so the field an operator just
+    # answered does not jump away at commit time. Store only the live result:
+    # otherwise the OR can never clear and the warning/highlight remains forever
+    # after every required value has been supplied.
     review_needs_key = f"review_needs_{token}"
     needs: ReviewNeeds = retain_review_needs(
         st.session_state.get(review_needs_key),
         current_needs,
     )
-    st.session_state[review_needs_key] = needs
+    st.session_state[review_needs_key] = current_needs
 
     st.markdown(
         """
@@ -2211,7 +2213,7 @@ def main() -> None:
                 "stated in the quote."
             )
 
-    if needs.any:
+    if current_needs.any:
         st.markdown(
             '<div class="needs-banner"><strong>Needed from you</strong><br>'
             'The tool could not safely determine one or more values below. '
@@ -2429,7 +2431,7 @@ def main() -> None:
     # When nothing is in question the container holds only the requester --
     # every other field has moved to `corrections` -- so highlighting the
     # container is precise in both cases.
-    if needs.any or (requester_key and not requester_value):
+    if current_needs.any or (requester_key and not requester_value):
         highlight_needed_fields(["po_needs_you"])
 
     # The empty-note half of the pair above. Behind a toggle rather than always
@@ -2503,7 +2505,9 @@ def main() -> None:
         draft_problems.append("choose the contract")
     if not site:
         draft_problems.append("choose the site")
-    if not cost_code:
+    if not category_label:
+        draft_problems.append("choose the work category")
+    elif not cost_code:
         draft_problems.append("enter the job cost code")
     if not requester_value:
         draft_problems.append("enter your name")
@@ -2553,16 +2557,7 @@ def main() -> None:
     # already be gone -- Streamlit drops the key of any widget that did not
     # render on the rerun that produced this state.
     #
-    # DISCARDED FOURTH VALUE, read this before treating it as an unused return.
-    # _routing_for_generation resolves the facility ADDRESS for the site the
-    # operator actually chose, and it is thrown away here while the PDF builder
-    # below is handed ``analysis.facility_address`` -- the address the analyzer
-    # read off the quote. Correct the site to a different RRH facility and the
-    # generated form carries the new facility's NAME above the old facility's
-    # street address, with nothing on screen indicating a mismatch. po_context
-    # computes the corrected address for the Smartsheet field, so the form and
-    # the document disagree. Reported, not fixed here.
-    selected_contract, selected_site, facility_name, _ = _routing_for_generation(
+    selected_contract, selected_site, facility_name, facility_address = _routing_for_generation(
         analysis, cached_quote, token
     )
     # Fingerprint of everything that changes the DOCUMENT's content. po_context
@@ -2636,7 +2631,10 @@ def main() -> None:
                     inclusions=final_inclusions,
                     exclusions=final_exclusions,
                     facility_display=facility_name or selected_site,
-                    facility_address_display=analysis.facility_address,
+                    facility_address_display=facility_address,
+                    vendor_display=str(
+                        st.session_state.get(vendor_key, "") or ""
+                    ).strip(),
                 )
         except Exception as exc:
             st.error(

@@ -25,10 +25,11 @@ and NOTHING raises: the lookup simply misses, the documented default applies,
 and the field reaches Smartsheet blank or carrying the previous quote's value.
 That failure is invisible until somebody reads the submitted form.
 
-Three literals are duplicated here on purpose rather than imported, because
+Four literals are duplicated here on purpose rather than imported, because
 importing ``app.web_ui`` from this module would be an import cycle:
-``_CONTRACT_PLACEHOLDER``, ``_SITE_PLACEHOLDER``, and the "None Applicable"
-spelling in :func:`_asset_value`. Each has a twin in ``app.web_ui``; a fourth,
+``_CONTRACT_PLACEHOLDER``, ``_SITE_PLACEHOLDER``,
+``_CATEGORY_PLACEHOLDER``, and the "None Applicable" spelling in
+:func:`_asset_value`. Each has a twin in ``app.web_ui``; another,
 the asset placeholder prefix, lives in ``po_rules.normalize_asset_id``.
 Changing one copy alone is silent in exactly the same way.
 """
@@ -67,6 +68,7 @@ from app.po_rules import (
 # No exception, no warning -- the only symptom is the submitted form.
 _CONTRACT_PLACEHOLDER = "— Select a contract —"
 _SITE_PLACEHOLDER = "— Select a site —"
+_CATEGORY_PLACEHOLDER = "— Select a work category —"
 # Display label -> internal key, inverting the config dictionaries. Inverting is
 # only lossless while every display value is unique; both source dicts satisfy
 # that today. Adding a second facility abbreviated "UMMC", or a second category
@@ -287,6 +289,8 @@ def _routing_fields(
     if rrh:
         site_key = _SITE_LABEL_TO_KEY.get(site)
         category_label = _state_text(state, f"cat_{token}_{site_key}") if site_key else ""
+        if category_label == _CATEGORY_PLACEHOLDER:
+            category_label = ""
         category_key = _CATEGORY_LABEL_TO_KEY.get(category_label, category_label)
         cost_code = (
             lookup_cost_code(site_key, category_key) if site_key and category_key else None

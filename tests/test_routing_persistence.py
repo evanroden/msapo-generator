@@ -3,11 +3,11 @@ from types import SimpleNamespace
 from app import web_ui
 
 
-def _analysis():
+def _analysis(*, work_category="repairs"):
     return SimpleNamespace(
         facility_name="United Memorial Medical Center",
         facility_address="127 North St, Batavia, NY 14020",
-        work_category="repairs",
+        work_category=work_category,
     )
 
 
@@ -100,3 +100,61 @@ def test_unconfigured_mirrored_contract_is_rejected(monkeypatch):
     assert contract == "Rochester Regional Health"
     assert site == "UMMC"
     assert facility == "United Memorial Medical Center"
+
+
+def test_missing_or_invalid_rrh_category_stays_unresolved(monkeypatch):
+    monkeypatch.setattr(web_ui, "st", SimpleNamespace(session_state={}))
+
+    for category in (None, "not_a_real_category"):
+        snapshot = web_ui._routing_snapshot(
+            _analysis(work_category=category), "Batavia quote", "quote123"
+        )
+
+        assert snapshot.contract == "Rochester Regional Health"
+        assert snapshot.site == "UMMC"
+        assert snapshot.category_label == ""
+        assert snapshot.cost_code == ""
+
+
+def test_explicit_routing_placeholders_do_not_fall_back_to_detection(monkeypatch):
+    monkeypatch.setattr(
+        web_ui,
+        "st",
+        SimpleNamespace(
+            session_state={"contract_quote123": web_ui.CONTRACT_PLACEHOLDER}
+        ),
+    )
+    contract_cleared = web_ui._routing_snapshot(
+        _analysis(), "Batavia quote", "quote123"
+    )
+    assert contract_cleared.contract == ""
+
+    web_ui.st.session_state = {
+        "contract_quote123": "Rochester Regional Health",
+        "site_quote123": web_ui.SITE_PLACEHOLDER,
+    }
+    site_cleared = web_ui._routing_snapshot(
+        _analysis(), "Batavia quote", "quote123"
+    )
+    assert site_cleared.contract == "Rochester Regional Health"
+    assert site_cleared.site == ""
+
+
+def test_explicit_category_placeholder_stays_unresolved(monkeypatch):
+    monkeypatch.setattr(
+        web_ui,
+        "st",
+        SimpleNamespace(
+            session_state={
+                "contract_quote123": "Rochester Regional Health",
+                "site_quote123": "UMMC",
+                "cat_quote123_united_memorial": web_ui.CATEGORY_PLACEHOLDER,
+            }
+        ),
+    )
+
+    snapshot = web_ui._routing_snapshot(
+        _analysis(), "Batavia quote", "quote123"
+    )
+    assert snapshot.category_label == ""
+    assert snapshot.cost_code == ""

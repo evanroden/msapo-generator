@@ -116,6 +116,20 @@ def test_fallback_does_not_route_from_negated_or_excluded_work(quote, expected):
     assert infer_purchase_route(quote) == expected
 
 
+@pytest.mark.parametrize(
+    "quote",
+    [
+        (
+            "Installation by others. Vendor technician will perform startup "
+            "and commissioning onsite."
+        ),
+        "Rigging by others. Vendor will provide two days of onsite startup labor.",
+    ],
+)
+def test_disclaimer_in_one_clause_does_not_cancel_affirmative_vendor_labor(quote):
+    assert infer_purchase_route(quote) == ONSITE_LABOR
+
+
 def test_group_a_source_recognizes_complete_equipment_but_not_loose_parts():
     assert group_a_equipment_match("Purchase one new boiler") == "Boiler"
     assert group_a_equipment_match("Long-lead procurement equipment") == "Long-lead Equipment"
@@ -125,11 +139,24 @@ def test_group_a_source_recognizes_complete_equipment_but_not_loose_parts():
     assert group_a_equipment_match("Provide chiller gaskets and filters") is None
     assert group_a_equipment_match("Supply replacement chiller gaskets") is None
     assert group_a_equipment_match("Supply one chiller and spare gaskets") == "Chiller"
+    assert group_a_equipment_match("Purchase one new chilled water pump") == "Pump"
+    assert group_a_equipment_match("Purchase one new oil pump") is None
     assert (
         group_a_equipment_match("Provide chiller parts and purchase one new boiler")
         == "Chiller"
     )
     assert group_a_equipment_match("Box delivered by third-party carrier") is None
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "Purchase one new 500-ton chiller. Freight and spare filters included.",
+        "Provide chiller parts and purchase one new boiler.",
+    ],
+)
+def test_parts_in_a_mixed_quote_do_not_veto_a_complete_group_a_purchase(quote):
+    assert infer_purchase_route(quote) == EQUIPMENT_PURCHASE
 
 
 @pytest.mark.parametrize(

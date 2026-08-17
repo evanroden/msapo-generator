@@ -149,6 +149,38 @@ def test_generic_words_in_quote_prose_do_not_route_anything():
     assert match_facility(None, "work performed at the hospital") == (None, None)
 
 
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "Quote from Beacon Mechanical for Mercy Hospital",
+        "Prepared by Shaw Services for Mercy Hospital",
+        "Technician will travel from Lexington to Mercy Hospital",
+        "Ship through Newport Freight to Mercy Hospital",
+        "Tulane controls supplied the panel for Mercy Hospital",
+        "UNO Mechanical prepared this proposal for Mercy Hospital",
+    ],
+)
+def test_one_word_registry_sites_do_not_route_from_incidental_quote_prose(quote):
+    """A vendor, origin, or carrier name is not the service destination."""
+    assert match_facility("Mercy Hospital", quote) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("quote", "expected"),
+    [
+        ("Site: Opelika", ("EAMC", "Opelika")),
+        ("Work at Lexington", ("Baptist KY", "Lexington")),
+        ("Deliver to Newport", ("Unity Health", "Newport")),
+    ],
+)
+def test_one_word_registry_sites_still_route_with_destination_context(quote, expected):
+    assert match_facility(None, quote) == expected
+
+
+def test_one_word_registry_site_still_resolves_from_exact_facility_field():
+    assert match_facility("Beacon") == ("Beacon", "Beacon")
+
+
 def test_place_names_and_zips_still_decide_alone():
     """Deliberately NOT in _GENERIC_SITE_WORDS. These are the aliases that make
     ordinary address text resolve, and they are distinctive enough to trust."""

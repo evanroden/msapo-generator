@@ -137,15 +137,16 @@ def _append_scope_content(
     final_exclusions: list[str],
     facility_display: str | None = None,
     facility_address_display: str | None = None,
+    vendor_display: str | None = None,
 ) -> None:
     """
     Append scope content after the sentinel paragraph.
 
     The web review supplies the final inclusion and exclusion lists as-is.
 
-    facility_display and facility_address_display, when given, override the
-    facility values written into the document. This ensures a user's corrected
-    routing choice is reflected in the attachment rather than only its filename.
+    Display overrides, when given, carry the operator's reviewed routing and
+    vendor values into the attachment rather than preserving stale analyzer
+    values.
     """
     # -- Facility --
     facility = facility_display or analysis.facility_name
@@ -163,7 +164,8 @@ def _append_scope_content(
 
     # -- Vendor --
     p = doc.add_paragraph()
-    run = p.add_run(f"Vendor: {analysis.vendor_name}")
+    vendor = analysis.vendor_name if vendor_display is None else vendor_display
+    run = p.add_run(f"Vendor: {vendor}")
     run.bold = True
     run.font.size = Pt(11)
 
@@ -255,6 +257,7 @@ def generate_docx(
     output_name: str | None = None,
     facility_display: str | None = None,
     facility_address_display: str | None = None,
+    vendor_display: str | None = None,
 ) -> Path:
     """
     Open the MSAPO template, preserve everything at the top, and insert
@@ -289,6 +292,7 @@ def generate_docx(
         final_exclusions=final_exclusions,
         facility_display=facility_display,
         facility_address_display=facility_address_display,
+        vendor_display=vendor_display,
     )
 
     # ── Build output filename ─────────────────────────────────────────
@@ -323,6 +327,7 @@ def build_msapo_pdf(
     exclusions: list[str],
     facility_display: str | None = None,
     facility_address_display: str | None = None,
+    vendor_display: str | None = None,
 ) -> bytes:
     """Render the official MSAPO form to PDF bytes for the PO attachment.
 
@@ -354,6 +359,7 @@ def build_msapo_pdf(
             list(exclusions),
             facility_display=facility_display,
             facility_address_display=facility_address_display,
+            vendor_display=vendor_display,
         )
         pdf_path = convert_to_pdf(docx_path)
         payload = pdf_path.read_bytes()

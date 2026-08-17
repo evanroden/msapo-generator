@@ -205,10 +205,14 @@ expense-report draft; the PO workflow does not import or call it.
 python -m venv .venv
 source .venv/bin/activate       # Linux/macOS
 # .venv\Scripts\activate      # Windows
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements-dev.lock
 cp .env.example .env
 streamlit run run_web.py
 ```
+
+`requirements.txt` and `requirements-dev.txt` declare the supported direct
+dependencies. The fully resolved lock files drive local, CI, and production
+installs so the same commit receives the same dependency set.
 
 The discreet **Built by Evan Roden** control below the purchase-workflow header
 loads a static synthetic quote for a safe end-to-end test. It contains no

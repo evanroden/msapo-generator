@@ -101,6 +101,24 @@ def _tag_sort_key(tag: str) -> tuple:
     return (0, int(numbers[-1]), tag) if numbers else (1, 0, tag or "")
 
 
+# Only distinctive equipment nouns are safe enough to trigger an automatic
+# lowest-unit choice. Registry descriptions also end in broad words such as
+# SYSTEM, UNIT and PUMP; those occur throughout scopes and can otherwise select
+# an unrelated asset merely because it has the lowest tag at the site.
+_SAFE_TYPE_HEADS = frozenset(
+    {
+        "BOILER",
+        "CHILLER",
+        "EXCHANGER",
+        "SEPARATOR",
+        "SOFTENER",
+        "STARTER",
+        "TOWER",
+        "VFD",
+    }
+)
+
+
 def lowest_numbered_of_type(
     assets: Sequence[Mapping[str, str]], *, quote_text: object = "", hint: object = ""
 ) -> str | None:
@@ -149,6 +167,8 @@ def lowest_numbered_of_type(
         if not words:
             continue
         head = words[-1]
+        if head not in _SAFE_TYPE_HEADS:
+            continue
         if _bounded_contains(haystack, head):
             matched.setdefault(head, []).append(row)
     # More than one type in play (a chiller AND a cooling tower) is genuinely

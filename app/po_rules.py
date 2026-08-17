@@ -235,6 +235,17 @@ _BOILERPLATE_HEADING_RE = re.compile(
 # reinstates the Trane misread; lowering it starts gutting short proposals.
 _MIN_SCOPE_CHARS = 200
 
+# A short proposal can still be complete. When an explicit scope heading AND a
+# price total both precede the legal heading, there is enough structural
+# evidence to cut even before _MIN_SCOPE_CHARS. Requiring both keeps a document
+# whose terms genuinely precede its scope untouched.
+_SHORT_PROPOSAL_SCOPE_RE = re.compile(
+    r"\b(?:scope\s+of\s+(?:work|supply)|quoted\s+scope)\b", re.IGNORECASE
+)
+_SHORT_PROPOSAL_TOTAL_RE = re.compile(
+    r"\b(?:total\s+(?:price|amount)|proposal\s+total)\b", re.IGNORECASE
+)
+
 # A heading OWNS ITS LINE. That is what separates the section marker
 #
 #     TERMS AND CONDITIONS - QUOTED SERVICE
@@ -287,8 +298,6 @@ def _boilerplate_cut(source: str) -> int | None:
     must not stop a genuine heading further down from being found.
     """
     for match in _BOILERPLATE_HEADING_RE.finditer(source):
-        if match.start() < _MIN_SCOPE_CHARS:
-            continue
         line_start = source.rfind("\n", 0, match.start()) + 1
         line_end = source.find("\n", match.start())
         if line_end == -1:
@@ -297,6 +306,13 @@ def _boilerplate_cut(source: str) -> int | None:
             continue
         if len(source[line_start:line_end].strip()) > _MAX_HEADING_LINE_CHARS:
             continue
+        if match.start() < _MIN_SCOPE_CHARS:
+            proposal = source[:line_start]
+            if not (
+                _SHORT_PROPOSAL_SCOPE_RE.search(proposal)
+                and _SHORT_PROPOSAL_TOTAL_RE.search(proposal)
+            ):
+                continue
         return line_start
     return None
 
@@ -334,76 +350,18 @@ _LABOR_AS_PRODUCT_RE = re.compile(
     r"manual|manuals|contract|agreement)\b"
 )
 
-# A document-level disclaimer that the vendor supplies no labour. Unlike the
-# window-based negation below, these carry across a sentence boundary: "Supply
-# replacement service parts for the boiler. Labor by others." negates the whole
-# quote, not just the clause it sits in.
-_LABOR_DISCLAIMED_RE = re.compile(
-    r"\b(?:labou?r|installation|install|rigging|start-?up|commissioning)\s+"
-    r"(?:is\s+)?(?:to be\s+)?(?:by\s+(?:others|owner|customer)|"
-    r"not\s+included|excluded|by\s+owner)\b"
-    r"|\bby\s+others\b"
-    r"|\bno\s+(?:onsite\s+)?labou?r\b"
-)
-
-
-# Group A covers a COMPLETE equipment item. Parts, kits and components FOR such
-# an item are materials, but the equipment noun still appears in the text, so a
-# bare Group A keyword search sends "service parts for the boiler" to
-# 5302-EQUIPMENT. Detected against the same corpus that exposed the labour bias.
-#
-# Note what the first alternative actually matches: the ``(?:for|to suit|to
-# fit)?`` group is OPTIONAL, so it constrains nothing and the branch reduces to
-# a bare noun search. Any mention of a part word anywhere in the scope region
-# makes _is_parts_purchase true, including in a quote that also buys a complete
-# unit. Do not "tidy" the optional group away expecting no behaviour change --
-# and do not make it mandatory either without re-running the corpus, since the
-# 2026-08-13 notes record that tightening this the wrong way swung the error
-# back the other direction.
-_PARTS_OF_EQUIPMENT_RE = re.compile(
-    r"\b(?:parts?|kits?|components?|spares?|consumables?|filters?|gaskets?|"
-    r"seals?|belts?|bearings?)\b\s*(?:for|to suit|to fit)?\b"
-    r"|\b(?:replacement|service|repair|spare)\s+(?:parts?|kits?|components?)\b"
-)
-
-
-# "part of the quoted scope" is an idiom, not a component. Without this the
-# phrase turns "Installation is not part of the scope. Supply one new boiler."
-# into a materials purchase.
-_PART_OF_IDIOM_RE = re.compile(r"\bparts?\s+of\b")
-
-
-def _is_parts_purchase(source: str) -> bool:
-    """Whether the quote buys components rather than a complete unit.
-
-    The idiom substitution must run FIRST. Reversing the order would let "not
-    part of the quoted scope" register as a component and route a complete
-    boiler purchase to Materials -- an existing test caught exactly that during
-    the 2026-08-13 work.
-
-    ``source`` must already be lower-cased; none of these patterns are
-    case-insensitive.
-    """
-    return bool(_PARTS_OF_EQUIPMENT_RE.search(_PART_OF_IDIOM_RE.sub(" ", source)))
-
-
 def _labor_signal(source: str) -> bool:
     """Whether the vendor is affirmatively providing onsite labour.
 
-    Two corrections over a plain keyword search, both driven by measured
-    misclassifications rather than theory:
-
-    * product phrases are removed first, so "repair kits" cannot read as repair
-      work;
-    * a document-level disclaimer ("labor by others") suppresses the signal even
-      when it sits in a different sentence from the labour word.
+    Product phrases are removed first, so "repair kits" cannot read as repair
+    work. Negation remains clause-local: "installation by others" must suppress
+    that installation occurrence without cancelling affirmative startup or
+    technician labor sold in another clause of the same quote.
 
     The product phrases are replaced with a SPACE, not deleted. Deleting them
     would splice the surrounding words together and manufacture matches that
     the text never contained.
     """
-    if _LABOR_DISCLAIMED_RE.search(source):
-        return False
     return _has_affirmative_match(_LABOR_AS_PRODUCT_RE.sub(" ", source), _LABOR_RE)
 
 
@@ -421,10 +379,8 @@ def _has_affirmative_match(source: str, pattern: re.Pattern[str]) -> bool:
     """
     for match in pattern.finditer(source):
         # 48 characters is roughly one clause. It is short ON PURPOSE: it cannot
-        # reach across a sentence boundary, which is why the document-level
-        # disclaimer in _labor_signal exists as a separate mechanism rather than
-        # by widening this window. Widening it here would let a negation in a
-        # neighbouring sentence cancel an unrelated affirmative clause.
+        # reach across a sentence boundary. Widening it would let a negation in
+        # a neighbouring sentence cancel an unrelated affirmative clause.
         before = source[max(0, match.start() - 48) : match.start()]
         after = source[match.end() : min(len(source), match.end() + 48)]
         # Trim to the clause actually containing the match. "but"/"however"
@@ -468,13 +424,10 @@ def infer_purchase_route(text: object) -> str:
         return ONSITE_RENTAL
     if _labor_signal(source):
         return ONSITE_LABOR
-    # Parts for a Group A item are materials, not the item itself.
-    #
-    # Note that _is_parts_purchase VETOES the Group A match, so it also
-    # overrides equipment_policy's own mixed-quote handling: that module goes to
-    # some trouble to keep recognising a complete unit in "chiller parts and one
-    # new boiler", and this veto discards the distinction. Reported.
-    if group_a_equipment_match(source) and not _is_parts_purchase(source):
+    # equipment_policy already distinguishes loose parts from a complete Group
+    # A unit and deliberately preserves a complete unit in mixed purchases.
+    # A second document-wide "parts" veto here would discard that distinction.
+    if group_a_equipment_match(source):
         return EQUIPMENT_PURCHASE
     return MATERIALS_PURCHASE
 

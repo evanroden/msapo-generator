@@ -7,6 +7,7 @@ from PIL import Image
 
 from app.ocr import (
     SUPPORTED_IMAGE_SUFFIXES,
+    _ocr_pdf_via_document,
     _ocr_pdf_via_page_images,
     extract_text_from_pdf,
     image_blocks_for_vision,
@@ -30,13 +31,17 @@ def _decoded_image(block: dict) -> tuple[bytes, Image.Image]:
     return payload, image
 
 
-def test_claude_native_png_passes_through():
-    original = b"\x89PNG\r\n\x1a\nexample"
+def test_claude_native_png_is_also_normalized_and_bounded():
+    source = BytesIO()
+    Image.new("RGB", (12, 8), "white").save(source, format="PNG")
+    original = source.getvalue()
+
     blocks = image_blocks_for_vision(original, ".png")
 
     assert len(blocks) == 1
-    assert blocks[0]["source"]["media_type"] == "image/png"
-    assert _decoded(blocks[0]) == original
+    assert blocks[0]["source"]["media_type"] == "image/jpeg"
+    assert _decoded(blocks[0]).startswith(b"\xff\xd8\xff")
+    assert _decoded(blocks[0]) != original
 
 
 def test_bmp_is_normalized_to_jpeg():
@@ -189,3 +194,55 @@ def test_many_frames_are_rejected_with_a_clear_message(monkeypatch):
 
     with pytest.raises(ValueError, match="too large to analyze together"):
         image_blocks_for_vision(source.getvalue(), ".tiff")
+
+
+def test_native_image_payload_is_rejected_before_the_api_call(monkeypatch):
+    source = BytesIO()
+    Image.effect_noise((100, 100), 90).convert("RGB").save(source, format="PNG")
+    monkeypatch.setattr("app.ocr._MAX_TOTAL_ENCODED_BYTES", 100)
+
+    with pytest.raises(ValueError, match="too large to analyze together"):
+        image_blocks_for_vision(source.getvalue(), ".png")
+
+
+def test_pdf_page_fallback_enforces_the_combined_payload_budget(monkeypatch):
+    document = fitz.open()
+    document.new_page(width=100, height=100)
+    document.new_page(width=100, height=100)
+    payload = document.tobytes()
+    document.close()
+
+    fake_block = {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/jpeg",
+            "data": "x" * 700,
+        },
+    }
+    monkeypatch.setattr(
+        "app.ocr.image_blocks_for_vision", lambda *_args: [fake_block.copy()]
+    )
+    monkeypatch.setattr("app.ocr._MAX_TOTAL_ENCODED_BYTES", 1000)
+    monkeypatch.setattr(
+        "app.ocr.anthropic.Anthropic",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("oversized fallback must not reach the OCR client")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="PDF pages are too large"):
+        _ocr_pdf_via_page_images(payload)
+
+
+def test_native_pdf_document_budget_is_checked_before_the_api_client(monkeypatch):
+    monkeypatch.setattr("app.ocr._MAX_TOTAL_ENCODED_BYTES", 10)
+    monkeypatch.setattr(
+        "app.ocr.anthropic.Anthropic",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("oversized document must not reach the OCR client")
+        ),
+    )
+
+    with pytest.raises(ValueError, match="too large for direct document OCR"):
+        _ocr_pdf_via_document(b"large-pdf-payload")

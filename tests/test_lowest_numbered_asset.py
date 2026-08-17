@@ -83,6 +83,16 @@ def test_a_near_miss_type_does_not_capture_the_parent_equipment():
     assert _tag_for(rows, lowest_numbered_of_type(rows, quote_text="cooling tower")) == "CT-1"
 
 
+@pytest.mark.parametrize("word", ["system", "unit", "pump"])
+def test_broad_head_nouns_never_choose_the_lowest_unrelated_asset(word):
+    rows = [
+        {"uid": "A-1", "asset": "A-1", "equipment": f"Heating {word}"},
+        {"uid": "A-2", "asset": "A-2", "equipment": f"Cooling {word}"},
+    ]
+
+    assert lowest_numbered_of_type(rows, quote_text=f"Inspect the {word}") is None
+
+
 def test_tags_sort_by_unit_number_not_text():
     """A string sort puts CH-10 before CH-2, which would pick the wrong unit."""
     assert sorted(["CH-10", "CH-2", "CH-1"], key=_tag_sort_key) == ["CH-1", "CH-2", "CH-10"]

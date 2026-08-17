@@ -36,7 +36,7 @@ from collections.abc import Sequence
 from copy import copy
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from io import BytesIO
 from math import ceil
 from pathlib import Path
@@ -409,20 +409,15 @@ def mileage_reimbursement(item: MileageItem) -> Decimal | None:
     rate); callers treat that as zero for display and validation blocks it
     before generation.
 
-    KNOWN DIVERGENCE, do not "simplify" either side into the other: this
-    quantize() uses Decimal's default ROUND_HALF_EVEN, while the cell this row
-    also receives is the live formula =ROUND(G*rate,2), and Excel's ROUND is
-    half-UP. A product landing exactly on a half-cent -- 1.15 miles at $0.70 is
-    0.8050 -- gives 0.80 here and 0.81 in the workbook, so the total quoted in
-    the approval email can trail the form's Q60 by a cent. The formula stays in
-    the cell because the form must remain an editable workbook whose totals
+    Uses ROUND_HALF_UP to match the live Excel ``ROUND`` formula written to the
+    official form. The formula stays in the cell because the workbook must
     recompute when the employee corrects a row.
     """
     miles = parse_mileage(item.miles)
     rate = irs_business_mileage_rate(item.transaction_date)
     if miles is None or rate is None:
         return None
-    return (miles * rate).quantize(Decimal("0.01"))
+    return (miles * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def allocation_problems(

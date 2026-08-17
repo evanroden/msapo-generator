@@ -11,7 +11,7 @@ defusedxml>=0.7.1
 # PDF text extraction
 PyMuPDF>=1.24.0
 
-# Bounded image normalization (TIFF/BMP/HEIC -> Claude-compatible PNG)
+# Bounded image normalization (all supported formats -> vision-safe JPEG)
 Pillow>=11.3.0
 pillow-heif>=1.1.1
 
