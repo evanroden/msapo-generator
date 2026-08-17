@@ -238,6 +238,46 @@ _GENERIC_SITE_WORDS: frozenset[str] = frozenset({
     "inoperable",
 })
 
+# A one-word site or alias is too weak to identify an account when it appears
+# anywhere in quote prose. Real registry labels include vendor surnames
+# ("Beacon", "Shaw"), cities a technician may travel FROM ("Lexington"), and
+# shipping locations ("Newport"). Those words remain valid when the analyzer's
+# dedicated facility field is exactly that value, or when quote prose gives the
+# word explicit destination context such as "site: Opelika" or "work at
+# Lexington". Multi-word names and five-digit ZIP aliases keep their existing
+# whole-phrase behaviour.
+_SINGLE_SITE_CONTEXT_BEFORE_RE = re.compile(
+    r"(?:\b(?:site|facility|location|campus|address)\s*(?:[:#=-]\s*)?"
+    r"|\b(?:at|to)\s+(?:the\s+)?"
+    r"|\b(?:work|service|deliver|ship)\s+(?:is\s+)?(?:at|to)\s+(?:the\s+)?)$"
+)
+_SINGLE_SITE_ADDRESS_AFTER_RE = re.compile(
+    r"^\s*,\s*(?:[a-z]{2}\b|\d{5}\b)"
+)
+
+
+def _single_site_has_quote_context(
+    haystack: str,
+    phrase: str,
+    match: re.Match[str],
+) -> bool:
+    """Whether a one-token site match is presented as a destination.
+
+    A five-digit ZIP is already destination evidence and remains usable by
+    itself. Alphabetic one-word sites require either an explicit location cue
+    immediately before the match or address-like text immediately after it.
+    The bounded before window prevents an unrelated "site" several sentences
+    earlier from authorizing a vendor-name match later in the quote.
+    """
+    if phrase.isdigit() and len(phrase) == 5:
+        return True
+    before = haystack[max(0, match.start() - 48) : match.start()]
+    after = haystack[match.end() : min(len(haystack), match.end() + 16)]
+    return bool(
+        _SINGLE_SITE_CONTEXT_BEFORE_RE.search(before)
+        or _SINGLE_SITE_ADDRESS_AFTER_RE.search(after)
+    )
+
 
 @lru_cache(maxsize=1)
 def _site_index() -> list[tuple[str, str, str]]:
@@ -333,21 +373,31 @@ def match_facility(facility_name: str | None, quote_text: str | None = None) -> 
     re.escape() is mandatory: real site names contain ".", "(", "-" and "&".
     """
     index = _site_index()
-    for haystack in (facility_name, quote_text):
+    for source_index, haystack in enumerate((facility_name, quote_text)):
         if not haystack:
             continue
         h = re.sub(r"\s+", " ", haystack.lower()).strip()
         for phrase, contract, site in index:
-            if not re.search(
-                r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])", h
-            ):
-                continue
-            # A generic word only decides when it IS the whole facility field.
-            # Skipping rather than returning is deliberate: the scan continues,
-            # so a real site named further along the same haystack still wins.
-            if phrase in _GENERIC_SITE_WORDS and h != phrase:
-                continue
-            return contract, site
+            pattern = re.compile(
+                r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])"
+            )
+            for match in pattern.finditer(h):
+                is_facility_field = source_index == 0
+                is_single_token = len(phrase.split()) == 1
+
+                # Generic English words never decide from quote prose. In the
+                # dedicated facility field they decide only when they are the
+                # complete value.
+                if phrase in _GENERIC_SITE_WORDS:
+                    if not is_facility_field or h != phrase:
+                        continue
+                elif is_single_token:
+                    if is_facility_field:
+                        if h != phrase:
+                            continue
+                    elif not _single_site_has_quote_context(h, phrase, match):
+                        continue
+                return contract, site
     return None, None
 
 
