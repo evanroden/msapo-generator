@@ -4,6 +4,7 @@ Loads settings from environment variables and .env file.
 """
 
 import os
+import re
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -166,9 +167,37 @@ SITE_VALID_CATEGORIES: dict[str, list[str]] = {
 }
 
 
+def alias_matches(alias: str, haystack: str) -> bool:
+    """Whether ``alias`` occurs in ``haystack`` as WHOLE WORDS.
+
+    A bare substring test is not safe here, and the failure is not hypothetical:
+    the alias "unity hospital" is a substring of "Community Hospital", so
+    Newark-Wayne Community Hospital matched Unity Hospital and was silently
+    rewritten to Unity's name and address -- which then produced Unity's
+    cost-code letter (01F... instead of 01D...) and dropped repair_cap, a
+    category that exists ONLY at Newark-Wayne.
+
+    Lookarounds rather than ``\\b`` because several aliases carry punctuation
+    ("st. mary", "canton-potsdam", "127 north"); ``\\b`` after a "." asserts the
+    wrong thing, while ``(?!\\w)`` means "not followed by another word character"
+    for every alias shape.
+    """
+    if not alias or not haystack:
+        return False
+    return re.search(
+        rf"(?<!\w){re.escape(alias.lower())}(?!\w)", haystack.lower()
+    ) is not None
+
+
 def facility_key_from_name(display_name: str) -> str | None:
     """Reverse-lookup: given a display name like 'United Memorial Medical Center',
-    return the config key like 'united_memorial'. Returns None if no match."""
+    return the config key like 'united_memorial'. Returns None if no match.
+
+    Two passes, and the order matters. The exact-name pass must run over ALL
+    facilities before any alias is tried, because two sites share a name stem
+    ("Unity Hospital" / "Unity Specialty Hospital") and dict order would
+    otherwise decide which one wins.
+    """
     if not display_name:
         return None
     lower = display_name.lower()
@@ -176,10 +205,9 @@ def facility_key_from_name(display_name: str) -> str | None:
     for key, fac in FACILITIES.items():
         if fac["name"].lower() == lower:
             return key
-    # Pass 2: alias substring match
+    # Pass 2: whole-word alias match. NOT a substring test -- see alias_matches.
     for key, fac in FACILITIES.items():
-        aliases = [a.lower() for a in fac.get("aliases", [])]
-        if any(a in lower for a in aliases):
+        if any(alias_matches(a, lower) for a in fac.get("aliases", [])):
             return key
     return None
 
