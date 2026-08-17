@@ -34,6 +34,7 @@ from app.config import (
     facility_key_from_name,
     lookup_cost_code,
 )
+from app.contracts import match_facility
 from app.quote_analyzer import _match_facility
 
 
@@ -99,3 +100,69 @@ def test_aliases_carrying_punctuation_still_match():
     assert alias_matches("14621", "1425 Portland Ave, Rochester, NY 14621")
     # A ZIP embedded in a longer number is not that ZIP.
     assert not alias_matches("14621", "invoice 1462100 attached")
+
+
+# --- A generic site label is not evidence on its own -----------------------
+
+
+def test_an_unknown_hospital_is_left_unresolved_not_billed_to_conway():
+    """The registry really does name Conway sites "Hospital", "Rehab" and
+    "Oncology", and an EAMC site "Valley". Matching one inside a LONGER unknown
+    name routed the PO to a different customer's account, and the routing
+    snapshot then reported routing as complete -- so the contract control stayed
+    in the collapsed panel and the operator never saw it.
+
+    Product decision 2026-08-17: precision over recall. Unresolved surfaces the
+    control in the visible "Needs You" panel; a wrong contract does not surface
+    at all.
+    """
+    for name in (
+        "Mercy Hospital",
+        "St. Joseph Hospital",
+        "Green Valley Medical",
+        "Community Rehab Center",
+    ):
+        assert match_facility(name) == (None, None), name
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Hospital", ("Conway", "Hospital")),
+        ("Rehab", ("Conway", "Rehab")),
+        ("Oncology", ("Conway", "Oncology")),
+        ("Valley", ("EAMC", "Valley")),
+    ],
+)
+def test_a_generic_site_still_resolves_when_it_is_the_whole_field(name, expected):
+    """The recall this trade costs is exactly one click, and only here: the site
+    is still matched when the facility field names it and nothing else."""
+    assert match_facility(name) == expected
+
+
+def test_generic_words_in_quote_prose_do_not_route_anything():
+    """The quote-text pass was the worse half. A vendor named "Valley
+    Mechanical", or a line reading "the chiller is inoperable" -- UNO has a site
+    labelled INOPERABLE -- was enough to pick a contract."""
+    assert match_facility(None, "Quote from Valley Mechanical Inc") == (None, None)
+    assert match_facility(None, "the chiller is inoperable") == (None, None)
+    assert match_facility(None, "work performed at the hospital") == (None, None)
+
+
+def test_place_names_and_zips_still_decide_alone():
+    """Deliberately NOT in _GENERIC_SITE_WORDS. These are the aliases that make
+    ordinary address text resolve, and they are distinctive enough to trust."""
+    assert match_facility(None, "work at 127 North St, Batavia, NY 14020") == (
+        "Rochester Regional Health",
+        "UMMC",
+    )
+    assert match_facility(None, "site: Opelika")[0] == "EAMC"
+
+
+def test_a_real_site_further_along_the_haystack_still_wins():
+    """A rejected generic match must SKIP, not abort the scan -- otherwise one
+    incidental "hospital" would suppress the real site named beside it."""
+    assert match_facility("Newark-Wayne Community Hospital") == (
+        "Rochester Regional Health",
+        "Newark Wayne",
+    )
