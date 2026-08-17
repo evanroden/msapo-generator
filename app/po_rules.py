@@ -5,6 +5,24 @@ and the delivery-method version deployed in PR #33. Labor and rental take
 priority. With neither present, items on the supplied Group A list are
 Equipment and every other purchase is Materials; who delivers the item does
 not determine the account.
+
+What depends on this module
+---------------------------
+``app.po_context`` (Object Account and Agreement Type on every submission),
+``app.web_ui`` (the route selector, the uncertainty cross-check, and its
+``_parse_amount`` compatibility wrapper), ``app.smartsheet._money_number``, and
+``app.workflow_review``. ``parse_amount`` is the ONE currency parser in the
+repository; every other one delegates here so classification, reconciliation
+and Smartsheet validation cannot disagree about what "$1,234.56" means.
+
+Why a wrong answer here is invisible
+------------------------------------
+Nothing downstream can tell a confident wrong route from a right one. It simply
+appears in Smartsheet as an authoritative 5511-SUBCONTRACTOR / 03 - MSAPO
+(SERVICE), and contract administration has no signal that the tool guessed.
+That is why the string constants below are the EXACT live Smartsheet option
+spellings and why ``classify_po`` raises rather than defaulting: a blank field
+with a blocking warning is recoverable, a plausible wrong value is not.
 """
 
 from __future__ import annotations
@@ -16,11 +34,16 @@ from decimal import Decimal, InvalidOperation
 from app.equipment_policy import group_a_equipment_match
 
 
+# These four strings are stored in session state under ``purchase_route_<tok>``
+# and re-validated by po_context against PURCHASE_ROUTES. They are internal
+# identifiers, never shown; the operator sees PURCHASE_ROUTE_LABELS.
 ONSITE_LABOR = "onsite_labor"
 ONSITE_RENTAL = "onsite_rental"
 EQUIPMENT_PURCHASE = "equipment_purchase"
 MATERIALS_PURCHASE = "materials_purchase"
 
+# The dict is also the option ORDER of the selectbox in web_ui, via
+# PURCHASE_ROUTES below. Reordering changes what the operator sees first.
 PURCHASE_ROUTE_LABELS: dict[str, str] = {
     ONSITE_LABOR: "Vendor will perform labor onsite",
     ONSITE_RENTAL: (
@@ -31,6 +54,10 @@ PURCHASE_ROUTE_LABELS: dict[str, str] = {
 }
 PURCHASE_ROUTES: tuple[str, ...] = tuple(PURCHASE_ROUTE_LABELS)
 
+# Exact live-form picklist values, imported by smartsheet.OBJECT_ACCOUNT_OPTIONS
+# and AGREEMENT_TYPE_OPTIONS. Smartsheet drops an unrecognised picklist value
+# instead of rejecting the row, so a stray space or a changed hyphen here lands
+# a submission with a BLANK account -- no error anywhere in this application.
 MATERIALS_ACCOUNT = "5301-MATERIALS"
 SUBCONTRACTOR_ACCOUNT = "5511-SUBCONTRACTOR"
 EQUIPMENT_ACCOUNT = "5302-EQUIPMENT"
@@ -44,11 +71,22 @@ STANDARD_PO_UNDER_25K = "ON - STANDARD PO UNDER $25K"
 STANDARD_PO_OVER_25K = "OR - STANDARD PO OVER $25K"
 EQUIPMENT_PO = "OR - EQUIPMENT PO"
 
+# Decimal, not float: this is a boundary comparison on money, and $24,999.99
+# versus $25,000.00 selects a different approval path. A float literal cannot
+# represent either exactly and the corpus test pins both sides of the edge.
 STANDARD_PO_THRESHOLD = Decimal("25000.00")
 
 
 @dataclass(frozen=True)
 class POClassification:
+    """The two Smartsheet cells that a route plus an amount fully determine.
+
+    Only ever produced by :func:`classify_po`. There is no "unknown" member and
+    no default instance on purpose: the absence of a classification is
+    represented by the ValueError, so no caller can accidentally submit a
+    placeholder pair.
+    """
+
     object_account: str
     agreement_type: str
 
@@ -60,10 +98,22 @@ def parse_amount(value: object) -> Decimal | None:
     turn malformed values such as ``1e3`` into ``13``.  Accept the formats the
     quote analyzer and UI actually produce, while rejecting ambiguous text,
     repeated signs, and more than two decimal places.
+
+    Returns ``None`` for anything it cannot read exactly, INCLUDING text a
+    human would find obvious ("1,234.5 ea", "(1,234.56)", "1.234,56"). That is
+    the contract: the caller must treat None as "ask the operator", never as
+    zero. Negative values parse successfully -- rejecting them is
+    ``classify_po``'s job, so the amount and the sign produce different
+    messages.
     """
     text = str(value or "").strip()
     text = re.sub(r"(?i)\bUSD\b", "", text)
     text = text.replace("$", "").replace(",", "").strip()
+    # Anchored with fullmatch, and the decimal group is capped at TWO digits:
+    # "12.345" is more likely a typo or a unit rate than a currency amount, and
+    # accepting it would silently change the value sent to Smartsheet. The
+    # leading "-?" appears once, so "--5" and "+-5" are rejected rather than
+    # normalised.
     if not re.fullmatch(r"-?(?:\d+(?:\.\d{1,2})?|\.\d{1,2})", text):
         return None
     try:
@@ -78,6 +128,14 @@ def classify_po(route: str, total: object) -> POClassification:
     The $25,000 boundary is intentionally conservative: only totals strictly
     below $25,000 use the under-$25K option; $25,000 and above use the other
     Standard PO option.
+
+    RAISES ``ValueError`` rather than returning a default, and the message is
+    shown to the operator verbatim by po_context. This is the whole point of
+    the function: the reported production defect was Object Account and
+    Agreement Type reading Subcontractor/MSAPO on every request, and any
+    fallback value reintroduces it. The amount is required for EVERY route,
+    including the three that do not consult it, so an unpriced request can
+    never be classified at all.
     """
     if route not in PURCHASE_ROUTES:
         raise ValueError("Choose how the vendor will provide the goods or service.")
@@ -105,6 +163,10 @@ def classify_po(route: str, total: object) -> POClassification:
     raise ValueError("Choose how the vendor will provide the goods or service.")
 
 
+# Every pattern from here down is compiled WITHOUT re.IGNORECASE and is applied
+# only to text that infer_purchase_route has already lower-cased and
+# whitespace-collapsed. Adding a caller that passes raw text is a silent
+# no-match: the route quietly falls through to materials_purchase.
 _RENTAL_RE = re.compile(
     r"\b(?:rental|rent(?:ed|ing)?|leased?|temporary chiller|scissor lift)\b"
 )
@@ -113,6 +175,12 @@ _LABOR_RE = re.compile(
     r"start-?up|commission(?:ing|ed)?|inspect(?:ion|ing|ed)?|troubleshoot(?:ing|ed)?|"
     r"perform(?:ing|ed)? work)\b"
 )
+# Both negation patterns are anchored to the WINDOW, not to the sentence: the
+# "before" one ends at $ so it only fires when the negator is within three words
+# of the match, and the "after" one starts at ^ so it only fires immediately
+# after it. That bounded reach is deliberate. An unbounded search would let a
+# "not included" anywhere in a long quote cancel an unrelated affirmative
+# clause -- the same class of error that reading vendor boilerplate produced.
 _NEGATION_BEFORE_RE = re.compile(
     r"(?:\bno\b|\bnot\b|\bwithout\b|\bexclude(?:d|s|ing)?\b|"
     r"\bowner[- ]provided\b|\bcustomer[- ]provided\b)"
@@ -161,7 +229,10 @@ _BOILERPLATE_HEADING_RE = re.compile(
 )
 
 # Below this, the "scope" is too short to be a proposal and the cut is more
-# likely to have removed real content than boilerplate.
+# likely to have removed real content than boilerplate. 200 characters is a
+# judgement call, not a measurement -- it was chosen so that a document whose
+# terms PRECEDE its scope is returned whole. Raising it makes the cut rarer and
+# reinstates the Trane misread; lowering it starts gutting short proposals.
 _MIN_SCOPE_CHARS = 200
 
 
@@ -174,6 +245,20 @@ def scope_region(text: object) -> str:
 
     Conservative in both directions: no heading found, or too little text before
     the first one, and the original is returned unchanged.
+
+    KNOWN LIMIT, and it fails silently. The cut is made at the FIRST heading
+    match anywhere past _MIN_SCOPE_CHARS, and ``limited warranty`` is one of the
+    headings. A proposal that mentions its own warranty mid-body -- "Limited
+    Warranty: twelve months on supplied materials" is ordinary vendor prose --
+    loses everything after that line, including any scope that followed it. The
+    route is then inferred from a partial proposal with no error and no visible
+    difference. Reported, not fixed here: narrowing the headings would reinstate
+    the boilerplate misread this function exists to stop.
+
+    Used ONLY by infer_purchase_route. It is deliberately not applied to the
+    analyzer prompt -- see §7 of
+    docs/COMMIT_NOTES_2026-08-14_SCOPE_REGION_ROUTING.md, which records that as
+    an untested question rather than a decision.
     """
     source = str(text or "")
     match = _BOILERPLATE_HEADING_RE.search(source)
@@ -209,6 +294,15 @@ _LABOR_DISCLAIMED_RE = re.compile(
 # an item are materials, but the equipment noun still appears in the text, so a
 # bare Group A keyword search sends "service parts for the boiler" to
 # 5302-EQUIPMENT. Detected against the same corpus that exposed the labour bias.
+#
+# Note what the first alternative actually matches: the ``(?:for|to suit|to
+# fit)?`` group is OPTIONAL, so it constrains nothing and the branch reduces to
+# a bare noun search. Any mention of a part word anywhere in the scope region
+# makes _is_parts_purchase true, including in a quote that also buys a complete
+# unit. Do not "tidy" the optional group away expecting no behaviour change --
+# and do not make it mandatory either without re-running the corpus, since the
+# 2026-08-13 notes record that tightening this the wrong way swung the error
+# back the other direction.
 _PARTS_OF_EQUIPMENT_RE = re.compile(
     r"\b(?:parts?|kits?|components?|spares?|consumables?|filters?|gaskets?|"
     r"seals?|belts?|bearings?)\b\s*(?:for|to suit|to fit)?\b"
@@ -223,7 +317,16 @@ _PART_OF_IDIOM_RE = re.compile(r"\bparts?\s+of\b")
 
 
 def _is_parts_purchase(source: str) -> bool:
-    """Whether the quote buys components rather than a complete unit."""
+    """Whether the quote buys components rather than a complete unit.
+
+    The idiom substitution must run FIRST. Reversing the order would let "not
+    part of the quoted scope" register as a component and route a complete
+    boiler purchase to Materials -- an existing test caught exactly that during
+    the 2026-08-13 work.
+
+    ``source`` must already be lower-cased; none of these patterns are
+    case-insensitive.
+    """
     return bool(_PARTS_OF_EQUIPMENT_RE.search(_PART_OF_IDIOM_RE.sub(" ", source)))
 
 
@@ -237,6 +340,10 @@ def _labor_signal(source: str) -> bool:
       work;
     * a document-level disclaimer ("labor by others") suppresses the signal even
       when it sits in a different sentence from the labour word.
+
+    The product phrases are replaced with a SPACE, not deleted. Deleting them
+    would splice the surrounding words together and manufacture matches that
+    the text never contained.
     """
     if _LABOR_DISCLAIMED_RE.search(source):
         return False
@@ -250,10 +357,22 @@ def _has_affirmative_match(source: str, pattern: re.Pattern[str]) -> bool:
     ``rental by others``.  Looking only for the noun sends those purchases to
     the wrong account.  Examine a short window around every match and accept
     the route when at least one occurrence is affirmative.
+
+    ANY affirmative occurrence wins. A quote that excludes installation in one
+    line and sells labour in another is still a labour purchase, so the search
+    cannot stop at the first negated hit.
     """
     for match in pattern.finditer(source):
+        # 48 characters is roughly one clause. It is short ON PURPOSE: it cannot
+        # reach across a sentence boundary, which is why the document-level
+        # disclaimer in _labor_signal exists as a separate mechanism rather than
+        # by widening this window. Widening it here would let a negation in a
+        # neighbouring sentence cancel an unrelated affirmative clause.
         before = source[max(0, match.start() - 48) : match.start()]
         after = source[match.end() : min(len(source), match.end() + 48)]
+        # Trim to the clause actually containing the match. "but"/"however"
+        # terminate the trailing clause because they reverse it: in "excluded,
+        # however labor is included" the exclusion belongs to the other half.
         before_clause = re.split(r"[.;:\n]", before)[-1]
         after_clause = re.split(r"[.;:\n]|\bbut\b|\bhowever\b", after)[0]
         if not _NEGATION_BEFORE_RE.search(
@@ -264,13 +383,40 @@ def _has_affirmative_match(source: str, pattern: re.Pattern[str]) -> bool:
 
 
 def infer_purchase_route(text: object) -> str:
-    """Make a reviewable fallback guess when the analyzer has no route value."""
+    """Make a reviewable fallback guess when the analyzer has no route value.
+
+    ALWAYS returns one of the four routes; there is no "unknown". web_ui uses
+    it two ways and both matter:
+
+    * as the sole decider when ``analyze_quote`` returned nothing usable (API
+      failure, timeout, unparseable response);
+    * as the second opinion in ``route_uncertain`` -- when it disagrees with the
+      analyzer, the route selector is promoted into the visible questions panel.
+
+    The second use is why a systematically wrong fallback is expensive even
+    though it rarely decides anything: it turns correct confident answers into
+    nags and degrades the disagreement signal to noise.
+
+    The order of the tests IS the policy, straight from the approved matrix:
+    labour and rental take priority over what is being bought, so a rental
+    chiller is a rental even though "chiller" is a Group A item. Reordering
+    these four lines silently re-implements the superseded delivery-method
+    logic.
+    """
+    # Lower-cased and whitespace-collapsed once, here, because every pattern
+    # below is case-sensitive and several span a word gap that a line break in
+    # OCR output would otherwise break.
     source = " ".join(scope_region(text).lower().split())
     if _has_affirmative_match(source, _RENTAL_RE):
         return ONSITE_RENTAL
     if _labor_signal(source):
         return ONSITE_LABOR
     # Parts for a Group A item are materials, not the item itself.
+    #
+    # Note that _is_parts_purchase VETOES the Group A match, so it also
+    # overrides equipment_policy's own mixed-quote handling: that module goes to
+    # some trouble to keep recognising a complete unit in "chiller parts and one
+    # new boiler", and this veto discards the distinction. Reported.
     if group_a_equipment_match(source) and not _is_parts_purchase(source):
         return EQUIPMENT_PURCHASE
     return MATERIALS_PURCHASE
@@ -283,17 +429,41 @@ def normalize_asset_id(value: object) -> str:
     a verified mapping for it. The product owner explicitly directed the tool
     to continue exporting the full asset codes already configured for every
     site. Keep the historical function name for compatibility with callers.
+
+    Returns "" for every "no asset chosen" spelling, which is what makes the
+    Smartsheet Asset ID cell blank rather than carrying prompt text. This is a
+    SIGNIFICANT reversal: do not reintroduce five-digit truncation without a
+    documented instruction and a verified mapping.
     """
     text = str(value or "").strip()
     if (
         not text
+        # These four spellings are duplicated from other modules and nothing
+        # links them: "None Applicable" is written by web_ui.ASSET_NONE and by
+        # po_context._asset_value, and the prefix below is the start of
+        # web_ui.ASSET_PLACEHOLDER. startswith rather than equality so the
+        # placeholder's trailing wording can drift; the LEADING words cannot.
+        # Change the placeholder's opening in web_ui and this test stops
+        # matching -- the prompt string itself is then exported as the Asset ID,
+        # with no error at any layer.
         or text.casefold() in {"none applicable", "n/a", "na"}
         or text.startswith("— Choose an asset")
     ):
         return ""
+    # Internal whitespace collapsed so the same asset never produces two
+    # different context IDs because of a double space.
     return " ".join(text.split())
 
 
 def asset_id_is_numeric(value: object) -> bool:
-    """Compatibility helper: configured full asset codes are valid text IDs."""
+    """Compatibility helper: configured full asset codes are valid text IDs.
+
+    NOT CALLED ANYWHERE -- neither app code nor tests. It survives from the
+    era when the Asset ID was expected to be a five-digit JDE number; the name
+    is now actively misleading, since it returns True for "EEA-CWP-07" and for
+    "". Kept because removal is a separate verified phase.
+
+    The 160 is the same cell limit build_po_context warns on, duplicated rather
+    than shared.
+    """
     return len(normalize_asset_id(value)) <= 160

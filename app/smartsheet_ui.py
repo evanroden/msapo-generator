@@ -1,4 +1,30 @@
-"""Reusable Streamlit component for manual Smartsheet form entry."""
+"""Reusable Streamlit component for manual Smartsheet form entry.
+
+Two independent handoff controls, both consumed by ``app.smartsheet_inline``:
+
+* ``render_prefilled_link`` -- the primary route, a native Streamlit link
+  control. Native because it is the only one that reliably opens a NEW tab on
+  iOS Safari; an anchor rendered inside a component frame is subject to the
+  frame's navigation rules and popup blocking.
+* ``render_manual_handoff`` -- the fallback shown only inside a collapsed
+  troubleshooting expander, for the case where prefill silently did not take
+  (an expired Smartsheet session is the common cause).
+
+The fallback is a self-contained HTML/JS frame rather than Streamlit widgets on
+purpose: per-field clipboard copy and progress that survives a rerun cannot be
+expressed with server-side widgets, and every rerun would otherwise discard the
+operator's place in a 16-field form.
+
+Note for anyone changing the frame: Streamlit embeds this HTML via ``srcdoc``,
+which is SAME-ORIGIN with the app. There is no sandbox between this markup and
+the Streamlit page, so the payload escaping in ``render_manual_handoff`` is a
+security control, not formatting.
+
+tests/test_smartsheet_handoff_entrypoint.py asserts on this file's SOURCE TEXT,
+including exact counts of the two Streamlit call sites and the absence of the
+deprecated components HTML helper. A second embed added here fails the suite
+with no behavioural change.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +39,17 @@ def render_prefilled_link(
     *,
     link_label: str = "Open Smartsheet in a new tab ↗",
 ) -> None:
-    """Render the primary handoff with Streamlit's native new-tab control."""
+    """Render the primary handoff with Streamlit's native new-tab control.
+
+    ``form_url`` must already be the fully validated, length-checked prefill URL
+    from ``build_prefilled_form_url``; this function performs no checks of its
+    own and will happily render whatever it is given.
+
+    The default ``link_label`` is asserted verbatim by the entrypoint test, as
+    is ``type="primary"`` -- the operator has to find this control on a phone
+    screen below two download buttons, and it demoting itself to a plain link is
+    exactly the regression the assertion catches.
+    """
     st.link_button(
         link_label,
         form_url,
@@ -38,14 +74,36 @@ def render_manual_handoff(
     Browser storage contains only completed row indexes. The storage key includes
     a digest of the exact labels and values, preventing progress from one PO or
     form revision from appearing on another.
+
+    ``rows`` must arrive in the live form's top-to-bottom order (that is what
+    ``handoff_rows`` produces) -- the whole value of this control is that the
+    operator can work straight down the real form without hunting.
+
+    Renders nothing but the frame; it never writes session state, so it is safe
+    to call on every rerun.
     """
     row_payload = [
         {"field": field, "label": label, "value": value}
         for field, label, value in rows
     ]
+    # The digest covers the exact labels AND values, not just a filename. Keying
+    # progress on anything coarser was FM-C02: green checkmarks from a previous
+    # PO reappeared on the next one, and the operator skipped fields they had
+    # never actually copied. sort_keys makes the digest independent of dict
+    # ordering; 16 hex characters is plenty for a per-browser namespace.
     digest = hashlib.sha256(
         json.dumps(row_payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()[:16]
+    # This payload carries VENDOR-CONTROLLED text (vendor name, description,
+    # notes lifted from an uploaded quote) into a <script> block inside a
+    # same-origin frame. json.dumps does NOT escape "<", so a value containing
+    # a literal closing script tag would terminate the block early and execute
+    # the remainder as page script. Rewriting every "<" as its JSON unicode
+    # escape makes that impossible while leaving the parsed value identical.
+    #
+    # Do not "simplify" this away as redundant with json.dumps, and do not swap
+    # it for an HTML-escape of the whole document -- the JS reads these values
+    # as data and escapes them again with escapeHtml before they reach innerHTML.
     payload = json.dumps(
         {
             "rows": row_payload,
@@ -56,6 +114,38 @@ def render_manual_handoff(
         ensure_ascii=False,
     ).replace("<", "\\u003c")
 
+    # A raw string, and every style is inline. The frame is a separate document,
+    # so it inherits none of the app's theme CSS; the literal ENFRA hex values
+    # below are what keep the fallback from looking like a different product.
+    # There is also no external stylesheet or script to load -- an offline or
+    # proxy-blocked asset would leave the operator with an unusable copy list.
+    #
+    # Four things inside this markup are load-bearing and are NOT obvious from
+    # reading the script. Editing them without knowing why is how this control
+    # regresses silently:
+    #
+    # 1. copyText tries the Clipboard API first, then falls back to a hidden
+    #    textarea and execCommand. The API is required for modern Chrome, but it
+    #    REJECTS -- silently -- on older iOS Safari, on an insecure origin, and
+    #    when permission is denied. Deleting the fallback removes copy support
+    #    for the iPad users this control was built for (FM-C03).
+    # 2. That fallback textarea sets contentEditable='true' AND readOnly=false,
+    #    and hides itself with opacity:0 at a real 1x1 size. This is the exact
+    #    documented iOS shape: without both flags Safari refuses to select the
+    #    contents, and display:none or visibility:hidden makes the element
+    #    unselectable -- in both cases execCommand copies nothing and still
+    #    returns true, so the operator pastes an empty string.
+    # 3. Stored progress is re-validated as in-range integers on load, and the
+    #    read is wrapped in try/catch because Safari private mode throws on
+    #    localStorage. Failing silently is intended here: losing checkmarks is
+    #    acceptable, refusing to render the copy list is not.
+    # 4. A row is marked done ONLY when copyText confirms success. Ticking it
+    #    optimistically would tell the operator a field is handled while the
+    #    clipboard is empty; the value stays on screen so a failed copy is still
+    #    recoverable by hand.
+    #
+    # Every interpolated value passes through escapeHtml before it reaches
+    # innerHTML -- vendor-supplied text lands in this DOM.
     html = r"""
 <div id="ss-root" style="font-family:Arial,Helvetica,sans-serif;color:#092B24;">
   <div style="display:flex;gap:8px;margin-bottom:10px;">
@@ -164,9 +254,25 @@ def render_manual_handoff(
 })()
 </script>
 """
+    # 175px of chrome (open button, progress bar, copy-all button, status line)
+    # plus ~67px per row, capped so a 16-field PO cannot push a 1,200px frame
+    # into the middle of a phone page.
+    #
+    # The cap is only safe because st.iframe hard-codes the frame's scrolling
+    # attribute ON, so a clipped list scrolls internally. The deprecated
+    # components HTML helper this replaced defaults to scrolling OFF: switching
+    # back would silently CUT the last three fields and the copy-all button off
+    # the bottom with no scrollbar and no error -- the operator would simply
+    # never see them. Any replacement embed must be re-checked for that.
+    #
+    # height must also stay a POSITIVE int; Streamlit rejects 0, and this call
+    # is not wrapped in a try/except, so that would surface as a page error.
     height = min(1050, 175 + 67 * len(rows))
     st.iframe(
         html.replace("__PAYLOAD__", payload),
         height=height,
+        # tab_index=0 keeps the frame in the natural tab order: this is a
+        # keyboard-and-touch data-entry aid, and removing it from the tab order
+        # would strand keyboard users between the download buttons and the link.
         tab_index=0,
     )

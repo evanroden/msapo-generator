@@ -3,6 +3,37 @@
 The application converts a reviewed vendor quote into a prefilled Smartsheet PO
 request and a two-file supporting package: the unchanged quote plus a concise
 MSAPO form PDF. It does not create or send email.
+
+What depends on this module
+---------------------------
+``run_web.py`` -- and therefore the deployed container -- calls :func:`main`.
+``app.expense_ui.render_expense_workflow`` is the other half of the same page;
+the workflow selector at the top of :func:`main` picks one of the two. The
+import therefore runs one way only: this module imports the expense page, never
+the reverse. That is why the shared "still needs a value" highlight lives in
+``app.ui_highlight`` instead of here -- importing it back from this module would
+be a cycle.
+
+Where the truth actually lives
+------------------------------
+This page RENDERS and COLLECTS; it does not decide. The Smartsheet-facing
+snapshot is rebuilt from ``st.session_state`` by ``app.po_context``, the routing
+rules live in ``app.po_rules``, and the question/correction placement rules live
+in ``app.workflow_review``. Several session-state key formats (``contract_``,
+``site_``, ``gsite_``, ``gsitetxt_``, ``cat_``, ``manualcost_``, ``gcat_``,
+``gcost_``, ``asset_``, ``inc_``, ``exc_``, ``scope_``, ``desc_``, ``total_``,
+``vendor_``, ``contact_``, ``cemail_``, ``instructions_``, ``requester_``,
+``job_number_``) are read back by ``app.po_context`` by exact string. Renaming a
+key here does not raise anywhere: po_context just reads a missing key, falls
+back to its default, and the field silently reaches Smartsheet blank or stale.
+
+A warning about editing this file at all
+----------------------------------------
+``tests/test_smartsheet_handoff_entrypoint.py`` reads this file as PLAIN TEXT
+and asserts both on exact substrings and on their exact COUNTS -- how many step
+headers exist, how many PDF-builder calls, how many generate labels. A comment
+that merely quotes one of those phrases changes a count and fails the suite with
+no logic change whatsoever. Read that test before adding prose here.
 """
 
 from __future__ import annotations
@@ -88,11 +119,32 @@ from app.workflow_review import (
 
 SITE_LABEL_TO_KEY = {label: key for key, label in FACILITY_SHORT_NAMES.items()}
 SITE_LABELS = list(FACILITY_SHORT_NAMES.values())
+# The four em-dash strings below are "the operator has not chosen yet" sentinels
+# that ride inside real option lists, because a Streamlit selectbox has no empty
+# state. Two properties are load-bearing:
+#
+#   * they must never collide with a real contract, site, job number or asset
+#     UID. The em-dash wrapper is what guarantees that -- no catalog entry in
+#     app/data/contracts.json or app/job_numbers.py looks like this.
+#   * ``app.po_context`` keeps its OWN copies of the contract and site literals
+#     (``_CONTRACT_PLACEHOLDER``, ``_SITE_PLACEHOLDER``) and compares session
+#     values against them. Changing a literal here without changing it there
+#     raises nothing: po_context stops recognising the placeholder and exports
+#     the prompt text itself into the Smartsheet SITE field as though the
+#     operator had typed it. SILENT, and visible only on the submitted form.
+#
+# ASSET_NONE is the same kind of shared literal: ``po_rules.normalize_asset_id``
+# maps "none applicable" (case-folded) to an empty Asset ID, and
+# ``po_context._asset_value`` writes this exact spelling as its own default.
 CONTRACT_PLACEHOLDER = "— Select a contract —"
 SITE_PLACEHOLDER = "— Select a site —"
 JOB_NUMBER_PLACEHOLDER = "— Select a job number —"
 ASSET_NONE = "None Applicable"
 ASSET_PLACEHOLDER = "— Choose an asset or No asset —"
+# Keys, not labels, are what reach Smartsheet and what po_context re-validates
+# against {"PO", "CHANGE ORDER"}. The dict is also the option ORDER for the
+# selectbox, so "PO" first is deliberate: it is the overwhelmingly common case
+# and the fallback whenever the analyzer's guess is unrecognised.
 REQUEST_TYPE_LABELS = {
     "PO": "New purchase order",
     "CHANGE ORDER": "Change order to an existing PO",
@@ -101,7 +153,23 @@ REQUEST_TYPE_LABELS = {
 
 @dataclass(frozen=True)
 class RoutingSnapshot:
-    """Current routing values before their widgets are placed on the page."""
+    """Current routing values before their widgets are placed on the page.
+
+    Exists because placement has to be decided BEFORE rendering. Each field goes
+    to either the visible questions container or the collapsed corrections panel,
+    and that choice depends on values the widgets have not produced yet this
+    rerun. Reading session state up front is the only way to know.
+
+    Reading it is also the only SAFE way. Writing a widget key after that widget
+    has rendered is silently discarded by Streamlit -- and on the approver-style
+    controls it additionally fires ``on_change``, so one ignored write cascades
+    into a cleared field. See §2.2 of
+    docs/COMMIT_NOTES_2026-08-13_EXPENSE_DISCLOSURE_AND_NEEDS_YOU_HIGHLIGHT.md.
+
+    ``rrh_site_key`` is the FACILITIES dictionary key (for example
+    "united_memorial"), not the short label the operator sees; it is None
+    whenever the site has not resolved to a configured RRH facility.
+    """
 
     contract: str
     rrh: bool
@@ -111,6 +179,33 @@ class RoutingSnapshot:
     rrh_site_key: str | None
 
 
+# Every rule below that begins ``.st-key-`` depends on Streamlit emitting a
+# container class named after a widget key. That coupling fails SILENTLY: rename
+# the key in main() and the selector matches nothing -- no error, no warning,
+# just an unstyled control. Two are live here (workflow_mode and
+# load_synthetic_test); the highlight bar targets a third, po_needs_you, from
+# app/ui_highlight.py.
+#
+# Three rules in this stylesheet currently match NOTHING. They are left in place
+# because removal is a separate verified phase, but do not read them as evidence
+# of a live style:
+#   * ``.epc-needs-value`` -- the needs-a-value bar was first baked in here, then
+#     moved to ``app.ui_highlight.highlight_needed_fields``, which emits the same
+#     declarations per rerun. Emitting from the caller is precisely what makes
+#     the bar transient. Nothing ever puts this class on an element. Its comment
+#     is still the only record of WHY the mark is a left bar and not an outline,
+#     so read it before restyling.
+#   * ``.scope-section`` and ``.scope-text`` -- left from the read-only scope
+#     preview that the inclusion/exclusion checkbox lists replaced.
+#
+# Related: the step-1 header markup in main() carries a second class token,
+# ``navy``, for which no rule exists anywhere in this repository. It is harmless
+# only because the base step-number style already paints the ocean colour. It is
+# not a colour modifier; do not add a sibling token expecting one to work.
+#
+# tests/test_web_ui_app.py slices this string with ``str.split`` on exact
+# selector text and then on the next "}". Reformatting a rule it slices -- even
+# only the whitespace -- breaks those tests without changing a rendered pixel.
 CUSTOM_CSS = """
 <style>
     :root {
@@ -510,18 +605,47 @@ CUSTOM_CSS = """
 
 
 def _h(value: object) -> str:
+    """Escape a value for interpolation into ``unsafe_allow_html`` markup.
+
+    EVERY value that reaches an ``st.markdown(..., unsafe_allow_html=True)`` call
+    on this page must go through this. The strings involved -- vendor name,
+    facility name and address, cost code, category -- come from OCR text and from
+    the model, so an apostrophe or an angle bracket in a real quote is enough to
+    break the card layout, and a crafted quote would inject markup outright.
+
+    ``value or ""`` deliberately collapses None to the empty string; no caller
+    passes a numeric zero that would be wrongly blanked.
+    """
     return html.escape(str(value or ""))
 
 
 def _parse_amount(value: object) -> Decimal | None:
-    """Compatibility wrapper around the canonical currency parser."""
+    """Compatibility wrapper around the canonical currency parser.
+
+    Kept as a name because ``tests/test_web_ui_helpers.py`` imports it directly
+    and pins the currency-format behaviour from this module. Do NOT reimplement
+    the parsing here: ``po_rules.parse_amount`` deliberately REFUSES ambiguous
+    input (an earlier version stripped every non-digit and silently turned "1e3"
+    into 13), and the submission gate depends on rejection rather than repair.
+    """
     return parse_amount(value)
 
 
 def _pricing_difference(
     subtotal: object, tax: object, total: object
 ) -> Decimal | None:
-    """Return subtotal plus tax minus total when all values are parseable."""
+    """Return subtotal plus tax minus total when all values are parseable.
+
+    Returns None when ANY of the three is unparseable, so the caller cannot read
+    a missing tax line as a zero discrepancy.
+
+    No production call site remains: the live subtotal/tax/total reconciliation
+    is ``po_context.build_po_context``, which raises the same comparison as a
+    submission warning with a one-cent tolerance. Only
+    ``tests/test_web_ui_helpers.py`` exercises this, so it is not dead by this
+    project's definition -- but any change to the money rules belongs in
+    po_rules/po_context, not here, or the two will disagree.
+    """
     parsed = tuple(_parse_amount(value) for value in (subtotal, tax, total))
     if any(value is None for value in parsed):
         return None
@@ -530,6 +654,19 @@ def _pricing_difference(
 
 
 def _strip_ai_wrapper(text: str) -> str:
+    """Unwrap an "[AI ESTIMATE: ...]" marker the analyzer may put on an item.
+
+    The marker is how an inferred inclusion/exclusion is distinguished from one
+    quoted verbatim; the wrapper is stripped for DISPLAY while the caller keeps
+    the flag separately.
+
+    ``app.po_context`` holds a byte-identical copy of this function. That
+    duplication is load-bearing, not laziness: the checkbox keys are positional
+    (``inc_<token>_<index>``), and po_context re-derives the same list to map
+    each index back to an item. If the two ever strip differently, one list
+    shifts by an entry and po_context attributes the operator's ticks to the
+    WRONG inclusions -- with no error anywhere. Change both or neither.
+    """
     match = re.search(r"\[AI ESTIMATE:\s*(.+?)\]", text)
     return match.group(1).strip() if match else text.strip()
 
@@ -537,7 +674,17 @@ def _strip_ai_wrapper(text: str) -> str:
 def _build_unified_lists(
     analysis: QuoteAnalysis,
 ) -> tuple[list[tuple[str, bool]], list[tuple[str, bool]]]:
-    """Return de-duplicated inclusion/exclusion choices with AI flags."""
+    """Return de-duplicated inclusion/exclusion choices with AI flags.
+
+    Each entry is ``(display text, was inferred by the tool)``. Quoted items come
+    first, then any ai_assumptions for that section that are not already present.
+
+    The ORDER is a contract, not a preference. ``po_context._unified_review_items``
+    reproduces this exact sequence to resolve the positional checkbox keys, so
+    reordering, re-sorting or changing the de-duplication rule here without
+    changing it there silently re-assigns the operator's selections to different
+    items in the generated PDF and in the Smartsheet scope text.
+    """
 
     def _process(items: list[str], section: str) -> list[tuple[str, bool]]:
         result: list[tuple[str, bool]] = []
@@ -573,6 +720,19 @@ def _routing_for_generation(
     Streamlit deletes widget keys when a widget is absent during a rerun. The
     confirmed values are therefore mirrored into a plain session key and take
     precedence over both stale widget state and the original AI suggestion.
+
+    Returns ``(contract, site, facility_display_name, facility_address)``.
+
+    The last two are what belong ON the generated document, and they are NOT the
+    analyzer's values: when the operator corrects the site to a different RRH
+    facility, both are re-read from FACILITIES for the site actually chosen. The
+    caller currently discards the address element -- see the note at the
+    generation call in main() before assuming that is intentional.
+
+    Unlike :func:`_routing_snapshot`, an unrecognised mirrored contract is
+    rejected here (``is_known_contract``) and the whole confirmation is dropped,
+    so a contracts.json edit that removes an account cannot carry a stale name
+    onto a freshly generated document.
     """
     detected_contract, detected_site = contracts.match_facility(
         analysis.facility_name, quote_text
@@ -634,7 +794,26 @@ def _routing_snapshot(
     quote_text: str,
     token: str,
 ) -> RoutingSnapshot:
-    """Resolve routing defaults without rendering or creating blank widgets."""
+    """Resolve routing defaults without rendering or creating blank widgets.
+
+    Must mirror what :func:`_render_routing_controls` is about to show, because
+    its result decides whether the routing block appears in the visible
+    questions container or inside the collapsed corrections panel. It is a
+    read-only twin: it must not call any ``st.*`` widget, since instantiating a
+    widget here would claim the key and leave a duplicate control on the page.
+
+    KNOWN DIVERGENCE from the renderer, and the reason this docstring is long:
+    the placeholder sentinels are not in ``contract_options`` or ``SITE_LABELS``,
+    so a stored placeholder reads here as "nothing stored" and this function
+    falls through to the analyzer's detected contract/site. The renderer instead
+    treats a placeholder as an explicit "not chosen" and returns empty strings.
+    So when an operator deliberately DESELECTS the contract or the site to force
+    a re-pick, this snapshot still reports the detected routing as complete,
+    ``needs.routing`` stays False, and the controls stay inside the collapsed
+    corrections panel -- while the pre-generation warning tells the operator to
+    choose the contract. The tool asks for a value and hides the control that
+    supplies it. Reported, not fixed here.
+    """
     detected_contract, detected_site = contracts.match_facility(
         analysis.facility_name, quote_text
     )
@@ -687,6 +866,12 @@ def _routing_snapshot(
             stored_category if stored_category in category_labels else guessed_category
         )
         category_key = valid_categories[category_labels.index(category_label)]
+        # Same two-source rule the renderer uses: a mapped site+category yields
+        # a fixed code shown as a read-only pill, and ONLY an unmapped pair falls
+        # back to whatever the operator typed. Reversing the precedence would let
+        # a stale typed value override the configured code for a site that has
+        # one -- and the operator would never see it, because when a mapping
+        # exists no text field is rendered at all.
         cost_code = lookup_cost_code(site_key, category_key) or str(
             st.session_state.get(f"manualcost_{token}_{site_key}", "") or ""
         ).strip()
@@ -747,7 +932,19 @@ def _asset_control_data(
     site: str,
     rrh_site_key: str | None,
 ) -> tuple[list[dict[str, str]], dict[str, str], str | None]:
-    """Return the current site assets, labels, and unique-best suggestion."""
+    """Return the current site assets, labels, and unique-best suggestion.
+
+    Returns ``(site_assets, {uid: label}, suggested_uid_or_None)``. An empty
+    asset list is a legitimate answer -- several configured sites have no
+    registry -- and the caller must treat it as "Asset ID stays blank", not as
+    an error.
+
+    Called TWICE per rerun on purpose, once by main() to decide placement before
+    the widgets exist and once inside :func:`_render_asset_control` to build the
+    options. Both calls must agree, which is why the guessing lives here rather
+    than in either caller. It is pure with respect to session state -- no widget,
+    no write -- so the duplicate call is safe if not free.
+    """
     if not contract or not site:
         return [], {}, None
     if rrh:
@@ -773,6 +970,18 @@ def _asset_control_data(
     # a tie between units of the same type, which left the operator with nothing
     # in exactly the cases where the scope made the type obvious ("repair the
     # chiller"). Fall back to the lowest-numbered unit of that type.
+    #
+    # This stage alone searches quote text PLUS the analyzer's project
+    # description and scope, because it matches on an equipment head noun and
+    # the noun is often only in the model's summary -- OCR of a scanned quote
+    # frequently loses it. The two earlier stages match tags and must stay on
+    # the raw quote so a hallucinated summary cannot invent an asset tag.
+    #
+    # Ordering is not cosmetic: lowest-numbered is a guess of last resort, so it
+    # may only run when the exact-tag and scorer stages have both declined.
+    # Promoting it would present an arbitrary unit as a confident match -- the
+    # exact failure ("AS-1 always suggested") the scorer's tie refusal exists to
+    # prevent. See docs/COMMIT_NOTES_2026-08-13_ASSET_AND_ROUTING_ACCURACY.md §2.
     type_guess = (
         None
         if (exact_guess in uids or broad_guess)
@@ -793,7 +1002,18 @@ def _asset_control_data(
 
 
 def _render_tax_alert(status: object) -> None:
-    """Render the one prominent non-blocking alert when tax was not included."""
+    """Render the one prominent non-blocking alert when tax was not included.
+
+    Deliberately NON-BLOCKING and deliberately not a checkbox. The operator can
+    generate with the alert on screen; the tool has no way to know whether tax
+    applies, so gating on it would train people to tick past it. An earlier
+    design did exactly that and the confirmation control was removed --
+    tests/test_smartsheet_handoff_entrypoint.py still asserts that no
+    tax-confirmation state name comes back.
+
+    Renders nothing when the quote states tax is included, which is why the
+    empty-message early return matters: an always-on banner is an ignored banner.
+    """
     message = tax_alert_message(status)
     if not message:
         return
@@ -806,6 +1026,20 @@ def _render_tax_alert(status: object) -> None:
 
 
 def _build_test_analysis() -> QuoteAnalysis:
+    """The synthetic quote behind the byline button -- a fixture, not a demo.
+
+    Its values are chosen so the whole quick path resolves without an API key:
+    the facility matches an RRH site in FACILITIES, "CH-1" resolves to a real
+    registry asset, and the amounts reconcile (subtotal + tax == total) so
+    po_context raises no discrepancy warning. Changing any of those breaks the
+    CI test that walks the full path including the LibreOffice render.
+
+    A DIAGNOSTIC TRAP worth knowing before reproducing an operator's report: this
+    sample fills vendor representative name and email, so those fields sit inside
+    the collapsed corrections panel. A real quote that leaves them undetermined
+    shows them in the visible questions container instead. A repro driven from
+    this sample is therefore NOT in the same UI state as most bug reports.
+    """
     return QuoteAnalysis(
         vendor_name="Northeast Mechanical Services",
         project_description="Repair and recommission absorption chiller CH-1.",
@@ -844,6 +1078,26 @@ def _build_test_analysis() -> QuoteAnalysis:
 
 
 def _load_test_into_state() -> None:
+    """Seed session state so the sample behaves exactly like a real upload.
+
+    Every key here has a consumer that VALIDATES it, which is why this looks
+    over-specified:
+
+    * ``analysis_token`` must equal the first 12 hex of the SHA-256 of
+      ``quote_text``; po_context recomputes it and warns "the analysis
+      fingerprint does not match" otherwise.
+    * ``last_sig`` must be the FULL digest of the same text, or main() decides
+      the quote changed and fires a real analyzer call -- which needs an API key
+      and defeats the point of the sample.
+    * ``extract_hash`` must be the digest of ``uploaded_file_bytes`` and
+      ``extracted_text`` must equal ``quote_text``, or
+      ``po_context._active_quote_attachment`` rejects the upload and silently
+      substitutes a synthesised text file as the first attachment.
+
+    The pops are the other half: a stale PDF or a stale error from a previous
+    quote would otherwise survive into the sample's run and make it look either
+    already-generated or already-failed.
+    """
     analysis = _build_test_analysis()
     quote_text = analysis.scope_of_work
     token = hashlib.sha256(quote_text.encode("utf-8")).hexdigest()[:12]
@@ -870,20 +1124,51 @@ def _load_test_into_state() -> None:
 
 
 def _deactivate_synthetic_quote() -> None:
+    """Retire the sample the moment the operator touches a real quote source.
+
+    Wired as ``on_change`` on the source radio, the uploader and the paste box.
+    It has to be a callback rather than inline code: the callback runs before the
+    rerun renders, so ``choose_quote_text`` sees the flag already cleared. Doing
+    it inline would leave the sample winning for one full render, and the
+    operator would watch their own upload be ignored.
+    """
     st.session_state["synthetic_quote_active"] = False
 
 
 def _retry_extraction() -> None:
+    """Clear the sticky per-file extraction failure so the read is attempted again.
+
+    The failure is keyed by file hash, and that stickiness is the point: without
+    it the same unreadable file is re-OCR'd on every rerun of the page. Popping
+    the pair is therefore the ONLY way back, which is why it is a named callback
+    rather than a condition folded into the render.
+    """
     st.session_state.pop("extraction_error_hash", None)
     st.session_state.pop("extraction_error_message", None)
 
 
 def _retry_analysis() -> None:
+    """Clear the sticky per-quote analysis failure so the model is called again.
+
+    Same shape as :func:`_retry_extraction`, keyed by quote signature instead of
+    file hash: without the marker a failing quote would re-bill an API call on
+    every rerun.
+    """
     st.session_state.pop("analysis_error_signature", None)
     st.session_state.pop("analysis_error_message", None)
 
 
 def _render_analysis_retry(signature: str) -> None:
+    """Show the fail-closed analysis error plus its retry control.
+
+    Fail-closed matters here: the caller has already dropped the previous
+    analysis, so the page shows an error and STOPS rather than continuing with a
+    stale quote's extracted values under a new quote's text.
+
+    The button key is scoped by signature so a different failing quote gets a
+    different widget; reusing one key would carry the previous quote's press
+    state onto the new failure.
+    """
     st.error(
         "The quote could not be analyzed. Try again, or switch to Paste text "
         "if the uploaded file has an unusual layout."
@@ -903,7 +1188,36 @@ def _render_routing_controls(
     quote_text: str,
     token: str,
 ) -> tuple[str, bool, str, str, str, str | None]:
-    """Render sanitized contract/site/cost-code overrides in page order."""
+    """Render sanitized contract/site/cost-code overrides in page order.
+
+    Returns ``(contract, rrh, site, category_label, cost_code, rrh_site_key)``,
+    with empty strings for anything the operator has not resolved. Callers must
+    treat an empty contract or site as "blocked", never as "use the default" --
+    the pre-generation gate in main() depends on that.
+
+    Guarantees and assumptions:
+
+    * Each selectbox's session key is REPAIRED before the widget is created --
+      ``if state.get(key) not in options: state[key] = <default>``. Streamlit
+      raises if a key holds a value absent from the option list, and the option
+      lists here change as contracts.json changes and as the operator switches
+      contract, so the repair is what stops a stale value from crashing a rerun.
+      It must stay BEFORE the widget call: a write afterwards is discarded.
+    * ``routing_<token>`` is a plain (non-widget) mirror of the confirmed
+      contract/site. Streamlit deletes widget keys for widgets that did not
+      render, so after a rerun where these controls were hidden the widget keys
+      are gone and only this mirror survives. It is popped, not left stale,
+      whenever the selection becomes incomplete -- otherwise generation would
+      later resurrect a contract the operator had already backed out of.
+    * The early returns are intentional: a contract with no site chosen yields
+      no category and no cost code, and inventing either would produce a
+      confident wrong Smartsheet cost code.
+
+    The RRH branch and the generic branch are NOT interchangeable. RRH sites map
+    through FACILITIES to a fixed cost code and a restricted category list; every
+    other account is free text or a contracts.json site list with a typed cost
+    code. Collapsing them would either invent RRH cost codes or discard them.
+    """
     detected_contract, detected_site = contracts.match_facility(
         analysis.facility_name, quote_text
     )
@@ -1054,7 +1368,25 @@ def _render_asset_control(
     site: str,
     rrh_site_key: str | None,
 ) -> str:
-    """Show one AI-suggested asset dropdown and export the full registry UID."""
+    """Show one AI-suggested asset dropdown and export the full registry UID.
+
+    Returns the RAW selection -- a registry UID, ``ASSET_NONE``, or
+    ``ASSET_PLACEHOLDER``. It is not normalised here on purpose: main() has to
+    distinguish "the operator confirmed no asset applies" from "the operator has
+    not answered", and ``normalize_asset_id`` maps both to the empty string.
+    Normalising early would let an unanswered asset question pass the gate.
+
+    The placeholder is added to the options ONLY when there is a genuine
+    question -- no confident guess and nothing already stored. Offering it
+    unconditionally would make "unanswered" a permanently selectable state on
+    quotes the tool identified correctly, and blocking on it would then nag on
+    every one of them.
+
+    The full UID is exported deliberately, not a shortened code. An earlier
+    review proposed a five-digit JDE code; the account team has no verified
+    mapping for it and the product owner directed that configured asset codes
+    ship whole (see ``po_rules.normalize_asset_id``).
+    """
     if not contract or not site:
         return ASSET_NONE
     site_assets, labels, guess = _asset_control_data(
@@ -1120,6 +1452,11 @@ def _render_asset_control(
 
 
 def _render_footer() -> None:
+    """Render the page footer.
+
+    Called from every exit path in main(), including the early ones, so the page
+    never ends abruptly mid-render on a blocked or empty quote.
+    """
     st.markdown(
         """
         <div class="app-footer">
@@ -1133,6 +1470,34 @@ def _render_footer() -> None:
 
 
 def main() -> None:
+    """Render the whole page: workflow selector, then the three purchase steps.
+
+    Called by ``run_web.py``. Returns None; everything it produces lands in
+    ``st.session_state`` for ``app.po_context`` to reassemble.
+
+    Two ordering rules govern almost every oddity below.
+
+    1. PLACEMENT IS COMPUTED BEFORE THE WIDGETS RENDER. Each field goes to the
+       visible questions container or to the collapsed corrections panel, and
+       that decision needs values the widgets have not produced yet -- so the
+       block between the analysis check and step 2 reads session state and
+       repairs defaults, and only then does the rendering start. Writing a
+       widget key after its widget has rendered is silently discarded by
+       Streamlit, so this order is not a preference.
+    2. NO EARLY RETURN AFTER THE ANALYSIS EXISTS. Streamlit deletes the keys of
+       widgets that did not render, so returning early from the reviewed path
+       would erase the operator's own corrections. Invalidation therefore
+       suppresses generation and the handoff, never the fields.
+       ``tests/test_web_ui_helpers.py`` pins rule 2 by scanning this function's
+       source for a return statement after that point.
+
+    ``st.form`` is the obvious refactor and it is WRONG here. The gate below
+    reads every field on every rerun to build ``draft_problems``; inside a form
+    those values do not update until submit, so the gate would compute from
+    stale values and could accept an incomplete purchase order. The full
+    reasoning, including what would have to change first, is §5 of
+    docs/COMMIT_NOTES_2026-08-12_TOUCH_AND_RENDERER_RELIABILITY.md.
+    """
     st.set_page_config(
         page_title="Process Control",
         page_icon=str(
@@ -1204,6 +1569,11 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
+    # The byline doubles as the synthetic-sample trigger. It is intentionally
+    # unlabelled and NOT gated behind an environment flag: it is the only way to
+    # exercise the full path -- render included -- on a deployment with no API
+    # key, and a flag would make it absent exactly where it is needed. A test
+    # pins its availability, so hiding it later is a deliberate act.
     _, center, _ = st.columns([2, 3, 2])
     with center:
         if st.button(
@@ -1213,6 +1583,11 @@ def main() -> None:
             help="Load the built-in synthetic quote for a safe workflow test.",
         ):
             _load_test_into_state()
+            # Bumping the nonce changes the uploader's widget key, which is the
+            # only way to make Streamlit forget a file the operator already
+            # dropped in. Without it the previous upload is still mounted, and
+            # on the next rerun its extraction overwrites the sample's seeded
+            # quote -- the sample would appear to load and then vanish.
             st.session_state["uploader_nonce"] = (
                 st.session_state.get("uploader_nonce", 0) + 1
             )
@@ -1246,6 +1621,11 @@ def main() -> None:
                 "pdf", "png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp",
                 "heic", "heif", "hif", "txt",
             ],
+            # Derived from the Smartsheet attachment ceiling, not chosen. The
+            # quote the operator uploads IS one of the two attachments, so a file
+            # the uploader accepts but Smartsheet later refuses is a failure the
+            # operator only discovers after generating everything. Integer
+            # division rounds DOWN, which errs on the safe side; keep it that way.
             max_upload_size=MAX_ATTACHMENT_BYTES // (1024 * 1024),
             label_visibility="collapsed",
             key=f"uploader_{st.session_state.get('uploader_nonce', 0)}",
@@ -1255,6 +1635,12 @@ def main() -> None:
             file_bytes = uploaded.getvalue()
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
+            # Every decision below keys off the file's CONTENT hash, never its
+            # name. Two consequences worth keeping: re-uploading the same file
+            # does not re-run OCR (it can take tens of seconds on a scan), and a
+            # failure is remembered per file, so a broken PDF cannot put the page
+            # into an OCR loop that re-fails on every rerun. The retry button is
+            # the only way to clear that memory -- which is why it exists.
             file_hash = hashlib.sha256(file_bytes).hexdigest()
             extraction_failed = (
                 st.session_state.get("extraction_error_hash") == file_hash
@@ -1268,6 +1654,12 @@ def main() -> None:
                         extracted = extract_text(
                             file_bytes, uploaded.name
                         ).strip()
+                        # A successful read of an image-only PDF returns an
+                        # empty string rather than raising. Left alone that is a
+                        # SILENT failure of the worst kind: the analyzer would be
+                        # handed nothing and the operator would be shown a
+                        # confidently blank form. Promote it to the same visible
+                        # error path as a genuine exception.
                         if not extracted:
                             raise ValueError("No readable text was found in the file.")
                     except Exception as exc:
@@ -1313,6 +1705,9 @@ def main() -> None:
             on_change=_deactivate_synthetic_quote,
         )
 
+    # Exactly one source wins, decided outside the UI. Both widgets keep their
+    # session values while hidden, so choosing here by hand would let a stale
+    # pasted quote outrank the file the operator is currently looking at.
     quote_text, quote_source = choose_quote_text(
         input_mode,
         uploaded_text=uploaded_text,
@@ -1321,6 +1716,10 @@ def main() -> None:
         synthetic_text=st.session_state.get("quote_text", ""),
     )
 
+    # Both guards below CLEAR the analysis before returning. That is the point:
+    # without it the page would keep rendering the previous quote's vendor,
+    # totals and scope under a new quote's input, and generate a package
+    # describing a document nobody is looking at.
     length_problem = quote_length_problem(quote_text)
     if length_problem:
         clear_active_analysis(st.session_state)
@@ -1335,6 +1734,14 @@ def main() -> None:
         _render_footer()
         return
 
+    # The quote text itself is the cache key for the (paid, slow) analyzer call.
+    # "ignore" on the encode is required, not tidy: OCR of a scanned quote
+    # regularly yields lone surrogates, and a UnicodeEncodeError here would take
+    # the whole page down on a file the operator cannot tell apart from any
+    # other. po_context re-derives the same digest with the same error handler to
+    # confirm the stored analysis belongs to the stored text -- both sides must
+    # use "ignore" or every quote containing one bad byte reports a fingerprint
+    # mismatch it cannot resolve.
     full_signature = hashlib.sha256(
         quote_text.encode("utf-8", "ignore")
     ).hexdigest()
@@ -1360,6 +1767,11 @@ def main() -> None:
                 st.session_state["quote_source"] = quote_source
             else:
                 st.session_state["analysis"] = analysis
+                # 12 hex characters, and po_context recomputes exactly this
+                # slice to verify the analysis matches the stored quote. Widen
+                # or narrow it here and every generated package reports a
+                # fingerprint mismatch warning; the tool would still generate,
+                # just always with a warning nobody can clear.
                 st.session_state["analysis_token"] = full_signature[:12]
                 st.session_state["last_sig"] = full_signature
                 st.session_state["quote_text"] = quote_text
@@ -1387,6 +1799,23 @@ def main() -> None:
 
     routing_snapshot = _routing_snapshot(analysis, cached_quote, token)
 
+    # Everything from here to the step-2 header is the pre-render seeding pass.
+    # Two idioms recur and mean different things:
+    #
+    #   ``if key not in state``            -- seed ONCE from the analysis. Used
+    #                                         for free text, so a later rerun can
+    #                                         never overwrite the operator's own
+    #                                         correction with the model's value,
+    #                                         not even when they blank the field.
+    #   ``if state.get(key) not in <opts>`` -- REPAIR whenever the stored value
+    #                                         is not selectable. Used for every
+    #                                         selectbox, because Streamlit raises
+    #                                         if a key holds a value missing from
+    #                                         the options and the option lists
+    #                                         change with the chosen contract.
+    #
+    # Every key is scoped by ``token`` (and by contract or site where the option
+    # list depends on one) so switching quotes cannot carry a value across.
     request_type_key = f"request_type_{token}"
     request_type_guess = str(
         getattr(analysis, "request_type_guess", "") or "PO"
@@ -1406,6 +1835,12 @@ def main() -> None:
 
     route_key = f"purchase_route_{token}"
     model_route = str(getattr(analysis, "purchase_route_guess", "") or "").strip()
+    # The deterministic second opinion. It reads the raw quote joined with the
+    # analyzer's own summary, because a scanned quote's OCR often loses the
+    # sentence that names the work while the summary keeps it. The rules
+    # themselves discard the vendor's terms and conditions before matching --
+    # on one real quote that boilerplate was 92% of the document and outvoted
+    # the actual scope. See po_rules.scope_region.
     inferred_route = infer_purchase_route(
         " ".join(
             (
@@ -1450,6 +1885,22 @@ def main() -> None:
     if email_key not in st.session_state:
         st.session_state[email_key] = analysis_contact_email
 
+    # Vendor-representative recall, and the bookkeeping that keeps it honest.
+    #
+    # Memory is scoped to (account, vendor). Both can change mid-session -- the
+    # operator corrects the vendor spelling, or picks a different contract -- so
+    # the pair is fingerprinted into ``contact_seed_context`` and the seeding
+    # re-runs whenever that fingerprint moves. NUL joins the two halves because
+    # it cannot occur in either value; a hyphen would let "A-B" + "C" collide
+    # with "A" + "B-C".
+    #
+    # The two ``seeded_*`` keys record what THIS page filled in, and they are the
+    # only defence against a specific silent corruption: without them, a value
+    # recalled for the previous vendor is indistinguishable from a value the
+    # operator typed, so switching vendors would keep the old representative and
+    # attach the wrong person's email to the purchase order. A field is reverted
+    # only when it still holds exactly what was seeded -- an edited field is left
+    # alone, always.
     contact_seed_key = f"vendor_contact_seed_{token}"
     seeded_name_key = f"vendor_contact_seeded_name_{token}"
     seeded_email_key = f"vendor_contact_seeded_email_{token}"
@@ -1517,11 +1968,20 @@ def main() -> None:
         )
     )
 
+    # 20 characters is the Smartsheet Description of Work column's hard cap, not
+    # a style choice. It is enforced three times over -- when seeding, when
+    # reading, and by max_chars on the widget -- because a value that exceeds it
+    # is not rejected at submission: it is TRUNCATED by the form, so the operator
+    # would see a description they never wrote. The full reviewed scope lives in
+    # the generated PDF; this field is only ever the short label.
     description_key = f"desc_{token}"
     if description_key not in st.session_state:
         st.session_state[description_key] = (
             analysis.short_description or ""
         )[:20]
+    # Defensive, and normally unreachable through the UI because the widget caps
+    # input. It catches a value seeded before the cap existed, or restored from
+    # an older session, rather than letting it reach the form over-length.
     elif len(str(st.session_state.get(description_key, "") or "")) > 20:
         st.session_state[description_key] = str(
             st.session_state.get(description_key, "") or ""
@@ -1540,11 +2000,28 @@ def main() -> None:
         st.session_state.get(instructions_key, "") or ""
     ).strip()
 
+    # Job number, seeded here only so ``needs.job_number`` can be computed before
+    # anything renders. The selectbox itself is built again further down against
+    # the POST-render contract; both must agree on the key format, which
+    # po_context also reads by exact string.
+    #
+    # The default differs by account and the asymmetry is deliberate: RRH has one
+    # obviously correct O&M job, so it is preselected, while every other account
+    # gets the placeholder and must be answered. Preselecting the first catalog
+    # entry for a non-RRH account would send a confident wrong job number to
+    # Smartsheet with nothing on screen suggesting a choice was ever made.
+    #
+    # The conditional below binds as ``(a or b) if rrh else (c or d)`` -- Python
+    # gives ``or`` higher precedence than the conditional expression. That is the
+    # intent; do not "clarify" it by moving the parentheses.
     job_key = ""
     job_value = ""
     if routing_snapshot.contract:
         job_key = f"job_number_{token}_{routing_snapshot.contract}"
         job_options = job_numbers_for_contract(routing_snapshot.contract)
+        # Suggests ONLY on an exact job identifier quoted in the text, or when
+        # the account has a single option. It deliberately returns nothing on a
+        # tie -- an invented job number is worse than an unanswered one.
         job_suggestion = suggest_job_number(job_options, cached_quote)
         valid_job_values = {JOB_NUMBER_PLACEHOLDER, *job_options}
         if st.session_state.get(job_key) not in valid_job_values:
@@ -1573,6 +2050,11 @@ def main() -> None:
         else ""
     )
     stored_asset = st.session_state.get(asset_key) if asset_key else None
+    # "Resolved" includes a site with NO registry at all. Several configured
+    # sites have none, and treating that as an open question would put an
+    # unanswerable prompt in front of the operator forever. It is the inverse of
+    # ``needs_choice`` in _render_asset_control -- keep the two in step or the
+    # asset dropdown appears in one container while the page blocks on the other.
     asset_resolved = (
         not asset_uids
         or stored_asset in [ASSET_NONE, *asset_uids]
@@ -1596,6 +2078,21 @@ def main() -> None:
         contact_name=contact_value,
         contact_email=email_value,
     )
+    # ``needs`` is STICKY: retain_review_needs ORs the live answer with the one
+    # stored for this quote, so a field that has ever been unresolved keeps its
+    # visible placement for the rest of the quote's life. That is deliberate --
+    # Streamlit reruns the moment a field is committed, and without stickiness
+    # the field the operator just answered would jump into the collapsed
+    # corrections panel, reading as though the answer had been thrown away.
+    #
+    # KNOWN CONSEQUENCE, reported not fixed: because ``needs.any`` can never go
+    # back to False, the "Needed from you" banner below and the highlight bar at
+    # the end of this function also stay on for the rest of the quote, on fields
+    # that are now filled and while the generate button is enabled. On the
+    # synthetic sample nothing is ever unresolved, which is why the highlight
+    # test does not see this. Do not "fix" it by making retention conditional
+    # without re-reading the paragraph above -- the jumping-field behaviour is
+    # what retention exists to prevent.
     review_needs_key = f"review_needs_{token}"
     needs: ReviewNeeds = retain_review_needs(
         st.session_state.get(review_needs_key),
@@ -1643,6 +2140,18 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
+    # The checkbox keys are POSITIONAL -- inc_<token>_<index> -- and
+    # ``po_context._reviewed_lists`` rebuilds the same lists to map each index
+    # back to an item. Enumeration order is therefore part of the data contract,
+    # not a rendering detail. Sorting these lists, filtering them, or skipping an
+    # empty entry would shift every following index and silently attribute the
+    # operator's ticks to different inclusions on the generated document.
+    #
+    # The lists are also built OUTSIDE the expander body while the checkboxes are
+    # built inside it: expander contents execute whether or not the panel is
+    # open, so final_inclusions/final_exclusions are complete either way. Moving
+    # this behind an "if expanded" guard would make an unopened panel generate a
+    # PDF with no inclusions at all.
     final_inclusions: list[str] = []
     final_exclusions: list[str] = []
     unified_inclusions, unified_exclusions = _build_unified_lists(analysis)
@@ -1655,6 +2164,13 @@ def main() -> None:
             "The tool selected everything below for the supporting PDF. "
             "Only change an item if the quote was interpreted incorrectly."
         )
+        # Reassigns scope_value from the widget, and everything downstream --
+        # the PDF signature and the rendered document -- uses the reassigned
+        # value. This is the ONLY path by which an operator's scope edit reaches
+        # the attachment: the PDF builder is handed this string explicitly
+        # because the document template would otherwise read the untouched
+        # analysis text and discard every correction, on the exact page contract
+        # administration signs.
         scope_value = st.text_area(
             "Scope of Work",
             key=scope_key,
@@ -1708,6 +2224,12 @@ def main() -> None:
     # container highlights exactly the fields that still need a value, and a
     # field stops being highlighted the moment it moves to corrections. The
     # key is what Streamlit turns into the st-key- class the rule targets.
+    #
+    # Both handles are created here and entered repeatedly below with
+    # ``with questions if needs.X else corrections``. Streamlit containers are
+    # re-enterable, which is what allows placement to be decided per field while
+    # the page still reads top to bottom. Creating a fresh container per field
+    # instead would break the single st-key- hook the highlight depends on.
     questions = st.container(key="po_needs_you")
     corrections = st.expander(
         "Change a value the tool already filled",
@@ -1742,6 +2264,16 @@ def main() -> None:
                 placeholder="Enter the existing PO number",
             )
 
+    # Rebuilt against the POST-render contract, which can differ from the
+    # snapshot's for one rerun after the operator switches accounts. The key
+    # embeds the contract name, so each account keeps its own answer and
+    # switching back restores it rather than resetting to a suggestion.
+    #
+    # RRH is the only account whose option list omits the placeholder: it has a
+    # single correct O&M job and forcing a redundant confirmation on the busiest
+    # account is pure friction. Every other account keeps the placeholder so an
+    # unanswered job number stays unanswered instead of defaulting to whichever
+    # catalog entry happens to sort first.
     if contract:
         job_key = f"job_number_{token}_{contract}"
         job_options = job_numbers_for_contract(contract)
@@ -1837,6 +2369,15 @@ def main() -> None:
             key=description_key,
         )
 
+    # The optional note has two mutually exclusive homes: here once it holds
+    # text, and behind the toggle further down while it is empty. Only one
+    # renders per run, so the widget key survives either way and po_context still
+    # finds it.
+    #
+    # Consequence to be aware of before rearranging this: the run after the
+    # operator types a note, the note moves into the collapsed corrections panel
+    # and the toggle that revealed the field disappears. The text is retained and
+    # is still sent, but it leaves the visible page. Reported, not changed here.
     if instructions_value:
         with corrections:
             st.text_area(
@@ -1845,6 +2386,16 @@ def main() -> None:
                 help="Only add a note the Smartsheet reviewer needs to see.",
             )
 
+    # The requester is the person filling the form in, and it deliberately never
+    # comes from a deployment default -- po_context keeps its ``env`` parameter
+    # only for old callers and ignores it for exactly this reason. Memory is
+    # scoped to (this browser, this account) and is written only after a package
+    # passes validation, so an abandoned draft never teaches a name.
+    #
+    # ``browser_token`` may legitimately be "" when the cookie has not been
+    # established yet; the memory layer treats an empty token as "no device" and
+    # returns nothing, so every cookie-less browser is isolated rather than
+    # sharing one bucket.
     requester_value = ""
     requester_key = ""
     if contract:
@@ -1881,6 +2432,11 @@ def main() -> None:
     if needs.any or (requester_key and not requester_value):
         highlight_needed_fields(["po_needs_you"])
 
+    # The empty-note half of the pair above. Behind a toggle rather than always
+    # visible because the Smartsheet reviewer reads every note that arrives, so
+    # an always-present box invites filler; short-circuiting on
+    # ``instructions_value`` is what guarantees only one of the two text areas
+    # claims the key on any given run.
     if not instructions_value and st.toggle(
         "Add Additional Information",
         key=f"show_optional_{token}",
@@ -1924,6 +2480,24 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
+    # THE SUBMISSION GATE. Rebuilt from live values on every rerun and consumed
+    # twice: it disables the generate button, and it is the list telling the
+    # operator what is still missing. Both consumers depend on these values being
+    # current, which is the concrete reason st.form cannot be dropped in around
+    # these fields -- inside a form they would not update until submit, so the
+    # gate could refuse a complete request or accept an incomplete one and push
+    # a partial purchase order into the Smartsheet handoff.
+    #
+    # Note the deliberate asymmetry in where values are read from: fields whose
+    # widget always renders are read through their local variable, while fields
+    # that may be absent this run (job number, original PO number) are read from
+    # session state, because a hidden widget's local variable does not exist.
+    #
+    # These checks intentionally overlap ``po_context``'s own warnings. This one
+    # stops the operator early with plain instructions; that one is the last line
+    # of defence over the whole reassembled context, including the attachments
+    # this list knows nothing about. Deleting either does not make the other
+    # cover it.
     draft_problems: list[str] = []
     if not contract:
         draft_problems.append("choose the contract")
@@ -1959,6 +2533,10 @@ def main() -> None:
     parsed_total = parse_amount(total_value)
     if parsed_total is None or parsed_total <= 0:
         draft_problems.append("enter a valid final PO/CO amount greater than zero")
+    # Guarded so the two amount complaints cannot both appear: classify_po
+    # rejects a missing amount with its own wording, which would otherwise
+    # duplicate the line directly above in different words and read as two
+    # separate problems with one field.
     if classification_error and parsed_total is not None and parsed_total > 0:
         draft_problems.append(classification_error)
 
@@ -1970,9 +2548,29 @@ def main() -> None:
             "Before generating: " + "; ".join(concise_problems) + "."
         )
 
+    # Routing is resolved a second time, from the mirror rather than from the
+    # widgets, because by the time the package is generated the widget keys may
+    # already be gone -- Streamlit drops the key of any widget that did not
+    # render on the rerun that produced this state.
+    #
+    # DISCARDED FOURTH VALUE, read this before treating it as an unused return.
+    # _routing_for_generation resolves the facility ADDRESS for the site the
+    # operator actually chose, and it is thrown away here while the PDF builder
+    # below is handed ``analysis.facility_address`` -- the address the analyzer
+    # read off the quote. Correct the site to a different RRH facility and the
+    # generated form carries the new facility's NAME above the old facility's
+    # street address, with nothing on screen indicating a mismatch. po_context
+    # computes the corrected address for the Smartsheet field, so the form and
+    # the document disagree. Reported, not fixed here.
     selected_contract, selected_site, facility_name, _ = _routing_for_generation(
         analysis, cached_quote, token
     )
+    # Fingerprint of everything that changes the DOCUMENT's content. po_context
+    # recomputes the identical signature and refuses to attach a PDF whose
+    # signature does not match, so the two calls must stay argument-for-argument
+    # identical. Adding a field to one only -- say the facility address -- makes
+    # every package report a stale-document warning that no amount of
+    # regenerating can clear.
     current_pdf_signature = _document_signature(
         token,
         selected_contract,
@@ -2006,6 +2604,11 @@ def main() -> None:
         "One button creates the MSAPO form PDF, keeps the "
         "unchanged quote, and prepares the prefilled Smartsheet link."
     )
+    # ONE action produces everything: the PDF, the retained quote, and the
+    # prefilled link. There is no separate submit, no email route, and no
+    # switch to another page -- several tests assert on this file's raw text to
+    # keep those from creeping back, because each previously existed and each
+    # gave the operator a way to reach Smartsheet with only half a package.
     generated_key = f"generated_context_{token}"
     if st.button(
         "Generate both files and Smartsheet link",
@@ -2047,6 +2650,14 @@ def main() -> None:
             context = build_po_context(st.session_state)
             if context is not None:
                 st.session_state[generated_key] = context.context_id
+                # THREE independent checks, not one with redundancy. ``ready``
+                # covers the reassembled context's own warnings,
+                # validate_submission_fields covers the Smartsheet field rules,
+                # and preflight_attachments covers size and type limits the
+                # other two never see. Memory is only taught from a package that
+                # would genuinely have been accepted -- otherwise a rejected
+                # draft would train the requester and vendor-representative
+                # suggestions offered to the next person on this browser.
                 memory_ready = (
                     context.ready
                     and not validate_submission_fields(context.fields)
@@ -2067,6 +2678,17 @@ def main() -> None:
                         context_id=vendor_contact_memory_context_id(context),
                     )
 
+    # Rebuilt unconditionally, outside the click branch, and compared by context
+    # ID. This is the staleness gate for the handoff: the ID is a hash of every
+    # field plus the hash of every attachment, so ANY change after generation --
+    # a corrected total, a different asset, a re-uploaded quote -- produces a
+    # different ID and the handoff is replaced by the "use the button again"
+    # warning rather than offering a link that no longer matches the files.
+    #
+    # Yes, this repeats the build performed inside the click branch on the run
+    # where the button was pressed. Collapsing them is not safe: the click branch
+    # only exists on that one run, and every other rerun needs a freshly built
+    # context to compare against.
     context = build_po_context(st.session_state)
     generated_context = st.session_state.get(generated_key, "")
     if context is not None and generated_context == context.context_id:
