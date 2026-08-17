@@ -133,3 +133,97 @@ def test_a_genuine_exclusion_in_the_scope_still_counts():
     ) + BOILERPLATE
 
     assert infer_purchase_route(document) == MATERIALS_PURCHASE
+
+
+# --- Regression: a heading must OWN ITS LINE -------------------------------
+#
+# The first version of scope_region cut at the first keyword match anywhere past
+# 200 characters. "limited warranty" is one of the keywords and is also ordinary
+# vendor prose, so a proposal mentioning its own warranty mid-body lost every
+# line below it -- including the scope. Measured, not theorised: the case in
+# test_an_in_proposal_warranty_line_does_not_truncate_the_scope routed to
+# 5302-EQUIPMENT / OR - EQUIPMENT PO instead of 5511-SUBCONTRACTOR, silently,
+# because the labour verbs were discarded with the tail.
+
+
+def test_an_in_proposal_warranty_line_does_not_truncate_the_scope():
+    """The exact case that regressed. The vendor header deliberately carries NO
+    labour keyword ("Equipment Proposal", not "Service Quote") -- otherwise the
+    header alone keeps the labour signal alive above the cut and hides the bug."""
+    document = (
+        "Carrier Corporation -- Equipment Proposal 88214\n"
+        "Site Name: United Memorial Medical Center\n"
+        "Attn: Accounts Payable, Rochester NY 14610\n"
+        "Project Name: CH-3 differential oil pressure fault\n"
+        "Unit: CVHE045 centrifugal chiller, serial L21E01632\n"
+        "This proposal carries our standard limited warranty of one year.\n"
+        "Scope of Work:\n"
+        "Mobilize technicians and equipment to the site.\n"
+        "Troubleshoot the oil pump that is not starting.\n"
+        "Repair burnt and damaged wiring. Perform startup.\n"
+        "Demobilize. Price includes travel.\n"
+        "Total Price: $870.00\n"
+    )
+
+    assert scope_region(document) == document, "prose keyword truncated the scope"
+    assert infer_purchase_route(document) == ONSITE_LABOR
+    assert classify_po(infer_purchase_route(document), "870.00").object_account == (
+        "5511-SUBCONTRACTOR"
+    )
+
+
+def test_a_long_sentence_beginning_with_the_keyword_is_not_a_heading():
+    """Owning the start of the line is not enough -- a heading is also SHORT."""
+    document = (
+        "Vendor Proposal 12\n"
+        + "Detail line.\n" * 14
+        + "Limited warranty does not extend to parts supplied by others, and "
+        "Company shall have no obligation whatsoever.\n"
+        "Scope of Work: Mobilize technicians, troubleshoot, repair the wiring.\n"
+    )
+    assert scope_region(document) == document
+
+
+def test_a_numbered_or_bulleted_heading_still_counts():
+    """Real documents number their sections. Requiring a bare line start would
+    miss "1. TERMS AND CONDITIONS" and reinstate the original misread."""
+    for prefix in ("1. ", "  ", "- ", "#  ", "(a) "):
+        document = (
+            "Vendor Proposal 12\n"
+            + "Detail line.\n" * 14
+            + f"{prefix}TERMS AND CONDITIONS\n"
+            "Company is responsible for transporting a part requiring service.\n"
+        )
+        kept = scope_region(document)
+        assert "TERMS AND CONDITIONS" not in kept, prefix
+        assert "Detail line." in kept, prefix
+
+
+def test_an_early_prose_match_does_not_hide_a_real_heading_below_it():
+    """The scan continues past a prose match. Stopping at the first keyword --
+    matched or rejected -- would let one mid-body warranty sentence disable
+    boilerplate trimming for the whole rest of the document."""
+    document = (
+        "Vendor Proposal 12\n"
+        + "Detail line.\n" * 10
+        + "We provide a limited warranty of one year on all supplied parts.\n"
+        "Scope of Work: Mobilize technicians and troubleshoot the unit.\n"
+        "TERMS AND CONDITIONS\n"
+        "Company shall not be obligated to repair parts damaged by others.\n"
+    )
+    kept = scope_region(document)
+    assert "Scope of Work" in kept
+    assert "TERMS AND CONDITIONS" not in kept
+
+
+def test_text_with_no_line_breaks_is_never_cut():
+    """Some OCR paths collapse a document to one line. There is then no way to
+    tell a heading from prose, so the conservative answer is to cut nothing:
+    returning too much text is wrong-but-visible, while cutting real scope
+    produces a confident answer from a partial proposal."""
+    document = (
+        "Vendor Proposal 88214 for chiller repair. " * 6
+        + "TERMS AND CONDITIONS Company is responsible for a part requiring service."
+    )
+    assert "\n" not in document
+    assert scope_region(document) == document

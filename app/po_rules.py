@@ -235,6 +235,71 @@ _BOILERPLATE_HEADING_RE = re.compile(
 # reinstates the Trane misread; lowering it starts gutting short proposals.
 _MIN_SCOPE_CHARS = 200
 
+# A heading OWNS ITS LINE. That is what separates the section marker
+#
+#     TERMS AND CONDITIONS - QUOTED SERVICE
+#
+# from the same words used as ordinary vendor prose
+#
+#     This proposal carries our standard limited warranty of one year.
+#
+# The first version of this function cut at the first keyword match anywhere,
+# which truncated any proposal that mentioned its own warranty mid-body. That
+# was measured, not theorised: an in-scope warranty line past character 200
+# discarded the entire "Scope of Work" block below it, the labour signal died
+# with it, and the quote routed to 5302-EQUIPMENT / OR - EQUIPMENT PO instead
+# of 5511-SUBCONTRACTOR / 03 - MSAPO (SERVICE). It failed silently -- a partial
+# proposal produces a confident answer.
+#
+# Requiring the heading to own its line fixes that WITHOUT narrowing the
+# heading list, so the boilerplate detection this function exists for is
+# untouched. Only the position test changed.
+#
+# Two conditions, because either alone is too weak:
+#   * nothing but whitespace, numbering or bullet punctuation precedes the
+#     match on its line -- "1. TERMS AND CONDITIONS" and "- Indemnity" are
+#     headings, "...our standard limited warranty..." is not;
+#   * the line is short. A long line starting with the keyword is a sentence
+#     ("Limited warranty does not extend to parts supplied by others, and
+#     Company shall...").
+_MAX_HEADING_LINE_CHARS = 60
+
+# What may sit between the start of the line and the heading word: indentation
+# and bullets, then at most ONE enumerator closed by "." or ")".
+#
+# The enumerator alternative has to admit letters, because real contracts number
+# clauses "(a)" and "iv." as readily as "1.". Letters are why it is bounded to
+# four characters AND required to be followed by "." or ")": without both, the
+# leading words of an ordinary sentence would qualify as an enumerator and every
+# prose match would be treated as a heading again -- the exact bug this replaces.
+# "This proposal carries our standard limited warranty..." fails because "This"
+# is followed by a space, not a closer.
+_HEADING_PREFIX_RE = re.compile(r"[\s\-–—#*•]*(?:\(?\w{1,4}[.)]\s*)?\Z")
+
+
+def _boilerplate_cut(source: str) -> int | None:
+    """Offset where vendor boilerplate begins, or None if it never clearly does.
+
+    Returns the start of the HEADING'S LINE, so the heading itself is dropped
+    along with the terms beneath it.
+
+    Scans every match rather than only the first: an early keyword used in prose
+    must not stop a genuine heading further down from being found.
+    """
+    for match in _BOILERPLATE_HEADING_RE.finditer(source):
+        if match.start() < _MIN_SCOPE_CHARS:
+            continue
+        line_start = source.rfind("\n", 0, match.start()) + 1
+        line_end = source.find("\n", match.start())
+        if line_end == -1:
+            line_end = len(source)
+        if not _HEADING_PREFIX_RE.match(source, line_start, match.start()):
+            continue
+        if len(source[line_start:line_end].strip()) > _MAX_HEADING_LINE_CHARS:
+            continue
+        return line_start
+    return None
+
 
 def scope_region(text: object) -> str:
     """The proposal, with trailing vendor boilerplate removed.
@@ -243,28 +308,20 @@ def scope_region(text: object) -> str:
     happens if it goes wrong, in language that reuses every keyword the routing
     rules depend on, so leaving them in lets the boilerplate outvote the scope.
 
-    Conservative in both directions: no heading found, or too little text before
-    the first one, and the original is returned unchanged.
-
-    KNOWN LIMIT, and it fails silently. The cut is made at the FIRST heading
-    match anywhere past _MIN_SCOPE_CHARS, and ``limited warranty`` is one of the
-    headings. A proposal that mentions its own warranty mid-body -- "Limited
-    Warranty: twelve months on supplied materials" is ordinary vendor prose --
-    loses everything after that line, including any scope that followed it. The
-    route is then inferred from a partial proposal with no error and no visible
-    difference. Reported, not fixed here: narrowing the headings would reinstate
-    the boilerplate misread this function exists to stop.
+    Conservative in every direction. The original is returned unchanged when no
+    heading is found, when one appears too early to be trailing boilerplate, or
+    when the keyword occurs inside prose rather than as a section heading. A
+    document with no line breaks at all therefore never gets cut -- returning too
+    much text is a wrong-but-visible answer, while cutting real scope produces a
+    confident answer from a partial proposal.
 
     Used ONLY by infer_purchase_route. It is deliberately not applied to the
-    analyzer prompt -- see §7 of
-    docs/COMMIT_NOTES_2026-08-14_SCOPE_REGION_ROUTING.md, which records that as
-    an untested question rather than a decision.
+    analyzer prompt -- see the notes for 2026-08-14, which record that as an
+    untested question rather than a decision.
     """
     source = str(text or "")
-    match = _BOILERPLATE_HEADING_RE.search(source)
-    if not match or match.start() < _MIN_SCOPE_CHARS:
-        return source
-    return source[: match.start()]
+    cut = _boilerplate_cut(source)
+    return source if cut is None else source[:cut]
 
 
 # A labour word used as a NOUN MODIFIER names a product, not vendor work:
