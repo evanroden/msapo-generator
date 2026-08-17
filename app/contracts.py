@@ -207,6 +207,38 @@ def asset_label(a: dict[str, str]) -> str:
     return label
 
 
+# Registry site labels that are ALSO ordinary English, and so cannot be trusted
+# as evidence on their own. Every one of these is a real site name -- the export
+# genuinely names Conway sites "Hospital", "Rehab", "Oncology", "Residency" and
+# "Embrace", an EAMC site "Valley", and a UNO site "INOPERABLE" -- which is why
+# they are in the index at all and cannot simply be dropped from it.
+#
+# Matching one INSIDE a longer name is how an unknown facility got billed to
+# another customer's account: "Mercy Hospital" and "St. Joseph Hospital" both
+# resolved to ("Conway", "Hospital"), and "Green Valley Medical" to ("EAMC",
+# "Valley"). The quote-text pass was worse, because a vendor called "Valley
+# Mechanical" or a line reading "the chiller is inoperable" is enough.
+#
+# So a word in this set decides only when it is the ENTIRE facility field.
+# Anything else leaves the contract unresolved, which surfaces the control in
+# the visible "Needs You" panel instead of silently filling it wrong. That is a
+# deliberate precision-over-recall trade, chosen by the product owner on
+# 2026-08-17: a quote for the real Conway "Hospital" site now costs one click.
+#
+# Place names and ZIP codes are NOT here on purpose. "batavia", "potsdam",
+# "lexington", "14020" are distinctive enough to decide alone, and they are the
+# aliases that make ordinary address text resolve.
+_GENERIC_SITE_WORDS: frozenset[str] = frozenset({
+    "hospital",
+    "rehab",
+    "oncology",
+    "residency",
+    "embrace",
+    "valley",
+    "inoperable",
+})
+
+
 @lru_cache(maxsize=1)
 def _site_index() -> list[tuple[str, str, str]]:
     """(matchable_lowercase_phrase, contract, site_label), longest phrase first.
@@ -277,17 +309,23 @@ def match_facility(facility_name: str | None, quote_text: str | None = None) -> 
     so a recognised facility name always beats an incidental mention buried in
     the quote body.
 
-    KNOWN DEFECT, reported and not fixed here: this matches phrases, not
-    facilities, so an UNKNOWN facility whose name merely CONTAINS a registry
-    site word is routed to that site's contract. "Mercy Hospital" resolves to
-    ("Conway", "Hospital") and "Community Rehab Center" to ("Conway", "Rehab"),
-    because Conway really does have sites by those names. Nothing downstream
-    can distinguish that from a real hit: web_ui's routing snapshot then reports
-    routing as complete, so the contract and site controls stay inside the
-    COLLAPSED corrections panel and the operator never sees the wrong account
-    unless they open it. Do NOT try to improve recall by lowering the length
-    floor in _site_index() or by dropping the lookarounds below -- both widen
-    exactly this failure.
+    FIXED 2026-08-17, and the shape of the fix matters. This matches phrases,
+    not facilities, so an UNKNOWN facility whose name merely CONTAINED a
+    registry site word used to be routed to that site's contract -- a DIFFERENT
+    CUSTOMER'S ACCOUNT. "Mercy Hospital" resolved to ("Conway", "Hospital") and
+    "Green Valley Medical" to ("EAMC", "Valley"), because Conway and EAMC really
+    do have sites by those names. Nothing downstream could tell that from a real
+    hit: web_ui's routing snapshot reported routing as complete, so the contract
+    and site controls stayed inside the COLLAPSED corrections panel and the
+    operator never saw the wrong account unless they opened it.
+
+    Generic words now decide only when they are the WHOLE facility field --
+    see _GENERIC_SITE_WORDS. Everything else leaves the contract unresolved, so
+    the operator is asked instead of being silently told.
+
+    Do NOT try to improve recall by lowering the length floor in _site_index(),
+    by dropping the lookarounds below, or by shrinking _GENERIC_SITE_WORDS --
+    all three widen exactly this failure.
 
     The lookarounds are explicit character classes rather than a word-boundary
     escape so that a phrase ending in punctuation ("st. mary's") still anchors
@@ -298,10 +336,18 @@ def match_facility(facility_name: str | None, quote_text: str | None = None) -> 
     for haystack in (facility_name, quote_text):
         if not haystack:
             continue
-        h = re.sub(r"\s+", " ", haystack.lower())
+        h = re.sub(r"\s+", " ", haystack.lower()).strip()
         for phrase, contract, site in index:
-            if re.search(r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])", h):
-                return contract, site
+            if not re.search(
+                r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])", h
+            ):
+                continue
+            # A generic word only decides when it IS the whole facility field.
+            # Skipping rather than returning is deliberate: the scan continues,
+            # so a real site named further along the same haystack still wins.
+            if phrase in _GENERIC_SITE_WORDS and h != phrase:
+                continue
+            return contract, site
     return None, None
 
 

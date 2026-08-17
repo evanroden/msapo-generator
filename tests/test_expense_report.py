@@ -41,6 +41,7 @@ from app.expense_report import (
     total_reimbursement,
     validate_expense_report,
 )
+from app.expense_report import _compact_receipt_image
 from app.job_numbers import RRH_JOB_NUMBERS
 from app.expense_ui import _build_expense_eml
 from tests.conftest import requires_libreoffice
@@ -743,3 +744,64 @@ def test_pdf_renderer_connection_failure_preserves_the_completed_workbook(monkey
     assert package.workbook_bytes.startswith(b"PK")
     assert package.pdf_bytes is None
     assert "unreachable" in package.pdf_error
+
+
+# --- Transparent receipts must flatten onto WHITE, in every mode ------------
+
+
+@pytest.mark.parametrize("mode", ["P", "RGBA", "LA", "PA"])
+def test_a_transparent_receipt_is_flattened_onto_white_not_blacked_out(mode):
+    """A PNG-8/GIF receipt used to come out 100% BLACK in the submitted packet.
+
+    The old branch tested ``mode in {"RGBA", "LA"} or "transparency" in info``
+    and then took its mask from ``getchannel("A") if "A" in getbands()``. A
+    palette receipt is mode "P": it PASSED the test via info["transparency"] but
+    has bands ("P",) and no "A", so the mask was None -- and
+    ``paste(..., mask=None)`` is a plain overwrite, so the flatten silently never
+    happened. Mode "PA" missed the test entirely.
+
+    Measured before the fix: 100% of the output near-black, the text destroyed
+    along with the background, no error raised, and the result attached to the
+    approver's PDF.
+    """
+    source = Image.new("RGBA", (400, 300), (0, 0, 0, 0))
+    ImageDraw.Draw(source).text((40, 140), "TOTAL $31.25", fill=(0, 0, 0, 255))
+    if mode == "P":
+        source = source.convert("P", palette=Image.ADAPTIVE, colors=64)
+        source.info["transparency"] = 0
+    elif mode in {"LA", "PA"}:
+        source = source.convert(mode)
+
+    rendered = Image.open(BytesIO(_compact_receipt_image(source))).convert("RGB")
+    pixels = list(rendered.get_flattened_data())
+
+    # The page background is white, not the transparent pixels' leftover black.
+    assert sum(rendered.getpixel((5, 5))) > 700, f"{mode}: background not white"
+    ink = sum(1 for pixel in pixels if sum(pixel) < 200)
+    # Text survived...
+    assert ink > 0, f"{mode}: the receipt text was flattened away entirely"
+    # ...and the page was not blacked out.
+    assert ink < len(pixels) * 0.25, f"{mode}: receipt came out mostly black"
+
+
+def test_an_opaque_receipt_is_unaffected_by_the_flatten_branch():
+    source = Image.new("RGB", (400, 300), "white")
+    ImageDraw.Draw(source).text((40, 140), "TOTAL $31.25", fill="black")
+    rendered = Image.open(BytesIO(_compact_receipt_image(source))).convert("RGB")
+    assert sum(rendered.getpixel((5, 5))) > 700
+
+
+def test_the_flatten_matches_the_one_in_ocr():
+    """These two are the same fix for the same reason and have already drifted
+    apart once -- ocr.py was correct while expense_report.py silently was not.
+    Pin the mode test so a future edit to one is visible against the other."""
+    import inspect
+
+    from app import ocr
+
+    for source in (
+        inspect.getsource(_compact_receipt_image),
+        inspect.getsource(ocr.image_blocks_for_vision),
+    ):
+        assert '"RGBA", "LA", "PA"' in source
+        assert 'rgba.split()[-1]' in source or "split()[-1]" in source

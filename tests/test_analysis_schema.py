@@ -235,3 +235,35 @@ def test_unrecognized_request_type_still_clears_the_original_po_number():
 
     assert result["request_type_guess"] is None
     assert result["original_po_number"] is None
+
+
+# --- The schema's enums must not drift from their sources of truth ----------
+
+
+def test_allowed_work_categories_match_the_config_source_of_truth():
+    """analysis_schema keeps its own copy of two enums that live elsewhere, and
+    a copy that drifts fails SILENTLY in the damaging direction: an unrecognised
+    value degrades to None rather than raising, so adding a work category to
+    app/config.py alone would make the model's correct answer for it get
+    discarded, with the operator simply seeing an unset dropdown.
+
+    This is the same shape as the transparency-flatten duplication, which had
+    already drifted and was turning receipts black. Pin the copies together.
+    """
+    from app.analysis_schema import _ALLOWED_WORK_CATEGORIES
+    from app.config import WORK_CATEGORY_DISPLAY, WORK_CATEGORY_SUFFIXES
+
+    assert _ALLOWED_WORK_CATEGORIES == set(WORK_CATEGORY_SUFFIXES)
+    # The display map is what the UI labels them with; a missing entry renders a
+    # blank option rather than raising.
+    assert set(WORK_CATEGORY_SUFFIXES) == set(WORK_CATEGORY_DISPLAY)
+
+
+def test_allowed_purchase_routes_match_po_rules():
+    """po_rules.PURCHASE_ROUTES is authoritative -- classify_po raises on
+    anything outside it. A route the schema accepts but po_rules does not would
+    reach classification and fail there instead of at the boundary."""
+    from app.analysis_schema import _ALLOWED_PURCHASE_ROUTES
+    from app.po_rules import PURCHASE_ROUTES
+
+    assert _ALLOWED_PURCHASE_ROUTES == set(PURCHASE_ROUTES)

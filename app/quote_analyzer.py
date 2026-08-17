@@ -20,7 +20,7 @@ from typing import Optional
 import anthropic
 
 from app.analysis_schema import AnalysisResponseError, normalize_analysis_response
-from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES
+from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES, alias_matches
 from app.equipment_policy import GROUP_A_PROMPT_LIST
 from app.job_numbers import UNITY_DISAMBIGUATION_GUIDANCE
 
@@ -236,15 +236,36 @@ class QuoteAnalysis:
 
 
 def _match_facility(name: Optional[str], address: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    """Cross-reference extracted facility against known RRH sites using aliases."""
+    """Cross-reference the extracted facility against the known RRH sites.
+
+    Returns the site's CANONICAL name and address when one is recognised, and the
+    model's own values untouched when none is. Callers treat the result as
+    authoritative -- it drives the cost-code letter, the job number, and the
+    address printed on the MSAPO form -- so a wrong match here is not cosmetic.
+
+    Two passes, deliberately:
+
+    1. An exact name match against every site first. This must precede alias
+       matching because sites share name stems ("Unity Hospital" versus "Unity
+       Specialty Hospital"), and an alias pass alone lets dict order pick.
+    2. Whole-word alias matching via config.alias_matches. NOT a bare substring
+       test: "unity hospital" is a substring of "Community Hospital", which
+       silently rewrote every Newark-Wayne quote to Unity Hospital -- Unity's
+       address, Unity's cost-code letter, and no repair_cap category, which
+       exists only at Newark-Wayne. Nothing surfaced the swap to the operator.
+    """
     if not name and not address:
         return None, None
 
-    combined = f"{name or ''} {address or ''}".lower()
+    if name:
+        for fac in FACILITIES.values():
+            if fac["name"].lower() == name.strip().lower():
+                return fac["name"], fac["address"]
+
+    combined = f"{name or ''} {address or ''}"
 
     for _key, fac in FACILITIES.items():
-        aliases = fac.get("aliases", [])
-        if any(alias in combined for alias in aliases):
+        if any(alias_matches(alias, combined) for alias in fac.get("aliases", [])):
             return fac["name"], fac["address"]
 
     return name, address

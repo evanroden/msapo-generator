@@ -1,5 +1,31 @@
 """Generate the lightweight Scope/Inclusions/Exclusions PO attachment.
 
+DORMANT since 2026-08-12. Reached only by tests/test_scope_pdf.py.
+
+This built the PO attachment between 2026-08-08 and 2026-08-12. Contract
+administration then reversed the policy back to the full MSAPO form, so the live
+attachment is built by document_generator.build_msapo_pdf via pdf_converter, and
+build_scope_pdf has no production caller. The paragraph below describes the
+policy as it stood while this was live; read it as history.
+
+DO NOT DELETE without asking. Three reasons, in order:
+
+1. The policy it implements has already been reversed ONCE, in this direction.
+   This module went dormant and document_generator -- which it had itself
+   replaced -- came back. A second reversal is a business decision, not a code
+   smell, and this file is what makes it cheap.
+2. tests/test_smartsheet_handoff_entrypoint.py asserts
+   `source.count("build_scope_pdf(") == 0` in app/web_ui.py. That encodes "the
+   scope PDF is not the attachment", so it passes today AND would keep passing
+   after a deletion. It does not guard this module and will not warn you.
+3. Deleting it also deletes tests/test_scope_pdf.py, the only remaining record of
+   the simplified layout that contract administration approved at the time.
+
+If it does get removed, that belongs in its own commit with the reversal
+documented -- not folded into a cleanup.
+
+--- history, accurate while this was the live attachment ---
+
 This PDF intentionally contains no MSAPO agreement language and replaces the
 former DOCX-plus-converted-PDF package.  It is built directly with PyMuPDF,
 which is already required for quote extraction, so every PO route receives the

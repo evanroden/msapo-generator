@@ -3,6 +3,24 @@
 The model is prompted for a fixed JSON shape, but network success does not mean
 the response is usable. This module separates JSON extraction and field-type
 validation from the business post-processing in ``quote_analyzer.py``.
+
+THE GOVERNING PRINCIPLE, and it is not obvious: this module raises only for
+damage it cannot contain, and degrades everything else. A malformed TYPE (a list
+where text belongs) raises, because nothing downstream can recover. An
+unrecognised ENUM VALUE degrades to None or to the conservative bucket, because
+the UI already has a deterministic fallback for each one and hard-failing threw
+away a complete, usable extraction over a cosmetic deviation -- the operator saw
+"The quote could not be analyzed" and got nothing at all for a response that
+merely said "onsite labor" instead of "onsite_labor".
+
+So: when you add a field, decide which of those two it is, and say why here.
+
+The enum sets below are COPIES of definitions that live elsewhere --
+config.WORK_CATEGORY_SUFFIXES and po_rules.PURCHASE_ROUTES. A drifted copy fails
+in the damaging direction and in silence: a category added to config alone is
+not in this set, so the model's correct answer for it degrades to None and the
+operator sees an unset dropdown with no error. tests/test_analysis_schema.py
+pins the copies against their sources for exactly that reason.
 """
 
 from __future__ import annotations
@@ -94,6 +112,18 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
 
 
 def _string(value: Any, field: str, *, optional: bool) -> str | None:
+    """Normalize one text field. Returns None only for an OPTIONAL empty value.
+
+    The asymmetry is deliberate and load-bearing for the UI: a required field
+    empties to "" while an optional one becomes None. web_ui distinguishes those
+    two -- "" is a value the operator must fill (it drives the "Needed from you"
+    banner and the highlight), while None means the field does not apply. Making
+    both None would hide required-but-missing fields instead of flagging them.
+
+    A non-string RAISES rather than being coerced with str(). A model returning
+    {"vendor_name": {"name": "Trane"}} would otherwise stringify to
+    "{'name': 'Trane'}" and print that onto the MSAPO form.
+    """
     if value is None and optional:
         return None
     if value is None:
@@ -203,6 +233,11 @@ def normalize_analysis_response(raw: str) -> dict[str, Any]:
             candidate if candidate in _ALLOWED_WORK_CATEGORIES else None
         )
 
+    # Hard 20-character truncation, because this becomes a JDE cost-code
+    # description and the field will not accept more. It can cut mid-word, which
+    # is accepted: the operator sees and can edit the value (web_ui renders it
+    # with max_chars=20), so a clipped label is visible rather than silent, and
+    # rejecting the whole response over a long label would discard everything.
     short_description = normalized.get("short_description")
     if short_description:
         normalized["short_description"] = short_description[:20]

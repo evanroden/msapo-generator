@@ -282,7 +282,24 @@ def asset_label(a: dict[str, str]) -> str:
 
 
 def assets_for_facility(facility_key: str | None) -> list[dict[str, str]]:
-    """All assets at a facility, ordered by their tag."""
+    """All assets at a facility, ordered by their tag as TEXT.
+
+    KNOWN ORDERING DEFECT, reported not fixed: this is a string sort, so a
+    double-digit unit sorts before a single-digit one. Real, and visible in the
+    operator's dropdown today:
+
+        UMMC        CWP-10, CWP-11, CWP-12, CWP-7, CWP-8
+        Clifton     CHP-13, CHP-14, CHP-15, CHP-3A, CHP-3B, CHP-45
+
+    Someone scanning for CWP-7 finds it below CWP-12. app.asset_guess._tag_sort_key
+    already sorts on the trailing integer and is the helper to reuse if this is
+    changed -- but the change is user-visible ordering, so it was left for the
+    product owner rather than altered during a review.
+
+    NOT a correctness problem for asset SELECTION. lowest_numbered_of_type
+    re-sorts these rows with _tag_sort_key before choosing, precisely because it
+    cannot rely on this order.
+    """
     if not facility_key:
         return []
     rows = [a for a in ASSETS if a["facility_key"] == facility_key]
@@ -343,6 +360,18 @@ def guess_asset_id(text: str | None, facility_key: str | None,
     if not text:
         return None
     upper = text.upper()
+    # A bare substring test, unlike the word-bounded tag search below. It is safe
+    # ONLY because no UID in this registry is a substring of another one -- UIDs
+    # carry both a site suffix and a tag, so "EEA-CH-1-CSHC" cannot sit inside
+    # "EEA-CH-1STR-CSHC". tests/test_asset_guess.py pins that property, because a
+    # future export that breaks it would silently select the wrong asset here
+    # rather than raise: the shorter UID would match inside the longer one and
+    # win, since this loop returns on FIRST hit.
+    #
+    # First hit in tag order, not the longest match -- deliberately different
+    # from the loop below. Two UIDs in one quote is not a case this can resolve,
+    # and picking one arbitrarily is no worse than picking the longer string;
+    # the operator reviews the asset either way.
     for a in candidates:
         if a["uid"].upper() in upper:
             return a["uid"]
