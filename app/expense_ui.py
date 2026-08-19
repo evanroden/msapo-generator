@@ -49,7 +49,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from app import contracts
-from app.config import RRH_APPROVER_EMAIL, RRH_APPROVER_NAME
+from app.config import RRH_APPROVER_EMAIL, RRH_APPROVER_NAME, operator_today
 from app.eml_builder import (
     build_eml,
     build_mailto_url,
@@ -1744,7 +1744,7 @@ def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
             # NOTE: the container runs in UTC, so late-evening US filing can
             # seed tomorrow's date. It is an editable default, and every date
             # comparison downstream is a warning rather than a block.
-            f"expense_report_date_{account_token}": date.today(),
+            f"expense_report_date_{account_token}": operator_today(),
             f"expense_approver_name_{account_token}": (
                 profile.get("approver_name")
                 or (RRH_APPROVER_NAME if contracts.is_rrh(account) else "")

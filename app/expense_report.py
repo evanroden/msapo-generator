@@ -526,8 +526,33 @@ def validate_expense_report(
     misc_count = 0
     entertainment_count = 0
     total = Decimal("0")
+    # Number the messages by UPLOADED RECEIPT, not by reimbursement line.
+    #
+    # `items` are lines, and a split receipt produces several lines from ONE
+    # upload. Numbering by line meant a problem on the third line of a single
+    # split receipt read "Receipt 3:" while the employee was looking at one card
+    # labelled "Receipt 1 of 1" -- pointing at a card that does not exist. The
+    # date checks further down already number by source; this now agrees with
+    # them, and with the RECEIPTS worksheet headers.
+    #
+    # The per-source counts are taken up front because a source is only known to
+    # be SPLIT once every line has been seen, and the first line's message has to
+    # know that before it is written.
+    _line_counts: dict[str, int] = {}
+    for _item in items:
+        _sid = _receipt_source_id(_item)
+        _line_counts[_sid] = _line_counts.get(_sid, 0) + 1
+    _source_numbers: dict[str, int] = {}
+    _line_positions: dict[str, int] = {}
     for index, item in enumerate(items, 1):
-        prefix = f"Receipt {index}"
+        _sid = _receipt_source_id(item)
+        _source_number = _source_numbers.setdefault(_sid, len(_source_numbers) + 1)
+        _line_positions[_sid] = _line_positions.get(_sid, 0) + 1
+        prefix = (
+            f"Receipt {_source_number}"
+            if _line_counts.get(_sid, 1) <= 1
+            else f"Receipt {_source_number}, line {_line_positions[_sid]}"
+        )
         if not item.receipt_id or item.receipt_id in seen_lines:
             problems.append(f"{prefix}: remove the duplicate reimbursement line")
         seen_lines.add(item.receipt_id)

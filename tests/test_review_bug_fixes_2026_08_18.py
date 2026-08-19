@@ -307,3 +307,163 @@ def test_the_parenthesised_guard_matches_the_same_keys_it_did_before():
         old = receipt_id in key or token in key and key.startswith("expense_")
         new = (receipt_id in key or token in key) and key.startswith("expense_")
         assert old == new, f"behaviour changed for {key!r}"
+
+
+# --- 19: blocking messages must name a receipt the employee can see --------
+
+
+def _split_receipt_items():
+    from datetime import date as _date
+    from io import BytesIO
+
+    from PIL import Image, ImageDraw
+
+    from app.expense_report import (
+        ALLOCATION_JOB,
+        EXPENSE_SECTION_MISC,
+        ExpenseAllocation,
+        ExpenseItem,
+    )
+    from app.job_numbers import RRH_JOB_NUMBERS
+
+    image = Image.new("RGB", (400, 300), "white")
+    ImageDraw.Draw(image).text((20, 20), "TOTAL", fill="black")
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG")
+    payload = buffer.getvalue()
+
+    allocation = ExpenseAllocation(
+        kind=ALLOCATION_JOB,
+        job_number=RRH_JOB_NUMBERS[0],
+        account_cost_type="01AMA",
+        cost_code_or_wo_type="5490",
+    )
+    # ONE upload split into three reimbursement lines; the third is incomplete.
+    return [
+        ExpenseItem(
+            receipt_id=f"line-{index}",
+            source_receipt_id="src-a",
+            filename="receipt.jpg",
+            file_bytes=payload,
+            transaction_date=_date(2026, 8, 10),
+            description="Parking" if index < 3 else "",
+            amount="10.00",
+            section=EXPENSE_SECTION_MISC,
+            allocation=allocation,
+            merchant_name="Merchant",
+            contact_name="",
+        )
+        for index in (1, 2, 3)
+    ]
+
+
+def _rrh_details():
+    from datetime import date as _date
+
+    from app.expense_report import ExpenseReportDetails
+
+    return ExpenseReportDetails(
+        account="Rochester Regional Health",
+        employee_name="Test Employee",
+        employee_number="1",
+        employee_home_bu="695",
+        report_date=_date(2026, 8, 11),
+        approver_name="Approver",
+        approver_email="approver@example.invalid",
+        mail_destination="home",
+        satellite_office="",
+        employee_signature_confirmed=True,
+    )
+
+
+def test_a_split_receipt_problem_names_the_card_that_exists():
+    """`items` are reimbursement LINES; a split receipt makes several from ONE
+    upload. Numbering by line meant a problem on the third line of a single
+    split receipt read "Receipt 3:" while the employee looked at one card
+    labelled "Receipt 1 of 1" -- a card that does not exist."""
+    from app.expense_report import _unique_receipt_count, validate_expense_report
+
+    items = _split_receipt_items()
+    assert _unique_receipt_count(items) == 1, "fixture is not actually one receipt"
+
+    problems = [p for p in validate_expense_report(_rrh_details(), items) if "Receipt" in p]
+    assert problems, "expected a blocking problem on the incomplete line"
+    assert any(p.startswith("Receipt 1, line 3") for p in problems), problems
+    assert not any(p.startswith("Receipt 3") for p in problems), problems
+
+
+def test_separate_receipts_are_still_numbered_plainly():
+    """The common case must not gain a "line N" suffix it does not need."""
+    from datetime import date as _date
+
+    from app.expense_report import _unique_receipt_count, validate_expense_report
+
+    items = _split_receipt_items()
+    # Same three lines, but each from its own upload.
+    items = [
+        type(item)(**{**item.__dict__, "source_receipt_id": f"src-{index}"})
+        for index, item in enumerate(items, 1)
+    ]
+    assert _unique_receipt_count(items) == 3
+
+    problems = [p for p in validate_expense_report(_rrh_details(), items) if "Receipt" in p]
+    assert any(p.startswith("Receipt 3:") for p in problems), problems
+    assert not any("line" in p for p in problems), problems
+
+
+# --- 13: the report date must default in the OPERATOR's zone ---------------
+
+
+def test_the_report_date_default_uses_the_configured_zone_not_the_container():
+    """Nothing sets TZ in the Dockerfile, render.yaml or docker-compose.yml, so
+    the container runs UTC -- 4-5 hours ahead of every US contract. date.today()
+    rolled over at 8pm Eastern and defaulted TOMORROW'S DATE onto the expense
+    form the approver signs."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.config import EPC_TIMEZONE, operator_today
+
+    assert operator_today() == datetime.now(ZoneInfo(EPC_TIMEZONE)).date()
+
+
+def test_the_zone_is_overridable_per_deployment(monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    import app.config as config
+
+    monkeypatch.setattr(config, "EPC_TIMEZONE", "America/Chicago")
+    assert config.operator_today() == datetime.now(ZoneInfo("America/Chicago")).date()
+
+
+def test_an_unknown_zone_falls_back_instead_of_taking_the_workflow_down(monkeypatch):
+    """A typo in a dashboard variable must not break expense filing. The
+    operator can still edit the date; an exception would blank the page."""
+    from datetime import date as _date
+
+    import app.config as config
+
+    monkeypatch.setattr(config, "EPC_TIMEZONE", "Not/AZone")
+    assert config.operator_today() == _date.today()
+
+
+def test_no_module_defaults_a_visible_date_from_the_container_clock():
+    """Pins the whole class. date.today() is correct for internal comparisons
+    but never for a value an operator sees or signs, and this app has no TZ set
+    anywhere, so the container clock is always UTC."""
+    import subprocess
+
+    result = subprocess.run(
+        ["grep", "-rn", "date.today()", "app/"],
+        capture_output=True,
+        text=True,
+    )
+    offenders = [
+        line
+        for line in result.stdout.splitlines()
+        if line and not line.startswith("app/config.py")
+    ]
+    assert not offenders, (
+        "use config.operator_today() for operator-visible dates: " + "; ".join(offenders)
+    )
