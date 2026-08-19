@@ -2376,18 +2376,6 @@ def main() -> None:
     # renders per run, so the widget key survives either way and po_context still
     # finds it.
     #
-    # Consequence to be aware of before rearranging this: the run after the
-    # operator types a note, the note moves into the collapsed corrections panel
-    # and the toggle that revealed the field disappears. The text is retained and
-    # is still sent, but it leaves the visible page. Reported, not changed here.
-    if instructions_value:
-        with corrections:
-            st.text_area(
-                "Additional information (optional)",
-                key=instructions_key,
-                help="Only add a note the Smartsheet reviewer needs to see.",
-            )
-
     # The requester is the person filling the form in, and it deliberately never
     # comes from a deployment default -- po_context keeps its ``env`` parameter
     # only for old callers and ignores it for exactly this reason. Memory is
@@ -2439,15 +2427,36 @@ def main() -> None:
     # an always-present box invites filler; short-circuiting on
     # ``instructions_value`` is what guarantees only one of the two text areas
     # claims the key on any given run.
-    if not instructions_value and st.toggle(
+    # The toggle renders UNCONDITIONALLY, and the box renders whenever the
+    # toggle is on OR a note already exists. Both halves matter.
+    #
+    # This used to read `if not instructions_value and st.toggle(...)`, so the
+    # run after the operator typed a note the whole condition short-circuited:
+    # the box AND the toggle vanished from the page, and a second copy of the
+    # field appeared inside the collapsed corrections panel. The text was
+    # retained and still sent, but from the operator's seat an optional note
+    # they had just typed simply disappeared.
+    #
+    # It also did not belong in that panel. It is labelled "Change a value the
+    # tool already filled", and this note is operator-authored -- the tool never
+    # filled it. There is now exactly ONE text area for this key, in the flow
+    # where it was typed, which is also what keeps two widgets from claiming the
+    # same session key on one run.
+    #
+    # Toggling off does NOT hide existing text. Silently concealing content the
+    # operator wrote is the failure this whole change is about; they clear the
+    # box to remove the note.
+    reveal_note = st.toggle(
         "Add Additional Information",
         key=f"show_optional_{token}",
         help="Use this only when the Smartsheet reviewer needs an extra note.",
-    ):
+    )
+    if reveal_note or instructions_value:
         st.text_area(
             "Additional information (optional)",
             key=instructions_key,
             placeholder="Only enter something the Smartsheet reviewer needs",
+            help="Only add a note the Smartsheet reviewer needs to see.",
         )
 
     with corrections:

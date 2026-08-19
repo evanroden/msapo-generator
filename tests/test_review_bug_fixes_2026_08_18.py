@@ -467,3 +467,89 @@ def test_no_module_defaults_a_visible_date_from_the_container_clock():
     assert not offenders, (
         "use config.operator_today() for operator-visible dates: " + "; ".join(offenders)
     )
+
+
+# --- 18: a blocked package must not be confirmed in green ------------------
+
+
+def test_the_readiness_banner_is_not_green_while_the_package_is_blocked():
+    """st.success used to fire unconditionally, with the blocking warning
+    underneath it. Green is the strongest signal on the page and it was
+    answering a question nobody had asked yet."""
+    import ast
+
+    source = Path("app/smartsheet_inline.py").read_text(encoding="utf-8")
+    function = next(
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.FunctionDef) and "handoff" in node.name
+    )
+    blockers_assigned = min(
+        node.lineno
+        for node in ast.walk(function)
+        if isinstance(node, ast.Assign)
+        and any(getattr(target, "id", "") == "blockers" for target in node.targets)
+    )
+    success_called = min(
+        node.lineno
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "success"
+    )
+    assert success_called > blockers_assigned, (
+        "st.success renders before the blockers are known"
+    )
+
+
+def test_the_summary_line_still_renders_when_blocked():
+    """It is the operator's last chance to notice that extraction missed the
+    vendor, site or amount -- MORE important when blocked, not less, since a
+    missing vendor is often the very thing being reported. Only the colour
+    changes."""
+    source = Path("app/smartsheet_inline.py").read_text(encoding="utf-8")
+    assert "st.markdown(summary)" in source
+    assert "st.success(summary)" in source
+
+
+# --- 11: an optional note must not vanish when you type it -----------------
+
+
+def test_typing_the_optional_note_keeps_it_and_its_toggle_on_the_page():
+    """`if not instructions_value and st.toggle(...)` short-circuited on the run
+    after the operator typed: box AND toggle vanished, and a second copy
+    appeared inside the collapsed corrections panel. The text was retained and
+    still sent, but from the operator's seat an optional note they had just
+    typed simply disappeared."""
+    from dotenv import dotenv_values
+    from streamlit.testing.v1 import AppTest
+
+    root = Path(__file__).resolve().parents[1]
+    app = AppTest.from_file(root / "run_web.py", default_timeout=60)
+    for key, value in dotenv_values(root / ".env.example").items():
+        if value is not None:
+            app.session_state[key] = value
+    app.run()
+    app.button[0].click().run()
+
+    toggles = [t for t in app.toggle if "Additional Information" in t.label]
+    assert len(toggles) == 1
+    toggles[0].set_value(True).run()
+
+    label = "Additional information (optional)"
+    boxes = [t for t in app.text_area if t.label == label]
+    assert len(boxes) == 1
+    boxes[0].set_value("Reviewer: please expedite.").run()
+
+    after = [t for t in app.text_area if t.label == label]
+    assert len(after) == 1, "the note box vanished, or a duplicate appeared"
+    assert after[0].value == "Reviewer: please expedite."
+    assert [t for t in app.toggle if "Additional Information" in t.label], (
+        "the toggle vanished once the note had content"
+    )
+    assert not app.exception
+
+
+def test_only_one_widget_ever_claims_the_instructions_key():
+    """Two text areas sharing a session key on one run is the hazard the old
+    short-circuit was working around. The single-render fix removes the need."""
+    source = Path("app/web_ui.py").read_text(encoding="utf-8")
+    assert source.count("key=instructions_key") == 1
