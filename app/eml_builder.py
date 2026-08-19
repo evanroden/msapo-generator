@@ -130,11 +130,23 @@ def build_eml(
     contains CR or LF. That is the header-injection guard and the only failure
     mode: everything else about the message is constructed, not parsed.
 
-    An EMPTY `attachments` list is accepted and produces a single-part
-    text/html message rather than multipart/mixed -- a draft that silently
-    promises an attachment it does not carry. Callers must refuse to build a
-    draft with no artifact instead of relying on this function to complain.
+    Raises ValueError on an EMPTY `attachments` list. The body this function
+    writes tells the approver to review "the attached expense report", so a
+    draft with nothing attached is a message that lies about itself.
+
+    That used to be a documented CALLER obligation rather than an enforced one.
+    The single caller, expense_ui._build_expense_eml, does honour it -- it
+    raises ExpenseReportError when package.pdf_bytes is empty -- so this is
+    defence in depth, not a live fix. It is enforced here because the obligation
+    was invisible at the call site: a second caller would have to read this
+    docstring to learn about it, and the failure it prevents is silent.
     """
+    if not attachments:
+        raise ValueError(
+            "Refusing to build an approval draft with no attachment: the body "
+            "describes an attached report."
+        )
+
     msg = EmailMessage()
     msg["To"] = to
     msg["Subject"] = subject

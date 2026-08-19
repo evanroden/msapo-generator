@@ -81,14 +81,36 @@ class SubmissionStore:
     def from_environment(cls) -> "SubmissionStore":
         """Locate the database on the deployment's persistent disk.
 
-        EPC_DATA_DIR is set to the mounted Render disk in render.yaml. The
-        fallback is CWD-relative and therefore EPHEMERAL: if that variable is
-        ever removed from the dashboard, duplicate-prevention history silently
-        starts over on every container restart while everything still appears to
-        work. Note that ``app/memory.py`` resolves the same variable with an
-        extra fallback to the mount path; the two are not interchangeable.
+        Resolution order is deliberately IDENTICAL to ``app.memory._data_dir``,
+        and that is the whole point of this method. The two used to differ: this
+        one fell straight from EPC_DATA_DIR to a CWD-relative directory, while
+        memory.py probed the /test1 mount in between.
+
+        The consequence of that gap was silent and one-sided. Drop EPC_DATA_DIR
+        from the Render dashboard and memory.py still found the persistent disk
+        via /test1, so contract learning, vendor contacts and requester recall
+        all kept working -- while THIS store quietly moved to ephemeral
+        container storage and began forgetting every submission on restart.
+        Duplicate prevention is the one feature whose failure looks exactly like
+        success: nothing errors, submissions simply stop being recognised as
+        already sent.
+
+        The probe is ``is_dir()`` rather than ``exists()`` for the same reason
+        memory.py uses it: when the disk is not attached the path is absent, and
+        local development must fall through to the repo-local directory.
         """
-        root = Path(os.getenv("EPC_DATA_DIR", "./data_store"))
+        env = os.getenv("EPC_DATA_DIR")
+        if env:
+            root = Path(env)
+        else:
+            mounted = Path("/test1")  # the Render persistent disk's mount path
+            # Module-relative, not "./data_store". A CWD-relative fallback puts
+            # the database wherever the process happened to be started, so a
+            # different working directory silently produced a DIFFERENT store
+            # from the one app/memory.py resolves -- the same divergence this
+            # method exists to close, just one level further down.
+            local = Path(__file__).resolve().parent.parent / "data_store"
+            root = mounted if mounted.is_dir() else local
         return cls(root / "smartsheet_submissions.db")
 
     def _connect(self) -> sqlite3.Connection:

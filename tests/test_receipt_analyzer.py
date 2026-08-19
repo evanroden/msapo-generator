@@ -104,7 +104,14 @@ def test_detected_receipt_items_are_bounded_without_collapsing_repeated_items():
     assert len(result.line_items) == 60
     assert result.line_items[0].description == "Repeated item 0"
     assert result.line_items[3].description == "Repeated item 0"
-    assert "Only the first 60 detected receipt items are shown." in result.review_notes
+    # Assert the FACTS the note has to carry, not one exact sentence. The
+    # wording changed on 2026-08-18 because it used to say "the first 60 are
+    # shown" even when rejected rows meant far fewer were -- see
+    # tests/test_review_bug_fixes_2026_08_18.py. What must never change is that
+    # a truncation is stated at all, and that the numbers in it are real.
+    note = next(n for n in result.review_notes if "rows" in n)
+    assert "65 rows" in note, "the note must name how many rows the receipt listed"
+    assert "60" in note, "the note must name the bound that was applied"
 
 
 def test_large_item_total_mismatch_requires_visible_review_note():

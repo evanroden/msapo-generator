@@ -995,13 +995,20 @@ def handoff_rows(
     back to DISPLAY_LABELS when the administrator has not mapped that field, so
     the copy list still works on a deployment where prefill was never enabled.
 
-    WARNING: values are emitted RAW -- ``_mapped_value`` is deliberately not
-    applied, because these rows are also the audit view of what the tool
-    actually holds. If SMARTSHEET_FORM_VALUE_MAP_JSON is ever configured, the
-    prefill URL will carry the translated value while this list shows the
-    untranslated one, and an operator copying from here would be typing a
-    string the dropdown does not offer. Enabling that map means fixing this
-    together with it, not one before the other.
+    Values pass through ``_mapped_value``, the SAME translation
+    ``build_prefilled_form_url`` applies. This list exists to be TYPED INTO THE
+    REAL FORM, so it has to carry strings the form's dropdowns actually offer.
+
+    It previously emitted raw values, on the reasoning that these rows are also
+    an audit view of what the tool holds. That made the copy fallback and the
+    prefill URL disagree the moment SMARTSHEET_FORM_VALUE_MAP_JSON was
+    configured -- and disagree silently, with the operator typing a value the
+    dropdown would reject. The audit view is still available from the PO
+    context, which is where an untranslated record belongs.
+
+    With no map configured -- the state today, the example in .env.example is
+    commented out -- ``_mapped_value`` returns the stripped string unchanged, so
+    this is identical to the previous behaviour until the map is enabled.
     """
     rows: list[tuple[str, str, str]] = []
     seen: set[str] = set()
@@ -1017,7 +1024,7 @@ def handoff_rows(
         if not _nonempty(value):
             continue
         label = config.form_field_map.get(field) or DISPLAY_LABELS.get(field, field)
-        rows.append((field, label, str(value).strip()))
+        rows.append((field, label, _mapped_value(config, field, value)))
     return rows
 
 
@@ -1092,6 +1099,16 @@ def preflight_attachments(
     seen_names: set[str] = set()
     for filename, data in attachments:
         safe_name = _safe_filename(filename)
+        # Register the name BEFORE the empty-file bail-out. Registering after
+        # it meant an empty "quote.pdf" never entered seen_names, so a second,
+        # valid "quote.pdf" in the same package was not reported as a
+        # duplicate -- the operator fixed the empty file, resubmitted, and only
+        # then learned about the name collision. This function exists to report
+        # every problem in ONE pass; bailing early made it report them serially.
+        folded = safe_name.casefold()
+        if folded in seen_names:
+            problems.append(f"Attachment filename is duplicated: {safe_name}.")
+        seen_names.add(folded)
         if not isinstance(data, bytes) or not data:
             problems.append(f"{safe_name} is empty or unreadable.")
             continue
@@ -1099,10 +1116,6 @@ def preflight_attachments(
             problems.append(
                 f"{safe_name} is larger than Smartsheet's 30 MB attachment limit."
             )
-        folded = safe_name.casefold()
-        if folded in seen_names:
-            problems.append(f"Attachment filename is duplicated: {safe_name}.")
-        seen_names.add(folded)
     return tuple(problems)
 
 
