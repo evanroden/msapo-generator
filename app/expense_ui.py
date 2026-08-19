@@ -271,18 +271,22 @@ def render_expense_workflow(browser_token: str) -> None:
         # Run de-duplication over THIS batch alone purely to collect names to
         # warn about. _merge_receipt_sources below drops duplicates silently, so
         # without this call selecting the same file twice in one dialog would do
-        # nothing at all with no explanation. (Known gap: a file that duplicates
-        # one already in the mirror is still dropped without a warning -- its
-        # preview is already on screen, which is the only feedback.)
+        # nothing at all with no explanation. A file duplicating one already in
+        # the MIRROR is reported too, from _merge_receipt_sources below.
         _, duplicate_names = _unique_receipts(current_uploads)
         # File-uploader values cannot be restored programmatically after that
         # widget is hidden by a workflow switch. Merge its current additions
         # into the bounded byte mirror so the restored files do not disappear
         # on the next ordinary rerun.
-        upload_sources = _merge_receipt_sources(
+        # merged_duplicate_names covers the case this batch cannot see: a file
+        # that duplicates one ALREADY in the mirror. _unique_receipts above only
+        # compares within the current batch, so without this the re-selected
+        # receipt was dropped with no message at all.
+        upload_sources, merged_duplicate_names = _merge_receipt_sources(
             mirrored_uploads,
             current_uploads,
         )
+        duplicate_names.extend(merged_duplicate_names)
         st.session_state["expense_receipt_files"] = upload_sources
         st.session_state.pop("expense_restored_without_uploader", None)
     else:
@@ -2297,8 +2301,15 @@ def _unique_receipts(uploads) -> tuple[list[tuple[str, str, bytes]], list[str]]:
     return unique, duplicates
 
 
-def _merge_receipt_sources(*groups) -> list[tuple[str, bytes, str]]:
+def _merge_receipt_sources(*groups) -> tuple[list[tuple[str, bytes, str]], list[str]]:
     """Merge uploader additions into the receipt mirror without byte growth.
+
+    Returns ``(merged, dropped_names)``. The second element is what makes a
+    re-selected file explainable: this function silently discarded duplicates
+    and the caller computed its warning from the current batch ALONE, so
+    re-picking a receipt already in the report did nothing and said nothing. The
+    only feedback was that its preview happened to already be on screen, which
+    tells the operator nothing about the file they just chose.
 
     Earlier groups win, so the caller passes the existing mirror first and the
     uploader's current batch second: re-selecting a file already in the report
@@ -2310,6 +2321,7 @@ def _merge_receipt_sources(*groups) -> list[tuple[str, bytes, str]]:
     hashes a filename instead of the bytes.
     """
     merged: list[tuple[str, bytes, str]] = []
+    dropped: list[str] = []
     seen: set[str] = set()
     for group in groups:
         for upload in group:
@@ -2321,10 +2333,14 @@ def _merge_receipt_sources(*groups) -> list[tuple[str, bytes, str]]:
                 mime_type = upload.type or "application/octet-stream"
             receipt_id = hashlib.sha256(payload).hexdigest()
             if receipt_id in seen:
+                # Report the name the operator just picked, not the stored one:
+                # the same bytes may have been saved under a different filename,
+                # and the operator is looking for the file THEY chose.
+                dropped.append(filename)
                 continue
             seen.add(receipt_id)
             merged.append((filename, payload, mime_type))
-    return merged
+    return merged, dropped
 
 
 def _remove_receipt_from_draft(receipt_id: str) -> None:

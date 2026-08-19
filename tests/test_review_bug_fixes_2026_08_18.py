@@ -553,3 +553,52 @@ def test_only_one_widget_ever_claims_the_instructions_key():
     short-circuit was working around. The single-render fix removes the need."""
     source = Path("app/web_ui.py").read_text(encoding="utf-8")
     assert source.count("key=instructions_key") == 1
+
+
+# --- 15: a receipt already in the report must say so when re-selected ------
+
+
+def test_reselecting_a_receipt_already_in_the_report_is_reported():
+    """_merge_receipt_sources dropped mirror-duplicates silently while the
+    caller computed its warning from the current batch ALONE. Re-picking a
+    receipt already in the report did nothing and said nothing -- the only
+    feedback was that its preview happened to already be on screen, which tells
+    the operator nothing about the file they just chose."""
+    from app.expense_ui import _merge_receipt_sources
+
+    mirror = [("receipt.jpg", b"same-bytes", "image/jpeg")]
+    batch = [
+        ("resent.jpg", b"same-bytes", "image/jpeg"),
+        ("new.jpg", b"other-bytes", "image/jpeg"),
+    ]
+    merged, dropped = _merge_receipt_sources(mirror, batch)
+
+    assert [name for name, _, _ in merged] == ["receipt.jpg", "new.jpg"]
+    # The name the OPERATOR just picked, not the stored one: the same bytes may
+    # have been saved under a different filename.
+    assert dropped == ["resent.jpg"]
+
+
+def test_the_stored_copy_and_its_reviewed_fields_still_win():
+    """Earlier groups win, so re-selecting keeps the stored copy rather than
+    replacing it -- otherwise the operator's reviewed amount and coding for that
+    receipt would be discarded by re-picking the file."""
+    from app.expense_ui import _merge_receipt_sources
+
+    merged, dropped = _merge_receipt_sources(
+        [("stored.jpg", b"bytes", "image/jpeg")],
+        [("picked-again.jpg", b"bytes", "image/jpeg")],
+    )
+    assert [name for name, _, _ in merged] == ["stored.jpg"]
+    assert dropped == ["picked-again.jpg"]
+
+
+def test_nothing_is_reported_when_every_file_is_new():
+    from app.expense_ui import _merge_receipt_sources
+
+    merged, dropped = _merge_receipt_sources(
+        [("a.jpg", b"a", "image/jpeg")],
+        [("b.jpg", b"b", "image/jpeg")],
+    )
+    assert len(merged) == 2
+    assert dropped == []
