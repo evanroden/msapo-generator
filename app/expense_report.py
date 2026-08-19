@@ -1464,7 +1464,25 @@ def employee_signature_png(employee_name: str) -> bytes:
 
     size = _SIGNATURE_MAX_FONT_SIZE
     while True:
-        font = ImageFont.truetype(str(font_path), size)
+        # A font file that EXISTS can still fail to load: an interrupted apt
+        # install, a truncated layer, or a corrupt mount all produce a readable
+        # path whose bytes are not a font, and Pillow raises OSError("broken
+        # file") for it. The candidate scan above only tests is_file().
+        #
+        # This module's contract is that every failure reaches the operator as
+        # ExpenseReportError with a sentence they can act on. An OSError escaping
+        # here broke that: expense_ui catches ExpenseReportError around the
+        # signature preview, so the raw OSError propagated out of
+        # render_expense_workflow and BLANKED THE WHOLE PAGE -- after the
+        # employee had entered the entire report.
+        try:
+            font = ImageFont.truetype(str(font_path), size)
+        except OSError as exc:
+            raise ExpenseReportError(
+                "The signature font could not be loaded in this deployment. "
+                "The report can still be completed; contact support so the "
+                "font can be reinstalled."
+            ) from exc
         box = drawing.textbbox((0, 0), name, font=font)
         width = max(1, box[2] - box[0])
         height = max(1, box[3] - box[1])

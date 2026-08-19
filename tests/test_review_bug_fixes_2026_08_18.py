@@ -217,3 +217,93 @@ def test_a_draft_with_an_attachment_is_still_built():
         attachments=[("expense.pdf", b"%PDF-1.7 x")],
     )
     assert payload.startswith(b"MIME-Version") or b"multipart/mixed" in payload
+
+
+# --- 12: a broken font must not blank the page -----------------------------
+
+
+def test_a_corrupt_signature_font_raises_the_operator_facing_error(tmp_path):
+    """A font file that EXISTS can still fail to load -- an interrupted apt
+    install, a truncated layer, a corrupt mount -- and Pillow raises
+    OSError("broken file"). The candidate scan only tests is_file().
+
+    expense_ui catches ExpenseReportError around the signature preview, so an
+    OSError propagated out of render_expense_workflow and BLANKED THE WHOLE
+    PAGE, after the employee had entered the entire report.
+    """
+    from unittest import mock
+
+    import app.expense_report as expense_report
+    from app.expense_report import ExpenseReportError, employee_signature_png
+
+    broken = tmp_path / "broken.ttf"
+    broken.write_bytes(b"not a font at all")
+
+    with mock.patch.object(expense_report, "_SIGNATURE_FONT_CANDIDATES", [broken]):
+        with pytest.raises(ExpenseReportError, match="signature font"):
+            employee_signature_png("Dane Example")
+
+
+def test_the_underlying_font_error_is_preserved_as_the_cause(tmp_path):
+    """Wrapped, not swallowed. The operator gets a sentence; the logs keep the
+    OSError that says which file broke."""
+    from unittest import mock
+
+    import app.expense_report as expense_report
+    from app.expense_report import ExpenseReportError, employee_signature_png
+
+    broken = tmp_path / "broken.ttf"
+    broken.write_bytes(b"not a font at all")
+
+    with mock.patch.object(expense_report, "_SIGNATURE_FONT_CANDIDATES", [broken]):
+        try:
+            employee_signature_png("Dane Example")
+        except ExpenseReportError as exc:
+            assert isinstance(exc.__cause__, OSError)
+        else:
+            pytest.fail("expected ExpenseReportError")
+
+
+def test_a_working_font_still_renders_a_signature():
+    from app.expense_report import employee_signature_png
+
+    payload = employee_signature_png("Dane Example")
+    assert payload[:4] == bytes([0x89]) + b"PNG"
+
+
+# --- 14: the session-key guard must mean what it says ----------------------
+
+
+def test_the_receipt_cleanup_guard_is_prefix_protected_on_both_branches():
+    """`and` binds tighter than `or`, so
+        receipt_id in key or token in key and key.startswith("expense_")
+    guarded the TOKEN branch only -- the full-hash branch could pop any key in
+    session state. Latent rather than live (a 64-hex content hash appears in no
+    other key), but the guard now says what it always meant, so a change to
+    receipt_id's shape cannot turn the trap live.
+    """
+    source = Path("app/expense_ui.py").read_text(encoding="utf-8")
+    guarded = '(receipt_id in key or token in key) and key.startswith("expense_")'
+    unguarded = 'receipt_id in key or token in key and key.startswith("expense_")'
+
+    assert source.count(guarded) == 2, "both cleanup loops must be parenthesised"
+    assert unguarded not in source.replace(guarded, ""), "an unparenthesised guard remains"
+
+
+def test_the_parenthesised_guard_matches_the_same_keys_it_did_before():
+    """The fix must not change which keys are cleared today. Both forms agree
+    on every key the workflow actually creates; they differ only for a
+    hypothetical non-expense_ key containing the full hash."""
+    receipt_id = "a" * 64
+    token = receipt_id[:12]
+    live_keys = [
+        f"expense_receipt_amount_{receipt_id}",
+        f"expense_section_{token}_x",
+        f"expense_analysis_{receipt_id}",
+        "expense_employee_name_abc123",
+        "workflow_mode",
+    ]
+    for key in live_keys:
+        old = receipt_id in key or token in key and key.startswith("expense_")
+        new = (receipt_id in key or token in key) and key.startswith("expense_")
+        assert old == new, f"behaviour changed for {key!r}"

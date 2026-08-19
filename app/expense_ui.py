@@ -2381,15 +2381,17 @@ def _clear_removed_receipts(active_ids: set[str]) -> None:
             # full content hash, the field widgets carry its 12-character
             # prefix. Both have to match or half the receipt's state survives.
             #
-            # Precedence note: `and` binds tighter than `or`, so the
-            # expense_-prefix test applies to the token branch only. Harmless
-            # today (a 64-hex content hash appears in no other key), but do not
-            # read this as "both branches are prefix-guarded".
-            if receipt_id in key or token in key and key.startswith("expense_"):
+            # Parenthesised deliberately. `and` binds tighter than `or`, so
+            # without these the expense_ prefix guarded the TOKEN branch only
+            # and the full-hash branch could pop any key in session state.
+            # Harmless in practice -- a 64-hex content hash appears in no other
+            # key -- but the guard now says what it always meant, so a future
+            # change to receipt_id's shape cannot turn a latent trap live.
+            if (receipt_id in key or token in key) and key.startswith("expense_"):
                 st.session_state.pop(key, None)
         snapshot = dict(st.session_state.get("expense_draft_snapshot", {}) or {})
         for key in list(snapshot):
-            if receipt_id in key or token in key and key.startswith("expense_"):
+            if (receipt_id in key or token in key) and key.startswith("expense_"):
                 snapshot.pop(key, None)
         if snapshot:
             st.session_state["expense_draft_snapshot"] = snapshot
