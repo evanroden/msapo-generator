@@ -299,7 +299,11 @@ def test_duplicate_receipt_is_blocked_even_when_other_fields_are_valid():
         _details(),
         [_item("same"), _item("same", amount="22.00")],
     )
-    assert "Receipt 2: remove the duplicate reimbursement line" in problems
+    # Both lines carry receipt_id "same", so this is ONE uploaded receipt with
+    # two lines -- not two receipts. The message used to read "Receipt 2",
+    # pointing the employee at a card that does not exist. See
+    # tests/test_review_bug_fixes_2026_08_18.py.
+    assert "Receipt 1, line 2: remove the duplicate reimbursement line" in problems
 
 
 def test_split_receipt_writes_multiple_lines_but_attaches_source_once():
@@ -377,7 +381,12 @@ def test_split_lines_must_reference_the_same_source_bytes_and_filename():
 
     problems = validate_expense_report(_details(), [first, second])
 
-    assert "Receipt 2: split lines must use the same uploaded receipt" in problems
+    # Split lines are by definition several views of ONE upload, so the offender
+    # is line 2 of receipt 1, never "Receipt 2".
+    assert (
+        "Receipt 1, line 2: split lines must use the same uploaded receipt"
+        in problems
+    )
 
 
 def test_official_section_row_limits_block_without_truncating_split_lines():

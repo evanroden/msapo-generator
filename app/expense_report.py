@@ -526,8 +526,33 @@ def validate_expense_report(
     misc_count = 0
     entertainment_count = 0
     total = Decimal("0")
+    # Number the messages by UPLOADED RECEIPT, not by reimbursement line.
+    #
+    # `items` are lines, and a split receipt produces several lines from ONE
+    # upload. Numbering by line meant a problem on the third line of a single
+    # split receipt read "Receipt 3:" while the employee was looking at one card
+    # labelled "Receipt 1 of 1" -- pointing at a card that does not exist. The
+    # date checks further down already number by source; this now agrees with
+    # them, and with the RECEIPTS worksheet headers.
+    #
+    # The per-source counts are taken up front because a source is only known to
+    # be SPLIT once every line has been seen, and the first line's message has to
+    # know that before it is written.
+    _line_counts: dict[str, int] = {}
+    for _item in items:
+        _sid = _receipt_source_id(_item)
+        _line_counts[_sid] = _line_counts.get(_sid, 0) + 1
+    _source_numbers: dict[str, int] = {}
+    _line_positions: dict[str, int] = {}
     for index, item in enumerate(items, 1):
-        prefix = f"Receipt {index}"
+        _sid = _receipt_source_id(item)
+        _source_number = _source_numbers.setdefault(_sid, len(_source_numbers) + 1)
+        _line_positions[_sid] = _line_positions.get(_sid, 0) + 1
+        prefix = (
+            f"Receipt {_source_number}"
+            if _line_counts.get(_sid, 1) <= 1
+            else f"Receipt {_source_number}, line {_line_positions[_sid]}"
+        )
         if not item.receipt_id or item.receipt_id in seen_lines:
             problems.append(f"{prefix}: remove the duplicate reimbursement line")
         seen_lines.add(item.receipt_id)
@@ -1464,7 +1489,25 @@ def employee_signature_png(employee_name: str) -> bytes:
 
     size = _SIGNATURE_MAX_FONT_SIZE
     while True:
-        font = ImageFont.truetype(str(font_path), size)
+        # A font file that EXISTS can still fail to load: an interrupted apt
+        # install, a truncated layer, or a corrupt mount all produce a readable
+        # path whose bytes are not a font, and Pillow raises OSError("broken
+        # file") for it. The candidate scan above only tests is_file().
+        #
+        # This module's contract is that every failure reaches the operator as
+        # ExpenseReportError with a sentence they can act on. An OSError escaping
+        # here broke that: expense_ui catches ExpenseReportError around the
+        # signature preview, so the raw OSError propagated out of
+        # render_expense_workflow and BLANKED THE WHOLE PAGE -- after the
+        # employee had entered the entire report.
+        try:
+            font = ImageFont.truetype(str(font_path), size)
+        except OSError as exc:
+            raise ExpenseReportError(
+                "The signature font could not be loaded in this deployment. "
+                "The report can still be completed; contact support so the "
+                "font can be reinstalled."
+            ) from exc
         box = drawing.textbbox((0, 0), name, font=font)
         width = max(1, box[2] - box[0])
         height = max(1, box[3] - box[1])

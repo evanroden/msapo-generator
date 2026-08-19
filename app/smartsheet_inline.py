@@ -86,13 +86,6 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
         f"{fields.get('site_location') or fields.get('site') or 'Site not found'} · "
         f"{fields.get('total') or 'Amount not found'}"
     )
-    st.success(summary)
-    st.caption(
-        f"Object Account: {fields.get('object_account') or '—'} · "
-        f"Agreement Type: {fields.get('agreement_type') or '—'} · "
-        f"Asset ID: {fields.get('asset_id') or 'No asset'}"
-    )
-
     # Three independent sources, concatenated rather than short-circuited so the
     # operator sees every problem at once. They do not overlap: context.warnings
     # covers reassembly of the PO (missing contract, unreconciled totals),
@@ -100,9 +93,30 @@ def render_inline_smartsheet_handoff(context: POContext) -> None:
     # preflight_attachments covers file size, emptiness and name collisions.
     # Dropping any one of them leaves a whole class of rejection undetected
     # until the operator is already inside the Smartsheet form.
+    #
+    # Computed BEFORE the summary renders, which is the whole point of the
+    # ordering. st.success used to fire unconditionally, so a package that could
+    # not be submitted showed a GREEN CONFIRMATION with the blocking warning
+    # underneath it. Green is the strongest signal on the page and it was
+    # answering a question nobody had asked yet.
     field_problems = list(validate_submission_fields(fields))
     attachment_problems = list(preflight_attachments(context.attachments))
     blockers = list(context.warnings) + field_problems + attachment_problems
+
+    # The summary still renders either way. It is the operator's last chance to
+    # notice that extraction missed the vendor, site or amount, and that is MORE
+    # important when the package is blocked, not less -- a missing vendor is
+    # often the very thing being reported below. Only the colour changes.
+    if blockers:
+        st.markdown(summary)
+    else:
+        st.success(summary)
+    st.caption(
+        f"Object Account: {fields.get('object_account') or '—'} · "
+        f"Agreement Type: {fields.get('agreement_type') or '—'} · "
+        f"Asset ID: {fields.get('asset_id') or 'No asset'}"
+    )
+
     if blockers:
         st.warning(
             "Fix these items above, then generate the package again:\n\n- "

@@ -418,9 +418,27 @@ def _call_with_retry(client, content: list[dict[str, Any]], max_retries: int = 3
                 messages=[{"role": "user", "content": content}],
             )
             return message.content[0].text.strip()
+        except anthropic.APIConnectionError as exc:
+            # A dropped connection or timeout is the most common transient
+            # failure of all, and it is NOT an APIStatusError -- it carries no
+            # status code. Before this clause it escaped on the first attempt,
+            # so the "retry transient conditions" contract above held for a
+            # rate limit but not for the flaky network it was really written
+            # for. The employee saw one failed receipt from a blip.
+            last_error = exc
+            if attempt == max_retries - 1:
+                break
+            time.sleep((attempt + 1) * 3)
         except anthropic.APIStatusError as exc:
             last_error = exc
             if exc.status_code in {429, 529} or exc.status_code >= 500:
+                # Do NOT sleep after the last attempt. The old code slept and
+                # then fell out of the loop, so a persistently rate-limited
+                # receipt waited 3 + 6 + 9 = 18 seconds to deliver an answer it
+                # already had at 9 -- the final 9 spent inside a Streamlit
+                # spinner with a person watching it, buying nothing.
+                if attempt == max_retries - 1:
+                    break
                 time.sleep((attempt + 1) * 3)
                 continue
             raise
@@ -516,8 +534,16 @@ def _line_items(value: object, notes: list[str]) -> tuple[ReceiptLineItem, ...]:
             continue
         result.append(ReceiptLineItem(description=description, amount=amount))
     if len(value) > _MAX_LINE_ITEMS:
+        # Report what the employee CAN SEE, not the size of the slice. The cap
+        # is applied to the raw list on purpose (see above), so rejected rows
+        # consume it -- 70 raw rows could yield 20 usable ones while this note
+        # said "the first 60 are shown". The employee then reconciles a
+        # 20-row selector against a sentence promising 60 and concludes the
+        # tool lost 40 items.
         notes.append(
-            f"Only the first {_MAX_LINE_ITEMS} detected receipt items are shown."
+            f"This receipt listed {len(value)} rows; only the first "
+            f"{_MAX_LINE_ITEMS} were examined and {len(result)} usable items "
+            "are shown. Check the total against the receipt."
         )
     if rejected:
         notes.append("One or more unreadable receipt-item rows were omitted.")
