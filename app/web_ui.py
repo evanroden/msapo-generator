@@ -84,6 +84,7 @@ from app.po_context import (
     build_po_context,
     vendor_contact_memory_context_id,
 )
+from app.smartsheet import AGREEMENT_TYPE_OPTIONS, OBJECT_ACCOUNT_OPTIONS
 from app.po_rules import (
     PURCHASE_ROUTE_LABELS,
     PURCHASE_ROUTES,
@@ -2472,6 +2473,74 @@ def main() -> None:
     except ValueError as exc:
         classification_error = str(exc)
 
+    # Object Account and Agreement Type are OPERATOR-EDITABLE, defaulting to the
+    # route-derived pair. Which coding a job takes depends on the contract
+    # vehicle -- MSA versus CSA -- and on whether the vendor is coming onsite,
+    # none of which a text rule can see. Deriving them alone left two values the
+    # form accepts unreachable (5490-OTHER and "03 - CSAPO (CONSTRUCTION)"), so
+    # ISDC-funded work could not be coded at all.
+    #
+    # They live in `corrections` because that panel is exactly "Change a value
+    # the tool already filled" -- which is what these are. The route selector
+    # above still drives the default, so the common case needs no interaction.
+    #
+    # Track-the-default, the same protocol as the expense job coding: a shadow
+    # `_prior_default_` key records what was last offered, so a field still
+    # holding the previous default follows a new one when the route changes,
+    # while a field the operator set stays put. Plain setdefault would freeze
+    # the first route's coding in place and silently contradict the route shown
+    # beside it.
+    for _field_key, _options, _derived in (
+        (
+            f"object_account_{token}",
+            OBJECT_ACCOUNT_OPTIONS,
+            classification.object_account if classification else "",
+        ),
+        (
+            f"agreement_type_{token}",
+            AGREEMENT_TYPE_OPTIONS,
+            classification.agreement_type if classification else "",
+        ),
+    ):
+        _prior_key = f"{_field_key}_prior_default"
+        _prior = st.session_state.get(_prior_key)
+        if _field_key not in st.session_state or (
+            st.session_state.get(_field_key) == _prior
+        ):
+            st.session_state[_field_key] = _derived
+        st.session_state[_prior_key] = _derived
+        # A stored value outside the catalog would raise in the selectbox rather
+        # than degrade, so it is corrected before render. po_context re-validates
+        # independently, because Streamlit keeps state for widgets that did not
+        # render this run.
+        if st.session_state.get(_field_key) not in _options:
+            st.session_state[_field_key] = _derived if _derived in _options else "NA"
+
+    with corrections:
+        st.selectbox(
+            "Object Account",
+            OBJECT_ACCOUNT_OPTIONS,
+            key=f"object_account_{token}",
+            help=(
+                "Defaults from how the work is handled. Change it when the "
+                "funding or contract vehicle needs a different account, such as "
+                "5490-OTHER for ISDC-funded work."
+            ),
+        )
+        st.selectbox(
+            "Agreement Type for PO",
+            AGREEMENT_TYPE_OPTIONS,
+            key=f"agreement_type_{token}",
+            help=(
+                "Defaults from how the work is handled. Change it when the "
+                "contract vehicle differs -- for example CSAPO (CONSTRUCTION) "
+                "under a CSA rather than an MSA."
+            ),
+        )
+
+    object_account_value = str(st.session_state.get(f"object_account_{token}", "") or "")
+    agreement_type_value = str(st.session_state.get(f"agreement_type_{token}", "") or "")
+
     asset_id = normalize_asset_id(selected_asset)
     summary_route = PURCHASE_ROUTE_LABELS.get(purchase_route, "Route not found")
     summary_primary = (
@@ -2481,8 +2550,8 @@ def main() -> None:
     )
     summary_detail = (
         f"{summary_route} · "
-        f"{classification.object_account if classification else 'Account pending'} · "
-        f"{classification.agreement_type if classification else 'Agreement pending'} · "
+        f"{object_account_value or 'Account pending'} · "
+        f"{agreement_type_value or 'Agreement pending'} · "
         f"Asset: {asset_id or 'None'} · Total: {total_value or 'Needed'}"
     )
     st.markdown(

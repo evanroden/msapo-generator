@@ -52,6 +52,7 @@ from app.config import (
     lookup_cost_code,
 )
 from app.job_numbers import JOB_NUMBER_OPTIONS, RRH_JOB_NUMBERS
+from app.smartsheet import AGREEMENT_TYPE_OPTIONS, OBJECT_ACCOUNT_OPTIONS
 from app.po_rules import (
     PURCHASE_ROUTE_LABELS,
     classify_po,
@@ -635,6 +636,29 @@ def vendor_contact_memory_context_id(context: POContext) -> str:
     return _context_id(fields, context.attachments)
 
 
+def _explicit_choice(
+    state: Mapping[str, Any],
+    key: str,
+    allowed: tuple[str, ...],
+    derived: str,
+) -> str:
+    """An operator's explicit dropdown override, or the derived default.
+
+    An override wins even when the derived value is BLANK. A blank derived value
+    means classify_po refused -- no route chosen, or an unusable amount -- and
+    that refusal is already reported as a warning that blocks submission, so
+    honouring the operator's explicit pick here cannot slip an unreviewed
+    package through. It only stops the page discarding a choice they made.
+
+    An unrecognised stored value falls back to the derived default rather than
+    being passed through. It never becomes a silent blank: blank plus a warning
+    is safe, but a value Smartsheet rejects fails at submission time, after the
+    operator has left this page.
+    """
+    chosen = _state_text(state, key)
+    return chosen if chosen in allowed else derived
+
+
 def build_po_context(
     state: Mapping[str, Any], env: Mapping[str, str] | None = None
 ) -> POContext | None:
@@ -758,6 +782,37 @@ def build_po_context(
     except ValueError as exc:
         classification = None
         classification_error = str(exc)
+
+    # The route-derived pair is a DEFAULT, not a verdict.
+    #
+    # Which Object Account and Agreement Type a job takes depends on the
+    # contract vehicle -- whether there is an MSA or a CSA with that customer --
+    # and on whether the vendor is coming onsite. No text rule can see any of
+    # that, so two values the Smartsheet form legitimately accepts were
+    # unreachable: 5490-OTHER and "03 - CSAPO (CONSTRUCTION)". ISDC-funded work
+    # is the case that surfaced it -- it could not be coded at all.
+    #
+    # The 2026-08-04 handoff specified this editability ("Object account remains
+    # editable on the handoff page because a person may need one of the other
+    # confirmed account choices"); it was lost in the Smartsheet transition.
+    #
+    # Validated against the confirmed catalogs rather than trusted, for two
+    # reasons. Streamlit keeps widget state for keys whose widgets did not
+    # render, so a value here may be stale; and Smartsheet rejects a dropdown
+    # value that is not character-for-character an option, which surfaces as a
+    # failed submission rather than a field error.
+    object_account = _explicit_choice(
+        state,
+        f"object_account_{token}",
+        OBJECT_ACCOUNT_OPTIONS,
+        classification.object_account if classification else "",
+    )
+    agreement_type = _explicit_choice(
+        state,
+        f"agreement_type_{token}",
+        AGREEMENT_TYPE_OPTIONS,
+        classification.agreement_type if classification else "",
+    )
     request_type = _state_text(
         state,
         f"request_type_{token}",
@@ -821,8 +876,8 @@ def build_po_context(
         "customer_po": "",
         "work_category": category,
         "cost_code": cost_code,
-        "object_account": classification.object_account if classification else "",
-        "agreement_type": classification.agreement_type if classification else "",
+        "object_account": object_account,
+        "agreement_type": agreement_type,
         "leave_request_completed": "",
         "po_number": "",
         "work_order_number": "",
