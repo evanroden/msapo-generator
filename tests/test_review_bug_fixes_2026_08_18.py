@@ -16,7 +16,7 @@ quietly "fixed":
 
 from __future__ import annotations
 
-import os
+import hashlib
 from pathlib import Path
 
 import anthropic
@@ -394,8 +394,6 @@ def test_a_split_receipt_problem_names_the_card_that_exists():
 
 def test_separate_receipts_are_still_numbered_plainly():
     """The common case must not gain a "line N" suffix it does not need."""
-    from datetime import date as _date
-
     from app.expense_report import _unique_receipt_count, validate_expense_report
 
     items = _split_receipt_items()
@@ -435,6 +433,71 @@ def test_the_zone_is_overridable_per_deployment(monkeypatch):
 
     monkeypatch.setattr(config, "EPC_TIMEZONE", "America/Chicago")
     assert config.operator_today() == datetime.now(ZoneInfo("America/Chicago")).date()
+
+
+def test_browser_zone_precedes_the_shared_deployment_fallback(monkeypatch):
+    """One Render deployment serves operators in several US zones. The browser
+    zone must control the editable report-date default when it is valid."""
+    from datetime import date as _date
+    from datetime import datetime as _datetime
+
+    import app.config as config
+
+    class BoundaryClock:
+        @classmethod
+        def now(cls, timezone):
+            if timezone.key == "America/Los_Angeles":
+                return _datetime(2026, 8, 24, 21, 30, tzinfo=timezone)
+            return _datetime(2026, 8, 25, 0, 30, tzinfo=timezone)
+
+    monkeypatch.setattr(config, "datetime", BoundaryClock)
+    monkeypatch.setattr(config, "EPC_TIMEZONE", "America/New_York")
+
+    assert config.operator_today("America/Los_Angeles") == _date(2026, 8, 24)
+
+
+def test_invalid_browser_zone_uses_the_deployment_fallback(monkeypatch):
+    from datetime import date as _date
+    from datetime import datetime as _datetime
+
+    import app.config as config
+
+    class BoundaryClock:
+        @classmethod
+        def now(cls, timezone):
+            assert timezone.key == "America/Chicago"
+            return _datetime(2026, 8, 24, 23, 30, tzinfo=timezone)
+
+    monkeypatch.setattr(config, "datetime", BoundaryClock)
+    monkeypatch.setattr(config, "EPC_TIMEZONE", "America/Chicago")
+
+    assert config.operator_today("Not/AZone") == _date(2026, 8, 24)
+
+
+def test_expense_profile_seed_passes_the_browser_zone_to_the_date_default(monkeypatch):
+    from datetime import date as _date
+
+    import app.expense_ui as expense_ui
+
+    state: dict = {}
+    captured: list[str] = []
+    monkeypatch.setattr(expense_ui.st, "session_state", state)
+    monkeypatch.setattr(expense_ui, "remembered_expense_profile", lambda *_: {})
+    monkeypatch.setattr(
+        expense_ui, "remembered_device_account_manager", lambda *_: ""
+    )
+    monkeypatch.setattr(expense_ui.contracts, "is_rrh", lambda _account: False)
+    monkeypatch.setattr(
+        expense_ui,
+        "operator_today",
+        lambda timezone: captured.append(timezone) or _date(2026, 8, 24),
+    )
+
+    expense_ui._seed_profile("device", "Synthetic account", "America/Los_Angeles")
+
+    account_token = hashlib.sha256(b"Synthetic account").hexdigest()[:10]
+    assert captured == ["America/Los_Angeles"]
+    assert state[f"expense_report_date_{account_token}"] == _date(2026, 8, 24)
 
 
 def test_an_unknown_zone_falls_back_instead_of_taking_the_workflow_down(monkeypatch):
@@ -602,3 +665,25 @@ def test_nothing_is_reported_when_every_file_is_new():
     )
     assert len(merged) == 2
     assert dropped == []
+
+
+def test_persistent_uploader_values_are_not_new_additions_on_ordinary_reruns():
+    from app.expense_ui import _new_receipt_uploads
+
+    upload = ("receipt.jpg", b"same-bytes", "image/jpeg")
+    receipt_id = hashlib.sha256(upload[1]).hexdigest()
+
+    assert _new_receipt_uploads((receipt_id,), [upload]) == []
+
+
+def test_uploader_multiset_diff_detects_a_second_copy_and_only_new_files():
+    from app.expense_ui import _new_receipt_uploads
+
+    first = ("stored.jpg", b"same-bytes", "image/jpeg")
+    duplicate = ("picked-again.jpg", b"same-bytes", "image/jpeg")
+    new = ("new.jpg", b"new-bytes", "image/jpeg")
+    first_id = hashlib.sha256(first[1]).hexdigest()
+
+    additions = _new_receipt_uploads((first_id,), [first, duplicate, new])
+
+    assert additions == [duplicate, new]

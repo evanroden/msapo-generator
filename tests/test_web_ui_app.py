@@ -619,6 +619,44 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
     )
 
 
+def test_ordinary_expense_edits_do_not_report_persistent_uploads_as_duplicates(
+    monkeypatch, tmp_path
+):
+    """The uploader returns its full selection on every rerun. Editing a report
+    field must not be described as re-selecting the already mirrored receipt."""
+    _configure_smartsheet(monkeypatch)
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        expense_ui,
+        "analyze_receipt",
+        lambda *_args: ReceiptAnalysis(
+            merchant_name="Test Parking",
+            transaction_date=date(2026, 8, 25),
+            total_amount="31.25",
+            suggested_description="Business parking",
+            confidence="high",
+        ),
+    )
+    image = Image.new("RGB", (120, 220), "white")
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG")
+
+    app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    app.file_uploader[0].upload(
+        "parking.jpg", buffer.getvalue(), "image/jpeg"
+    ).run()
+
+    assert not any("Duplicate receipt" in item.value for item in app.warning)
+    employee = next(
+        field for field in app.text_input if field.label == "Employee name *"
+    )
+    employee.set_value("Synthetic Employee").run()
+
+    assert not any("Duplicate receipt" in item.value for item in app.warning)
+    assert not app.exception
+
+
 def test_primary_workflows_do_not_use_blue_information_callouts():
     assert "st.info(" not in inspect.getsource(expense_ui.render_expense_workflow)
     assert "st.info(" not in inspect.getsource(expense_ui._render_generated_package)

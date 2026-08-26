@@ -43,7 +43,8 @@ from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit, urlunsp
 
 import requests
 
-from app.job_numbers import JOB_NUMBER_OPTIONS, RRH_JOB_NUMBERS
+# RRH_JOB_NUMBERS remains a compatibility re-export for existing callers.
+from app.job_numbers import JOB_NUMBER_OPTIONS, RRH_JOB_NUMBERS  # noqa: F401
 from app.smartsheet_store import SubmissionStore, SubmissionStoreError
 from app.po_rules import (
     EQUIPMENT_ACCOUNT,
@@ -587,8 +588,8 @@ def load_config(env: Mapping[str, str] | None = None) -> SmartsheetConfig:
 
     # Per-field translation from this codebase's canonical value to whatever the
     # form's dropdown actually displays (FM-D04). Currently unset in render.yaml
-    # because the two vocabularies match exactly. Before enabling it, read the
-    # warning on handoff_rows: the manual copy fallback does NOT apply this map.
+    # because the two vocabularies match exactly. The same normalized map feeds
+    # both the prefilled URL and the manual copy fallback.
     value_map_raw = _json_object(source, "SMARTSHEET_FORM_VALUE_MAP_JSON")
     value_map: dict[str, dict[str, str]] = {}
     for raw_field, mappings in value_map_raw.items():
@@ -603,7 +604,12 @@ def load_config(env: Mapping[str, str] | None = None) -> SmartsheetConfig:
                 raise SmartsheetConfigurationError(
                     f"Value mapping for {field!r} contains an unsupported value."
                 )
-            normalized[str(original)] = str(replacement)
+            replacement_text = str(replacement).strip()
+            if not replacement_text:
+                raise SmartsheetConfigurationError(
+                    f"Value mapping for {field!r} contains an empty replacement."
+                )
+            normalized[str(original)] = replacement_text
         value_map[field] = normalized
 
     configured_order = _csv_fields(source, "SMARTSHEET_FORM_ORDER")
@@ -929,6 +935,9 @@ def build_prefilled_form_url(
             skipped.append(f"{field}: no exact label mapping")
             continue
         text = _mapped_value(config, field, value)
+        if not _nonempty(text):
+            skipped.append(f"{field}: mapped value is empty")
+            continue
         if len(text) > MAX_CELL_CHARS:
             skipped.append(f"{field}: value exceeds {MAX_CELL_CHARS:,} characters")
             continue
@@ -1023,8 +1032,11 @@ def handoff_rows(
         value = fields.get(field)
         if not _nonempty(value):
             continue
+        mapped_value = _mapped_value(config, field, value)
+        if not _nonempty(mapped_value):
+            continue
         label = config.form_field_map.get(field) or DISPLAY_LABELS.get(field, field)
-        rows.append((field, label, _mapped_value(config, field, value)))
+        rows.append((field, label, mapped_value))
     return rows
 
 

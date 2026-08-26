@@ -152,6 +152,94 @@ REQUEST_TYPE_LABELS = {
     "CHANGE ORDER": "Change order to an existing PO",
 }
 
+# Non-widget mirror for the two operator-editable financial coding fields.
+# Streamlit removes widget state when the Purchase Order branch does not render,
+# so these values cannot safely live only under ``object_account_<token>`` and
+# ``agreement_type_<token>``. The mirror also carries an explicit override bit:
+# comparing a value with a previous default cannot distinguish an operator's
+# choice from the temporary ``NA`` used while routing is incomplete.
+_PO_CODING_DRAFT_KEY = "_po_coding_draft"
+_PO_CODING_OPTIONS = {
+    "object_account": OBJECT_ACCOUNT_OPTIONS,
+    "agreement_type": AGREEMENT_TYPE_OPTIONS,
+}
+
+
+def _po_coding_draft() -> dict[str, dict[str, dict[str, object]]]:
+    """Return the validated non-widget PO-coding mirror for this session."""
+    draft = st.session_state.get(_PO_CODING_DRAFT_KEY)
+    if not isinstance(draft, dict):
+        draft = {}
+        st.session_state[_PO_CODING_DRAFT_KEY] = draft
+    return draft
+
+
+def _po_coding_token_draft(token: str) -> dict[str, dict[str, object]]:
+    """Return one analysis token's entry and discard obsolete token entries."""
+    draft = _po_coding_draft()
+    for saved_token in list(draft):
+        if saved_token != token:
+            draft.pop(saved_token, None)
+    token_draft = draft.get(token)
+    if not isinstance(token_draft, dict):
+        token_draft = {}
+        draft[token] = token_draft
+    return token_draft
+
+
+def _sync_po_coding_field(token: str, field: str, derived: str) -> str:
+    """Seed one coding widget without losing explicit operator intent.
+
+    ``derived`` is empty while route classification is unresolved. An untouched
+    field may display ``NA`` during that interval, but its override flag remains
+    false, so the next valid classification replaces it. A value chosen through
+    the widget is marked explicitly by :func:`_remember_po_coding_choice` and
+    survives route changes and workflow switches.
+    """
+    options = _PO_CODING_OPTIONS[field]
+    valid_default = derived if derived in options else ""
+    token_draft = _po_coding_token_draft(token)
+    entry = token_draft.get(field)
+    if not isinstance(entry, dict):
+        entry = {}
+
+    overridden = entry.get("overridden") is True
+    value = str(entry.get("value", "") or "")
+    if value not in options:
+        value = ""
+        overridden = False
+    if not overridden:
+        value = valid_default or "NA"
+
+    token_draft[field] = {
+        "value": value,
+        "default": valid_default,
+        "overridden": overridden,
+    }
+    widget_key = f"{field}_{token}"
+    st.session_state[widget_key] = value
+    return value
+
+
+def _remember_po_coding_choice(token: str, field: str) -> None:
+    """Persist one selectbox change and record whether it overrides its default."""
+    options = _PO_CODING_OPTIONS[field]
+    widget_key = f"{field}_{token}"
+    value = str(st.session_state.get(widget_key, "") or "")
+    if value not in options:
+        return
+
+    token_draft = _po_coding_token_draft(token)
+    entry = token_draft.get(field)
+    if not isinstance(entry, dict):
+        entry = {}
+    default = str(entry.get("default", "") or "")
+    token_draft[field] = {
+        "value": value,
+        "default": default,
+        "overridden": value != default,
+    }
+
 
 @dataclass(frozen=True)
 class RoutingSnapshot:
@@ -1532,6 +1620,10 @@ def main() -> None:
         browser_token = device_token(st.context.cookies)
     except Exception:
         browser_token = ""
+    try:
+        browser_timezone = str(st.context.timezone or "").strip()
+    except Exception:
+        browser_timezone = ""
     if not browser_token:
         try:
             ensure_device_cookie()
@@ -1565,7 +1657,7 @@ def main() -> None:
     if workflow_mode not in (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW):
         workflow_mode = PURCHASE_WORKFLOW
     if workflow_mode == EXPENSE_WORKFLOW:
-        render_expense_workflow(browser_token)
+        render_expense_workflow(browser_token, browser_timezone)
         _render_footer()
         return
 
@@ -2484,43 +2576,29 @@ def main() -> None:
     # the tool already filled" -- which is what these are. The route selector
     # above still drives the default, so the common case needs no interaction.
     #
-    # Track-the-default, the same protocol as the expense job coding: a shadow
-    # `_prior_default_` key records what was last offered, so a field still
-    # holding the previous default follows a new one when the route changes,
-    # while a field the operator set stays put. Plain setdefault would freeze
-    # the first route's coding in place and silently contradict the route shown
-    # beside it.
-    for _field_key, _options, _derived in (
-        (
-            f"object_account_{token}",
-            OBJECT_ACCOUNT_OPTIONS,
-            classification.object_account if classification else "",
-        ),
-        (
-            f"agreement_type_{token}",
-            AGREEMENT_TYPE_OPTIONS,
-            classification.agreement_type if classification else "",
-        ),
-    ):
-        _prior_key = f"{_field_key}_prior_default"
-        _prior = st.session_state.get(_prior_key)
-        if _field_key not in st.session_state or (
-            st.session_state.get(_field_key) == _prior
-        ):
-            st.session_state[_field_key] = _derived
-        st.session_state[_prior_key] = _derived
-        # A stored value outside the catalog would raise in the selectbox rather
-        # than degrade, so it is corrected before render. po_context re-validates
-        # independently, because Streamlit keeps state for widgets that did not
-        # render this run.
-        if st.session_state.get(_field_key) not in _options:
-            st.session_state[_field_key] = _derived if _derived in _options else "NA"
+    # An explicit override bit, stored outside widget state, distinguishes an
+    # operator choice from an untouched default. This is required for two state
+    # transitions that a value-comparison heuristic cannot represent safely:
+    # classification becoming temporarily invalid (which displays NA) and the
+    # Purchase Order widgets disappearing during an Expense workflow visit.
+    _sync_po_coding_field(
+        token,
+        "object_account",
+        classification.object_account if classification else "",
+    )
+    _sync_po_coding_field(
+        token,
+        "agreement_type",
+        classification.agreement_type if classification else "",
+    )
 
     with corrections:
         st.selectbox(
             "Object Account",
             OBJECT_ACCOUNT_OPTIONS,
             key=f"object_account_{token}",
+            on_change=_remember_po_coding_choice,
+            args=(token, "object_account"),
             help=(
                 "Defaults from how the work is handled. Change it when the "
                 "funding or contract vehicle needs a different account, such as "
@@ -2531,6 +2609,8 @@ def main() -> None:
             "Agreement Type for PO",
             AGREEMENT_TYPE_OPTIONS,
             key=f"agreement_type_{token}",
+            on_change=_remember_po_coding_choice,
+            args=(token, "agreement_type"),
             help=(
                 "Defaults from how the work is handled. Change it when the "
                 "contract vehicle differs -- for example CSAPO (CONSTRUCTION) "

@@ -121,6 +121,90 @@ def test_an_operator_choice_survives_a_route_change():
     assert build_po_context(_state(app)).fields["object_account"] == "5490-OTHER"
 
 
+def test_temporary_invalid_amount_does_not_turn_defaults_into_na_overrides():
+    """NA is a display fallback while classification is impossible, not proof
+    that the operator deliberately selected NA. Restoring the amount must
+    restore both route-derived defaults."""
+    app = _started_app()
+    amount_label = "PO/CO amount — final total including every fee and tax *"
+    amount = next(field for field in app.text_input if field.label == amount_label)
+    original_amount = amount.value
+
+    amount.set_value("").run()
+    assert _selector(app, "Object Account").value == "NA"
+    assert _selector(app, "Agreement Type for PO").value == "NA"
+
+    amount = next(field for field in app.text_input if field.label == amount_label)
+    amount.set_value(original_amount).run()
+
+    assert _selector(app, "Object Account").value == "5511-SUBCONTRACTOR"
+    assert _selector(app, "Agreement Type for PO").value == "03 - MSAPO (SERVICE)"
+    context = build_po_context(_state(app))
+    assert context.fields["object_account"] == "5511-SUBCONTRACTOR"
+    assert context.fields["agreement_type"] == "03 - MSAPO (SERVICE)"
+
+
+def test_operator_coding_survives_expense_workflow_round_trip():
+    """PO selectboxes do not render on the expense branch, so their widget keys
+    are collected by Streamlit. The non-widget mirror must restore the explicit
+    financial coding when the operator returns."""
+    app = _started_app()
+    _selector(app, "Object Account").set_value("5490-OTHER").run()
+    _selector(app, "Agreement Type for PO").set_value(
+        "03 - CSAPO (CONSTRUCTION)"
+    ).run()
+
+    app.segmented_control[0].set_value("Expense reimbursement").run()
+    app.segmented_control[0].set_value("Purchase order").run()
+
+    assert _selector(app, "Object Account").value == "5490-OTHER"
+    assert _selector(app, "Agreement Type for PO").value == (
+        "03 - CSAPO (CONSTRUCTION)"
+    )
+    context = build_po_context(_state(app))
+    assert context.fields["object_account"] == "5490-OTHER"
+    assert context.fields["agreement_type"] == "03 - CSAPO (CONSTRUCTION)"
+
+
+def test_reselecting_the_current_default_resumes_following_route_defaults():
+    """An override is explicit state, but it is not irreversible. Choosing the
+    current derived value again clears the override and later route changes
+    should follow the matrix."""
+    app = _started_app()
+    account = _selector(app, "Object Account")
+    account.set_value("5490-OTHER").run()
+    _selector(app, "Object Account").set_value("5511-SUBCONTRACTOR").run()
+
+    route = next(
+        widget
+        for widget in app.selectbox
+        if "how will this work or purchase be handled" in widget.label.lower()
+    )
+    route.set_value("Buying materials or parts; no vendor labor onsite").run()
+
+    assert _selector(app, "Object Account").value == "5301-MATERIALS"
+
+
+def test_malformed_or_obsolete_coding_mirror_recovers_and_stays_bounded(monkeypatch):
+    import app.web_ui as web_ui
+
+    state = {
+        "_po_coding_draft": {
+            "old-token": {"object_account": {"value": "5490-OTHER"}},
+            "active-token": "corrupted",
+        }
+    }
+    monkeypatch.setattr(web_ui.st, "session_state", state)
+
+    value = web_ui._sync_po_coding_field(
+        "active-token", "object_account", "5511-SUBCONTRACTOR"
+    )
+
+    assert value == "5511-SUBCONTRACTOR"
+    assert state["object_account_active-token"] == "5511-SUBCONTRACTOR"
+    assert set(state["_po_coding_draft"]) == {"active-token"}
+
+
 @pytest.mark.parametrize("route", PURCHASE_ROUTES)
 def test_the_derived_default_still_matches_the_routing_matrix(route):
     """The business matrix is UNCHANGED by this feature -- only who gets the

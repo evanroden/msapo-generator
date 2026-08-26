@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
@@ -147,6 +148,14 @@ def test_invalid_or_unsafe_configuration_is_rejected():
                 "SMARTSHEET_API_BASE_URL": "https://attacker.invalid/2.0",
             }
         )
+    with pytest.raises(SmartsheetConfigurationError, match="empty replacement"):
+        load_config(
+            {
+                "SMARTSHEET_FORM_VALUE_MAP_JSON": json.dumps(
+                    {"request_type": {"PO": "   "}}
+                )
+            }
+        )
 
 
 def test_prefill_replaces_existing_field_value_and_preserves_unrelated_query():
@@ -239,6 +248,33 @@ def test_prefill_withholds_required_values_that_are_nonempty_but_not_encoded():
     assert result.included == ("request_type",)
     assert result.missing_required == ("vendor",)
     assert any(item.startswith("vendor:") for item in result.skipped)
+
+
+def test_empty_mapped_required_value_is_not_marked_included_or_copied():
+    """Defence in depth for a stale/programmatically constructed config. The
+    loader rejects this map, but the URL and manual fallback must still fail
+    closed if an old object survives across a deploy."""
+    config = load_config(
+        {
+            "SMARTSHEET_FORM_URL": "https://app.smartsheet.com/b/form/example",
+            "SMARTSHEET_URL_PREFILL_ENABLED": "true",
+            "SMARTSHEET_FORM_FIELD_MAP_JSON": json.dumps(
+                {"request_type": "REQUEST TYPE"}
+            ),
+            "SMARTSHEET_FORM_REQUIRED_FIELDS": "request_type",
+        }
+    )
+    stale_config = replace(
+        config,
+        form_value_map={"request_type": {"PO": ""}},
+    )
+
+    result = build_prefilled_form_url({"request_type": "PO"}, stale_config)
+
+    assert result.included == ()
+    assert result.missing_required == ("request_type",)
+    assert result.skipped == ("request_type: mapped value is empty",)
+    assert handoff_rows({"request_type": "PO"}, stale_config) == []
 
 
 def test_custom_url_prefills_every_populated_live_po_field_under_exact_labels():

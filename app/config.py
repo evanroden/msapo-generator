@@ -24,7 +24,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # ANTHROPIC_MODEL environment variable (e.g. in .env or Render dashboard).
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 
-# The zone the OPERATOR files in, not the container's.
+# Fallback zone when Streamlit cannot report the operator's browser zone.
 #
 # Nothing sets TZ in the Dockerfile, render.yaml or docker-compose.yml, so the
 # container runs UTC -- which is 4-5 hours ahead of every US contract this tool
@@ -33,34 +33,35 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 # approver signs. Mileage travel dates inherit it through the track-the-default
 # protocol, so one wrong default propagated down the whole report.
 #
-# America/New_York is the default because it is ENFRA's and RRH's zone -- the
-# highest-volume account -- and because no US zone is worse served by it than by
-# UTC. Central-time accounts are still an hour off between 11pm and midnight
-# local; set EPC_TIMEZONE per deployment if that matters. Any IANA name works.
-#
-# Deliberately NOT browser-detected. The browser's zone is available (the
-# device-identity iframe could carry it) but it is attacker-controlled input
-# deciding a date on a financial document, and a laptop with a wrong clock would
-# silently misdate a report. A deployment setting is auditable.
+# America/New_York remains the auditable fallback for test runs, older clients,
+# and request contexts without browser metadata. The production page passes
+# ``st.context.timezone`` into ``operator_today`` so one shared deployment can
+# serve Eastern, Central, Mountain, and Pacific operators without giving all of
+# them the same rollover boundary. The date remains visible and editable before
+# generation; this function supplies a default, not an authorization decision.
 EPC_TIMEZONE = os.getenv("EPC_TIMEZONE", "America/New_York").strip() or "America/New_York"
 
 
-def operator_today() -> "date":
-    """Today's date in the operator's configured zone.
+def operator_today(browser_timezone: str | None = None) -> "date":
+    """Today's date in the browser zone, with a deployment-zone fallback.
 
     Use this instead of date.today() for any value an operator SEES or signs.
     date.today() reads the container clock, which is UTC in every deployment of
     this app.
 
-    Falls back to the container's date if the zone name is unknown rather than
-    raising: a typo in a dashboard variable must not take the expense workflow
-    down, and a wrong-by-hours default is still recoverable by the operator,
-    who can edit the field.
+    Streamlit supplies an IANA browser-zone name. Invalid or missing browser
+    metadata falls back to ``EPC_TIMEZONE``; an invalid deployment setting then
+    falls back to the container date rather than taking the workflow down.
     """
-    try:
-        return datetime.now(ZoneInfo(EPC_TIMEZONE)).date()
-    except (ZoneInfoNotFoundError, ValueError):
-        return date.today()
+    candidates = (str(browser_timezone or "").strip(), EPC_TIMEZONE)
+    for timezone_name in candidates:
+        if not timezone_name:
+            continue
+        try:
+            return datetime.now(ZoneInfo(timezone_name)).date()
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+    return date.today()
 
 
 # Contract administrators are deployment data, not source-code constants.

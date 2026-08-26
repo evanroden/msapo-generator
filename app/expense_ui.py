@@ -40,6 +40,7 @@ import hashlib
 import html
 import mimetypes
 import uuid
+from collections import Counter
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
@@ -192,13 +193,16 @@ _IOS_MAIL_SHARE_COMPONENT = components.declare_component(
 )
 
 
-def render_expense_workflow(browser_token: str) -> None:
+def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> None:
     """Render the complete receipt-to-email-draft workflow.
 
     Called once per rerun by ``app.web_ui.main`` when the workflow selector is
     on ``EXPENSE_WORKFLOW``. ``browser_token`` is the opaque device cookie and
     may legitimately be ``""`` -- device memory is a convenience and every
     lookup that uses it degrades to "nothing remembered", never to an error.
+    ``browser_timezone`` is Streamlit's IANA timezone for the connected browser;
+    it seeds the visible report date and falls back through ``EPC_TIMEZONE``
+    when absent or invalid.
 
     Guarantees: it renders every step, and it never sends mail, writes to
     Smartsheet, or posts to JDE. It returns early only for an over-budget
@@ -260,33 +264,32 @@ def render_expense_workflow(browser_token: str) -> None:
             "PDF receipts are supported. One file may contain multiple receipt pages."
         ),
     )
-    mirrored_uploads = list(
-        st.session_state.get("expense_receipt_files", []) or []
+    mirrored_uploads = list(st.session_state.get("expense_receipt_files", []) or [])
+    current_uploads = [
+        (upload.name, upload.getvalue(), upload.type or "application/octet-stream")
+        for upload in (uploads or [])
+    ]
+    uploader_seen_key = f"expense_receipt_uploader_seen_{uploader_nonce}"
+    previous_uploader_ids = st.session_state.get(uploader_seen_key, ())
+    new_uploads = _new_receipt_uploads(previous_uploader_ids, current_uploads)
+    st.session_state[uploader_seen_key] = tuple(
+        hashlib.sha256(payload).hexdigest()
+        for _, payload, _ in current_uploads
     )
-    if uploads:
-        current_uploads = [
-            (upload.name, upload.getvalue(), upload.type or "application/octet-stream")
-            for upload in uploads
-        ]
-        # Run de-duplication over THIS batch alone purely to collect names to
-        # warn about. _merge_receipt_sources below drops duplicates silently, so
-        # without this call selecting the same file twice in one dialog would do
-        # nothing at all with no explanation. A file duplicating one already in
-        # the MIRROR is reported too, from _merge_receipt_sources below.
-        _, duplicate_names = _unique_receipts(current_uploads)
+    if current_uploads:
+        # Warn only about additions that appeared in the uploader THIS rerun.
+        # Streamlit returns the full persistent selection after every unrelated
+        # text/date/control edit, so comparing the entire current list with the
+        # mirror labels every ordinary rerun as a duplicate re-selection.
+        _, duplicate_names = _merge_receipt_sources(mirrored_uploads, new_uploads)
         # File-uploader values cannot be restored programmatically after that
         # widget is hidden by a workflow switch. Merge its current additions
         # into the bounded byte mirror so the restored files do not disappear
         # on the next ordinary rerun.
-        # merged_duplicate_names covers the case this batch cannot see: a file
-        # that duplicates one ALREADY in the mirror. _unique_receipts above only
-        # compares within the current batch, so without this the re-selected
-        # receipt was dropped with no message at all.
-        upload_sources, merged_duplicate_names = _merge_receipt_sources(
+        upload_sources, _ = _merge_receipt_sources(
             mirrored_uploads,
             current_uploads,
         )
-        duplicate_names.extend(merged_duplicate_names)
         st.session_state["expense_receipt_files"] = upload_sources
         st.session_state.pop("expense_restored_without_uploader", None)
     else:
@@ -382,7 +385,7 @@ def render_expense_workflow(browser_token: str) -> None:
     # Must run after the account selectbox (it needs the chosen account) and
     # before any detail widget below is instantiated, for the same
     # post-render-write reason given in this function's docstring.
-    _seed_profile(browser_token, account)
+    _seed_profile(browser_token, account, browser_timezone)
     # Every step-2 widget key is namespaced by this digest so switching accounts
     # gives a fresh, independently remembered set of details rather than
     # carrying one facility's approver into another's report. _seed_profile
@@ -937,10 +940,7 @@ def _render_receipt(
 
     merchant_key = f"expense_merchant_{token}"
     date_key = f"expense_date_{token}"
-    description_key = f"expense_description_{token}"
     amount_key = f"expense_amount_{token}"
-    section_key = f"expense_section_{token}"
-    contact_key = f"expense_contact_{token}"
     selected_item_indices, calculated_item_amount = _sync_detected_item_amount(
         token,
         analysis,
@@ -1717,12 +1717,15 @@ def _clear_approver_recall(recall_marker_key: str) -> None:
     st.session_state.pop(recall_marker_key, None)
 
 
-def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
+def _seed_profile(
+    browser_token: str, account: str, browser_timezone: str = ""
+) -> dict[str, str]:
     """Seed this account's step-2 fields from device memory, once per account.
 
-    Assumes it is called before any of those widgets renders. Returns the raw
-    remembered profile; the return value is currently unused by the caller and
-    is kept because it is the only accessor that already holds it.
+    Assumes it is called before any of those widgets renders. ``browser_timezone``
+    controls only the editable date default for a newly seeded account. Returns
+    the raw remembered profile; the return value is currently unused by the
+    caller and is kept because it is the only accessor that already holds it.
 
     Every write goes through ``setdefault``, so a value the operator has already
     typed -- or one restored from the draft mirror after a workflow switch -- is
@@ -1745,10 +1748,7 @@ def _seed_profile(browser_token: str, account: str) -> dict[str, str]:
         defaults = {
             f"expense_employee_name_{account_token}": employee_name,
             f"expense_employee_number_{account_token}": profile.get("employee_number", ""),
-            # NOTE: the container runs in UTC, so late-evening US filing can
-            # seed tomorrow's date. It is an editable default, and every date
-            # comparison downstream is a warning rather than a block.
-            f"expense_report_date_{account_token}": operator_today(),
+            f"expense_report_date_{account_token}": operator_today(browser_timezone),
             f"expense_approver_name_{account_token}": (
                 profile.get("approver_name")
                 or (RRH_APPROVER_NAME if contracts.is_rrh(account) else "")
@@ -2341,6 +2341,32 @@ def _merge_receipt_sources(*groups) -> tuple[list[tuple[str, bytes, str]], list[
             seen.add(receipt_id)
             merged.append((filename, payload, mime_type))
     return merged, dropped
+
+
+def _new_receipt_uploads(
+    previous_receipt_ids: object,
+    current_uploads: list[tuple[str, bytes, str]],
+) -> list[tuple[str, bytes, str]]:
+    """Return only uploader entries added since its previous rendered value.
+
+    ``file_uploader`` returns its complete selection on every Streamlit rerun.
+    A multiset comparison is required: set subtraction would miss a second copy
+    of the same bytes added under another filename, which is exactly the
+    duplicate event the warning is intended to explain.
+    """
+    if not isinstance(previous_receipt_ids, (list, tuple)):
+        previous_receipt_ids = ()
+    remaining = Counter(
+        value for value in previous_receipt_ids if isinstance(value, str)
+    )
+    additions: list[tuple[str, bytes, str]] = []
+    for upload in current_uploads:
+        receipt_id = hashlib.sha256(upload[1]).hexdigest()
+        if remaining[receipt_id]:
+            remaining[receipt_id] -= 1
+        else:
+            additions.append(upload)
+    return additions
 
 
 def _remove_receipt_from_draft(receipt_id: str) -> None:

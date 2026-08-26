@@ -478,11 +478,9 @@ def validate_expense_report(
     to go fix. Messages are de-duplicated at the end because several rows
     legitimately raise the identical phrase.
 
-    NUMBERING CAVEAT: "Receipt N" here counts reimbursement LINES in the order
-    supplied, so a receipt split into two lines occupies N and N+1. The
-    per-card numbering in the UI and the "Receipt N of M" headers in the
-    RECEIPTS worksheet both count unique SOURCES instead. They agree for the
-    common unsplit case and diverge once a receipt is split.
+    "Receipt N" counts unique uploaded SOURCES in supplied order. A split
+    receipt keeps one source number and adds "line N" within that source, which
+    matches the UI cards and the RECEIPTS worksheet headers.
     """
     problems: list[str] = []
     for value, field in (
