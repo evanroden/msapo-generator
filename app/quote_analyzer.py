@@ -20,6 +20,12 @@ from typing import Optional
 import anthropic
 
 from app.analysis_schema import AnalysisResponseError, normalize_analysis_response
+from app.api_retry import (
+    OPERATION_BUDGET_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+    complete_response_text,
+    request_with_retry,
+)
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL, FACILITIES, alias_matches
 from app.equipment_policy import GROUP_A_PROMPT_LIST
 from app.job_numbers import UNITY_DISAMBIGUATION_GUIDANCE
@@ -287,56 +293,45 @@ def _strip_prices(text: str) -> str:
     return text.strip()
 
 
-def _call_api_with_retry(client, quote_text: str, max_retries: int = 3) -> str:
-    """Call the Anthropic API with automatic retry for transient errors."""
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            message = client.messages.create(
-                model=ANTHROPIC_MODEL,
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": (
-                            "Analyze the following vendor quote and return the JSON "
-                            "extraction. Remember: absolutely NO prices in any field.\n\n"
-                            "PAY SPECIAL ATTENTION to any SALES TAX line items in the "
-                            "pricing section — if a 'SALES TAX' line exists with a dollar "
-                            "amount, tax IS included in the quoted total.\n\n"
-                            f"--- BEGIN QUOTE ---\n{quote_text}\n--- END QUOTE ---"
-                        ),
-                    }
-                ],
-            )
-            return message.content[0].text.strip()
-        except anthropic.APIStatusError as e:
-            last_error = e
-            # Retry on overloaded (529), rate limit (429), or server errors (5xx)
-            if e.status_code in (429, 529) or e.status_code >= 500:
-                wait = (attempt + 1) * 5  # 5s, 10s, 15s
-                time.sleep(wait)
-                continue
-            raise  # Non-retryable error
-    raise last_error  # All retries exhausted
+def _call_api_with_retry(client, quote_text: str, max_retries: int = 3, *, until: float | None = None) -> str:
+    """Use one retry layer and no sleep after the final failed attempt."""
+    until = until if until is not None else time.monotonic() + OPERATION_BUDGET_SECONDS
+    message = request_with_retry(
+        lambda timeout: client.messages.create(
+            model=ANTHROPIC_MODEL, max_tokens=4096, timeout=timeout,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": (
+                "Analyze the following vendor quote and return the JSON "
+                "extraction. Remember: absolutely NO prices in any field.\n\n"
+                "PAY SPECIAL ATTENTION to any SALES TAX line items in the "
+                "pricing section — if a 'SALES TAX' line exists with a dollar "
+                "amount, tax IS included in the quoted total.\n\n"
+                f"--- BEGIN QUOTE ---\n{quote_text}\n--- END QUOTE ---"
+            )}],
+        ), until=until, attempts=max_retries,
+    )
+    return complete_response_text(message)
 
 
 def analyze_quote(quote_text: str) -> QuoteAnalysis:
     """Send quote text to the Anthropic API and return structured analysis."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
+    until = time.monotonic() + OPERATION_BUDGET_SECONDS
 
     # Transport retries do not cover a syntactically malformed model response.
     # Re-roll that response once before exposing the parse failure to the user.
     data = None
     parse_error: AnalysisResponseError | None = None
-    for _ in range(2):
-        raw = _call_api_with_retry(client, quote_text)
-        try:
-            data = normalize_analysis_response(raw)
-            break
-        except AnalysisResponseError as exc:
-            parse_error = exc
+    try:
+        for _ in range(2):
+            raw = _call_api_with_retry(client, quote_text, until=until)
+            try:
+                data = normalize_analysis_response(raw)
+                break
+            except AnalysisResponseError as exc:
+                parse_error = exc
+    finally:
+        client.close()
     if data is None:
         assert parse_error is not None
         raise parse_error

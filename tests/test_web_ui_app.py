@@ -1,4 +1,5 @@
 import base64
+from concurrent.futures import Future
 import inspect
 from pathlib import Path
 from datetime import date
@@ -21,6 +22,13 @@ ROOT = Path(__file__).parents[1]
 
 
 def _configure_smartsheet(monkeypatch):
+    # UI assertions use deterministic completed jobs; pending/concurrent jobs
+    # have dedicated lifecycle tests in test_review_remediation_2026_09_10.
+    def immediate(prepare, read):
+        future = Future()
+        future.set_result(read(prepare()))
+        return future
+    monkeypatch.setattr(expense_ui, "start_receipt", immediate)
     values = dotenv_values(ROOT / ".env.example")
     for key, value in values.items():
         if value is not None:
@@ -503,9 +511,10 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
 ):
     _configure_smartsheet(monkeypatch)
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(expense_ui, "prepare_receipt_content", lambda *_: [])
     monkeypatch.setattr(
         expense_ui,
-        "analyze_receipt",
+        "analyze_prepared_receipt",
         lambda *_args: ReceiptAnalysis(
             merchant_name="Test Parking",
             transaction_date=date(2026, 8, 10),
@@ -626,9 +635,10 @@ def test_ordinary_expense_edits_do_not_report_persistent_uploads_as_duplicates(
     field must not be described as re-selecting the already mirrored receipt."""
     _configure_smartsheet(monkeypatch)
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(expense_ui, "prepare_receipt_content", lambda *_: [])
     monkeypatch.setattr(
         expense_ui,
-        "analyze_receipt",
+        "analyze_prepared_receipt",
         lambda *_args: ReceiptAnalysis(
             merchant_name="Test Parking",
             transaction_date=date(2026, 8, 25),
@@ -668,9 +678,10 @@ def test_itemized_receipt_selection_recalculates_reimbursable_amount(
 ):
     _configure_smartsheet(monkeypatch)
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(expense_ui, "prepare_receipt_content", lambda *_: [])
     monkeypatch.setattr(
         expense_ui,
-        "analyze_receipt",
+        "analyze_prepared_receipt",
         lambda *_args: ReceiptAnalysis(
             merchant_name="Synthetic Store",
             transaction_date=date(2026, 8, 10),
@@ -757,9 +768,10 @@ def test_expense_receipt_can_split_into_independently_editable_lines(
     _configure_smartsheet(monkeypatch)
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     captured = {}
+    monkeypatch.setattr(expense_ui, "prepare_receipt_content", lambda *_: [])
     monkeypatch.setattr(
         expense_ui,
-        "analyze_receipt",
+        "analyze_prepared_receipt",
         lambda *_args: ReceiptAnalysis(
             merchant_name="Synthetic Market",
             transaction_date=date(2026, 8, 10),
@@ -845,9 +857,10 @@ def test_restored_receipts_merge_new_uploads_and_remove_individually(
 ):
     _configure_smartsheet(monkeypatch)
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(expense_ui, "prepare_receipt_content", lambda *_: [])
     monkeypatch.setattr(
         expense_ui,
-        "analyze_receipt",
+        "analyze_prepared_receipt",
         lambda *_args: ReceiptAnalysis(
             merchant_name="Synthetic Merchant",
             transaction_date=date(2026, 8, 10),

@@ -6,10 +6,10 @@ from one input from silently overriding the source the operator is looking at.
 
 What depends on this module
 ---------------------------
-``app.web_ui`` only. The hazard it exists to contain is specific to Streamlit:
-a widget that is not rendered this run KEEPS its session value, so the paste
-box still holds last week's quote while the operator is looking at an uploader.
-Choosing the active text by hand at the call site is how a stale source wins.
+``app.web_ui`` only. Streamlit removes values for widgets that are not rendered;
+the explicit draft mirror preserves those inputs across workflow switches. The
+active source still needs a separate choice: restored paste text must never
+override the upload the operator is currently reviewing.
 
 ``quote_source`` is not cosmetic. ``po_context._active_quote_attachment`` uses
 it to decide whether the uploaded FILE may be attached as the vendor's quote,
@@ -38,6 +38,43 @@ QUOTE_INPUT_MODES = (UPLOAD_MODE, PASTE_MODE)
 # and useless model call. Blocking here is deliberate: silently truncating
 # would analyze a fraction of the quote and report nothing.
 MAX_QUOTE_CHARACTERS = 500_000
+
+
+def preserve_po_draft(state: MutableMapping[str, Any]) -> None:
+    """Mirror only active-quote input values; never buttons, errors or files."""
+    token = str(state.get("analysis_token", ""))
+    prior = state.get("po_draft", {})
+    snapshot = dict(prior) if isinstance(prior, dict) else {}
+    if snapshot.get("token") != token:
+        snapshot = {"token": token, "values": {}}
+    raw_values = snapshot.get("values", {})
+    values = dict(raw_values) if isinstance(raw_values, dict) else {}
+    prefixes = (
+        "contract_", "site_", "gsite_", "gsitetxt_", "cat_", "manualcost_",
+        "gcat_", "gcost_", "asset_", "inc_", "exc_", "scope_", "desc_",
+        "total_", "vendor_", "contact_", "cemail_", "instructions_",
+        "requester_", "job_number_", "request_type_", "original_po_",
+        "purchase_route_", "show_optional_",
+    )
+    for key, value in list(state.items()):
+        if key in ("quote_input_mode", "pasted_quote_text") or (
+            token and token in key and key.startswith(prefixes)
+        ):
+            if isinstance(value, (str, bool, int, float, type(None))):
+                values[key] = value
+    snapshot["values"] = values
+    state["po_draft"] = snapshot
+
+
+def restore_po_draft(state: MutableMapping[str, Any]) -> None:
+    snapshot = state.get("po_draft", {})
+    if not isinstance(snapshot, dict):
+        return
+    values = snapshot.get("values", {})
+    if not isinstance(values, dict):
+        return
+    for key, value in values.items():
+        state.setdefault(key, value)
 
 # Everything that can make an OLD analysis look like it describes the CURRENT
 # quote. The list is exhaustive on purpose and each entry earns its place:

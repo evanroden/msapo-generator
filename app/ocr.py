@@ -13,12 +13,19 @@ sent as ordered JPEG image blocks.
 from __future__ import annotations
 
 import base64
+import time
 from io import BytesIO
 from pathlib import Path
 
 import anthropic
 
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+from app.api_retry import (
+    OPERATION_BUDGET_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+    complete_response_text,
+    request_with_retry,
+)
 
 
 _OCR_PROMPT = (
@@ -181,43 +188,82 @@ def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Extract text from a PDF.
+    """Read native pages locally; OCR scanned pages in ordered contiguous runs."""
+    import fitz
 
-    First tries the embedded text layer (fast, free). Scanned/image-only PDFs
-    have no useful text layer, so those fall back to Claude vision.
-    """
-    import fitz  # PyMuPDF
-
-    text_parts: list[str] = []
-    ocr_bytes = file_bytes
+    until = time.monotonic() + OPERATION_BUDGET_SECONDS
+    parts: list[str] = []
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
         if pdf.page_count > _MAX_PDF_PAGES:
             raise ValueError(
                 f"This PDF contains {pdf.page_count} pages; the maximum is "
                 f"{_MAX_PDF_PAGES}. Split it into smaller quotes before uploading."
             )
-        # Vendors often owner-lock a quote while leaving it openable. Re-serialize
-        # a decrypted copy for OCR only; the original upload remains unchanged.
-        if pdf.is_encrypted:
-            try:
-                pdf.authenticate("")
-                ocr_bytes = pdf.tobytes(encryption=fitz.PDF_ENCRYPT_NONE)
-            except Exception:
-                ocr_bytes = file_bytes
-        for page in pdf:
-            text_parts.append(page.get_text())
-    text = "\n".join(text_parts).strip()
+        if pdf.is_encrypted and not pdf.authenticate(""):
+            raise ValueError("This PDF needs a password. Upload an unlocked copy.")
+        pending: list[int] = []
 
-    if len(text) >= 20:
-        return text
+        def flush() -> None:
+            if not pending:
+                return
+            with fitz.open() as subset:
+                subset.insert_pdf(pdf, from_page=pending[0], to_page=pending[-1])
+                payload = subset.tobytes(encryption=fitz.PDF_ENCRYPT_NONE)
+            parts.append(_ocr_pdf(payload, until=until))
+            pending.clear()
 
+        for index, page in enumerate(pdf):
+            native = page.get_text().strip()
+            images = page.get_image_info()
+            page_area = max(1.0, page.rect.width * page.rect.height)
+            large_scan = any(
+                fitz.Rect(info["bbox"]).get_area() >= page_area * 0.5
+                for info in images
+            )
+            needs_ocr = large_scan or (
+                len(native) < 20 and bool(images or page.get_drawings())
+            )
+            if needs_ocr:
+                pending.append(index)
+            else:
+                flush()
+                parts.append(native)
+        flush()
+    return "\n".join(parts).strip()
+
+
+def _ocr_pdf(payload: bytes, *, until: float) -> str:
     try:
-        return _ocr_pdf_via_document(ocr_bytes)
-    except Exception:
-        return _ocr_pdf_via_page_images(ocr_bytes)
+        text = _ocr_pdf_via_document(payload, until=until).strip()
+        if text:
+            return text
+    except anthropic.APIStatusError as exc:
+        # Changing representation cannot repair auth, rate limiting or outages.
+        if exc.status_code not in (400, 413):
+            raise
+    except ValueError:
+        pass  # Local direct-document payload budget: try compact pages.
+    text = _ocr_pdf_via_page_images(payload, until=until).strip()
+    if not text:
+        raise ValueError("Scanned quote pages could not be read. Upload a clearer copy or paste the complete text.")
+    return text
 
 
-def _ocr_pdf_via_document(file_bytes: bytes) -> str:
+def _ocr_request(content: list[dict], *, until: float | None = None) -> str:
+    until = until if until is not None else time.monotonic() + OPERATION_BUDGET_SECONDS
+    with anthropic.Anthropic(
+        api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS,
+    ) as client:
+        message = request_with_retry(
+            lambda timeout: client.messages.create(
+                model=ANTHROPIC_MODEL, max_tokens=8192, timeout=timeout,
+                messages=[{"role": "user", "content": content}],
+            ), until=until,
+        )
+    return complete_response_text(message)
+
+
+def _ocr_pdf_via_document(file_bytes: bytes, *, until: float | None = None) -> str:
     """OCR a PDF by sending it to Claude as a native document block."""
     b64 = base64.standard_b64encode(file_bytes).decode("ascii")
     if len(b64) > _MAX_TOTAL_ENCODED_BYTES:
@@ -225,31 +271,15 @@ def _ocr_pdf_via_document(file_bytes: bytes) -> str:
             "This PDF is too large for direct document OCR; trying bounded "
             "page images instead."
         )
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    message = client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=8192,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": b64,
-                        },
-                    },
-                    {"type": "text", "text": _OCR_PROMPT},
-                ],
-            }
-        ],
-    )
-    return message.content[0].text.strip()
+    return _ocr_request([
+        {"type": "document", "source": {
+            "type": "base64", "media_type": "application/pdf", "data": b64,
+        }},
+        {"type": "text", "text": _OCR_PROMPT},
+    ], until=until)
 
 
-def _ocr_pdf_via_page_images(file_bytes: bytes) -> str:
+def _ocr_pdf_via_page_images(file_bytes: bytes, *, until: float | None = None) -> str:
     """OCR a PDF through bounded, normalized page images."""
     import fitz  # PyMuPDF
 
@@ -272,26 +302,14 @@ def _ocr_pdf_via_page_images(file_bytes: bytes) -> str:
             content.extend(image_blocks_for_vision(png, ".png"))
     _enforce_vision_payload_budget(content, label="PDF")
     content.append({"type": "text", "text": _OCR_PROMPT})
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    message = client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=8192,
-        messages=[{"role": "user", "content": content}],
-    )
-    return message.content[0].text.strip()
+    return _ocr_request(content, until=until)
 
 
 def extract_text_from_image(file_bytes: bytes, suffix: str) -> str:
-    """Normalize an image when necessary and read all ordered frames with Claude."""
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    """Normalize all frames, then make one bounded OCR request."""
     content = image_blocks_for_vision(file_bytes, suffix)
     content.append({"type": "text", "text": _OCR_PROMPT})
-    message = client.messages.create(
-        model=ANTHROPIC_MODEL,
-        max_tokens=8192,
-        messages=[{"role": "user", "content": content}],
-    )
-    return message.content[0].text.strip()
+    return _ocr_request(content)
 
 
 def extract_text(file_bytes: bytes, filename: str) -> str:

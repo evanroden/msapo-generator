@@ -66,6 +66,7 @@ import os
 import re
 import sqlite3
 import time
+import threading
 from pathlib import Path
 
 # Read only by suggest_admin_emails/suggest_contacts, which have no caller in
@@ -77,8 +78,8 @@ SUGGEST_THRESHOLD = 5
 # module docstring and FM-C07) and must not be "restored" to a threshold.
 REQUESTER_SUGGEST_THRESHOLD = 3
 
-# Re-executed on EVERY connection, which is why every statement is
-# CREATE TABLE IF NOT EXISTS.
+# Applied once per process/database identity and schema version. Statements
+# remain idempotent for independent processes and restored database files.
 #
 # CREATE TABLE IF NOT EXISTS is a NO-OP on an older table, so changing a schema
 # below still requires a migration. _migrate_expense_approver_identity handles
@@ -299,6 +300,10 @@ def _db_path() -> Path:
     return d / "epc_memory.db"
 
 
+_INITIALIZATION_LOCK = threading.Lock()
+_INITIALIZED_DATABASES: dict[str, tuple[int, int, int]] = {}
+
+
 def _connect() -> sqlite3.Connection | None:
     """Open (and initialize) the database; None if storage is unavailable.
 
@@ -307,15 +312,27 @@ def _connect() -> sqlite3.Connection | None:
     disk is missing, read-only, full or corrupt (FM-G04), so learning degrades
     without touching the workflow.
 
-    WAL is set per connection because there is no separate init step; the pragma
-    is a no-op once the file is already in WAL mode.
+    Persistent WAL mode and migrations are established once per database
+    identity/schema version. Connections themselves are never cached or shared.
     """
     conn: sqlite3.Connection | None = None
     try:
-        conn = sqlite3.connect(_db_path(), timeout=5)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript(_SCHEMA)
-        _migrate_expense_approver_identity(conn)
+        path = _db_path().resolve()
+        conn = sqlite3.connect(path, timeout=5)
+        # A replacement inode or external DDL invalidates initialization; data
+        # writes do not. Never cache open connections across threads.
+        with _INITIALIZATION_LOCK:
+            stat = path.stat()
+            version = conn.execute("PRAGMA schema_version").fetchone()[0]
+            identity = (stat.st_dev, stat.st_ino, version)
+            if _INITIALIZED_DATABASES.get(str(path)) != identity:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.executescript(_SCHEMA)
+                _migrate_expense_approver_identity(conn)
+                version = conn.execute("PRAGMA schema_version").fetchone()[0]
+                if len(_INITIALIZED_DATABASES) >= 128:
+                    _INITIALIZED_DATABASES.clear()
+                _INITIALIZED_DATABASES[str(path)] = (stat.st_dev, stat.st_ino, version)
         return conn
     except Exception:
         if conn is not None:

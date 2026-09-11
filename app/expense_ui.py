@@ -40,6 +40,7 @@ import hashlib
 import html
 import mimetypes
 import uuid
+import time
 from collections import Counter
 from dataclasses import replace
 from datetime import date
@@ -50,6 +51,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from app import contracts
+from app.content_cache import ContentDigests
 from app.config import RRH_APPROVER_EMAIL, RRH_APPROVER_NAME, operator_today
 from app.eml_builder import (
     build_eml,
@@ -91,7 +93,9 @@ from app.memory import (
     remembered_expense_employee_number,
     remembered_expense_profile,
 )
-from app.receipt_analyzer import ReceiptAnalysis, analyze_receipt
+from app.receipt_analyzer import ReceiptAnalysis, prepare_receipt_content, analyze_prepared_receipt
+from app.receipt_jobs import start_receipt
+from app.api_retry import OPERATION_BUDGET_SECONDS
 from app.ui_highlight import highlight_needed_fields
 
 
@@ -273,7 +277,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
     previous_uploader_ids = st.session_state.get(uploader_seen_key, ())
     new_uploads = _new_receipt_uploads(previous_uploader_ids, current_uploads)
     st.session_state[uploader_seen_key] = tuple(
-        hashlib.sha256(payload).hexdigest()
+        _receipt_digest(payload)
         for _, payload, _ in current_uploads
     )
     if current_uploads:
@@ -335,16 +339,23 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             "These receipts total more than 60 MB. Remove or resize the largest "
             "files before continuing."
         )
+        for receipt_id, filename, payload in unique_uploads:
+            if st.button(
+                f"Remove {filename} ({len(payload) / (1024 * 1024):.1f} MB)",
+                key=f"expense_remove_receipt_{receipt_id[:12]}",
+            ):
+                _remove_receipt_from_draft(receipt_id)
+                st.rerun()
         return
 
-    analyses: dict[str, ReceiptAnalysis] = {}
-    for index, (receipt_id, filename, file_bytes) in enumerate(unique_uploads, 1):
-        analyses[receipt_id] = _receipt_analysis(
-            receipt_id,
-            filename,
-            file_bytes,
-            index=index,
-        )
+    _content_digests().retain(payload for _, _, payload in unique_uploads)
+    _advance_receipt_jobs(unique_uploads)
+    analyses = {
+        receipt_id: st.session_state.get(f"expense_receipt_analysis_{receipt_id}", ReceiptAnalysis())
+        for receipt_id, _, _ in unique_uploads
+    }
+    if _unread_receipts(unique_uploads):
+        _receipt_reading_progress()
 
     if unique_uploads:
         st.caption(
@@ -755,7 +766,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         details,
         employee_signature_confirmed=signature_confirmed,
     )
-    problems = validate_expense_report(details, items, mileage_items)
+    problems = validate_expense_report(details, items, mileage_items, content_digests=_content_digests())
     if problems:
         st.warning(
             "Before generating: "
@@ -768,7 +779,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
     # render gate at the bottom of this function compares it again, so an edited
     # report cannot hand the approver a PDF built from the previous values.
     # Weakening it to hash only the "important" fields silently reopens that.
-    signature = expense_report_signature(details, items, mileage_items)
+    signature = expense_report_signature(details, items, mileage_items, content_digests=_content_digests())
     generated_signature = str(st.session_state.get("expense_generated_signature", ""))
     if generated_signature and generated_signature != signature:
         st.warning(
@@ -876,35 +887,82 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         )
 
 
-def _receipt_analysis(
-    receipt_id: str,
-    filename: str,
-    file_bytes: bytes,
-    *,
-    index: int,
-) -> ReceiptAnalysis:
-    """Read one receipt once, caching by content hash.
+def _unread_receipts(receipts):
+    return [
+        source for source in receipts
+        if f"expense_receipt_analysis_{source[0]}" not in st.session_state
+        and f"expense_receipt_error_{source[0]}" not in st.session_state
+    ]
 
-    Returns a populated ``ReceiptAnalysis`` on success and an EMPTY one on any
-    failure -- never raises, never blocks. The fields beside the receipt stay
-    required either way, so a receipt the model cannot read is still completable
-    by hand; the caller surfaces the stored error separately.
-    """
-    analysis_key = f"expense_receipt_analysis_{receipt_id}"
-    error_key = f"expense_receipt_error_{receipt_id}"
-    # Both keys are checked because a FAILURE must be sticky too. Without the
-    # error-key half, every rerun -- a keystroke in any field on the page --
-    # would re-run the vision call for a receipt that already failed, spending
-    # money and a multi-second spinner per keypress. The retry button clears
-    # both keys, which is the only supported way back to a fresh read.
-    if analysis_key not in st.session_state and error_key not in st.session_state:
-        with st.spinner(f"Reading receipt {index} of the upload…"):
+
+def _advance_receipt_jobs(receipts) -> bool:
+    """Only the UI thread publishes results, and only for still-active sources."""
+    jobs = st.session_state.setdefault("expense_analysis_jobs", {})
+    active = {source[0] for source in receipts}
+    changed = False
+    for receipt_id, (future, started) in list(jobs.items()):
+        if receipt_id not in active:
+            future.cancel()
+            jobs.pop(receipt_id)
+        elif future.done():
             try:
-                st.session_state[analysis_key] = analyze_receipt(file_bytes, filename)
+                st.session_state[f"expense_receipt_analysis_{receipt_id}"] = future.result()
             except Exception as exc:
-                st.session_state[error_key] = str(exc)[:400]
-    result = st.session_state.get(analysis_key)
-    return result if isinstance(result, ReceiptAnalysis) else ReceiptAnalysis()
+                st.session_state[f"expense_receipt_error_{receipt_id}"] = str(exc)[:400]
+            jobs.pop(receipt_id)
+            changed = True
+        elif time.monotonic() - started > OPERATION_BUDGET_SECONDS:
+            # The HTTP timeout bounds the still-running request. Discard its
+            # eventual result; users can finish manually without waiting for it.
+            future.cancel()
+            jobs.pop(receipt_id)
+            st.session_state[f"expense_receipt_error_{receipt_id}"] = "Automatic reading timed out."
+            changed = True
+    for receipt_id, filename, payload in _unread_receipts(receipts):
+        if receipt_id in jobs:
+            continue
+        try:
+            future = start_receipt(
+                lambda: prepare_receipt_content(payload, filename),
+                analyze_prepared_receipt,
+            )
+        except Exception as exc:
+            st.session_state[f"expense_receipt_error_{receipt_id}"] = str(exc)[:400]
+            changed = True
+            continue
+        if future is None:
+            break
+        jobs[receipt_id] = (future, time.monotonic())
+        # Fast completions need no polling round trip. No waiting on slow I/O.
+        if future.done():
+            try:
+                st.session_state[f"expense_receipt_analysis_{receipt_id}"] = future.result()
+            except Exception as exc:
+                st.session_state[f"expense_receipt_error_{receipt_id}"] = str(exc)[:400]
+            jobs.pop(receipt_id)
+            changed = True
+    return changed
+
+
+@st.fragment(run_every=1.0)
+def _receipt_reading_progress() -> None:
+    receipts, _ = _unique_receipts(st.session_state.get("expense_receipt_files", []))
+    if _advance_receipt_jobs(receipts):
+        st.rerun()
+    unread = _unread_receipts(receipts)
+    if unread:
+        st.caption(
+            f"Reading {len(unread)} remaining receipt(s). "
+            "You can enter or correct report details while automatic reading continues."
+        )
+        if st.button("Stop automatic reading; enter details manually"):
+            jobs = st.session_state.get("expense_analysis_jobs", {})
+            for receipt_id, _, _ in unread:
+                job = jobs.pop(receipt_id, None)
+                if job:
+                    job[0].cancel()
+                st.session_state[f"expense_receipt_error_{receipt_id}"] = "Automatic reading stopped."
+            st.rerun()
 
 
 def _render_receipt(
@@ -1111,6 +1169,8 @@ def _render_receipt(
                 tuple(_SECTION_LABELS),
                 format_func=lambda value: _SECTION_LABELS[value],
                 key=line_section_key,
+                on_change=_mark_receipt_section_edited,
+                args=(line_token,),
                 help=(
                     "Entertainment requires a business purpose and contact name. "
                     "Ordinary travel, parking, supplies, and employee meals "
@@ -1520,7 +1580,9 @@ def _render_mileage_entries(
         # this refuses rather than guessing: an invented rate on a reimbursement
         # form is a payroll error nobody would catch downstream.
         rate = irs_business_mileage_rate(travel_date)
-        if rate is None:
+        if travel_date is None:
+            st.error("Enter the travel date to calculate mileage reimbursement.")
+        elif rate is None:
             st.error(
                 f"The IRS business-mileage rate for {travel_date:%Y-%m-%d} "
                 "has not been configured yet."
@@ -1777,6 +1839,13 @@ def _seed_profile(
     return profile
 
 
+def _mark_receipt_section_edited(token: str) -> None:
+    # An explicit selection, including a return to Miscellaneous, takes priority
+    # over a delayed model suggestion. The scalar draft mirror preserves this
+    # flag when workflow switching removes the corresponding widget.
+    st.session_state[f"expense_section_edited_{token}"] = True
+
+
 def _seed_receipt_fields(token: str, analysis: ReceiptAnalysis) -> None:
     """Seed one receipt's fields: blanks first, then the model's reading.
 
@@ -1784,7 +1853,8 @@ def _seed_receipt_fields(token: str, analysis: ReceiptAnalysis) -> None:
     value so the fields render even for a receipt that could not be read. The
     AI pass then fills only keys that are still empty and only from non-empty
     values, and marks itself done, so a re-read (or an ordinary rerun) can never
-    overwrite something the operator typed.
+    overwrite something the operator typed. The section starts at Miscellaneous;
+    a delayed suggestion may replace that default only before an explicit choice.
 
     Note the transaction date is seeded ONLY in the AI pass -- there is no blank
     default for it, because a date widget with no session value is what lets the
@@ -1807,6 +1877,7 @@ def _seed_receipt_fields(token: str, analysis: ReceiptAnalysis) -> None:
             analysis.transaction_date,
             analysis.total_amount,
             analysis.suggested_description,
+            analysis.expense_section_guess == EXPENSE_SECTION_ENTERTAINMENT,
         )
     ):
         ai_values = {
@@ -1814,11 +1885,17 @@ def _seed_receipt_fields(token: str, analysis: ReceiptAnalysis) -> None:
             f"expense_date_{token}": analysis.transaction_date,
             f"expense_description_{token}": analysis.suggested_description,
             f"expense_amount_{token}": analysis.total_amount,
-            f"expense_section_{token}": analysis.expense_section_guess,
         }
         for key, value in ai_values.items():
             if value not in {None, ""} and st.session_state.get(key) in {None, ""}:
                 st.session_state[key] = value
+        section_key = f"expense_section_{token}"
+        if (
+            not st.session_state.get(f"expense_section_edited_{token}")
+            and st.session_state.get(section_key) == EXPENSE_SECTION_MISC
+            and analysis.expense_section_guess in _SECTION_LABELS
+        ):
+            st.session_state[section_key] = analysis.expense_section_guess
         st.session_state[seeded_key] = True
 
 
@@ -2271,6 +2348,18 @@ def _request_platform_hint() -> str:
     return _request_header("Sec-CH-UA-Platform")
 
 
+def _content_digests() -> ContentDigests:
+    cache = st.session_state.get("expense_content_digests")
+    if not isinstance(cache, ContentDigests):
+        cache = ContentDigests()
+        st.session_state["expense_content_digests"] = cache
+    return cache
+
+
+def _receipt_digest(payload: bytes) -> str:
+    return _content_digests().digest(payload).hex()
+
+
 def _unique_receipts(uploads) -> tuple[list[tuple[str, str, bytes]], list[str]]:
     """De-duplicate receipts by content hash, preserving first-seen order.
 
@@ -2292,7 +2381,7 @@ def _unique_receipts(uploads) -> tuple[list[tuple[str, str, bytes]], list[str]]:
             filename, payload, _mime_type = upload
         else:
             filename, payload = upload.name, upload.getvalue()
-        receipt_id = hashlib.sha256(payload).hexdigest()
+        receipt_id = _receipt_digest(payload)
         if receipt_id in seen:
             duplicates.append(filename)
             continue
@@ -2331,7 +2420,7 @@ def _merge_receipt_sources(*groups) -> tuple[list[tuple[str, bytes, str]], list[
                 filename = upload.name
                 payload = upload.getvalue()
                 mime_type = upload.type or "application/octet-stream"
-            receipt_id = hashlib.sha256(payload).hexdigest()
+            receipt_id = _receipt_digest(payload)
             if receipt_id in seen:
                 # Report the name the operator just picked, not the stored one:
                 # the same bytes may have been saved under a different filename,
@@ -2361,7 +2450,7 @@ def _new_receipt_uploads(
     )
     additions: list[tuple[str, bytes, str]] = []
     for upload in current_uploads:
-        receipt_id = hashlib.sha256(upload[1]).hexdigest()
+        receipt_id = _receipt_digest(upload[1])
         if remaining[receipt_id]:
             remaining[receipt_id] -= 1
         else:
@@ -2382,11 +2471,14 @@ def _remove_receipt_from_draft(receipt_id: str) -> None:
     longer matches, and leaving it would put a stale PDF -- one still containing
     the removed receipt -- behind a download button that looks current.
     """
+    job = st.session_state.get("expense_analysis_jobs", {}).pop(receipt_id, None)
+    if job:
+        job[0].cancel()
     retained = []
     for filename, payload, mime_type in list(
         st.session_state.get("expense_receipt_files", []) or []
     ):
-        if hashlib.sha256(payload).hexdigest() != receipt_id:
+        if _receipt_digest(payload) != receipt_id:
             retained.append((filename, payload, mime_type))
     st.session_state["expense_receipt_files"] = retained
     st.session_state["expense_uploader_nonce"] = int(
@@ -2559,6 +2651,8 @@ def _reset_expense_report() -> None:
     # would restart at 1 and reuse a widget key this session has already used --
     # which resurrects the retired uploader's file list.
     next_nonce = int(st.session_state.get("expense_uploader_nonce", 0) or 0) + 1
+    for future, _ in st.session_state.get("expense_analysis_jobs", {}).values():
+        future.cancel()
     for key in list(st.session_state):
         if key.startswith("expense_"):
             st.session_state.pop(key, None)

@@ -1,8 +1,8 @@
 """Structured extraction from one uploaded employee-expense receipt.
 
 The ONLY AI call path in the expense workflow. Its single consumer is
-app/expense_ui.py, which calls analyze_receipt() once per uploaded receipt
-and caches the result in session state.
+app/expense_ui.py, which prepares receipt content on the UI thread, runs the
+network-only analysis in a bounded worker, and caches the result in the session.
 
 The boundary this module holds is: it produces an EDITABLE DRAFT, never an
 authority. Every field it returns is rendered into a widget the employee can
@@ -33,11 +33,18 @@ from typing import Any
 import anthropic
 
 from app.config import ANTHROPIC_API_KEY, ANTHROPIC_MODEL
+from app.api_retry import (
+    OPERATION_BUDGET_SECONDS,
+    REQUEST_TIMEOUT_SECONDS,
+    complete_response_text,
+    request_with_retry,
+)
 from app.expense_report import (
     EXPENSE_SECTION_ENTERTAINMENT,
     EXPENSE_SECTION_MISC,
     ExpenseReportError,
     parse_expense_amount,
+    receipt_attachment_pages,
     receipt_preview_bytes,
 )
 from app.ocr import image_blocks_for_vision
@@ -201,10 +208,10 @@ Return exactly these keys:
 """
 
 
-def analyze_receipt(file_bytes: bytes, filename: str) -> ReceiptAnalysis:
-    """Send one bounded receipt document/image for structured extraction.
+def prepare_receipt_content(file_bytes: bytes, filename: str) -> list[dict[str, Any]]:
+    """Validate and prepare the complete receipt on the UI/calling thread.
 
-    Returns a ReceiptAnalysis prefill. Raises ReceiptAnalysisError with an
+    Returns ordered API content blocks. Raises ReceiptAnalysisError with an
     operator-facing sentence for every anticipated failure -- unconfigured key,
     empty upload, unreadable/oversized source, unparseable response. The
     caller must keep the manual fields visible on that path; it is a degraded
@@ -222,10 +229,9 @@ def analyze_receipt(file_bytes: bytes, filename: str) -> ReceiptAnalysis:
       COUNT and every page's raster size, discarding the returned preview),
       then the ORIGINAL bytes are sent as a document block so the model reads
       the embedded text layer instead of a rasterization of it.
-    * image -- the normalized preview is what gets sent. That single call is
-      also what applies EXIF rotation and bounds a 12 MP phone photo; a raw
-      upload would arrive sideways and over the per-image limit. The preview
-      is already JPEG, so image_blocks_for_vision passes it straight through.
+    * image -- every validated frame is normalized, orientation-corrected and
+      included, with one aggregate payload budget. A thumbnail is not a full
+      analysis payload: TIFF receipts may have several pages.
     """
     if not ANTHROPIC_API_KEY:
         raise ReceiptAnalysisError(
@@ -258,26 +264,43 @@ def analyze_receipt(file_bytes: bytes, filename: str) -> ReceiptAnalysis:
         # Normalize every receipt image before analysis. This handles EXIF
         # rotation and keeps ordinary 12 MP phone photos below vision limits.
         try:
-            preview = receipt_preview_bytes(file_bytes, filename)
+            pages = receipt_attachment_pages(file_bytes, filename)
         except ExpenseReportError as exc:
             raise ReceiptAnalysisError(str(exc)) from exc
-        content = image_blocks_for_vision(preview, ".jpg")
+        content = []
+        for page in pages:
+            content.extend(image_blocks_for_vision(page, ".jpg"))
+        from app.ocr import _enforce_vision_payload_budget
+        _enforce_vision_payload_budget(content, label="receipt")
     content.append({"type": "text", "text": RECEIPT_PROMPT})
+    return content
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+def analyze_receipt(file_bytes: bytes, filename: str) -> ReceiptAnalysis:
+    """Synchronous convenience API; the UI prepares on its thread first."""
+    return analyze_prepared_receipt(prepare_receipt_content(file_bytes, filename))
+
+
+def analyze_prepared_receipt(content: list[dict[str, Any]]) -> ReceiptAnalysis:
+    """Network-only phase: safe to run in a worker without Streamlit/PDF APIs."""
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, max_retries=0, timeout=REQUEST_TIMEOUT_SECONDS)
+    until = time.monotonic() + OPERATION_BUDGET_SECONDS
     parse_error: ReceiptAnalysisError | None = None
     # Two SHAPE attempts wrapping the transport retries inside
     # _call_with_retry, which are a different failure: a 429/5xx is worth
     # sleeping through, a response that is not a JSON object is worth
     # re-rolling because sampling alone often fixes it. Bounded at two because
     # a model that answered with prose twice will answer with prose again, and
-    # the employee is watching a spinner the whole time.
-    for _ in range(2):
-        raw = _call_with_retry(client, content)
-        try:
-            return normalize_receipt_response(raw)
-        except ReceiptAnalysisError as exc:
-            parse_error = exc
+    # the same operation budget covers both shapes and all transport retries.
+    try:
+        for _ in range(2):
+            raw = _call_with_retry(client, content, until=until)
+            try:
+                return normalize_receipt_response(raw)
+            except ReceiptAnalysisError as exc:
+                parse_error = exc
+    finally:
+        client.close()
     assert parse_error is not None
     raise parse_error
 
@@ -389,61 +412,17 @@ def normalize_receipt_response(raw: str) -> ReceiptAnalysis:
     )
 
 
-def _call_with_retry(client, content: list[dict[str, Any]], max_retries: int = 3) -> str:
-    """Issue one vision request, retrying only TRANSIENT server conditions.
-
-    Returns the response text. Re-raises the API error otherwise; the caller
-    turns that into the cached per-receipt error message.
-
-    Only 429 (rate limited), 529 (overloaded) and 5xx are retried. A 400/401/
-    413 is a property of the request itself -- a malformed block, a bad key, a
-    payload over the limit -- and retrying it burns the employee's time three
-    times over to reach the same answer. Note that the retry is a linear
-    back-off, not exponential, on purpose: this runs inside a Streamlit
-    spinner with a person watching it, so the total wait is capped by taste
-    rather than by politeness to the API.
-    """
-    last_error: Exception | None = None
-    for attempt in range(max_retries):
-        try:
-            message = client.messages.create(
-                model=ANTHROPIC_MODEL,
-                # Long itemized receipts need room for the selectable line-item
-                # list as well as the receipt-level fields and review notes.
-                # Too small truncates the JSON mid-array, which surfaces as
-                # "malformed JSON" and looks like a model fault rather than a
-                # budget one -- keep this comfortably above _MAX_LINE_ITEMS
-                # rows' worth of output if the item schema ever grows.
-                max_tokens=3000,
-                messages=[{"role": "user", "content": content}],
-            )
-            return message.content[0].text.strip()
-        except anthropic.APIConnectionError as exc:
-            # A dropped connection or timeout is the most common transient
-            # failure of all, and it is NOT an APIStatusError -- it carries no
-            # status code. Before this clause it escaped on the first attempt,
-            # so the "retry transient conditions" contract above held for a
-            # rate limit but not for the flaky network it was really written
-            # for. The employee saw one failed receipt from a blip.
-            last_error = exc
-            if attempt == max_retries - 1:
-                break
-            time.sleep((attempt + 1) * 3)
-        except anthropic.APIStatusError as exc:
-            last_error = exc
-            if exc.status_code in {429, 529} or exc.status_code >= 500:
-                # Do NOT sleep after the last attempt. The old code slept and
-                # then fell out of the loop, so a persistently rate-limited
-                # receipt waited 3 + 6 + 9 = 18 seconds to deliver an answer it
-                # already had at 9 -- the final 9 spent inside a Streamlit
-                # spinner with a person watching it, buying nothing.
-                if attempt == max_retries - 1:
-                    break
-                time.sleep((attempt + 1) * 3)
-                continue
-            raise
-    assert last_error is not None
-    raise last_error
+def _call_with_retry(client, content: list[dict[str, Any]], max_retries: int = 3, *, until: float | None = None) -> str:
+    """Retry transport failures once per attempt; SDK retries are disabled."""
+    until = until if until is not None else time.monotonic() + OPERATION_BUDGET_SECONDS
+    message = request_with_retry(
+        lambda timeout: client.messages.create(
+            model=ANTHROPIC_MODEL, max_tokens=3000, timeout=timeout,
+            messages=[{"role": "user", "content": content}],
+        ),
+        until=until, attempts=max_retries,
+    )
+    return complete_response_text(message)
 
 
 def _extract_json_object(raw: str) -> dict[str, Any]:

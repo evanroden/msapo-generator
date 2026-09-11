@@ -72,6 +72,7 @@ what was **not** verified, and what was deliberately left alone.
 
 | Date | Document | PR | Subject |
 |---|---|---|---|
+| 2026-09-10 | [`COMMIT_NOTES_2026-09-10_DRAFT_READING_AND_PERFORMANCE.md`](COMMIT_NOTES_2026-09-10_DRAFT_READING_AND_PERFORMANCE.md) | — | Full PO draft/source persistence, mixed-PDF and TIFF completeness, date/budget recovery, bounded background reading and retries, digest/PDF/database caching. September 11 follow-up adds incomplete-response rejection and explicit receipt-section choice preservation. |
 | 2026-08-26 | [`COMMIT_NOTES_2026-08-26_STATE_AND_HANDOFF_REMEDIATION.md`](COMMIT_NOTES_2026-08-26_STATE_AND_HANDOFF_REMEDIATION.md) | — | Explicit PO coding state, workflow-switch persistence, receipt uploader event tracking, browser-local report dates, and fail-closed Smartsheet mappings. Authentication/rate limiting remains deferred. |
 | 2026-08-17 | [`COMMIT_NOTES_2026-08-17_REVIEW_FINDINGS_REMEDIATION.md`](COMMIT_NOTES_2026-08-17_REVIEW_FINDINGS_REMEDIATION.md) | — | Cross-cutting remediation of the two-week review: routing and facility accuracy, reviewed MSAPO values, bounded OCR inputs, approver identity migration, mileage rounding, live needs placement, handoff warnings, and locked deployments. Authentication/rate limiting explicitly deferred. |
 | 2026-08-14 | [`CODE_REVIEW_FINDINGS_2026-08-14.md`](CODE_REVIEW_FINDINGS_2026-08-14.md) | #48 | Line-by-line review and annotation pass. 23 bugs, 21 dead-code candidates, 16 duplications — **all unactioned**. Records which 12 modules were NOT reviewed. |

@@ -107,6 +107,8 @@ from app.workflow_state import (
     UPLOAD_MODE,
     choose_quote_text,
     clear_active_analysis,
+    preserve_po_draft,
+    restore_po_draft,
     quote_length_problem,
 )
 from app.workflow_review import (
@@ -1202,6 +1204,7 @@ def _load_test_into_state() -> None:
     st.session_state["quote_text"] = quote_text
     st.session_state["quote_source"] = "synthetic"
     st.session_state["synthetic_quote_active"] = True
+    st.session_state["po_upload_available"] = False
     st.session_state["quote_input_mode"] = UPLOAD_MODE
     st.session_state["last_sig"] = hashlib.sha256(
         quote_text.encode("utf-8")
@@ -1228,6 +1231,18 @@ def _deactivate_synthetic_quote() -> None:
     operator would watch their own upload be ignored.
     """
     st.session_state["synthetic_quote_active"] = False
+
+
+def _quote_upload_changed() -> None:
+    _deactivate_synthetic_quote()
+    key = f"uploader_{st.session_state.get('uploader_nonce', 0)}"
+    st.session_state["po_upload_available"] = st.session_state.get(key) is not None
+
+
+def _clear_quote_upload() -> None:
+    st.session_state["po_upload_available"] = False
+    st.session_state["uploader_nonce"] = st.session_state.get("uploader_nonce", 0) + 1
+    _deactivate_synthetic_quote()
 
 
 def _retry_extraction() -> None:
@@ -1634,6 +1649,7 @@ def main() -> None:
             print(f"device cookie bootstrap failed: {exc.__class__.__name__}: {exc}")
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     preserve_expense_draft_state()
+    preserve_po_draft(st.session_state)
 
     # required=True is load-bearing, not cosmetic. A single-select
     # segmented_control defaults to required=False, which lets the operator
@@ -1660,6 +1676,8 @@ def main() -> None:
         render_expense_workflow(browser_token, browser_timezone)
         _render_footer()
         return
+
+    restore_po_draft(st.session_state)
 
     st.markdown(
         """
@@ -1735,9 +1753,18 @@ def main() -> None:
             max_upload_size=MAX_ATTACHMENT_BYTES // (1024 * 1024),
             label_visibility="collapsed",
             key=f"uploader_{st.session_state.get('uploader_nonce', 0)}",
-            on_change=_deactivate_synthetic_quote,
+            on_change=_quote_upload_changed,
         )
+        if uploaded is None and st.session_state.get("po_upload_available"):
+            # A hidden uploader cannot be restored as a widget. Use the retained
+            # immutable source, and expose an explicit removal action instead.
+            from io import BytesIO
+            uploaded = BytesIO(st.session_state.get("uploaded_file_bytes", b""))
+            uploaded.name = st.session_state.get("uploaded_file_name", "quote.txt")
+            st.caption(f"Retained quote: {uploaded.name}")
+            st.button("Remove retained quote", on_click=_clear_quote_upload)
         if uploaded is not None:
+            st.session_state["po_upload_available"] = True
             file_bytes = uploaded.getvalue()
             st.session_state["uploaded_file_bytes"] = file_bytes
             st.session_state["uploaded_file_name"] = uploaded.name
@@ -1811,9 +1838,9 @@ def main() -> None:
             on_change=_deactivate_synthetic_quote,
         )
 
-    # Exactly one source wins, decided outside the UI. Both widgets keep their
-    # session values while hidden, so choosing here by hand would let a stale
-    # pasted quote outrank the file the operator is currently looking at.
+    # Exactly one source wins, decided outside the UI. Draft restoration can
+    # retain inactive source values, so choosing here by hand would let stale
+    # pasted text outrank the file the operator is currently looking at.
     quote_text, quote_source = choose_quote_text(
         input_mode,
         uploaded_text=uploaded_text,
@@ -2782,18 +2809,20 @@ def main() -> None:
             # LibreOffice, which takes seconds -- longer on a cold start on a
             # small container -- and with no feedback the button reads as dead
             # and invites repeat taps.
-            with st.spinner("Building the MSAPO form PDF…"):
-                scope_pdf = build_msapo_pdf(
-                    analysis=analysis,
-                    scope=scope_value,
-                    inclusions=final_inclusions,
-                    exclusions=final_exclusions,
-                    facility_display=facility_name or selected_site,
-                    facility_address_display=facility_address,
-                    vendor_display=str(
-                        st.session_state.get(vendor_key, "") or ""
-                    ).strip(),
-                )
+            with st.spinner("Preparing the MSAPO form PDF…"):
+                scope_pdf = st.session_state.get("scope_pdf_bytes")
+                if not scope_pdf or st.session_state.get("scope_pdf_signature") != current_pdf_signature:
+                    scope_pdf = build_msapo_pdf(
+                        analysis=analysis,
+                        scope=scope_value,
+                        inclusions=final_inclusions,
+                        exclusions=final_exclusions,
+                        facility_display=facility_name or selected_site,
+                        facility_address_display=facility_address,
+                        vendor_display=str(
+                            st.session_state.get(vendor_key, "") or ""
+                        ).strip(),
+                    )
         except Exception as exc:
             st.error(
                 f"The MSAPO form PDF could not be generated: {exc} "

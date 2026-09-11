@@ -50,6 +50,7 @@ from openpyxl.worksheet.pagebreak import Break
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from app.config import GOTENBERG_URL, PDF_BACKEND
+from app.content_cache import ContentDigests
 from app.job_numbers import (
     JOB_NUMBER_OPTIONS,
     job_number_identifier,
@@ -464,6 +465,7 @@ def validate_expense_report(
     details: ExpenseReportDetails,
     items: list[ExpenseItem],
     mileage_items: Sequence[MileageItem] = (),
+    *, content_digests: ContentDigests | None = None,
 ) -> list[str]:
     """Return actionable blocking problems in interaction order.
 
@@ -504,6 +506,8 @@ def validate_expense_report(
         problems.append("enter the satellite office")
     if not details.employee_signature_confirmed:
         problems.append("confirm the generated employee signature")
+    if details.report_date is None:
+        problems.append("enter the report date")
 
     # A mileage-only report is valid, so this is "neither", not "no receipts".
     # Returning early keeps the $20 minimum from firing on an empty report and
@@ -555,7 +559,7 @@ def validate_expense_report(
             problems.append(f"{prefix}: remove the duplicate reimbursement line")
         seen_lines.add(item.receipt_id)
         source_id = _receipt_source_id(item)
-        fingerprint = (item.filename, hashlib.sha256(item.file_bytes).digest())
+        fingerprint = (item.filename, content_digests.digest(item.file_bytes) if content_digests is not None else hashlib.sha256(item.file_bytes).digest())
         if source_id in source_fingerprints:
             if source_fingerprints[source_id] != fingerprint:
                 problems.append(
@@ -707,7 +711,7 @@ def expense_report_warnings(
         # date_checked keeps the age checks per SOURCE, not per line. Without
         # it a receipt split into four lines produces the same "dated after the
         # report date" sentence four times, which reads as four bad receipts.
-        if item.transaction_date and source_id not in date_checked:
+        if details.report_date and item.transaction_date and source_id not in date_checked:
             if item.transaction_date > details.report_date:
                 warnings.append(
                     f"Receipt {source_number} is dated after the report date"
@@ -747,7 +751,7 @@ def expense_report_warnings(
                 "confirm they are separate purchases"
             )
     for index, item in enumerate(mileage_items, 1):
-        if item.transaction_date and item.transaction_date > details.report_date:
+        if details.report_date and item.transaction_date and item.transaction_date > details.report_date:
             warnings.append(f"Mileage {index} is dated after the report date")
     return _deduplicate(warnings)
 
@@ -756,6 +760,7 @@ def expense_report_signature(
     details: ExpenseReportDetails,
     items: list[ExpenseItem],
     mileage_items: Sequence[MileageItem] = (),
+    *, content_digests: ContentDigests | None = None,
 ) -> str:
     """Stable signature used to suppress stale downloads after an edit.
 
@@ -791,7 +796,7 @@ def expense_report_signature(
                 )
             ).encode("utf-8")
         )
-        digest.update(hashlib.sha256(item.file_bytes).digest())
+        digest.update(content_digests.digest(item.file_bytes) if content_digests is not None else hashlib.sha256(item.file_bytes).digest())
     for item in mileage_items:
         digest.update(repr(item).encode("utf-8"))
     return digest.hexdigest()
@@ -1115,8 +1120,8 @@ def receipt_preview_bytes(file_bytes: bytes, filename: str) -> bytes:
     unacceptable receipt is rejected locally instead of after an upload to the
     vision API. Raises ExpenseReportError with the operator-facing reason.
 
-    For images this IS the payload the analyzer sends -- it applies EXIF
-    rotation and bounds a phone photo, both of which the raw upload lacks.
+    Images use this only as a first-page UI preview. Automatic reading prepares
+    every validated frame separately so multipage receipts remain complete.
     """
     pages = receipt_attachment_pages(file_bytes, filename, render_limit=1)
     if not pages:

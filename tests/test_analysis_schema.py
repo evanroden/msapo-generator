@@ -168,10 +168,10 @@ def test_analyzer_rerolls_one_malformed_response(monkeypatch):
     monkeypatch.setattr(
         quote_analyzer.anthropic,
         "Anthropic",
-        lambda **_kwargs: object(),
+        lambda **_kwargs: type("Client", (), {"close": lambda self: None})(),
     )
 
-    def fake_call(_client, _quote_text):
+    def fake_call(_client, _quote_text, **_kwargs):
         calls.append(True)
         return next(responses)
 
