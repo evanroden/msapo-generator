@@ -34,7 +34,23 @@ _OCR_PROMPT = (
     "extracted text, no commentary."
 )
 _MAX_IMAGE_FRAMES = 20
+# Pages sent to VISION, not pages in the document. Native-text pages are read
+# locally -- no API call, no payload, no cost -- so counting them against a
+# vision budget rejects documents that were never going to touch the API.
+#
+# A real 26-page steam-trap quote was refused by the old document-level cap with
+# "Split it into smaller quotes before uploading", and every one of its 26 pages
+# had native text: the extraction would have been entirely local. Splitting a
+# quote also corrupts the deliverable -- the package attaches the vendor's
+# original file, so an operator who split it would attach half a quote.
 _MAX_PDF_PAGES = 20
+# The page cap used to bound extracted TEXT as a side effect. Now that page
+# count no longer limits native reading, that bound has to be explicit, or a
+# pathological document would be accepted here and fail later inside
+# analyze_quote where the message names nothing the operator can act on.
+# ~400k characters is roughly 100k tokens, half the model context, and about
+# 470 pages at the density of a real quote (~850 chars/page).
+_MAX_EXTRACTED_CHARS = 400_000
 _MAX_PIXELS_PER_FRAME = 40_000_000
 # The vision API downsamples anything larger than this on the long edge, so
 # sending full-resolution frames only inflates the payload past the per-image
@@ -187,6 +203,25 @@ def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
     return blocks
 
 
+def _page_needs_ocr(page) -> bool:
+    """Whether this page has to go to vision rather than being read locally.
+
+    Extracted so the pre-count below and the read loop ask the SAME question. A
+    second copy of this test would drift, and the failure would be silent in the
+    worst direction: a document admitted by the count and then sending more
+    pages to vision than the budget allows.
+    """
+    import fitz
+
+    native = page.get_text().strip()
+    images = page.get_image_info()
+    page_area = max(1.0, page.rect.width * page.rect.height)
+    large_scan = any(
+        fitz.Rect(info["bbox"]).get_area() >= page_area * 0.5 for info in images
+    )
+    return large_scan or (len(native) < 20 and bool(images or page.get_drawings()))
+
+
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     """Read native pages locally; OCR scanned pages in ordered contiguous runs."""
     import fitz
@@ -194,13 +229,18 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
     parts: list[str] = []
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
-        if pdf.page_count > _MAX_PDF_PAGES:
-            raise ValueError(
-                f"This PDF contains {pdf.page_count} pages; the maximum is "
-                f"{_MAX_PDF_PAGES}. Split it into smaller quotes before uploading."
-            )
         if pdf.is_encrypted and not pdf.authenticate(""):
             raise ValueError("This PDF needs a password. Upload an unlocked copy.")
+        # Counted BEFORE any OCR call, so a document over budget costs nothing
+        # and fails with a complete number. Counting inside the read loop would
+        # bill several vision requests before discovering the total.
+        scanned = sum(1 for page in pdf if _page_needs_ocr(page))
+        if scanned > _MAX_PDF_PAGES:
+            raise ValueError(
+                f"This PDF has {scanned} scanned pages needing image reading; "
+                f"the maximum is {_MAX_PDF_PAGES}. Upload a text-based copy, or "
+                "paste the quote text instead."
+            )
         pending: list[int] = []
 
         def flush() -> None:
@@ -213,23 +253,20 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
             pending.clear()
 
         for index, page in enumerate(pdf):
-            native = page.get_text().strip()
-            images = page.get_image_info()
-            page_area = max(1.0, page.rect.width * page.rect.height)
-            large_scan = any(
-                fitz.Rect(info["bbox"]).get_area() >= page_area * 0.5
-                for info in images
-            )
-            needs_ocr = large_scan or (
-                len(native) < 20 and bool(images or page.get_drawings())
-            )
-            if needs_ocr:
+            if _page_needs_ocr(page):
                 pending.append(index)
             else:
                 flush()
-                parts.append(native)
+                parts.append(page.get_text().strip())
         flush()
-    return "\n".join(parts).strip()
+    text = "\n".join(parts).strip()
+    if len(text) > _MAX_EXTRACTED_CHARS:
+        raise ValueError(
+            f"This document holds {len(text):,} characters of text; the maximum "
+            f"is {_MAX_EXTRACTED_CHARS:,}. Upload the quote pages only, or paste "
+            "the relevant section."
+        )
+    return text
 
 
 def _ocr_pdf(payload: bytes, *, until: float) -> str:
