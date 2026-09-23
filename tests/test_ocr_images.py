@@ -100,9 +100,25 @@ def test_small_normalized_image_is_not_upscaled():
 
 
 def test_overlong_pdf_is_rejected_before_ocr_api_fallback(monkeypatch):
+    """The budget must refuse a document BEFORE billing any vision call.
+
+    The trigger changed on 2026-09-23 and the fixture changed with it. It used
+    to build 21 BLANK pages and assert "21 pages; the maximum is 20", because
+    the cap counted pages in the document. That cap rejected real 26-page quotes
+    whose text was entirely native and needed no vision at all -- see
+    tests/test_pdf_page_budget.py. Blank pages cost nothing to read, so they are
+    no longer what this budget is about.
+
+    The pages here are SCANNED -- a full-page image and no text -- which is what
+    the vision budget actually exists to bound. The assertion this test was
+    written for is unchanged: over budget, and not one OCR request is made.
+    """
     document = fitz.open()
     for _ in range(21):
-        document.new_page(width=100, height=100)
+        page = document.new_page(width=100, height=100)
+        pixmap = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 80, 80))
+        pixmap.clear_with(255)
+        page.insert_image(page.rect, pixmap=pixmap)
     payload = document.tobytes()
     document.close()
 
@@ -113,7 +129,7 @@ def test_overlong_pdf_is_rejected_before_ocr_api_fallback(monkeypatch):
         ),
     )
 
-    with pytest.raises(ValueError, match="21 pages; the maximum is 20"):
+    with pytest.raises(ValueError, match="21 scanned pages"):
         extract_text_from_pdf(payload)
 
 
