@@ -322,10 +322,21 @@ def _ocr_pdf_via_page_images(file_bytes: bytes, *, until: float | None = None) -
 
     content: list[dict] = []
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
+        # Backstop, not the operator-facing budget. extract_text_from_pdf counts
+        # scanned pages across the whole document before any OCR runs, and hands
+        # this function one contiguous run of them -- so a run over the budget
+        # implies the pre-count already refused the document. It stays as a
+        # guard for a direct caller that skipped that path.
+        #
+        # The wording is NOT the old "Split it into smaller quotes before
+        # uploading". That advice was actively wrong: the PO package attaches
+        # the vendor's ORIGINAL file, so splitting a quote to satisfy the tool
+        # attaches half a quote to the purchase order.
         if pdf.page_count > _MAX_PDF_PAGES:
             raise ValueError(
-                f"This PDF contains {pdf.page_count} pages; the maximum is "
-                f"{_MAX_PDF_PAGES}. Split it into smaller quotes before uploading."
+                f"This run holds {pdf.page_count} scanned pages needing image "
+                f"reading; the maximum is {_MAX_PDF_PAGES}. Upload a text-based "
+                "copy, or paste the quote text instead."
             )
         for page_number, page in enumerate(pdf, 1):
             width = round(page.rect.width * 150 / 72)
