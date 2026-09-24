@@ -139,3 +139,33 @@ def test_a_real_sized_quote_is_far_inside_the_text_bound():
     with mock.patch.object(ocr, "_ocr_pdf", lambda *_a, **_k: ""):
         text = extract_text_from_pdf(_native_pdf(26))
     assert len(text) < _MAX_EXTRACTED_CHARS / 10
+
+
+def test_no_reachable_message_tells_an_operator_to_split_a_quote():
+    """The advice was actively wrong, so it must be gone from every path.
+
+    The PO package attaches the vendor's ORIGINAL file. An operator who split a
+    quote to satisfy the tool would have attached half a quote to the purchase
+    order -- worse than the upload they could not complete.
+
+    The one surviving occurrence is a COMMENT quoting the old text to explain
+    what changed, which is why this counts executable lines only.
+    """
+    from pathlib import Path
+
+    source = Path("app/ocr.py").read_text(encoding="utf-8")
+    code = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+    assert "Split it into smaller quotes" not in code
+
+
+def test_the_page_image_backstop_also_names_scanned_pages():
+    """_ocr_pdf_via_page_images keeps a page guard as a backstop for a direct
+    caller that skipped the pre-count. Its message has to agree with the budget
+    the operator actually hit, or two paths explain the same limit differently.
+    """
+    import app.ocr as ocr_module
+
+    with pytest.raises(ValueError, match="scanned pages"):
+        ocr_module._ocr_pdf_via_page_images(_scanned_pdf(_MAX_PDF_PAGES + 1))
