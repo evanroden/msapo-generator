@@ -106,18 +106,29 @@ def parse_amount(value: object) -> Decimal | None:
     ``classify_po``'s job, so the amount and the sign produce different
     messages.
     """
-    text = str(value or "").strip()
-    text = re.sub(r"(?i)\bUSD\b", "", text)
-    text = text.replace("$", "").replace(",", "").strip()
+    text = "" if value is None else str(value).strip()
+    # Decorations belong at the boundaries, and commas must separate groups
+    # of three. Deleting them first turned "123,45" into 12,345 dollars and
+    # "1$2" into 12 without asking the operator to correct the ambiguity.
+    if re.match(r"(?i)^USD\b", text):
+        text = text[3:].strip()
+    elif re.search(r"(?i)\bUSD$", text):
+        text = text[:-3].strip()
+    if text.startswith("-$"):
+        text = "-" + text[2:].strip()
+    elif text.startswith("$"):
+        text = text[1:].strip()
     # Anchored with fullmatch, and the decimal group is capped at TWO digits:
     # "12.345" is more likely a typo or a unit rate than a currency amount, and
     # accepting it would silently change the value sent to Smartsheet. The
     # leading "-?" appears once, so "--5" and "+-5" are rejected rather than
     # normalised.
-    if not re.fullmatch(r"-?(?:\d+(?:\.\d{1,2})?|\.\d{1,2})", text):
+    if not re.fullmatch(
+        r"-?(?:(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?|\.\d{1,2})", text
+    ):
         return None
     try:
-        return Decimal(text)
+        return Decimal(text.replace(",", ""))
     except InvalidOperation:
         return None
 

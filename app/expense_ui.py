@@ -1060,7 +1060,8 @@ def _render_receipt(
             for note in analysis.review_notes:
                 st.caption(f"Review: {note}")
         if analysis.tax_amount:
-            st.caption(f"Tax printed on receipt: ${analysis.tax_amount}")
+            currency_prefix = f"{analysis.currency} " if _foreign_receipt(analysis) else "$"
+            st.caption(f"Tax printed on receipt: {currency_prefix}{analysis.tax_amount}")
         # A foreign-currency receipt is an ERROR, not a warning: the number
         # printed on it is not the reimbursable amount, and every downstream
         # total treats the entered value as dollars. Nothing converts rates
@@ -1230,7 +1231,10 @@ def _render_receipt(
         (parse_expense_amount(item.amount) or 0 for item in items),
         0,
     )
-    if len(items) > 1 and analyzed_total is not None and reviewed_total > analyzed_total:
+    if (
+        len(items) > 1 and not _foreign_receipt(analysis)
+        and analyzed_total is not None and reviewed_total > analyzed_total
+    ):
         st.warning(
             f"The split lines total ${reviewed_total:,.2f}, which exceeds the "
             f"tool-read receipt total of ${analyzed_total:,.2f}. Verify the "
@@ -1310,6 +1314,11 @@ def _selected_receipt_item_amount(
     return f"{calculated:.2f}" if calculated > 0 else ""
 
 
+def _foreign_receipt(analysis: ReceiptAnalysis) -> bool:
+    """Known non-USD values cannot be treated as reimbursement dollars."""
+    return bool(analysis.currency and analysis.currency != "USD")
+
+
 def _sync_detected_item_amount(
     token: str,
     analysis: ReceiptAnalysis,
@@ -1326,7 +1335,7 @@ def _sync_detected_item_amount(
     the sole item as "selected" would let this overwrite an amount the operator
     typed with the model's total on every rerun.
     """
-    if len(analysis.line_items) < 2:
+    if len(analysis.line_items) < 2 or _foreign_receipt(analysis):
         return set(), ""
     entries = _detected_item_entries(token, analysis)
     selected = {
@@ -1389,7 +1398,7 @@ def _render_detected_receipt_items(
     silently does nothing, and syncing without rendering would move the amount
     with no visible cause.
     """
-    if len(analysis.line_items) < 2:
+    if len(analysis.line_items) < 2 or _foreign_receipt(analysis):
         return
     st.markdown("**Select the reimbursable receipt items**")
     st.caption(
@@ -1884,7 +1893,11 @@ def _seed_receipt_fields(token: str, analysis: ReceiptAnalysis) -> None:
             f"expense_merchant_{token}": analysis.merchant_name,
             f"expense_date_{token}": analysis.transaction_date,
             f"expense_description_{token}": analysis.suggested_description,
-            f"expense_amount_{token}": analysis.total_amount,
+            # The printed foreign total is not an approved USD amount. Leave
+            # this blank for manual entry, including when analysis arrives
+            # after the widgets render; never replace a manually entered USD
+            # amount with an unconverted total or selected-item calculation.
+            f"expense_amount_{token}": "" if _foreign_receipt(analysis) else analysis.total_amount,
         }
         for key, value in ai_values.items():
             if value not in {None, ""} and st.session_state.get(key) in {None, ""}:

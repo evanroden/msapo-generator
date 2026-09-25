@@ -578,6 +578,33 @@ def _money(value: str) -> Decimal | None:
     return parse_amount(value)
 
 
+def pricing_problems(subtotal_value: str, tax_value: str, total_value: str) -> list[str]:
+    """Validate optional reviewed amounts without mistaking freight for an error.
+
+    Blank means the quote did not state that component; malformed or negative
+    text is not a blank and must not silently disable reconciliation. Subtotal
+    means the net subtotal after any discounts, as labelled in the UI.
+    """
+    problems: list[str] = []
+    subtotal, tax, total = map(_money, (subtotal_value, tax_value, total_value))
+    for raw, amount, label in (
+        (subtotal_value, subtotal, "subtotal"),
+        (tax_value, tax, "sales tax"),
+    ):
+        if raw.strip() and (amount is None or amount < 0):
+            problems.append(f"Enter valid nonnegative {label}, or leave it blank if not stated.")
+    if not problems and subtotal is not None and tax is not None and total is not None:
+        # The all-in total may also contain freight or other fees. Keep the
+        # one-directional check, but let the operator correct both components
+        # before spending time rendering a package that cannot be handed off.
+        if (subtotal + tax) - total > Decimal("0.01"):
+            problems.append(
+                "Subtotal plus sales tax is MORE than the stated total. Check "
+                "the extracted amounts against the quote."
+            )
+    return problems
+
+
 def _context_id(fields: Mapping[str, str], attachments: tuple[tuple[str, bytes], ...]) -> str:
     """Identity of one exact reviewed package, as 20 hex characters.
 
@@ -974,48 +1001,7 @@ def build_po_context(
     # comparison decides whether a real quote is flagged as internally
     # inconsistent. One cent of tolerance absorbs the vendor's own rounding.
     #
-    # Deliberately silent when ANY of the three fails to parse. A quote with no
-    # stated subtotal is normal, and warning "subtotal plus tax does not equal
-    # total" for a missing subtotal would train operators to ignore the message.
-    #
-    # ONE-DIRECTIONAL, and that is the whole point of this check.
-    #
-    # It used to be symmetric -- abs((subtotal + tax) - total) -- which made it
-    # BLOCK every quote carrying freight, and it contradicted the analyzer's own
-    # instructions. quote_analyzer's prompt defines total_amount as "the final
-    # grand total the customer pays, including every stated tax, freight charge,
-    # delivery charge, surcharge, and other fee" while subtotal_amount is the
-    # pre-tax subtotal. So on any quote with shipping the two fields are
-    # CORRECTLY unequal by the freight, and the tool then refused its own
-    # correct extraction.
-    #
-    # The reported case, a Grainger salt quote:
-    #     Sub Total                 513.45
-    #     Estimated Other Shipping  209.00
-    #     Tax                        57.80
-    #     Total USD                 780.25   = 513.45 + 209.00 + 57.80
-    # The symmetric check saw a 209.00 discrepancy and blocked submission, with
-    # nothing on the page naming freight as the reason.
-    #
-    # A total may exceed subtotal + tax by any amount: freight, delivery,
-    # surcharges, fees. It may never fall SHORT of them -- that direction means
-    # a genuinely misread figure (a subtotal captured as the total, a dropped
-    # digit), which is what this check is for and what it still catches.
-    #
-    # Making it exact instead would mean extracting the freight/other-charges
-    # line as its own field, through the prompt, the schema and QuoteAnalysis.
-    # That is the better long-term shape and is NOT done here: it cannot be
-    # validated end to end without an API key, and shipping an unverified prompt
-    # change to unblock a live workflow is the wrong trade.
-    subtotal = _money(fields["subtotal"])
-    tax = _money(fields["tax"])
-    total = _money(fields["total"])
-    if subtotal is not None and tax is not None and total is not None:
-        if (subtotal + tax) - total > Decimal("0.01"):
-            warnings.append(
-                "Subtotal plus sales tax is MORE than the stated total. Check "
-                "the extracted amounts against the quote."
-            )
+    warnings.extend(pricing_problems(fields["subtotal"], fields["tax"], fields["total"]))
 
     context_id = _context_id(fields, attachments)
     return POContext(

@@ -203,23 +203,64 @@ def image_blocks_for_vision(file_bytes: bytes, suffix: str) -> list[dict]:
     return blocks
 
 
-def _page_needs_ocr(page) -> bool:
-    """Whether this page has to go to vision rather than being read locally.
+def _images_cover_half_page(page, images: list[dict]) -> bool:
+    """Measure the union of visible image rectangles, not the largest tile.
 
-    Extracted so the pre-count below and the read loop ask the SAME question. A
-    second copy of this test would drift, and the failure would be silent in the
-    worst direction: a document admitted by the count and then sending more
-    pages to vision than the budget allows.
+    Scanners may store one page in several strips under a native-text header.
+    Summing areas alone also fails: repeated, overlapping logos can look like
+    a full scan. Sweep disjoint x bands and merge their y intervals instead.
+    Image coordinates are unrotated, unlike Page.rect; clip in that same space.
     """
     import fitz
 
-    native = page.get_text().strip()
+    bounds = page.rect * page.derotation_matrix
+    threshold = max(1.0, bounds.get_area()) * 0.5
+    rectangles = set()
+    for info in images:
+        rect = fitz.Rect(info["bbox"]) & bounds
+        if rect.is_empty:
+            continue
+        if rect.get_area() >= threshold:
+            return True
+        rectangles.add(tuple(rect))
+    xs = sorted({x for left, _, right, _ in rectangles for x in (left, right)})
+    area = 0.0
+    for left, right in zip(xs, xs[1:]):
+        intervals = sorted(
+            (top, bottom) for x0, top, x1, bottom in rectangles
+            if x0 < right and x1 > left
+        )
+        if not intervals:
+            continue
+        start, end = intervals[0]
+        height = 0.0
+        for top, bottom in intervals[1:]:
+            if top > end:
+                height += end - start
+                start, end = top, bottom
+            else:
+                end = max(end, bottom)
+        area += (right - left) * (height + end - start)
+        if area >= threshold:
+            return True
+    return False
+
+
+def _page_needs_ocr(page, *, native_text: str | None = None) -> bool:
+    """Classify once during preflight, reusing text already decoded locally."""
+    native = page.get_text().strip() if native_text is None else native_text
     images = page.get_image_info()
-    page_area = max(1.0, page.rect.width * page.rect.height)
-    large_scan = any(
-        fitz.Rect(info["bbox"]).get_area() >= page_area * 0.5 for info in images
-    )
+    large_scan = _images_cover_half_page(page, images)
     return large_scan or (len(native) < 20 and bool(images or page.get_drawings()))
+
+
+def _check_extracted_size(size: int) -> None:
+    if size > _MAX_EXTRACTED_CHARS:
+        raise ValueError(
+            f"This document holds {size:,} characters of text; the maximum "
+            f"is {_MAX_EXTRACTED_CHARS:,}. Upload the quote pages only, or paste "
+            "the relevant section."
+        )
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -228,13 +269,34 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
     until = time.monotonic() + OPERATION_BUDGET_SECONDS
     parts: list[str] = []
+    output_size = 0
+
+    def append(text: str) -> None:
+        nonlocal output_size
+        output_size += len(text) + bool(parts)
+        _check_extracted_size(output_size)
+        parts.append(text)
+
     with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
         if pdf.is_encrypted and not pdf.authenticate(""):
             raise ValueError("This PDF needs a password. Upload an unlocked copy.")
         # Counted BEFORE any OCR call, so a document over budget costs nothing
         # and fails with a complete number. Counting inside the read loop would
         # bill several vision requests before discovering the total.
-        scanned = sum(1 for page in pdf if _page_needs_ocr(page))
+        # Reuse this exact plan during reading: the previous pre-count plus
+        # read loop decoded every native page three times, and only checked
+        # the known native-text budget after making paid OCR calls.
+        plan: list[str | None] = []
+        scanned = native_size = 0
+        for page in pdf:
+            native = page.get_text().strip()
+            if _page_needs_ocr(page, native_text=native):
+                scanned += 1
+                plan.append(None)
+            else:
+                native_size += len(native)
+                _check_extracted_size(native_size)
+                plan.append(native)
         if scanned > _MAX_PDF_PAGES:
             raise ValueError(
                 f"This PDF has {scanned} scanned pages needing image reading; "
@@ -249,24 +311,17 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
             with fitz.open() as subset:
                 subset.insert_pdf(pdf, from_page=pending[0], to_page=pending[-1])
                 payload = subset.tobytes(encryption=fitz.PDF_ENCRYPT_NONE)
-            parts.append(_ocr_pdf(payload, until=until))
+            append(_ocr_pdf(payload, until=until))
             pending.clear()
 
-        for index, page in enumerate(pdf):
-            if _page_needs_ocr(page):
+        for index, native in enumerate(plan):
+            if native is None:
                 pending.append(index)
             else:
                 flush()
-                parts.append(page.get_text().strip())
+                append(native)
         flush()
-    text = "\n".join(parts).strip()
-    if len(text) > _MAX_EXTRACTED_CHARS:
-        raise ValueError(
-            f"This document holds {len(text):,} characters of text; the maximum "
-            f"is {_MAX_EXTRACTED_CHARS:,}. Upload the quote pages only, or paste "
-            "the relevant section."
-        )
-    return text
+    return "\n".join(parts).strip()
 
 
 def _ocr_pdf(payload: bytes, *, until: float) -> str:

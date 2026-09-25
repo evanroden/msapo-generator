@@ -52,7 +52,7 @@ def preserve_po_draft(state: MutableMapping[str, Any]) -> None:
     prefixes = (
         "contract_", "site_", "gsite_", "gsitetxt_", "cat_", "manualcost_",
         "gcat_", "gcost_", "asset_", "inc_", "exc_", "scope_", "desc_",
-        "total_", "vendor_", "contact_", "cemail_", "instructions_",
+        "total_", "sub_", "tax_", "vendor_", "contact_", "cemail_", "instructions_",
         "requester_", "job_number_", "request_type_", "original_po_",
         "purchase_route_", "show_optional_",
     )

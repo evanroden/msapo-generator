@@ -82,6 +82,7 @@ from app.po_context import (
     _document_signature,
     account_manager_memory_context_id,
     build_po_context,
+    pricing_problems,
     vendor_contact_memory_context_id,
 )
 from app.smartsheet import AGREEMENT_TYPE_OPTIONS, OBJECT_ACCOUNT_OPTIONS
@@ -2002,6 +2003,9 @@ def main() -> None:
     if total_key not in st.session_state:
         st.session_state[total_key] = analysis.total_amount or ""
     total_value = str(st.session_state.get(total_key, "") or "").strip()
+    subtotal_key, tax_key = f"sub_{token}", f"tax_{token}"
+    st.session_state.setdefault(subtotal_key, str(analysis.subtotal_amount or ""))
+    st.session_state.setdefault(tax_key, str(analysis.tax_amount or ""))
 
     vendor_key = f"vendor_{token}"
     if vendor_key not in st.session_state:
@@ -2465,6 +2469,24 @@ def main() -> None:
             ),
         ).strip()
 
+    price_issues = pricing_problems(
+        str(st.session_state.get(subtotal_key, "") or ""),
+        str(st.session_state.get(tax_key, "") or ""),
+        total_value,
+    )
+    # Both components were formerly invisible analyzer values. A misread could
+    # block the completed package with no way to repair it. Keep the controls
+    # visible when they need attention, otherwise with the optional corrections.
+    with questions if price_issues else corrections:
+        subtotal_value = st.text_input(
+            "Subtotal after discounts (optional)", key=subtotal_key,
+            help="Correct the quoted net subtotal. Leave blank only if not stated.",
+        ).strip()
+        tax_value = st.text_input(
+            "Sales tax (optional)", key=tax_key,
+            help="Enter the quoted sales tax, including zero. Leave blank only if not stated.",
+        ).strip()
+
     with questions if needs.vendor else corrections:
         st.text_input("Vendor name *", key=vendor_key)
 
@@ -2539,7 +2561,7 @@ def main() -> None:
     # When nothing is in question the container holds only the requester --
     # every other field has moved to `corrections` -- so highlighting the
     # container is precise in both cases.
-    if current_needs.any or (requester_key and not requester_value):
+    if current_needs.any or price_issues or (requester_key and not requester_value):
         highlight_needed_fields(["po_needs_you"])
 
     # The empty-note half of the pair above. Behind a toggle rather than always
@@ -2722,6 +2744,7 @@ def main() -> None:
     parsed_total = parse_amount(total_value)
     if parsed_total is None or parsed_total <= 0:
         draft_problems.append("enter a valid final PO/CO amount greater than zero")
+    draft_problems.extend(pricing_problems(subtotal_value, tax_value, total_value))
     # Guarded so the two amount complaints cannot both appear: classify_po
     # rejects a missing amount with its own wording, which would otherwise
     # duplicate the line directly above in different words and read as two
