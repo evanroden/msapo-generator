@@ -65,11 +65,13 @@ def _details(**changes) -> ExpenseReportDetails:
         "employee_number": "TEST-1001",
         "employee_home_bu": "695",
         "report_date": date(2026, 8, 11),
-        "approver_name": "RRH Test Administrator",
-        "approver_email": "rrh.approver@example.invalid",
+        "approver_name": "RRH Test Director",
+        "approver_email": "rrh.director@example.invalid",
         "mail_destination": "home",
         "satellite_office": "",
         "employee_signature_confirmed": True,
+        "manager_name": "Synthetic Manager",
+        "manager_email": "manager@example.invalid",
     }
     values.update(changes)
     return ExpenseReportDetails(**values)
@@ -269,7 +271,7 @@ def test_validation_blocks_signature_and_non_job_routes():
         [item],
     )
 
-    assert "enter a valid contract administrator email" in problems
+    assert "enter a valid account director email" in problems
     assert "confirm the generated employee signature" in problems
     assert "Receipt 1: enter the entertainment contact name" in problems
     assert (
@@ -681,7 +683,7 @@ def test_email_uses_pdf_only_and_excel_remains_in_package():
     message = BytesParser(policy=policy.default).parsebytes(
         _build_expense_eml(_details(), package)
     )
-    assert message["To"] == "rrh.approver@example.invalid"
+    assert message["To"] == "rrh.director@example.invalid"
     assert message["X-Unsent"] == "1"
     assert [part.get_filename() for part in message.iter_attachments()] == [
         "expense.pdf"

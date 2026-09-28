@@ -32,6 +32,9 @@
       font-size: 13px;
       line-height: 1.35;
       margin: 8px 2px 0;
+      /* An email address has no natural break points; without this a Cc line
+         runs past the right edge of an iPhone-width frame. */
+      overflow-wrap: anywhere;
     }
   </style>
 </head>
@@ -58,6 +61,20 @@
       {isStreamlitMessage: true, type, ...extra},
       parentOrigin
     );
+
+    // Measured, not fixed. A Cc instruction makes the status line three or four
+    // lines on a phone, and a fixed 112px iframe clips the bottom of it with no
+    // error: the employee would see half an instruction. 112 stays the floor.
+    const fitFrame = () => sendToStreamlit("streamlit:setFrameHeight", {
+      height: Math.max(112, Math.ceil(document.body.scrollHeight) + 4),
+    });
+
+    // textContent only, never innerHTML: the addresses come from deployment
+    // configuration and from a field the operator typed.
+    const setStatus = (text) => {
+      status.textContent = text;
+      fitFrame();
+    };
 
     const decode = (value, mime) => {
       const binary = atob(value);
@@ -89,23 +106,26 @@
         const files = browserFiles(Array.isArray(args.files) ? args.files : []);
         current = {
           to: String(args.to || ""),
+          cc: String(args.cc || ""),
           subject: String(args.subject || ""),
           body: String(args.body || ""),
           files,
         };
         if (directShareIsAvailable(files)) {
           button.disabled = false;
-          status.textContent = "The approver email will be copied; choose Mail or Outlook in the share sheet.";
+          setStatus(
+            "The approver email will be copied; choose Mail or Outlook in the share sheet." +
+            (current.cc ? ` Then add ${current.cc} to Cc.` : "")
+          );
         } else {
           button.disabled = true;
-          status.textContent = "This browser cannot share the PDF directly. Choose an Outlook option above, or use the files under Other file and email options.";
+          setStatus("This browser cannot share the PDF directly. Choose an Outlook option above, or use the files under Other file and email options.");
         }
       } catch (error) {
         current = null;
         button.disabled = true;
-        status.textContent = "The PDF could not be prepared for sharing. Choose an Outlook option above, or use Other file and email options.";
+        setStatus("The PDF could not be prepared for sharing. Choose an Outlook option above, or use Other file and email options.");
       }
-      sendToStreamlit("streamlit:setFrameHeight", {height: 112});
     };
 
     window.addEventListener("message", (event) => {
@@ -130,9 +150,12 @@
       try { copied = document.execCommand("copy"); } catch (error) {}
       copyField.remove();
 
-      status.textContent = copied
-        ? "Approver email copied. Choose Mail or Outlook, then paste it into To."
-        : `Choose Mail or Outlook, then address the message to ${current.to}.`;
+      // Only the approver fits on the clipboard -- it holds one string -- so the
+      // Cc is spelled out for the employee to add in the mail app.
+      const ccStep = current.cc ? ` Add ${current.cc} to Cc.` : "";
+      setStatus(copied
+        ? `Approver email copied. Choose Mail or Outlook, then paste it into To.${ccStep}`
+        : `Choose Mail or Outlook, then address the message to ${current.to}.${ccStep}`);
 
       try {
         await navigator.share({
@@ -142,7 +165,7 @@
         });
       } catch (error) {
         if (error.name !== "AbortError") {
-          status.textContent = "The share sheet could not open. Choose an Outlook option above, or use Other file and email options.";
+          setStatus("The share sheet could not open. Choose an Outlook option above, or use Other file and email options.");
         }
       }
     });

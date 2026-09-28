@@ -98,11 +98,16 @@ def test_public_examples_and_render_blueprint_require_private_configuration():
     blueprint = (REPO_ROOT / "render.yaml").read_text(encoding="utf-8")
 
     assert "ANTHROPIC_API_KEY=replace-with-private-key" in example
-    assert "RRH_APPROVER_EMAIL=rrh.approver@example.invalid" in example
+    assert '"email":"rrh.director@example.invalid"' in example
+    # The retired administrator/Cc variables must not come back: a stale value
+    # in a deployment would otherwise route reports to the wrong person.
+    assert "RRH_APPROVER" not in example
+    assert "RRH_APPROVER" not in blueprint
     assert "/b/form/00000000000000000000000000000000" in example
     for key in (
-        "RRH_APPROVER_NAME",
-        "RRH_APPROVER_EMAIL",
+        # Real directors' names and addresses: declared without a value and
+        # set in the dashboard.
+        "EXPENSE_ACCOUNT_DIRECTORS_JSON",
         "SMARTSHEET_FORM_URL",
         "SMARTSHEET_API_TOKEN",
         "SMARTSHEET_SHEET_ID",

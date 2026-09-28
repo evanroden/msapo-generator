@@ -63,12 +63,16 @@ There is no email-submission route in the active UI.
    photos, screenshots, common image formats, and multi-page PDF receipts are
    supported without modifying the uploaded files. Receipt upload is optional
    for a mileage-only report.
-2. Confirm the employee, report date, administrator, mail destination, and RRH
-   service year. RRH derives Employee Home Business Unit `695` from the account
-   and defaults the approval recipient from private deployment configuration.
-   Confirmed employee numbers are recalled by employee name. Administrator
-   names are searchable per account, and selecting one fills the remembered
-   email without carrying contacts between accounts.
+2. Confirm the employee, report date, account director, your manager, mail
+   destination, and RRH service year. The approval email goes **to the ENFRA
+   director of the contract** (not the contract administrator), with **the
+   filer's own manager on Cc**. Directors come from private deployment
+   configuration (`EXPENSE_ACCOUNT_DIRECTORS_JSON`, one per account) and outrank
+   anything a device remembers; the manager is entered once and remembered on
+   that browser. RRH derives Employee Home Business Unit `695` from the account.
+   Confirmed employee numbers are recalled by employee name. For a first-time
+   filer, a customer name printed on the receipts pre-fills an empty employee
+   name, flagged as a low-confidence guess to check.
 3. Review the editable merchant, transaction date, description/business
    purpose, reimbursable amount, and Miscellaneous/Entertainment selection below
    every receipt. Required values remain visible when AI cannot determine them.
@@ -274,7 +278,7 @@ count, account memories do not cross, and there is no Forget button in the
 active flow. Blocked cookies disable only this convenience.
 
 After a valid expense package is generated, the same browser/account pair also
-remembers the reviewed employee name/number, administrator, and mail destination.
+remembers the reviewed employee name/number, account director, manager, and mail destination.
 Employee Home Business Unit and baseline coding are derived from account policy.
 It never persists receipt files, merchant names, transaction dates, descriptions,
 amounts, or mileage. An in-progress draft is mirrored in the current Streamlit

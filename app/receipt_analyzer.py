@@ -94,6 +94,12 @@ class ReceiptAnalysis:
     confidence: str = "low"
     review_notes: list[str] = field(default_factory=list)
     line_items: tuple[ReceiptLineItem, ...] = field(default_factory=tuple)
+    # The person the receipt names as its customer (cardholder, guest,
+    # passenger, reservation holder), normalised to "First Last". LOW
+    # confidence by nature -- a colleague may have paid, or the name may be a
+    # card's abbreviation -- so expense_ui only ever uses it to pre-fill an
+    # EMPTY employee-name field for a first-time filer, with a note to check it.
+    customer_name: str = ""
 
 
 # Ceiling on the per-item checkboxes the review card will render. A long
@@ -179,6 +185,10 @@ Extract or make a careful best-supported guess for:
   change, loyalty points, or suggested-tip rows as items. Preserve repeated
   items as separate entries. Return an empty list when individual purchased
   items are not readable.
+- customer_name: the full name of the person the receipt was issued to (the
+  customer, cardholder, hotel guest, passenger, or reservation holder) exactly
+  as printed; never the merchant, cashier, server, host, or driver; null when no
+  such person is named
 - expense_section_guess: "entertainment" only when the receipt itself supports
   customer/guest/business entertainment; otherwise "miscellaneous"
 - confidence: "high", "medium", or "low"
@@ -201,6 +211,7 @@ Return exactly these keys:
   "line_items": [
     {"description": "purchased item", "amount": "decimal string"}
   ],
+  "customer_name": "string or null",
   "expense_section_guess": "miscellaneous | entertainment",
   "confidence": "high | medium | low",
   "review_notes": ["string", "..."]
@@ -409,7 +420,79 @@ def normalize_receipt_response(raw: str) -> ReceiptAnalysis:
         confidence=confidence,
         review_notes=list(dict.fromkeys(notes)),
         line_items=line_items,
+        customer_name=person_name(
+            _optional_string(source.get("customer_name")), merchant=merchant
+        ),
     )
+
+
+_NAME_TITLES = {"mr", "mrs", "ms", "miss", "mx", "dr"}
+# Placeholders printed where a name would be ("CARD MEMBER", "Valued Guest").
+# Any of these words disqualifies the whole value.
+_NOT_A_NAME_WORDS = {
+    "account", "card", "cardholder", "cardmember", "customer", "guest",
+    "holder", "member", "name", "server", "table", "valued", "visa",
+    "mastercard", "amex", "discover", "debit", "credit",
+}
+
+
+def person_name(value: str, *, merchant: str = "") -> str:
+    """Normalise a receipt's printed customer name to "First Last", or "".
+
+    Receipts print names every way there is: "RODEN/EVAN" (airlines),
+    "Roden, Evan J" (hotels), "EVAN J RODEN" (card slips). Anything that does
+    not read as a two-to-four-word personal name -- digits, an address, a
+    masked card number, the merchant's own name -- becomes "" rather than a
+    guess, because the only use of this value is to pre-fill a person's name.
+    """
+    text = " ".join(str(value or "").split())
+    if not text or len(text) > 60 or re.search(r"[\d@#*]", text):
+        return ""
+    for separator in ("/", ","):
+        if text.count(separator) == 1:
+            last, first = (part.strip() for part in text.split(separator))
+            text = f"{first} {last}"
+            break
+    words = [
+        word
+        for word in text.replace(".", " ").split()
+        if word.casefold() not in _NAME_TITLES
+    ]
+    if not 2 <= len(words) <= 4:
+        return ""
+    if any(word.casefold() in _NOT_A_NAME_WORDS for word in words):
+        return ""
+    if not all(re.fullmatch(r"[A-Za-z][A-Za-z'\-]*", word) for word in words):
+        return ""
+    if len(words[0]) < 2 or len(words[-1]) < 2:
+        return ""
+    name = " ".join(words)
+    if merchant and name.casefold() in " ".join(merchant.split()).casefold():
+        return ""
+    if name.isupper() or name.islower():
+        name = " ".join(word[:1].upper() + word[1:].lower() for word in words)
+    return name
+
+
+def guess_employee_name(analyses) -> str:
+    """The customer name most receipts agree on, or "" when there is none.
+
+    Ties go to the name seen first. A single receipt naming someone is still
+    offered -- the caller labels it low confidence and asks for a check.
+    """
+    counts: dict[str, int] = {}
+    display: dict[str, str] = {}
+    for analysis in analyses:
+        name = getattr(analysis, "customer_name", "") or ""
+        key = name.casefold()
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        display.setdefault(key, name)
+    if not counts:
+        return ""
+    best = max(counts.values())
+    return next(display[key] for key in counts if counts[key] == best)
 
 
 def _call_with_retry(client, content: list[dict[str, Any]], max_retries: int = 3, *, until: float | None = None) -> str:

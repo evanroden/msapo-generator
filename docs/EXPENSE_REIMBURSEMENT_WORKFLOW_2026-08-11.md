@@ -19,7 +19,7 @@ One generation action creates:
    worksheet when receipts are present. This remains available for edits.
 2. A single `.pdf` packet with the official form first and each receipt page
    afterward.
-3. A platform-aware approval action addressed to the reviewed administrator.
+3. A platform-aware approval action addressed to the account director, with the filer's manager on Cc.
    Windows defaults to an Outlook `.eml` draft with only the submission PDF
    attached; Outlook on the web uses the same attachment-bearing draft. iPhone
    and iPad use Web Share Level 2 to pass the PDF and message directly to Mail
@@ -77,13 +77,54 @@ Required report values:
 - Employee name
 - Employee number
 - Report date
-- Contract administrator name and email
+- ENFRA account director name and email (the approval email's **To**)
+- The filer's manager name and email (the approval email's **Cc**)
 - Mail destination; satellite office becomes required when selected
 
 For RRH, Employee Home Business Unit is derived from the account as `695`,
-matching the approved Dane report. The default administrator name and email
-come from private deployment configuration rather than public source. A
-different reviewed administrator can still be entered.
+matching the approved Dane report.
+
+**Approval routing (updated 2026-09-28).** Every expense report, on every
+account, goes **to the ENFRA director of the filer's contract** -- not the
+contract administrator, which is what the tool addressed before -- with **the
+filer's own manager copied**.
+
+- **Directors are per contract** and come from one deployment variable, set
+  privately in the Render dashboard and never committed (this repository is
+  public):
+
+  ```
+  EXPENSE_ACCOUNT_DIRECTORS_JSON={"Rochester Regional Health": {"name": "...", "email": "..."}, "Tulane": {"name": "...", "email": "..."}}
+  ```
+
+  Keys are account names as the expense page lists them (case and spacing are
+  forgiven). A malformed entry, or a key matching no account, is shown as a
+  warning on the expense page rather than silently ignored. A configured
+  director **outranks** whatever a device remembers, so a change reaches people
+  who have filed before. Accounts without an entry ask the filer to enter the
+  director, with a note that it is not the contract administrator.
+- **The manager is per employee**, entered in the form (required) and remembered
+  on that browser with the rest of the filer's details.
+- **Administrators remembered before this change are never offered or seeded as
+  the director.** The retired `RRH_APPROVER_NAME` / `RRH_APPROVER_EMAIL`
+  variables are no longer read, and device memory marks which remembered
+  approvers were confirmed as directors (a guarded, in-place schema migration
+  adds the columns; existing profiles keep working).
+- The Cc is **left off** when the manager entered is the filer (matched on first
+  and last name, or on a `first.last` mailbox whose first part prefixes the
+  filer's first name -- `christop.` matches Christopher, but Christina is not
+  Chris), and when the manager is also the director already on To. The send
+  step states To and Cc, and why a Cc is absent, before anything is sent.
+- Every route carries the Cc: the Outlook `.eml` draft sets a `Cc` header, the
+  attachment-free mailto adds `cc=`, and the iPhone/iPad share sheet -- which
+  cannot set recipients -- spells the Cc address out for the employee to add.
+
+**First-time filers.** When the employee-name field is empty (nothing
+remembered on this browser) and the receipts print a customer name -- a card
+slip's cardholder, a hotel guest, an airline passenger -- the most common one
+pre-fills the field once, with a warning that it is a low-confidence guess to
+check. A remembered or typed name is never replaced, and a corrected or cleared
+name is never refilled.
 
 RRH service year controls the Account / Cost Type default: `01AMA` for year 1,
 `02AMA` for year 2, `03AMA` for year 3, and so on. Cost Code defaults to `5490`.
@@ -169,7 +210,10 @@ Outlook on the web using the attachment-bearing `.eml`. The mobile action turns
 the generated PDF bytes into a browser `File`, verifies `navigator.canShare`
 for that file, and calls `navigator.share` with the file, subject, and message.
 The approver email is copied for the employee to paste into the share-sheet
-draft's To field. The editable Excel file, submission PDF, and generic
+draft's To field; a configured Cc is shown in the status line to add by hand,
+because the clipboard holds a single string. That component sizes its frame to
+its content: the Cc instruction ends at 124px on a 320-343px phone, past the
+112px it was fixed at before. The editable Excel file, submission PDF, and generic
 attachment-free fallback stay collapsed under **Other file and email options**.
 Any edit changes the content fingerprint and suppresses stale actions and
 downloads until regeneration.
