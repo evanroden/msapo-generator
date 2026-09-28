@@ -66,9 +66,13 @@ There is no email-submission route in the active UI.
 2. Confirm the employee, report date, administrator, mail destination, and RRH
    service year. RRH derives Employee Home Business Unit `695` from the account
    and defaults the approval recipient from private deployment configuration.
+   That configured approver is account policy: it outranks the approver a
+   device remembers, so a change reaches people who have filed before.
    Confirmed employee numbers are recalled by employee name. Administrator
    names are searchable per account, and selecting one fills the remembered
-   email without carrying contacts between accounts.
+   email without carrying contacts between accounts. RRH approval emails also
+   copy a configured Cc person, except on that person's own report; the send
+   step names the Cc before anything is sent.
 3. Review the editable merchant, transaction date, description/business
    purpose, reimbursable amount, and Miscellaneous/Entertainment selection below
    every receipt. Required values remain visible when AI cannot determine them.

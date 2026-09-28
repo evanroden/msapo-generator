@@ -85,6 +85,32 @@ matching the approved Dane report. The default administrator name and email
 come from private deployment configuration rather than public source. A
 different reviewed administrator can still be entered.
 
+**RRH approval routing (updated 2026-09-28).** Account guidance from the RRH
+asset manager: send each report directly to the configured approver, with the
+asset manager copied. Four deployment variables carry it, set privately in the
+Render dashboard and never committed (this repository is public):
+
+| Variable | Holds |
+|---|---|
+| `RRH_APPROVER_NAME` / `RRH_APPROVER_EMAIL` | The approver, on **To** |
+| `RRH_APPROVER_CC_NAME` / `RRH_APPROVER_CC_EMAIL` | The person copied, on **Cc** |
+
+- A fully configured approver **outranks** the approver a device remembers.
+  Before this change the remembered one won, so a new configured approver only
+  reached devices that had never filed. Remembered names stay selectable.
+- The Cc is **left off** when the employee filing is the Cc person, matched on
+  first and last name or on a `first.last` mailbox whose first part is a prefix
+  of the employee's first name (so a truncated mailbox such as `christop.`
+  still matches Christopher). A shared first-name prefix alone does not match:
+  Christina is not Chris.
+- The Cc is also left off when that person is already the approver, and when
+  the configured address is not a usable email -- in which case the send step
+  shows a warning naming `RRH_APPROVER_CC_EMAIL` rather than dropping it
+  silently.
+- Every route carries it: the Outlook `.eml` draft sets a `Cc` header, the
+  attachment-free mailto adds `cc=`, and the iPhone/iPad share sheet -- which
+  cannot set recipients -- spells the Cc address out for the employee to add.
+
 RRH service year controls the Account / Cost Type default: `01AMA` for year 1,
 `02AMA` for year 2, `03AMA` for year 3, and so on. Cost Code defaults to `5490`.
 
@@ -169,7 +195,10 @@ Outlook on the web using the attachment-bearing `.eml`. The mobile action turns
 the generated PDF bytes into a browser `File`, verifies `navigator.canShare`
 for that file, and calls `navigator.share` with the file, subject, and message.
 The approver email is copied for the employee to paste into the share-sheet
-draft's To field. The editable Excel file, submission PDF, and generic
+draft's To field; a configured Cc is shown in the status line to add by hand,
+because the clipboard holds a single string. That component sizes its frame to
+its content: the Cc instruction ends at 124px on a 320-343px phone, past the
+112px it was fixed at before. The editable Excel file, submission PDF, and generic
 attachment-free fallback stay collapsed under **Other file and email options**.
 Any edit changes the content fingerprint and suppresses stale actions and
 downloads until regeneration.

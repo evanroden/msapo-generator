@@ -107,8 +107,13 @@ def build_eml(
     bullets: list[Bullet],
     attachments: list[tuple[str, bytes]],  # [(filename, data), ...]
     greeting: str = GREETING,
+    cc: str = "",
 ) -> bytes:
     """Return raw .eml bytes with a ready-to-send body and attachments.
+
+    ``cc`` is one bare address, or "" for no Cc header at all. An empty header
+    is not written: Outlook shows a blank "Cc" row as an addressing mistake the
+    employee then has to reason about before sending.
 
     Parameters
     ----------
@@ -149,6 +154,10 @@ def build_eml(
 
     msg = EmailMessage()
     msg["To"] = to
+    # Same header-injection guard as To: the stdlib policy raises ValueError on
+    # CR or LF in any header value, so a crafted address cannot smuggle in a Bcc.
+    if cc:
+        msg["Cc"] = cc
     msg["Subject"] = subject
     msg["From"] = ""  # Left blank — Outlook fills in the sender
     msg["X-Unsent"] = "1"  # Opens in Outlook compose mode with Send button
@@ -171,7 +180,7 @@ def build_eml(
     return msg.as_bytes()
 
 
-def build_mailto_url(*, to: str, subject: str, body: str) -> str:
+def build_mailto_url(*, to: str, subject: str, body: str, cc: str = "") -> str:
     """mailto: URL that opens a pre-filled draft in the default mail app.
 
     Attachments cannot be passed through mailto:. The primary iOS action uses
@@ -188,7 +197,12 @@ def build_mailto_url(*, to: str, subject: str, body: str) -> str:
     encoded too; the subject and body are fully encoded, which is what turns
     build_plain_body's newlines into %0A rather than terminating the URL.
     """
-    return f"mailto:{quote(to, safe='@')}?subject={quote(subject)}&body={quote(body)}"
+    url = f"mailto:{quote(to, safe='@')}?subject={quote(subject)}&body={quote(body)}"
+    # RFC 6068 hfield. Encoded like the recipient, so "&" or "?" in a malformed
+    # address cannot start a new field and rewrite the subject or body.
+    if cc:
+        url += f"&cc={quote(cc, safe='@')}"
+    return url
 
 
 def _esc(text: str) -> str:

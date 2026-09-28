@@ -1944,6 +1944,78 @@ def _looks_like_email(value: str) -> bool:
     )
 
 
+# Public name for the same check, used by expense_ui to report a misconfigured
+# Cc address rather than quietly dropping it.
+looks_like_email = _looks_like_email
+
+
+def _name_words(value: str) -> list[str]:
+    """Lower-case letter runs: "Example, Chris J." -> ["example", "chris", "j"]."""
+    return re.findall(r"[a-z]+", str(value or "").casefold())
+
+
+def is_same_person(employee_name: str, person_name: str, person_email: str = "") -> bool:
+    """Whether the employee filing this report is the named person.
+
+    Two ways to match, both on FIRST and LAST words only, so a middle name or
+    initial on either side ("Chris A. Example") does not break the comparison:
+
+    1. The configured name: "Chris Example" matches "Chris Example".
+    2. The address's local part, when it reads first.last: "christop.example"
+       matches "Christopher Example", because corporate mailboxes truncate the
+       first name and the configured display name may use the short form.
+
+    Deliberately NOT a plain prefix test on the configured first name. "chris"
+    is a prefix of Christina and Christian as well as Christopher, and the cost
+    of a false match is the Cc silently vanishing from SOMEONE ELSE'S report.
+    The address rule is narrower -- "christina" does not start with "christop".
+    A miss in the other direction just copies the filer on their own report,
+    which is visible and harmless.
+    """
+    employee = _name_words(employee_name)
+    if len(employee) < 2:
+        return False
+    named = _name_words(person_name)
+    if len(named) >= 2 and employee[0] == named[0] and employee[-1] == named[-1]:
+        return True
+    local = str(person_email or "").split("@", 1)[0]
+    parts = _name_words(local)
+    return (
+        len(parts) >= 2
+        and len(parts[0]) >= 3
+        and employee[-1] == parts[-1]
+        and employee[0].startswith(parts[0])
+    )
+
+
+def approval_cc(
+    details: "ExpenseReportDetails",
+    *,
+    cc_name: str,
+    cc_email: str,
+) -> tuple[str, str] | None:
+    """The (name, address) to copy on this report's approval email, or None.
+
+    ``cc_name`` / ``cc_email`` are the account's configured Cc person; the caller
+    decides which account has one. None when:
+
+    * no address is configured, or it is not a usable address -- a malformed
+      Cc header would put a broken recipient in front of the employee at the
+      send step, and expense_ui reports that case instead of passing it on;
+    * the Cc person IS the approver -- the same inbox twice is noise;
+    * the Cc person is the one filing. The account guidance is to copy them "for
+      approval"; on their own report there is nothing for them to approve.
+    """
+    email = str(cc_email or "").strip()
+    if not email or not _looks_like_email(email):
+        return None
+    if email.casefold() == str(details.approver_email or "").strip().casefold():
+        return None
+    if is_same_person(details.employee_name, cc_name, email):
+        return None
+    return (str(cc_name or "").strip(), email)
+
+
 def _deduplicate(values: list[str]) -> list[str]:
     """De-duplicate while preserving first-seen order, dropping empties.
 

@@ -15,6 +15,10 @@ services:
         sync: false
       - key: RRH_APPROVER_EMAIL
         sync: false
+      - key: RRH_APPROVER_CC_NAME
+        sync: false
+      - key: RRH_APPROVER_CC_EMAIL
+        sync: false
       # Persistent disk is created in the Render dashboard and mounted at /test1.
       # It stores contract learning, anonymous browser requester learning, and
       # fail-closed Smartsheet idempotency state.

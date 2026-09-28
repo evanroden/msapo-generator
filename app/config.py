@@ -65,8 +65,24 @@ def operator_today(browser_timezone: str | None = None) -> "date":
 
 
 # Contract administrators are deployment data, not source-code constants.
+#
+# The RRH approver is ACCOUNT POLICY, not a suggestion. When both halves are set,
+# expense_ui seeds it ahead of an operator's remembered approver -- otherwise a
+# change here would only ever reach devices that had never filed a report, and
+# everyone else would keep sending to whoever approved last time.
 RRH_APPROVER_NAME = os.getenv("RRH_APPROVER_NAME", "").strip()
 RRH_APPROVER_EMAIL = os.getenv("RRH_APPROVER_EMAIL", "").strip()
+
+# The person copied on every RRH approval email, per the account's standing
+# guidance: reports go to the approver with the asset manager on Cc. Left out
+# automatically when that person is the one filing (see
+# expense_report.approval_cc). Blank leaves the approval email with no Cc.
+#
+# Real addresses belong in the deployment environment only. This repository is
+# public, and tests/test_public_repository_hygiene.py fails the build if an
+# ENFRA address is committed anywhere in it.
+RRH_APPROVER_CC_NAME = os.getenv("RRH_APPROVER_CC_NAME", "").strip()
+RRH_APPROVER_CC_EMAIL = os.getenv("RRH_APPROVER_CC_EMAIL", "").strip()
 
 # ── PDF Conversion Backend ────────────────────────────────────────────
 # Options: "libreoffice", "gotenberg", "docx2pdf"

@@ -52,7 +52,13 @@ import streamlit.components.v1 as components
 
 from app import contracts
 from app.content_cache import ContentDigests
-from app.config import RRH_APPROVER_EMAIL, RRH_APPROVER_NAME, operator_today
+from app.config import (
+    RRH_APPROVER_CC_EMAIL,
+    RRH_APPROVER_CC_NAME,
+    RRH_APPROVER_EMAIL,
+    RRH_APPROVER_NAME,
+    operator_today,
+)
 from app.eml_builder import (
     build_eml,
     build_mailto_url,
@@ -71,6 +77,7 @@ from app.expense_report import (
     ExpenseReportDetails,
     MileageItem,
     allocation_problems,
+    approval_cc,
     build_expense_package,
     email_attachment_size_warning,
     email_attachments_for_package,
@@ -78,6 +85,8 @@ from app.expense_report import (
     expense_report_signature,
     expense_report_warnings,
     irs_business_mileage_rate,
+    is_same_person,
+    looks_like_email,
     parse_expense_amount,
     parse_mileage,
     receipt_preview_bytes,
@@ -1816,18 +1825,33 @@ def _seed_profile(
         employee_name = profile.get("employee_name") or remembered_device_account_manager(
             browser_token, account
         )
+        # A fully configured RRH approver is ACCOUNT POLICY and outranks the
+        # approver this device remembers. The previous order -- remembered
+        # first, configuration as the fallback -- meant a change to the
+        # configured approver only ever reached devices that had never filed:
+        # everyone else kept defaulting to whoever approved last time, which is
+        # exactly the failure an "always send it to X" instruction exists to
+        # stop. The remembered names stay in the dropdown, so choosing someone
+        # else is still one click.
+        #
+        # Taken as a PAIR, never field by field: a configured name beside a
+        # remembered email would address one person's report to another.
+        # Incomplete configuration keeps the old per-field fallback exactly.
+        if contracts.is_rrh(account) and RRH_APPROVER_NAME and RRH_APPROVER_EMAIL:
+            seeded_approver = (RRH_APPROVER_NAME, RRH_APPROVER_EMAIL)
+        else:
+            seeded_approver = (
+                profile.get("approver_name")
+                or (RRH_APPROVER_NAME if contracts.is_rrh(account) else ""),
+                profile.get("approver_email")
+                or (RRH_APPROVER_EMAIL if contracts.is_rrh(account) else ""),
+            )
         defaults = {
             f"expense_employee_name_{account_token}": employee_name,
             f"expense_employee_number_{account_token}": profile.get("employee_number", ""),
             f"expense_report_date_{account_token}": operator_today(browser_timezone),
-            f"expense_approver_name_{account_token}": (
-                profile.get("approver_name")
-                or (RRH_APPROVER_NAME if contracts.is_rrh(account) else "")
-            ),
-            f"expense_approver_email_{account_token}": (
-                profile.get("approver_email")
-                or (RRH_APPROVER_EMAIL if contracts.is_rrh(account) else "")
-            ),
+            f"expense_approver_name_{account_token}": seeded_approver[0],
+            f"expense_approver_email_{account_token}": seeded_approver[1],
             f"expense_mail_destination_{account_token}": (
                 profile.get("mail_destination")
                 if profile.get("mail_destination") in _MAIL_LABELS
@@ -2003,6 +2027,57 @@ def _remember_profile(
     )
 
 
+def _approval_cc(details: ExpenseReportDetails) -> tuple[str, str] | None:
+    """The Cc for this report's approval email, or None.
+
+    RRH only: the RRH account's standing guidance is to send reports to the
+    approver with the asset manager copied. The policy -- including leaving the
+    Cc person off their OWN report -- lives in expense_report.approval_cc.
+
+    Derived from the report details at send time rather than stored as its own
+    field. That is what keeps it correct when the employee name changes after
+    the page first rendered: a seeded field would have to be re-synchronised,
+    and a stale one would copy the Cc person on their own report.
+    """
+    if not contracts.is_rrh(details.account):
+        return None
+    return approval_cc(
+        details, cc_name=RRH_APPROVER_CC_NAME, cc_email=RRH_APPROVER_CC_EMAIL
+    )
+
+
+def _approval_routing_note(details: ExpenseReportDetails) -> tuple[str, str]:
+    """(caption, warning) describing who the approval email goes to.
+
+    Shown beside the send action so the operator can see the Cc before sending,
+    and -- when it is deliberately left off -- WHY it is missing, rather than
+    discovering an absent Cc after the fact. The warning is non-empty only when
+    the deployment's configured Cc address is unusable, which is a setup error
+    worth surfacing rather than silently dropping.
+    """
+    approver = details.approver_name or details.approver_email
+    cc = _approval_cc(details)
+    if cc is not None:
+        return f"Approval email goes to {approver}, with {cc[0] or cc[1]} on Cc.", ""
+    if not contracts.is_rrh(details.account) or not RRH_APPROVER_CC_EMAIL:
+        return f"Approval email goes to {approver}.", ""
+    if not looks_like_email(RRH_APPROVER_CC_EMAIL):
+        return (
+            f"Approval email goes to {approver}.",
+            "The account's Cc address is not a valid email, so this approval "
+            "email has no Cc. Ask whoever maintains the deployment to correct "
+            "RRH_APPROVER_CC_EMAIL.",
+        )
+    if is_same_person(details.employee_name, RRH_APPROVER_CC_NAME, RRH_APPROVER_CC_EMAIL):
+        return (
+            f"Approval email goes to {approver}. No Cc: you are the account's "
+            "usual Cc recipient.",
+            "",
+        )
+    # Remaining case: the Cc person is the approver, so they are already on To.
+    return f"Approval email goes to {approver}.", ""
+
+
 def _build_expense_eml(details: ExpenseReportDetails, package: ExpensePackage) -> bytes:
     """Build the unsent Outlook draft carrying the combined PDF.
 
@@ -2041,12 +2116,14 @@ def _build_expense_eml(details: ExpenseReportDetails, package: ExpensePackage) -
         if first_name
         else "Good afternoon. Please review and approve the attached expense report."
     )
+    cc = _approval_cc(details)
     return build_eml(
         to=details.approver_email,
         subject=subject,
         bullets=bullets,
         attachments=email_attachments_for_package(package),
         greeting=greeting,
+        cc=cc[1] if cc else "",
     )
 
 
@@ -2097,6 +2174,12 @@ def _render_generated_package(
         st.warning(size_warning)
 
     subject, body = _expense_email_subject_and_body(details, package)
+    cc = _approval_cc(details)
+    cc_email = cc[1] if cc else ""
+    routing_caption, routing_warning = _approval_routing_note(details)
+    if routing_warning:
+        st.warning(routing_warning)
+    st.caption(routing_caption)
     preferred_destination = _preferred_email_destination(
         _request_user_agent(),
         _request_platform_hint(),
@@ -2160,6 +2243,7 @@ def _render_generated_package(
     else:
         _render_ios_mail_share(
             to=details.approver_email,
+            cc=cc_email,
             subject=subject,
             body=body,
             attachments=email_attachments_for_package(package),
@@ -2196,6 +2280,7 @@ def _render_generated_package(
                 to=details.approver_email,
                 subject=subject,
                 body=body,
+                cc=cc_email,
             ),
             width="stretch",
         )
@@ -2207,6 +2292,7 @@ def _render_ios_mail_share(
     subject: str,
     body: str,
     attachments: list[tuple[str, bytes]],
+    cc: str = "",
 ) -> None:
     """Pass the completed PDF to an iOS/iPadOS mail app through Web Share.
 
@@ -2217,13 +2303,16 @@ def _render_ios_mail_share(
     tests/test_web_ui_app.py.
 
     Web Share cannot populate a recipient, so the frontend copies the approver
-    address to the clipboard (or displays it) in the same user gesture. Nothing
+    address to the clipboard (or displays it) in the same user gesture. The
+    clipboard holds one string, so a Cc cannot travel the same way: it is SHOWN
+    in the status line for the employee to add, which is the platform's limit
+    rather than a choice. Nothing
     may be awaited before ``navigator.share()``: the transient user activation
     expires and the sheet silently refuses to open.
     """
     _IOS_MAIL_SHARE_COMPONENT(
         **_ios_mail_share_payload(
-            to=to, subject=subject, body=body, attachments=attachments
+            to=to, cc=cc, subject=subject, body=body, attachments=attachments
         ),
         # A starting iframe height, refined by the frontend's
         # streamlit:setFrameHeight message. It must stay large enough to show
@@ -2245,6 +2334,7 @@ def _ios_mail_share_payload(
     subject: str,
     body: str,
     attachments: list[tuple[str, bytes]],
+    cc: str = "",
 ) -> dict[str, object]:
     """Serialize an attachment-bearing iOS share request for the component.
 
@@ -2259,6 +2349,7 @@ def _ios_mail_share_payload(
     """
     return {
         "to": to,
+        "cc": cc,
         "subject": subject,
         "body": body,
         "files": [
