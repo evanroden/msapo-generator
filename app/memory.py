@@ -82,9 +82,10 @@ REQUESTER_SUGGEST_THRESHOLD = 3
 # remain idempotent for independent processes and restored database files.
 #
 # CREATE TABLE IF NOT EXISTS is a NO-OP on an older table, so changing a schema
-# below still requires a migration. _migrate_expense_approver_identity handles
-# the one historical change this module has needed; any future field or key
-# change needs an equivalent guarded migration, not only an edit here.
+# below still requires a migration. _migrate_expense_approver_identity (key
+# change) and _migrate_expense_routing_columns (added columns) handle the two
+# historical changes; any future field or key change needs an equivalent
+# guarded migration, not only an edit here.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS admin_emails (
     contract TEXT NOT NULL,
@@ -172,6 +173,9 @@ CREATE TABLE IF NOT EXISTS device_expense_profiles (
     ou_number            TEXT NOT NULL,
     gl_account_number    TEXT NOT NULL,
     last_used            REAL NOT NULL DEFAULT 0,
+    manager_name         TEXT NOT NULL DEFAULT '',
+    manager_email        TEXT NOT NULL DEFAULT '',
+    approver_role        TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (device_hash, account_key)
 );
 CREATE TABLE IF NOT EXISTS device_expense_employees (
@@ -190,6 +194,7 @@ CREATE TABLE IF NOT EXISTS expense_approvers (
     email          TEXT NOT NULL,
     use_count      INTEGER NOT NULL DEFAULT 0,
     last_used      REAL NOT NULL DEFAULT 0,
+    role           TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (account_key, approver_key, email)
 );
 CREATE TABLE IF NOT EXISTS expense_approver_events (
@@ -275,6 +280,61 @@ def _migrate_expense_approver_identity(conn: sqlite3.Connection) -> None:
         raise
 
 
+# Approval routing changed on 2026-09-28: an expense report now goes TO the
+# ENFRA director of the filer's contract, with the filer's own manager on Cc --
+# NOT to the contract administrator, which is what every approver remembered
+# before that date is. These columns carry that distinction:
+#
+#   device_expense_profiles.manager_name / manager_email -- the filer's manager.
+#   device_expense_profiles.approver_role -- "director" once a report has been
+#       generated under the new routing; "" marks a legacy (administrator) row.
+#   expense_approvers.role -- the same marker for the shared typeahead, so a
+#       remembered contract administrator is never offered as the director.
+#
+# CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists, so a
+# deployed database only gains these columns here. Skipping this is not a loud
+# failure: remembered_expense_profile would SELECT a missing column, hit its
+# except-branch and return {} -- every device silently forgets every profile.
+_ROUTING_COLUMNS = (
+    ("device_expense_profiles", "manager_name"),
+    ("device_expense_profiles", "manager_email"),
+    ("device_expense_profiles", "approver_role"),
+    ("expense_approvers", "role"),
+)
+
+
+def _migrate_expense_routing_columns(conn: sqlite3.Connection) -> None:
+    """Add the 2026-09-28 routing columns to a database created before them."""
+    def _missing() -> list[tuple[str, str]]:
+        present: dict[str, set[str]] = {}
+        for table, _ in _ROUTING_COLUMNS:
+            if table not in present:
+                present[table] = {
+                    row[1]
+                    for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                }
+        return [
+            (table, column)
+            for table, column in _ROUTING_COLUMNS
+            if column not in present[table]
+        ]
+
+    if not _missing():
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        # Re-read under the write lock: another worker may have added them
+        # while this connection waited, and ADD COLUMN twice is an error.
+        for table, column in _missing():
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def _data_dir() -> Path:
     # EPC_DATA_DIR wins over the mount so every test can point the whole module
     # at a tmp_path. The /test1 probe is is_dir(), not exists(): when the Render
@@ -329,6 +389,9 @@ def _connect() -> sqlite3.Connection | None:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.executescript(_SCHEMA)
                 _migrate_expense_approver_identity(conn)
+                # After the identity migration, which rebuilds
+                # expense_approvers without the role column.
+                _migrate_expense_routing_columns(conn)
                 version = conn.execute("PRAGMA schema_version").fetchone()[0]
                 if len(_INITIALIZED_DATABASES) >= 128:
                     _INITIALIZED_DATABASES.clear()
@@ -955,10 +1018,11 @@ def remembered_device_account_manager(
 # the keys of the dict remembered_expense_profile() returns. Every name here
 # MUST exist as a column in _SCHEMA under the same spelling.
 #
-# Adding a field is not a one-line change. There is no expense-profile migration,
-# so on an existing deployment the new column will not exist, the SELECT raises,
-# the except-branch returns {}, and ALL expense recall stops with no error --
-# while a fresh tmp_path database makes every test pass. Read the _SCHEMA note.
+# Adding a field is not a one-line change. On an existing deployment the new
+# column will not exist unless a migration adds it (see _ROUTING_COLUMNS and
+# _migrate_expense_routing_columns), the SELECT raises, the except-branch
+# returns {}, and ALL expense recall stops with no error -- while a fresh
+# tmp_path database makes every test pass. Read the _SCHEMA note.
 #
 # Order within the tuple is free (columns and placeholders are generated from
 # it together), but it must stay consistent within a single call.
@@ -980,6 +1044,9 @@ _EXPENSE_PROFILE_FIELDS = (
     "department_number",
     "ou_number",
     "gl_account_number",
+    "manager_name",
+    "manager_email",
+    "approver_role",
 )
 
 
@@ -1029,6 +1096,10 @@ def record_expense_profile(
     # optional here and required by the report generator, not by memory.
     if cleaned["approver_email"] and not _looks_like_email(
         cleaned["approver_email"].lower()
+    ):
+        return False
+    if cleaned["manager_email"] and not _looks_like_email(
+        cleaned["manager_email"].lower()
     ):
         return False
 
@@ -1253,11 +1324,12 @@ def record_expense_approver(
             )
             conn.execute(
                 "INSERT INTO expense_approvers "
-                "(account_key,approver_key,display_name,email,use_count,last_used) "
-                "VALUES (?,?,?,?,1,?) "
+                "(account_key,approver_key,display_name,email,use_count,last_used,"
+                "role) VALUES (?,?,?,?,1,?,'director') "
                 "ON CONFLICT(account_key,approver_key,email) DO UPDATE SET "
                 "display_name=excluded.display_name,"
-                "use_count=use_count+1,last_used=excluded.last_used",
+                "use_count=use_count+1,last_used=excluded.last_used,"
+                "role=excluded.role",
                 (account_key, approver_key, name, email, now),
             )
         else:
@@ -1273,11 +1345,11 @@ def record_expense_approver(
             # It also re-applies the display spelling without touching use_count.
             conn.execute(
                 "INSERT INTO expense_approvers "
-                "(account_key,approver_key,display_name,email,use_count,last_used) "
-                "VALUES (?,?,?,?,1,?) "
+                "(account_key,approver_key,display_name,email,use_count,last_used,"
+                "role) VALUES (?,?,?,?,1,?,'director') "
                 "ON CONFLICT(account_key,approver_key,email) DO UPDATE SET "
                 "display_name=excluded.display_name,"
-                "last_used=excluded.last_used",
+                "last_used=excluded.last_used,role=excluded.role",
                 (account_key, approver_key, name, email, now),
             )
 
@@ -1302,10 +1374,14 @@ def expense_approvers(account: str | None) -> list[tuple[str, str]]:
     """Return confirmed approver name/email pairs for this account only.
 
     Only approvers CONFIRMED by a generated report appear. In particular the
-    RRH administrator that _seed_profile fills from deployment configuration is
-    absent until the first report is filed -- expense_ui compensates by
-    prepending the current field value to its option list, and that compensation
-    is required, not belt-and-braces.
+    director that _seed_profile fills from deployment configuration is absent
+    until the first report is filed -- expense_ui compensates by prepending the
+    current field value to its option list, and that compensation is required,
+    not belt-and-braces.
+
+    Only rows confirmed under director routing (role = 'director') are
+    returned. Rows from before 2026-09-28 are contract administrators; offering
+    one would put the report back in the wrong inbox with one click.
 
     Ordering feeds a fuzzy-search selectbox: most-used, then most-recent, then
     NOCASE alphabetical so the list is stable rather than reshuffling between
@@ -1320,7 +1396,7 @@ def expense_approvers(account: str | None) -> list[tuple[str, str]]:
     try:
         rows = conn.execute(
             "SELECT display_name,email FROM expense_approvers "
-            "WHERE account_key=? AND use_count>=1 "
+            "WHERE account_key=? AND use_count>=1 AND role='director' "
             "ORDER BY use_count DESC,last_used DESC,display_name COLLATE NOCASE",
             (account_key,),
         ).fetchall()

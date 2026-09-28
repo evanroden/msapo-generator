@@ -266,11 +266,19 @@ class ExpenseReportDetails:
     employee_number: str
     employee_home_bu: str
     report_date: date
+    # The ENFRA director of this contract -- the approval email's To. Not the
+    # contract administrator (the pre-2026-09-28 routing). Field names kept so
+    # device memory and the approver directory keep their columns.
     approver_name: str
     approver_email: str
     mail_destination: str = "home"
     satellite_office: str = ""
     employee_signature_confirmed: bool = False
+    # The filer's own manager -- the approval email's Cc. Per employee, not per
+    # contract. Defaults keep older constructions valid Python; validation
+    # still requires both.
+    manager_name: str = ""
+    manager_email: str = ""
 
 
 @dataclass(frozen=True)
@@ -493,13 +501,19 @@ def validate_expense_report(
             details.employee_home_bu,
             "enter the Employee Home Business Unit",
         ),
-        (details.approver_name, "enter the contract administrator's name"),
-        (details.approver_email, "enter the contract administrator's email"),
+        (details.approver_name, "enter the account director's name"),
+        (details.approver_email, "enter the account director's email"),
+        (details.manager_name, "enter your manager's name"),
+        (details.manager_email, "enter your manager's email"),
     ):
         if not str(value or "").strip():
             problems.append(field)
     if not _looks_like_email(details.approver_email):
-        problems.append("enter a valid contract administrator email")
+        problems.append("enter a valid account director email")
+    if str(details.manager_email or "").strip() and not _looks_like_email(
+        details.manager_email
+    ):
+        problems.append("enter a valid manager email")
     if details.mail_destination not in {"home", "satellite"}:
         problems.append("choose where the reimbursement check should be mailed")
     if details.mail_destination == "satellite" and not details.satellite_office.strip():
@@ -1944,8 +1958,7 @@ def _looks_like_email(value: str) -> bool:
     )
 
 
-# Public name for the same check, used by expense_ui to report a misconfigured
-# Cc address rather than quietly dropping it.
+# Public name for the same check, used by expense_ui for the manager field.
 looks_like_email = _looks_like_email
 
 
@@ -1960,17 +1973,17 @@ def is_same_person(employee_name: str, person_name: str, person_email: str = "")
     Two ways to match, both on FIRST and LAST words only, so a middle name or
     initial on either side ("Chris A. Example") does not break the comparison:
 
-    1. The configured name: "Chris Example" matches "Chris Example".
+    1. The entered name: "Chris Example" matches "Chris Example".
     2. The address's local part, when it reads first.last: "christop.example"
        matches "Christopher Example", because corporate mailboxes truncate the
-       first name and the configured display name may use the short form.
+       first name and the entered display name may use the short form.
 
-    Deliberately NOT a plain prefix test on the configured first name. "chris"
-    is a prefix of Christina and Christian as well as Christopher, and the cost
-    of a false match is the Cc silently vanishing from SOMEONE ELSE'S report.
-    The address rule is narrower -- "christina" does not start with "christop".
-    A miss in the other direction just copies the filer on their own report,
-    which is visible and harmless.
+    Deliberately NOT a plain prefix test on the first name. "chris" is a prefix
+    of Christina and Christian as well as Christopher, and the cost of a false
+    match is the Cc silently vanishing from the report. The address rule is
+    narrower -- "christina" does not start with "christop". A miss in the other
+    direction just copies the filer on their own report, which is visible and
+    harmless.
     """
     employee = _name_words(employee_name)
     if len(employee) < 2:
@@ -1988,32 +2001,27 @@ def is_same_person(employee_name: str, person_name: str, person_email: str = "")
     )
 
 
-def approval_cc(
-    details: "ExpenseReportDetails",
-    *,
-    cc_name: str,
-    cc_email: str,
-) -> tuple[str, str] | None:
+def approval_cc(details: "ExpenseReportDetails") -> tuple[str, str] | None:
     """The (name, address) to copy on this report's approval email, or None.
 
-    ``cc_name`` / ``cc_email`` are the account's configured Cc person; the caller
-    decides which account has one. None when:
+    The Cc is the filer's own manager (``details.manager_*``). None when:
 
-    * no address is configured, or it is not a usable address -- a malformed
-      Cc header would put a broken recipient in front of the employee at the
-      send step, and expense_ui reports that case instead of passing it on;
-    * the Cc person IS the approver -- the same inbox twice is noise;
-    * the Cc person is the one filing. The account guidance is to copy them "for
-      approval"; on their own report there is nothing for them to approve.
+    * no manager address is entered, or it is not a usable address -- a
+      malformed Cc header would put a broken recipient in front of the employee
+      at the send step (validation blocks this case before a package exists);
+    * the manager IS the director on To -- the same inbox twice is noise;
+    * the "manager" entered is the filer themselves. A manager filing their own
+      report is not copied on it: there is nothing for them to approve.
     """
-    email = str(cc_email or "").strip()
+    email = str(details.manager_email or "").strip()
     if not email or not _looks_like_email(email):
         return None
     if email.casefold() == str(details.approver_email or "").strip().casefold():
         return None
-    if is_same_person(details.employee_name, cc_name, email):
+    name = str(details.manager_name or "").strip()
+    if is_same_person(details.employee_name, name, email):
         return None
-    return (str(cc_name or "").strip(), email)
+    return (name, email)
 
 
 def _deduplicate(values: list[str]) -> list[str]:

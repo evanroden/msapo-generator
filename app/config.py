@@ -64,25 +64,91 @@ def operator_today(browser_timezone: str | None = None) -> "date":
     return date.today()
 
 
-# Contract administrators are deployment data, not source-code constants.
+# ── Expense approval routing ──────────────────────────────────────────
+# Every expense report goes TO the ENFRA director of the filer's contract, with
+# the filer's own manager on Cc. The director is per contract and comes from
+# here; the manager is per employee and is entered (then remembered) in the
+# form. The contract ADMINISTRATOR is deliberately not the recipient -- that was
+# the pre-2026-09-28 routing, and the RRH_APPROVER_NAME / RRH_APPROVER_EMAIL
+# variables that held one are no longer read, so a stale value left in a
+# deployment cannot quietly keep reports going to the administrator.
 #
-# The RRH approver is ACCOUNT POLICY, not a suggestion. When both halves are set,
-# expense_ui seeds it ahead of an operator's remembered approver -- otherwise a
-# change here would only ever reach devices that had never filed a report, and
-# everyone else would keep sending to whoever approved last time.
-RRH_APPROVER_NAME = os.getenv("RRH_APPROVER_NAME", "").strip()
-RRH_APPROVER_EMAIL = os.getenv("RRH_APPROVER_EMAIL", "").strip()
+# Format: a JSON object keyed by the account name exactly as the expense
+# account selector shows it (case and spacing are forgiven), e.g.
+#   {"Rochester Regional Health": {"name": "...", "email": "..."}}
+# Real names and addresses belong in the deployment environment only. This
+# repository is public, and tests/test_public_repository_hygiene.py fails the
+# build if an ENFRA address is committed anywhere in it.
+#
+# A configured director is ACCOUNT POLICY: expense_ui seeds it ahead of any
+# director a device remembers, so a change here reaches everyone who has filed
+# before, not only first-time filers.
+EXPENSE_ACCOUNT_DIRECTORS_JSON = os.getenv("EXPENSE_ACCOUNT_DIRECTORS_JSON", "").strip()
 
-# The person copied on every RRH approval email, per the account's standing
-# guidance: reports go to the approver with the asset manager on Cc. Left out
-# automatically when that person is the one filing (see
-# expense_report.approval_cc). Blank leaves the approval email with no Cc.
-#
-# Real addresses belong in the deployment environment only. This repository is
-# public, and tests/test_public_repository_hygiene.py fails the build if an
-# ENFRA address is committed anywhere in it.
-RRH_APPROVER_CC_NAME = os.getenv("RRH_APPROVER_CC_NAME", "").strip()
-RRH_APPROVER_CC_EMAIL = os.getenv("RRH_APPROVER_CC_EMAIL", "").strip()
+
+def _account_match_key(account: str | None) -> str:
+    return " ".join(str(account or "").split()).casefold()
+
+
+def _parse_account_directors(raw: str) -> tuple[dict[str, tuple[str, str]], list[str]]:
+    """Parse the director map into {account key: (name, email)} plus problems.
+
+    Never raises: a malformed deployment value must not take the expense page
+    down. Each problem is a sentence naming the variable, shown to the filer so
+    a broken entry is visible instead of silently leaving the field blank.
+    """
+    if not raw:
+        return {}, []
+    import json
+
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}, ["EXPENSE_ACCOUNT_DIRECTORS_JSON is not valid JSON."]
+    if not isinstance(data, dict):
+        return {}, ["EXPENSE_ACCOUNT_DIRECTORS_JSON must be a JSON object keyed by account."]
+    directors: dict[str, tuple[str, str]] = {}
+    problems: list[str] = []
+    for account, entry in data.items():
+        name = email = ""
+        if isinstance(entry, dict):
+            name = " ".join(str(entry.get("name") or "").split())
+            email = str(entry.get("email") or "").strip()
+        if not name or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            problems.append(
+                f"EXPENSE_ACCOUNT_DIRECTORS_JSON entry for {account!r} needs a "
+                "name and a valid email."
+            )
+            continue
+        directors[_account_match_key(account)] = (name, email)
+    return directors, problems
+
+
+_ACCOUNT_DIRECTORS, _ACCOUNT_DIRECTOR_PROBLEMS = _parse_account_directors(
+    EXPENSE_ACCOUNT_DIRECTORS_JSON
+)
+
+
+def account_director(account: str | None) -> tuple[str, str] | None:
+    """The configured ENFRA director (name, email) for an account, or None."""
+    return _ACCOUNT_DIRECTORS.get(_account_match_key(account))
+
+
+def director_config_problems(known_accounts) -> list[str]:
+    """Malformed entries plus keys that match no known account.
+
+    An unmatched key is almost always a typo ("Rochester Regional") and would
+    otherwise leave that account without a director and nothing on screen
+    saying why.
+    """
+    known = {_account_match_key(account) for account in known_accounts}
+    unmatched = sorted(key for key in _ACCOUNT_DIRECTORS if key not in known)
+    return list(_ACCOUNT_DIRECTOR_PROBLEMS) + [
+        f"EXPENSE_ACCOUNT_DIRECTORS_JSON names an account the tool does not "
+        f"know: {key!r}."
+        for key in unmatched
+    ]
+
 
 # ── PDF Conversion Backend ────────────────────────────────────────────
 # Options: "libreoffice", "gotenberg", "docx2pdf"

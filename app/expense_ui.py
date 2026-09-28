@@ -53,10 +53,8 @@ import streamlit.components.v1 as components
 from app import contracts
 from app.content_cache import ContentDigests
 from app.config import (
-    RRH_APPROVER_CC_EMAIL,
-    RRH_APPROVER_CC_NAME,
-    RRH_APPROVER_EMAIL,
-    RRH_APPROVER_NAME,
+    account_director,
+    director_config_problems,
     operator_today,
 )
 from app.eml_builder import (
@@ -86,7 +84,6 @@ from app.expense_report import (
     expense_report_warnings,
     irs_business_mileage_rate,
     is_same_person,
-    looks_like_email,
     parse_expense_amount,
     parse_mileage,
     receipt_preview_bytes,
@@ -102,7 +99,12 @@ from app.memory import (
     remembered_expense_employee_number,
     remembered_expense_profile,
 )
-from app.receipt_analyzer import ReceiptAnalysis, prepare_receipt_content, analyze_prepared_receipt
+from app.receipt_analyzer import (
+    ReceiptAnalysis,
+    analyze_prepared_receipt,
+    guess_employee_name,
+    prepare_receipt_content,
+)
 from app.receipt_jobs import start_receipt
 from app.api_retry import OPERATION_BUDGET_SECONDS
 from app.ui_highlight import highlight_needed_fields
@@ -398,14 +400,24 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         accounts,
         key="expense_account",
         help=(
-            "This filters the verified job-number choices and remembers the "
-            "correct administrator."
+            "This filters the verified job-number choices and sets the "
+            "account director the approval email goes to."
         ),
     )
     # Must run after the account selectbox (it needs the chosen account) and
     # before any detail widget below is instantiated, for the same
     # post-render-write reason given in this function's docstring.
     _seed_profile(browser_token, account, browser_timezone)
+    for problem in director_config_problems(accounts):
+        st.warning(problem)
+    _account_token_for_note = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
+    if account_director(account) is None and not str(
+        st.session_state.get(f"expense_approver_name_{_account_token_for_note}", "") or ""
+    ).strip():
+        st.caption(
+            "No director is set up for this account yet -- enter the ENFRA "
+            "director over this contract below (not the contract administrator)."
+        )
     # Every step-2 widget key is namespaced by this digest so switching accounts
     # gives a fresh, independently remembered set of details rather than
     # carrying one facility's approver into another's report. _seed_profile
@@ -413,6 +425,12 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
     # the seeds land on keys no widget reads and the fields render blank with no
     # error. tests/test_expense_disclosure.py hardcodes this derivation too.
     account_token = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
+    # After _seed_profile (a remembered name always wins) and before the name
+    # widget renders (a post-render write is discarded).
+    _apply_receipt_name_guess(account_token, analyses.values())
+    name_guess = str(
+        st.session_state.get(f"expense_employee_name_guess_{account_token}", "") or ""
+    )
 
     # Progressive disclosure, matching the purchase-order flow. Every field
     # below is still rendered exactly once and stays fully editable -- nothing
@@ -432,9 +450,18 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
     _outstanding_details = sum(
         (
             _detail_unset(f"expense_employee_name_{account_token}"),
+            # A name guessed from receipts and not yet changed keeps the panel
+            # open: it has not been confirmed by the person it names.
+            bool(name_guess)
+            and str(
+                st.session_state.get(f"expense_employee_name_{account_token}", "") or ""
+            ).strip()
+            == name_guess,
             _detail_unset(f"expense_employee_number_{account_token}"),
             _detail_unset(f"expense_approver_name_{account_token}"),
             _detail_unset(f"expense_approver_email_{account_token}"),
+            _detail_unset(f"expense_manager_name_{account_token}"),
+            _detail_unset(f"expense_manager_email_{account_token}"),
             (
                 st.session_state.get(f"expense_mail_destination_{account_token}")
                 == "satellite"
@@ -457,6 +484,10 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
              _detail_unset(f"expense_approver_name_{account_token}")),
             (f"expense_approver_email_{account_token}",
              _detail_unset(f"expense_approver_email_{account_token}")),
+            (f"expense_manager_name_{account_token}",
+             _detail_unset(f"expense_manager_name_{account_token}")),
+            (f"expense_manager_email_{account_token}",
+             _detail_unset(f"expense_manager_email_{account_token}")),
             (f"expense_satellite_office_{account_token}",
              st.session_state.get(f"expense_mail_destination_{account_token}")
              == "satellite"
@@ -505,6 +536,12 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                     employee_number_recall_key,
                 ),
             ).strip()
+            if name_guess and employee_name == name_guess:
+                st.warning(
+                    "Guessed from a name printed on your receipts -- low confidence. "
+                    "Check this is YOUR name exactly as it should appear on the "
+                    "report, and correct it if not."
+                )
             employee_number = st.text_input(
                 "Employee number *",
                 key=employee_number_key,
@@ -564,7 +601,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                 st.session_state[fallback_key] = fallback
             # The CURRENT value is prepended, not merely offered. This selectbox
             # uses index=None with accept_new_options=True, so a name the
-            # operator typed -- or the RRH default seeded from config, which has
+            # operator typed -- or the director seeded from config, which has
             # never been "confirmed" and so is absent from expense_approvers()
             # -- exists only in session_state. Building the option list from the
             # remembered pairs alone drops that value out of options on the very
@@ -578,15 +615,17 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             if current_approver and current_option != current_approver:
                 st.session_state[approver_name_key] = current_option
             selected_approver_option = str(st.selectbox(
-                "Contract administrator / approver name *",
+                "ENFRA account director *",
                 approver_names,
                 index=None,
                 key=approver_name_key,
-                placeholder="Type or select an approver",
+                placeholder="Type or select the account director",
                 accept_new_options=True,
                 filter_mode="fuzzy",
                 help=(
-                    "Start typing to search approvers confirmed for this account, "
+                    "The ENFRA director over this contract -- NOT the contract "
+                    "administrator. The approval email is addressed to them. "
+                    "Start typing to search directors confirmed for this account, "
                     "or enter a new name. Selecting a remembered name fills the email."
                 ),
                 on_change=_recall_approver_email,
@@ -604,7 +643,7 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
                 else selected_approver_option
             )
             approver_email = st.text_input(
-                "Contract administrator / approver email *",
+                "ENFRA account director email *",
                 key=approver_email_key,
                 on_change=_clear_approver_recall,
                 args=(approver_recall_key,),
@@ -612,7 +651,31 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
             if st.session_state.get(approver_recall_key) == _approver_identity_key(
                 approver_name, approver_email
             ):
-                st.caption("Approver email recalled from this account's confirmed history.")
+                st.caption("Director email recalled from this account's confirmed history.")
+            configured_director = account_director(account)
+            if configured_director is not None and (
+                approver_name.casefold(), approver_email.casefold()
+            ) == (
+                configured_director[0].casefold(),
+                configured_director[1].casefold(),
+            ):
+                st.caption("This account's director, from the tool's routing setup.")
+
+        manager_columns = st.columns(2)
+        with manager_columns[0]:
+            manager_name = st.text_input(
+                "Your manager's name (Cc) *",
+                key=f"expense_manager_name_{account_token}",
+                help=(
+                    "Your own manager, copied on the approval email. Remembered on "
+                    "this browser after your first report."
+                ),
+            ).strip()
+        with manager_columns[1]:
+            manager_email = st.text_input(
+                "Your manager's email (Cc) *",
+                key=f"expense_manager_email_{account_token}",
+            ).strip()
 
         mail_destination = st.radio(
             "Where should the reimbursement check be mailed? *",
@@ -672,6 +735,8 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         mail_destination=mail_destination,
         satellite_office=satellite_office,
         employee_signature_confirmed=False,
+        manager_name=manager_name,
+        manager_email=manager_email,
     )
 
     st.markdown(
@@ -1797,6 +1862,32 @@ def _clear_approver_recall(recall_marker_key: str) -> None:
     st.session_state.pop(recall_marker_key, None)
 
 
+def _apply_receipt_name_guess(account_token: str, analyses) -> None:
+    """Pre-fill an EMPTY employee name from the receipts, at most once.
+
+    For first-time filers only in effect: anyone who has filed before gets their
+    remembered name from _seed_profile, so the field is not empty. The receipt
+    name is low confidence (a colleague may have paid; a card slip abbreviates),
+    so the caller shows a check-this warning while the guess stands unchanged.
+
+    The marker key records the decision: the guess itself once applied, or ""
+    when a guess arrived but the filer already had a name. Either way it is
+    never re-applied, so a name the filer clears or corrects stays theirs.
+    """
+    name_key = f"expense_employee_name_{account_token}"
+    guess_key = f"expense_employee_name_guess_{account_token}"
+    if guess_key in st.session_state:
+        return
+    guess = guess_employee_name(analyses)
+    if not guess:
+        return
+    if str(st.session_state.get(name_key, "") or "").strip():
+        st.session_state[guess_key] = ""
+        return
+    st.session_state[name_key] = guess
+    st.session_state[guess_key] = guess
+
+
 def _seed_profile(
     browser_token: str, account: str, browser_timezone: str = ""
 ) -> dict[str, str]:
@@ -1825,33 +1916,38 @@ def _seed_profile(
         employee_name = profile.get("employee_name") or remembered_device_account_manager(
             browser_token, account
         )
-        # A fully configured RRH approver is ACCOUNT POLICY and outranks the
-        # approver this device remembers. The previous order -- remembered
-        # first, configuration as the fallback -- meant a change to the
-        # configured approver only ever reached devices that had never filed:
-        # everyone else kept defaulting to whoever approved last time, which is
-        # exactly the failure an "always send it to X" instruction exists to
-        # stop. The remembered names stay in the dropdown, so choosing someone
-        # else is still one click.
+        # The account's configured ENFRA director is ACCOUNT POLICY and
+        # outranks the director this device remembers. Remembered-first would
+        # mean a change to the configured director only ever reached devices
+        # that had never filed: everyone else would keep defaulting to whoever
+        # approved last time.
         #
-        # Taken as a PAIR, never field by field: a configured name beside a
-        # remembered email would address one person's report to another.
-        # Incomplete configuration keeps the old per-field fallback exactly.
-        if contracts.is_rrh(account) and RRH_APPROVER_NAME and RRH_APPROVER_EMAIL:
-            seeded_approver = (RRH_APPROVER_NAME, RRH_APPROVER_EMAIL)
-        else:
+        # A remembered approver is used only when it was confirmed under
+        # director routing (approver_role == "director"). Rows from before
+        # 2026-09-28 hold the contract ADMINISTRATOR, who is no longer the
+        # recipient; seeding one would quietly keep sending to the wrong
+        # person. Taken as a PAIR either way -- a name from one source beside
+        # an email from another would address one person's report to another.
+        director = account_director(account)
+        if director is not None:
+            seeded_approver = director
+        elif profile.get("approver_role") == "director":
             seeded_approver = (
-                profile.get("approver_name")
-                or (RRH_APPROVER_NAME if contracts.is_rrh(account) else ""),
-                profile.get("approver_email")
-                or (RRH_APPROVER_EMAIL if contracts.is_rrh(account) else ""),
+                profile.get("approver_name", ""),
+                profile.get("approver_email", ""),
             )
+        else:
+            seeded_approver = ("", "")
         defaults = {
             f"expense_employee_name_{account_token}": employee_name,
             f"expense_employee_number_{account_token}": profile.get("employee_number", ""),
             f"expense_report_date_{account_token}": operator_today(browser_timezone),
             f"expense_approver_name_{account_token}": seeded_approver[0],
             f"expense_approver_email_{account_token}": seeded_approver[1],
+            # The filer's manager is per EMPLOYEE, so it is remembered with the
+            # rest of this device's profile rather than configured per account.
+            f"expense_manager_name_{account_token}": profile.get("manager_name", ""),
+            f"expense_manager_email_{account_token}": profile.get("manager_email", ""),
             f"expense_mail_destination_{account_token}": (
                 profile.get("mail_destination")
                 if profile.get("mail_destination") in _MAIL_LABELS
@@ -1991,8 +2087,8 @@ def _remember_profile(
 ) -> None:
     """Record the confirmed profile and approver after a successful generation.
 
-    The profile is scoped to (device, account) and the approver to the account,
-    so one facility's administrator can never be offered on another's report.
+    The profile is scoped to (device, account) and the director to the account,
+    so one contract's director can never be offered on another's report.
     Both stores swallow their own failures -- memory is a convenience and must
     never take down a report the operator has already generated.
     """
@@ -2005,6 +2101,11 @@ def _remember_profile(
             "employee_home_bu": details.employee_home_bu,
             "approver_name": details.approver_name,
             "approver_email": details.approver_email,
+            # Marks this row's approver as a DIRECTOR; _seed_profile ignores
+            # remembered approvers without it (pre-2026-09-28 administrators).
+            "approver_role": "director",
+            "manager_name": details.manager_name,
+            "manager_email": details.manager_email,
             "mail_destination": details.mail_destination,
             "satellite_office": details.satellite_office,
             "allocation_kind": allocation.kind,
@@ -2028,54 +2129,48 @@ def _remember_profile(
 
 
 def _approval_cc(details: ExpenseReportDetails) -> tuple[str, str] | None:
-    """The Cc for this report's approval email, or None.
-
-    RRH only: the RRH account's standing guidance is to send reports to the
-    approver with the asset manager copied. The policy -- including leaving the
-    Cc person off their OWN report -- lives in expense_report.approval_cc.
+    """The Cc for this report's approval email -- the filer's manager -- or None.
 
     Derived from the report details at send time rather than stored as its own
-    field. That is what keeps it correct when the employee name changes after
-    the page first rendered: a seeded field would have to be re-synchronised,
-    and a stale one would copy the Cc person on their own report.
+    field, so it stays correct when the employee or manager fields change after
+    the page first rendered. The policy lives in expense_report.approval_cc.
     """
-    if not contracts.is_rrh(details.account):
-        return None
-    return approval_cc(
-        details, cc_name=RRH_APPROVER_CC_NAME, cc_email=RRH_APPROVER_CC_EMAIL
-    )
+    return approval_cc(details)
 
 
 def _approval_routing_note(details: ExpenseReportDetails) -> tuple[str, str]:
     """(caption, warning) describing who the approval email goes to.
 
-    Shown beside the send action so the operator can see the Cc before sending,
-    and -- when it is deliberately left off -- WHY it is missing, rather than
-    discovering an absent Cc after the fact. The warning is non-empty only when
-    the deployment's configured Cc address is unusable, which is a setup error
-    worth surfacing rather than silently dropping.
+    Shown beside the send action so the operator can see To and Cc before
+    sending, and -- when the Cc is deliberately left off -- WHY. The warning is
+    currently always empty: an unusable manager address is a validation error,
+    so no package exists to send in that case. The pair is kept so the send step
+    has one place to surface a routing problem.
     """
-    approver = details.approver_name or details.approver_email
+    director = details.approver_name or details.approver_email
     cc = _approval_cc(details)
     if cc is not None:
-        return f"Approval email goes to {approver}, with {cc[0] or cc[1]} on Cc.", ""
-    if not contracts.is_rrh(details.account) or not RRH_APPROVER_CC_EMAIL:
-        return f"Approval email goes to {approver}.", ""
-    if not looks_like_email(RRH_APPROVER_CC_EMAIL):
         return (
-            f"Approval email goes to {approver}.",
-            "The account's Cc address is not a valid email, so this approval "
-            "email has no Cc. Ask whoever maintains the deployment to correct "
-            "RRH_APPROVER_CC_EMAIL.",
-        )
-    if is_same_person(details.employee_name, RRH_APPROVER_CC_NAME, RRH_APPROVER_CC_EMAIL):
-        return (
-            f"Approval email goes to {approver}. No Cc: you are the account's "
-            "usual Cc recipient.",
+            f"Approval email goes to {director} (account director), with "
+            f"{cc[0] or cc[1]} (your manager) on Cc.",
             "",
         )
-    # Remaining case: the Cc person is the approver, so they are already on To.
-    return f"Approval email goes to {approver}.", ""
+    if is_same_person(details.employee_name, details.manager_name, details.manager_email):
+        return (
+            f"Approval email goes to {director} (account director). No Cc: the "
+            "manager entered is you.",
+            "",
+        )
+    manager_email = str(details.manager_email or "").strip().casefold()
+    if manager_email and manager_email == str(
+        details.approver_email or ""
+    ).strip().casefold():
+        return (
+            f"Approval email goes to {director} (account director), who is also "
+            "your manager.",
+            "",
+        )
+    return f"Approval email goes to {director} (account director).", ""
 
 
 def _build_expense_eml(details: ExpenseReportDetails, package: ExpensePackage) -> bytes:

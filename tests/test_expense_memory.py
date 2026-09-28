@@ -14,8 +14,8 @@ def _profile(name: str = "Synthetic Employee") -> dict[str, str]:
         "employee_name": name,
         "employee_number": "TEST-1001",
         "employee_home_bu": "695",
-        "approver_name": "RRH Test Administrator",
-        "approver_email": "rrh.approver@example.invalid",
+        "approver_name": "RRH Test Director",
+        "approver_email": "rrh.director@example.invalid",
         "mail_destination": "home",
         "satellite_office": "",
         "allocation_kind": "job",
@@ -321,10 +321,13 @@ def test_legacy_name_only_approver_schema_is_migrated_in_place(
             """
         )
 
-    assert expense_approvers("Rochester Regional Health") == [
-        ("Alex Smith", "alex@example.invalid")
-    ]
+    # The legacy row survives the migration but is NOT offered: it predates
+    # director routing, so it is a contract administrator (role '').
+    assert expense_approvers("Rochester Regional Health") == []
     with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT display_name,email,use_count,role FROM expense_approvers"
+        ).fetchall() == [("Alex Smith", "alex@example.invalid", 2, "")]
         primary_key = tuple(
             row[1]
             for row in sorted(

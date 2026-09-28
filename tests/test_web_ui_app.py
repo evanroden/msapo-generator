@@ -10,6 +10,7 @@ from dotenv import dotenv_values
 from PIL import Image
 from streamlit.testing.v1 import AppTest
 
+import app.config as config
 import app.expense_ui as expense_ui
 import app.web_ui as web_ui
 from app.expense_report import ExpensePackage
@@ -34,17 +35,16 @@ def _configure_smartsheet(monkeypatch):
         if value is not None:
             monkeypatch.setenv(key, value)
     # app.config is imported during test collection, before this per-test
-    # environment is installed. Mirror the deployment values into the UI
-    # module so AppTest exercises the configured default instead of a blank.
-    monkeypatch.setattr(
-        expense_ui,
-        "RRH_APPROVER_NAME",
-        values["RRH_APPROVER_NAME"],
+    # environment is installed. Mirror the deployment's director map into the
+    # UI module so AppTest exercises the configured default instead of a blank.
+    directors, problems = config._parse_account_directors(
+        values["EXPENSE_ACCOUNT_DIRECTORS_JSON"]
     )
+    assert not problems
     monkeypatch.setattr(
         expense_ui,
-        "RRH_APPROVER_EMAIL",
-        values["RRH_APPROVER_EMAIL"],
+        "account_director",
+        lambda account: directors.get(config._account_match_key(account)),
     )
 
 
@@ -198,7 +198,7 @@ def test_expense_approver_name_suggestions_fill_the_paired_email(monkeypatch):
     approver = next(
         field
         for field in app.selectbox
-        if field.label == "Contract administrator / approver name *"
+        if field.label == "ENFRA account director *"
     )
     assert "Remembered Administrator" in approver.options
     assert "Second Administrator" in approver.options
@@ -207,11 +207,11 @@ def test_expense_approver_name_suggestions_fill_the_paired_email(monkeypatch):
     email = next(
         field
         for field in app.text_input
-        if field.label == "Contract administrator / approver email *"
+        if field.label == "ENFRA account director email *"
     )
     assert email.value == "remembered@example.invalid"
     assert any(
-        "Approver email recalled from this account's confirmed history"
+        "Director email recalled from this account's confirmed history"
         in caption.value
         for caption in app.caption
     )
@@ -219,16 +219,16 @@ def test_expense_approver_name_suggestions_fill_the_paired_email(monkeypatch):
     approver = next(
         field
         for field in app.selectbox
-        if field.label == "Contract administrator / approver name *"
+        if field.label == "ENFRA account director *"
     )
-    assert "RRH Test Administrator" in approver.options
-    approver.set_value("RRH Test Administrator").run()
+    assert "RRH Test Director" in approver.options
+    approver.set_value("RRH Test Director").run()
     email = next(
         field
         for field in app.text_input
-        if field.label == "Contract administrator / approver email *"
+        if field.label == "ENFRA account director email *"
     )
-    assert email.value == "rrh.approver@example.invalid"
+    assert email.value == "rrh.director@example.invalid"
 
 
 def test_same_name_approvers_are_labeled_and_recalled_by_email(monkeypatch):
@@ -247,7 +247,7 @@ def test_same_name_approvers_are_labeled_and_recalled_by_email(monkeypatch):
     approver = next(
         field
         for field in app.selectbox
-        if field.label == "Contract administrator / approver name *"
+        if field.label == "ENFRA account director *"
     )
     first = "Alex Smith — alex.one@example.invalid"
     second = "Alex Smith — alex.two@example.invalid"
@@ -258,7 +258,7 @@ def test_same_name_approvers_are_labeled_and_recalled_by_email(monkeypatch):
     email = next(
         field
         for field in app.text_input
-        if field.label == "Contract administrator / approver email *"
+        if field.label == "ENFRA account director email *"
     )
     assert email.value == "alex.two@example.invalid"
 
@@ -266,7 +266,7 @@ def test_same_name_approvers_are_labeled_and_recalled_by_email(monkeypatch):
 def test_expense_approver_control_supports_typeahead_and_new_names():
     source = inspect.getsource(expense_ui.render_expense_workflow)
 
-    assert 'placeholder="Type or select an approver"' in source
+    assert 'placeholder="Type or select the account director"' in source
     assert "accept_new_options=True" in source
     assert 'filter_mode="fuzzy"' in source
 
@@ -549,6 +549,8 @@ def test_expense_workflow_generates_excel_pdf_and_attached_email_draft(
 
     text_field("Employee name *").set_value("Synthetic Employee").run()
     text_field("Employee number *").set_value("TEST-1001").run()
+    text_field("Your manager's name (Cc) *").set_value("Synthetic Manager").run()
+    text_field("Your manager's email (Cc) *").set_value("manager@example.invalid").run()
     assert text_field("Employee Home Business Unit").value == "695"
     assert text_field("Employee Home Business Unit").disabled
 
@@ -809,6 +811,8 @@ def test_expense_receipt_can_split_into_independently_editable_lines(
 
     text_fields("Employee name *")[0].set_value("Synthetic Employee").run()
     text_fields("Employee number *")[0].set_value("TEST-1001").run()
+    text_fields("Your manager's name (Cc) *")[0].set_value("Synthetic Manager").run()
+    text_fields("Your manager's email (Cc) *")[0].set_value("manager@example.invalid").run()
     next(
         toggle for toggle in app.toggle
         if toggle.label == "Split this receipt into multiple reimbursement lines"
@@ -938,6 +942,8 @@ def test_rrh_mileage_only_flow_uses_service_year_defaults_and_job_columns(
 
     text_field("Employee name *").set_value("Synthetic Employee").run()
     text_field("Employee number *").set_value("TEST-1001").run()
+    text_field("Your manager's name (Cc) *").set_value("Synthetic Manager").run()
+    text_field("Your manager's email (Cc) *").set_value("manager@example.invalid").run()
     next(
         toggle for toggle in app.toggle
         if toggle.label == "Include reimbursable business mileage"
@@ -974,7 +980,7 @@ def test_rrh_mileage_only_flow_uses_service_year_defaults_and_job_columns(
     assert not app.exception
     assert captured["items"] == []
     assert captured["details"].employee_home_bu == "695"
-    assert captured["details"].approver_email == "rrh.approver@example.invalid"
+    assert captured["details"].approver_email == "rrh.director@example.invalid"
     assert len(captured["mileage"]) == 1
     assert captured["mileage"][0].allocation.account_cost_type == "02AMA"
     assert captured["mileage"][0].allocation.cost_code_or_wo_type == "5490"

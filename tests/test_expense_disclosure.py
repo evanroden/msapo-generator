@@ -36,11 +36,13 @@ _TEXT_FIELDS = (
     "Employee name *",
     "Employee number *",
     "Employee Home Business Unit",
-    "Contract administrator / approver email *",
+    "ENFRA account director email *",
+    "Your manager's name (Cc) *",
+    "Your manager's email (Cc) *",
 )
 _SELECT_FIELDS = (
     "Account / contract *",
-    "Contract administrator / approver name *",
+    "ENFRA account director *",
 )
 
 
@@ -81,6 +83,8 @@ def test_every_detail_field_survives_the_collapsed_path():
         f"expense_employee_number_{TOKEN}": "TEST-4242",
         f"expense_approver_name_{TOKEN}": "Example Approver",
         f"expense_approver_email_{TOKEN}": "approver@example.invalid",
+        f"expense_manager_name_{TOKEN}": "Morgan Manager",
+        f"expense_manager_email_{TOKEN}": "manager@example.invalid",
     }
     app.segmented_control[0].set_value("Expense reimbursement").run()
 
@@ -105,7 +109,7 @@ def test_every_detail_field_survives_the_collapsed_path():
     assert _field("Employee name *").value == "Dane Example"
     assert _field("Employee number *").value == "TEST-4242"
     assert (
-        _field("Contract administrator / approver email *").value
+        _field("ENFRA account director email *").value
         == "approver@example.invalid"
     )
 
@@ -125,6 +129,8 @@ def test_the_account_selector_is_never_hidden():
         f"expense_employee_number_{TOKEN}": "TEST-4242",
         f"expense_approver_name_{TOKEN}": "Example Approver",
         f"expense_approver_email_{TOKEN}": "approver@example.invalid",
+        f"expense_manager_name_{TOKEN}": "Morgan Manager",
+        f"expense_manager_email_{TOKEN}": "manager@example.invalid",
     }
     app.segmented_control[0].set_value("Expense reimbursement").run()
 
