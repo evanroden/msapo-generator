@@ -292,6 +292,8 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
                 if index:
                     document.add_page_break()
                 _picture(document, asset_loader(reference))
+                if index < len(block.asset_captions) and block.asset_captions[index]:
+                    document.add_paragraph(block.asset_captions[index], style="Caption")
             if block.rows:
                 width = len(spec.columns) or max(map(len, block.rows))
                 table = document.add_table(rows=1 if spec.columns else 0, cols=width)

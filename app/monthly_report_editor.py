@@ -39,7 +39,9 @@ def _preview(block: ResolvedBlock | None, assets: dict[str, bytes], profile: Rep
         st.text(block.text)
     if block.rows:
         st.dataframe(list(block.rows), hide_index=True)
-    for reference in block.asset_hashes:
+    if len(block.asset_hashes) > 1:
+        st.caption(f"{len(block.asset_hashes)} prepared images/pages; previewing the first. Review individual pages in monthly evidence.")
+    for reference in block.asset_hashes[:1]:
         raw = assets.get(reference) or library.read_asset(profile.contract, profile.key, reference)
         st.image(raw, width="stretch")
 
@@ -147,12 +149,19 @@ def _profile_manager(contract: str, state: library.LibraryState | None, field) -
 
 
 def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[str, ResolvedBlock],
-                  default_source: str, prefix: str, assets: dict[str, bytes], field) -> ResolvedBlock:
+                  default_source: str, prefix: str, assets: dict[str, bytes], field,
+                  monthly_blocks: dict[str, ResolvedBlock] | None = None) -> ResolvedBlock:
     key = prefix + "_" + spec.key
     saved = state.block(spec.key)
     source = st.selectbox("Source", BLOCK_SOURCES, key=field(key + "_source", default_source))
     if source == "Omit":
         return ResolvedBlock(spec.key, source)
+    if source == "This month" and monthly_blocks and spec.key in monthly_blocks:
+        mode = st.radio("This month's content", ["Uploaded content", "Edit manually"],
+                        key=field(key + "_monthly_mode", "Uploaded content"))
+        if mode == "Uploaded content":
+            _preview(monthly_blocks[spec.key], assets, state.profile)
+            return monthly_blocks[spec.key]
     if source in ("Library", "Last month"):
         block = saved if source == "Library" else previous.get(spec.key)
         if source == "Library" and spec.type in ("image_page", "image_grid", "pdf_pages"):
@@ -313,7 +322,9 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     prepared_key = field(prefix + "_prepared", remembered_report_preparer(browser_token, contract, profile.key)
                          or (prior.draft.prepared_by if prior else "ENFRA Asset Management Team"))
     prepared = st.text_input("Prepared by", key=prepared_key)
-    st.caption("Monthly document extraction and AI drafts are coming in the upload milestone. You can assemble the library and enter this month's text now.")
+    from app.monthly_report_upload_ui import render_uploads
+    report_sources, monthly_blocks, monthly_specs = render_uploads(profile, period, prefix, field)
+    st.caption("AI drafts and Copilot context are coming next. Review the extracted facts and enter narrative text in the report blocks now.")
 
     st.subheader("5. Assemble the report")
     base_sections = prior.draft.sections if from_prior else default_sections()
@@ -352,7 +363,6 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
             ordered_specs = []
             for position, block_key in enumerate(st.session_state[block_order_key]):
                 spec = specs[block_key]
-                ordered_specs.append(spec)
                 st.markdown("**" + spec.key.replace("_", " ").capitalize() + "**")
                 left, right = st.columns(2)
                 left.button("Move block up", key=section_prefix + "_" + block_key + "_up", disabled=position == 0,
@@ -360,12 +370,14 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
                 right.button("Move block down", key=section_prefix + "_" + block_key + "_down", disabled=position == len(specs) - 1,
                              on_click=move, args=(block_order_key, block_key, 1))
                 default_source = "Last month" if from_prior and spec.key in previous else defaults.get(spec.key, "Stock text" if spec.stock_text_keys else "Library")
-                blocks.append(_block_editor(spec, state, previous, default_source, start_key, assets, field))
+                block = _block_editor(spec, state, previous, default_source, start_key, assets, field, monthly_blocks)
+                blocks.append(block)
+                ordered_specs.append(monthly_specs.get(spec.key, spec) if block is monthly_blocks.get(spec.key) else spec)
             sections.append(replace(section, title=title, included=included, blocks=tuple(ordered_specs),
                                     divider_asset=divider.asset_hashes[0] if divider.asset_hashes and divider.source != "Omit" else ""))
     footer = next(b for b in blocks if b.key == "footer_text")
     draft = ReportDraft(profile, period, prepared, tuple(sections), tuple(blocks),
-                        address_line=footer.text if footer.source != "Omit" else "")
+                        address_line=footer.text if footer.source != "Omit" else "", sources=report_sources)
     loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, profile.key, ref)
     with st.expander("Live outline"):
         for title, block_keys, pages in outline(draft):
@@ -415,7 +427,7 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
             st.session_state[prefix + "_package"] = package
             saved = library.save_snapshot(draft, expected_revision=st.session_state[revision_key],
                                            open_issues=prior.open_issues if prior else (), pending_proposals=prior.pending_proposals if prior else (),
-                                           assets=tuple(assets.items()))
+                                           assets=tuple(assets.items()), entered_editor=prepared)
             st.session_state[revision_key] = saved.revision
             record_report_preparer(browser_token, contract, profile.key, prepared)
         except (ValueError, OSError) as exc:
