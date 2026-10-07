@@ -1,8 +1,7 @@
-"""Monthly-report workflow, initially limited to clearly labelled synthetic data.
+"""Monthly reports with a versioned profile library and a synthetic demonstration.
 
-Do not offer real library uploads until the versioned persistence milestone is
-installed. The sample exercises all three report scopes equally. The owner has
-explicitly deferred passcodes during testing; writes will still be confirmed.
+The owner deferred passcodes during internal testing; shared library writes
+still require explicit confirmation and remain attributable and reversible.
 """
 
 from __future__ import annotations
@@ -62,10 +61,18 @@ def _move(order_key: str, section_key: str, offset: int) -> None:
 
 
 def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "") -> None:
-    """Render the synthetic milestone without reading or writing private storage."""
+    """Keep library and demonstration work separate while preserving both drafts."""
     restore_report_draft_state()
     st.title("Monthly report")
-    st.info("Demonstration release: explore individual, multi-site and regional report layouts using synthetic content. Client libraries and uploads will arrive in the next milestones.")
+    if st.toggle("Use the profile library", key=_field("report_use_library", False)):
+        from app.monthly_report_editor import render_profile_workflow
+        try:
+            render_profile_workflow(browser_token, browser_timezone, _field, _move)
+        except (ValueError, OSError) as exc:
+            st.error(f"The profile library could not be read: {exc}")
+        preserve_report_draft_state()
+        return
+    st.info("Explore individual, multi-site and regional layouts with synthetic content, or turn on the profile library above to build your report. Document import and AI drafts are coming next.")
     st.subheader("1. Choose the report")
     profiles = synthetic_profiles()
     profile_key = st.selectbox("Report profile", [p.key for p in profiles],

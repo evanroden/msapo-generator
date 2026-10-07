@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-from app.monthly_report_model import PLACEHOLDER_PHRASES, ReportDraft, included_sections
+from app.monthly_report_model import PLACEHOLDER_PHRASES, ReportDraft, included_sections, layout_blocks, used_block_keys
 
 
 @dataclass(frozen=True)
@@ -72,6 +72,14 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     texts = [("cover", draft.profile.title), ("cover", draft.prepared_by), ("footer", draft.address_line)]
     texts.extend(("cover", f.title) for f in draft.profile.facilities)
     texts.append(("cover", draft.profile.contract))
+    layout_keys = {spec.key for spec in layout_blocks()} & used_block_keys(draft)
+    for block in draft.blocks:
+        if block.key in layout_keys and block.source != "Omit":
+            texts.append((block.key, block.text))
+            if not block.reviewed:
+                checks.append(ReportCheck("review", f"Review the AI draft: {block.key}.", True, block.key))
+            if block.pending_library_save:
+                checks.append(ReportCheck("library_save", f"Confirm the library replacement for {block.key}, or choose Replace once.", True, block.key))
     for section in sections:
         if not section.title.strip():
             checks.append(ReportCheck("title", "Enter a title for every included section.", True, section.key))
@@ -82,12 +90,20 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             present = bool(block and block.source != "Omit" and (
                 block.text.strip() or block.asset_hashes or any(any(c.strip() for c in row) for row in block.rows)
             ))
+            if present and spec.type in ("image_page", "image_grid", "pdf_pages"):
+                present = bool(block.asset_hashes or (block.source == "Stock text" and spec.stock_text_keys))
+            if present and spec.type in ("table", "work_order_grid"):
+                present = bool(block.rows or (block.source == "Stock text" and spec.stock_text_keys))
             has_content |= present
             if spec.required and not present:
                 checks.append(ReportCheck("required", f"Resolve required block: {spec.key}.", True, spec.key))
             if block and block.source not in spec.allowed_sources:
                 checks.append(ReportCheck("source", f"Unsupported source for {spec.key}.", True, spec.key))
-            if present and block:
+            if block and block.pending_library_save:
+                checks.append(ReportCheck("library_save", f"Confirm the library replacement for {spec.key}, or choose Replace once.", True, spec.key))
+            # Even an incomplete optional image can carry a visible caption.
+            # Scan all included text, rather than only fully resolved payloads.
+            if block and block.source != "Omit":
                 if not block.reviewed:
                     checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key))
                 texts.append((spec.key, block.text))

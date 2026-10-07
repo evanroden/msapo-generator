@@ -99,6 +99,12 @@ def test_generation_enforces_preflight_and_content_bound_acknowledgement(draft):
     assert assemble_docx(stale, acknowledged_fingerprint=stale.fingerprint).startswith(b"PK")
 
 
+def test_optional_unresolved_image_caption_is_still_scanned(draft):
+    draft = replace(draft, sections=(replace(draft.sections[0], blocks=(BlockSpec("optional_photo", "image_page"),)),),
+                    blocks=(ResolvedBlock("optional_photo", "Replace once", text="Insert image here"),))
+    assert any(c.code == "placeholder" for c in preflight(draft))
+
+
 def test_cover_toc_dividers_filename_and_deterministic_bytes(draft):
     draft = replace(draft, sections=(draft.sections[2], draft.sections[0]))
     first = assemble_docx(draft)
