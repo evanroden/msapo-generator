@@ -30,6 +30,7 @@ class BrandLogo:
     source_url: str
     asset_url: str
     checked_on: str
+    source_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,7 @@ def _logos(values):
             library._valid_key(logo.key)
             if (not isinstance(value["contracts"], list) or len(logo.contracts) > 100
                     or not logo.title.strip() or len(logo.title) > 200
+                    or not isinstance(logo.source_note, str) or len(logo.source_note) > 1000
                     or logo.key in keys or not library._ASSET.fullmatch(logo.asset)
                     or not logo.asset.endswith(".png")):
                 raise ValueError

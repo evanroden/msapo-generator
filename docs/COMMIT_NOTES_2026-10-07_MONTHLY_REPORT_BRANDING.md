@@ -1,3 +1,11 @@
+---
+document_type: commit_notes
+date: 2026-10-07
+status: in_progress
+commit_intent: Add reviewed runtime logos and visual monthly report setup
+base_commit: d7f1d0df33cfb9438d5058a7da9109923b124270
+---
+
 # Monthly report: reviewed branding and visual starting choices
 
 ## Why
@@ -29,28 +37,60 @@ identical generic controls for very different report sections.
   target the chart, either outage workflow or facility contacts. Existing
   review-plan action values remain compatible.
 
-## Validation checkpoint
+## Validation and publication
 
-65 focused branding/storage/start/UI/section/hygiene/docs tests passed. Ruff
-F/E9 and git diff --check passed. Full-suite, real-report walkthrough, final
-logo collection, exact-head remote CI and production installation are pending
-at this checkpoint. Do not describe this as released.
+The final local suite passed **886 tests, one CI-only skip**, including real
+LibreOffice. Ruff F/E9, compileall, dependency consistency and diff checks passed.
+The initial full run caught missing notes metadata and a test still using the
+previous starting control; both were corrected before that final full run.
 
-## Logo research and recovery
+A local AppTest installed the reviewed public bundle through its confirmation
+flow, checked all 37 contract mappings, created a general-template report with
+both client and ENFRA logos, and exposed the same-contract starting card only
+after a report existed. A five-page synthetic DOCX/PDF was rendered, the cover
+was visually inspected, and identical inputs produced identical DOCX bytes.
+The new logos correctly required image review before finished output.
 
-The official-source research and originals are outside git in
-`/workspace/scratch/monthly-report-branding-research`. Source discovery has
-identified newer names/marks including Powers Health, Manning Family Children's,
-LSU New Orleans and FMOL Health. Coverage and rendered-logo review are still
-in progress; no missing brand should be invented or silently substituted.
-SVG originals are converted outside the app to reviewed PNGs. The app accepts
-only the final bounded bundle. Never add source artwork, private client files
-or runtime contents to git.
+The supplied private Glendale report was walked through locally again using
+the upload card: 265 extracted items became 13 section cards, every card opened,
+and a text edit survived closing/reopening. Existing drawing/content blockers
+remained. Original files were unchanged and no private production upload was
+used. Hardware phone/iPad acceptance remains unclaimed.
 
-After validation and merge, install the reviewed public-logo collection through
-the public app UI. This is the owner-requested shared branding update, not a
-private report smoke test. Public Render verification only; no private logs,
-workspace selection or disk APIs. The collection can be restored in the UI.
+Draft PR #70 initially published head
+75e29290e51d299aae24d665d7e15b2f3c9b6e0e with verified tree
+b4d05e7f86618c4ea872c49199258aca60f62882. The final follow-up is not yet claimed
+merged or deployed at the time these notes were written.
+
+## Reviewed logo collection and recovery
+
+The collection contains 30 marks (including ENFRA), explicitly covering all 37
+listed contracts. Original colors/proportions are preserved, empty margins are
+trimmed, and clear space is added in consistent frames. White marks use a dark
+background. SVG/animated originals are not executed by or uploaded to the app.
+A static official Memorial Health image avoids the incomplete first frame of
+its animated header. PNG pixels are bounded and fingerprinted.
+
+Source dates and URLs are stored with each runtime logo. Current official pages
+verify newer identities including Powers Health, Manning Family Children's,
+LSU New Orleans and FMOL Health. System logos serve relevant contract groups;
+they never infer report membership or overwrite a site-specific logo. FMOL's
+official download service returned 502 errors; its current mark was checked
+against the official company page and rebrand announcement, with the matching
+artwork taken from its public employer profile. That exception and artwork URL
+are explicitly recorded in the collection, not labeled as a direct official
+download. No brand artwork is committed to git.
+
+Local research, provenance manifest, reviewed logo contact sheets and bundle:
+`/workspace/scratch/monthly-report-branding-research`.
+Final bundle: `enfra-client-logos-2026-10-07.zip`.
+AppTest/renderer proof: `flow-result.json`, `synthetic-branding.docx` and
+`synthetic-branding.pdf`. These are QA intermediates outside git.
+
+After exact-head CI and merge, install the reviewed public-logo collection
+through the public app UI. This is the owner-requested shared branding update,
+not a private report smoke test. Public Render verification only; no private
+logs, workspace selection or disk APIs. The collection can be restored in the UI.
 
 ## Previous release now verified
 

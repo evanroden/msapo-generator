@@ -111,11 +111,19 @@ or production logo installation is claimed yet.
 Official-logo research and original public assets are outside git at
 `/workspace/scratch/monthly-report-branding-research`. Current source sites
 show changed branding including Powers Health, Manning Family Children’s,
-LSU New Orleans and FMOL Health. Research/visual verification and coverage
-are unfinished; do not publish an unverified logo or guess an identity.
-The next steps are finish the reviewed collection, test first-use and existing
-report behavior, publish exact trees with green CI, deploy, then install the
-reviewed public-logo bundle through the app UI. All artwork must remain on
+LSU New Orleans and FMOL Health. The reviewed collection now has 30 logos
+(including ENFRA) covering all 37 catalog contracts. FMOL artwork uses a disclosed
+public-employer-profile fallback matched to its official current identity after
+its official downloads returned 502 errors. All source URLs/dates are retained.
+Final local suite: **886 passed, one CI-only skip** with LibreOffice. Ruff F/E9,
+compileall, pip check and diff checks passed. A local AppTest confirmed bundle
+installation, all mappings, automatic new-design logos and conditional same-
+contract cards. A deterministic five-page synthetic DOCX/PDF was rendered and
+its cover visually inspected. The actual Glendale DOCX walkthrough opened all
+13 section cards, retained a text edit and preserved content/drawing blockers.
+Draft PR #70 initial head `75e29290e51d299aae24d665d7e15b2f3c9b6e0e`, tree
+`b4d05e7f86618c4ea872c49199258aca60f62882`, is pushed. Final follow-up publication,
+exact-head green CI, merge and public deployment/collection installation remain. All artwork must remain on
 persistent runtime storage, not in git. No private Render API access.
 
 All six implementation milestones and the requested UX increments have merged.

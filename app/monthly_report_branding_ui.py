@@ -34,7 +34,10 @@ def render_branding(field):
         st.image(assets.get(logo.asset) or branding.read_logo(logo), width=360)
         st.write("Contracts: " + (", ".join(logo.contracts) or "ENFRA report branding"))
         st.caption("Source reviewed " + logo.checked_on)
+        if logo.source_note:
+            st.caption(logo.source_note)
         st.link_button("Official source", logo.source_url)
+        st.link_button("Artwork source", logo.asset_url)
         with st.expander("All logos and contract mappings"):
             st.dataframe([{"Logo": v.title, "Contracts": ", ".join(v.contracts), "Reviewed": v.checked_on, "Official source": v.source_url} for v in logos], hide_index=True)
     actor = st.text_input("Logo editor name", key=field("report_branding_actor", ""))

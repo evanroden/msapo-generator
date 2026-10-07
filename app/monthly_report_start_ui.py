@@ -28,6 +28,7 @@ def _logo(contract):
 
 
 def choose_contract(last_contract, field):
+    from app.monthly_report_branding import find_logo
     names = contract_choices()
     current_key = field("report_contract", last_contract if last_contract in names else "")
     current = st.session_state[current_key]
@@ -52,6 +53,9 @@ def choose_contract(last_contract, field):
                 logo = _logo(name)
                 if logo:
                     st.image(logo, width=160)
+                branding = find_logo(name)
+                if branding and branding.title.casefold() != name.casefold():
+                    st.caption(branding.title)
                 if st.button(name, key="report_contract_card_" + _key(name), width="stretch"):
                     st.session_state[current_key] = name
                     st.session_state["report_change_contract"] = False
@@ -147,7 +151,8 @@ def starting_choice(profile, profiles, period, prepared, field):
                 st.markdown("# " + icon)
             st.markdown("**" + title + "**")
             st.caption(description)
-            if st.button("Selected" if selected == choice else "Choose this starting point", icon=icon, type="primary" if selected == choice else "secondary", key="report_start_card_" + _key(choice) + "_" + profile.key, width="stretch"):
+            button_label = {choices[-1]: "Upload my report", "Use another report from this contract": "Use a contract report", "Use the general ENFRA monthly report template": "Use ENFRA template"}[choice]
+            if st.button("Selected · " + button_label if selected == choice else button_label, icon=icon, type="primary" if selected == choice else "secondary", key="report_start_card_" + _key(choice) + "_" + profile.key, width="stretch"):
                 st.session_state[choice_key] = choice
                 st.rerun()
     if selected not in choices:
