@@ -17,7 +17,7 @@ import tempfile
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from docx import Document
 from docx.enum.section import WD_SECTION_START
@@ -182,19 +182,20 @@ def outline(draft: ReportDraft) -> tuple[tuple[str, tuple[str, ...], int], ...]:
     return tuple(result)
 
 
-def _display_page(document, *, label: str, title: str, subtitle: str = "") -> None:
-    # Generated solid colour and text, not a reproduction of private logo bands
-    # or photos. Library image dividers are resolved in the next milestone.
+def _display_page(document, *, label: str, title: str, subtitle: str = "", light: bool = False) -> None:
     paragraph = document.add_paragraph()
     paragraph.paragraph_format.space_before = Inches(2.2)
     paragraph.paragraph_format.left_indent = Inches(0.75)
     run = paragraph.add_run(label)
     run.bold = True
     run.font.size = Pt(22)
-    run.font.color.rgb = RGBColor.from_string(OCEAN)
+    run.font.color.rgb = RGBColor.from_string("FFFFFF" if light else OCEAN)
     paragraph = document.add_paragraph(title, "Title")
     paragraph.paragraph_format.left_indent = Inches(0.75)
     paragraph.paragraph_format.right_indent = Inches(0.75)
+    if light:
+        for run in paragraph.runs:
+            run.font.color.rgb = RGBColor(255, 255, 255)
     if subtitle:
         paragraph = document.add_paragraph(subtitle)
         paragraph.paragraph_format.left_indent = Inches(0.75)
@@ -217,19 +218,93 @@ def estimate_bytes(draft: ReportDraft, asset_loader: Callable[[str], bytes] | No
     included_keys = used_block_keys(draft)
     used_blocks = [b for b in draft.blocks if b.key in included_keys and b.source != "Omit"]
     references = used_asset_references(draft)
-    return 150_000 + sum(len(b.text.encode()) + sum(len(c.encode()) for row in b.rows for c in row)
+    from app.monthly_report_visuals import org_groups, photo_count
+    # Generated page images, including editable charts/grids, occupy space too.
+    generated = 0
+    for block in used_blocks:
+        if block.org_nodes:
+            try:
+                generated += 200_000 * len(org_groups(block.org_nodes))
+            except ValueError:
+                pass  # The content check explains an invalid chart.
+        elif block.asset_hashes and any(s.key == block.key and s.type == "image_grid" for section in draft.sections for s in section.blocks):
+            generated += 150_000 * photo_count(block)
+    generated += 250_000 * sum(bool(s.divider_asset) for s in included_sections(draft.sections))
+    return 150_000 + generated + sum(len(b.text.encode()) + sum(len(c.encode()) for row in b.rows for c in row)
                         + sum(len(c.encode()) for t in b.extra_tables for row in (t.columns, *t.rows) for c in row)
                         for b in used_blocks) + (
         sum(len(asset_loader(ref)) for ref in references) if asset_loader else 0
     )
 
 
-def _picture(document, raw: bytes, *, width: float = 7, height: float = 8) -> None:
+def _picture(document, raw: bytes, *, width: float = 7, height: float = 8, inset: float = 0) -> None:
+    paragraph = document.add_paragraph()
+    paragraph.paragraph_format.left_indent = Inches(inset)
+    paragraph.paragraph_format.space_after = Pt(0)
+    _fit_picture(paragraph.add_run(), raw, width, height)
+
+
+def _fit_picture(run, raw, width, height):
     with Image.open(BytesIO(raw)) as image:
         if image.width * image.height > _MAX_PIXELS_PER_FRAME:
             raise ValueError("Resolved image exceeds the pixel limit.")
         scale = min(width / image.width, height / image.height)
-        document.add_picture(BytesIO(raw), width=Inches(image.width * scale), height=Inches(image.height * scale))
+        run.add_picture(BytesIO(raw), width=Inches(image.width * scale), height=Inches(image.height * scale))
+
+
+def _divider_background(document, raw):
+    """Full-page photo behind editable Word text; crop only divider artwork."""
+    normalized = normalize_report_image(raw, ".png", frame=(8.5, 11), dpi=150)
+    with Image.open(BytesIO(normalized.data)) as image:
+        page = ImageOps.fit(image.convert("RGB"), (1275, 1650), Image.Resampling.LANCZOS)
+    # A solid band guarantees title contrast regardless of the supplied photo.
+    draw = ImageDraw.Draw(page)
+    draw.rectangle((0, 290, 1275, 1050), fill="#" + OCEAN)
+    draw.rectangle((0, 290, 1275, 305), fill="#d9ee6c")
+    buffer = BytesIO()
+    page.save(buffer, "JPEG", quality=85, optimize=True)
+    paragraph = document.add_paragraph()
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = Pt(1)
+    inline = paragraph.add_run().add_picture(BytesIO(buffer.getvalue()), width=Inches(8.5), height=Inches(11))._inline
+    anchor = OxmlElement("wp:anchor")
+    for key, value in {"distT":"0", "distB":"0", "distL":"0", "distR":"0", "simplePos":"0", "relativeHeight":"0", "behindDoc":"1", "locked":"0", "layoutInCell":"1", "allowOverlap":"1"}.items():
+        anchor.set(key, value)
+    simple = OxmlElement("wp:simplePos")
+    simple.set("x", "0"); simple.set("y", "0")
+    anchor.append(simple)
+    for axis in ("H", "V"):
+        position = OxmlElement("wp:position" + axis)
+        position.set("relativeFrom", "page")
+        offset = OxmlElement("wp:posOffset"); offset.text = "0"
+        position.append(offset); anchor.append(position)
+    anchor.append(inline.extent)
+    anchor.append(OxmlElement("wp:wrapNone"))
+    for child in list(inline):
+        anchor.append(child)
+    inline.getparent().replace(inline, anchor)
+
+
+def _format_table(table, has_header):
+    """Keep site labels with their row and repeat column titles on overflow."""
+    for index, row in enumerate(table.rows):
+        properties = row._tr.get_or_add_trPr()
+        properties.append(OxmlElement("w:cantSplit"))
+        if index == 0 and has_header:
+            properties.append(OxmlElement("w:tblHeader"))
+        for cell in row.cells:
+            if index == 0 and has_header:
+                shading = OxmlElement("w:shd")
+                shading.set(qn("w:fill"), OCEAN)
+                cell._tc.get_or_add_tcPr().append(shading)
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.space_after = Pt(4)
+                paragraph.paragraph_format.keep_with_next = index == 0 and has_header
+                for run in paragraph.runs:
+                    run.font.size = Pt(9 if len(row.cells) > 6 else 10)
+                    if index == 0 and has_header:
+                        run.font.color.rgb = RGBColor(255, 255, 255)
+                        run.bold = True
 
 
 def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
@@ -240,7 +315,26 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
         raise ValueError(" ".join(blocking))
     if any(not c.blocking for c in checks) and acknowledged_fingerprint != draft.fingerprint:
         raise ValueError("Acknowledge the warnings for this version of the report.")
+    return _build_docx(draft, asset_loader=asset_loader)
+
+
+def _build_docx(draft, *, asset_loader=None):
+    """Internal layout assembler. Final output always uses assemble_docx's gate."""
     document = Document(SHELL_PATH)
+    # Override the shell's stock blue theme without modifying the content-free
+    # shell or importing any private branding into git.
+    for node in document.styles.element.iter():
+        if node.get(qn("w:themeColor")) == "accent1":
+            node.attrib.pop(qn("w:themeColor"), None)
+            node.attrib.pop(qn("w:themeShade"), None)
+            node.attrib.pop(qn("w:themeTint"), None)
+            node.set(qn("w:val") if node.tag == qn("w:color") else qn("w:color"), OCEAN)
+        if node.get(qn("w:themeFill")) == "accent1":
+            for name in ("themeFill", "themeFillTint", "themeFillShade"):
+                node.attrib.pop(qn("w:" + name), None)
+            node.set(qn("w:fill"), "EDF3F0")
+    for border in document.styles["Title"].element.xpath("./w:pPr/w:pBdr"):
+        border.getparent().remove(border)
     blocks = {b.key: b for b in draft.blocks}
     def cover_asset(key):
         block = blocks.get(key)
@@ -256,13 +350,13 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
         if logo:
             paragraph = section.header.paragraphs[0]
             paragraph.clear()
-            paragraph.add_run().add_picture(BytesIO(logo), height=Inches(0.3))
+            _fit_picture(paragraph.add_run(), logo, 2.5, 0.3)
     _configure_section(document.sections[0], content=False)
     _display_page(document, label=draft.profile.contract, title=draft.profile.title,
                   subtitle="Operations and Maintenance Monthly Review\n" + draft.period.label)
     client_logo = cover_asset("client_logo")
     if client_logo:
-        _picture(document, client_logo, width=2, height=0.5)
+        _picture(document, client_logo, width=2.5, height=0.75, inset=0.75)
     for text in ("Prepared by: " + draft.prepared_by,
                  "Facilities: " + "; ".join(f.title for f in draft.profile.facilities),
                  "SYNTHETIC DEMONSTRATION — NOT A CLIENT REPORT" if draft.synthetic else ""):
@@ -272,7 +366,7 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
             paragraph.paragraph_format.right_indent = Inches(0.75)
     photo = cover_asset("cover_photo")
     if photo:
-        _picture(document, photo, width=7, height=3)
+        _picture(document, photo, width=7, height=3, inset=0.75)
     configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
     document.add_heading("Table of contents", 0)
     sections = included_sections(draft.sections)
@@ -282,11 +376,11 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
     document.add_paragraph("Create. Sustain. Empower.")
     for section in sections:
         _configure_section(document.add_section(WD_SECTION_START.NEW_PAGE), content=False)
-        _display_page(document, label=f"Section {section.number}" if not section.appendix else f"Appendix {section.number}", title=section.title)
         if section.divider_asset:
             if asset_loader is None:
                 raise ValueError("The divider image could not be resolved.")
-            _picture(document, asset_loader(section.divider_asset), width=8.5, height=5.5)
+            _divider_background(document, asset_loader(section.divider_asset))
+        _display_page(document, label=f"Section {section.number}" if not section.appendix else f"Appendix {section.number}", title=section.title, light=bool(section.divider_asset))
         configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
         document.add_heading(f"{section.number}. {section.title}", 1)
         for spec in section.blocks:
@@ -322,17 +416,12 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
                 if spec.columns:
                     for cell, col in zip(table.rows[0].cells, spec.columns):
                         cell.text = col.title
-                        shading = OxmlElement("w:shd")
-                        shading.set(qn("w:fill"), OCEAN)
-                        cell._tc.get_or_add_tcPr().append(shading)
-                        for run in cell.paragraphs[0].runs:
-                            run.font.color.rgb = RGBColor(255, 255, 255)
-                            run.bold = True
                 for values in block.rows:
                     if len(values) > width:
                         raise ValueError(f"Too many table columns in {spec.key}.")
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = value
+                _format_table(table, bool(spec.columns))
             for imported in block.extra_tables:
                 if not imported.columns or not any(c.strip() for row in imported.rows for c in row):
                     continue
@@ -345,6 +434,7 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
                         raise ValueError("An imported table has more cells than columns.")
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = value
+                _format_table(table, True)
         carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
         if carried:
             from app.monthly_report_followups import report_text

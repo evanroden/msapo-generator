@@ -14,108 +14,47 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current implementation branch: `feat/monthly-report-m5`, integrating main
-`d385c43510160388a24a6c76f15db04118bdcba9`. Working checkout:
-`/workspace/scratch/monthly-report-m5-work`; venv: `/workspace/scratch/monthly-report-venv`.
-The separate `/workspace/scratch/monthly-report` checkout holds the released UI
-increments. Do not restart from the earlier vanished ca2afe740bcd checkout.
+Current implementation branch: `feat/monthly-report-polish`, based on main
+`ad0a408668270f9f7d71854f73902fb793511e88`. Working checkout:
+`/workspace/scratch/monthly-report`; venv `/workspace/scratch/monthly-report-venv`.
+M5 worktree `/workspace/scratch/monthly-report-m5-work` is clean at its published
+head. The older ca2afe740bcd checkout vanished; do not restart from it.
 
-M2 PR #58 merged at `73915b17cd1d3e5dbbe429719121e5a5400d29a8` (738 CI passes).
-M3 PR #59 merged at `012d4a85de7a364358ceee9b128a14d95509605c` (758 CI passes).
-M4 PR #60 merged at `d649cb8a90dd8382982a6a9c074997b78a152498` (784 CI passes).
-PR #62 guided setup merged at `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`
-(802 CI passes). The owner then found the raw fragment queue confusing.
+M1–M5 are merged. M5 PR #61 head
+`dd0996f57ab92e5e5155e8f31ca6a6384cbb64f9`, tree
+`123c178bca35d7c6713b854ab0f158e072415669`, passed Actions `37677196040` /
+job `112983633916`: **866 passed, zero skipped**. Logs verified the exact head
+merged into unchanged main `d385c43510160388a24a6c76f15db04118bdcba9`.
+Merged with expected-head protection at
+`ad0a408668270f9f7d71854f73902fb793511e88`.
 
-PR #63 replaced it with recognizable section expanders. Head
-`41ea6ea8e27e185c1acd48f04c42fbad32d13e06` passed Actions `37666102415`
-attempt 2 / job `112952646771`: **822 passed, zero skipped**. Attempt 1
-timed out downloading LibreOffice before tests; a normal retry passed. GitHub
-initially retained the old PR head after update_ref; reopening the existing PR
-refreshed it and triggered CI on the correct commit. Merge:
-`43269786db1e7f720772e9ea8efc1b2a657da1ec`.
-Public browser verified synthetic upload, section cards, site entry, retained
-independent table schemas, zero/No values and removal of a pricing column. No
-persistent test profile was saved. All eight private DOCX samples were inspected
-locally (12–13 grouped cards); three actual-report AppTest walkthroughs opened
-every section and verified edit retention. Original private reports stay outside
-git/production. Four synthetic DOCX/PDF pages were rendered and visually checked.
+Released UX increments: #63 section review (822 CI passes), #64 reviewed directory
+(835), #65 contract cards/site selection/start choices (841), #66 editable org
+charts/contacts/photo layouts (847). Public browser verified setup/section cards;
+no persistent synthetic profile or private client data was saved in production.
+Public saved-report editor controls have not been exercised without such a write.
+Local AppTest verified the editing/save/resume flows. Actual private Portland,
+Castle and White Memorial DOCX walkthroughs opened every section and retained
+edits; all eight supplied DOCX layouts were inspected outside git. This is not
+owner acceptance of a finished client report. The directory workbook was reviewed
+locally; importing/confirming it in production is still an operator task.
 
-Directory PR #64 head `80bf6456162b261d548ec04c4887a3a8c97fc3d9`, tree
-`a5312c90f03d4fb813b97fca14ce48a22fa72497`, passed Actions `37666662388` /
-job `112947521546`: **835 passed, zero skipped**. Rechecked main and proved
-its merged tree equaled the tested tree. Merge:
-`99cdd2a688bae623d171bbba53a64ee6e59c8139`.
-Public browser verified its optional directory entry, workbook upload screen
-and confirmation workflow entry. No real workbook or contacts were uploaded
-to production. The actual workbook's 25 tabs/22 detail tabs were read locally.
+M6 currently adds a bounded, low-resolution, watermarked full-report preview at
+any step; stale downloads disable until refreshed. Strict finished-output gates
+remain. Runtime divider artwork fills the page behind editable headings; logos
+fit bounded frames; tables repeat headers and keep rows together. Estimates now
+include generated chart/photo pages, and finished sizes are visible. A five-page
+synthetic report and its preview rendered with real LibreOffice and were visually
+inspected. The full local suite passed **871 tests, one CI-only skip** with
+real LibreOffice. Ruff F/E9, compileall, pip check, repository hygiene/docs and
+diff checks passed. Publication, exact-head CI and M6 public verification remain
+before release.
 
-M5 is draft PR #61, latest published checkpoint head
-`3d188c0a78cc4f0ddf8c3ea49e9a78bc98b8a285`, verified tree
-`7c658e61982473e78240fc5cbed6c8bdd24f066b`. Worktree:
-`/workspace/scratch/monthly-report-m5-work`. It has strict fact/draft JSON,
-evidence citations, caches/bounds, network-only workers, optional OCR, Copilot
-prompt/parser and reviewed suggestion UI. A focused 36-test run passed. It is
-NOT merged/deployed. The current local follow-up adds confirmed ongoing/updated/
-resolved carry-forward with evidence and explicit removal, including output and
-snapshot persistence. Applied AI paragraphs now retain old/manual links, remain
-editable and require fresh review after evidence changes. Source/model/UI
-integration is complete locally. The final full suite passed **865 tests, one
-CI-only skip** with real LibreOffice; publication/exact-head CI/release remain.
-
-Latest owner feedback is the active priority: replace the one-option report
-dropdown with contract cards and site checkboxes; choose a saved design by exact
-membership, offer a same-contract design/general ENFRA template/upload when new,
-remember optional group names and most recent saved designs, and allow free
-navigation. This is implemented locally in the start modules. Final local full
-suite: **840 passed, one CI-only skip** with LibreOffice; Ruff F/E9, dependency
-consistency and diff checks passed. Two actual private DOCX walkthroughs used
-the new contract cards/site selection/upload path, opened all 12/13 sections
-and retained edits across closing/reopening. Expected review blockers remain
-visible; no private data was uploaded to production. Reused designs
-keep schemas/branding but clear other-site contacts, charts/photos and activity.
-PR #65 head `106fa8ca36e4fa11cf9d7f8c0308249fc729899a`, tree
-`f76c9b8aae5a0c73b71e4c5d3dc0f0a41ea33846`, passed Actions `37672489798`
-/ job `112967509794`: **841 passed, zero skipped**. Rechecked main before
-merging at `544e7d59b3274f8ffa9defc7b52a932f857c23b6`. Public browser showed
-contract cards, the site checklist, month/year, combined-report name and the
-template/upload alternatives. Two site selections and the name persisted using
-keyboard controls; cloud-browser pointer clicks did not reliably operate the
-clipped React Aria checkbox input, so pointer/mobile acceptance is not claimed.
-No persistent test profile or private data was saved in production.
-
-The next local increment adds editable org-chart fields/reporting lines, simple
-contact fields and live photo-page layouts (one to six photos per page). Preview
-images are the same ones embedded in DOCX/PDF. Replacing a supplied chart/contact
-image is explicit, cycles and chart prices block output, and contact-row removal
-does not resurrect stale widget values. Full local suite: **845 passed, one
-CI-only skip**; after an advanced-editor preservation fix, 15 focused tests
-passed. A synthetic six-page DOCX/PDF was rendered and visually checked. See
-the visual-editing notes. PR #66 head `1be6e9038f5dc6f069829546198b391e16088655`,
-tree `f7d9779841677046f972227eec84732de841d94c`, passed Actions `37674412210`
-/ job `112974083657`: **847 passed, zero skipped**. Rechecked main before
-merge `d385c43510160388a24a6c76f15db04118bdcba9`. Public editor controls have
-not yet been exercised on a saved report in production; no persistent synthetic
-profile was created for this check.
-M6 remains unfinished; full preview PDF and final layout/size/mobile polish remain.
-
-Local M5 hardening commit `73a32d4` preserves manual/old-AI citations, never
-marks earlier unreviewed AI text reviewed on append, and exposes applied
-paragraphs with editable text and current real fact/page choices. Quote
-validation, unsupported numbers, strict JSON field types and conservative
-Copilot vendor/meeting classification are covered. After merging the current
-UI/model changes, 57 focused AI/UI/visual/site-start/hygiene/docs tests passed.
-That integration checkpoint was published at the PR #61 head above. New local
-carry-forward work has focused regression tests; an initial full suite passed
-**865 tests, one CI-only skip** with real LibreOffice. Final refinements expose
-confirmed equipment tags in Site information, remove price-entry columns from
-new designs, preserve sources/carry-forward in advanced editing and fix reuse
-of a saved design's table overrides. The fresh final full run passed **865 tests,
-one CI-only skip**. Ruff F/E9, compileall, dependency and diff checks passed.
-An eight-page synthetic AI/carry-forward DOCX/PDF was rendered
-and visually inspected outside git. No paid model calls or private client data
-were used in automated tests or production QA. An additional supplied large
-DOCX walkthrough opened all 13 section cards and retained an activity edit;
-expected content/drawing review blockers were preserved, not auto-approved.
+Hardware phone/iPad acceptance remains unavailable in the cloud browser. Public
+site-checkbox keyboard behavior was verified; clipped React Aria inputs did not
+respond reliably to automated pointer clicks, so pointer/touch acceptance is not
+claimed. No paid-model request was used in tests. Public Render checks only;
+no private workspace/log access. DOCX/PDF only; no demos or passcode added.
 
 ## Additional owner decisions October 7
 
@@ -324,3 +263,108 @@ Snapshot provenance pins asset versions rather than following future replacement
   rendered and visually inspected; actual page count matched the outline.
   Public-repository hygiene and documentation-index checks passed. Next:
   final regression gates, checkpoint branch, then merge/deploy for owner testing.
+
+## Earlier checkpoint detail (historical)
+
+Current implementation branch: `feat/monthly-report-m5`, integrating main
+`d385c43510160388a24a6c76f15db04118bdcba9`. Working checkout:
+`/workspace/scratch/monthly-report-m5-work`; venv: `/workspace/scratch/monthly-report-venv`.
+The separate `/workspace/scratch/monthly-report` checkout holds the released UI
+increments. Do not restart from the earlier vanished ca2afe740bcd checkout.
+
+M2 PR #58 merged at `73915b17cd1d3e5dbbe429719121e5a5400d29a8` (738 CI passes).
+M3 PR #59 merged at `012d4a85de7a364358ceee9b128a14d95509605c` (758 CI passes).
+M4 PR #60 merged at `d649cb8a90dd8382982a6a9c074997b78a152498` (784 CI passes).
+PR #62 guided setup merged at `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`
+(802 CI passes). The owner then found the raw fragment queue confusing.
+
+PR #63 replaced it with recognizable section expanders. Head
+`41ea6ea8e27e185c1acd48f04c42fbad32d13e06` passed Actions `37666102415`
+attempt 2 / job `112952646771`: **822 passed, zero skipped**. Attempt 1
+timed out downloading LibreOffice before tests; a normal retry passed. GitHub
+initially retained the old PR head after update_ref; reopening the existing PR
+refreshed it and triggered CI on the correct commit. Merge:
+`43269786db1e7f720772e9ea8efc1b2a657da1ec`.
+Public browser verified synthetic upload, section cards, site entry, retained
+independent table schemas, zero/No values and removal of a pricing column. No
+persistent test profile was saved. All eight private DOCX samples were inspected
+locally (12–13 grouped cards); three actual-report AppTest walkthroughs opened
+every section and verified edit retention. Original private reports stay outside
+git/production. Four synthetic DOCX/PDF pages were rendered and visually checked.
+
+Directory PR #64 head `80bf6456162b261d548ec04c4887a3a8c97fc3d9`, tree
+`a5312c90f03d4fb813b97fca14ce48a22fa72497`, passed Actions `37666662388` /
+job `112947521546`: **835 passed, zero skipped**. Rechecked main and proved
+its merged tree equaled the tested tree. Merge:
+`99cdd2a688bae623d171bbba53a64ee6e59c8139`.
+Public browser verified its optional directory entry, workbook upload screen
+and confirmation workflow entry. No real workbook or contacts were uploaded
+to production. The actual workbook's 25 tabs/22 detail tabs were read locally.
+
+M5 is draft PR #61, latest published checkpoint head
+`3d188c0a78cc4f0ddf8c3ea49e9a78bc98b8a285`, verified tree
+`7c658e61982473e78240fc5cbed6c8bdd24f066b`. Worktree:
+`/workspace/scratch/monthly-report-m5-work`. It has strict fact/draft JSON,
+evidence citations, caches/bounds, network-only workers, optional OCR, Copilot
+prompt/parser and reviewed suggestion UI. A focused 36-test run passed. It is
+NOT merged/deployed. The current local follow-up adds confirmed ongoing/updated/
+resolved carry-forward with evidence and explicit removal, including output and
+snapshot persistence. Applied AI paragraphs now retain old/manual links, remain
+editable and require fresh review after evidence changes. Source/model/UI
+integration is complete locally. The final full suite passed **865 tests, one
+CI-only skip** with real LibreOffice; publication/exact-head CI/release remain.
+
+Latest owner feedback is the active priority: replace the one-option report
+dropdown with contract cards and site checkboxes; choose a saved design by exact
+membership, offer a same-contract design/general ENFRA template/upload when new,
+remember optional group names and most recent saved designs, and allow free
+navigation. This is implemented locally in the start modules. Final local full
+suite: **840 passed, one CI-only skip** with LibreOffice; Ruff F/E9, dependency
+consistency and diff checks passed. Two actual private DOCX walkthroughs used
+the new contract cards/site selection/upload path, opened all 12/13 sections
+and retained edits across closing/reopening. Expected review blockers remain
+visible; no private data was uploaded to production. Reused designs
+keep schemas/branding but clear other-site contacts, charts/photos and activity.
+PR #65 head `106fa8ca36e4fa11cf9d7f8c0308249fc729899a`, tree
+`f76c9b8aae5a0c73b71e4c5d3dc0f0a41ea33846`, passed Actions `37672489798`
+/ job `112967509794`: **841 passed, zero skipped**. Rechecked main before
+merging at `544e7d59b3274f8ffa9defc7b52a932f857c23b6`. Public browser showed
+contract cards, the site checklist, month/year, combined-report name and the
+template/upload alternatives. Two site selections and the name persisted using
+keyboard controls; cloud-browser pointer clicks did not reliably operate the
+clipped React Aria checkbox input, so pointer/mobile acceptance is not claimed.
+No persistent test profile or private data was saved in production.
+
+The next local increment adds editable org-chart fields/reporting lines, simple
+contact fields and live photo-page layouts (one to six photos per page). Preview
+images are the same ones embedded in DOCX/PDF. Replacing a supplied chart/contact
+image is explicit, cycles and chart prices block output, and contact-row removal
+does not resurrect stale widget values. Full local suite: **845 passed, one
+CI-only skip**; after an advanced-editor preservation fix, 15 focused tests
+passed. A synthetic six-page DOCX/PDF was rendered and visually checked. See
+the visual-editing notes. PR #66 head `1be6e9038f5dc6f069829546198b391e16088655`,
+tree `f7d9779841677046f972227eec84732de841d94c`, passed Actions `37674412210`
+/ job `112974083657`: **847 passed, zero skipped**. Rechecked main before
+merge `d385c43510160388a24a6c76f15db04118bdcba9`. Public editor controls have
+not yet been exercised on a saved report in production; no persistent synthetic
+profile was created for this check.
+M6 remains unfinished; full preview PDF and final layout/size/mobile polish remain.
+
+Local M5 hardening commit `73a32d4` preserves manual/old-AI citations, never
+marks earlier unreviewed AI text reviewed on append, and exposes applied
+paragraphs with editable text and current real fact/page choices. Quote
+validation, unsupported numbers, strict JSON field types and conservative
+Copilot vendor/meeting classification are covered. After merging the current
+UI/model changes, 57 focused AI/UI/visual/site-start/hygiene/docs tests passed.
+That integration checkpoint was published at the PR #61 head above. New local
+carry-forward work has focused regression tests; an initial full suite passed
+**865 tests, one CI-only skip** with real LibreOffice. Final refinements expose
+confirmed equipment tags in Site information, remove price-entry columns from
+new designs, preserve sources/carry-forward in advanced editing and fix reuse
+of a saved design's table overrides. The fresh final full run passed **865 tests,
+one CI-only skip**. Ruff F/E9, compileall, dependency and diff checks passed.
+An eight-page synthetic AI/carry-forward DOCX/PDF was rendered
+and visually inspected outside git. No paid model calls or private client data
+were used in automated tests or production QA. An additional supplied large
+DOCX walkthrough opened all 13 section cards and retained an activity edit;
+expected content/drawing review blockers were preserved, not auto-approved.
