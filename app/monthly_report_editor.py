@@ -18,7 +18,7 @@ from app.monthly_report_checks import preflight
 from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image, outline
 from app.monthly_report_model import (
     BLOCK_SOURCES, STOCK_TEXTS, BlockSpec, Facility, ReportDraft, ReportPeriod,
-    ReportProfile, ResolvedBlock, default_sections, layout_blocks,
+    ReportProfile, ResolvedBlock, default_sections, layout_blocks, profile_sections,
 )
 from app.ui_highlight import highlight_needed_fields
 
@@ -91,7 +91,10 @@ def _profile_manager(contract: str, state: library.LibraryState | None, field) -
             candidate = ReportProfile(contract, profile.key if profile else _key(title), title.strip(), facilities, scope,
                                       tuple(v.strip() for v in order_text.splitlines() if v.strip()),
                                       tuple((row["Block"], row["Default source"]) for row in sources),
-                                      excluded_sections=tuple(excluded), block_overrides=profile.block_overrides if profile else ())
+                                      excluded_sections=tuple(excluded), block_overrides=profile.block_overrides if profile else (),
+                                      section_titles=profile.section_titles if profile else (),
+                                      section_block_order=profile.section_block_order if profile else (),
+                                      imported_from=profile.imported_from if profile else "")
         except (ValueError, TypeError, KeyError) as exc:
             candidate = None
             st.caption(str(exc))
@@ -308,14 +311,16 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     profile = state.profile
     st.write("Facilities: " + "; ".join(f.title for f in profile.facilities))
     st.caption("Scope: " + profile.scope_type.replace("_", " "))
-    from app.monthly_report_import_ui import render_import
-    render_import(state, field, browser_timezone)
-    month = st.date_input("Reporting month", key=field("report_month", ReportPeriod.previous(operator_today(browser_timezone)).start))
-    period = ReportPeriod(month.year, month.month)
-    st.caption(f"Reporting period: {period.start:%b %d, %Y} – {period.end:%b %d, %Y}")
+    from app.monthly_report_setup import month_selector, suggested_period
+    period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
+    st.caption("To import an older or partially completed report, return to the guided report’s first step. Save any current advanced edits first.")
     prefix = "report_draft_" + _signature((contract, profile.key, period.key))
-    prior = library.load_snapshot(contract, profile.key, ReportPeriod.previous(period.start))
-    start_choices = (["Last month's report for this profile"] if prior else []) + ["The profile's library template"]
+    current = library.load_snapshot(contract, profile.key, period)
+    prior = current or library.load_snapshot(contract, profile.key, ReportPeriod.previous(period.start))
+    if prior and not current:
+        from app.monthly_report_setup import new_month_draft
+        prior = replace(prior, draft=new_month_draft(prior.draft, period))
+    start_choices = (["Saved work for this month" if current else "Last month's report for this profile"] if prior else []) + ["The profile's library template"]
     start = st.radio("Start from", start_choices, key=field(prefix + "_start", start_choices[0]))
     from_prior = bool(prior and start == start_choices[0])
     previous = {b.key: b for b in prior.draft.blocks} if prior else {}
@@ -327,7 +332,7 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     st.caption("AI drafts and Copilot context are coming next. Review the extracted facts and enter narrative text in the report blocks now.")
 
     st.subheader("5. Assemble the report")
-    base_sections = prior.draft.sections if from_prior else default_sections()
+    base_sections = prior.draft.sections if from_prior else profile_sections(profile)
     if not from_prior:
         overrides = {b.key: b for b in profile.block_overrides}
         base_sections = tuple(replace(s, blocks=tuple(overrides.get(b.key, b) for b in s.blocks)) for s in base_sections)

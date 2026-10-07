@@ -14,37 +14,66 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current branch: `feat/monthly-report-m5` (recovery checkpoint only).
-Current stage: milestones 1–3 merged and publicly verified; milestone 4 merged,
-with public production verification still pending. M5 and M6 are not implemented.
-Next action: restore normal terminal/browser access, fetch the published M5
-checkpoint and current main, verify M4 on the public production app, then
-implement M5 AI/Copilot and M6 polish. Do not repeat completed milestones.
+Current implementation branch: `feat/monthly-report-m5`, integrating main
+`29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Working checkout:
+`/workspace/scratch/monthly-report`; venv: `/workspace/scratch/monthly-report-venv`.
+The earlier `ca2afe740bcd/monthly-report` checkout did not survive the environment
+replacement. Do not restart the milestones from the stale status below.
 
-## October 7 environment interruption
+M2 PR #58 merged at `73915b17cd1d3e5dbbe429719121e5a5400d29a8` (738 CI passes).
+M3 PR #59 merged at `012d4a85de7a364358ceee9b128a14d95509605c` (758 CI passes).
+M4 PR #60 merged at `d649cb8a90dd8382982a6a9c074997b78a152498`; exact-head Actions
+run `37634255896`, job `112836173453`: **784 passed, zero skipped**. The public app
+now shows the M4 entry text for monthly uploads/CMMS. No private Render access
+or persistent production test content was used.
 
-M4 PR #60 merged successfully at d649cb8a90dd8382982a6a9c074997b78a152498.
-Its exact feature head 6222d6d5981d0e0a090f5fa222b864be75724c09 has tree
-09f25f1aa5fd88ec1561237469d6e45994d7c00c. Actions run 37634255896,
-job 112836173453, passed 784 tests with zero skipped. Local/remote tree equality
-was verified before the merge. Main was rechecked immediately before merging.
+M5 draft PR #61 started as a documentation-only recovery checkpoint, head
+`ebc7185779f33133738d76015882cbd285e14028`. M5 AI/Copilot is NOT implemented yet.
+The owner requested a focused setup/UX increment before continuing it: remove
+the demo switch; upload-first real report setup; month/year only; anonymous
+device/profile preferences; saved partial drafts; and mixed-month item review.
+The setup increment implements those changes. The complete local
+suite passed **801 tests with one CI-only skip**, plus compileall/Ruff/pip check,
+privacy/docs-index/diff checks. All six synthetic output pages passed visual QA.
+PR #62 merged at `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Exact feature head
+`ddbe835226342749b89ec0fa53984fb7ad96a135` passed Actions run `37652428282`, job
+`112898927182`: **802 passed, zero skipped**. Final tree
+`1aa781f0b82d34f75563cd48f9ddcae33642a06e` matched local before the protected merge.
+Public deployment verification passed: HTTP 200 health, no demo/library switch,
+September 2026 month/year controls, real-report selector and 128 MB upload-first
+DOCX setup. No persistent public test records or private Render access were used.
+Continue M5/M6 rather than claiming the guided action-field append is full AI drafting.
 
-The terminal disconnected during the post-merge local fetch. A normal retry and
-the public browser both then returned `409 Conflict, environment_offline` /
-`Environment is not connected`. This is an environment availability failure;
-no approval rejection or unsafe-operation determination was reported. Do not
-bypass controls. GitHub remained available, so this documentation-only recovery
-checkpoint was published through the authenticated Git-object connector. No
-untested implementation was added or deployed during the outage.
+The October 7 `409 environment_offline` interruption is resolved. Its recovery
+checkpoint is preserved in M5 history; no controls were bypassed. The replacement
+checkout and venv above are the current paths, not the earlier session paths.
 
-Last verified local checkout: branch feat/monthly-report-m5 at the M4 feature
-head above, with a clean working tree. The attempted fetch/fast-forward did not
-complete; inspect actual state on resumption. The new remote M5 checkpoint is a
-descendant of the M4 main merge and can be integrated normally after fetching.
-No M5 source edits were made. M4 production deployment/UI has NOT been verified.
-M2 and M3 public UI checks were completed earlier; no persistent production test
-data was created. The supplied private examples were inspected/rendered outside
-git, and synthetic M4 DOCX/PDF QA also remains outside git.
+## Additional owner decisions October 7
+
+- Only real saved reports in the UI; synthetic builders remain test fixtures.
+- Start with contract and an uploaded preferred report, then confirm explicit
+  scope, site identities and aliases. Save logical order/titles/table schemas
+  and standing assets; do not require an empty profile to exist first.
+- Asset managers need four clear stages: report, monthly work, standing site
+  information, review/download. Advanced layout/library controls are secondary.
+- Suggest last month on days 1–10, otherwise current month; always offer month
+  and year selectors, never a day picker for the reporting period.
+- A partial report can have a stale cover, mixed old/new narrative and only a
+  few replaced vendor images. NEVER classify the whole upload by its title.
+  Inspect item text and embedded images independently. Surface mixed/unknown
+  dates. Visual/OCR reading is assistive and bounded, not a deletion decision.
+  Keep/reference/exclude decisions require confirmation; preserve original DOCX
+  and unmatched content on the runtime disk. Exclude means from this draft,
+  not irreversible deletion. A same-month partial import must preserve/append
+  current work; a deliberately new month resets monthly attachments/narrative
+  while retaining standing information and previous saved versions.
+- The owner supplied a private Excel contract/site/leadership/contact directory.
+  Inspect it outside git; never publish its names, contacts, original or extracts.
+  Add a generic reviewed runtime import, distinguishing index/summary sheets
+  from site-detail sheets. Use confirmed site identities as setup suggestions,
+  not automatic regional membership or authenticated manager identity. Contacts
+  belong in confirmed contact tables, not AI narrative. Preserve source provenance,
+  revision guards and restoration. The original workbook remains unchanged.
 
 ## Owner decisions approved October 6
 

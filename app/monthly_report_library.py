@@ -16,6 +16,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import tempfile
 
 from app.memory import _data_dir
@@ -180,6 +181,9 @@ def profile_from_dict(value: dict) -> ReportProfile:
             template=value.get("template", "monthly_review_v1"),
             excluded_sections=tuple(value.get("excluded_sections", ())),
             block_overrides=tuple(spec_from_dict(b) for b in value.get("block_overrides", ())),
+            section_titles=tuple(tuple(v) for v in value.get("section_titles", ())),
+            section_block_order=tuple((k, tuple(v)) for k, v in value.get("section_block_order", ())),
+            imported_from=value.get("imported_from", ""),
         )
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report profile.") from exc
@@ -277,8 +281,7 @@ def _expected(value: dict, revision: int) -> None:
         raise RevisionConflict("Someone changed this profile. Reload and review the new version before saving.")
 
 
-def save_profile(profile: ReportProfile, *, expected_revision: int, actor: str, confirmed: bool) -> LibraryState:
-    actor = _confirmation(actor, confirmed)
+def _validate_profile(profile: ReportProfile) -> None:
     if not profile.title.strip():
         raise LibraryError("Enter the report profile title.")
     skeleton = default_sections()
@@ -291,6 +294,23 @@ def save_profile(profile: ReportProfile, *, expected_revision: int, actor: str, 
     if any(key not in known_blocks or source not in BLOCK_SOURCES for key, source in profile.default_block_sources):
         raise LibraryError("Invalid default block source.")
     _validate_overrides(profile.block_overrides)
+    section_keys = {s.key for s in skeleton}
+    if (len(dict(profile.section_titles)) != len(profile.section_titles)
+            or any(k not in section_keys or not title.strip() for k, title in profile.section_titles)):
+        raise LibraryError("Invalid saved section titles.")
+    if len(dict(profile.section_block_order)) != len(profile.section_block_order):
+        raise LibraryError("Duplicate saved block order.")
+    for key, order in profile.section_block_order:
+        section = next((s for s in skeleton if s.key == key), None)
+        if section is None or len(set(order)) != len(order) or set(order) != {b.key for b in section.blocks}:
+            raise LibraryError("Each section's block order must contain its blocks exactly once.")
+    if profile.imported_from and not re.fullmatch(r"[0-9a-f]{64}", profile.imported_from):
+        raise LibraryError("Invalid original design reference.")
+
+
+def save_profile(profile: ReportProfile, *, expected_revision: int, actor: str, confirmed: bool) -> LibraryState:
+    actor = _confirmation(actor, confirmed)
+    _validate_profile(profile)
     path = _profile_path(profile.contract, profile.key)
     with _locked(path):
         manifest = path / "manifest.json"
@@ -306,6 +326,103 @@ def save_profile(profile: ReportProfile, *, expected_revision: int, actor: str, 
         _atomic_write(path / "history" / f'{value["revision"]:08d}.json', _json(value))
         _atomic_write(manifest, _json(value))
         return _state(value)
+
+
+def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, review: dict, *,
+                      assets: tuple[tuple[str, bytes], ...], expected_revision: int,
+                      actor: str, confirmed: bool, snapshot_revision: int = 0) -> LibraryState:
+    """Publish design, original, review decisions and working seed in one manifest.
+
+    New profiles become visible only after every immutable asset and the original
+    are durable. Existing report snapshots are not overwritten by an import.
+    """
+    from app.monthly_report_setup import MONTHLY_BLOCKS
+    actor = _confirmation(actor, confirmed)
+    _validate_profile(profile)
+    if (draft.profile.contract, draft.profile.key) != (profile.contract, profile.key):
+        raise LibraryError("Imported draft identity does not match the profile.")
+    if source.stat().st_size > 128 * 1024 * 1024:
+        raise LibraryError("Original DOCX exceeds the import limit.")
+    with source.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    if digest != review.get("sha256"):
+        raise LibraryError("Original DOCX changed during review. Analyze it again.")
+    path = _profile_path(profile.contract, profile.key)
+    with _locked(path):
+        manifest = path / "manifest.json"
+        value = _read(manifest) if manifest.exists() else {"schema": 1, "revision": 0, "versions": [], "current": [], "audit": []}
+        _expected(value, expected_revision)
+        for reference, raw in assets:
+            if not _ASSET.fullmatch(reference) or asset_reference(raw, reference.rsplit(".", 1)[-1]) != reference:
+                raise LibraryError("Invalid imported asset.")
+            _atomic_write(path / "assets" / reference, raw)
+        for block in draft.blocks:
+            for reference in block.asset_hashes:
+                read_asset(profile.contract, profile.key, reference)
+        original = path / "imports" / (digest + ".docx")
+        original.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=original.parent, prefix=".pending-", delete=False) as output:
+                temporary = Path(output.name)
+                with source.open("rb") as incoming:
+                    shutil.copyfileobj(incoming, output, length=1024 * 1024)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, original)
+        finally:
+            if temporary:
+                temporary.unlink(missing_ok=True)
+        _atomic_write(path / "imports" / (digest + ".json"), _json({"schema": 1, **review, "actor": actor, "at": _now()}))
+        # Only first setup seeds standing defaults. A partial report cannot
+        # silently change everyone else's org chart or contact matrix.
+        if expected_revision == 0:
+            current, at = {}, _now()
+            for block in draft.blocks:
+                if block.key in MONTHLY_BLOCKS or block.source == "Omit":
+                    continue
+                identity = hashlib.sha256(_json(asdict(block))).hexdigest()
+                value["versions"].append(asdict(LibraryVersion(identity, block.key, block.key.replace("_", " "),
+                                                              replace(block, source="Library"), actor, at)))
+                current[block.key] = identity
+            value["current"] = sorted(current.items())
+        value["profile"] = asdict(profile)
+        value["bootstrap"] = asdict(draft)
+        value["bootstrap_snapshot_revision"] = snapshot_revision
+        value["import_review"] = digest
+        value["revision"] += 1
+        value["audit"].append({"action": "report_import", "actor": actor, "at": _now(), "source": digest,
+                               "period": draft.period.key, "intent": review.get("intent", "")})
+        raw = _json(value)
+        _atomic_write(path / "history" / f'{value["revision"]:08d}.json', raw)
+        _atomic_write(manifest, raw)
+        return _state(value)
+
+
+def load_imported_draft(contract: str, key: str) -> ReportDraft | None:
+    value = _read(_profile_path(contract, key) / "manifest.json")
+    return draft_from_dict(value["bootstrap"]) if value.get("bootstrap") else None
+
+
+def imported_snapshot_revision(contract: str, key: str) -> int:
+    value = _read(_profile_path(contract, key) / "manifest.json")
+    return int(value.get("bootstrap_snapshot_revision", 0))
+
+
+def imported_original(contract: str, key: str) -> Path | None:
+    value = _read(_profile_path(contract, key) / "manifest.json")
+    digest = value.get("import_review", "")
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        return None
+    return _profile_path(contract, key) / "imports" / (digest + ".docx")
+
+
+def imported_review_scope(contract: str, key: str, period: ReportPeriod) -> str:
+    original = imported_original(contract, key)
+    if not original:
+        return ""
+    review = _read(original.with_suffix(".json"))
+    return review.get("image_review_scope", "") if review.get("period") == period.key else ""
 
 
 def _validate_overrides(overrides: tuple[BlockSpec, ...]) -> None:

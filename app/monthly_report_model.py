@@ -1,8 +1,8 @@
 """Immutable report definitions, shared by the editor, checks and renderer.
 
 Profiles describe scope explicitly: a regional title is not a facility, and a
-facility alias must never become a second member of a report. The initial UI
-uses synthetic profiles; real membership belongs in the runtime library.
+facility alias must never become a second member of a report. Synthetic builders
+are regression fixtures only; the application uses saved real-report profiles.
 """
 
 from __future__ import annotations
@@ -51,6 +51,9 @@ class ReportProfile:
     excluded_sections: tuple[str, ...] = ()
     # Imported tables keep their actual schema instead of dropping extra cells.
     block_overrides: tuple[BlockSpec, ...] = ()
+    section_titles: tuple[tuple[str, str], ...] = ()
+    section_block_order: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    imported_from: str = ""
 
     def __post_init__(self) -> None:
         if self.scope_type not in ("individual", "multi_site", "regional"):
@@ -283,6 +286,20 @@ def included_sections(sections: tuple[SectionSpec, ...]) -> tuple[SectionSpec, .
             number += 1
         result.append(replace(section, number=section.number if section.appendix else str(number)))
     return tuple(result)
+
+
+def profile_sections(profile: ReportProfile) -> tuple[SectionSpec, ...]:
+    """Resolve the saved design independently of last month's report content."""
+    overrides, titles = {b.key: b for b in profile.block_overrides}, dict(profile.section_titles)
+    block_orders = dict(profile.section_block_order)
+    sections = {}
+    for section in default_sections():
+        blocks = {b.key: overrides.get(b.key, b) for b in section.blocks}
+        order = block_orders.get(section.key, tuple(blocks))
+        sections[section.key] = replace(section, title=titles.get(section.key, section.title),
+                                        included=section.key not in profile.excluded_sections,
+                                        blocks=tuple(blocks[k] for k in order))
+    return tuple(sections[k] for k in profile.section_order or tuple(sections))
 
 
 def layout_blocks() -> tuple[BlockSpec, ...]:
