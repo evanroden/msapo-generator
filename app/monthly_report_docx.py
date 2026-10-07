@@ -1,19 +1,23 @@
 """Deterministic DOCX assembly with recoverable PDF conversion.
 
 The committed shell contains only styles and page chrome, never client assets.
-M1 renders text/stock-text and tables; image-backed blocks fail explicitly until
-their library resolver is installed. Missing content must not vanish silently.
+Runtime library assets are resolved by hash. Missing content fails explicitly;
+it must never vanish silently from a finished report.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Callable
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
+import logging
 import tempfile
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+from PIL import Image, ImageOps
 
 from docx import Document
 from docx.enum.section import WD_SECTION_START
@@ -22,13 +26,52 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from app import pdf_converter
+from app.ocr import SUPPORTED_IMAGE_SUFFIXES, _MAX_PIXELS_PER_FRAME
 from app.monthly_report_checks import preflight
-from app.monthly_report_model import ReportDraft, included_sections, report_filename
+from app.monthly_report_model import ReportDraft, included_sections, report_filename, used_block_keys, used_asset_references
 
 
 SHELL_PATH = Path(__file__).resolve().parents[1] / "templates" / "monthly_report" / "shell.docx"
 FIXED_TIME = datetime(2000, 1, 1, tzinfo=timezone.utc)
 OCEAN = "092B24"  # Matches --enfra-ocean in the existing application CSS.
+
+
+@dataclass(frozen=True)
+class ReportImage:
+    data: bytes
+    extension: str
+    width: int
+    height: int
+
+
+def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
+                           frame: tuple[float, float] = (7, 9), dpi: int = 200) -> ReportImage:
+    """Print normalization; vision still uses the stricter OCR request budgets.
+
+    Line art must stay lossless, so the JPEG-only vision encoder is unsuitable
+    here. Share its formats and pixel limit, and check size BEFORE decoding.
+    """
+    if suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES or len(raw) > 30 * 1024 * 1024:
+        raise ValueError("Choose a supported image no larger than 30 MB.")
+    if dpi not in (96, 150, 200) or min(frame) <= 0 or max(frame) > 11:
+        raise ValueError("Invalid report image frame.")
+    if suffix.lower() in {".heic", ".heif", ".hif"}:
+        from pillow_heif import register_heif_opener
+        register_heif_opener(thumbnails=False)
+    with Image.open(BytesIO(raw)) as image:
+        if image.width * image.height > _MAX_PIXELS_PER_FRAME:
+            raise ValueError("Image is too large to decode safely. Resize it before uploading.")
+        if getattr(image, "n_frames", 1) != 1:
+            raise ValueError("Choose a single image; use a PDF for multiple pages.")
+        oriented = ImageOps.exif_transpose(image)
+        oriented.thumbnail((round(frame[0] * dpi), round(frame[1] * dpi)), Image.Resampling.LANCZOS)
+        rgba = oriented.convert("RGBA")
+        flattened = Image.new("RGB", rgba.size, "white")
+        flattened.paste(rgba, mask=rgba.getchannel("A"))
+        output = BytesIO()
+        flattened.save(output, format="PNG" if line_art else "JPEG",
+                       **({"optimize": True} if line_art else {"quality": 82, "optimize": True}))
+        return ReportImage(output.getvalue(), "png" if line_art else "jpg", *flattened.size)
 
 
 @dataclass(frozen=True)
@@ -122,9 +165,15 @@ def create_shell(path: Path) -> None:
 
 
 def outline(draft: ReportDraft) -> tuple[tuple[str, tuple[str, ...], int], ...]:
-    """Conservative text-only minimum; large text/tables can flow onto more pages."""
-    return tuple((f"{s.number}. {s.title}", tuple(b.key for b in s.blocks), 2)
-                 for s in included_sections(draft.sections))
+    """Include dedicated image pages; text/table overflow remains an estimate."""
+    blocks = {b.key: b for b in draft.blocks if b.source != "Omit"}
+    result = []
+    for section in included_sections(draft.sections):
+        images = sum(len(blocks[b.key].asset_hashes) for b in section.blocks if b.key in blocks)
+        has_other = any(blocks[b.key].text or blocks[b.key].rows for b in section.blocks if b.key in blocks)
+        result.append((f"{section.number}. {section.title}",
+                       tuple(b.key for b in section.blocks if b.key in blocks), 1 + max(1, images + int(has_other))))
+    return tuple(result)
 
 
 def _display_page(document, *, label: str, title: str, subtitle: str = "") -> None:
@@ -158,17 +207,54 @@ def _text(document, text: str) -> None:
             document.add_paragraph(line)
 
 
-def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "") -> bytes:
-    checks = preflight(draft)
+def estimate_bytes(draft: ReportDraft, asset_loader: Callable[[str], bytes] | None = None) -> int:
+    included_keys = used_block_keys(draft)
+    used_blocks = [b for b in draft.blocks if b.key in included_keys and b.source != "Omit"]
+    references = used_asset_references(draft)
+    return 150_000 + sum(len(b.text.encode()) + sum(len(c.encode()) for row in b.rows for c in row) for b in used_blocks) + (
+        sum(len(asset_loader(ref)) for ref in references) if asset_loader else 0
+    )
+
+
+def _picture(document, raw: bytes, *, width: float = 7, height: float = 8) -> None:
+    with Image.open(BytesIO(raw)) as image:
+        if image.width * image.height > _MAX_PIXELS_PER_FRAME:
+            raise ValueError("Resolved image exceeds the pixel limit.")
+        scale = min(width / image.width, height / image.height)
+        document.add_picture(BytesIO(raw), width=Inches(image.width * scale), height=Inches(image.height * scale))
+
+
+def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
+                  asset_loader: Callable[[str], bytes] | None = None) -> bytes:
+    checks = preflight(draft, estimate_bytes(draft, asset_loader))
     blocking = [c.message for c in checks if c.blocking]
     if blocking:
         raise ValueError(" ".join(blocking))
     if any(not c.blocking for c in checks) and acknowledged_fingerprint != draft.fingerprint:
         raise ValueError("Acknowledge the warnings for this version of the report.")
     document = Document(SHELL_PATH)
+    blocks = {b.key: b for b in draft.blocks}
+    def cover_asset(key):
+        block = blocks.get(key)
+        if block and block.source != "Omit" and block.asset_hashes:
+            if asset_loader is None:
+                raise ValueError("Cover image requires the library resolver.")
+            return asset_loader(block.asset_hashes[0])
+        return None
+
+    logo = cover_asset("brand_logo")
+    def configure_content(section):
+        _configure_section(section, content=True, address=draft.address_line)
+        if logo:
+            paragraph = section.header.paragraphs[0]
+            paragraph.clear()
+            paragraph.add_run().add_picture(BytesIO(logo), height=Inches(0.3))
     _configure_section(document.sections[0], content=False)
     _display_page(document, label=draft.profile.contract, title=draft.profile.title,
                   subtitle="Operations and Maintenance Monthly Review\n" + draft.period.label)
+    client_logo = cover_asset("client_logo")
+    if client_logo:
+        _picture(document, client_logo, width=2, height=0.5)
     for text in ("Prepared by: " + draft.prepared_by,
                  "Facilities: " + "; ".join(f.title for f in draft.profile.facilities),
                  "SYNTHETIC DEMONSTRATION — NOT A CLIENT REPORT" if draft.synthetic else ""):
@@ -176,26 +262,36 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "") -> 
             paragraph = document.add_paragraph(text)
             paragraph.paragraph_format.left_indent = Inches(0.75)
             paragraph.paragraph_format.right_indent = Inches(0.75)
-    _configure_section(document.add_section(WD_SECTION_START.NEW_PAGE), content=True, address=draft.address_line)
+    photo = cover_asset("cover_photo")
+    if photo:
+        _picture(document, photo, width=7, height=3)
+    configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
     document.add_heading("Table of contents", 0)
     sections = included_sections(draft.sections)
     for section in sections:
         document.add_paragraph(f"{section.number}. {section.title}")
     document.add_paragraph("Confidential — intended for the report recipients. Do not distribute without permission.")
     document.add_paragraph("Create. Sustain. Empower.")
-    blocks = {b.key: b for b in draft.blocks}
     for section in sections:
         _configure_section(document.add_section(WD_SECTION_START.NEW_PAGE), content=False)
         _display_page(document, label=f"Section {section.number}" if not section.appendix else f"Appendix {section.number}", title=section.title)
-        _configure_section(document.add_section(WD_SECTION_START.NEW_PAGE), content=True, address=draft.address_line)
+        if section.divider_asset:
+            if asset_loader is None:
+                raise ValueError("The divider image could not be resolved.")
+            _picture(document, asset_loader(section.divider_asset), width=8.5, height=5.5)
+        configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
         document.add_heading(f"{section.number}. {section.title}", 1)
         for spec in section.blocks:
             block = blocks.get(spec.key)
             if block is None or block.source == "Omit":
                 continue
-            if block.asset_hashes:
-                raise ValueError("Image and PDF-page assets require the library resolver.")
             _text(document, block.text)
+            for index, reference in enumerate(block.asset_hashes):
+                if asset_loader is None:
+                    raise ValueError("Image and PDF-page assets require the library resolver.")
+                if index:
+                    document.add_page_break()
+                _picture(document, asset_loader(reference))
             if block.rows:
                 width = len(spec.columns) or max(map(len, block.rows))
                 table = document.add_table(rows=1 if spec.columns else 0, cols=width)
@@ -217,8 +313,9 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "") -> 
     return _save(document)
 
 
-def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "") -> ReportPackage:
-    docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint)
+def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
+                    asset_loader: Callable[[str], bytes] | None = None) -> ReportPackage:
+    docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader)
     pdf = None
     error = ""
     # The converter writes into the shared OUTPUT_DIR. A random stem prevents
@@ -239,5 +336,9 @@ def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "") -
         error = f"PDF conversion failed ({type(exc).__name__}). The DOCX is ready to download; retry PDF generation."
     finally:
         for path in {actual_pdf, expected_pdf} - {None}:
-            path.unlink(missing_ok=True)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                # A cleanup failure must not discard either finished download.
+                logging.getLogger(__name__).warning("Monthly-report temporary PDF cleanup failed")
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error)

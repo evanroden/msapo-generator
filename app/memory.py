@@ -205,6 +205,15 @@ CREATE TABLE IF NOT EXISTS expense_approver_events (
     recorded_at  REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (account_key, context_id)
 );
+-- Additive guarded migration: no existing table or key is altered. Older
+-- databases acquire this independent table on their next initialization.
+CREATE TABLE IF NOT EXISTS device_report_preparers (
+    device_hash TEXT NOT NULL,
+    account_key TEXT NOT NULL,
+    profile_key TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    PRIMARY KEY (device_hash, account_key, profile_key)
+);
 """
 
 
@@ -974,6 +983,48 @@ def record_device_account_manager(
         except Exception:
             pass
         return 0
+    finally:
+        conn.close()
+
+
+def record_report_preparer(device_token: str, account: str, profile: str, name: str) -> None:
+    """Remember only a completed report's preparer, scoped to device and profile."""
+    device = _device_hash(device_token)
+    account_key = _account_key(account)
+    if not device or not account_key or not profile or not name.strip():
+        return
+    conn = _connect()
+    if conn is None:
+        return
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO device_report_preparers VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(device_hash, account_key, profile_key) DO UPDATE SET display_name=excluded.display_name",
+                (device, account_key, profile, name.strip()),
+            )
+    except Exception:
+        pass  # Device memory must never discard a finished report.
+    finally:
+        conn.close()
+
+
+def remembered_report_preparer(device_token: str, account: str, profile: str) -> str:
+    device = _device_hash(device_token)
+    account_key = _account_key(account)
+    if not device or not account_key or not profile:
+        return ""
+    conn = _connect()
+    if conn is None:
+        return ""
+    try:
+        row = conn.execute(
+            "SELECT display_name FROM device_report_preparers WHERE device_hash=? AND account_key=? AND profile_key=?",
+            (device, account_key, profile),
+        ).fetchone()
+        return str(row[0]) if row else ""
+    except Exception:
+        return ""
     finally:
         conn.close()
 

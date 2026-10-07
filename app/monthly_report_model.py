@@ -24,6 +24,7 @@ BLOCK_SOURCES = (
     "Library", "Last month", "This month", "Replace once",
     "Replace and save to library", "Stock text", "Omit",
 )
+COVER_ASSET_KEYS = ("brand_logo", "client_logo", "cover_photo")
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,10 @@ class Facility:
     key: str
     title: str
     aliases: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.key.strip() or not self.title.strip():
+            raise ValueError("Facility identity and title are required")
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,7 @@ class ReportProfile:
     section_order: tuple[str, ...] = ()
     default_block_sources: tuple[tuple[str, str], ...] = ()
     template: str = "monthly_review_v1"
+    excluded_sections: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.scope_type not in ("individual", "multi_site", "regional"):
@@ -51,6 +57,14 @@ class ReportProfile:
             raise ValueError("A profile needs unique facility identities")
         if self.scope_type == "individual" and len(self.facilities) != 1:
             raise ValueError("An individual report covers exactly one facility")
+        identities = {}
+        for facility in self.facilities:
+            for name in (facility.title, *facility.aliases):
+                normalized = " ".join(name.casefold().split())
+                if normalized in identities and identities[normalized] != facility.key:
+                    raise ValueError("A facility alias cannot identify two different facilities")
+                if normalized:
+                    identities[normalized] = facility.key
 
 
 @dataclass(frozen=True)
@@ -120,6 +134,7 @@ class ResolvedBlock:
     references: tuple[str, ...] = ()
     ai_written: bool = False
     reviewed_fingerprint: str = ""
+    pending_library_save: bool = False
 
     @property
     def fingerprint(self) -> str:
@@ -182,7 +197,7 @@ def default_sections() -> tuple[SectionSpec, ...]:
             BlockSpec("org_chart", "image_page", True),
             BlockSpec("business_hours_workflow", "image_page"),
             BlockSpec("after_hours_workflow", "image_page"),
-            BlockSpec("contact_matrix", "table"),
+            BlockSpec("contact_matrix", "image_page"),
         )),
         SectionSpec("activity", "2", "Monthly Activity Summary", (
             BlockSpec("work_orders", "work_order_grid", stock_text_keys=("cmms_pending",)),
@@ -191,7 +206,7 @@ def default_sections() -> tuple[SectionSpec, ...]:
         )),
         SectionSpec("scorecards", "3", "Monthly Scorecards", (
             BlockSpec("utility_analysis", "stock_text", stock_text_keys=("utility_pending",)),
-            BlockSpec("thermal_capacity", "table"),
+            BlockSpec("thermal_capacity", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("service", "Service"), ColumnSpec("capacity", "Capacity", "number"), ColumnSpec("units", "Units"))),
         )),
         SectionSpec("mbcx", "4", "MBCx Reports", (
             BlockSpec("mbcx_report", "pdf_pages", stock_text_keys=("mbcx_pending",)),
@@ -203,16 +218,23 @@ def default_sections() -> tuple[SectionSpec, ...]:
                 ColumnSpec("tag", "Tag #"),
             )), BlockSpec("vendor_reports", "pdf_pages"),
         )),
-        SectionSpec("subcontractors", "6", "Sub-Contractor Status", (BlockSpec("subcontractor_matrix", "table"),)),
+        SectionSpec("subcontractors", "6", "Sub-Contractor Status", (BlockSpec("subcontractor_matrix", "table", columns=(
+            ColumnSpec("facility", "Facility"), ColumnSpec("discipline", "Discipline"), ColumnSpec("vendor", "Vendor"),
+            ColumnSpec("contact", "Contact"), ColumnSpec("phone", "Phone"), ColumnSpec("msa", "MSA", "boolean"),
+        )),)),
         SectionSpec("water", "7", "Water Treatment Reports", (BlockSpec("water_reports", "pdf_pages"),)),
         SectionSpec("issues", "8", "Equipment Performance Issues", (BlockSpec("equipment_issues", "rich_text", True),)),
         SectionSpec("capital", "9", "Priority Capital Renewal List", (
-            BlockSpec("capital_renewal", "table", stock_text_keys=("no_capital",)),
-            BlockSpec("end_of_life", "table"),
+            BlockSpec("capital_renewal", "table", stock_text_keys=("no_capital",), columns=(
+                ColumnSpec("facility", "Facility"), ColumnSpec("priority", "Priority"), ColumnSpec("recommendation", "Recommendation"), ColumnSpec("cost", "Cost", "currency"),
+            )),
+            BlockSpec("end_of_life", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("asset", "Asset"), ColumnSpec("end_date", "End of useful life", "date"))),
         )),
-        SectionSpec("proposals", "10", "Pending & Declined Proposals", (BlockSpec("proposals", "table"),)),
+        SectionSpec("proposals", "10", "Pending & Declined Proposals", (BlockSpec("proposals", "table", columns=(
+            ColumnSpec("facility", "Facility"), ColumnSpec("vendor", "Vendor"), ColumnSpec("scope", "Scope"), ColumnSpec("amount", "Amount", "currency"), ColumnSpec("status", "Status"),
+        )),)),
         SectionSpec("training", "11", "Training Summary", (BlockSpec("training_summary", "rich_text", True),)),
-        SectionSpec("rfi", "G", "RFI Matrix", (BlockSpec("rfi_matrix", "table"),), included=False, appendix=True),
+        SectionSpec("rfi", "G", "RFI Matrix", (BlockSpec("rfi_matrix", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("item", "Requested item"), ColumnSpec("complete", "Complete", "boolean"))),), included=False, appendix=True),
     )
 
 
@@ -227,6 +249,25 @@ def included_sections(sections: tuple[SectionSpec, ...]) -> tuple[SectionSpec, .
             number += 1
         result.append(replace(section, number=section.number if section.appendix else str(number)))
     return tuple(result)
+
+
+def layout_blocks() -> tuple[BlockSpec, ...]:
+    """Layout assets use the same versioning and confirmation as section blocks."""
+    return (tuple(BlockSpec(key, "image_page") for key in COVER_ASSET_KEYS)
+            + (BlockSpec("footer_text", "rich_text"),)
+            + tuple(BlockSpec("divider_" + s.key, "image_page") for s in default_sections()))
+
+
+def used_block_keys(draft: ReportDraft) -> set[str]:
+    return (set(COVER_ASSET_KEYS) | {"footer_text"}
+            | {b.key for s in included_sections(draft.sections) for b in s.blocks}
+            | {"divider_" + s.key for s in included_sections(draft.sections)})
+
+
+def used_asset_references(draft: ReportDraft) -> set[str]:
+    keys = used_block_keys(draft)
+    return ({ref for b in draft.blocks if b.key in keys and b.source != "Omit" for ref in b.asset_hashes}
+            | {s.divider_asset for s in included_sections(draft.sections) if s.divider_asset})
 
 
 def report_filename(draft: ReportDraft, extension: Literal["docx", "pdf"]) -> str:

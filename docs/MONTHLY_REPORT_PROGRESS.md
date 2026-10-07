@@ -14,9 +14,10 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current branch: `feat/monthly-report-m1`.
-Current stage: milestone 1 implemented; validation and PR publication in progress.
-Next action: finish renderer/UI checks, publish milestone 1, then start library work.
+Current branch: `feat/monthly-report-m2`.
+Current stage: milestone 1 merged/deployed; milestone 2 library implementation.
+Next action: finish the profile/library UI, image and snapshot integration; test,
+then publish/merge the milestone 2 PR and verify it publicly on production.
 
 ## Owner decisions approved October 6
 
@@ -28,6 +29,11 @@ Next action: finish renderer/UI checks, publish milestone 1, then start library 
   history and reversible library changes. Typed names are not verified identity.
   Revisit reader/editor passcodes before release from testing; do not introduce
   an unapproved login gate in the meantime. Never commit secret values.
+- Owner authorized incremental commits, pushes and production deployments so
+  they can test as work progresses. Continue to test each coherent increment
+  before merging. Each milestone retains its own PR and engineering notes.
+- Owner selected PUBLIC CHECKS ONLY for Render verification. Do not select a
+  Render workspace or retrieve private deployment logs without new direction.
 - CMMS format is not yet supplied. Implement configurable CSV/XLSX column
   mapping and test synthetic data. Unknown historical counts remain unknown.
 - Owner clarification: DOCX and PDF downloads ONLY. No EML or email workflow.
@@ -120,3 +126,20 @@ Snapshot provenance pins asset versions rather than following future replacement
   allows two concurrent network jobs and reserves capacity before preparation.
 - Open prerequisite: synthetic FacilityOne export. No real data has been
   published or deployed. Passcodes explicitly deferred during testing.
+- Milestone 1: PR #57 merged at bcdf9cc7dc86429c04a2372906bee334025beb78.
+  GitHub Actions run 37553785932: 705 passed, zero skipped. Local final tree:
+  704 passed, one CI-only skip, with bundled Writer/Calc enabled. Public production
+  browser verified the Monthly report tab and both download buttons after
+  generating the synthetic report. No private data or paid AI calls used.
+- Milestone 2 checkpoint: versioned library backend with atomic/fsynced writes,
+  revision guards, confirmation/attribution, asset hash checks, profile/block
+  restore, snapshot history and usage counts. Fourteen backend tests passed.
+  The library UI, typed tables, cover/logo/divider swaps, section/block ordering,
+  image normalization/rendering and device/profile preparer memory are now in
+  the worktree. Focused Monthly report suite: 67 passing tests including real
+  LibreOffice; final complete run: 736 passed and one CI-only skip. One additional
+  AppTest for blank typed editors and workflow cleanup passed independently.
+  Five-page image-heavy DOCX/PDF
+  rendered and visually inspected; actual page count matched the outline.
+  Public-repository hygiene and documentation-index checks passed. Next:
+  final regression gates, checkpoint branch, then merge/deploy for owner testing.

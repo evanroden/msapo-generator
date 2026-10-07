@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Monthly report library handoff: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M2.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M2.md).
+
 Eighteen-plus documents accumulate quickly and none of them announce which is
 still true. This index exists so an agent arriving with no conversation history
 knows what to read, in what order, and which documents have been overtaken.
