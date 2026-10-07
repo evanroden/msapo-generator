@@ -82,6 +82,14 @@ def _site_editor(sites, existing, prefix, *, importing=False):
 
 
 def render_directory(field):
+    try:
+        _render_directory(field)
+    except (ValueError, OSError) as exc:
+        st.error(str(exc))
+        st.caption("Nothing was replaced. Correct the selection or reload the current version before trying again.")
+
+
+def _render_directory(field):
     if st.button("Back to monthly reports", key="report_directory_back"):
         st.session_state["report_directory_manage"] = False
         st.rerun()
@@ -209,7 +217,11 @@ def review_contacts(draft, prefix, field, assets):
                 st.session_state[key] = ""
             bindings[facility.key] = st.selectbox("Directory site for " + facility.title, ["", *active],
                                                 format_func=lambda k: active[k].title if k else "Choose the matching site", key=key)
-        candidate, missing = directory.contact_block(state, draft.profile.facilities, bindings)
+        try:
+            candidate, missing = directory.contact_block(state, draft.profile.facilities, bindings)
+        except ValueError as exc:
+            st.error(str(exc))
+            return draft
         if missing:
             st.warning("Choose a directory match for: " + "; ".join(missing) + ". Report membership will not be changed.")
         left, right = st.columns(2)

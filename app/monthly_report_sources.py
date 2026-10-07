@@ -287,6 +287,7 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
 
 def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceContent, tuple[tuple[str, bytes], ...]]:
     """Cache local extraction. Caller enforces aggregate count/byte/text budgets."""
+    from app.monthly_report_content_policy import suggested_pages
     filename = Path(filename.replace("\\", "/")).name
     suffix = Path(filename).suffix.casefold()
     limit = 128 * 1024 * 1024 if suffix == ".docx" else MAX_FILE_BYTES
@@ -300,6 +301,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         source = library.source_from_dict(data["source"])
         tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
         if source.suffix == suffix:
+            if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
+                source = replace(source, selected_pages=suggested_pages(source))
             return SourceContent(replace(source, filename=filename), tables, tuple(tuple(p) for p in data.get("image_items", ()))), ()
     library._atomic_write(path, raw)
     page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
@@ -342,8 +345,10 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
                           selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
     source = suggest_facts(source, profile)
+    if suffix not in (".csv", ".xlsx"):
+        source = replace(source, selected_pages=suggested_pages(source))
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, **asdict(content)}))
     return content, attachments
 
 
@@ -445,6 +450,7 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
     This creates immutable assets, never shared profile defaults. No manifest or
     report snapshot is changed until the operator saves/generates explicitly.
     """
+    from app.monthly_report_content_policy import page_allowed
     sources = {c.source.id: c for c in contents}
     if len(dict(destinations)) != len(destinations):
         raise ValueError("Each source needs one page destination.")
@@ -460,6 +466,9 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         planned.extend((content, slot, n) for n in selected)
     if len(planned) > MAX_EMBED_PAGES:
         raise ValueError("Embedding limit is 150 selected image/PDF pages per report. Reduce the selection before preparing.")
+    for content, _, number in planned:
+        if not page_allowed(content.source, number):
+            raise ValueError(f"Check page {number} of {content.source.filename} before including it. Prices, legal-only and blank/signature-only pages cannot be included.")
     grouped, total = {}, 0
     for content, slot, number in planned:
         normalized = page_image(profile, content, number)
@@ -470,6 +479,7 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         library._atomic_write(library._profile_path(profile.contract, profile.key) / "assets" / ref, normalized.data)
         caption = dict(content.source.captions).get(number, f"{content.source.filename} · page/item {number}")
         grouped.setdefault(slot, []).append((ref, caption, source_reference(content.source, number)))
-    return tuple(ResolvedBlock(slot, "This month", asset_hashes=tuple(v[0] for v in values),
+    blocks = tuple(ResolvedBlock(slot, "This month", asset_hashes=tuple(v[0] for v in values),
                                asset_captions=tuple(v[1] for v in values), references=tuple(v[2] for v in values))
                  for slot, values in grouped.items())
+    return tuple(replace(b, client_reviewed_fingerprint=b.fingerprint) for b in blocks)

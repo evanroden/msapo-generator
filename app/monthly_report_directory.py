@@ -8,6 +8,7 @@ restorable history; directory updates never mutate profiles or report snapshots.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from collections import Counter
 from io import BytesIO
 import hashlib
 import re
@@ -214,8 +215,9 @@ def suggest_matrix(sheet: DirectorySheet):
     roles = [r for r in rows if re.search(r"manager|director|executive|administrator|engineer|supervisor|leadership|analyst|point of contact", labels[r], re.I)
              and not re.search(r"phone|email|address", labels[r], re.I)]
     boundary = min([*roles, *([address] if address else [])], default=50)
-    candidates = [r for r in rows if r < boundary and sum(bool(v) for (rr, c), v in values.items() if rr == r and c > label_col) >= 1]
-    header = max(candidates, key=lambda r: (sum(bool(v) for (rr, c), v in values.items() if rr == r and c > label_col), -r), default=rows[0] if rows else 1)
+    counts = Counter(r for (r, c), value in values.items() if c > label_col and value)
+    candidates = [r for r in rows if r < boundary and counts[r]]
+    header = max(candidates, key=lambda r: (counts[r], -r), default=rows[0] if rows else 1)
     groups = []
     for row in roles:
         next_role = next((r for r in roles if r > row), row + 5)
