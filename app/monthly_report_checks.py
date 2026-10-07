@@ -76,11 +76,22 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     for block in draft.blocks:
         if block.key in used_block_keys(draft) and block.source != "Omit":
             if block.ai_written and (block.ai_evidence_fingerprint or block.ai_paragraphs):
-                from app.monthly_report_ai import evidence_fingerprint
-                if not block.ai_evidence_fingerprint or block.ai_evidence_fingerprint != evidence_fingerprint(draft.sources, block.references):
+                from app.monthly_report_ai import evidence_fingerprint, ai_references
+                if not block.ai_evidence_fingerprint or block.ai_evidence_fingerprint != evidence_fingerprint(draft.sources, ai_references(block)):
                     checks.append(ReportCheck("ai_evidence", "Evidence changed or a source is missing. Refresh and review the AI draft before generating.", True, block.key))
             if any("Unsupported number" in flag for paragraph in block.ai_paragraphs for flag in paragraph.flags):
                 checks.append(ReportCheck("ai_number", "Correct unsupported numerical statements in the AI draft.", True, block.key))
+            if block.org_nodes:
+                if block.asset_hashes:
+                    checks.append(ReportCheck("org_chart", "Choose the editable chart or the uploaded chart, not both in the same chart item.", True, block.key))
+                from app.monthly_report_visuals import validate_org
+                try:
+                    validate_org(block.org_nodes)
+                except ValueError as exc:
+                    checks.append(ReportCheck("org_chart", str(exc), True, block.key))
+                texts.extend((block.key, value) for node in block.org_nodes for value in (node.name, node.role, node.team))
+            if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
+                checks.append(ReportCheck("photo_layout", "Choose between 1 and 6 photos per page.", True, block.key))
             if block.asset_hashes and block.client_reviewed_fingerprint != block.fingerprint:
                 checks.append(ReportCheck("client_pages", f"Check the images/pages in {block.key.replace('_', ' ')} for relevance and visible pricing before including them.", True, block.key))
             if block.asset_hashes:
@@ -117,10 +128,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             block = blocks.get(spec.key)
             has_extra_tables = bool(block and any(any(c.strip() for row in t.rows for c in row) for t in block.extra_tables))
             present = bool(block and block.source != "Omit" and (
-                block.text.strip() or block.asset_hashes or has_extra_tables or any(any(c.strip() for c in row) for row in block.rows)
+                block.text.strip() or block.asset_hashes or block.org_nodes or has_extra_tables or any(any(c.strip() for c in row) for row in block.rows)
             ))
             if present and spec.type in ("image_page", "image_grid", "pdf_pages"):
-                present = bool(block.asset_hashes or has_extra_tables or (block.source == "Stock text" and spec.stock_text_keys))
+                present = bool(block.asset_hashes or block.org_nodes or has_extra_tables or (block.source == "Stock text" and spec.stock_text_keys))
             if present and spec.type in ("table", "work_order_grid"):
                 present = bool(block.rows or has_extra_tables or block.asset_hashes or (block.source == "Stock text" and spec.stock_text_keys))
             has_content |= present

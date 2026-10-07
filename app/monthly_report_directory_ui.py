@@ -254,8 +254,10 @@ def review_contacts(draft, prefix, field, assets):
 def _resume_contacts(draft, prefix):
     # An explicit replacement/undo resets only that contact editor's ephemeral
     # delta; otherwise an old data_editor value could overwrite the new table.
+    changed = (prefix + "_edit_contact_matrix_", prefix + "_contacts_contact_matrix_")
+    st.session_state["report_draft_mirror"] = {k:v for k,v in st.session_state.get("report_draft_mirror", {}).items() if not k.startswith(changed)}
     for key in list(st.session_state):
-        if key.startswith(prefix + "_edit_contact_matrix_"):
+        if key.startswith(changed):
             del st.session_state[key]
     st.session_state[prefix + "_draft"] = draft
     st.rerun()

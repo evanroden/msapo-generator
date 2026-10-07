@@ -35,7 +35,7 @@ def copilot_source(text, profile, period):
     digest = hashlib.sha256(text.encode()).hexdigest()
     identity = "copilot-" + digest[:20]
     source = ReportSource(identity, "Pasted Copilot notes.txt", digest, ".txt", page_texts=tuple(l.text + " [" + l.source + "]" for l in lines))
-    kinds = {1: "action", 2: "action", 3: "issue", 4: "proposal", 5: "action", 6: "training", 7: "improvement", 8: "follow_up"}
+    kinds = {1: "action", 2: "finding", 3: "issue", 4: "proposal", 5: "finding", 6: "training", 7: "improvement", 8: "follow_up"}
     facts = []
     for n, line in enumerate(lines, 1):
         if ai.contains_price(line.text):
@@ -99,6 +99,48 @@ def _start(prefix, draft, job, prepare, read=ai.request_json):
             st.rerun()
     except ValueError as exc:
         st.warning(str(exc))
+
+
+def edit_linked_paragraphs(draft, blocks, prefix, field):
+    facts={f.id:(s,f) for s in draft.sources for f in s.facts}
+    for block in tuple(blocks.values()):
+        if not block.ai_paragraphs or block.source=="Omit":
+            continue
+        with st.expander(LABELS.get(block.key,block.key.replace("_"," "))+" · wording and sources", expanded=not block.reviewed):
+            p=prefix+"_linked_"+block.key
+            manual=block.text
+            for paragraph in block.ai_paragraphs:
+                manual=manual.replace("- "+paragraph.text,"",1)
+            manual=st.text_area("Your other notes",key=field(p+"_manual_"+ai.digest(manual.strip()),manual.strip()),height=100)
+            paragraphs=[]
+            for n,paragraph in enumerate(block.ai_paragraphs):
+                identity=ai.digest((n,paragraph.fact_ids))
+                text=st.text_area(f"Report paragraph {n+1}",key=field(p+"_text_"+identity,paragraph.text),height=90)
+                available=list(facts)
+                selected=st.multiselect(f"Evidence for paragraph {n+1}",available,
+                                        format_func=lambda k:f"{facts[k][0].filename} · page {facts[k][1].page} · {facts[k][1].text[:90]}",
+                                        key=field(p+"_facts_"+identity+ai.digest(available),[i for i in paragraph.fact_ids if i in facts]))
+                for identity in selected:
+                    source,fact=facts[identity]
+                    st.caption(f"{source.filename}, page {fact.page}: {fact.quote}")
+                paragraphs.append(replace(paragraph,text=ai.clean_text(text),fact_ids=tuple(selected)))
+            candidate=replace(block,ai_paragraphs=tuple(paragraphs),text="\n".join(t for t in (manual,"\n".join("- "+p.text for p in paragraphs)) if t))
+            try:
+                candidate=ai.refresh_evidence(candidate,draft.sources)
+                for paragraph in candidate.ai_paragraphs:
+                    for flag in paragraph.flags:
+                        st.warning(flag)
+                same=candidate.fingerprint==block.fingerprint and block.reviewed
+                checked=st.checkbox("I checked this wording against the displayed current evidence",key=field(p+"_review_"+candidate.fingerprint,same))
+                if checked:
+                    candidate=ai.reviewed_block(candidate,draft.sources)
+                else:
+                    st.caption("Needs review. Changes to text or evidence clear this confirmation.")
+            except ValueError as exc:
+                candidate=replace(candidate,reviewed_fingerprint="")
+                st.warning(str(exc))
+            blocks[block.key]=candidate
+    return blocks
 
 
 def render_drafting(draft, blocks, prefix, field):
@@ -227,16 +269,14 @@ def render_drafting(draft, blocks, prefix, field):
             mode = st.radio("Use the checked suggestion", ["Add below existing wording", "Replace existing wording"], key=prefix + "_ai_apply_mode")
             if st.button("Use checked wording in this report", disabled=not ready, key=prefix + "_ai_apply"):
                 revised = replace(suggestion, ai_paragraphs=tuple(paragraphs), text="\n".join("- " + p.text for p in paragraphs))
-                if existing:
-                    text = revised.text if mode.startswith("Replace") else "\n".join(t for t in (existing.text, revised.text) if t)
-                    revised = replace(revised, text=text, asset_hashes=existing.asset_hashes, asset_captions=existing.asset_captions,
-                                      rows=existing.rows, extra_tables=existing.extra_tables)
-                blocks[revised.key] = ai.reviewed_block(revised, sources)
+                blocks[revised.key] = ai.apply_suggestion(existing, revised, sources, append=mode.startswith("Add"))
                 draft = replace(draft, sections=tuple(replace(s, included=True) if any(b.key == revised.key for b in s.blocks) else s for s in draft.sections))
                 st.session_state.pop(prefix + "_ai_suggestion", None)
                 # Remove stale widget mirrors so the normal editor shows the accepted text.
                 for key in list(st.session_state):
                     if key.startswith(prefix + "_edit_" + revised.key + "_text_"):
                         del st.session_state[key]
+                st.session_state["report_draft_mirror"]={k:v for k,v in st.session_state.get("report_draft_mirror",{}).items() if not k.startswith(prefix+"_edit_"+revised.key+"_text_")}
                 st.success("Checked wording added. Existing pictures and tables were retained.")
+    blocks=edit_linked_paragraphs(draft,blocks,prefix,field)
     return draft, blocks

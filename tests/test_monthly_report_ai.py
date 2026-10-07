@@ -59,7 +59,33 @@ def test_fact_extraction_is_page_bounded_quote_supported_and_conservative():
 def test_mixed_period_facility_unknown_tag_and_uncertainty_are_flagged():
     value = {"facts": [{**VALUE["facts"][0], "date": "2026-08-31", "facility": "Another synthetic site", "tags": ["UNKNOWN"], "uncertain": True}]}
     fact = ai.normalize_facts(value, SOURCE, (1,), PROFILE, PERIOD)[0]
-    assert len(fact.flags) == 4
+    assert len(fact.flags) >= 4
+
+
+def test_append_preserves_manual_provenance_and_does_not_review_earlier_ai():
+    source,block=prepared()
+    manual=replace(block,ai_written=False,ai_paragraphs=(),references=("docx:synthetic:original",),text="Original manual work.")
+    revised=ai.apply_suggestion(manual,block,(source,))
+    assert revised.reviewed and "docx:synthetic:original" in revised.references
+    assert revised.text.startswith("Original manual work.")
+    revised=ai.apply_suggestion(block,block,(source,))
+    assert not revised.reviewed and len(revised.ai_paragraphs)==2
+
+
+def test_refresh_requires_real_current_quotes_and_explicit_review():
+    source,block=prepared()
+    changed=replace(source,findings="Corrected context")
+    refreshed=ai.refresh_evidence(block,(changed,))
+    assert not refreshed.reviewed and refreshed.references!=block.references
+    assert ai.reviewed_block(refreshed,(changed,)).reviewed
+    with pytest.raises(ValueError,match="quote changed"):
+        ai.refresh_evidence(block,(replace(source,page_texts=("Different evidence",)),))
+
+
+def test_strict_field_types_cannot_be_coerced_into_facts():
+    for change in ({"text":True},{"uncertain":"false"},{"date":42}):
+        with pytest.raises(ValueError,match="invalid field|uncertainty"):
+            ai.normalize_facts({"facts":[{**VALUE["facts"][0],**change}]},SOURCE,(1,),PROFILE,PERIOD)
 
 
 def test_draft_requires_real_evidence_and_review_invalidates_after_changes():

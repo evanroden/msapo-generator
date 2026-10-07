@@ -34,12 +34,15 @@ def test_read_draft_review_preserves_existing_work_and_invalidates(monkeypatch, 
     next(w for w in app.checkbox if w.label == "I checked paragraph 1 against its source").check().run()
     button(app, "Use checked wording in this report").click().run()
     assert not app.exception
-    text = next(w for w in app.text_area if w.label == "Activity summary").value
+    key = next(k for k, v in app.session_state.filtered_state.items() if k.startswith("report_guided_") and k.endswith("_draft") and hasattr(v, "sources"))
+    text = next(b.text for b in app.session_state[key].blocks if b.key=="activity_summary")
     assert "Synthetic initial activity." in text and "Inspected the synthetic pump." in text
     key = next(k for k, v in app.session_state.filtered_state.items() if k.startswith("report_guided_") and k.endswith("_draft") and hasattr(v, "sources"))
     assert not any(c.code == "ai_evidence" for c in preflight(app.session_state[key]))
     next(w for w in app.text_area if w.label == "Findings").set_value("Corrected finding.").run()
-    assert any(c.code == "ai_evidence" for c in preflight(app.session_state[key]))
+    assert any(c.code in ("ai_evidence","review") for c in preflight(app.session_state[key]))
+    next(w for w in app.text_area if w.label=="Report paragraph 1").set_value("Inspected 800 synthetic pumps.").run()
+    assert any(c.code=="ai_number" for c in preflight(app.session_state[key]))
 
 
 def test_copilot_originals_and_unmatched_lines_are_retained(tmp_path, monkeypatch):

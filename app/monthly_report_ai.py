@@ -125,6 +125,11 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
         if not isinstance(item, dict) or type(item.get("page")) is not int or item["page"] not in pages:
             raise ValueError("A fact cited a page that was not read. No facts were accepted.")
         page = item["page"]
+        for field, bound in (("text",2000),("quote",4000),("date",40),("facility",300),("vendor",300),("status",30)):
+            if field in item and (not isinstance(item[field],str) or len(item[field])>bound):
+                raise ValueError("A fact contained invalid field types or lengths.")
+        if "uncertain" in item and type(item["uncertain"]) is not bool:
+            raise ValueError("A fact's uncertainty must be true or false.")
         kind = item.get("kind")
         text, quote = clean_text(item.get("text", "")), str(item.get("quote", "")).strip()
         if kind not in FACT_KINDS or not text or len(text) > 2000 or not quote or len(quote) > 4000:
@@ -145,6 +150,11 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
             else:
                 if not period.start <= parsed <= period.end:
                     flags.append("Outside the reporting month")
+                variants=(parsed.isoformat(),f"{parsed.month}/{parsed.day}/{parsed.year}",parsed.strftime("%m/%d/%Y"),
+                          parsed.strftime("%B ")+str(parsed.day),parsed.strftime("%b ")+str(parsed.day))
+                if not any(v.casefold() in native for v in variants):
+                    flags.append("Date was not verified on the cited page")
+                    when=""
         site = clean_text(item.get("facility", ""))
         sites = {n.casefold(): f.title for f in profile.facilities for n in (f.title, *f.aliases)}
         if site and site.casefold() not in sites:
@@ -159,6 +169,8 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
         tags = tuple(known.get(t.casefold(), t) for t in tags)
         if any(t.casefold() not in known for t in tags):
             flags.append("Equipment tag is not in this site's confirmed asset list")
+        if any(t.casefold() not in native for t in tags):
+            flags.append("Equipment tag was not found on the cited page")
         if item.get("uncertain"):
             flags.append("Reader marked this fact uncertain")
         status = str(item.get("status") or "")
@@ -208,6 +220,8 @@ def normalize_draft(value, key, facts, sources):
     for item in raw:
         if not isinstance(item, dict):
             raise ValueError("Invalid draft paragraph.")
+        if not isinstance(item.get("text"),str) or ("uncertain" in item and type(item["uncertain"]) is not bool):
+            raise ValueError("A draft paragraph contained invalid field types.")
         ids = item.get("fact_ids")
         if not isinstance(ids, list) or not ids or any(not isinstance(i, str) or i not in by_id for i in ids):
             raise ValueError("A draft cited nonexistent evidence. Your narrative was preserved.")
@@ -231,8 +245,59 @@ def normalize_draft(value, key, facts, sources):
 
 
 def reviewed_block(block, sources):
-    if not block.ai_evidence_fingerprint or block.ai_evidence_fingerprint != evidence_fingerprint(sources, block.references):
+    if not block.ai_evidence_fingerprint or block.ai_evidence_fingerprint != evidence_fingerprint(sources, ai_references(block)):
         raise ValueError("Evidence changed. Redraft or compare and refresh the source links before review.")
     if any("Unsupported number" in f for p in block.ai_paragraphs for f in p.flags):
         raise ValueError("Correct unsupported numerical statements before review.")
     return replace(block, reviewed_fingerprint=block.fingerprint)
+
+
+def ai_references(block):
+    """Narrative evidence excludes unrelated manual/image/import references."""
+    return tuple(dict.fromkeys(r for p in block.ai_paragraphs for r in p.references)) if block.ai_paragraphs else block.references
+
+
+def refresh_evidence(block, sources):
+    """Rebind only after the UI displays current quotes; review remains unset."""
+    facts = {f.id:(s,f) for s in sources for f in s.facts}
+    paragraphs=[]
+    old_ai=set(ai_references(block))
+    for paragraph in block.ai_paragraphs:
+        cited=[]
+        for identity in paragraph.fact_ids:
+            if identity not in facts:
+                raise ValueError("A cited fact is missing. Read the source again or remove this paragraph explicitly.")
+            source,fact=facts[identity]
+            if not 1<=fact.page<=len(source.page_texts):
+                raise ValueError("A cited page is missing.")
+            native=" ".join(clean_text(source.page_texts[fact.page-1]).split()).casefold()
+            if not fact.quote.strip() or " ".join(fact.quote.split()).casefold() not in native:
+                raise ValueError("A supporting quote changed. Read the source again before reviewing this paragraph.")
+            cited.append((source,fact))
+        if not cited:
+            raise ValueError("Each AI paragraph needs a real supporting fact.")
+        if contains_price(paragraph.text):
+            raise ValueError("Remove pricing from the paragraph.")
+        flags=tuple(dict.fromkeys((*[flag for flag in paragraph.flags if "Unsupported number" not in flag],*[flag for _,f in cited for flag in f.flags])))
+        if numbers(paragraph.text)-numbers(" ".join(f.text+" "+f.quote for _,f in cited)):
+            flags+=("Unsupported number: edit this paragraph against its evidence",)
+        refs=tuple(dict.fromkeys(source_reference(s,f.page) for s,f in cited))
+        paragraphs.append(replace(paragraph,references=refs,flags=flags))
+    references=tuple(dict.fromkeys((*[r for r in block.references if r not in old_ai],*[r for p in paragraphs for r in p.references])))
+    revised=replace(block,ai_paragraphs=tuple(paragraphs),references=references,reviewed_fingerprint="")
+    return replace(revised,ai_evidence_fingerprint=evidence_fingerprint(sources,ai_references(revised)))
+
+
+def apply_suggestion(existing, suggestion, sources, *, append=True):
+    """Keep original provenance and never bless earlier unreviewed AI text."""
+    checked=reviewed_block(suggestion,sources)
+    if not existing:
+        return checked
+    revised=replace(existing,source="This month",ai_written=True,reviewed_fingerprint="",
+                    text="\n".join(t for t in ((existing.text if append else ""),checked.text) if t),
+                    references=tuple(dict.fromkeys((*existing.references,*checked.references))),
+                    ai_paragraphs=(*existing.ai_paragraphs,*checked.ai_paragraphs) if append else checked.ai_paragraphs)
+    stamp=evidence_fingerprint(sources,ai_references(revised))
+    revised=replace(revised,ai_evidence_fingerprint=stamp)
+    old_valid=(not existing.ai_written or (existing.reviewed and existing.ai_evidence_fingerprint==evidence_fingerprint(sources,ai_references(existing))))
+    return reviewed_block(revised,sources) if stamp and (not append or old_valid) else revised

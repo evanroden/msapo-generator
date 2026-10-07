@@ -31,6 +31,16 @@ This is still being hardened for stale evidence, old unreviewed paragraphs and
 returning sessions. Issue resolution/carry-forward and complete acceptance tests
 remain. No paid model calls or private data were used by automated tests.
 
+Additional local hardening preserves manual and prior AI citations when adding
+suggestions, keeps older unreviewed AI text unreviewed, and exposes every applied
+paragraph with editable text and real fact/page choices. Current quotes are
+checked before rebinding evidence; any text or evidence change requires review
+again. Unsupported numbers remain blocking. Fact/draft field types are checked
+strictly, unverified dates/tags are flagged, and Copilot vendor/meeting lines are
+findings rather than automatically completed work. This local checkpoint still
+needs integration with the merged site-first/visual-editing changes and the
+carry-forward workflow before a full run and release.
+
 Initial validation: nine synthetic backend tests and a 29-test focused existing
 UI/source run passed. New AppTest coverage and the complete local/remote suite
 are still being completed. PR #63 and #64 releases are recorded separately in

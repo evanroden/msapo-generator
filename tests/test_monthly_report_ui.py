@@ -23,8 +23,20 @@ def monthly(monkeypatch, tmp_path, *, saved=True):
                               expected_revision=1, actor="Synthetic Editor", confirmed=True, label="Synthetic activity")
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     app.segmented_control[0].set_value("Monthly report").run()
+    choose_report(app, profile.facilities[0].title if saved else None)
     assert not app.exception
     return app
+
+
+def choose_report(app, site=None):
+    card = next((b for b in app.button if b.label == RRH_CONTRACT), None)
+    if card:
+        card.click().run()
+    if site:
+        box = next(w for w in app.checkbox if w.label == site)
+        if not box.value:
+            box.check().run()
+    assert not app.exception
 
 
 def step(app, number):
@@ -32,12 +44,15 @@ def step(app, number):
     assert not app.exception
 
 
-def test_empty_contract_uploads_first_without_demo_or_day_selector(monkeypatch, tmp_path):
+def test_empty_contract_selects_sites_and_starting_point_without_demo_or_day_selector(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path, saved=False)
     assert not app.date_input
     assert not any(t.key == "report_use_library" for t in app.toggle)
     assert app.selectbox("report_month_number").value == 9
     assert app.selectbox("report_year").value == 2026
+    assert not any(w.label == "Site / report" for w in app.selectbox)
+    next(w for w in app.checkbox if w.key.startswith("report_sites_")).check().run()
+    next(w for w in app.radio if w.label == "Starting point").set_value("Upload an older or unfinished report from my site").run()
     assert any(w.label == "Older or partially completed report" for w in app.get("file_uploader"))
     assert next(b for b in app.button if b.label == "Analyze report").disabled
 
@@ -69,6 +84,7 @@ def test_guided_progress_is_persistent_and_resumes_same_month(monkeypatch, tmp_p
     assert next(b for b in saved.draft.blocks if b.key == "activity_summary").text == "Synthetic colleague's partial work."
     new = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     new.segmented_control[0].set_value("Monthly report").run()
+    choose_report(new, synthetic_profiles()[0].facilities[0].title)
     step(new, 2)
     assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic colleague's partial work."
 
@@ -88,6 +104,7 @@ def test_confirmed_import_resumes_even_with_an_older_saved_snapshot(monkeypatch,
                               expected_revision=state.revision, actor="Synthetic Editor", confirmed=True, snapshot_revision=1)
     new = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     new.segmented_control[0].set_value("Monthly report").run()
+    choose_report(new, synthetic_profiles()[0].facilities[0].title)
     step(new, 2)
     assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic imported partial work."
 
@@ -147,20 +164,22 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     monkeypatch.setattr(setup_ui.st, "file_uploader", lambda label, *a, **kw:
                         upload if label == "Older or partially completed report" else real_upload(label, *a, **kw))
     app = monthly(monkeypatch, tmp_path / "data", saved=False)
+    next(w for w in app.text_input if w.label == "Site name").set_value("Synthetic North; Synthetic South").run()
+    next(w for w in app.text_input if w.label == "Name for this group (optional)").set_value("Synthetic Region").run()
+    next(w for w in app.checkbox if w.label == "This is a regional report").check().run()
+    next(w for w in app.text_input if w.label == "Other names for Synthetic North").set_value("Synthetic Legacy North").run()
+    next(w for w in app.radio if w.label == "Starting point").set_value("Upload an older or unfinished report from my site").run()
     next(b for b in app.button if b.label == "Analyze report").click().run()
     assert not app.exception
     assert not library.list_profiles(RRH_CONTRACT)
-    next(w for w in app.text_input if w.label == "Site not listed? Add its name here").set_value("Synthetic North; Synthetic South").run()
-    next(w for w in app.radio if w.label == "This report covers").set_value("A region").run()
-    next(w for w in app.text_input if w.label == "Report name").set_value("Synthetic Region").run()
-    next(w for w in app.text_input if w.label == "Other names for Synthetic North").set_value("Synthetic Legacy North").run()
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
     assert next(b for b in app.button if b.label == "Continue to this month’s updates").disabled
     assert not any(w.label in ("Use this item", "Where it belongs", "Content to review") for w in app.selectbox)
     # A stale July cover must not discard September content or unread images.
     from app.monthly_report_sections import section_reviews
     inspection = inspect_docx(path)
-    prefix = "report_setup_" + setup_ui._signature((RRH_CONTRACT, "new", "2026-09")) + "_" + inspection.sha256[:16]
+    stage_key = next(k for k in app.session_state.filtered_state if k.startswith("report_setup_") and k.endswith("_stage"))
+    prefix = stage_key.removesuffix("_stage") + "_" + inspection.sha256[:16]
     for section in section_reviews(inspection):
         app.session_state[prefix + "_section_" + section.key + "_open"] = True
         app.run()
