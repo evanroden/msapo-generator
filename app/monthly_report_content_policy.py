@@ -25,7 +25,29 @@ def contains_price(text):
 
 
 def price_column(title, kind=""):
-    return kind == "currency" or bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate", "total")
+    return kind == "currency" or bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
+
+
+def table_price_columns(columns, rows):
+    """Inspect adjacent header lines before the first numeric data row."""
+    header_rows = [columns]
+    for row in rows[:3]:
+        if any(re.search(r"\d", str(cell)) for cell in row):
+            break
+        header_rows.append(row)
+    return tuple(i for i in range(len(columns)) if price_column(" ".join(row[i] for row in header_rows if i < len(row))))
+
+
+def table_has_pricing(columns, rows, *, work_orders=False):
+    if any(contains_price("\t".join(row)) for row in rows):
+        return True
+    if any(any(i < len(row) and re.search(r"\d", row[i]) for row in rows) for i in table_price_columns(columns, rows)):
+        return True
+    # An unlabeled Total/500 row is ambiguous and must be clarified before export.
+    # Explicit engineering/count headers distinguish legitimate technical totals.
+    technical = work_orders or bool(re.search(r"\b(?:counts?|hours?|temperature|pressure|flow|gpm|readings?|work.orders?|PM|CM)\b", " ".join(columns), re.I))
+    return not technical and any(any(re.fullmatch(r"(?:grand\s+)?total\s*:?[ ]*", cell.strip(), re.I) for cell in row)
+                                 and any(re.fullmatch(r"[\d,.()\s+-]+", cell.strip()) and re.search(r"\d", cell) for cell in row) for row in rows)
 
 
 def page_status(text, *, unreadable=False):

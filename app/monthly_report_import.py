@@ -243,6 +243,7 @@ def inspect_docx(path: Path) -> DocxInspection:
     items, titles, notices = [], [], []
     word_section, section, text_total, cell_total = 1, "", 0, 0
     toc_section = 0
+    toc_headings = set()
 
     def add(kind, part, position, **kwargs):
         nonlocal text_total, cell_total
@@ -300,13 +301,18 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part == "word/document.xml" and element.tag != W + "tbl":
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
                                     toc_section, section, heading_fragments = word_section, "", []
+                                    toc_headings = set()
                                 style = element.find(f"{W}pPr/{W}pStyle")
+                                candidate = _heading(text)
                                 if (word_section == toc_section and style is not None
                                         and style.get(W + "val", "").casefold().startswith("heading")
-                                        and not re.match(r"section\s+\d", text, re.I) and _heading(text)):
+                                        and candidate and (candidate in toc_headings or not toc_headings
+                                                           or not re.match(r"section\s+\d", text, re.I))):
                                     toc_section = 0
                                 detected = _heading(text) if word_section != toc_section else None
                                 if word_section == toc_section:
+                                    compact = re.sub(r"[^a-z]", "", text.casefold())
+                                    toc_headings.update(key for key, terms in _SECTION_TERMS.items() if any(term in compact for term in terms))
                                     heading_fragments = []
                                 elif text and len(text) < 100:
                                     if not detected:

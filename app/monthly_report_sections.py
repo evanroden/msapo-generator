@@ -5,7 +5,7 @@ from collections import defaultdict
 import hashlib
 import re
 
-from app.monthly_report_content_policy import contains_price, price_column, page_status
+from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing
 from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, MAX_NORMALIZED_BYTES
 from app.monthly_report_model import ReportTable, ResolvedBlock, default_sections, layout_blocks
 
@@ -79,7 +79,7 @@ def table_without_prices(item):
     rows = item.rows
     if not rows:
         return None, ()
-    removed = tuple(i for i, title in enumerate(rows[0]) if price_column(title))
+    removed = table_price_columns(rows[0], rows[1:])
     keep = [i for i in range(len(rows[0])) if i not in removed]
     if not keep:
         return None, removed
@@ -100,11 +100,14 @@ def build_section_import(path, inspection, plans):
     known = {b.key for s in default_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     grouped, assets, mappings, total = {}, {}, [], 0
     items = {i.id: i for i in inspection.items}
+    sections = {s.key: s for s in section_reviews(inspection)}
     for plan in plans:
         if not plan.get("approved"):
             raise ValueError("Review each included section before continuing.")
         if plan.get("omit"):
             continue
+        if any(i.kind == "unsupported" for i in sections[plan["key"]].items) and not plan.get("unsupported_reviewed"):
+            raise ValueError("Choose whether to replace or leave out unread drawings before continuing.")
         selected = plan.get("selected", ())
         for identity in selected:
             item = items[identity]
@@ -133,7 +136,7 @@ def build_section_import(path, inspection, plans):
                 if item.id in plan.get("tables", {}):
                     table = plan["tables"][item.id]
                 if table:
-                    if any(contains_price(cell) for row in table.rows for cell in row):
+                    if table_has_pricing(table.columns, table.rows):
                         raise ValueError("Remove pricing from the section table before continuing.")
                     block = replace(block, extra_tables=(*block.extra_tables, replace(table, reference=reference)))
             else:
@@ -161,3 +164,14 @@ def build_section_import(path, inspection, plans):
     # Section confirmation covers the actual selected images and current text.
     blocks = tuple(replace(b, client_reviewed_fingerprint=b.fingerprint) for b in grouped.values())
     return MappedImport(blocks, (), tuple(assets.items()), tuple(m.item_id for m in mappings)), tuple(mappings)
+
+
+def apply_section_omissions(draft, plans):
+    """Honor explicit omissions after append-only partial-report preservation."""
+    omitted = {p["key"] for p in plans if p.get("approved") and p.get("omit")}
+    keys = {b.key for s in draft.sections if s.key in omitted for b in s.blocks}
+    if "cover" in omitted:
+        keys.update(("cover_photo", "brand_logo", "client_logo", "footer_text"))
+    return replace(draft, sections=tuple(replace(s, included=False) if s.key in omitted else s for s in draft.sections),
+                   blocks=tuple(replace(b, source="Omit") if b.key in keys else b for b in draft.blocks),
+                   address_line="" if "cover" in omitted else draft.address_line)

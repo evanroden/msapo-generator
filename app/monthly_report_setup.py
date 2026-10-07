@@ -84,6 +84,10 @@ def design_profile(profile, inspection, mappings, overrides=()):
     found, order, block_order = {}, [], {}
     for item in inspection.items:
         slot = destinations.get(item.id)
+        # Layout text/images do not belong to the last body section seen by
+        # the XML inspector. Never insert footer/logo keys into section order.
+        if item.part != "word/document.xml" or (slot and slot not in owner):
+            continue
         section = owner.get(slot, item.section)
         if section not in {s.key for s in skeleton}:
             continue

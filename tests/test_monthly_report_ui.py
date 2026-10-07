@@ -136,6 +136,10 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
         return values
     monkeypatch.setattr(ElementTree, "get_widget_states", states)
     path = make_docx(tmp_path)
+    from docx import Document
+    doc = Document(path)
+    doc.sections[0].footer.paragraphs[0].text = "100 Example Way | example.invalid"
+    doc.save(path)
     original_bytes = path.read_bytes()
     upload = BytesIO(original_bytes)
     upload.size, upload.name = len(original_bytes), "synthetic-mixed.docx"
@@ -179,6 +183,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     assert library.imported_original(RRH_CONTRACT, profile.key).read_bytes() == original_bytes
     draft = library.load_imported_draft(RRH_CONTRACT, profile.key)
     assert draft.period == ReportPeriod(2026, 9)
+    assert draft.address_line == "100 Example Way | example.invalid"
     assert "September 2026 repair" in next(b.text for b in draft.blocks if b.key == "activity_summary")
     assert next(b for b in draft.blocks if b.key == "vendor_reports").asset_hashes
     assert next(r for r in app.radio if r.label == "Report steps").value == guided.STEPS[1]

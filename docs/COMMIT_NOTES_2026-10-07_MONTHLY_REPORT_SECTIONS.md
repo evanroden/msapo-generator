@@ -77,6 +77,15 @@ remains the owner's task.
 
 ## Recovery and rollback
 
+PR review follow-up: styled body headings can end a TOC within the same Word
+section; imported footer text remains editable and reaches the generated footer.
+Unread drawings require an explicit replacement/exclusion decision. Explicit
+section omissions apply after conservative partial-draft merging. Financial
+table checks inspect adjacent header rows and label/value rows; unqualified
+totals need clarification while explicitly technical count totals remain valid.
+Synthetic regressions cover each case. The initial published head passed 818 CI
+tests; these fixes require a new exact-head run before merge.
+
 Use MONTHLY_REPORT_PROGRESS.md for exact branch/release status. Runtime manifests
 remain schema 1; extraction caches add an independent page-policy version field.
 Existing revision guards and immutable asset references remain in effect. Shared

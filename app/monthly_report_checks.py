@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.monthly_report_model import PLACEHOLDER_PHRASES, ReportDraft, included_sections, layout_blocks, used_block_keys
-from app.monthly_report_content_policy import contains_price, price_column
+from app.monthly_report_content_policy import contains_price, price_column, table_has_pricing
 
 
 @dataclass(frozen=True)
@@ -90,6 +90,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             for table in block.extra_tables:
                 texts.extend((block.key, cell) for row in table.rows for cell in row)
                 texts.extend((block.key, title) for title in table.columns)
+                if table_has_pricing(table.columns, table.rows):
+                    checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, block.key))
                 if any(price_column(title) and any(i < len(r) and r[i].strip() for r in table.rows) for i, title in enumerate(table.columns)):
                     checks.append(ReportCheck("pricing", "Remove pricing columns from the client report.", True, block.key))
     layout_keys = {spec.key for spec in layout_blocks()} & used_block_keys(draft)
@@ -131,6 +133,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 texts.extend((spec.key, caption) for caption in block.asset_captions)
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
                 if block.rows:
+                    if table_has_pricing(tuple(c.title for c in spec.columns), block.rows, work_orders=spec.type == "work_order_grid"):
+                        checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, spec.key))
                     texts.extend((spec.key, col.title) for col in spec.columns)
                     if any(price_column(col.title, col.type) and any(i < len(r) and r[i].strip() for r in block.rows) for i, col in enumerate(spec.columns)):
                         checks.append(ReportCheck("pricing", "Remove pricing columns from the client report.", True, spec.key))

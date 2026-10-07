@@ -8,13 +8,13 @@ import streamlit as st
 
 from app import contracts, monthly_report_library as library
 from app.config import FACILITIES
-from app.monthly_report_content_policy import contains_price, page_status
+from app.monthly_report_content_policy import contains_price, page_status, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import imported_draft, read_import_image
 from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import Facility, ReportProfile, ReportTable, default_sections
-from app.monthly_report_sections import section_reviews, table_without_prices, build_section_import, default_slot, small_artwork
+from app.monthly_report_sections import section_reviews, table_without_prices, build_section_import, default_slot, small_artwork, apply_section_omissions
 from app.monthly_report_setup import design_profile, merge_drafts, item_findings
 
 
@@ -105,7 +105,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 st.info(f"The cover will use the confirmed sites and {period.label}. Old cover dates and the old contents list are not reused.")
                 # Logo/cover choices are visual; old cover prose cannot masquerade
                 # as this month's activity. It remains in the retained original.
-                items = [i for i in items if i.kind == "image"]
+                items = [i for i in items if i.kind == "image" or i.suggested_slot == "footer_text"]
             elif section.key == "other":
                 target = st.selectbox("Where should this content appear?", ["", *[s.key for s in default_sections()]],
                                       format_func=lambda k: next((s.title for s in default_sections() if s.key == k), "Choose a report section"), key=field(p + "_target", old.get("target", "")))
@@ -124,6 +124,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     blocking.append("This text includes pricing. Choose Edit and remove the pricing before including it.")
                 plan["selected"].append(texts[0].id)
                 plan["texts"][texts[0].id] = text
+                if section.key == "cover":
+                    plan["destinations"][texts[0].id] = "footer_text"
                 # All original paragraphs remain identifiable in the review record.
                 plan["combined_text_ids"] = [i.id for i in texts]
                 findings = tuple(dict.fromkeys(f for i in texts for f in item_findings(i, period) if f.startswith("Other-month")))
@@ -144,7 +146,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         st.dataframe(rows[:300], hide_index=True)
                         if len(rows) > 300:
                             st.caption("Showing the first 300 rows. Choose Edit to inspect all rows.")
-                    if any(contains_price(c) for r in table.rows for c in r):
+                    if table_has_pricing(table.columns, table.rows):
                         blocking.append("A table cell still contains pricing. Choose Edit and remove it.")
                     plan["tables"][item.id] = table
                     plan["selected"].append(item.id)
@@ -195,8 +197,14 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     plan["new_assets"] = [(default_slot(section.key), image)]
                 elif plan["new_assets"]:
                     st.caption("Your replacement picture is retained.")
-            if any(i.kind == "unsupported" for i in items):
+            if any(i.kind == "unsupported" for i in section.items):
                 st.warning("Some Word drawings could not be read as editable pictures. Check this section in the original report and add a replacement picture if needed before marking it ready. The original drawings will be retained for reference.")
+                choice = st.radio("What should happen to those unread drawings?", ["Choose an option", "I added replacement pictures for the drawings needed", "Leave these drawings out of this draft"],
+                                  key=field(p + "_unsupported", old.get("unsupported_choice", "Choose an option")))
+                plan["unsupported_choice"] = choice
+                plan["unsupported_reviewed"] = choice == "Leave these drawings out of this draft" or (choice == "I added replacement pictures for the drawings needed" and bool(plan["new_assets"]))
+                if not plan["unsupported_reviewed"]:
+                    blocking.append("Add replacement pictures using Edit, or explicitly choose to leave the unread drawings out of this draft.")
         for message in blocking:
             st.error(message)
         stamp = plan_signature(plan)
@@ -272,6 +280,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None):
                 if prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
                     base = merge_drafts(base, prior_import)
                 draft = merge_drafts(base, draft)
+                draft = apply_section_omissions(draft, plans.values())
                 review = {"sha256": inspection.sha256, "intent": intent, "period": period.key, "image_review_scope": p,
                           "items": [asdict(i) for i in inspection.items],
                           "section_plans": [{k: v for k, v in plan.items() if k != "new_assets"} for plan in plans.values()]}

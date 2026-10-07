@@ -8,12 +8,12 @@ from docx.enum.section import WD_SECTION_START
 import pytest
 
 from app.monthly_report_checks import preflight
-from app.monthly_report_content_policy import contains_price, page_status, page_fingerprint, price_column
+from app.monthly_report_content_policy import contains_price, page_status, page_fingerprint, price_column, table_has_pricing
 from app.monthly_report_docx import assemble_docx
-from app.monthly_report_import import inspect_docx, imported_draft
+from app.monthly_report_import import inspect_docx, imported_draft, ImportItem
 from app.monthly_report_model import ReportPeriod, ResolvedBlock, synthetic_draft, synthetic_profiles
-from app.monthly_report_sections import section_reviews, build_section_import, table_without_prices
-from app.monthly_report_setup import design_profile, merge_blocks, new_month_draft
+from app.monthly_report_sections import section_reviews, build_section_import, table_without_prices, apply_section_omissions
+from app.monthly_report_setup import design_profile, merge_blocks, new_month_draft, merge_drafts
 from app import monthly_report_sources as sources, monthly_report_library as library
 from test_monthly_report_setup import make_docx
 
@@ -135,3 +135,60 @@ def test_pdf_defaults_exclude_prices_legal_blank_and_signature_pages(tmp_path, m
     source = replace(source, captions=((1, 'Price: 150'),))
     with pytest.raises(ValueError, match='Check page'):
         sources.prepare_pages(profile, (replace(content, source=source),), ((source.id, 'vendor_reports'),))
+
+
+def test_multiline_table_headers_and_separate_total_cells_cannot_leak_prices():
+    item = ImportItem('table','table','word/document.xml',1,1,'activity','work_orders',
+                      rows=(('Description','Unit'),('','Price'),('Synthetic task','500')))
+    table,removed=table_without_prices(item)
+    assert removed==(1,) and all('500' not in row for row in table.rows)
+    assert table_has_pricing(item.rows[0],item.rows[1:])
+    assert table_has_pricing(('Description','Value'),(('Total','500'),))
+    assert table_has_pricing(('Description','Value'),(('Price','500'),))
+    assert not table_has_pricing(('Measure','Count'),(('Total','500'),))
+
+
+def test_numbered_body_heading_can_end_contents_in_same_word_section(tmp_path):
+    doc=Document()
+    doc.add_paragraph('Table of contents')
+    doc.add_paragraph('Section 1 Organizational Chart')
+    doc.add_paragraph('Section 2 Monthly Activity Summary')
+    doc.add_heading('Section 1 Organizational Chart',1)
+    doc.add_paragraph('Synthetic organizational details.')
+    doc.add_heading('Section 2 Monthly Activity Summary',1)
+    doc.add_paragraph('Synthetic current inspection was completed.')
+    path=tmp_path/'synthetic-toc.docx'; doc.save(path)
+    inspection=inspect_docx(path)
+    assert next(i for i in inspection.items if i.text=='Synthetic organizational details.').section=='organization'
+    assert next(i for i in inspection.items if i.text=='Synthetic current inspection was completed.').section=='activity'
+
+
+def test_footer_remains_a_layout_destination_and_unsupported_requires_decision(tmp_path):
+    path=make_docx(tmp_path)
+    doc=Document(path); doc.sections[0].footer.paragraphs[0].text='100 Example Way | example.invalid'
+    doc.save(path)
+    inspection=inspect_docx(path)
+    footer=next(i for s in section_reviews(inspection) for i in s.items if i.suggested_slot=='footer_text')
+    plan={'key':'cover','target':'cover','approved':True,'selected':[footer.id],'destinations':{footer.id:'footer_text'}}
+    mapped,_=build_section_import(path,inspection,(plan,))
+    draft=imported_draft(synthetic_profiles()[0],ReportPeriod(2026,9),'Synthetic Editor',mapped)
+    assert draft.address_line==footer.text
+    unsupported=ImportItem('drawing','unsupported','word/document.xml',99,1,'activity')
+    inspection=replace(inspection,items=(*inspection.items,unsupported))
+    text=next(i for i in inspection.items if i.suggested_slot=='activity_summary')
+    plan={'key':'activity','target':'activity','approved':True,'selected':[text.id]}
+    with pytest.raises(ValueError,match='unread drawings'):
+        build_section_import(path,inspection,(plan,))
+    mapped,_=build_section_import(path,inspection,(plan|{'unsupported_reviewed':True},))
+    assert mapped.blocks
+
+
+def test_explicit_omission_wins_after_preserving_a_partial_report():
+    draft=synthetic_draft(synthetic_profiles()[0],ReportPeriod(2026,9))
+    incoming=replace(draft,sections=tuple(replace(s,included=False) if s.key=='activity' else s for s in draft.sections),blocks=tuple(b for b in draft.blocks if b.key!=draft.sections[1].blocks[0].key))
+    merged=merge_drafts(draft,incoming)
+    assert next(s for s in merged.sections if s.key=='activity').included
+    result=apply_section_omissions(merged,({'key':'activity','approved':True,'omit':True},))
+    assert not next(s for s in result.sections if s.key=='activity').included
+    assert next(s for s in result.sections if s.key=='organization').included
+    assert draft.sections[1].included  # Prior immutable draft is preserved.

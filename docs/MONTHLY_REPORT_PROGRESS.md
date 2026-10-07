@@ -46,6 +46,12 @@ icons unchecked with an explicit explanation. A four-page synthetic output was
 rendered/visually checked, including price-column removal and zero/false retention.
 The complete local suite passed **815 tests with one CI-only skip**. These
 changes are NOT yet merged/deployed; exact-head CI and public checks are pending.
+PR #63 was opened; head `d14b6ec1cf05b530b0f4fe1769c9f5421bb1a070`
+passed Actions `37662686911` / job `112933919576`: 818 passed, zero skipped.
+Review found additional cases now being fixed before merge: single-Word-section
+TOCs, footer retention, split financial table headings/totals, explicit unread-
+drawing decisions and honoring omissions while merging partial work. Require a
+new green run on the updated head; the 818-pass run does not cover those fixes.
 
 M5 draft PR #61 remains a documentation checkpoint, now integrated with main at
 head `d9a974e46af6a1dd9d5050bf2d5b537eb749dfa9`. AI/Copilot is NOT implemented.
