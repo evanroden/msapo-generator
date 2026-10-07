@@ -114,3 +114,90 @@ def test_section_choices_are_specific_and_cover_every_section():
     assert "readings" in section_help("water").guidance
     assert "reporting lines" in section_help("organization").guidance
     assert "price" in section_help("proposals").guidance
+
+
+def test_copy_design_preserves_explicit_logo_omissions(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    logos, assets = collection()
+    brand = replace(logos[0], key="enfra", contracts=())
+    branding.save_branding((*logos, brand), assets, expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    profile = synthetic_profiles()[0]
+    draft, _ = design_seed(profile, ReportPeriod(2026, 8), "Synthetic Editor")
+    draft = replace(draft, blocks=tuple(replace(b, source="Omit", asset_hashes=())
+                                       if b.key in ("client_logo", "brand_logo") else b for b in draft.blocks))
+    saved = save_design_start(draft, {}, actor="Synthetic Editor", confirmed=True)
+    copied, copied_assets = design_seed(replace(profile, key="another-site-design"),
+                                        ReportPeriod(2026, 9), "Synthetic Editor", saved)
+    assert not copied_assets
+    assert all(b.source == "Omit" and not b.asset_hashes for b in copied.blocks
+               if b.key in ("client_logo", "brand_logo"))
+
+
+@pytest.mark.parametrize("existing_logo", ["missing", "uploaded", "omitted"])
+def test_first_uploaded_design_fills_only_missing_logos(monkeypatch, tmp_path, existing_logo):
+    from app.monthly_report_import import MappedImport, imported_draft
+    from app.monthly_report_model import ResolvedBlock
+    from test_monthly_report_import import synthetic_docx
+    import hashlib
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "runtime"))
+    logos, assets = collection()
+    branding.save_branding(logos, assets, expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    profile = synthetic_profiles()[0]
+    mapped = MappedImport((ResolvedBlock("activity_summary", "Library", text="Synthetic monthly work."),), (), (), ())
+    draft = imported_draft(profile, ReportPeriod(2026, 9), "Synthetic Editor", mapped)
+    uploaded_assets = {}
+    if existing_logo != "missing":
+        if existing_logo == "uploaded":
+            custom, uploaded_assets = collection("blue")
+            block = ResolvedBlock("client_logo", "Last month", asset_hashes=(custom[0].asset,))
+        else:
+            block = ResolvedBlock("client_logo", "Omit")
+        draft = replace(draft, blocks=(*draft.blocks, block))
+    source = synthetic_docx(tmp_path)
+    review = {"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+    library.save_report_setup(profile, draft, source, review, assets=tuple(uploaded_assets.items()),
+                              expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    result = library.load_imported_draft(profile.contract, profile.key)
+    saved = next(b for b in result.blocks if b.key == "client_logo")
+    assert next(b for b in result.blocks if b.key == "activity_summary").text == "Synthetic monthly work."
+    if existing_logo == "missing":
+        assert saved.asset_hashes == (logos[0].asset,)
+        assert library.read_asset(profile.contract, profile.key, logos[0].asset) == assets[logos[0].asset]
+        assert library.load_profile(profile.contract, profile.key).block("client_logo").asset_hashes == saved.asset_hashes
+    else:
+        assert saved == block
+    # Updating an existing design never fills previously absent logos.
+    library.save_report_setup(profile, draft, source, review, assets=tuple(uploaded_assets.items()),
+                              expected_revision=1, actor="Synthetic Editor", confirmed=True)
+    assert library.load_imported_draft(profile.contract, profile.key) == draft
+
+
+def test_contract_grid_reads_manifest_once_and_each_shared_asset_once(monkeypatch, tmp_path):
+    from streamlit.testing.v1 import AppTest
+    from app import monthly_report_start_ui as ui
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    names = ["Synthetic Contract " + str(i) for i in range(6)]
+    logos, assets = collection()
+    logo = replace(logos[0], contracts=tuple(names))
+    branding.save_branding((logo,), assets, expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    original_load, original_read = branding.load_branding, branding.read_logo
+    calls = {"manifest": 0, "image": 0}
+    def load():
+        calls["manifest"] += 1
+        return original_load()
+    def read(logo):
+        calls["image"] += 1
+        return original_read(logo)
+    monkeypatch.setattr(branding, "load_branding", load)
+    monkeypatch.setattr(branding, "read_logo", read)
+    monkeypatch.setattr(ui, "contract_choices", lambda: names)
+    app = AppTest.from_string('''
+import streamlit as st
+from app.monthly_report_start_ui import choose_contract
+def field(key, default):
+    st.session_state.setdefault(key, default)
+    return key
+choose_contract("", field)
+''').run()
+    assert not app.exception and len(app.button) == 6
+    assert calls == {"manifest": 1, "image": 1}

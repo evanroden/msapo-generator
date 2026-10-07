@@ -364,6 +364,14 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
         manifest = path / "manifest.json"
         value = _read(manifest) if manifest.exists() else {"schema": 1, "revision": 0, "versions": [], "current": [], "audit": []}
         _expected(value, expected_revision)
+        if expected_revision == 0:
+            # New uploaded designs receive the same empty-logo defaults as the
+            # template route. Existing designs, imported logos and omissions
+            # remain pinned to the manager's choices.
+            from app.monthly_report_branding import apply_defaults
+            initial_assets = dict(assets)
+            draft = apply_defaults(draft, initial_assets)
+            assets = tuple(initial_assets.items())
         for reference, raw in assets:
             if not _ASSET.fullmatch(reference) or asset_reference(raw, reference.rsplit(".", 1)[-1]) != reference:
                 raise LibraryError("Invalid imported asset.")

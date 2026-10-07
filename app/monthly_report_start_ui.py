@@ -12,11 +12,13 @@ from app.monthly_report_section_ui import _site_options
 from app.monthly_report_start import membership_key, matching_profiles, report_key, design_seed, save_design_start
 
 
-def _logo(contract):
+def _logo(contract, state, images):
     from app.monthly_report_branding import find_logo, read_logo, card_image
-    logo = find_logo(contract)
+    logo = find_logo(contract, state=state) if state else None
     if logo:
-        return card_image(read_logo(logo))
+        if logo.asset not in images:
+            images[logo.asset] = card_image(read_logo(logo))
+        return images[logo.asset]
     for profile in library.list_profiles(contract):
         state = library.load_profile(contract, profile.key)
         block = state.block("client_logo")
@@ -28,14 +30,15 @@ def _logo(contract):
 
 
 def choose_contract(last_contract, field):
-    from app.monthly_report_branding import find_logo
+    from app.monthly_report_branding import find_logo, load_branding
+    state, images = load_branding(), {}
     names = contract_choices()
     current_key = field("report_contract", last_contract if last_contract in names else "")
     current = st.session_state[current_key]
     if current and not st.session_state.get("report_change_contract", False):
         with st.container(border=True):
             st.subheader(current)
-            logo = _logo(current)
+            logo = _logo(current, state, images)
             if logo:
                 st.image(logo, width=190)
             if st.button("Change contract", key="report_change_contract_button"):
@@ -50,10 +53,10 @@ def choose_contract(last_contract, field):
     for offset in range(0, len(visible), 3):
         for column, name in zip(st.columns(3), visible[offset:offset+3]):
             with column, st.container(border=True):
-                logo = _logo(name)
+                logo = _logo(name, state, images)
                 if logo:
                     st.image(logo, width=160)
-                branding = find_logo(name)
+                branding = find_logo(name, state=state) if state else None
                 if branding and branding.title.casefold() != name.casefold():
                     st.caption(branding.title)
                 if st.button(name, key="report_contract_card_" + _key(name), width="stretch"):
@@ -134,11 +137,12 @@ def starting_choice(profile, profiles, period, prepared, field):
     choices = (["Use another report from this contract"] if available else []) + ["Use the general ENFRA monthly report template", "Upload an older or unfinished report from my site"]
     choice_key = field("report_start_choice_" + profile.key, "")
     selected = st.session_state[choice_key]
-    from app.monthly_report_branding import find_logo, read_logo, card_image
-    brand = find_logo(brand=True)
+    from app.monthly_report_branding import find_logo, read_logo, card_image, load_branding
+    state = load_branding()
+    brand = find_logo(brand=True, state=state) if state else None
     st.caption("Choose one starting point. You can work through the report sections in any order.")
     cards = {
-        "Use another report from this contract": ("Another report from this contract", "Reuse an existing layout and logos. You’ll add the people, contacts and work for your selected sites.", _logo(profile.contract), ":material/library_books:"),
+        "Use another report from this contract": ("Another report from this contract", "Reuse an existing layout and logos. You’ll add the people, contacts and work for your selected sites.", _logo(profile.contract, state, {}) if available else None, ":material/library_books:"),
         "Use the general ENFRA monthly report template": ("ENFRA monthly report template", "Start with the standard sections and available client logo. We’ll walk you through your site information.", card_image(read_logo(brand)) if brand else None, ":material/description:"),
         "Upload an older or unfinished report from my site": ("A report you already have", "Upload a Word report from your sites—an older example or a teammate’s unfinished report. Review and update it section by section.", None, ":material/upload_file:"),
     }

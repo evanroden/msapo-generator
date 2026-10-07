@@ -124,6 +124,13 @@ installation, all mappings, automatic new-design logos and conditional same-
 contract cards. A deterministic five-page synthetic DOCX/PDF was rendered and
 its cover visually inspected. The actual Glendale DOCX walkthrough opened all
 13 section cards, retained a text edit and preserved content/drawing blockers.
+PR review then identified and fixed omitted-logo preservation during design
+copying and missing-logo defaults on first DOCX setup. Existing imported/custom
+logos and subsequent imports remain unchanged. Grid rendering loads branding
+once and reuses each shared image. **78 focused tests passed** after these
+changes; Ruff F/E9 and diff checks passed. The preceding head
+`abcd42bd47b02669b364fc55c3303d1830a7fe73` passed Actions `37698370119`;
+the corrected head still requires its own green CI.
 Draft PR #70 initial head `75e29290e51d299aae24d665d7e15b2f3c9b6e0e`, tree
 `b4d05e7f86618c4ea872c49199258aca60f62882`, is pushed. Final follow-up publication,
 exact-head green CI, merge and public deployment/collection installation remain. All artwork must remain on

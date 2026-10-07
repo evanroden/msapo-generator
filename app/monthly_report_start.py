@@ -65,7 +65,8 @@ def design_seed(profile, period, actor, source=None):
         prior = prior_blocks.get(spec.key) or (source.block(spec.key) if source else None)
         reusable = spec.key in ("brand_logo", "client_logo") or spec.key.startswith("divider_")
         if reusable and prior:
-            block = replace(prior, source="Library", references=(), reviewed_fingerprint="", client_reviewed_fingerprint="")
+            block = replace(prior, source="Omit" if prior.source == "Omit" else "Library",
+                            references=(), reviewed_fingerprint="", client_reviewed_fingerprint="")
             for reference in block.asset_hashes:
                 assets[reference] = library.read_asset(source.profile.contract, source.profile.key, reference)
         else:

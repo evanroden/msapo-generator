@@ -57,6 +57,15 @@ assets retain their natural proportions and clear space. After that fix,
 repeated and the corrected header visually inspected. This is full run plus
 focused follow-up, not a combined full-suite count.
 
+PR review found two integration edge cases: seeding another site's design could
+lose an explicit logo omission, and first-time DOCX setup did not fill missing
+logos. Both are corrected with regression coverage, including persistence,
+custom uploaded logos and subsequent imports. Contract grids now load the
+branding manifest once and decode each shared asset once per render. After
+these corrections, **78 focused tests passed**; Ruff F/E9 and diff checks passed.
+The preceding head abcd42bd47b02669b364fc55c3303d1830a7fe73 passed Actions
+37698370119; that is not the corrected head's CI result.
+
 The supplied private Glendale report was walked through locally again using
 the upload card: 265 extracted items became 13 section cards, every card opened,
 and a text edit survived closing/reopening. Existing drawing/content blockers

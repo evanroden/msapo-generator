@@ -192,6 +192,8 @@ def apply_defaults(draft, assets):
     """Fill empty logos only; pinned/custom content always stays intact."""
     blocks = {block.key: block for block in draft.blocks}
     state = load_branding()
+    if not state:
+        return draft
     for key in ("client_logo", "brand_logo"):
         block = blocks.get(key)
         if block and (block.asset_hashes or block.source == "Omit"):
