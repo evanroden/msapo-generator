@@ -74,7 +74,8 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     next(w for w in app.text_input if w.label == "Site name").set_value("Synthetic East; Synthetic West").run()
     next(w for w in app.text_input if w.label == "Name for this group (optional)").set_value("Synthetic Region").run()
     next(w for w in app.checkbox if w.label == "This is a regional report").check().run()
-    assert next(w for w in app.radio if w.label == "Starting point").value == "Use the general ENFRA monthly report template"
+    assert not any(w.label == "Starting point" for w in app.radio)
+    next(w for w in app.button if w.key and "report_start_card_use-the-general" in w.key).click().run()
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
     next(w for w in app.checkbox if w.label == "Save this design for these sites so we can use it next month").check().run()
     next(b for b in app.button if b.label == "Start this report").click().run()

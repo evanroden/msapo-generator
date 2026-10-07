@@ -74,7 +74,9 @@ def design_seed(profile, period, actor, source=None):
             # this site's information.
             block = ResolvedBlock(spec.key, "This month", extra_tables=tuple(replace(t, columns=tuple(c for c in t.columns if not price_column(c)), rows=(), reference="") for t in prior.extra_tables) if prior else ())
         blocks.append(block)
-    return ReportDraft(profile, period, actor, profile_sections(profile), tuple(blocks)), assets
+    from app.monthly_report_branding import apply_defaults
+    draft = ReportDraft(profile, period, actor, profile_sections(profile), tuple(blocks))
+    return apply_defaults(draft, assets), assets
 
 
 def save_design_start(draft, assets, *, actor, confirmed):

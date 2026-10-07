@@ -15,6 +15,7 @@ from app.monthly_report_editor import _grid, _preview, _signature, _typed_table
 from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
                                      layout_blocks, profile_sections)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
+from app.monthly_report_section_help import section_help, update_label
 
 STEPS = ("1 · Report", "2 · This month’s work", "3 · Site information", "4 · Review & download")
 
@@ -138,6 +139,10 @@ def activity_from_sources(sources, existing):
 
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
+    if st.session_state.get("report_branding_manage", False):
+        from app.monthly_report_branding_ui import render_branding
+        render_branding(field)
+        return
     from app.monthly_report_directory_ui import render_directory
     if st.session_state.get("report_directory_manage", False):
         render_directory(field)
@@ -161,6 +166,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.caption("Use a contract directory workbook to suggest sites and contacts. Each report still confirms its own sites.")
         if st.button("Manage contract and site directory", key="report_directory_open"):
             st.session_state["report_directory_manage"] = True
+            st.rerun()
+    with st.expander("Shared contract logos (optional)"):
+        st.caption("Current shared logos are used on the contract cards and offered in reports. Site-specific replacements remain available in Site information.")
+        if st.button("Manage shared logos", key="report_branding_open"):
+            st.session_state["report_branding_manage"] = True
             st.rerun()
     if not contract:
         return
@@ -281,6 +291,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 relevant = [b for b in section.blocks if b.key in monthly_keys]
                 if relevant:
                     with st.expander(section.title, expanded=section.key == "activity"):
+                        st.caption(section_help(section.key).guidance)
                         for spec in relevant:
                             block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
                             if block.source == "Omit" and spec.key != "activity_summary" and spec.type != "image_grid":
@@ -303,6 +314,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             for key in ("client_logo", "brand_logo", "cover_photo", "footer_text"):
                 st.write(key.replace("_", " ").capitalize())
                 blocks[key] = _edit_content(specs[key], blocks.get(key, ResolvedBlock(key, "This month")), state, prefix, assets, field)
+                if key in ("client_logo", "brand_logo"):
+                    from app.monthly_report_branding_ui import offer_logo
+                    blocks[key] = offer_logo(blocks[key], contract, prefix, assets)
         from app.monthly_report_directory_ui import review_contacts
         review_contacts(draft, prefix, field, assets)
         from app.monthly_report_visual_ui import edit_org_chart, edit_contacts
@@ -317,7 +331,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                         blocks[key] = _edit_content(spec, blocks[key], state, prefix, assets, field)
                 elif key in ("contact_matrix", "subcontractor_matrix"):
                     blocks[key] = edit_contacts(draft, spec, block, prefix, assets, field)
-                elif st.checkbox("Update this item", key=field(prefix + "_change_" + key, False)):
+                elif st.checkbox(update_label(key), key=field(prefix + "_change_" + key, False)):
                     blocks[key] = _edit_content(spec, block, state, prefix, assets, field)
                 else:
                     _preview(block, assets, profile)

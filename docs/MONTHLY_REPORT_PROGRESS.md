@@ -14,8 +14,8 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current checkpoint branch: `feat/monthly-report-first-use`, based on main
-`051e627b554d09008168b0fbb7234fd0d2beeb5d`. Working checkout:
+Current checkpoint branch: `feat/monthly-report-branding`, based on main
+`d7f1d0df33cfb9438d5058a7da9109923b124270`. Working checkout:
 `/workspace/scratch/monthly-report`; venv `/workspace/scratch/monthly-report-venv`.
 M5 worktree `/workspace/scratch/monthly-report-m5-work` is clean at its published
 head. The older ca2afe740bcd checkout vanished; do not restart from it.
@@ -77,8 +77,13 @@ from the report's reviewed contact fields. Reporting lines remain operator
 choices, and replacing an uploaded chart remains explicit. This is implemented
 locally. Full local suite: **878 passed, one CI-only skip** with real LibreOffice;
 after a final staged-image error recovery change, **98 focused tests passed**.
-Ruff F/E9, compileall, pip check and diff checks passed. Publication, exact-head
-CI and deployment remain.
+Ruff F/E9, compileall, pip check and diff checks passed. PR #69 head
+`69228f39844d6fe1d827c8b740ddd01c3438d646`, tree
+`1cbe4890702c175e532c60cacac76c21d306230a`, passed Actions `37693409691` /
+job `113038952193`: **881 passed, zero skipped**. Merged with expected-head
+protection at `d7f1d0df33cfb9438d5058a7da9109923b124270`. Public production
+verified the new “Match to a listed site” column with a synthetic workbook;
+no directory/profile was saved. Screenshot proof stays outside git.
 The actual private workbook passed a local setup/save/resume walkthrough with
 seven directory sites, nine available sites and four contact-derived chart
 positions. Two spelling variants were explicitly matched; other contract tabs
@@ -94,7 +99,24 @@ contract, standardize their presentation on contract cards and report pages, and
 make them reusable defaults so asset managers do not need to source them. Keep
 artwork on runtime storage, preserve explicit custom-logo overrides and source
 provenance, and do not guess ambiguous contract identities. This branding work
-follows the first-use release; it is not implemented or deployed yet.
+follows the first-use release. Runtime PNG-only bundle validation, atomic
+versioned storage/restoration, source attribution, contract-card reuse and
+empty-logo defaults are now implemented locally. Pictorial starting choices
+replace the generic starting-point radio; section actions and instructions
+are tailored to organization, activity, utilities, MBCx, maintenance, vendors,
+water, issues, renewal, proposals, training and RFI. Existing pinned/custom
+logos are preserved with an explicit replacement offer. No branding release
+or production logo installation is claimed yet.
+
+Official-logo research and original public assets are outside git at
+`/workspace/scratch/monthly-report-branding-research`. Current source sites
+show changed branding including Powers Health, Manning Family Children’s,
+LSU New Orleans and FMOL Health. Research/visual verification and coverage
+are unfinished; do not publish an unverified logo or guess an identity.
+The next steps are finish the reviewed collection, test first-use and existing
+report behavior, publish exact trees with green CI, deploy, then install the
+reviewed public-logo bundle through the app UI. All artwork must remain on
+persistent runtime storage, not in git. No private Render API access.
 
 All six implementation milestones and the requested UX increments have merged.
 Follow-up work should respond to operator acceptance findings, not restart the

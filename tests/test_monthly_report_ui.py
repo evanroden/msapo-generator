@@ -52,7 +52,7 @@ def test_empty_contract_selects_sites_and_starting_point_without_demo_or_day_sel
     assert app.selectbox("report_year").value == 2026
     assert not any(w.label == "Site / report" for w in app.selectbox)
     next(w for w in app.checkbox if w.key.startswith("report_sites_")).check().run()
-    next(w for w in app.radio if w.label == "Starting point").set_value("Upload an older or unfinished report from my site").run()
+    next(w for w in app.button if w.key and "report_start_card_upload" in w.key).click().run()
     assert any(w.label == "Older or partially completed report" for w in app.get("file_uploader"))
     assert next(b for b in app.button if b.label == "Analyze report").disabled
 
@@ -186,7 +186,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     next(w for w in app.text_input if w.label == "Name for this group (optional)").set_value("Synthetic Region").run()
     next(w for w in app.checkbox if w.label == "This is a regional report").check().run()
     next(w for w in app.text_input if w.label == "Other names for Synthetic North").set_value("Synthetic Legacy North").run()
-    next(w for w in app.radio if w.label == "Starting point").set_value("Upload an older or unfinished report from my site").run()
+    next(w for w in app.button if w.key and "report_start_card_upload" in w.key).click().run()
     next(b for b in app.button if b.label == "Analyze report").click().run()
     assert not app.exception
     assert not library.list_profiles(RRH_CONTRACT)

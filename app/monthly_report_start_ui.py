@@ -13,6 +13,10 @@ from app.monthly_report_start import membership_key, matching_profiles, report_k
 
 
 def _logo(contract):
+    from app.monthly_report_branding import find_logo, read_logo
+    logo = find_logo(contract)
+    if logo:
+        return read_logo(logo)
     for profile in library.list_profiles(contract):
         state = library.load_profile(contract, profile.key)
         block = state.block("client_logo")
@@ -124,7 +128,32 @@ def starting_choice(profile, profiles, period, prepared, field):
     st.subheader("How would you like to start?")
     available = [p for p in profiles if p.key != profile.key]
     choices = (["Use another report from this contract"] if available else []) + ["Use the general ENFRA monthly report template", "Upload an older or unfinished report from my site"]
-    selected = st.radio("Starting point", choices, key=field("report_start_choice_" + profile.key, choices[0]))
+    choice_key = field("report_start_choice_" + profile.key, "")
+    selected = st.session_state[choice_key]
+    from app.monthly_report_branding import find_logo, read_logo
+    brand = find_logo(brand=True)
+    st.caption("Choose one starting point. You can work through the report sections in any order.")
+    cards = {
+        "Use another report from this contract": ("Another report from this contract", "Reuse an existing layout and logos. You’ll add the people, contacts and work for your selected sites.", _logo(profile.contract), ":material/library_books:"),
+        "Use the general ENFRA monthly report template": ("ENFRA monthly report template", "Start with the standard sections and available client logo. We’ll walk you through your site information.", read_logo(brand) if brand else None, ":material/description:"),
+        "Upload an older or unfinished report from my site": ("A report you already have", "Upload a Word report from your sites—an older example or a teammate’s unfinished report. Review and update it section by section.", None, ":material/upload_file:"),
+    }
+    for column, choice in zip(st.columns(len(choices)), choices):
+        title, description, logo, icon = cards[choice]
+        with column, st.container(border=True):
+            if logo:
+                st.image(logo, width="stretch")
+            else:
+                st.markdown("# " + icon)
+            st.markdown("**" + title + "**")
+            st.caption(description)
+            if st.button("Selected" if selected == choice else "Choose this starting point", icon=icon, type="primary" if selected == choice else "secondary", key="report_start_card_" + _key(choice) + "_" + profile.key, width="stretch"):
+                st.session_state[choice_key] = choice
+                st.rerun()
+    if selected not in choices:
+        st.info("Choose a starting point above to continue.")
+        return
+    st.write("Starting with: **" + cards[selected][0] + "**")
     if selected.startswith("Upload"):
         from app.monthly_report_section_ui import render_section_setup as render_setup
         render_setup(profile.contract, period, prepared, field, identity=profile)
@@ -139,7 +168,7 @@ def starting_choice(profile, profiles, period, prepared, field):
             source = library.load_profile(profile.contract, key)
         st.caption("Reuses the section layout, table headings and saved contract logos. You’ll supply this site's org chart, contacts, photos and current work.")
     else:
-        st.caption("Starts with the standard ENFRA report sections. Add your client logo, org chart, contacts and site information; the tool remembers the design for next time.")
+        st.caption("The available ENFRA and client logos are filled in. Check your org chart, contacts and site information; the tool remembers the design for next time.")
     actor = st.text_input("Your name", key=field("report_start_actor_" + profile.key, prepared))
     confirm = st.checkbox("Save this design for these sites so we can use it next month", key="report_start_confirm_" + _signature((profile, source.revision if source else 0, actor)))
     if st.button("Start this report", key="report_start_save_" + profile.key, disabled=not (actor.strip() and confirm), type="primary"):
