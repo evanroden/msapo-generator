@@ -21,7 +21,7 @@ from defusedxml.common import DefusedXmlException
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
     BlockSpec, ColumnSpec, ReportDraft, ReportPeriod, ReportProfile, ResolvedBlock,
-    default_sections, layout_blocks,
+    default_sections, layout_blocks, profile_sections,
 )
 
 
@@ -425,7 +425,7 @@ def imported_draft(profile: ReportProfile, period: ReportPeriod, prepared_by: st
     overrides = {b.key: b for b in (*profile.block_overrides, *mapped.overrides)}
     keys = {b.key for b in mapped.blocks}
     sections = tuple(replace(s, included=any(b.key in keys for b in s.blocks),
-                             blocks=tuple(overrides.get(b.key, b) for b in s.blocks)) for s in default_sections())
+                             blocks=tuple(overrides.get(b.key, b) for b in s.blocks)) for s in profile_sections(profile))
     footer = next((b.text for b in mapped.blocks if b.key == "footer_text"), "")
     return ReportDraft(profile, period, prepared_by, sections,
                        tuple(replace(b, source="Last month") for b in mapped.blocks), footer)

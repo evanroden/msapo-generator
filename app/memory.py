@@ -214,6 +214,11 @@ CREATE TABLE IF NOT EXISTS device_report_preparers (
     display_name TEXT NOT NULL,
     PRIMARY KEY (device_hash, account_key, profile_key)
 );
+CREATE TABLE IF NOT EXISTS device_report_preferences (
+    device_hash TEXT PRIMARY KEY,
+    account_name TEXT NOT NULL,
+    profile_key TEXT NOT NULL
+);
 """
 
 
@@ -1025,6 +1030,41 @@ def remembered_report_preparer(device_token: str, account: str, profile: str) ->
         return str(row[0]) if row else ""
     except Exception:
         return ""
+    finally:
+        conn.close()
+
+
+def record_report_preferences(device_token: str, account: str, profile: str) -> None:
+    """An anonymous browser preference, never authentication or an access grant."""
+    device = _device_hash(device_token)
+    if not device or not account.strip() or not profile:
+        return
+    conn = _connect()
+    if conn is None:
+        return
+    try:
+        with conn:
+            conn.execute("INSERT INTO device_report_preferences VALUES (?, ?, ?) "
+                         "ON CONFLICT(device_hash) DO UPDATE SET account_name=excluded.account_name, profile_key=excluded.profile_key",
+                         (device, account, profile))
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def remembered_report_preferences(device_token: str) -> tuple[str, str]:
+    device = _device_hash(device_token)
+    if not device:
+        return "", ""
+    conn = _connect()
+    if conn is None:
+        return "", ""
+    try:
+        row = conn.execute("SELECT account_name, profile_key FROM device_report_preferences WHERE device_hash=?", (device,)).fetchone()
+        return (str(row[0]), str(row[1])) if row else ("", "")
+    except Exception:
+        return "", ""
     finally:
         conn.close()
 
