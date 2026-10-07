@@ -245,7 +245,17 @@ def test_import_ui_confirmations_staging_and_workflow_lifecycle(tmp_path, monkey
     original = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
                         upload if label == "Existing monthly report DOCX" else original(label, *args, **kwargs))
-    app.run()
+    # Exercise the retained low-level mapping API independently. The public
+    # entry points use the mixed-month guided review instead.
+    from streamlit.testing.v1 import AppTest
+    app = AppTest.from_string('''
+import streamlit as st
+from app import monthly_report_library as library
+from app.monthly_report_import_ui import render_import
+from app.monthly_report_ui import _field
+from app.contracts import RRH_CONTRACT
+render_import(library.load_profile(RRH_CONTRACT, "synthetic"), _field)
+''', default_timeout=20).run()
     next(b for b in app.button if b.label == "Read DOCX for mapping").click().run()
     assert not app.exception
     assert library.load_profile(profile.contract, profile.key).revision == 1
@@ -264,12 +274,9 @@ def test_import_ui_confirmations_staging_and_workflow_lifecycle(tmp_path, monkey
     state = library.load_profile(profile.contract, profile.key)
     assert state.revision == 2 and state.block("service_calls").rows[0][2:] == ("0", "No")
     assert state.block("training_summary") is None
-    app.segmented_control[0].set_value("Purchase order").run()
-    app.segmented_control[0].set_value("Monthly report").run()
+    app.run()
     assert not app.exception
     assert any("retained for review" in w.value for w in app.markdown)
-    next(w for w in app.selectbox if w.key.endswith("_service_calls_source")).set_value("This month").run()
-    assert not app.exception
     next(w for w in app.checkbox if w.label == "Discard this staged import and unmatched review items").check().run()
     next(b for b in app.button if b.label == "Discard staged DOCX").click().run()
     assert not app.exception

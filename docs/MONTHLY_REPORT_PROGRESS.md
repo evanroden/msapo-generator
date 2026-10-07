@@ -14,11 +14,52 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current branch: `feat/monthly-report-m4`.
-Current stage: milestones 1–3 merged/deployed; milestone 4 tested for publication.
-Next action: publish/verify the M4 branch tree and milestone PR, require green
-exact-head CI before merge/public verification. M4 has not been merged or
-deployed. M5 AI and M6 polish follow.
+Current implementation branch: `feat/monthly-report-setup`, based on main
+`d649cb8a90dd8382982a6a9c074997b78a152498`. Working checkout:
+`/workspace/scratch/monthly-report`; venv: `/workspace/scratch/monthly-report-venv`.
+The earlier `ca2afe740bcd/monthly-report` checkout did not survive the environment
+replacement. Do not restart the milestones from the stale status below.
+
+M2 PR #58 merged at `73915b17cd1d3e5dbbe429719121e5a5400d29a8` (738 CI passes).
+M3 PR #59 merged at `012d4a85de7a364358ceee9b128a14d95509605c` (758 CI passes).
+M4 PR #60 merged at `d649cb8a90dd8382982a6a9c074997b78a152498`; exact-head Actions
+run `37634255896`, job `112836173453`: **784 passed, zero skipped**. The public app
+now shows the M4 entry text for monthly uploads/CMMS. No private Render access
+or persistent production test content was used.
+
+M5 draft PR #61 is a documentation-only recovery checkpoint, head
+`ebc7185779f33133738d76015882cbd285e14028`. M5 AI/Copilot is NOT implemented.
+The owner requested a focused setup/UX increment before continuing it: remove
+the demo switch; upload-first real report setup; month/year only; anonymous
+device/profile preferences; saved partial drafts; and mixed-month item review.
+The current setup branch implements those changes locally. The complete local
+suite passed **801 tests with one CI-only skip**, plus compileall/Ruff/pip check,
+privacy/docs-index/diff checks. All six synthetic output pages passed visual QA.
+PR #62 is open. First published head `12c8241699ba9ca4235d755c19908cf1d0c0ee91`
+passed CI run `37651587941`; a final preservation-hardening commit is being
+published. It is NOT merged or deployed yet. Require green CI on the updated
+exact head, then merge and publicly verify. Integrate main into the M5 branch and continue
+M5/M6 rather than claiming the guided action-field append is full AI drafting.
+
+## Additional owner decisions October 7
+
+- Only real saved reports in the UI; synthetic builders remain test fixtures.
+- Start with contract and an uploaded preferred report, then confirm explicit
+  scope, site identities and aliases. Save logical order/titles/table schemas
+  and standing assets; do not require an empty profile to exist first.
+- Asset managers need four clear stages: report, monthly work, standing site
+  information, review/download. Advanced layout/library controls are secondary.
+- Suggest last month on days 1–10, otherwise current month; always offer month
+  and year selectors, never a day picker for the reporting period.
+- A partial report can have a stale cover, mixed old/new narrative and only a
+  few replaced vendor images. NEVER classify the whole upload by its title.
+  Inspect item text and embedded images independently. Surface mixed/unknown
+  dates. Visual/OCR reading is assistive and bounded, not a deletion decision.
+  Keep/reference/exclude decisions require confirmation; preserve original DOCX
+  and unmatched content on the runtime disk. Exclude means from this draft,
+  not irreversible deletion. A same-month partial import must preserve/append
+  current work; a deliberately new month resets monthly attachments/narrative
+  while retaining standing information and previous saved versions.
 
 ## Owner decisions approved October 6
 

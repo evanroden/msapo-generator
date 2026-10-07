@@ -112,27 +112,38 @@ follow that same order.
 
 ## Monthly report workflow
 
-Choose **Monthly report**, then **Use the profile library**. Create a profile
-with an explicit scope, display title, facility identities and aliases. An alias
-does not create a second facility. Shared saves require entered-editor
-attribution and confirmation; names are not authenticated identities. Passcodes
-remain deferred during owner-authorized internal testing.
+Choose **Monthly report**, your contract, and the month/year. First use starts
+with **Set up a report from an existing DOCX** (up to 128 MB); returning managers
+choose their saved site/report. The browser remembers the last confirmed report
+and its preparer. Four stages guide report selection, monthly work, standing
+site information and review/download. Synthetic reports are no longer a UI mode.
 
-**Import an existing DOCX** inspects packages up to 128 MB. Review extracted
-images, text and tables, select destinations/columns, and confirm membership and
-the final mapping set. Save as versioned library defaults or a prior report
-snapshot. Unmapped content remains in the staged review. Native Word charts,
-shapes and unsupported image formats need exported PNG/JPEG replacements; no
-external links, macros or embedded objects are executed. Table schemas and asset
-versions are retained. Shared content lives under EPC_DATA_DIR/monthly_reports.
+Confirm the report name, single-site/multiple-site/regional scope, actual sites
+and aliases. An alias does not create a second site. An uploaded report can mix
+old and new work even when its title is stale: review each uncertain text/image
+item and confirm keep, reference or exclude. Optional bounded visual/OCR reading
+helps with embedded images; it never decides what to delete. Originals and
+unmatched content remain on disk after a confirmed save. Native Word charts,
+shapes and unsupported formats need exported PNG/JPEG replacements. No external
+links, macros or embedded objects execute. Reusable section order/titles, table
+schemas and standing assets stay scoped to the confirmed profile.
 
-Assemble sections with Library, Last month, This month, Replace once, Replace and
-save to library, Stock text or Omit. Preflight blocks required gaps, template
+**Save progress** retains incomplete work for another editor or the next visit.
+Same-month partial content appends without silently replacing existing work.
+Starting a new period clears monthly attachments/narrative while retaining site
+information and earlier versions. Add vendor/chemical reports and reviewed
+action fields to the editable activity summary; full AI drafting is still pending.
+Shared saves require entered-editor attribution and confirmation; entered names
+are not authenticated identities. Passcodes remain deferred during internal
+testing. All shared content lives under EPC_DATA_DIR/monthly_reports.
+
+Advanced controls retain section order, one-off/shared replacements and library
+history/restoration. Preflight blocks required gaps, template
 instructions and unreviewed AI content; stale periods and size warnings require
 content-specific acknowledgement. Generate finished DOCX and PDF downloads.
 DOCX remains available if PDF conversion fails. Monthly report never generates
-an email draft or sends/uploads the report. Monthly document ingestion, AI/Copilot
-and final visual polish remain in the next milestones. See
+an email draft or sends/uploads the report. Evidence uploads and CMMS mapping are
+implemented; full AI/Copilot and final visual polish remain. See
 [the implementation checkpoint](docs/MONTHLY_REPORT_PROGRESS.md).
 
 ## Canonical classification matrix

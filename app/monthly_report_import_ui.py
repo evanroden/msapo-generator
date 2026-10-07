@@ -15,7 +15,7 @@ from app.config import operator_today
 from app.monthly_report_import import (
     MAX_DOCX_BYTES, ImportMapping, imported_draft, inspect_docx, map_items, read_import_image,
 )
-from app.monthly_report_model import ReportPeriod, default_sections, layout_blocks
+from app.monthly_report_model import default_sections, layout_blocks
 
 
 def _signature(value) -> str:
@@ -168,9 +168,8 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                                     st.image(preview[1], width="stretch")
                                 else:
                                     st.caption("Select this item above and press Preview extracted image to show it here.")
-            source_month = st.date_input("Original report month", key=field(document_key + "_month", ReportPeriod.previous(operator_today(browser_timezone)).start),
-                                         help="Confirm from the original report. The filename or a cover candidate may contain a stale month.")
-            period = ReportPeriod(source_month.year, source_month.month)
+            from app.monthly_report_setup import month_selector, suggested_period
+            period = month_selector(field, document_key, suggested_period(operator_today(browser_timezone)), label="Original report")
             snapshot = library.load_snapshot(profile.contract, profile.key, period) if target == "Prior report snapshot" else None
             if snapshot:
                 st.warning(f"This will create a new version of the saved {period.label} report.")

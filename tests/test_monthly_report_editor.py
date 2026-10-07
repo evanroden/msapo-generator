@@ -27,8 +27,8 @@ def app_with_library(monkeypatch, tmp_path):
 
     monkeypatch.setattr(editor, "generate_report", generate)
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    app.session_state["report_advanced"] = True
     app.segmented_control[0].set_value("Monthly report").run()
-    app.toggle("report_use_library").set_value(True).run()
     assert not app.exception
     return app, profile
 
@@ -91,7 +91,7 @@ def test_shared_org_chart_needs_confirmation_and_next_template_uses_it(monkeypat
     state = library.load_profile(profile.contract, profile.key)
     assert state.block("org_chart").asset_hashes
     assert not generate_button(app).disabled
-    app.date_input("report_month").set_value(date(2026, 10, 1)).run()
+    app.selectbox("report_month_number").set_value(10).run()
     assert not app.exception
     assert org_source(app).value == "Library"
     assert not generate_button(app).disabled
@@ -114,7 +114,7 @@ def test_last_month_keeps_section_and_block_order_and_one_off_assets(monkeypatch
     saved = library.load_snapshot(profile.contract, profile.key, ReportPeriod(2026, 9))
     assert saved.draft.sections[0].key == "activity"
     assert saved.draft.sections[1].blocks[0].key == "business_hours_workflow"
-    app.date_input("report_month").set_value(date(2026, 10, 1)).run()
+    app.selectbox("report_month_number").set_value(10).run()
     assert org_source(app).value == "Last month"
     assert not generate_button(app).disabled
     generate_button(app).click().run()
