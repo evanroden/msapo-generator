@@ -4,13 +4,15 @@ date: 2026-10-07
 base_commit: d385c43510160388a24a6c76f15db04118bdcba9
 workflow: Monthly report
 change_type: evidence_drafting
-status: tested_release_candidate
+status: merged
 ---
 
 # Evidence-linked monthly drafting checkpoint
 
-This M5 increment remains on draft PR #61 during final validation. Do not
-describe it as merged or deployed until exact-head CI and release complete.
+PR #61 merged at `ad0a408668270f9f7d71854f73902fb793511e88`. Head
+`dd0996f57ab92e5e5155e8f31ca6a6384cbb64f9` passed Actions `37677196040`: 866
+tests, zero skipped. Main was rechecked and the expected head protected the merge.
+Public UI acceptance is limited as described below.
 
 The implementation uses compact page-cited facts, strict JSON, exact supporting
 quotes and bounded source text. Native extraction caches include source SHA and

@@ -122,6 +122,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         render_profile_workflow(browser_token, browser_timezone, field, move)
         return
     last_contract, last_profile = remembered_report_preferences(browser_token)
+    with st.expander("First time here? How to finish a monthly report"):
+        st.write("1. Choose your contract and check the sites that belong in **one** report.\n2. Use a saved design, the general template, or upload an older/unfinished report.\n3. Open the section boxes to update this month’s work, pictures, people and contacts.\n4. Preview the report, finish the review checks, then download DOCX and PDF.")
+        st.caption("You can move between steps in any order. Save progress before leaving; return to the same sites and month to continue. Chart and photo layouts update beside their fields. Refresh the draft PDF preview when you want to check the whole report.")
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
     contract = choose_contract(last_contract, field)
     with st.expander("Set up or update the contract’s site/contact list (optional)"):
@@ -300,6 +303,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if footer:
         draft = replace(draft, address_line=footer.text if footer.source != "Omit" else "")
     st.session_state[draft_key] = draft
+    from app.monthly_report_preview import render_preview
+    render_preview(draft, assets, prefix, field)
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
     if conflict:
@@ -333,6 +338,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.write(f"{title} · at least {pages} pages")
         loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref)
         estimated = estimate_bytes(draft, loader)
+        st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Aim for under 15 MB; fewer attachment pages and more photos per page can help.")
         checks = preflight(draft, estimated)
         for check in checks:
             (st.error if check.blocking else st.warning)(check.message)
@@ -356,6 +362,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             except (ValueError, OSError) as exc:
                 st.warning(f"Downloads are ready, but this version could not be saved: {exc}")
         if package:
+            sizes = f"DOCX {len(package.docx) / (1024 * 1024):.1f} MB"
+            if package.pdf:
+                sizes += f" · PDF {len(package.pdf) / (1024 * 1024):.1f} MB"
+            st.caption(sizes)
+            if max(len(package.docx), len(package.pdf or b"")) > 15 * 1024 * 1024:
+                st.warning("The finished report exceeds the 15 MB target. You can reduce selected attachment pages or use denser photo layouts, then generate it again.")
             st.download_button("Download DOCX", package.docx, file_name=package.docx_name, key=prefix + "_docx")
             if package.pdf:
                 st.download_button("Download PDF", package.pdf, file_name=package.pdf_name, mime="application/pdf", key=prefix + "_pdf")

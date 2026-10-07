@@ -112,39 +112,49 @@ follow that same order.
 
 ## Monthly report workflow
 
-Choose **Monthly report**, your contract, and the month/year. First use starts
-with **Set up a report from an existing DOCX** (up to 128 MB); returning managers
-choose their saved site/report. The browser remembers the last confirmed report
-and its preparer. Four stages guide report selection, monthly work, standing
-site information and review/download. Synthetic reports are no longer a UI mode.
+Choose **Monthly report**, a contract card and the sites for **one** report.
+Use month/year only. Multiple checked sites produce one combined report; give
+that combination an optional name, such as a region, and explicitly confirm
+regional scope. To make separate reports, run the workflow separately.
 
-Confirm the report name, single-site/multiple-site/regional scope, actual sites
-and aliases. An alias does not create a second site. An uploaded report can mix
-old and new work even when its title is stale: review each uncertain text/image
-item and confirm keep, reference or exclude. Optional bounded visual/OCR reading
-helps with embedded images; it never decides what to delete. Originals and
-unmatched content remain on disk after a confirmed save. Native Word charts,
-shapes and unsupported formats need exported PNG/JPEG replacements. No external
-links, macros or embedded objects execute. Reusable section order/titles, table
-schemas and standing assets stay scoped to the confirmed profile.
+The most recent saved design for that exact site combination is reused. For a
+new combination, choose another report from the same contract, the general
+ENFRA template, or an older/unfinished DOCX (up to 128 MB). Uploads open familiar
+section boxes for reviewing text, tables and pictures. Confirm site identities,
+aliases and content before saving. A stale cover never decides the age of all
+content. Originals/unmatched items remain available; unsupported native Word
+shapes need an exported image or an editable replacement chart.
 
-**Save progress** retains incomplete work for another editor or the next visit.
-Same-month partial content appends without silently replacing existing work.
-Starting a new period clears monthly attachments/narrative while retaining site
-information and earlier versions. Add vendor/chemical reports and reviewed
-action fields to the editable activity summary; full AI drafting is still pending.
-Shared saves require entered-editor attribution and confirmation; entered names
-are not authenticated identities. Passcodes remain deferred during internal
-testing. All shared content lives under EPC_DATA_DIR/monthly_reports.
+Four freely navigable steps cover the report, this month's work, site information,
+and review/download. **Save progress** resumes the same month on another visit.
+Browser memory recalls the report/preparer; entered names are attribution, not
+verified identity. New months retain standing assets and carry issues/proposals
+forward for explicit ongoing/updated/resolved review. Existing same-month work
+is not silently erased. Confirmed contact-directory imports provide site/contact
+suggestions. Client logos and all site-specific content remain on the runtime disk.
 
-Advanced controls retain section order, one-off/shared replacements and library
-history/restoration. Preflight blocks required gaps, template
-instructions and unreviewed AI content; stale periods and size warnings require
-content-specific acknowledgement. Generate finished DOCX and PDF downloads.
-DOCX remains available if PDF conversion fails. Monthly report never generates
-an email draft or sends/uploads the report. Evidence uploads and CMMS mapping are
-implemented; full AI/Copilot and final visual polish remain. See
-[the implementation checkpoint](docs/MONTHLY_REPORT_PROGRESS.md).
+Upload vendor/chemical evidence, choose relevant pages, review extracted facts,
+and request editable source-linked wording. Optional Copilot notes and a filled
+copy prompt use the same review flow. AI suggestions require review and cannot
+invent figures. **Client output must contain no prices**: pricing, legal-only,
+blank and signature-only pages are excluded; image pages require visual review.
+OCR helps but cannot guarantee that every price or service date was detected.
+
+Edit org-chart reporting lines, contact fields and captioned photo grids of
+one to six photos per page with live image previews. Refresh a low-resolution,
+watermarked PDF preview from any step. A changed report marks its preview stale
+and disables that preview's download until refreshed. The preview does not
+approve unfinished work. Shared assets/history/reordering remain in the advanced
+editor. All saved report data lives under EPC_DATA_DIR/monthly_reports.
+
+Preflight blocks required gaps, template instructions, prices and unreviewed AI
+content; stale-period/size warnings require content-specific acknowledgement.
+Review standing details and selected image pages, then download finished DOCX
+and PDF. DOCX remains available if PDF conversion fails. The target is under
+15 MB; estimated and finished sizes are visible. No email draft, automatic
+sending or uploading is generated. Passcodes remain deferred for internal testing.
+See the [asset-manager guide](docs/MONTHLY_REPORT_GUIDE.md) and
+[implementation checkpoint](docs/MONTHLY_REPORT_PROGRESS.md).
 
 ## Canonical classification matrix
 

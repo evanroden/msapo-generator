@@ -15,6 +15,8 @@ Monthly report directory handoff: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_DIRECT
 Monthly report drafting checkpoint: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M5.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M5.md).
 Monthly report site-first setup: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_START.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_START.md).
 Monthly report visual editing: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_EDITING.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_EDITING.md).
+Monthly report preview/layout: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M6.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M6.md).
+Asset-manager instructions: [MONTHLY_REPORT_GUIDE.md](MONTHLY_REPORT_GUIDE.md).
 
 Eighteen-plus documents accumulate quickly and none of them announce which is
 still true. This index exists so an agent arriving with no conversation history
