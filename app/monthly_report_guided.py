@@ -312,7 +312,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             block = blocks.get(key, ResolvedBlock(key, "This month"))
             with st.expander(readable_label(key)):
                 if key == "org_chart":
-                    blocks[key] = edit_org_chart(draft, block, prefix, assets, field)
+                    blocks[key] = edit_org_chart(replace(draft, blocks=tuple(blocks.values())), block, prefix, assets, field)
                     if not blocks[key].org_nodes:
                         blocks[key] = _edit_content(spec, blocks[key], state, prefix, assets, field)
                 elif key in ("contact_matrix", "subcontractor_matrix"):

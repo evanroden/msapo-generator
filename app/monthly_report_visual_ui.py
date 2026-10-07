@@ -9,7 +9,7 @@ from app import monthly_report_library as library
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_editor import _signature
 from app.monthly_report_model import OrgChartNode, ReportTable
-from app.monthly_report_visuals import org_groups, org_page, photo_count, photo_page
+from app.monthly_report_visuals import contact_positions, validate_org, org_groups, org_page, photo_count, photo_page
 
 
 def _install(draft, prefix, block, *, spec=None, clear=""):
@@ -66,17 +66,45 @@ def edit_org_chart(draft, block, prefix, assets, field):
             st.write(
                 "Add each person or position, then choose who they report to. The preview updates as you type. Existing image charts remain in saved history."
             )
+            candidates = contact_positions(draft)
+            nodes = (OrgChartNode("position-1", role="Asset manager"),)
+            if candidates:
+                method = st.radio(
+                    "Start the chart with",
+                    ["People already in this report’s contacts", "An empty chart"],
+                    key=field(p + "_method", "People already in this report’s contacts"),
+                )
+                if method == "People already in this report’s contacts":
+                    choices = {n.key: n for n in candidates}
+                    signature = _signature(candidates)
+                    selected = st.multiselect(
+                        "People to include in the org chart",
+                        list(choices),
+                        format_func=lambda key: " · ".join(v for v in (choices[key].name, choices[key].role, choices[key].team) if v),
+                        key=field(p + "_people_" + signature, list(choices) if len(choices) <= 60 else []),
+                        max_selections=60,
+                    )
+                    nodes = tuple(choices[key] for key in selected)
+                    st.caption("Choose up to 60 people or positions. Next, choose who each person reports to. Phone numbers and email fields are not copied into the chart.")
+            else:
+                st.caption("To reuse people already saved for these sites, add or update this report’s contacts first. You can also start with an empty chart.")
+            problem = ""
+            try:
+                validate_org(nodes)
+            except ValueError as exc:
+                problem = str(exc)
+                st.info(problem + " You can change the contact fields or start with an empty chart.")
             confirm = not block.asset_hashes or st.checkbox(
                 "Replace this report’s uploaded chart with the editable chart",
                 key=p + "_replace_ok",
             )
             if st.button(
-                "Start an editable org chart", key=p + "_start", disabled=not confirm
+                "Start an editable org chart", key=p + "_start", disabled=not confirm or bool(problem)
             ):
                 new = replace(
                     block,
                     source="Replace once",
-                    org_nodes=(OrgChartNode("position-1", role="Asset manager"),),
+                    org_nodes=nodes,
                     asset_hashes=(),
                     asset_captions=(),
                     references=(),

@@ -13,6 +13,15 @@ def contract_choices():
     return list(dict.fromkeys([*contracts.contract_names(), *directory.directory_contracts()]))
 
 
+def _known_sites(contract, state):
+    from app.monthly_report_section_ui import _site_options
+
+    saved = {s.key: s for s in state.sites} if state else {}
+    for facility in _site_options(contract):
+        saved.setdefault(facility.key, directory.DirectorySite(facility.key, facility.title, facility.aliases))
+    return tuple(saved.values())
+
+
 def _edit_contacts(site, prefix):
     rows = _grid(prefix + "_contacts_" + site.key, [
         {"Role": c.role, "Name": c.name, "Phone": c.phone, "Email": c.email, "Source": c.source}
@@ -27,20 +36,22 @@ def _site_editor(sites, existing, prefix, *, importing=False):
     existing_by_title = {s.title: s for s in existing}
     records = []
     for site in sites:
-        matches = [s.title for s in existing if site.title.casefold() in {n.casefold() for n in (s.title, *s.aliases)}]
+        matches = [s.title for s in existing if directory.facility_names(site) & directory.facility_names(s)]
         matched = existing_by_title[matches[0]] if len(matches) == 1 else None
+        aliases = tuple(dict.fromkeys((*site.aliases, *((matched.title, *matched.aliases) if matched else ()))))
+        aliases = tuple(n for n in aliases if n.casefold() != site.title.casefold())
         records.append({"Include": True, "Identity": site.key, "Site": site.title,
-                        "Aliases": "; ".join(site.aliases or (matched.aliases if matched else ())),
+                        "Aliases": "; ".join(aliases),
                         "Address": site.address or (matched.address if matched else ""), "Active": matched.active if matched else site.active,
                         "Existing site": matches[0] if len(matches) == 1 else "New site",
                         "Source": site.source.split(":", 1)[-1]})
     edited = _grid(prefix + "_sites", records, hide_index=True,
                    disabled=["Identity", "Source"], column_config={"Identity": None,
-                    "Existing site": st.column_config.SelectboxColumn(options=["New site", *existing_by_title]) if importing else None,
+                    "Existing site": st.column_config.SelectboxColumn("Match to a listed site", options=["New site", *existing_by_title], help="Choose a listed site when the worksheet uses a different name for the same place. This keeps its saved identity.") if importing else None,
                     "Include": st.column_config.CheckboxColumn() if importing else None,
                     "Aliases": st.column_config.TextColumn(help="Alternate names for this one site, separated by semicolons."),
                     "Active": st.column_config.CheckboxColumn(help="Inactive sites stay in history and existing reports but are not offered for new setup.")})
-    st.caption("A renamed site keeps its identity when linked to the existing record. Two names for one site belong in Aliases, not two rows. Unselected existing sites are retained.")
+    st.caption("Match a different spelling to the same listed site. Keep alternate names in Aliases, not separate rows. Unselected existing sites are retained.")
     chosen = [r for r in edited if r.get("Include", True)]
     if not chosen:
         return ()
@@ -70,7 +81,8 @@ def _site_editor(sites, existing, prefix, *, importing=False):
         source = by_id[row["Identity"]]
         matched = existing_by_title.get(row.get("Existing site")) if importing else None
         aliases = tuple(v.strip() for v in str(row.get("Aliases") or "").split(";") if v.strip())
-        # Proposed aliases remain visible/editable; never manufacture one from a title.
+        # Every alias, including a matched record's prior name, was visible and
+        # editable in the grid before this confirmed save.
         result.append(replace(source, key=matched.key if matched else source.key,
                               title=str(row.get("Site") or "").strip(), aliases=aliases,
                               address=str(row.get("Address") or "").strip(), active=bool(row.get("Active", True)),
@@ -156,7 +168,7 @@ def _render_directory(field):
         proposed = directory.matrix_sites(inspection, sheet, header, label, address, groups)
         edit_prefix = prefix + "_" + _signature([asdict(s) for s in proposed])
         st.subheader("Confirm sites, aliases and contacts")
-        incoming = _site_editor(proposed, state.sites if state else (), edit_prefix, importing=True)
+        incoming = _site_editor(proposed, _known_sites(contract, state), edit_prefix, importing=True)
         if not incoming:
             st.info("Select at least one site to save.")
             return
@@ -209,9 +221,11 @@ def review_contacts(draft, prefix, field, assets):
         current = next((b for b in draft.blocks if b.key == "contact_matrix"), None)
         links = {r.split(":")[1]: r.split(":")[2] for r in current.references if r.startswith("directory-site:") and len(r.split(":")) == 3} if current else {}
         active = {s.key: s for s in state.sites if s.active}
+        suggestions = directory.suggest_contact_bindings(state, draft.profile.facilities, links)
+        st.caption("Matching site names are suggested below. Check the sites and people before using these contacts in your report.")
         bindings = {}
         for facility in draft.profile.facilities:
-            default = links.get(facility.key, facility.key if facility.key in active else "")
+            default = suggestions.get(facility.key, "")
             key = field(prefix + "_directory_link_" + facility.key, default if default in active else "")
             if st.session_state[key] not in ("", *active):
                 st.session_state[key] = ""
