@@ -16,6 +16,7 @@ Monthly report drafting checkpoint: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M5.m
 Monthly report site-first setup: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_START.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_START.md).
 Monthly report visual editing: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_EDITING.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_EDITING.md).
 Monthly report preview/layout: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M6.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M6.md).
+Monthly report first-use contact reuse: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_FIRST_USE.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_FIRST_USE.md).
 Asset-manager instructions: [MONTHLY_REPORT_GUIDE.md](MONTHLY_REPORT_GUIDE.md).
 
 Eighteen-plus documents accumulate quickly and none of them announce which is

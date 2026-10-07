@@ -14,8 +14,8 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current checkpoint branch: `docs/monthly-report-release-checkpoint`, based on main
-`d39670b52dc258f47f2f30e33703c794181e5f37`. Working checkout:
+Current checkpoint branch: `feat/monthly-report-first-use`, based on main
+`051e627b554d09008168b0fbb7234fd0d2beeb5d`. Working checkout:
 `/workspace/scratch/monthly-report`; venv `/workspace/scratch/monthly-report-venv`.
 M5 worktree `/workspace/scratch/monthly-report-m5-work` is clean at its published
 head. The older ca2afe740bcd checkout vanished; do not restart from it.
@@ -60,12 +60,41 @@ was used. This proves the new UI release is live, not saved-profile end-to-end
 production acceptance. The remaining operator tasks are reviewed directory import,
 site-specific setup and acceptance of a finished private report.
 
-Final checkpoint PR #68 also replaces internal field IDs in guided review
+Final checkpoint PR #68 replaces internal field IDs in guided review
 messages with the recognizable item name, a concrete action and the destination
 step/section. It does not relax any content/review gate. Focused UI/docs/hygiene
-validation passed **35 tests**; Ruff F/E9 and diff checks passed. PR #68 is the
-authoritative record for its final exact-head CI and merge status; the earlier
-M6 CI total does not cover this subsequent wording change.
+validation passed **35 tests**; Ruff F/E9 and diff checks passed. Head
+`dc428ee9ecb91fd07191c326939355af7982d012`, tree
+`f68bb4eba1e972b0bc7343003efd2c14f564f089`, passed Actions `37681642371` /
+job `112998905433`: **873 passed, zero skipped**. Merged with expected-head
+protection at `051e627b554d09008168b0fbb7234fd0d2beeb5d`; public setup loaded
+after deployment. No persistent production QA profile was created.
+
+The current first-use follow-up keeps catalog sites available after a partial
+directory import, offers explicit links to existing catalog identities during
+that import, suggests unique exact contact matches and starts editable charts
+from the report's reviewed contact fields. Reporting lines remain operator
+choices, and replacing an uploaded chart remains explicit. This is implemented
+locally. Full local suite: **878 passed, one CI-only skip** with real LibreOffice;
+after a final staged-image error recovery change, **98 focused tests passed**.
+Ruff F/E9, compileall, pip check and diff checks passed. Publication, exact-head
+CI and deployment remain.
+The actual private workbook passed a local setup/save/resume walkthrough with
+seven directory sites, nine available sites and four contact-derived chart
+positions. Two spelling variants were explicitly matched; other contract tabs
+were not silently imported. See the first-use notes for scope and recovery.
+An actual additional DOCX walkthrough opened all 13 section cards, retained edits
+and preserved review blockers. Its first attempt encountered a transient staged
+ZIP read failure; an isolated retry passed. Picture-read failures now present a
+re-upload action and block approval instead of crashing; root cause of that
+transient read is not claimed. No private production write was used.
+
+Latest owner request: find current logos from official sources for every listed
+contract, standardize their presentation on contract cards and report pages, and
+make them reusable defaults so asset managers do not need to source them. Keep
+artwork on runtime storage, preserve explicit custom-logo overrides and source
+provenance, and do not guess ambiguous contract identities. This branding work
+follows the first-use release; it is not implemented or deployed yet.
 
 All six implementation milestones and the requested UX increments have merged.
 Follow-up work should respond to operator acceptance findings, not restart the

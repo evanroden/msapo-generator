@@ -13,11 +13,13 @@ from app.monthly_report_model import (
     ResolvedBlock,
     BlockSpec,
     ReportPeriod,
+    ReportTable,
+    Facility,
     synthetic_draft,
     synthetic_profiles,
 )
-from app.monthly_report_visuals import validate_org, org_groups, org_page, photo_page
-from test_monthly_report_ui import monthly, step
+from app.monthly_report_visuals import contact_positions, validate_org, org_groups, org_page, photo_page
+from test_monthly_report_ui import monthly, step, choose_report
 
 
 def nodes():
@@ -83,6 +85,94 @@ def test_chart_persistence_and_large_teams_remain_readable():
     for n in range(len(groups)):
         with Image.open(BytesIO(org_page(large, n))) as page:
             assert page.size == (1400, 1540)
+
+
+def test_contact_chart_positions_are_scoped_explicit_and_do_not_infer_managers():
+    from app.monthly_report_directory import CONTACT_SPEC
+    block = ResolvedBlock('contact_matrix', 'This month', rows=(
+        ('Synthetic Site', 'Manager', 'Synthetic Lead', '202-555-0100', 'lead@example.invalid'),
+        ('Synthetic Site', 'Technician', 'Synthetic Worker', '', ''),
+    ), extra_tables=(
+        ReportTable(('Name', 'Role', 'Site'), (('Synthetic Lead', 'Manager', 'Synthetic Site'),)),
+        ReportTable(('Person and telephone', 'Details'), (('Unmapped', 'Do not guess'),)),
+        ReportTable(('Name', 'Contact name'), (('Ambiguous', 'Do not guess'),)),
+    ))
+    draft = draft_for(block, 'table')
+    draft = replace(draft, sections=(replace(draft.sections[0], blocks=(CONTACT_SPEC,)),),
+                    blocks=(block, ResolvedBlock('subcontractor_matrix', 'This month', rows=(('Other vendor',),))))
+    positions = contact_positions(draft)
+    assert [(n.name, n.role, n.team, n.reports_to) for n in positions] == [
+        ('Synthetic Lead', 'Manager', 'Synthetic Site', ''),
+        ('Synthetic Worker', 'Technician', 'Synthetic Site', ''),
+    ]
+    assert '202-555' not in str(positions) and 'example.invalid' not in str(positions)
+    assert contact_positions(replace(draft, blocks=(replace(block, source='Omit'),))) == ()
+    assert contact_positions(replace(draft, sections=(replace(draft.sections[0], included=False),))) == ()
+    changed = replace(block, rows=tuple(reversed(block.rows)))
+    assert {n.key for n in contact_positions(replace(draft, blocks=(changed,)))} == {n.key for n in positions}
+
+
+def test_chart_contact_choice_is_bounded_without_truncating_people():
+    rows = tuple((f'Synthetic Person {n}',) for n in range(61))
+    block = ResolvedBlock('contact_matrix', 'This month', extra_tables=(ReportTable(('Name',), rows),))
+    choices = contact_positions(draft_for(block, 'table'))
+    assert len(choices) == 61  # Operator selects a subset; no silent first-60 crop.
+    with pytest.raises(ValueError, match='60'):
+        validate_org(choices)
+    block = replace(block, extra_tables=(ReportTable(('Name',), (('S' * 101,),)),))
+    assert len(contact_positions(draft_for(block, 'table'))[0].name) == 101
+
+
+def test_reviewed_directory_contacts_can_seed_chart_without_replacing_it_silently(monkeypatch, tmp_path):
+    from app import monthly_report_library as library, monthly_report_directory as directory
+    from app.contracts import RRH_CONTRACT
+    from app.monthly_report_start import design_seed, save_design_start
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    sites = (
+        directory.DirectorySite('directory-north', 'Synthetic North', contacts=(
+            directory.DirectoryContact('Asset manager', 'Synthetic Lead', email='lead@example.invalid'),
+            directory.DirectoryContact('Technician', 'Synthetic Worker'),
+        )),
+        directory.DirectorySite('directory-south', 'Synthetic South', contacts=(directory.DirectoryContact('Manager', 'Other Site Person'),)),
+    )
+    directory.save_directory(RRH_CONTRACT, sites, expected_revision=0, actor='Synthetic Editor', confirmed=True)
+    profile = replace(synthetic_profiles()[0], contract=RRH_CONTRACT, facilities=(Facility('existing-north', 'Synthetic North'),))
+    draft, _ = design_seed(profile, ReportPeriod(2026, 9), 'Synthetic Editor')
+    raw = BytesIO()
+    Image.new('RGB', (100, 80), '#123456').save(raw, 'PNG')
+    ref = library.asset_reference(raw.getvalue(), 'png')
+    draft = replace(draft, blocks=tuple(ResolvedBlock('org_chart', 'Replace once', asset_hashes=(ref,)) if b.key == 'org_chart' else b for b in draft.blocks))
+    save_design_start(draft, {ref: raw.getvalue()}, actor='Synthetic Editor', confirmed=True)
+    app = monthly(monkeypatch, tmp_path, saved=False)
+    choose_report(app, 'Synthetic North')
+    step(app, 3)
+    match = next(w for w in app.selectbox if w.label == 'Directory site for Synthetic North')
+    assert match.value == 'directory-north'
+    assert next(b for b in app.button if b.label == 'Use reviewed contact table').disabled
+    next(c for c in app.checkbox if c.label == 'Replace this report’s contact matrix with this reviewed directory table').check().run()
+    next(b for b in app.button if b.label == 'Use reviewed contact table').click().run()
+    assert not app.exception
+    choices = next(w for w in app.multiselect if w.label == 'People to include in the org chart')
+    assert len(choices.options) == 2 and not any('Other Site' in str(v) for v in choices.options)
+    assert next(b for b in app.button if b.label == 'Start an editable org chart').disabled
+    selected = choices.value[:1]
+    choices.set_value(selected).run()
+    next(c for c in app.checkbox if c.label == 'Replace this report’s uploaded chart with the editable chart').check().run()
+    next(b for b in app.button if b.label == 'Start an editable org chart').click().run()
+    assert not app.exception
+    assert next(w for w in app.text_input if w.label == 'Name' and '_org_person_' in w.key).value == 'Synthetic Lead'
+    assert next(w for w in app.selectbox if w.label == 'Reports to').value == ''
+    step(app, 2)
+    step(app, 3)
+    next(c for c in app.checkbox if c.label == 'Save this draft for others on this report to continue').check().run()
+    next(b for b in app.button if b.label == 'Save progress').click().run()
+    assert not app.exception
+    saved = library.load_snapshot(RRH_CONTRACT, profile.key, ReportPeriod(2026, 9)).draft
+    chart = next(b for b in saved.blocks if b.key == 'org_chart')
+    assert len(chart.org_nodes) == 1 and chart.org_nodes[0].name == 'Synthetic Lead' and not chart.asset_hashes
+    assert library.read_asset(RRH_CONTRACT, profile.key, ref) == raw.getvalue()  # Original still recoverable.
+    assert len(next(b for b in saved.blocks if b.key == 'contact_matrix').rows) == 2
+    assert saved.profile.facilities == profile.facilities
 
 
 def test_preview_pages_are_the_images_embedded_in_deterministic_docx():

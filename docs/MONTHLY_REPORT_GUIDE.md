@@ -75,8 +75,10 @@ record the basis for that status. Removing a resolved item is an explicit choice
 ## Check site information
 
 - **Org chart:** retain the uploaded chart or explicitly replace it with editable
-  people/positions and reporting lines. Its layout updates beside the fields.
-  Larger teams split into readable pages.
+  people/positions and reporting lines. If the report has editable contacts,
+  choose which people to start with, then choose who they report to. Phone/email
+  fields are not copied into the chart. Its layout updates beside the fields;
+  larger teams split into readable pages.
 - **Contacts:** edit the labeled fields; the table below reflects the changes.
   Confirm a directory suggestion before it replaces the report's contacts.
 - **Logos and other standing pictures:** choose Update this item and upload a
@@ -92,6 +94,10 @@ ordering and version history/restoration.
 The optional contract/site directory accepts a workbook with contract tabs and
 site columns. Review the extracted sites/roles/contacts before confirming a
 shared import. A directory helps with setup; it never decides report membership.
+Match a worksheet's different spelling to the same listed site and keep its
+alternate names in Aliases. Importing only some sites keeps the other known sites
+available; explicitly inactive sites remain in history. Matching names suggest
+contacts, but the report's contact table changes only after your confirmation.
 
 ## Preview, save and download
 

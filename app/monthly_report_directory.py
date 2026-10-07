@@ -382,6 +382,57 @@ CONTACT_SPEC = BlockSpec("contact_matrix", "table", columns=tuple(
     ColumnSpec(key, title) for key, title in (("facility", "Facility"), ("role", "Role"), ("name", "Name"), ("phone", "Phone"), ("email", "Email"))))
 
 
+def facility_names(facility):
+    """Exact display names/confirmed aliases, with only case/space normalization."""
+    return {" ".join(n.casefold().split()) for n in (facility.title, *facility.aliases) if n.strip()}
+
+
+def available_sites(catalog, state):
+    """A partial directory supplements the catalog; explicit retirements win.
+
+    A unique name/alias overlap avoids duplicate choices, not an automatic
+    change to any report's membership. Ambiguous overlaps remain visible.
+    """
+    if state is None:
+        return tuple(catalog)
+    result = [s.facility for s in state.sites if s.active]
+    by_key = {s.key for s in state.sites}
+    matches = {
+        f.key: tuple(s.key for s in state.sites if facility_names(f) & facility_names(s))
+        for f in catalog
+    }
+    counts = Counter(k for keys in matches.values() for k in keys)
+    for facility in catalog:
+        keys = matches[facility.key]
+        if facility.key in by_key or (len(keys) == 1 and counts[keys[0]] == 1):
+            continue
+        result.append(facility)
+    return tuple(result)
+
+
+def suggest_contact_bindings(state, facilities, confirmed=None):
+    """Suggest unique exact-name matches; applying contacts still needs review.
+
+    Saved links/identities take precedence. A retired saved link stays unresolved
+    instead of being retargeted to a different person/site with a similar name.
+    """
+    confirmed = confirmed or {}
+    all_sites = {s.key: s for s in state.sites}
+    active = {k: s for k, s in all_sites.items() if s.active}
+    result, candidates = {}, {}
+    for facility in facilities:
+        if facility.key in confirmed or facility.key in all_sites:
+            key = confirmed.get(facility.key, facility.key)
+            result[facility.key] = key if key in active else ""
+        else:
+            candidates[facility.key] = tuple(k for k, s in active.items() if facility_names(facility) & facility_names(s))
+    counts = Counter(k for keys in candidates.values() for k in keys)
+    reserved = set(result.values())
+    for key, matches in candidates.items():
+        result[key] = matches[0] if len(matches) == 1 and counts[matches[0]] == 1 and matches[0] not in reserved else ""
+    return result
+
+
 def contact_block(state: DirectoryState, facilities: tuple[Facility, ...], bindings=None):
     by_id = {s.key: s for s in state.sites}
     bindings = bindings or {}

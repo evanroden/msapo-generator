@@ -2,16 +2,52 @@
 
 from io import BytesIO
 from pathlib import Path
+import hashlib
+import json
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from app.ocr import _MAX_PIXELS_PER_FRAME
+from app.monthly_report_model import OrgChartNode, ReportTable
 
 PAGE = (1400, 1540)  # 7 by 7.7 inches at print resolution; leaves room for headings.
 INK = "#092b24"
 MUTED = "#49635d"
 LIME = "#dcf36b"
 FONT_ROOT = Path("/usr/share/fonts/truetype/dejavu")
+
+
+def contact_positions(draft):
+    """Offer positions from this report's contact fields, never infer managers.
+
+    Only recognizable name/role/site columns are read. Images, prose, vendor
+    tables and other sites' directories are not a source of chart identities.
+    A person with two roles/sites remains two separately selectable positions.
+    """
+    block = next((b for b in draft.blocks if b.key == "contact_matrix"), None)
+    spec = next((b for s in draft.sections if s.included for b in s.blocks if b.key == "contact_matrix"), None)
+    if block is None or spec is None or block.source == "Omit":
+        return ()
+    tables = (ReportTable(tuple(c.title for c in spec.columns), block.rows), *block.extra_tables)
+    fields = {
+        "name": {"name", "contact name", "full name"},
+        "role": {"role", "position", "title", "role / position"},
+        "team": {"facility", "site", "team", "site or team", "site / team"},
+    }
+    result = {}
+    for table in tables:
+        columns = [" ".join(c.casefold().split()) for c in table.columns]
+        indices = {field: [i for i, c in enumerate(columns) if c in labels] for field, labels in fields.items()}
+        if any(len(v) > 1 for v in indices.values()) or not (indices["name"] or indices["role"]):
+            continue  # Ambiguous schemas stay in the contact editor for review.
+        for row in table.rows:
+            values = {field: row[ids[0]].strip() if ids and ids[0] < len(row) else "" for field, ids in indices.items()}
+            if not (values["name"] or values["role"]):
+                continue
+            identity = tuple(" ".join(values[k].casefold().split()) for k in ("name", "role", "team"))
+            key = "contact-" + hashlib.sha256(json.dumps(identity).encode()).hexdigest()[:24]
+            result.setdefault(key, OrgChartNode(key, **values))
+    return tuple(result.values())
 
 
 def font(size, bold=False):

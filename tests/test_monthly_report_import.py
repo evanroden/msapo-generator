@@ -62,6 +62,14 @@ def test_floating_header_images_merged_cells_and_unknown_sections(tmp_path):
     assert len(unmatched) == 1 and unmatched[0].section == "unmatched"
 
 
+def test_unreadable_staged_picture_has_recovery_message(tmp_path):
+    path = synthetic_docx(tmp_path)
+    image = next(i for i in importer.inspect_docx(path).items if i.kind == 'image')
+    path.write_bytes(b'Truncated synthetic staging copy')
+    with pytest.raises(importer.ImportError, match='Upload the original DOCX again'):
+        importer.read_import_image(path, image, preview=True)
+
+
 def test_confirmed_table_schema_preserves_extra_columns_and_zero(tmp_path, monkeypatch):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "runtime"))
     path = synthetic_docx(tmp_path)

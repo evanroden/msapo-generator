@@ -154,11 +154,56 @@ def test_setup_site_options_use_confirmed_identity_and_hide_inactive(tmp_path,mo
     assert _site_options('Synthetic Contract')==(sites[0].facility,)
 
 
+def test_partial_directory_keeps_catalog_sites_and_explicit_retirements(tmp_path, monkeypatch):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    from app import contracts
+    from app.monthly_report_editor import _key
+    from app.monthly_report_section_ui import _site_options
+    from app.monthly_report_start_ui import site_choices
+    from app.monthly_report_directory_ui import _known_sites
+    monkeypatch.setattr(contracts, 'sites_for_contract', lambda _: ['Synthetic North', 'Synthetic South', 'Synthetic West'])
+    _, _, _, sites = inspected()
+    sites = (replace(sites[0], title='Synthetic North Campus', aliases=('Synthetic North',)), replace(sites[1], active=False))
+    state = directory.save_directory('Synthetic Contract', sites, expected_revision=0, actor='Synthetic Editor', confirmed=True)
+    choices = _site_options('Synthetic Contract')
+    assert choices == (sites[0].facility, Facility(_key('Synthetic West'), 'Synthetic West'))
+    assert _known_sites('Synthetic Contract', state) == (*sites, directory.DirectorySite(_key('Synthetic West'), 'Synthetic West'))
+    # An existing report's identity survives a later directory import.
+    profile = replace(synthetic_profiles()[0], facilities=(Facility('prior-id', 'Synthetic North'),))
+    assert site_choices('Synthetic Contract', (profile,)) == (profile.facilities[0], choices[1])
+
+
+def test_site_name_ambiguity_is_never_silently_merged():
+    site = directory.DirectorySite('directory', 'Synthetic Campus', ('Synthetic North', 'Synthetic South'))
+    state = directory.DirectoryState('Synthetic Contract', 1, (site,), 'Synthetic Editor', '')
+    catalog = (Facility('north', 'Synthetic North'), Facility('south', 'Synthetic South'))
+    assert directory.available_sites(catalog, state) == (site.facility, *catalog)
+    assert directory.suggest_contact_bindings(state, catalog) == {'north': '', 'south': ''}
+
+
+def test_contact_suggestions_require_unique_exact_identity_or_alias():
+    north = directory.DirectorySite('north', 'Synthetic North', ('Former Campus',))
+    south = directory.DirectorySite('south', 'Synthetic South')
+    state = directory.DirectoryState('Synthetic Contract', 1, (north, south), 'Synthetic Editor', '')
+    facilities = (Facility('prior', ' FORMER   campus '), Facility('other', 'Synthetic South Annex'))
+    assert directory.suggest_contact_bindings(state, facilities) == {'prior': 'north', 'other': ''}
+    assert directory.suggest_contact_bindings(state, facilities, {'prior': 'south'})['prior'] == 'south'
+    retired = replace(state, sites=(replace(north, active=False), south))
+    assert directory.suggest_contact_bindings(retired, facilities, {'prior': 'north'})['prior'] == ''
+    # A confirmed link cannot be re-used by another automatic name suggestion.
+    facilities = (Facility('existing', 'Synthetic Alias'), Facility('new', 'Synthetic North'))
+    assert directory.suggest_contact_bindings(state, facilities, {'existing': 'north'}) == {'existing': 'north', 'new': ''}
+
+
 def test_directory_upload_preview_confirmation_and_save_in_app(tmp_path,monkeypatch):
     from pathlib import Path
     import streamlit as st
     from streamlit.testing.v1 import AppTest
+    from app import contracts
+    from app.monthly_report_editor import _key
     monkeypatch.setenv('EPC_DATA_DIR',str(tmp_path))
+    original_sites = contracts.sites_for_contract
+    monkeypatch.setattr(contracts, 'sites_for_contract', lambda contract: ['Synthetic North', 'Synthetic West'] if contract == 'Synthetic Contract' else original_sites(contract))
     upload=BytesIO(workbook()); upload.name='synthetic-directory.xlsx'
     original=st.file_uploader
     monkeypatch.setattr(st,'file_uploader',lambda label,*a,**kw: upload if label=='Contract / site directory workbook' else original(label,*a,**kw))
@@ -175,6 +220,7 @@ def test_directory_upload_preview_confirmation_and_save_in_app(tmp_path,monkeypa
     assert not app.exception
     state=directory.load_directory('Synthetic Contract')
     assert state.revision==1 and len(state.sites)==2
+    assert state.sites[0].key==_key('Synthetic North')  # First import links to the listed site.
     assert state.sites[0].contacts[0].email=='lead@example.invalid'
     next(b for b in app.button if b.label=='Back to monthly reports').click().run()
     assert not app.exception

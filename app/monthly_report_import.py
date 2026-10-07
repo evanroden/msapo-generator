@@ -388,11 +388,14 @@ def inspect_docx(path: Path) -> DocxInspection:
 def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, preview: bool = False):
     if item.kind != "image" or not item.image_part.startswith("word/media/"):
         raise ImportError("Select an extractable image.")
-    with _package(path) as archive:
-        info = archive.getinfo(item.image_part)
-        if info.file_size > 30 * 1024 * 1024:
-            raise ImportError("This image exceeds 30 MB. Export a smaller copy from Word.")
-        raw = archive.read(item.image_part)
+    try:
+        with _package(path) as archive:
+            info = archive.getinfo(item.image_part)
+            if info.file_size > 30 * 1024 * 1024:
+                raise ImportError("This image exceeds 30 MB. Export a smaller copy from Word.")
+            raw = archive.read(item.image_part)
+    except (BadZipFile, KeyError, OSError, RuntimeError) as exc:
+        raise ImportError("This report picture could not be read. Upload the original DOCX again and choose Analyze report. Saved versions were not changed.") from exc
     return normalize_report_image(raw, Path(item.image_part).suffix, line_art=line_art,
                                   frame=(4, 5) if preview else (7, 9), dpi=96 if preview else 200)
 

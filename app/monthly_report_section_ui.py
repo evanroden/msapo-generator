@@ -25,12 +25,11 @@ def plan_signature(plan):
 
 
 def _site_options(contract):
-    from app.monthly_report_directory import load_directory
+    from app.monthly_report_directory import available_sites, load_directory
     directory = load_directory(contract)
-    if directory:
-        return tuple(site.facility for site in directory.sites if site.active)
     if contract != contracts.RRH_CONTRACT:
-        return tuple(Facility(_key(title), title) for title in contracts.sites_for_contract(contract))
+        catalog = tuple(Facility(_key(title), title) for title in contracts.sites_for_contract(contract))
+        return available_sites(catalog, directory)
     # Explicit owner-confirmed alias relationship. Never group sites by address
     # or guess regional membership from a title or geographic location.
     result = []
@@ -39,7 +38,7 @@ def _site_options(contract):
             continue
         aliases = (FACILITIES["st_marys"]["name"],) if key == "unity_specialty" and "st_marys" in FACILITIES else ()
         result.append(Facility(key, value["name"], aliases))
-    return tuple(result)
+    return available_sites(result, directory)
 
 
 def _identity(contract, prepared, prefix, field, state):
@@ -165,8 +164,13 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     st.caption("Small icons and thin separator graphics start unchecked. You can select one if it is meaningful report content. All remain in the saved original.")
                 shown = st.selectbox("Picture or page to view", list(labels), format_func=labels.get, key=field(p + "_preview", images[0].id))
                 image = next(i for i in images if i.id == shown)
-                preview = read_import_image(path, image, preview=True)
-                st.image(preview.data, width=min(preview.width, 700))
+                try:
+                    preview = read_import_image(path, image, preview=True)
+                except (ValueError, OSError) as exc:
+                    preview = None
+                    blocking.append(str(exc))
+                if preview:
+                    st.image(preview.data, width=min(preview.width, 700))
                 st.caption(f"{len(kept)} of {len(images)} pictures/pages selected. Check the actual pages; a stale cover does not mean the work on a page is old.")
                 if section.key == "cover":
                     st.caption("Repeated page artwork is grouped here once. Choose the cover and logos you want to reuse; other artwork stays in the original.")
@@ -182,7 +186,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         blocking.append("Choose a different picture for each cover photograph or logo.")
                 else:
                     plan["selected"].extend(kept)
-                if st.checkbox("Read dates and text from the displayed page (optional)", key=field(p + "_read_image", False)):
+                if preview and st.checkbox("Read dates and text from the displayed page (optional)", key=field(p + "_read_image", False)):
                     from app.monthly_report_setup_ui import _image_review
                     notes = _image_review(path, image, p, field, prefix)
                     plan["image_notes"][image.image_part] = notes
