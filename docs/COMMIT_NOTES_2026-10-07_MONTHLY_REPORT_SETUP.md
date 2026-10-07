@@ -54,7 +54,7 @@ unchanged. All fixtures and rendered QA samples are synthetic.
 
 ## Verification checkpoint
 
-Complete local suite: **799 passed, one CI-only skip**, with real LibreOffice
+Complete local suite: **801 passed, one CI-only skip**, with real LibreOffice
 Writer/Calc available. Compileall, Ruff F/E9, pip check, diff whitespace,
 public-repository hygiene and documentation index checks passed. Guided tests
 cover upload-first entry, no day
@@ -63,6 +63,9 @@ placeholder/stale-warning gates and DOCX/PDF-only downloads. Image-reader tests
 verify caller-thread preparation, network-only work, hash caching and the
 persistent 20-image budget. Single-image and table-schema conflicts cannot hide
 an existing version. Imported drafts pin their starting snapshot revision.
+Final preservation review added explicit review of unmatched undated text,
+resumption of a confirmed import ahead of its older snapshot, and a guard that
+leaves the old table schema intact if a monthly table append is rejected.
 
 Six-page synthetic DOCX/PDF output was rendered and every page visually checked.
 A stale July cover and a newer service page with an old template date did not

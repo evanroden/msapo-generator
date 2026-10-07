@@ -33,10 +33,12 @@ The owner requested a focused setup/UX increment before continuing it: remove
 the demo switch; upload-first real report setup; month/year only; anonymous
 device/profile preferences; saved partial drafts; and mixed-month item review.
 The current setup branch implements those changes locally. The complete local
-suite passed **799 tests with one CI-only skip**, plus compileall/Ruff/pip check,
+suite passed **801 tests with one CI-only skip**, plus compileall/Ruff/pip check,
 privacy/docs-index/diff checks. All six synthetic output pages passed visual QA.
-It is NOT published, merged or deployed yet. Next: publish its own PR, require exact-head green CI,
-merge and publicly verify. Then integrate main into the M5 branch and continue
+PR #62 is open. First published head `12c8241699ba9ca4235d755c19908cf1d0c0ee91`
+passed CI run `37651587941`; a final preservation-hardening commit is being
+published. It is NOT merged or deployed yet. Require green CI on the updated
+exact head, then merge and publicly verify. Integrate main into the M5 branch and continue
 M5/M6 rather than claiming the guided action-field append is full AI drafting.
 
 ## Additional owner decisions October 7

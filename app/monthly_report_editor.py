@@ -313,9 +313,7 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     st.caption("Scope: " + profile.scope_type.replace("_", " "))
     from app.monthly_report_setup import month_selector, suggested_period
     period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
-    from app.monthly_report_setup_ui import render_setup
-    with st.expander("Upload an older or partially completed report"):
-        render_setup(contract, period, remembered_report_preparer(browser_token, contract, profile.key), field, state=state)
+    st.caption("To import an older or partially completed report, return to the guided report’s first step. Save any current advanced edits first.")
     prefix = "report_draft_" + _signature((contract, profile.key, period.key))
     current = library.load_snapshot(contract, profile.key, period)
     prior = current or library.load_snapshot(contract, profile.key, ReportPeriod.previous(period.start))

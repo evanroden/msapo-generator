@@ -73,6 +73,25 @@ def test_guided_progress_is_persistent_and_resumes_same_month(monkeypatch, tmp_p
     assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic colleague's partial work."
 
 
+def test_confirmed_import_resumes_even_with_an_older_saved_snapshot(monkeypatch, tmp_path):
+    from test_monthly_report_setup import make_docx
+    from app.monthly_report_import import inspect_docx
+    monthly(monkeypatch, tmp_path)
+    profile = library.list_profiles(RRH_CONTRACT)[0]
+    state = library.load_profile(RRH_CONTRACT, profile.key)
+    period = ReportPeriod(2026, 9)
+    initial = guided._initial_draft(state, period, "Synthetic Editor")
+    library.save_snapshot(initial, expected_revision=0, entered_editor="Synthetic Editor")
+    incoming = replace(initial, blocks=tuple(replace(b, text="Synthetic imported partial work.") if b.key == "activity_summary" else b for b in initial.blocks))
+    source = make_docx(tmp_path)
+    library.save_report_setup(profile, incoming, source, {"sha256": inspect_docx(source).sha256}, assets=(),
+                              expected_revision=state.revision, actor="Synthetic Editor", confirmed=True, snapshot_revision=1)
+    new = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    new.segmented_control[0].set_value("Monthly report").run()
+    step(new, 2)
+    assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic imported partial work."
+
+
 def test_guided_placeholder_warning_download_and_review_gates(monkeypatch, tmp_path):
     monkeypatch.setattr(guided, "generate_report", lambda draft, **kwargs: ReportPackage(
         assemble_docx(draft, **kwargs), b"%PDF-synthetic", "synthetic.docx", "synthetic.pdf", draft.fingerprint))

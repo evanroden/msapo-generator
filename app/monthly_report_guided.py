@@ -66,9 +66,10 @@ def activity_from_sources(sources, existing):
         refs = tuple(source_reference(source, n) for n in source.selected_pages)
         if all(r in existing.references for r in refs):
             continue
-        action = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[contact omitted]", source.actions)
+        action = ": ".join(v for v in (source.vendor, source.actions.strip()) if v)
+        action = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[contact omitted]", action)
         action = re.sub(r"(?<!\d)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}(?!\d)", "[contact omitted]", action)
-        text.append("- " + ": ".join(v for v in (source.vendor, action.strip()) if v))
+        text.append("- " + action.strip())
         references.extend(refs)
     return merge_blocks(existing, ResolvedBlock("activity_summary", "This month", text="\n".join(text), references=tuple(references)))
 
@@ -117,7 +118,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if draft_key not in st.session_state or resume:
         prepared = remembered_report_preparer(browser_token, contract, selected)
         using_import = False
-        if resume and imported:
+        pending_import = imported and imported.period == period and (not snapshot or snapshot.revision == library.imported_snapshot_revision(contract, selected))
+        if imported and (resume or pending_import):
             draft = imported
             using_import = True
             st.session_state.pop("report_resume_import", None)
@@ -169,13 +171,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         report_sources, monthly_blocks, monthly_specs = render_uploads(profile, period, prefix, field)
         draft = replace(draft, sources=report_sources)
         if monthly_blocks and st.button("Add prepared pages and tables to this draft", key=prefix + "_apply_uploads"):
+            applied = set()
             for key, block in monthly_blocks.items():
                 if block.rows and blocks.get(key) and blocks[key].rows and specs.get(key) != monthly_specs.get(key, specs.get(key)):
                     st.error("The existing table has different columns. Review it in the advanced editor; nothing was replaced.")
                     continue
                 blocks[key] = merge_blocks(blocks.get(key), block)
-            draft = replace(draft, sections=tuple(replace(s, included=s.included or any(b.key in monthly_blocks for b in s.blocks),
-                                                         blocks=tuple(monthly_specs.get(b.key, b) for b in s.blocks)) for s in draft.sections))
+                applied.add(key)
+            draft = replace(draft, sections=tuple(replace(s, included=s.included or any(b.key in applied for b in s.blocks),
+                                                         blocks=tuple(monthly_specs.get(b.key, b) if b.key in applied else b for b in s.blocks)) for s in draft.sections))
         activity = blocks.get("activity_summary", ResolvedBlock("activity_summary", "This month"))
         reviewed_actions = st.checkbox("I reviewed the vendor / chemical report action fields against the sources", key=prefix + "_actions_ok_" + _signature([s.fingerprint for s in report_sources]))
         if st.button("Add reviewed work to the activity summary", key=prefix + "_add_actions", disabled=not reviewed_actions):

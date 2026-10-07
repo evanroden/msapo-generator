@@ -71,6 +71,8 @@ def item_findings(item, period: ReportPeriod, image_text: str = "") -> tuple[str
 def initial_decision(item, mapped: bool, period: ReportPeriod) -> str:
     if item.suggested_slot in MONTHLY_BLOCKS or item_findings(item, period) or item.kind == "unsupported":
         return "Needs review"
+    if not mapped and not (item.kind == "text" and _heading(item.text)):
+        return "Needs review"  # Unmatched new work must not default out of the output.
     return "Keep in report" if mapped else "Save for reference"
 
 
@@ -133,7 +135,7 @@ def merge_drafts(existing: ReportDraft | None, incoming: ReportDraft) -> ReportD
         return incoming
     if (existing.profile.contract, existing.profile.key, existing.period) != (incoming.profile.contract, incoming.profile.key, incoming.period):
         raise ValueError("Only merge drafts for the same confirmed profile and month.")
-    old_specs = {b.key: b for s in existing.sections for b in s.blocks}
+    old_specs = {b.key: b for s in existing.sections for b in s.blocks} | {b.key: b for b in layout_blocks()}
     old_blocks = {b.key: b for b in existing.blocks}
     occupied = {b.key for b in existing.blocks if b.text.strip() or b.rows or b.asset_hashes}
     new_specs = {b.key: b for s in incoming.sections for b in s.blocks}

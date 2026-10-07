@@ -39,6 +39,13 @@ def test_ambiguous_org_charts_are_not_automatically_selected():
     assert suggested_mappings(inspection) == ()
 
 
+def test_unmatched_undated_work_cannot_default_to_reference_only():
+    item = ImportItem("new-work", "text", "word/document.xml", 3, 1, text="The synthetic pump repair was completed.")
+    assert initial_decision(item, False, ReportPeriod(2026, 9)) == "Needs review"
+    heading = replace(item, text="2 Monthly Activity Summary", section="activity")
+    assert initial_decision(heading, False, ReportPeriod(2026, 9)) == "Save for reference"
+
+
 def make_docx(tmp_path):
     doc = Document()
     doc.add_heading("Synthetic report July 2024", 0)
@@ -133,6 +140,9 @@ def test_reviewed_actions_append_without_converting_recommendations_into_work():
     assert "next year" not in combined.text
     assert len(combined.references) == 1
     assert activity_from_sources((source,), combined) == combined
+    contact_source = replace(source, vendor="Synthetic Vendor contact@example.invalid", actions="Called 202-555-0100; inspected pump.")
+    safe = activity_from_sources((contact_source,), original)
+    assert "contact@example.invalid" not in safe.text and "202-555-0100" not in safe.text
 
 
 def test_browser_preferences_do_not_cross_devices_or_preparer_profiles(tmp_path, monkeypatch):
