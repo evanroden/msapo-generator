@@ -178,5 +178,5 @@ def test_directory_upload_preview_confirmation_and_save_in_app(tmp_path,monkeypa
     assert state.sites[0].contacts[0].email=='lead@example.invalid'
     next(b for b in app.button if b.label=='Back to monthly reports').click().run()
     assert not app.exception
-    assert 'Synthetic Contract' in app.selectbox('report_contract').options
+    assert any(b.label == 'Synthetic Contract' for b in app.button)
     assert not library.list_profiles('Synthetic Contract')  # Directory is not report membership.

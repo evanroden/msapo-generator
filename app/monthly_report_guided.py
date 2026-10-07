@@ -11,12 +11,18 @@ from app.memory import (record_report_preferences, record_report_preparer,
                         remembered_report_preferences, remembered_report_preparer)
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image, outline
-from app.monthly_report_editor import _grid, _key, _preview, _signature, _typed_table
-from app.monthly_report_model import (ReportDraft, ReportPeriod, ResolvedBlock, STOCK_TEXTS,
+from app.monthly_report_editor import _grid, _preview, _signature, _typed_table
+from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
                                      layout_blocks, profile_sections)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
 
 STEPS = ("1 · Report", "2 · This month’s work", "3 · Site information", "4 · Review & download")
+
+
+def _standing_signature(blocks, included):
+    keys = included | {b.key for b in layout_blocks()}
+    return _signature(sorted((b.key, b.fingerprint) for b in blocks
+                             if b.key not in MONTHLY_BLOCKS and b.key in keys))
 
 
 def _initial_draft(state, period, prepared):
@@ -73,6 +79,7 @@ def _edit_content(spec, block, state, prefix, assets, field):
         reference = library.asset_reference(image.data, image.extension)
         assets[reference] = image.data
         block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
+        st.image(image.data, width="stretch", caption="Updated image in this report")
     return block
 
 
@@ -95,7 +102,7 @@ def activity_from_sources(sources, existing):
 
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
-    from app.monthly_report_directory_ui import contract_choices, render_directory
+    from app.monthly_report_directory_ui import render_directory
     if st.session_state.get("report_directory_manage", False):
         render_directory(field)
         return
@@ -109,28 +116,26 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         render_profile_workflow(browser_token, browser_timezone, field, move)
         return
     last_contract, last_profile = remembered_report_preferences(browser_token)
-    names = contract_choices()
-    contract = st.selectbox("Contract", names, key=field("report_contract", last_contract if last_contract in names else names[0]))
+    from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
+    contract = choose_contract(last_contract, field)
     with st.expander("Set up or update the contract’s site/contact list (optional)"):
         st.caption("Use a contract directory workbook to suggest sites and contacts. Each report still confirms its own sites.")
         if st.button("Manage contract and site directory", key="report_directory_open"):
             st.session_state["report_directory_manage"] = True
             st.rerun()
+    if not contract:
+        return
     period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
     st.caption("Suggested month: previous month on days 1–10; current month thereafter. Change it whenever needed.")
     profiles = library.list_profiles(contract)
-    choices = [p.key for p in profiles] + ["__new__"]
     completed_setup = st.session_state.pop("report_setup_done", None)
-    profile_key = field("report_profile_" + _key(contract), last_profile if last_contract == contract and last_profile in choices else choices[0])
-    if completed_setup in choices:
-        st.session_state[profile_key] = completed_setup
-    if st.session_state[profile_key] not in choices:
-        st.session_state[profile_key] = choices[0]
-    selected = st.selectbox("Site / report", choices, format_func=lambda k: "Set up a report from an existing DOCX" if k == "__new__" else next(p.title for p in profiles if p.key == k), key=profile_key)
-    if selected == "__new__":
-        from app.monthly_report_setup_ui import render_setup
-        render_setup(contract, period, "", field)
+    candidate, existing = select_sites(contract, profiles, last_profile if last_contract == contract else "", field, completed_setup)
+    if not candidate:
         return
+    if not existing:
+        starting_choice(candidate, profiles, period, "", field)
+        return
+    selected = existing.key
     state = library.load_profile(contract, selected)
     profile = state.profile
     st.caption(profile.scope_type.replace("_", " ").capitalize() + " · " + "; ".join(f.title for f in profile.facilities))
@@ -141,7 +146,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         record_report_preferences(browser_token, contract, selected)
         if imported:
             record_report_preparer(browser_token, contract, selected, imported.prepared_by)
-    prior = library.load_snapshot(contract, selected, ReportPeriod.previous(period.start))
+    from app.monthly_report_start import latest_snapshot
+    prior = latest_snapshot(contract, selected, period)
     draft_key = prefix + "_draft"
     resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
     if draft_key not in st.session_state or resume:
@@ -158,7 +164,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             draft = imported
             using_import = True
         elif prior:
-            draft = new_month_draft(prior.draft, period)
+            draft = replace(new_month_draft(prior.draft, period), profile=profile)
         else:
             draft = _initial_draft(state, period, prepared)
         st.session_state[draft_key] = replace(draft, prepared_by=prepared or draft.prepared_by)
@@ -166,16 +172,23 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     draft = st.session_state[draft_key]
     prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by))
     draft = replace(draft, prepared_by=prepared)
+    if candidate != profile:
+        st.caption("The updated group name/scope will be remembered after you save it.")
+        rename_ok = st.checkbox("Remember this name and scope for these same sites", key=prefix + "_rename_" + _signature((candidate, prepared, state.revision)))
+        if st.button("Save group name", disabled=not (rename_ok and prepared.strip()), key=prefix + "_rename_save"):
+            library.save_profile(candidate, expected_revision=state.revision, actor=prepared, confirmed=True)
+            st.session_state[draft_key] = replace(draft, profile=candidate)
+            st.rerun()
     assets = st.session_state.setdefault(prefix + "_assets", {})
     step_key = field(prefix + "_step", STEPS[0])
     if completed_setup == selected:
-        st.session_state[step_key] = STEPS[1]
+        start_standing = st.session_state.pop("report_start_at_site_information", None) == selected
+        st.session_state[step_key] = STEPS[2] if start_standing else STEPS[1]
     step = st.radio("Report steps", STEPS, horizontal=True, key=step_key)
     blocks = {b.key: b for b in draft.blocks}
-    specs = {b.key: b for s in draft.sections for b in s.blocks}
+    specs = {b.key: b for s in draft.sections for b in s.blocks} | {b.key: b for b in layout_blocks()}
     included = {b.key for s in draft.sections if s.included for b in s.blocks}
-    standing = [b for b in draft.blocks if b.key not in MONTHLY_BLOCKS and b.key in included]
-    standing_signature = _signature([asdict(b) for b in standing])
+    standing_signature = _standing_signature(draft.blocks, included)
     review_state = prefix + "_standing_reviewed_content"
 
     if step == STEPS[0]:
@@ -233,6 +246,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     elif step == STEPS[2]:
         st.subheader("Keep what is still correct; update what changed")
         st.write("Check the org chart, outage workflows, facility/vendor contacts and other standing information for these exact sites.")
+        with st.expander("Client logo, cover photo and footer", expanded=not blocks.get("client_logo", ResolvedBlock("client_logo", "This month")).asset_hashes):
+            st.caption("Drop in a replacement logo or photo. Images fit the available space without stretching; transparent backgrounds are printed on white.")
+            for key in ("client_logo", "brand_logo", "cover_photo", "footer_text"):
+                st.write(key.replace("_", " ").capitalize())
+                blocks[key] = _edit_content(specs[key], blocks.get(key, ResolvedBlock(key, "This month")), state, prefix, assets, field)
         from app.monthly_report_directory_ui import review_contacts
         review_contacts(draft, prefix, field, assets)
         for key in sorted(included - MONTHLY_BLOCKS):
@@ -244,8 +262,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     blocks[key] = _edit_content(spec, block, state, prefix, assets, field)
                 else:
                     _preview(block, assets, profile)
-        standing = [b for b in blocks.values() if b.key not in MONTHLY_BLOCKS and b.key in included]
-        standing_signature = _signature([asdict(b) for b in standing])
+        standing_signature = _standing_signature(blocks.values(), included)
         reviewed_key = prefix + "_standing_control_" + standing_signature
         def record_review():
             st.session_state[review_state] = standing_signature if st.session_state[reviewed_key] else ""

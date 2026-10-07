@@ -220,8 +220,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             st.caption("Resolve the message above to finish this section.")
 
 
-def render_section_setup(contract, period, prepared, field, *, state=None):
-    prefix = "report_setup_" + _signature((contract, state.profile.key if state else "new", period.key))
+def render_section_setup(contract, period, prepared, field, *, state=None, identity=None):
+    prefix = "report_setup_" + _signature((contract, state.profile.key if state else identity.key if identity else "new", period.key))
     st.subheader("Start with a report you already have")
     st.write("Upload an older report or a teammate’s unfinished report. Then review its sections below. Your original file will not be changed.")
     upload = st.file_uploader("Older or partially completed report", type=["docx"], max_upload_size=128, key=prefix + "_upload")
@@ -248,7 +248,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None):
         return
     _, path, inspection = staged
     p = prefix + "_" + inspection.sha256[:16]
-    candidate, actor, missing = _identity(contract, prepared, p, field, state)
+    if identity:
+        candidate = identity
+        st.write("Report sites: " + "; ".join(f.title for f in identity.facilities))
+        actor = st.text_input("Your name", key=field(p + "_actor", prepared))
+        missing = [] if actor.strip() else ["Enter your name."]
+    else:
+        candidate, actor, missing = _identity(contract, prepared, p, field, state)
     intent = st.radio("What are you preparing?", ["A new month using this report’s design", "Finish a report someone already started"],
                       key=field(p + "_intent", "Finish a report someone already started"))
     st.caption(f"Finished report: {period.label}. Existing work stays selected until you choose to change or leave it out. No pages are removed merely because the cover looks old.")
