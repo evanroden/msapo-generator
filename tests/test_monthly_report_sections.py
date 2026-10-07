@@ -18,7 +18,7 @@ from app import monthly_report_sources as sources, monthly_report_library as lib
 from test_monthly_report_setup import make_docx
 
 
-@pytest.mark.parametrize("text", ["Price: 1200", "USD 30", "30 dollars", "Quoted amount: 450.00", "$1,000.00", "Labour rate 75"])
+@pytest.mark.parametrize("text", ["Price: 1200", "USD 30", "30 dollars", "Quoted amount: 450.00", "$1,000.00", "Labour rate 75", "Unit price\n\n1,200.00"])
 def test_detects_client_pricing(text):
     assert contains_price(text)
     assert page_status(text)[0] == "pricing"

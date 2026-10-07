@@ -12,7 +12,16 @@ _LEGAL_TERMS = ("terms and conditions", "limitation of liability", "indemnif", "
 def contains_price(text):
     if _MONEY.search(text):
         return True
-    return any(_PRICE_LABEL.search(line) and re.search(r"\d", line) for line in text.splitlines())
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for n, line in enumerate(lines):
+        if _PRICE_LABEL.search(line):
+            if re.search(r"\d", line):
+                return True
+            # PDF text often puts a monetary table heading and its bare amount
+            # on separate lines, without a repeated currency symbol.
+            if n + 1 < len(lines) and re.fullmatch(r"[\d,.()\s+-]+", lines[n+1]) and re.search(r"\d", lines[n+1]):
+                return True
+    return False
 
 
 def price_column(title, kind=""):
