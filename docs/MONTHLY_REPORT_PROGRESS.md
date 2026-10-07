@@ -14,10 +14,11 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current branch: `feat/monthly-report-m2`.
-Current stage: milestone 1 merged/deployed; milestone 2 library implementation.
-Next action: finish the profile/library UI, image and snapshot integration; test,
-then publish/merge the milestone 2 PR and verify it publicly on production.
+Current branch: `feat/monthly-report-m3`.
+Current stage: milestones 1 and 2 merged/deployed; milestone 3 bootstrap in progress.
+Next action: finish bootstrap UI/state and restoration regression coverage, run
+the full suite, publish/update the milestone 3 PR, require exact-head CI, then
+merge and verify the public production import controls. M3 is not yet merged.
 
 ## Owner decisions approved October 6
 
@@ -121,6 +122,28 @@ Store a resolved snapshot after generation; keep DOCX even if PDF conversion fai
 Snapshot provenance pins asset versions rather than following future replacements.
 
 ## Verification and release log
+
+- October 7 resume: M2 local/published trees verified equal at
+  a7011d91b8f4c269fd01fb57685da9620d8c64c6. Created PR #58 at published head
+  237d0316d9df931419a0d8b5df0ea28d51199d5f. Actions run 37625889583 passed
+  738 tests, zero skipped. Rechecked unchanged main and merged with expected-head
+  protection at 73915b17cd1d3e5dbbe429719121e5a5400d29a8. Public production
+  browser verified the library toggle, contract, facility aliases/scope,
+  entered-editor confirmation and save controls. No persistent test writes.
+- M3 checkpoint: bounded streaming DOCX inspector, one-item mapping/preview UI,
+  confirmed batch library save and prior-snapshot import are implemented locally.
+  Original package, temporary staging and extracted content stay outside git.
+  Eight newly supplied DOCX files parsed within bounds; all eight were rendered
+  outside git and representative cover/chart/body/training pages visually reviewed.
+  The supplied PDF's structure and representative pages were reviewed too.
+  Variations include split headings, floating/text-box drawings, alternate
+  fallback duplication, merged cells, native vector charts and extra sections.
+  The latter remain unmatched for operator review, not automatic new sections.
+  Native Word shapes and unsupported image formats are explicitly flagged for
+  replacement by exported images; the source is never executed or fetched.
+  Synthetic tests exercise relationship/ZIP/XML safety, table schemas, image
+  mapping and atomic guarded saves. UI lifecycle, restoration and full-suite
+  verification remain before release. See the M3 engineering notes.
 
 - Planning: current main inspected; no monthly-report modules yet. Existing runner
   allows two concurrent network jobs and reserves capacity before preparation.

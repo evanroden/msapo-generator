@@ -9,7 +9,7 @@ Snapshots pin resolved values, rather than following the library's latest head.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -47,6 +47,7 @@ class LibraryVersion:
     block: ResolvedBlock
     actor: str
     updated_at: str
+    spec: BlockSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -75,6 +76,7 @@ class SavedReport:
     revision: int
     open_issues: tuple[str, ...] = ()
     pending_proposals: tuple[str, ...] = ()
+    entered_editor: str = ""
 
 
 def _json(value) -> bytes:
@@ -177,6 +179,7 @@ def profile_from_dict(value: dict) -> ReportProfile:
             default_block_sources=tuple(tuple(pair) for pair in value.get("default_block_sources", ())),
             template=value.get("template", "monthly_review_v1"),
             excluded_sections=tuple(value.get("excluded_sections", ())),
+            block_overrides=tuple(spec_from_dict(b) for b in value.get("block_overrides", ())),
         )
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report profile.") from exc
@@ -193,6 +196,13 @@ def block_from_dict(value: dict) -> ResolvedBlock:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid saved report block.") from exc
+
+
+def spec_from_dict(value: dict) -> BlockSpec:
+    return BlockSpec(value["key"], value["type"], value.get("required", False),
+                     tuple(value.get("allowed_sources", BLOCK_SOURCES)),
+                     tuple(value.get("stock_text_keys", ())),
+                     tuple(ColumnSpec(**c) for c in value.get("columns", ())))
 
 
 def draft_from_dict(value: dict) -> ReportDraft:
@@ -220,7 +230,8 @@ def _state(value: dict) -> LibraryState:
     try:
         return LibraryState(
             profile_from_dict(value["profile"]), value["revision"],
-            tuple(LibraryVersion(v["id"], v["slot"], v["label"], block_from_dict(v["block"]), v["actor"], v["updated_at"])
+            tuple(LibraryVersion(v["id"], v["slot"], v["label"], block_from_dict(v["block"]), v["actor"], v["updated_at"],
+                                 spec_from_dict(v["spec"]) if v.get("spec") else None)
                   for v in value.get("versions", ())),
             tuple(tuple(item) for item in value.get("current", ())), tuple(value.get("audit", ())),
         )
@@ -269,6 +280,7 @@ def save_profile(profile: ReportProfile, *, expected_revision: int, actor: str, 
     known_blocks = {b.key for s in skeleton for b in s.blocks} | {b.key for b in layout_blocks()}
     if any(key not in known_blocks or source not in BLOCK_SOURCES for key, source in profile.default_block_sources):
         raise LibraryError("Invalid default block source.")
+    _validate_overrides(profile.block_overrides)
     path = _profile_path(profile.contract, profile.key)
     with _locked(path):
         manifest = path / "manifest.json"
@@ -283,6 +295,67 @@ def save_profile(profile: ReportProfile, *, expected_revision: int, actor: str, 
         # be restored without reconstructing membership from an audit message.
         _atomic_write(path / "history" / f'{value["revision"]:08d}.json', _json(value))
         _atomic_write(manifest, _json(value))
+        return _state(value)
+
+
+def _validate_overrides(overrides: tuple[BlockSpec, ...]) -> None:
+    specs = {b.key: b for s in default_sections() for b in s.blocks}
+    if len({b.key for b in overrides}) != len(overrides):
+        raise LibraryError("Duplicate table override.")
+    for b in overrides:
+        if (b.key not in specs or b.type != "table" or
+                (specs[b.key].type not in ("table", "work_order_grid") and b.key != "contact_matrix") or
+                not b.columns or len(b.columns) > 100 or len({c.title for c in b.columns}) != len(b.columns)):
+            raise LibraryError("Invalid imported table schema.")
+
+
+def save_import(contract: str, key: str, blocks: tuple[ResolvedBlock, ...], *,
+                overrides: tuple[BlockSpec, ...] = (), assets: tuple[tuple[str, bytes], ...] = (),
+                expected_revision: int, actor: str, confirmed: bool) -> LibraryState:
+    """Apply a confirmed set of mappings as one manifest revision, or none.
+
+    Immutable assets/history may survive a failed head write. Existing defaults
+    remain intact, and a later retry is guarded by the same expected revision.
+    """
+    actor = _confirmation(actor, confirmed)
+    _validate_overrides(overrides)
+    known = {b.key for s in default_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
+    if not blocks or len({b.key for b in blocks}) != len(blocks) or any(b.key not in known for b in blocks):
+        raise LibraryError("Choose unique valid destinations for imported content.")
+    path = _profile_path(contract, key)
+    with _locked(path):
+        value = _read(path / "manifest.json")
+        _expected(value, expected_revision)
+        profile = profile_from_dict(value["profile"])
+        specs = {b.key: b for b in profile.block_overrides}
+        specs.update({b.key: b for b in overrides})
+        defaults = dict(profile.default_block_sources)
+        defaults.update({b.key: "Library" for b in blocks})
+        profile = replace(profile, block_overrides=tuple(specs.values()), default_block_sources=tuple(sorted(defaults.items())))
+        _validate_overrides(profile.block_overrides)
+        for reference, raw in assets:
+            if not _ASSET.fullmatch(reference) or asset_reference(raw, reference.rsplit(".", 1)[-1]) != reference:
+                raise LibraryError("Invalid imported image.")
+            _atomic_write(path / "assets" / reference, raw)
+        for block in blocks:
+            for reference in block.asset_hashes:
+                read_asset(contract, key, reference)
+        current = dict(value["current"])
+        value["revision"] += 1
+        at = _now()
+        for block in blocks:
+            old = next((v for v in value["versions"] if v["id"] == current.get(block.key)), None)
+            block = replace(block, source="Library")
+            version_id = hashlib.sha256(_json({"revision": value["revision"], "block": asdict(block)})).hexdigest()
+            value["versions"].append(asdict(LibraryVersion(version_id, block.key, "DOCX import · " + block.key, block, actor, at, specs.get(block.key))))
+            current[block.key] = version_id
+            value["audit"].append({"action": "import", "slot": block.key, "actor": actor, "at": at,
+                                   "old_hash": block_from_dict(old["block"]).fingerprint if old else "", "new_hash": block.fingerprint})
+        value["profile"] = asdict(profile)
+        value["current"] = sorted(current.items())
+        raw = _json(value)
+        _atomic_write(path / "history" / f'{value["revision"]:08d}.json', raw)
+        _atomic_write(path / "manifest.json", raw)
         return _state(value)
 
 
@@ -309,7 +382,8 @@ def read_asset(contract: str, key: str, reference: str) -> bytes:
 
 def replace_block(contract: str, key: str, slot: str, block: ResolvedBlock, *, label: str,
                   expected_revision: int, actor: str, confirmed: bool,
-                  assets: tuple[tuple[str, bytes], ...] = ()) -> LibraryState:
+                  assets: tuple[tuple[str, bytes], ...] = (), restore_spec: BlockSpec | None = None,
+                  restoring: bool = False) -> LibraryState:
     actor = _confirmation(actor, confirmed)
     _valid_key(slot)
     if block.key != slot:
@@ -328,7 +402,17 @@ def replace_block(contract: str, key: str, slot: str, block: ResolvedBlock, *, l
             read_asset(contract, key, reference)
         value["revision"] += 1
         version_id = hashlib.sha256(_json({"revision": value["revision"], "block": asdict(block)})).hexdigest()
-        version = LibraryVersion(version_id, slot, label.strip() or slot, block, actor, _now())
+        profile = profile_from_dict(value["profile"])
+        specs = {b.key: b for b in profile.block_overrides}
+        if restoring:
+            specs.pop(slot, None)
+            if restore_spec:
+                if restore_spec.key != slot:
+                    raise LibraryError("Restored table schema does not match its destination.")
+                specs[slot] = restore_spec
+            _validate_overrides(tuple(specs.values()))
+            value["profile"] = asdict(replace(profile, block_overrides=tuple(specs.values())))
+        version = LibraryVersion(version_id, slot, label.strip() or slot, block, actor, _now(), specs.get(slot))
         value["versions"].append(asdict(version))
         current[slot] = version_id
         value["current"] = sorted(current.items())
@@ -345,7 +429,8 @@ def restore_block(contract: str, key: str, version_id: str, *, expected_revision
                   actor: str, confirmed: bool) -> LibraryState:
     version = load_profile(contract, key).version(version_id)
     return replace_block(contract, key, version.slot, version.block, label=version.label,
-                         expected_revision=expected_revision, actor=actor, confirmed=confirmed)
+                         expected_revision=expected_revision, actor=actor, confirmed=confirmed,
+                         restore_spec=version.spec, restoring=True)
 
 
 def restore_profile(contract: str, key: str, revision: int, *, expected_revision: int,
@@ -360,7 +445,8 @@ def restore_profile(contract: str, key: str, revision: int, *, expected_revision
 
 
 def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tuple[str, ...] = (),
-                  pending_proposals: tuple[str, ...] = (), assets: tuple[tuple[str, bytes], ...] = ()) -> SavedReport:
+                  pending_proposals: tuple[str, ...] = (), assets: tuple[tuple[str, bytes], ...] = (),
+                  entered_editor: str = "") -> SavedReport:
     path = _profile_path(draft.profile.contract, draft.profile.key, snapshots=True)
     # One-off assets are saved for this report's snapshot only, without adding
     # a current library slot. Future templates cannot accidentally inherit them.
@@ -379,7 +465,7 @@ def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tu
         target = path / (draft.period.key + ".json")
         previous = _read(target) if target.exists() else {"revision": 0}
         _expected(previous, expected_revision)
-        saved = SavedReport(draft, _now(), expected_revision + 1, open_issues, pending_proposals)
+        saved = SavedReport(draft, _now(), expected_revision + 1, open_issues, pending_proposals, entered_editor)
         raw = _json({"schema": 1, **asdict(saved)})
         _atomic_write(path / "history" / f"{draft.period.key}-{saved.revision:08d}.json", raw)
         _atomic_write(target, raw)
@@ -396,7 +482,8 @@ def load_snapshot(contract: str, key: str, period: ReportPeriod) -> SavedReport 
         if (draft.profile.contract, draft.profile.key, draft.period) != (contract, key, period):
             raise LibraryError("Snapshot identity does not match its directory.")
         return SavedReport(draft, value["generated_at"], value["revision"],
-                           tuple(value.get("open_issues", ())), tuple(value.get("pending_proposals", ())))
+                           tuple(value.get("open_issues", ())), tuple(value.get("pending_proposals", ())),
+                           value.get("entered_editor", ""))
     except (KeyError, TypeError) as exc:
         raise LibraryError("Invalid saved report snapshot.") from exc
 
