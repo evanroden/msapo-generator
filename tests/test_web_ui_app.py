@@ -296,7 +296,9 @@ def test_workflow_selector_css_has_ipad_safe_touch_and_layout_rules():
         '.st-key-workflow_mode button[role="radio"] {', 1
     )[1].split("}", 1)[0]
 
-    assert "grid-template-columns: repeat(2, minmax(0, 1fr)) !important" in group
+    assert "grid-template-columns: repeat(3, minmax(0, 1fr)) !important" in group
+    phone = css.split("@media (max-width: 540px)", 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: minmax(0, 1fr) !important" in phone
     assert "width: 100% !important" in group
     assert "box-sizing: border-box !important" in group
     assert "min-height: 52px !important" in button

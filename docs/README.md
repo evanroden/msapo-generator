@@ -22,6 +22,7 @@ index.** Adding a document means adding a row here in the same commit.
 | 3 | [`COMMIT_NOTES_2026-08-12_MSAPO_FORM_RESTORED.md`](COMMIT_NOTES_2026-08-12_MSAPO_FORM_RESTORED.md) | The one policy reversal that invalidates parts of older documents. Read it before trusting anything about PO attachments. |
 | 4 | [`EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md`](EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md) | The second workflow end to end: form mapping, receipt controls, AI boundary, open policy questions. |
 | 5 | [`FAILURE_MODES_AND_CONTROLS.md`](FAILURE_MODES_AND_CONTROLS.md) | The standing failure matrix. Consult before adding a control, so you do not re-derive one that exists. |
+| 6 | [`COMMIT_NOTES_2026-10-06_MONTHLY_REPORT_M1.md`](COMMIT_NOTES_2026-10-06_MONTHLY_REPORT_M1.md) | Monthly report milestone 1: synthetic profiles, DOCX/PDF generation, state/check invariants and outstanding milestones. |
 
 Only after those does the change history below become useful.
 

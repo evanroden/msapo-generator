@@ -11,6 +11,7 @@ ALLOWED_BINARY_SOURCE_FILES = {
     "branding/process-control-preview.png",
     "templates/Employee_Reimbursement_Expense_Report_JDE_10012025.xlsx",
     "templates/Master_MSAPO_Template.docx",
+    "templates/monthly_report/shell.docx",
 }
 FORBIDDEN_TRACKED_PARTS = {
     "__pycache__",
