@@ -49,6 +49,8 @@ class ReportProfile:
     default_block_sources: tuple[tuple[str, str], ...] = ()
     template: str = "monthly_review_v1"
     excluded_sections: tuple[str, ...] = ()
+    # Imported tables keep their actual schema instead of dropping extra cells.
+    block_overrides: tuple[BlockSpec, ...] = ()
 
     def __post_init__(self) -> None:
         if self.scope_type not in ("individual", "multi_site", "regional"):

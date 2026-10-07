@@ -72,7 +72,7 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
             st.error(f"The profile library could not be read: {exc}")
         preserve_report_draft_state()
         return
-    st.info("Explore individual, multi-site and regional layouts with synthetic content, or turn on the profile library above to build your report. Document import and AI drafts are coming next.")
+    st.info("Explore individual, multi-site and regional layouts with synthetic content, or turn on the profile library to import an existing DOCX and build your report. Monthly uploads and AI drafts are coming next.")
     st.subheader("1. Choose the report")
     profiles = synthetic_profiles()
     profile_key = st.selectbox("Report profile", [p.key for p in profiles],
