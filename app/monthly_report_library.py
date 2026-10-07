@@ -21,7 +21,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, SectionSpec, default_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, SectionSpec, ReportSource, default_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -193,6 +193,7 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             asset_hashes=tuple(value.get("asset_hashes", ())), references=tuple(value.get("references", ())),
             ai_written=value.get("ai_written", False), reviewed_fingerprint=value.get("reviewed_fingerprint", ""),
             pending_library_save=value.get("pending_library_save", False),
+            asset_captions=tuple(value.get("asset_captions", ())),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid saved report block.") from exc
@@ -221,9 +222,18 @@ def draft_from_dict(value: dict) -> ReportDraft:
             prepared_by=value["prepared_by"], sections=sections,
             blocks=tuple(block_from_dict(b) for b in value["blocks"]),
             address_line=value.get("address_line", ""), synthetic=value.get("synthetic", False),
+            sources=tuple(source_from_dict(s) for s in value.get("sources", ())),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report snapshot.") from exc
+
+
+def source_from_dict(value: dict) -> ReportSource:
+    fields = dict(value)
+    for key in ("tags", "page_texts", "selected_pages", "needs_vision", "notices"):
+        fields[key] = tuple(fields.get(key, ()))
+    fields["captions"] = tuple(tuple(v) for v in fields.get("captions", ()))
+    return ReportSource(**fields)
 
 
 def _state(value: dict) -> LibraryState:

@@ -8,6 +8,7 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 Monthly report library handoff: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M2.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M2.md).
 Monthly report bootstrap handoff: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M3.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M3.md).
+Monthly report uploads handoff: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M4.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M4.md).
 
 Eighteen-plus documents accumulate quickly and none of them announce which is
 still true. This index exists so an agent arriving with no conversation history

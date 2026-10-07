@@ -107,6 +107,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 if not block.reviewed:
                     checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key))
                 texts.append((spec.key, block.text))
+                texts.extend((spec.key, caption) for caption in block.asset_captions)
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
                 if block.rows:
                     texts.extend((spec.key, col.title) for col in spec.columns)
@@ -121,4 +122,20 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             checks.append(ReportCheck("period", f"Check period references in {key}: {', '.join(stale)}.", False, key))
     if estimated_bytes > 15 * 1024 * 1024:
         checks.append(ReportCheck("size", "Estimated output exceeds 15 MB.", False))
+    names = {name.strip().casefold() for facility in draft.profile.facilities for name in (facility.key, facility.title, *facility.aliases)}
+    for source in draft.sources:
+        if source.classification == "Reference only" or not source.selected_pages:
+            continue
+        if source.service_date:
+            try:
+                value = date.fromisoformat(source.service_date)
+                valid_period = draft.period.start <= value <= draft.period.end
+            except ValueError:
+                valid_period = False
+            if not valid_period:
+                checks.append(ReportCheck("source_period", f"Check uploaded source date: {source.filename} ({source.service_date}).", False, source.id))
+        else:
+            checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
+        if not source.facility or source.facility.strip().casefold() not in names:
+            checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id))
     return tuple(checks)

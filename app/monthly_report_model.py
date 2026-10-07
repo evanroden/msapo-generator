@@ -137,6 +137,7 @@ class ResolvedBlock:
     ai_written: bool = False
     reviewed_fingerprint: str = ""
     pending_library_save: bool = False
+    asset_captions: tuple[str, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -150,6 +151,36 @@ class ResolvedBlock:
 
 
 @dataclass(frozen=True)
+class ReportSource:
+    id: str
+    filename: str
+    sha256: str
+    suffix: str
+    classification: str = "Reference only"
+    confidence: str = "low"
+    vendor: str = ""
+    service_date: str = ""
+    facility: str = ""
+    tags: tuple[str, ...] = ()
+    work_order: str = ""
+    actions: str = ""
+    findings: str = ""
+    recommendations: str = ""
+    follow_ups: str = ""
+    quotes: str = ""
+    out_of_limit: str = ""
+    page_texts: tuple[str, ...] = ()
+    selected_pages: tuple[int, ...] = ()
+    needs_vision: tuple[int, ...] = ()
+    captions: tuple[tuple[int, str], ...] = ()
+    notices: tuple[str, ...] = ()
+
+    @property
+    def fingerprint(self) -> str:
+        return _digest(self)
+
+
+@dataclass(frozen=True)
 class ReportDraft:
     profile: ReportProfile
     period: ReportPeriod
@@ -158,6 +189,7 @@ class ReportDraft:
     blocks: tuple[ResolvedBlock, ...]
     address_line: str = ""
     synthetic: bool = False
+    sources: tuple[ReportSource, ...] = ()
 
     @property
     def fingerprint(self) -> str:

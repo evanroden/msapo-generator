@@ -14,11 +14,11 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current branch: `feat/monthly-report-m3`.
-Current stage: milestones 1 and 2 merged/deployed; milestone 3 bootstrap in progress.
-Next action: finish bootstrap UI/state and restoration regression coverage, run
-the full suite, publish/update the milestone 3 PR, require exact-head CI, then
-merge and verify the public production import controls. M3 is not yet merged.
+Current branch: `feat/monthly-report-m4`.
+Current stage: milestones 1–3 merged/deployed; milestone 4 tested for publication.
+Next action: publish/verify the M4 branch tree and milestone PR, require green
+exact-head CI before merge/public verification. M4 has not been merged or
+deployed. M5 AI and M6 polish follow.
 
 ## Owner decisions approved October 6
 
@@ -122,6 +122,25 @@ Store a resolved snapshot after generation; keep DOCX even if PDF conversion fai
 Snapshot provenance pins asset versions rather than following future replacements.
 
 ## Verification and release log
+
+- M4 tested checkpoint: bounded local source parsing/cache, SHA-256 duplicates,
+  editable facts/classification, selected/captioned pages, serial image preparation
+  and explicit CMMS mapping are implemented. The complete local suite passed
+  783 tests with one CI-only skip. New AppTest flows cover upload, page-selection
+  invalidation, workflow switching/removal, mapped table use and map invalidation.
+  Real LibreOffice produced a nine-page synthetic report; all pages were visually
+  inspected. Selected vendor pages/captions, reporting-month service rows and
+  blank unsupported historical counts were verified. Compileall, changed-module
+  Ruff F/E9, pip check, diff whitespace, docs index and repository hygiene passed.
+  Exact-head CI and public deployment remain release gates.
+
+- M3 released: PR #59 merged at 012d4a85de7a364358ceee9b128a14d95509605c.
+  Final feature head 0d792ca28ddcc2af5cb460033be476966381f776 passed Actions
+  run 37629573026: 758 tests, zero skipped. Public browser verified the updated
+  DOCX-import entry point and the 128 MB profile-setup guidance after deployment.
+  Full mapping/save lifecycle was verified locally in AppTest; production had no
+  saved test profile and no persistent test writes were made. M4 is in progress
+  on feat/monthly-report-m4: local source ingestion and explicit CMMS mapping.
 
 - October 7 resume: M2 local/published trees verified equal at
   a7011d91b8f4c269fd01fb57685da9620d8c64c6. Created PR #58 at published head
