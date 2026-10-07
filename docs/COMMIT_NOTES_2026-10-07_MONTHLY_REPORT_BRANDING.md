@@ -1,7 +1,7 @@
 ---
 document_type: commit_notes
 date: 2026-10-07
-status: in_progress
+status: deployed
 commit_intent: Add reviewed runtime logos and visual monthly report setup
 base_commit: d7f1d0df33cfb9438d5058a7da9109923b124270
 ---
@@ -72,10 +72,23 @@ and a text edit survived closing/reopening. Existing drawing/content blockers
 remained. Original files were unchanged and no private production upload was
 used. Hardware phone/iPad acceptance remains unclaimed.
 
-Draft PR #70 initially published head
-75e29290e51d299aae24d665d7e15b2f3c9b6e0e with verified tree
-b4d05e7f86618c4ea872c49199258aca60f62882. The final follow-up is not yet claimed
-merged or deployed at the time these notes were written.
+PR #70 final head `95be0a338be3fc0a366da02f401c317bc1d4b40e`, tree
+`9843c459efbc22e2d1e95ec6cd59a8d87a73c250`, passed Actions `37699022024` /
+job `113057727580`: **893 passed, zero skipped**. Logs verified that head
+merged into unchanged main `d7f1d0df33cfb9438d5058a7da9109923b124270`.
+All changed blobs and the assembled tree were hash-verified; a fetch and
+zero diff proved local/remote equality. The PR merged with expected-head
+protection at `21d1c27122a3f355565eb5cb4b19e9518bc5015c`.
+Public production showed the new shared-logo controls after deployment. The
+reviewed bundle was installed through the confirmation UI as collection version
+**1**, entered actor **Codex (owner-authorized logo setup)**, at
+`2026-10-07T22:58:54.142195+00:00`. The save confirmation and history were visible.
+All 37 contract cards then showed their mapped logo. The public first-report
+flow showed site checkboxes, September 2026 as the suggested period, the ENFRA
+logo card and upload card; an unavailable same-contract choice was absent.
+Nothing was saved by selecting a site. Public health returned 200;
+an initial connection error during rollout cleared after reconnecting.
+No private report, persistent QA profile or private Render access was used.
 
 ## Reviewed logo collection and recovery
 
@@ -103,10 +116,17 @@ Final bundle: `enfra-client-logos-2026-10-07.zip`.
 AppTest/renderer proof: `flow-result.json`, `synthetic-branding.docx` and
 `synthetic-branding.pdf`. These are QA intermediates outside git.
 
-After exact-head CI and merge, install the reviewed public-logo collection
-through the public app UI. This is the owner-requested shared branding update,
-not a private report smoke test. Public Render verification only; no private
-logs, workspace selection or disk APIs. The collection can be restored in the UI.
+Installed bundle SHA-256:
+`155dee58f39e42d253e7d23b5523ec2a07dbb46f0be09c07ca86ffd65262c7a1`.
+Public installation/card screenshot proofs are outside git at
+`/workspace/scratch/monthly-report-logo-install-r1.jpg` and
+`/workspace/scratch/monthly-report-contract-cards-live.jpg`; the complete
+starting-choice proof is `/workspace/scratch/monthly-report-start-cards-complete.jpg`.
+The collection is now persistent under EPC_DATA_DIR/monthly_reports/branding;
+the UI retains source links and restoration history. This was the authorized
+shared public branding update. No private logs, workspace selection or disk API
+was used. The reviewed bundle can be installed again after runtime recovery;
+existing report snapshots retain their pinned assets.
 
 ## Previous release now verified
 

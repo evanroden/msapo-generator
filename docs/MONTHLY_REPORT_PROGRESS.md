@@ -14,8 +14,8 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current checkpoint branch: `feat/monthly-report-branding`, based on main
-`d7f1d0df33cfb9438d5058a7da9109923b124270`. Working checkout:
+Current checkpoint branch: `docs/monthly-report-branding-release`, based on main
+`21d1c27122a3f355565eb5cb4b19e9518bc5015c`. Working checkout:
 `/workspace/scratch/monthly-report`; venv `/workspace/scratch/monthly-report-venv`.
 M5 worktree `/workspace/scratch/monthly-report-m5-work` is clean at its published
 head. The older ca2afe740bcd checkout vanished; do not restart from it.
@@ -105,8 +105,7 @@ empty-logo defaults are now implemented locally. Pictorial starting choices
 replace the generic starting-point radio; section actions and instructions
 are tailored to organization, activity, utilities, MBCx, maintenance, vendors,
 water, issues, renewal, proposals, training and RFI. Existing pinned/custom
-logos are preserved with an explicit replacement offer. No branding release
-or production logo installation is claimed yet.
+logos are preserved with an explicit replacement offer. PR #70 is merged and publicly verified; the reviewed logo collection is installed.
 
 Official-logo research and original public assets are outside git at
 `/workspace/scratch/monthly-report-branding-research`. Current source sites
@@ -128,13 +127,25 @@ PR review then identified and fixed omitted-logo preservation during design
 copying and missing-logo defaults on first DOCX setup. Existing imported/custom
 logos and subsequent imports remain unchanged. Grid rendering loads branding
 once and reuses each shared image. **78 focused tests passed** after these
-changes; Ruff F/E9 and diff checks passed. The preceding head
-`abcd42bd47b02669b364fc55c3303d1830a7fe73` passed Actions `37698370119`;
-the corrected head still requires its own green CI.
-Draft PR #70 initial head `75e29290e51d299aae24d665d7e15b2f3c9b6e0e`, tree
-`b4d05e7f86618c4ea872c49199258aca60f62882`, is pushed. Final follow-up publication,
-exact-head green CI, merge and public deployment/collection installation remain. All artwork must remain on
-persistent runtime storage, not in git. No private Render API access.
+changes; Ruff F/E9 and diff checks passed. The corrected release passed its
+own complete CI run, recorded below.
+PR #70 final head `95be0a338be3fc0a366da02f401c317bc1d4b40e`, tree
+`9843c459efbc22e2d1e95ec6cd59a8d87a73c250`, passed Actions `37699022024` /
+job `113057727580`: **893 passed, zero skipped**. Logs verified that exact head
+merged into unchanged main `d7f1d0df33cfb9438d5058a7da9109923b124270`.
+All blobs/tree hashes and fetched local/remote equality were verified before
+merging with expected-head protection at
+`21d1c27122a3f355565eb5cb4b19e9518bc5015c`. Public production showed the
+new controls, and the reviewed 30-logo / 37-contract bundle was installed as
+collection **version 1** by entered actor **Codex (owner-authorized logo setup)**
+at `2026-10-07T22:58:54.142195+00:00`. Save confirmation/history and all branded
+contract cards were verified. The public first-report flow showed the ENFRA
+logo/upload cards and month/year selectors; the unavailable same-contract
+choice was absent. Site selection did not save a report. Bundle SHA-256:
+`155dee58f39e42d253e7d23b5523ec2a07dbb46f0be09c07ca86ffd65262c7a1`.
+The original bundle and installation/card screenshot proofs remain outside git;
+see the branding notes. All artwork is on persistent runtime storage, not git.
+No private Render API access or persistent production QA profile was used.
 
 All six implementation milestones and the requested UX increments have merged.
 Follow-up work should respond to operator acceptance findings, not restart the
@@ -285,6 +296,9 @@ Store a resolved snapshot after generation; keep DOCX even if PDF conversion fai
 Snapshot provenance pins asset versions rather than following future replacements.
 
 ## Verification and release log
+
+These entries preserve earlier checkpoint evidence. Historical pending work
+is superseded by the current release status in “Read first after any interruption.”
 
 - M4 tested checkpoint: bounded local source parsing/cache, SHA-256 duplicates,
   editable facts/classification, selected/captioned pages, serial image preparation
