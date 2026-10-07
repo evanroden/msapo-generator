@@ -148,3 +148,5 @@ Worth matching when you add one.
   project's live behaviours exist because an earlier approach broke something a
   test caught; deleting that record invites the same attempt again.
 - **Merge commits, not squash.** Per-fix reasoning stays reachable from history.
+
+- [Monthly report branding and visual choices](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_BRANDING.md) — runtime logo storage and section-specific setup checkpoint.

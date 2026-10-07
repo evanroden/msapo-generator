@@ -14,8 +14,8 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current checkpoint branch: `feat/monthly-report-first-use`, based on main
-`051e627b554d09008168b0fbb7234fd0d2beeb5d`. Working checkout:
+Current checkpoint branch: `feat/monthly-report-branding`, based on main
+`d7f1d0df33cfb9438d5058a7da9109923b124270`. Working checkout:
 `/workspace/scratch/monthly-report`; venv `/workspace/scratch/monthly-report-venv`.
 M5 worktree `/workspace/scratch/monthly-report-m5-work` is clean at its published
 head. The older ca2afe740bcd checkout vanished; do not restart from it.
@@ -77,8 +77,13 @@ from the report's reviewed contact fields. Reporting lines remain operator
 choices, and replacing an uploaded chart remains explicit. This is implemented
 locally. Full local suite: **878 passed, one CI-only skip** with real LibreOffice;
 after a final staged-image error recovery change, **98 focused tests passed**.
-Ruff F/E9, compileall, pip check and diff checks passed. Publication, exact-head
-CI and deployment remain.
+Ruff F/E9, compileall, pip check and diff checks passed. PR #69 head
+`69228f39844d6fe1d827c8b740ddd01c3438d646`, tree
+`1cbe4890702c175e532c60cacac76c21d306230a`, passed Actions `37693409691` /
+job `113038952193`: **881 passed, zero skipped**. Merged with expected-head
+protection at `d7f1d0df33cfb9438d5058a7da9109923b124270`. Public production
+verified the new “Match to a listed site” column with a synthetic workbook;
+no directory/profile was saved. Screenshot proof stays outside git.
 The actual private workbook passed a local setup/save/resume walkthrough with
 seven directory sites, nine available sites and four contact-derived chart
 positions. Two spelling variants were explicitly matched; other contract tabs
@@ -94,7 +99,42 @@ contract, standardize their presentation on contract cards and report pages, and
 make them reusable defaults so asset managers do not need to source them. Keep
 artwork on runtime storage, preserve explicit custom-logo overrides and source
 provenance, and do not guess ambiguous contract identities. This branding work
-follows the first-use release; it is not implemented or deployed yet.
+follows the first-use release. Runtime PNG-only bundle validation, atomic
+versioned storage/restoration, source attribution, contract-card reuse and
+empty-logo defaults are now implemented locally. Pictorial starting choices
+replace the generic starting-point radio; section actions and instructions
+are tailored to organization, activity, utilities, MBCx, maintenance, vendors,
+water, issues, renewal, proposals, training and RFI. Existing pinned/custom
+logos are preserved with an explicit replacement offer. No branding release
+or production logo installation is claimed yet.
+
+Official-logo research and original public assets are outside git at
+`/workspace/scratch/monthly-report-branding-research`. Current source sites
+show changed branding including Powers Health, Manning Family Children’s,
+LSU New Orleans and FMOL Health. The reviewed collection now has 30 logos
+(including ENFRA) covering all 37 catalog contracts. FMOL artwork uses a disclosed
+public-employer-profile fallback matched to its official current identity after
+its official downloads returned 502 errors. All source URLs/dates are retained.
+Full local suite: **886 passed, one CI-only skip** with LibreOffice. A later
+printed-header sizing correction separates screen-card padding from print
+assets; **56 focused tests** passed afterward, and the install/render walkthrough
+was repeated. The corrected header was visually inspected. Ruff F/E9,
+compileall, pip check and diff checks passed. A local AppTest confirmed bundle
+installation, all mappings, automatic new-design logos and conditional same-
+contract cards. A deterministic five-page synthetic DOCX/PDF was rendered and
+its cover visually inspected. The actual Glendale DOCX walkthrough opened all
+13 section cards, retained a text edit and preserved content/drawing blockers.
+PR review then identified and fixed omitted-logo preservation during design
+copying and missing-logo defaults on first DOCX setup. Existing imported/custom
+logos and subsequent imports remain unchanged. Grid rendering loads branding
+once and reuses each shared image. **78 focused tests passed** after these
+changes; Ruff F/E9 and diff checks passed. The preceding head
+`abcd42bd47b02669b364fc55c3303d1830a7fe73` passed Actions `37698370119`;
+the corrected head still requires its own green CI.
+Draft PR #70 initial head `75e29290e51d299aae24d665d7e15b2f3c9b6e0e`, tree
+`b4d05e7f86618c4ea872c49199258aca60f62882`, is pushed. Final follow-up publication,
+exact-head green CI, merge and public deployment/collection installation remain. All artwork must remain on
+persistent runtime storage, not in git. No private Render API access.
 
 All six implementation milestones and the requested UX increments have merged.
 Follow-up work should respond to operator acceptance findings, not restart the

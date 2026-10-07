@@ -10,8 +10,8 @@ steps in any order. Use **Save progress** before leaving the page.
 
 ## Choose the report
 
-1. Select the contract card. The search field narrows a long list. Saved client
-   logos appear when that contract has a confirmed logo.
+1. Select the contract card. The search field narrows a long list. Reviewed client
+   logos appear on the cards; saved custom logos remain available in reports.
 2. Check the sites that belong in **this one report**. To produce separate site
    reports, run the tool separately. Several checked sites combine into one file.
 3. A group name is optional. Enter a name such as “Western Region” and check the
@@ -21,12 +21,14 @@ steps in any order. Use **Save progress** before leaving the page.
    suggested. You can always change it.
 
 When this site combination has a saved design, the tool resumes that month's
-saved work or starts from its most recent earlier report. Otherwise, choose:
+saved work or starts from its most recent earlier report. Otherwise, choose a
+picture card:
 
 - **Another report from this contract:** copies its layout, headings and saved
   branding. Supply this site's people, contacts, chart, pictures and work.
 - **General ENFRA template:** starts with standard report sections and walks you
-  into Site information to fill the standing details.
+  into Site information to fill the standing details. Available ENFRA and client
+  logos are filled in automatically.
 - **Upload an older or unfinished report:** opens section boxes containing the
   extracted text, tables and pictures. DOCX files up to 128 MB are supported.
 
@@ -36,8 +38,10 @@ content. The entered name records who saved it; it is not an authenticated login
 
 ## Review an uploaded report
 
-Open each recognizable section box. Keep the useful content, edit its wording,
-or replace pictures. A report can contain both old and current work even when
+Open each recognizable section box. Its choices describe that section: check
+people and contacts, update utility results, review water readings, change
+proposal status, or update training, for example. Keep useful content, edit the
+labeled fields or replace the relevant pictures. A report can contain both old and current work even when
 its cover is old. Check vendor service dates and actual page contents; do not
 assume every page belongs to the month on the cover. Unknown/mixed content needs
 review. Optional bounded OCR helps read scans but can miss prices and dates.
@@ -81,8 +85,11 @@ record the basis for that status. Removing a resolved item is an explicit choice
   larger teams split into readable pages.
 - **Contacts:** edit the labeled fields; the table below reflects the changes.
   Confirm a directory suggestion before it replaces the report's contacts.
-- **Logos and other standing pictures:** choose Update this item and upload a
-  replacement. Aspect ratio is preserved and the image fits its allotted frame.
+- **Logos:** keep the saved logo, choose the current shared logo offered beside
+  it, or upload a replacement. Existing reports do not change when shared logos
+  are updated. Aspect ratio is preserved and images fit their allotted frames.
+- **Other standing pictures:** use the item-specific update control to replace
+  an outage workflow, capacity table or other site information.
 - **Progress photos:** add captions and choose one to six photos per page. The
   displayed page layout is the layout placed into DOCX/PDF.
 
@@ -98,6 +105,12 @@ Match a worksheet's different spelling to the same listed site and keep its
 alternate names in Aliases. Importing only some sites keeps the other known sites
 available; explicitly inactive sites remain in history. Matching names suggest
 contacts, but the report's contact table changes only after your confirmation.
+
+Shared logos are maintained under **Shared contract logos (optional)**. Reviewed
+collections include source links, review dates and explicit contract mappings.
+An entered editor name and confirmation are required; old collections can be
+restored. Artwork stays on the persistent disk. Reports retain their own pinned
+logo copies. A logo collection is not a contract/site directory.
 
 ## Preview, save and download
 

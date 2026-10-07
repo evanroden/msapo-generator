@@ -65,7 +65,8 @@ def design_seed(profile, period, actor, source=None):
         prior = prior_blocks.get(spec.key) or (source.block(spec.key) if source else None)
         reusable = spec.key in ("brand_logo", "client_logo") or spec.key.startswith("divider_")
         if reusable and prior:
-            block = replace(prior, source="Library", references=(), reviewed_fingerprint="", client_reviewed_fingerprint="")
+            block = replace(prior, source="Omit" if prior.source == "Omit" else "Library",
+                            references=(), reviewed_fingerprint="", client_reviewed_fingerprint="")
             for reference in block.asset_hashes:
                 assets[reference] = library.read_asset(source.profile.contract, source.profile.key, reference)
         else:
@@ -74,7 +75,9 @@ def design_seed(profile, period, actor, source=None):
             # this site's information.
             block = ResolvedBlock(spec.key, "This month", extra_tables=tuple(replace(t, columns=tuple(c for c in t.columns if not price_column(c)), rows=(), reference="") for t in prior.extra_tables) if prior else ())
         blocks.append(block)
-    return ReportDraft(profile, period, actor, profile_sections(profile), tuple(blocks)), assets
+    from app.monthly_report_branding import apply_defaults
+    draft = ReportDraft(profile, period, actor, profile_sections(profile), tuple(blocks))
+    return apply_defaults(draft, assets), assets
 
 
 def save_design_start(draft, assets, *, actor, confirmed):

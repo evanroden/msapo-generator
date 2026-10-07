@@ -16,6 +16,7 @@ from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import Facility, ReportProfile, ReportTable, default_sections
 from app.monthly_report_sections import section_reviews, table_without_prices, build_section_import, default_slot, small_artwork, apply_section_omissions
 from app.monthly_report_setup import design_profile, merge_drafts, item_findings
+from app.monthly_report_section_help import section_help
 
 
 def plan_signature(plan):
@@ -96,8 +97,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         return
     with box:
         st.caption(status)
+        guide = section_help(section.key)
+        st.write(guide.guidance)
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
-        action = st.radio("What would you like to do?", actions, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
+        labels = dict(zip(actions, (guide.keep, guide.edit, "Leave this section out")))
+        action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
         plan = {"key": section.key, "action": action, "target": section.key, "omit": action == actions[2], "selected": [], "texts": {}, "tables": {}, "destinations": {}, "new_assets": old.get("new_assets", []), "image_notes": dict(old.get("image_notes", {}))}
         blocking = []
         if plan["omit"]:
@@ -118,7 +122,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             texts = [i for i in items if i.kind == "text"]
             if texts:
                 combined = old.get("texts", {}).get(texts[0].id, "\n\n".join(i.text for i in texts))
-                text = st.text_area("Section text", key=field(p + "_text", combined), height=200) if action == actions[1] else combined
+                text = st.text_area(guide.text_label, key=field(p + "_text", combined), height=200) if action == actions[1] else combined
                 if action != actions[1]:
                     st.text(text[:14000])
                     if len(text) > 14000:
@@ -157,7 +161,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             if images:
                 labels = {i.id: f"Picture / page {n}" + (" · small artwork" if small_artwork(i) else "") for n, i in enumerate(images, 1)}
                 suggested = [i.id for i in images if not small_artwork(i)]
-                kept = st.multiselect("Pictures and pages to include", list(labels), format_func=labels.get,
+                kept = st.multiselect(guide.picture_label, list(labels), format_func=labels.get,
                                       key=field(p + "_pictures", old.get("picture_choices", suggested)), help="Uncheck old vendor pages, legal terms, blank/signature-only pages and every page showing a price. Unchecked pages remain in the original.")
                 plan["picture_choices"] = kept
                 if len(suggested) < len(images):
@@ -197,12 +201,15 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     if kind in ("pricing", "legal", "blank", "signature") and selected_image.id in plan["selected"]:
                         blocking.append("Uncheck " + labels[selected_image.id] + ": " + reason)
             if action == actions[1] and section.key not in ("cover", "other"):
-                st.caption("Add an updated org chart or photograph below. Uncheck the old picture above to replace it. Add complete vendor/chemical PDFs in the next step.")
-                upload = st.file_uploader("Updated picture or chart", type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=p + "_replacement", max_upload_size=30)
+                st.caption("Uncheck an old picture above when replacing it. Complete vendor, chemical and MBCx files can be added in This month’s work after setup.")
+                slot = {"activity": "improvements", "training": "training_summary", "maintenance": "vendor_reports", "water": "water_reports"}.get(section.key, default_slot(section.key))
+                if section.key == "organization":
+                    slot = st.radio("This replacement shows", ["org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix"], format_func=lambda v: {"org_chart": "Organization chart", "business_hours_workflow": "Business-hours outage procedure", "after_hours_workflow": "After-hours outage procedure", "contact_matrix": "Facility contacts"}[v], key=field(p + "_replacement_slot", old.get("new_assets", [("org_chart", None)])[0][0] if old.get("new_assets") else "org_chart"))
+                upload = st.file_uploader(guide.upload_label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=p + "_replacement", max_upload_size=30)
                 if upload:
                     image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix, line_art=section.key == "organization")
                     st.image(image.data, width="stretch")
-                    plan["new_assets"] = [(default_slot(section.key), image)]
+                    plan["new_assets"] = [(slot, image)]
                 elif plan["new_assets"]:
                     st.caption("Your replacement picture is retained.")
             if any(i.kind == "unsupported" for i in section.items):
