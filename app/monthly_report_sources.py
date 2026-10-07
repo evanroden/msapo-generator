@@ -40,7 +40,7 @@ MAX_EMBED_PAGES = 150
 MAX_VISION_PAGES = ocr._MAX_PDF_PAGES
 MAX_TABLE_CELLS = 200_000
 MAX_TABLE_ROWS = 20_000
-SUPPORTED = ocr.SUPPORTED_IMAGE_SUFFIXES | {".pdf", ".docx", ".xlsx", ".csv", ".eml", ".msg"}
+SUPPORTED = ocr.SUPPORTED_IMAGE_SUFFIXES | {".pdf", ".docx", ".xlsx", ".csv", ".eml", ".msg", ".txt"}
 PAGE_DESTINATIONS = ("vendor_reports", "water_reports", "mbcx_report", "improvements")
 
 
@@ -322,6 +322,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         normalize_report_image(raw, suffix)  # Validate before caching or paid work.
         page_texts, needs_vision = [""], [1]
+    elif suffix == ".txt":
+        page_texts = [raw.decode("utf-8-sig")]
     elif suffix in (".csv", ".xlsx"):
         tables = _spreadsheet(raw, suffix)
         page_texts = ["\n".join(["\t".join(t.columns), *("\t".join(r) for r in t.rows)]) for t in tables]

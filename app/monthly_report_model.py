@@ -54,6 +54,7 @@ class ReportProfile:
     section_titles: tuple[tuple[str, str], ...] = ()
     section_block_order: tuple[tuple[str, tuple[str, ...]], ...] = ()
     imported_from: str = ""
+    asset_tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.scope_type not in ("individual", "multi_site", "regional"):
@@ -159,6 +160,8 @@ class ResolvedBlock:
     asset_captions: tuple[str, ...] = ()
     extra_tables: tuple[ReportTable, ...] = ()
     client_reviewed_fingerprint: str = ""
+    ai_evidence_fingerprint: str = ""
+    ai_paragraphs: tuple[DraftParagraph, ...] = ()
     org_nodes: tuple[OrgChartNode, ...] = ()
     photos_per_page: int = 1
 
@@ -171,6 +174,30 @@ class ResolvedBlock:
     @property
     def reviewed(self) -> bool:
         return not self.ai_written or self.reviewed_fingerprint == self.fingerprint
+
+
+@dataclass(frozen=True)
+class EvidenceFact:
+    id: str
+    source_id: str
+    page: int
+    kind: str
+    text: str
+    quote: str
+    date: str = ""
+    facility: str = ""
+    vendor: str = ""
+    tags: tuple[str, ...] = ()
+    status: str = ""
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DraftParagraph:
+    text: str
+    fact_ids: tuple[str, ...]
+    references: tuple[str, ...]
+    flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -198,10 +225,25 @@ class ReportSource:
     captions: tuple[tuple[int, str], ...] = ()
     notices: tuple[str, ...] = ()
     client_page_reviews: tuple[tuple[int, str], ...] = ()
+    facts: tuple[EvidenceFact, ...] = ()
 
     @property
     def fingerprint(self) -> str:
         return _digest(self)
+
+
+@dataclass(frozen=True)
+class ReportFollowUp:
+    key: str
+    category: str
+    text: str
+    carried_from: str
+    status: str = "ongoing"
+    update: str = ""
+    evidence_note: str = ""
+    references: tuple[str, ...] = ()
+    included: bool = True
+    reviewed_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -214,6 +256,7 @@ class ReportDraft:
     address_line: str = ""
     synthetic: bool = False
     sources: tuple[ReportSource, ...] = ()
+    follow_ups: tuple[ReportFollowUp, ...] = ()
 
     @property
     def fingerprint(self) -> str:

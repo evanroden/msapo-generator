@@ -36,7 +36,7 @@ def design_seed(profile, period, actor, source=None):
         raise ValueError("Choose a starting report from the same contract.")
     if source:
         profile = replace(source.profile, key=profile.key, title=profile.title, facilities=profile.facilities,
-                          scope_type=profile.scope_type, imported_from="")
+                          scope_type=profile.scope_type, imported_from="", asset_tags=profile.asset_tags)
     prior_blocks = {}
     if source:
         saved = library.load_snapshot(source.profile.contract, source.profile.key, period) or latest_snapshot(source.profile.contract, source.profile.key, period)
@@ -47,7 +47,18 @@ def design_seed(profile, period, actor, source=None):
                               excluded_sections=tuple(s.key for s in seed.sections if not s.included),
                               section_titles=tuple((s.key, s.title) for s in seed.sections),
                               section_block_order=tuple((s.key, tuple(b.key for b in s.blocks)) for s in seed.sections),
-                              block_overrides=tuple(b for s in seed.sections for b in s.blocks))
+                              block_overrides=tuple(b for s in seed.sections for b in s.blocks if b.type == "table" and b.columns))
+    from app.monthly_report_content_policy import price_column
+    # New designs never ask asset managers to enter client-facing prices.
+    # Existing saved schemas remain pinned to their original snapshots.
+    overrides = {spec.key: spec for spec in profile.block_overrides}
+    for section in profile_sections(profile):
+        for spec in section.blocks:
+            if any(price_column(c.title,c.type) for c in spec.columns):
+                columns = tuple(c for c in spec.columns if not price_column(c.title,c.type))
+                if columns:
+                    overrides[spec.key] = replace(spec, type="table", columns=columns)
+    profile = replace(profile, block_overrides=tuple(overrides.values()))
     blocks, assets = [], {}
     specs = (*[b for s in profile_sections(profile) for b in s.blocks], *layout_blocks())
     for spec in specs:
@@ -61,7 +72,7 @@ def design_seed(profile, period, actor, source=None):
             # Table schemas are retained in profile overrides. No copied values,
             # org charts, site photographs or contact records can be mistaken for
             # this site's information.
-            block = ResolvedBlock(spec.key, "This month", extra_tables=tuple(replace(t, rows=(), reference="") for t in prior.extra_tables) if prior else ())
+            block = ResolvedBlock(spec.key, "This month", extra_tables=tuple(replace(t, columns=tuple(c for c in t.columns if not price_column(c)), rows=(), reference="") for t in prior.extra_tables) if prior else ())
         blocks.append(block)
     return ReportDraft(profile, period, actor, profile_sections(profile), tuple(blocks)), assets
 

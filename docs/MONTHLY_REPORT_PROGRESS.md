@@ -14,9 +14,11 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current implementation branch: `feat/monthly-report-editing`, based on main
-`544e7d59b3274f8ffa9defc7b52a932f857c23b6`. Working checkout:
-`/workspace/scratch/monthly-report`; venv: `/workspace/scratch/monthly-report-venv`.
+Current implementation branch: `feat/monthly-report-m5`, integrating main
+`d385c43510160388a24a6c76f15db04118bdcba9`. Working checkout:
+`/workspace/scratch/monthly-report-m5-work`; venv: `/workspace/scratch/monthly-report-venv`.
+The separate `/workspace/scratch/monthly-report` checkout holds the released UI
+increments. Do not restart from the earlier vanished ca2afe740bcd checkout.
 
 M2 PR #58 merged at `73915b17cd1d3e5dbbe429719121e5a5400d29a8` (738 CI passes).
 M3 PR #59 merged at `012d4a85de7a364358ceee9b128a14d95509605c` (758 CI passes).
@@ -47,16 +49,18 @@ Public browser verified its optional directory entry, workbook upload screen
 and confirmation workflow entry. No real workbook or contacts were uploaded
 to production. The actual workbook's 25 tabs/22 detail tabs were read locally.
 
-M5 is an unfinished draft PR #61, published head
-`2df5cc47e89f3ff623e09a1d1acdc287062d8142`, verified tree
-`bfb9179d5f4b0566719149a95d806a9df76a750a`. Worktree:
+M5 is draft PR #61, latest published checkpoint head
+`3d188c0a78cc4f0ddf8c3ea49e9a78bc98b8a285`, verified tree
+`7c658e61982473e78240fc5cbed6c8bdd24f066b`. Worktree:
 `/workspace/scratch/monthly-report-m5-work`. It has strict fact/draft JSON,
 evidence citations, caches/bounds, network-only workers, optional OCR, Copilot
 prompt/parser and reviewed suggestion UI. A focused 36-test run passed. It is
-NOT merged/deployed or complete: finish carry-forward issue/proposal status,
-source-review hardening, schema/merge integration and full validation first.
-In particular, preserve old AI/manual source links when appending suggestions,
-make stale-evidence review refresh explicit, and keep unsupported numbers blocked.
+NOT merged/deployed. The current local follow-up adds confirmed ongoing/updated/
+resolved carry-forward with evidence and explicit removal, including output and
+snapshot persistence. Applied AI paragraphs now retain old/manual links, remain
+editable and require fresh review after evidence changes. Source/model/UI
+integration is complete locally. The final full suite passed **865 tests, one
+CI-only skip** with real LibreOffice; publication/exact-head CI/release remain.
 
 Latest owner feedback is the active priority: replace the one-option report
 dropdown with contract cards and site checkboxes; choose a saved design by exact
@@ -86,8 +90,32 @@ image is explicit, cycles and chart prices block output, and contact-row removal
 does not resurrect stale widget values. Full local suite: **845 passed, one
 CI-only skip**; after an advanced-editor preservation fix, 15 focused tests
 passed. A synthetic six-page DOCX/PDF was rendered and visually checked. See
-the visual-editing notes. Publication/CI/deployment are pending for this increment.
+the visual-editing notes. PR #66 head `1be6e9038f5dc6f069829546198b391e16088655`,
+tree `f7d9779841677046f972227eec84732de841d94c`, passed Actions `37674412210`
+/ job `112974083657`: **847 passed, zero skipped**. Rechecked main before
+merge `d385c43510160388a24a6c76f15db04118bdcba9`. Public editor controls have
+not yet been exercised on a saved report in production; no persistent synthetic
+profile was created for this check.
 M6 remains unfinished; full preview PDF and final layout/size/mobile polish remain.
+
+Local M5 hardening commit `73a32d4` preserves manual/old-AI citations, never
+marks earlier unreviewed AI text reviewed on append, and exposes applied
+paragraphs with editable text and current real fact/page choices. Quote
+validation, unsupported numbers, strict JSON field types and conservative
+Copilot vendor/meeting classification are covered. After merging the current
+UI/model changes, 57 focused AI/UI/visual/site-start/hygiene/docs tests passed.
+That integration checkpoint was published at the PR #61 head above. New local
+carry-forward work has focused regression tests; an initial full suite passed
+**865 tests, one CI-only skip** with real LibreOffice. Final refinements expose
+confirmed equipment tags in Site information, remove price-entry columns from
+new designs, preserve sources/carry-forward in advanced editing and fix reuse
+of a saved design's table overrides. The fresh final full run passed **865 tests,
+one CI-only skip**. Ruff F/E9, compileall, dependency and diff checks passed.
+An eight-page synthetic AI/carry-forward DOCX/PDF was rendered
+and visually inspected outside git. No paid model calls or private client data
+were used in automated tests or production QA. An additional supplied large
+DOCX walkthrough opened all 13 section cards and retained an activity edit;
+expected content/drawing review blockers were preserved, not auto-approved.
 
 ## Additional owner decisions October 7
 

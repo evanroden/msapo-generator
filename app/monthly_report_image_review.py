@@ -46,6 +46,17 @@ def remaining_reviews(scope: str) -> int:
 def prepare_review(scope: str, path, item):
     """Caller-thread preparation; content hashes cache repeat images across uploads."""
     digest, content = prepare_image(path, item)
+    return reserve_review(scope, digest, content)
+
+
+def prepare_bytes_review(scope, raw, suffix):
+    """Monthly source pages share the setup OCR allowance and cache."""
+    digest = hashlib.sha256(PROMPT_VERSION.encode() + raw).hexdigest()
+    content = [*image_blocks_for_vision(raw, suffix), {"type": "text", "text": PROMPT}]
+    return reserve_review(scope, digest, content)
+
+
+def reserve_review(scope, digest, content):
     root = review_directory(scope)
     cache = root / (digest + ".json")
     if cache.exists():

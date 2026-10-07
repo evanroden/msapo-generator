@@ -22,7 +22,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, ReportTable, OrgChartNode, SectionSpec, ReportSource, default_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -184,6 +184,7 @@ def profile_from_dict(value: dict) -> ReportProfile:
             section_titles=tuple(tuple(v) for v in value.get("section_titles", ())),
             section_block_order=tuple((k, tuple(v)) for k, v in value.get("section_block_order", ())),
             imported_from=value.get("imported_from", ""),
+            asset_tags=tuple(value.get("asset_tags", ())),
         )
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report profile.") from exc
@@ -200,6 +201,8 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             asset_captions=tuple(value.get("asset_captions", ())),
             extra_tables=tuple(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t.get("reference", "")) for t in value.get("extra_tables", ())),
             client_reviewed_fingerprint=value.get("client_reviewed_fingerprint", ""),
+            ai_evidence_fingerprint=value.get("ai_evidence_fingerprint", ""),
+            ai_paragraphs=tuple(DraftParagraph(p["text"], tuple(p["fact_ids"]), tuple(p["references"]), tuple(p.get("flags", ()))) for p in value.get("ai_paragraphs", ())),
             org_nodes=tuple(OrgChartNode(**node) for node in value.get("org_nodes", ())),
             photos_per_page=int(value.get("photos_per_page", 1)),
         )
@@ -231,6 +234,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
             blocks=tuple(block_from_dict(b) for b in value["blocks"]),
             address_line=value.get("address_line", ""), synthetic=value.get("synthetic", False),
             sources=tuple(source_from_dict(s) for s in value.get("sources", ())),
+            follow_ups=tuple(ReportFollowUp(**{**item, "references":tuple(item.get("references",()))}) for item in value.get("follow_ups",())),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report snapshot.") from exc
@@ -242,6 +246,7 @@ def source_from_dict(value: dict) -> ReportSource:
         fields[key] = tuple(fields.get(key, ()))
     fields["captions"] = tuple(tuple(v) for v in fields.get("captions", ()))
     fields["client_page_reviews"] = tuple(tuple(v) for v in fields.get("client_page_reviews", ()))
+    fields["facts"] = tuple(EvidenceFact(**{**f, "tags": tuple(f.get("tags", ())), "flags": tuple(f.get("flags", ()))}) for f in fields.get("facts", ()))
     return ReportSource(**fields)
 
 
@@ -289,6 +294,8 @@ def _expected(value: dict, revision: int) -> None:
 def _validate_profile(profile: ReportProfile) -> None:
     if not profile.title.strip():
         raise LibraryError("Enter the report profile title.")
+    if len(profile.asset_tags) > 500 or any(not isinstance(tag,str) or not tag.strip() or len(tag)>80 for tag in profile.asset_tags):
+        raise LibraryError("Use at most 500 confirmed equipment tags, each up to 80 characters.")
     skeleton = default_sections()
     if profile.section_order and (len(set(profile.section_order)) != len(profile.section_order)
                                  or set(profile.section_order) != {s.key for s in skeleton}):

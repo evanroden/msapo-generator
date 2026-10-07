@@ -51,7 +51,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
             rows = _grid(key + f"_imported_{n}_" + _signature(table.columns), [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)], num_rows="dynamic", hide_index=True)
             tables.append(replace(table, rows=tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows if any(v is not None and v != "" for v in r.values()))))
         block = replace(block, extra_tables=tuple(tables))
-    if spec.type in ("rich_text", "stock_text"):
+    if spec.type in ("rich_text", "stock_text") and block.ai_paragraphs:
+        st.caption("Edit this source-linked wording in the wording and sources box above.")
+        st.text(block.text)
+    elif spec.type in ("rich_text", "stock_text"):
         text = st.text_area(spec.key.replace("_", " ").capitalize(), key=field(key + "_text_" + _signature(block.references), block.text), height=140)
         block = replace(block, source="This month", text=text, reviewed_fingerprint=block.reviewed_fingerprint if text == block.text else "")
     elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
@@ -233,8 +236,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if st.button("Add reviewed work to the activity summary", key=prefix + "_add_actions", disabled=not reviewed_actions):
             blocks["activity_summary"] = activity_from_sources(report_sources, activity)
             draft = replace(draft, sections=tuple(replace(s, included=True) if s.key == "activity" else s for s in draft.sections))
+        from app.monthly_report_ai_ui import render_drafting
+        draft, blocks = render_drafting(draft, blocks, prefix, field)
+        from app.monthly_report_followups import render_followups
+        draft = render_followups(draft, prefix, field)
         st.subheader("Update this month’s text")
-        st.caption("Source-linked action lines can be appended above. Full AI drafting is still being implemented; unreadable uploads do not silently become completed-work claims.")
+        st.caption("Edit the wording below. Suggested text must be checked against its linked evidence before download.")
         monthly_keys = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis"}
         for section in draft.sections:
             if section.included or section.key == "activity":
@@ -249,6 +256,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     elif step == STEPS[2]:
         st.subheader("Keep what is still correct; update what changed")
         st.write("Check the org chart, outage workflows, facility/vendor contacts and other standing information for these exact sites.")
+        with st.expander("Equipment tags for these sites (optional)"):
+            tags_text = st.text_area("Known equipment tags", key=field(prefix + "_asset_tags", "\n".join(profile.asset_tags)), help="One tag per line, such as the tag printed on a pump or air handler. Suggestions flag tags that are not on this confirmed list.")
+            tags = tuple(dict.fromkeys(t.strip() for t in tags_text.splitlines() if t.strip()))
+            tags_ok = st.checkbox("Remember these equipment tags for these exact report sites", key=prefix + "_tags_ok_" + _signature((tags,state.revision,prepared)))
+            if st.button("Save equipment tags", key=prefix + "_tags_save", disabled=not (tags_ok and prepared.strip())):
+                updated_profile = replace(profile, asset_tags=tags)
+                library.save_profile(updated_profile, expected_revision=state.revision, actor=prepared, confirmed=True)
+                st.session_state[draft_key] = replace(draft, profile=updated_profile)
+                st.rerun()
         with st.expander("Client logo, cover photo and footer", expanded=not blocks.get("client_logo", ResolvedBlock("client_logo", "This month")).asset_hashes):
             st.caption("Drop in a replacement logo or photo. Images fit the available space without stretching; transparent backgrounds are printed on white.")
             for key in ("client_logo", "brand_logo", "cover_photo", "footer_text"):
