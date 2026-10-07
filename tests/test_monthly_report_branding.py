@@ -93,6 +93,19 @@ def test_empty_brand_and_client_defaults_and_explicit_omit(monkeypatch, tmp_path
     assert branding.apply_defaults(omitted, images) == omitted
 
 
+def test_card_padding_does_not_become_a_pinned_print_asset(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    logos, assets = collection()
+    branding.save_branding(logos, assets, expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    original = branding.read_logo(logos[0])
+    with Image.open(BytesIO(branding.card_image(original))) as card:
+        assert card.size == (480, 192)
+    draft, images = design_seed(synthetic_profiles()[0], ReportPeriod(2026, 9), "Synthetic Editor")
+    assert images[logos[0].asset] == original
+    with Image.open(BytesIO(images[next(b for b in draft.blocks if b.key == "client_logo").asset_hashes[0]])) as printed:
+        assert printed.size == (240, 80)
+
+
 def test_section_choices_are_specific_and_cover_every_section():
     from app.monthly_report_model import default_sections
     from app.monthly_report_section_help import SECTION_HELP, section_help

@@ -115,7 +115,10 @@ LSU New Orleans and FMOL Health. The reviewed collection now has 30 logos
 (including ENFRA) covering all 37 catalog contracts. FMOL artwork uses a disclosed
 public-employer-profile fallback matched to its official current identity after
 its official downloads returned 502 errors. All source URLs/dates are retained.
-Final local suite: **886 passed, one CI-only skip** with LibreOffice. Ruff F/E9,
+Full local suite: **886 passed, one CI-only skip** with LibreOffice. A later
+printed-header sizing correction separates screen-card padding from print
+assets; **56 focused tests** passed afterward, and the install/render walkthrough
+was repeated. The corrected header was visually inspected. Ruff F/E9,
 compileall, pip check and diff checks passed. A local AppTest confirmed bundle
 installation, all mappings, automatic new-design logos and conditional same-
 contract cards. A deterministic five-page synthetic DOCX/PDF was rendered and

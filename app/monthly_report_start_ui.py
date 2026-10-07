@@ -13,17 +13,17 @@ from app.monthly_report_start import membership_key, matching_profiles, report_k
 
 
 def _logo(contract):
-    from app.monthly_report_branding import find_logo, read_logo
+    from app.monthly_report_branding import find_logo, read_logo, card_image
     logo = find_logo(contract)
     if logo:
-        return read_logo(logo)
+        return card_image(read_logo(logo))
     for profile in library.list_profiles(contract):
         state = library.load_profile(contract, profile.key)
         block = state.block("client_logo")
         if block and block.asset_hashes:
             from app.monthly_report_docx import normalize_report_image
             ref = block.asset_hashes[0]
-            return normalize_report_image(library.read_asset(contract, profile.key, ref), "." + ref.rsplit(".", 1)[-1], line_art=True, frame=(2, .75), dpi=96).data
+            return card_image(normalize_report_image(library.read_asset(contract, profile.key, ref), "." + ref.rsplit(".", 1)[-1], line_art=True, frame=(2, .75), dpi=96).data)
     return None
 
 
@@ -134,12 +134,12 @@ def starting_choice(profile, profiles, period, prepared, field):
     choices = (["Use another report from this contract"] if available else []) + ["Use the general ENFRA monthly report template", "Upload an older or unfinished report from my site"]
     choice_key = field("report_start_choice_" + profile.key, "")
     selected = st.session_state[choice_key]
-    from app.monthly_report_branding import find_logo, read_logo
+    from app.monthly_report_branding import find_logo, read_logo, card_image
     brand = find_logo(brand=True)
     st.caption("Choose one starting point. You can work through the report sections in any order.")
     cards = {
         "Use another report from this contract": ("Another report from this contract", "Reuse an existing layout and logos. You’ll add the people, contacts and work for your selected sites.", _logo(profile.contract), ":material/library_books:"),
-        "Use the general ENFRA monthly report template": ("ENFRA monthly report template", "Start with the standard sections and available client logo. We’ll walk you through your site information.", read_logo(brand) if brand else None, ":material/description:"),
+        "Use the general ENFRA monthly report template": ("ENFRA monthly report template", "Start with the standard sections and available client logo. We’ll walk you through your site information.", card_image(read_logo(brand)) if brand else None, ":material/description:"),
         "Upload an older or unfinished report from my site": ("A report you already have", "Upload a Word report from your sites—an older example or a teammate’s unfinished report. Review and update it section by section.", None, ":material/upload_file:"),
     }
     for column, choice in zip(st.columns(len(choices)), choices):

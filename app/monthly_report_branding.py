@@ -12,7 +12,7 @@ import json
 from urllib.parse import urlsplit
 from zipfile import BadZipFile, ZipFile
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app import monthly_report_library as library
 from app.monthly_report_model import ResolvedBlock
@@ -172,6 +172,20 @@ def read_logo(logo):
     raw = (_path() / "assets" / logo.asset).read_bytes()
     _image(raw, logo.asset)
     return raw
+
+
+def card_image(raw):
+    """Uniform screen canvas only; the report keeps the logo's print proportions."""
+    with Image.open(BytesIO(raw)) as image:
+        image = image.convert("RGBA")
+        corners = [image.getpixel(point) for point in ((0, 0), (image.width-1, 0), (0, image.height-1), (image.width-1, image.height-1))]
+        background = corners[0] if len(set(corners)) == 1 and corners[0][3] == 255 else (255, 255, 255, 255)
+        fitted = ImageOps.contain(image, (448, 160), Image.Resampling.LANCZOS)
+        canvas = Image.new("RGBA", (480, 192), background)
+        canvas.alpha_composite(fitted, ((480-fitted.width)//2, (192-fitted.height)//2))
+        output = BytesIO()
+        canvas.convert("RGB").save(output, "PNG")
+        return output.getvalue()
 
 
 def apply_defaults(draft, assets):

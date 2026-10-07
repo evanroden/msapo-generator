@@ -39,7 +39,7 @@ identical generic controls for very different report sections.
 
 ## Validation and publication
 
-The final local suite passed **886 tests, one CI-only skip**, including real
+The full local suite passed **886 tests, one CI-only skip**, including real
 LibreOffice. Ruff F/E9, compileall, dependency consistency and diff checks passed.
 The initial full run caught missing notes metadata and a test still using the
 previous starting control; both were corrected before that final full run.
@@ -50,6 +50,12 @@ both client and ENFRA logos, and exposed the same-contract starting card only
 after a report existed. A five-page synthetic DOCX/PDF was rendered, the cover
 was visually inspected, and identical inputs produced identical DOCX bytes.
 The new logos correctly required image review before finished output.
+A subsequent header inspection found card padding made the printed ENFRA mark
+too small. Screen cards now use a separate presentation canvas while print
+assets retain their natural proportions and clear space. After that fix,
+**56 focused tests passed**; the installation/first-use/render walkthrough was
+repeated and the corrected header visually inspected. This is full run plus
+focused follow-up, not a combined full-suite count.
 
 The supplied private Glendale report was walked through locally again using
 the upload card: 265 extracted items became 13 section cards, every card opened,
@@ -66,7 +72,8 @@ merged or deployed at the time these notes were written.
 
 The collection contains 30 marks (including ENFRA), explicitly covering all 37
 listed contracts. Original colors/proportions are preserved, empty margins are
-trimmed, and clear space is added in consistent frames. White marks use a dark
+trimmed, and clear space is added. Screen cards use consistent frames while
+printed logos keep the appropriate shape for their document positions. White marks use a dark
 background. SVG/animated originals are not executed by or uploaded to the app.
 A static official Memorial Health image avoids the incomplete first frame of
 its animated header. PNG pixels are bounded and fingerprinted.
