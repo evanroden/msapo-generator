@@ -137,6 +137,15 @@ class ReportTable:
 
 
 @dataclass(frozen=True)
+class OrgChartNode:
+    key: str
+    name: str = ""
+    role: str = ""
+    reports_to: str = ""
+    team: str = ""
+
+
+@dataclass(frozen=True)
 class ResolvedBlock:
     key: str
     source: str
@@ -150,6 +159,8 @@ class ResolvedBlock:
     asset_captions: tuple[str, ...] = ()
     extra_tables: tuple[ReportTable, ...] = ()
     client_reviewed_fingerprint: str = ""
+    org_nodes: tuple[OrgChartNode, ...] = ()
+    photos_per_page: int = 1
 
     @property
     def fingerprint(self) -> str:

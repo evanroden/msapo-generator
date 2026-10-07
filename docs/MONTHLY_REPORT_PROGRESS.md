@@ -14,8 +14,8 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current implementation branch: `feat/monthly-report-start`, based on main
-`99cdd2a688bae623d171bbba53a64ee6e59c8139`. Working checkout:
+Current implementation branch: `feat/monthly-report-editing`, based on main
+`544e7d59b3274f8ffa9defc7b52a932f857c23b6`. Working checkout:
 `/workspace/scratch/monthly-report`; venv: `/workspace/scratch/monthly-report-venv`.
 
 M2 PR #58 merged at `73915b17cd1d3e5dbbe429719121e5a5400d29a8` (738 CI passes).
@@ -67,10 +67,27 @@ suite: **840 passed, one CI-only skip** with LibreOffice; Ruff F/E9, dependency
 consistency and diff checks passed. Two actual private DOCX walkthroughs used
 the new contract cards/site selection/upload path, opened all 12/13 sections
 and retained edits across closing/reopening. Expected review blockers remain
-visible; no private data was uploaded to production. PR/CI/deployment are pending. Reused designs
+visible; no private data was uploaded to production. Reused designs
 keep schemas/branding but clear other-site contacts, charts/photos and activity.
-Editable professional org charts, simple contact fields and live page/photo-grid
-preview remain the next part of this usability work. M6 is unfinished.
+PR #65 head `106fa8ca36e4fa11cf9d7f8c0308249fc729899a`, tree
+`f76c9b8aae5a0c73b71e4c5d3dc0f0a41ea33846`, passed Actions `37672489798`
+/ job `112967509794`: **841 passed, zero skipped**. Rechecked main before
+merging at `544e7d59b3274f8ffa9defc7b52a932f857c23b6`. Public browser showed
+contract cards, the site checklist, month/year, combined-report name and the
+template/upload alternatives. Two site selections and the name persisted using
+keyboard controls; cloud-browser pointer clicks did not reliably operate the
+clipped React Aria checkbox input, so pointer/mobile acceptance is not claimed.
+No persistent test profile or private data was saved in production.
+
+The next local increment adds editable org-chart fields/reporting lines, simple
+contact fields and live photo-page layouts (one to six photos per page). Preview
+images are the same ones embedded in DOCX/PDF. Replacing a supplied chart/contact
+image is explicit, cycles and chart prices block output, and contact-row removal
+does not resurrect stale widget values. Full local suite: **845 passed, one
+CI-only skip**; after an advanced-editor preservation fix, 15 focused tests
+passed. A synthetic six-page DOCX/PDF was rendered and visually checked. See
+the visual-editing notes. Publication/CI/deployment are pending for this increment.
+M6 remains unfinished; full preview PDF and final layout/size/mobile polish remain.
 
 ## Additional owner decisions October 7
 

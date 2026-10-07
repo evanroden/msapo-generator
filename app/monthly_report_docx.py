@@ -168,8 +168,14 @@ def outline(draft: ReportDraft) -> tuple[tuple[str, tuple[str, ...], int], ...]:
     """Include dedicated image pages; text/table overflow remains an estimate."""
     blocks = {b.key: b for b in draft.blocks if b.source != "Omit"}
     result = []
+    def image_count(spec, block):
+        from app.monthly_report_visuals import org_groups, photo_count
+        try:
+            return len(org_groups(block.org_nodes)) if block.org_nodes else photo_count(block) if spec.type == "image_grid" else len(block.asset_hashes)
+        except ValueError:
+            return 0  # Preflight explains the invalid chart/layout; no preview crash.
     for section in included_sections(draft.sections):
-        images = sum(len(blocks[b.key].asset_hashes) for b in section.blocks if b.key in blocks)
+        images = sum(image_count(b, blocks[b.key]) for b in section.blocks if b.key in blocks)
         has_other = any(blocks[b.key].text or blocks[b.key].rows or blocks[b.key].extra_tables for b in section.blocks if b.key in blocks)
         result.append((f"{section.number}. {section.title}",
                        tuple(b.key for b in section.blocks if b.key in blocks), 1 + max(1, images + int(has_other))))
@@ -288,7 +294,20 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
             if block is None or block.source == "Omit":
                 continue
             _text(document, block.text)
-            for index, reference in enumerate(block.asset_hashes):
+            from app.monthly_report_visuals import org_groups, org_page, photo_count, photo_page
+            if block.org_nodes:
+                for index in range(len(org_groups(block.org_nodes))):
+                    if index:
+                        document.add_page_break()
+                    _picture(document, org_page(block.org_nodes, index), height=7.7)
+            elif spec.type == "image_grid" and block.asset_hashes:
+                if asset_loader is None:
+                    raise ValueError("Photo pages require the library resolver.")
+                for index in range(photo_count(block)):
+                    if index:
+                        document.add_page_break()
+                    _picture(document, photo_page(block, asset_loader, index), height=7.7)
+            for index, reference in enumerate(block.asset_hashes if not block.org_nodes and spec.type != "image_grid" else ()):
                 if asset_loader is None:
                     raise ValueError("Image and PDF-page assets require the library resolver.")
                 if index:
