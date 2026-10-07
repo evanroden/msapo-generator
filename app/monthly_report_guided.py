@@ -34,17 +34,37 @@ def _initial_draft(state, period, prepared):
 
 def _edit_content(spec, block, state, prefix, assets, field):
     key = prefix + "_edit_" + spec.key
+    if block.extra_tables:
+        from app.monthly_report_editor import _cell_text
+        tables = []
+        for n, table in enumerate(block.extra_tables):
+            st.write(f"Table {n+1}")
+            rows = _grid(key + f"_imported_{n}_" + _signature(table.columns), [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)], num_rows="dynamic", hide_index=True)
+            tables.append(replace(table, rows=tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows if any(v is not None and v != "" for v in r.values()))))
+        block = replace(block, extra_tables=tuple(tables))
     if spec.type in ("rich_text", "stock_text"):
         text = st.text_area(spec.key.replace("_", " ").capitalize(), key=field(key + "_text_" + _signature(block.references), block.text), height=140)
-        return replace(block, source="This month", text=text, reviewed_fingerprint=block.reviewed_fingerprint if text == block.text else "")
-    if spec.type in ("table", "work_order_grid"):
+        block = replace(block, source="This month", text=text, reviewed_fingerprint=block.reviewed_fingerprint if text == block.text else "")
+    elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
         from app.monthly_report_editor import _cell_text
         columns = [c.title for c in spec.columns] or ["Facility", "Item", "Status"]
-        return replace(block, source="This month", rows=tuple(tuple(_cell_text(row.get(c)) for c in columns) for row in rows
-                                                              if any(v is not None and v != "" for v in row.values())))
-    _preview(block, assets, state.profile)
+        block = replace(block, source="This month", rows=tuple(tuple(_cell_text(row.get(c)) for c in columns) for row in rows
+                                                               if any(v is not None and v != "" for v in row.values())))
+    if block.asset_hashes:
+        labels = {ref: f"Picture / page {n+1}" for n, ref in enumerate(block.asset_hashes)}
+        keep = st.multiselect("Pictures/pages to keep", list(block.asset_hashes),
+                              format_func=labels.get, key=field(key + "_keep_" + _signature(block.asset_hashes), list(block.asset_hashes)))
+        original = block
+        block = replace(block, asset_hashes=tuple(keep), asset_captions=tuple(original.asset_captions[n] if n < len(original.asset_captions) else "" for n, ref in enumerate(original.asset_hashes) if ref in keep))
+        if len(original.references) == len(original.asset_hashes):
+            block = replace(block, references=tuple(original.references[n] for n, ref in enumerate(original.asset_hashes) if ref in keep))
+        if keep:
+            shown = st.selectbox("Picture/page to view", keep, format_func=labels.get, key=key + "_shown_" + _signature(keep))
+            st.image(assets.get(shown) or library.read_asset(state.profile.contract, state.profile.key, shown), width="stretch")
+    if spec.type in ("rich_text", "stock_text", "table", "work_order_grid"):
+        return block
     upload = st.file_uploader("Updated " + spec.key.replace("_", " "), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
     if upload and st.button("Use this replacement in this report", key=key + "_replace"):
         from pathlib import Path
@@ -138,7 +158,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by))
     draft = replace(draft, prepared_by=prepared)
     assets = st.session_state.setdefault(prefix + "_assets", {})
-    step = st.radio("Report steps", STEPS, horizontal=True, key=field(prefix + "_step", STEPS[0]))
+    step_key = field(prefix + "_step", STEPS[0])
+    if completed_setup == selected:
+        st.session_state[step_key] = STEPS[1]
+    step = st.radio("Report steps", STEPS, horizontal=True, key=step_key)
     blocks = {b.key: b for b in draft.blocks}
     specs = {b.key: b for s in draft.sections for b in s.blocks}
     included = {b.key for s in draft.sections if s.included for b in s.blocks}
@@ -187,11 +210,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             draft = replace(draft, sections=tuple(replace(s, included=True) if s.key == "activity" else s for s in draft.sections))
         st.subheader("Update this month’s text")
         st.caption("Source-linked action lines can be appended above. Full AI drafting is still being implemented; unreadable uploads do not silently become completed-work claims.")
-        for key in ("activity_summary", "equipment_issues", "training_summary", "utility_analysis"):
-            if key in included or key == "activity_summary":
-                spec = specs[key]
-                block = blocks.get(key, ResolvedBlock(key, "This month"))
-                blocks[key] = _edit_content(spec, block, state, prefix, assets, field)
+        monthly_keys = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis"}
+        for section in draft.sections:
+            if section.included or section.key == "activity":
+                relevant = [b for b in section.blocks if b.key in monthly_keys]
+                if relevant:
+                    with st.expander(section.title, expanded=section.key == "activity"):
+                        for spec in relevant:
+                            block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
+                            if block.source == "Omit" and spec.key != "activity_summary":
+                                continue
+                            blocks[spec.key] = _edit_content(spec, block, state, prefix, assets, field)
     elif step == STEPS[2]:
         st.subheader("Keep what is still correct; update what changed")
         st.write("Check the org chart, outage workflows, facility/vendor contacts and other standing information for these exact sites.")
@@ -243,6 +272,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         package = None
     if step == STEPS[3]:
         st.subheader("Review and download")
+        from app.monthly_report_editor import review_client_images
+        draft = review_client_images(draft, assets, prefix, field)
+        st.session_state[draft_key] = draft
         for title, _, pages in outline(draft):
             st.write(f"{title} · at least {pages} pages")
         loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref)

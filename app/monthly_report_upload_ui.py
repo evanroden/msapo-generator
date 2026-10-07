@@ -9,6 +9,7 @@ import streamlit as st
 from app import monthly_report_sources as sources
 from app.monthly_report_cmms import CMMSMapping, map_cmms, month_window
 from app.monthly_report_model import ReportPeriod, ReportProfile
+from app.monthly_report_content_policy import page_status, page_fingerprint, page_allowed
 
 
 def _signature(value) -> str:
@@ -80,7 +81,8 @@ def _cmms(content, profile, period, prefix, field):
 
 
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field):
-    st.subheader("2. Add monthly evidence")
+    st.subheader("Add this month’s vendor reports, chemical reports and photos")
+    st.write("Only relevant, price-free pages belong in the client report. Check the suggested pages below; originals are kept for reference.")
     st.caption("PDF, images including HEIC, DOCX, XLSX, CSV, EML and MSG. Files are stored with this profile on the persistent disk; emails are read only. No email drafts or sending.")
     st.caption("Limits: 50 sources / 180 MB per report including attachments; 30 MB per file (DOCX 128 MB); 800,000 extracted characters. Up to 150 image/PDF pages can be embedded. OCR/vision is limited separately to 20 pages per report.")
     key = prefix + "_evidence"
@@ -119,29 +121,46 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         tags = st.text_input("Equipment tags (comma-separated)", key=field(p + "_tags", ", ".join(source.tags)))
         changes["tags"] = tuple(v.strip() for v in tags.split(",") if v.strip())
         for attr, label in (("actions", "Actions"), ("findings", "Findings"), ("recommendations", "Recommendations"),
-                            ("follow_ups", "Follow-ups"), ("quotes", "Quotes / stated costs"), ("out_of_limit", "Out-of-limit readings")):
+                            ("follow_ups", "Follow-ups"), ("out_of_limit", "Out-of-limit readings")):
             changes[attr] = st.text_area(label, key=field(p + "_" + attr, getattr(source, attr)), height=70)
         for notice in source.notices:
             st.warning(notice)
         pages = list(range(1, len(source.page_texts) + 1))
         selected_pages = st.multiselect("Included pages / extracted items", pages, key=field(p + "_pages", list(source.selected_pages)),
-                                       help="All pages are selected initially. DOCX units are logical extracted items; worksheets each form one unit.")
+                                       help="Readable technical pages are suggested. Pages with prices, legal terms, no useful content or unreadable images are not automatically included. Inspect image pages to decide. Originals remain saved.")
         changes["selected_pages"] = tuple(selected_pages)
         captions = dict(source.captions)
         if pages:
-            page = st.selectbox("Preview page / item", pages, key=field(p + "_page", pages[0]))
+            page = st.selectbox("Preview page / item", pages, key=field(p + "_page", pages[0]),
+                                format_func=lambda n: f"Page / item {n} · " + page_status(source.page_texts[n-1], unreadable=n in source.needs_vision)[0].replace("technical", "check before including").replace("review", "needs visual review"))
             st.text(source.page_texts[page-1][:12000] or "No native text on this page/item.")
             if page in sources.image_numbers(content):
-                # Thumbnail preparation runs only on demand, one page at a time.
-                if st.button("Show page thumbnail", key=p + "_thumbnail"):
-                    try:
-                        thumbnail = sources.page_image(profile, content, page, preview=True)
-                        st.image(thumbnail.data, width="stretch")
-                    except (ValueError, OSError) as exc:
-                        st.error(str(exc))
+                try:
+                    thumbnail = sources.page_image(profile, content, page, preview=True)
+                    st.image(thumbnail.data, width="stretch")
+                except (ValueError, OSError) as exc:
+                    st.error(str(exc))
                 captions[page] = st.text_input("Page caption", key=field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}")))
         changes["captions"] = tuple(sorted(captions.items()))
         source = replace(source, **changes)
+        if pages and page in sources.image_numbers(content):
+            kind, reason = page_status(source.page_texts[page-1], unreadable=page in source.needs_vision)
+            blocked = kind in ("pricing", "legal", "blank", "signature")
+            (st.warning if blocked else st.caption)(reason)
+            if blocked and page in selected_pages:
+                st.error("Remove this page from Included pages above. A page containing prices cannot be included, even if it also describes useful work.")
+            fingerprint = page_fingerprint(source, page)
+            reviewed = st.checkbox("I checked this page: relevant work, no prices, no legal-only or blank/signature-only content",
+                                   key=field(p + f"_client_page_{page}_" + fingerprint, page_allowed(source, page)), disabled=blocked)
+            reviews = dict(source.client_page_reviews)
+            if reviewed and not blocked:
+                reviews[page] = fingerprint
+            else:
+                reviews.pop(page, None)
+            source = replace(source, client_page_reviews=tuple(sorted(reviews.items())))
+            left = [n for n in source.selected_pages if n in sources.image_numbers(content) and not page_allowed(source, n)]
+            if left:
+                st.info("Still to check before including: " + ", ".join(f"page {n}" for n in left))
         by_id[selected] = replace(content, source=source)
         contents = tuple(by_id.values())
         st.session_state[key] = contents
@@ -178,7 +197,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 st.error(str(exc))
         if prepared:
             blocks.update((b.key, b) for b in prepared[1])
-            st.success("Pages prepared. Choose This month → Uploaded content in the matching report blocks.")
+            st.success("Reviewed pages are ready. Add them to the draft below.")
     cmms_contents = [c for c in contents if c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
     if cmms_contents:

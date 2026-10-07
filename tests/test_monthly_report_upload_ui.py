@@ -29,6 +29,9 @@ def test_upload_selection_invalidation_and_workflow_retention(monkeypatch, tmp_p
     assert not app.exception
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 2, 3]
     select(app, "Classification").set_value("Vendor service").run()
+    for page in (1, 2, 3):
+        select(app, "Preview page / item").set_value(page).run()
+        next(w for w in app.checkbox if w.label.startswith("I checked this page:")).check().run()
     button(app, "Prepare selected pages").click().run()
     assert not app.exception
     next(w for w in app.selectbox if w.key.endswith("_vendor_reports_source")).set_value("This month").run()
