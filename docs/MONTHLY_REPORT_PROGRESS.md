@@ -14,13 +14,13 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current implementation branch: `feat/monthly-report-polish`, based on main
-`ad0a408668270f9f7d71854f73902fb793511e88`. Working checkout:
+Current checkpoint branch: `docs/monthly-report-release-checkpoint`, based on main
+`d39670b52dc258f47f2f30e33703c794181e5f37`. Working checkout:
 `/workspace/scratch/monthly-report`; venv `/workspace/scratch/monthly-report-venv`.
 M5 worktree `/workspace/scratch/monthly-report-m5-work` is clean at its published
 head. The older ca2afe740bcd checkout vanished; do not restart from it.
 
-M1–M5 are merged. M5 PR #61 head
+M1–M6 are merged. M5 PR #61 head
 `dd0996f57ab92e5e5155e8f31ca6a6384cbb64f9`, tree
 `123c178bca35d7c6713b854ab0f158e072415669`, passed Actions `37677196040` /
 job `112983633916`: **866 passed, zero skipped**. Logs verified the exact head
@@ -39,7 +39,7 @@ edits; all eight supplied DOCX layouts were inspected outside git. This is not
 owner acceptance of a finished client report. The directory workbook was reviewed
 locally; importing/confirming it in production is still an operator task.
 
-M6 currently adds a bounded, low-resolution, watermarked full-report preview at
+M6 PR #67 adds a bounded, low-resolution, watermarked full-report preview at
 any step; stale downloads disable until refreshed. Strict finished-output gates
 remain. Runtime divider artwork fills the page behind editable headings; logos
 fit bounded frames; tables repeat headers and keep rows together. Estimates now
@@ -47,8 +47,29 @@ include generated chart/photo pages, and finished sizes are visible. A five-page
 synthetic report and its preview rendered with real LibreOffice and were visually
 inspected. The full local suite passed **871 tests, one CI-only skip** with
 real LibreOffice. Ruff F/E9, compileall, pip check, repository hygiene/docs and
-diff checks passed. Publication, exact-head CI and M6 public verification remain
-before release.
+diff checks passed. Published head `09bb359c2e1de280721f68d0bf3c39e33d3d7883`
+matched local tree `025f7208f5bdf5e4f3395eba71e0d6407cb951e5` after all ten
+blobs and the assembled tree were hash-verified. Actions `37679669121`, job
+`112992084258`, passed **872 tests, zero skipped**. Logs confirmed the exact
+head merged into unchanged main `ad0a408668270f9f7d71854f73902fb793511e88`.
+PR #67 merged with expected-head protection at
+`d39670b52dc258f47f2f30e33703c794181e5f37`. The public app loaded successfully
+after deployment and visibly showed the new first-time report guidance from
+this release. No private Render workspace/log access or persistent profile write
+was used. This proves the new UI release is live, not saved-profile end-to-end
+production acceptance. The remaining operator tasks are reviewed directory import,
+site-specific setup and acceptance of a finished private report.
+
+Final checkpoint PR #68 also replaces internal field IDs in guided review
+messages with the recognizable item name, a concrete action and the destination
+step/section. It does not relax any content/review gate. Focused UI/docs/hygiene
+validation passed **35 tests**; Ruff F/E9 and diff checks passed. PR #68 is the
+authoritative record for its final exact-head CI and merge status; the earlier
+M6 CI total does not cover this subsequent wording change.
+
+All six implementation milestones and the requested UX increments have merged.
+Follow-up work should respond to operator acceptance findings, not restart the
+implementation. The operator guide describes the available controls.
 
 Hardware phone/iPad acceptance remains unavailable in the cloud browser. Public
 site-checkbox keyboard behavior was verified; clipped React Aria inputs did not

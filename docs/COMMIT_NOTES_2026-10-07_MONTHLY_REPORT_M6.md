@@ -4,7 +4,7 @@ date: 2026-10-07
 base_commit: ad0a408668270f9f7d71854f73902fb793511e88
 workflow: Monthly report
 change_type: preview_layout_and_operator_guidance
-status: tested_release_candidate
+status: merged_public_ui_verified
 ---
 
 # Preview and report polish
@@ -49,7 +49,12 @@ LibreOffice and all pages visually inspected. Tests verify full-page divider
 geometry, repeating table headings, retained final rows and deterministic DOCX.
 The full local suite passed **871 tests, one CI-only skip** with LibreOffice.
 Ruff F/E9, compileall, pip check, hygiene/docs and diff checks passed. Exact-head
-CI and release verification remain; their results belong in the checkpoint.
+CI passed at head `09bb359c2e1de280721f68d0bf3c39e33d3d7883`: Actions
+`37679669121` / job `112992084258`, **872 passed, zero skipped**. PR #67 merged
+at `d39670b52dc258f47f2f30e33703c794181e5f37` with expected-head protection
+after rechecking main. The public app subsequently showed the new first-time
+guidance, confirming this UI release reached production. No saved production
+report was created or modified for this check.
 
 Public checks never use private Render logs/workspaces. No private sample,
 workbook, generated client report or extracted artwork is committed. The actual

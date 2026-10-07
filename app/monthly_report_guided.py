@@ -19,6 +19,36 @@ from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selecto
 STEPS = ("1 · Report", "2 · This month’s work", "3 · Site information", "4 · Review & download")
 
 
+def review_message(check, draft):
+    """Tell a manager what to do and where, without exposing model field IDs."""
+    from app.monthly_report_sections import readable_label
+    key = check.block_key
+    label = readable_label(key) if key else "this report"
+    section = next((s.title for s in draft.sections if any(b.key == key for b in s.blocks)), "")
+    monthly = key in MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis"}
+    location = "This month’s work" if monthly else "Site information"
+    if section and monthly:
+        location += " → " + section
+    elif key:
+        location += " → " + label
+    if key in {"issues", "proposals"} and draft.follow_ups:
+        location = "This month’s work → Carried-forward issues and proposals"
+    if check.code == "required":
+        return f"Add {label.lower()} in {location}."
+    if check.code in {"review", "ai_evidence", "ai_number"}:
+        return f"Check the wording and linked evidence for {label.lower()} in This month’s work, then confirm its review." + (" Correct any unsupported numbers." if check.code == "ai_number" else "")
+    if check.code == "client_pages":
+        return f"Open {label} above and confirm that every included picture/page is relevant and has no prices."
+    if check.code == "library_save":
+        return f"Finish confirming the shared replacement for {label.lower()} in the advanced editor, or use it for this report only."
+    message = check.message
+    if key:
+        message = message.replace(key, label).replace(key.replace("_", " "), label.lower())
+    if check.code in {"placeholder", "pricing", "period"} and key:
+        message += " Open " + ("Report" if key == "cover" else location) + " to make the correction."
+    return message
+
+
 def _standing_signature(blocks, included):
     keys = included | {b.key for b in layout_blocks()}
     return _signature(sorted((b.key, b.fingerprint) for b in blocks
@@ -341,7 +371,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Aim for under 15 MB; fewer attachment pages and more photos per page can help.")
         checks = preflight(draft, estimated)
         for check in checks:
-            (st.error if check.blocking else st.warning)(check.message)
+            (st.error if check.blocking else st.warning)(review_message(check, draft))
         standing_reviewed = st.session_state.get(review_state) == standing_signature
         if not standing_reviewed:
             st.warning("Finish step 3: confirm the standing site information.")
