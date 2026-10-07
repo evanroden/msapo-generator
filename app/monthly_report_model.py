@@ -1,0 +1,260 @@
+"""Immutable report definitions, shared by the editor, checks and renderer.
+
+Profiles describe scope explicitly: a regional title is not a facility, and a
+facility alias must never become a second member of a report. The initial UI
+uses synthetic profiles; real membership belongs in the runtime library.
+"""
+
+from __future__ import annotations
+
+import calendar
+import hashlib
+import json
+import re
+from dataclasses import asdict, dataclass, replace
+from datetime import date
+from typing import Literal
+
+
+BlockType = Literal[
+    "image_page", "image_grid", "pdf_pages", "rich_text", "table",
+    "stock_text", "work_order_grid",
+]
+BLOCK_SOURCES = (
+    "Library", "Last month", "This month", "Replace once",
+    "Replace and save to library", "Stock text", "Omit",
+)
+
+
+@dataclass(frozen=True)
+class Facility:
+    key: str
+    title: str
+    aliases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReportProfile:
+    contract: str
+    key: str
+    title: str
+    facilities: tuple[Facility, ...]
+    scope_type: Literal["individual", "multi_site", "regional"] = "individual"
+    section_order: tuple[str, ...] = ()
+    default_block_sources: tuple[tuple[str, str], ...] = ()
+    template: str = "monthly_review_v1"
+
+    def __post_init__(self) -> None:
+        if self.scope_type not in ("individual", "multi_site", "regional"):
+            raise ValueError("Unknown profile scope")
+        if not self.facilities or len({f.key for f in self.facilities}) != len(self.facilities):
+            raise ValueError("A profile needs unique facility identities")
+        if self.scope_type == "individual" and len(self.facilities) != 1:
+            raise ValueError("An individual report covers exactly one facility")
+
+
+@dataclass(frozen=True)
+class ReportPeriod:
+    year: int
+    month: int
+
+    def __post_init__(self) -> None:
+        date(self.year, self.month, 1)
+
+    @classmethod
+    def previous(cls, today: date) -> ReportPeriod:
+        return cls(today.year - 1, 12) if today.month == 1 else cls(today.year, today.month - 1)
+
+    @property
+    def start(self) -> date:
+        return date(self.year, self.month, 1)
+
+    @property
+    def end(self) -> date:
+        return date(self.year, self.month, calendar.monthrange(self.year, self.month)[1])
+
+    @property
+    def label(self) -> str:
+        return f"{calendar.month_name[self.month]} {self.year}"
+
+    @property
+    def key(self) -> str:
+        return f"{self.year:04d}-{self.month:02d}"
+
+
+@dataclass(frozen=True)
+class ColumnSpec:
+    key: str
+    title: str
+    type: Literal["text", "date", "number", "currency", "boolean"] = "text"
+
+
+@dataclass(frozen=True)
+class BlockSpec:
+    key: str
+    type: BlockType
+    required: bool = False
+    allowed_sources: tuple[str, ...] = BLOCK_SOURCES
+    stock_text_keys: tuple[str, ...] = ()
+    columns: tuple[ColumnSpec, ...] = ()
+
+
+@dataclass(frozen=True)
+class SectionSpec:
+    key: str
+    number: str
+    title: str
+    blocks: tuple[BlockSpec, ...]
+    divider_asset: str = ""
+    included: bool = True
+    appendix: bool = False
+
+
+@dataclass(frozen=True)
+class ResolvedBlock:
+    key: str
+    source: str
+    text: str = ""
+    rows: tuple[tuple[str, ...], ...] = ()
+    asset_hashes: tuple[str, ...] = ()
+    references: tuple[str, ...] = ()
+    ai_written: bool = False
+    reviewed_fingerprint: str = ""
+
+    @property
+    def fingerprint(self) -> str:
+        # Review is evidence-specific, not a sticky boolean. New sources must
+        # invalidate it even if the visible paragraph happens to be unchanged.
+        return _digest(replace(self, reviewed_fingerprint=""))
+
+    @property
+    def reviewed(self) -> bool:
+        return not self.ai_written or self.reviewed_fingerprint == self.fingerprint
+
+
+@dataclass(frozen=True)
+class ReportDraft:
+    profile: ReportProfile
+    period: ReportPeriod
+    prepared_by: str
+    sections: tuple[SectionSpec, ...]
+    blocks: tuple[ResolvedBlock, ...]
+    address_line: str = ""
+    synthetic: bool = False
+
+    @property
+    def fingerprint(self) -> str:
+        return _digest(self)
+
+
+@dataclass(frozen=True)
+class ReportSnapshot:
+    profile: ReportProfile
+    month: ReportPeriod
+    resolved_blocks: tuple[ResolvedBlock, ...]
+    open_issues: tuple[str, ...]
+    pending_proposals: tuple[str, ...]
+    generated_at: str
+
+
+def _digest(value: object) -> str:
+    return hashlib.sha256(json.dumps(asdict(value), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+STOCK_TEXTS = {
+    "cmms_pending": "FacilityOne transition: work-order reporting is pending. Verified monthly counts have not been supplied.",
+    "utility_pending": "Utility-rate analysis is pending M&V approval.",
+    "mbcx_pending": "ENFRA Connect monitoring-based commissioning reporting is pending implementation.",
+    "no_capital": "No Priority Zero recommendations this month.",
+    "no_training_hours": "Training hours not provided.",
+}
+
+PLACEHOLDER_PHRASES = (
+    "should include", "Example:", "Author: Name", "Insert image", "Month Year",
+    "X Hours", "CM/PM Pics", "Lunch/Learn", "Team Pics",
+)
+
+
+def default_sections() -> tuple[SectionSpec, ...]:
+    """The complete skeleton; library profiles only override these definitions."""
+    return (
+        SectionSpec("organization", "1", "Organizational Chart", (
+            BlockSpec("org_chart", "image_page", True),
+            BlockSpec("business_hours_workflow", "image_page"),
+            BlockSpec("after_hours_workflow", "image_page"),
+            BlockSpec("contact_matrix", "table"),
+        )),
+        SectionSpec("activity", "2", "Monthly Activity Summary", (
+            BlockSpec("work_orders", "work_order_grid", stock_text_keys=("cmms_pending",)),
+            BlockSpec("activity_summary", "rich_text", True),
+            BlockSpec("improvements", "image_grid"),
+        )),
+        SectionSpec("scorecards", "3", "Monthly Scorecards", (
+            BlockSpec("utility_analysis", "stock_text", stock_text_keys=("utility_pending",)),
+            BlockSpec("thermal_capacity", "table"),
+        )),
+        SectionSpec("mbcx", "4", "MBCx Reports", (
+            BlockSpec("mbcx_report", "pdf_pages", stock_text_keys=("mbcx_pending",)),
+        )),
+        SectionSpec("maintenance", "5", "Maintenance Schedule / In-House Maintenance", (
+            BlockSpec("service_calls", "table", stock_text_keys=("cmms_pending",), columns=(
+                ColumnSpec("wo", "WO #"), ColumnSpec("finished", "Finish Date", "date"),
+                ColumnSpec("area", "Area"), ColumnSpec("task", "Task Code-Description"),
+                ColumnSpec("tag", "Tag #"),
+            )), BlockSpec("vendor_reports", "pdf_pages"),
+        )),
+        SectionSpec("subcontractors", "6", "Sub-Contractor Status", (BlockSpec("subcontractor_matrix", "table"),)),
+        SectionSpec("water", "7", "Water Treatment Reports", (BlockSpec("water_reports", "pdf_pages"),)),
+        SectionSpec("issues", "8", "Equipment Performance Issues", (BlockSpec("equipment_issues", "rich_text", True),)),
+        SectionSpec("capital", "9", "Priority Capital Renewal List", (
+            BlockSpec("capital_renewal", "table", stock_text_keys=("no_capital",)),
+            BlockSpec("end_of_life", "table"),
+        )),
+        SectionSpec("proposals", "10", "Pending & Declined Proposals", (BlockSpec("proposals", "table"),)),
+        SectionSpec("training", "11", "Training Summary", (BlockSpec("training_summary", "rich_text", True),)),
+        SectionSpec("rfi", "G", "RFI Matrix", (BlockSpec("rfi_matrix", "table"),), included=False, appendix=True),
+    )
+
+
+def included_sections(sections: tuple[SectionSpec, ...]) -> tuple[SectionSpec, ...]:
+    """Renumber ordinary sections in their actual order; preserve appendix IDs."""
+    result = []
+    number = 0
+    for section in sections:
+        if not section.included:
+            continue
+        if not section.appendix:
+            number += 1
+        result.append(replace(section, number=section.number if section.appendix else str(number)))
+    return tuple(result)
+
+
+def report_filename(draft: ReportDraft, extension: Literal["docx", "pdf"]) -> str:
+    title = f"{draft.profile.contract} - {draft.profile.title} {draft.period.label} Monthly Report"
+    # A display name is never allowed to create a path or a response-header line.
+    title = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "-", title).strip(" .")
+    return f"{title}.{extension}"
+
+
+def synthetic_profiles() -> tuple[ReportProfile, ...]:
+    north = Facility("north", "Demonstration North Facility", ("Demo North",))
+    south = Facility("south", "Demonstration South Facility", ("Demo South",))
+    return (
+        ReportProfile("Demonstration", "individual", "Demonstration Individual Facility", (north,)),
+        ReportProfile("Demonstration", "multi_site", "Demonstration Two-Site Group", (north, south), "multi_site"),
+        ReportProfile("Demonstration", "regional", "Demonstration Region", (north, south), "regional"),
+    )
+
+
+def synthetic_draft(profile: ReportProfile, period: ReportPeriod) -> ReportDraft:
+    # M1 deliberately has no client library. Its content blocks are explicitly
+    # marked demo text instead of pretending missing charts/reports are resolved.
+    stocks = {"scorecards": "utility_pending", "mbcx": "mbcx_pending", "training": "no_training_hours"}
+    sections = tuple(replace(s, blocks=(BlockSpec(
+        f"demo_{s.key}", "stock_text" if s.key in stocks else "rich_text", True,
+    ),)) for s in default_sections())
+    blocks = tuple(ResolvedBlock(s.blocks[0].key, "Stock text" if s.key in stocks else "This month", text=(
+        f"Synthetic demonstration — {s.title}. No client information is included. "
+        + (STOCK_TEXTS[stocks[s.key]] if s.key in stocks else "This section demonstrates the report layout.")
+    )) for s in sections)
+    return ReportDraft(profile, period, "ENFRA Asset Management Team", sections, blocks, synthetic=True)

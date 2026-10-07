@@ -22,6 +22,7 @@ index.** Adding a document means adding a row here in the same commit.
 | 3 | [`COMMIT_NOTES_2026-08-12_MSAPO_FORM_RESTORED.md`](COMMIT_NOTES_2026-08-12_MSAPO_FORM_RESTORED.md) | The one policy reversal that invalidates parts of older documents. Read it before trusting anything about PO attachments. |
 | 4 | [`EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md`](EXPENSE_REIMBURSEMENT_WORKFLOW_2026-08-11.md) | The second workflow end to end: form mapping, receipt controls, AI boundary, open policy questions. |
 | 5 | [`FAILURE_MODES_AND_CONTROLS.md`](FAILURE_MODES_AND_CONTROLS.md) | The standing failure matrix. Consult before adding a control, so you do not re-derive one that exists. |
+| 6 | [`COMMIT_NOTES_2026-10-06_MONTHLY_REPORT_M1.md`](COMMIT_NOTES_2026-10-06_MONTHLY_REPORT_M1.md) | Monthly report milestone 1: synthetic profiles, DOCX/PDF generation, state/check invariants and outstanding milestones. |
 
 Only after those does the change history below become useful.
 
@@ -72,6 +73,7 @@ what was **not** verified, and what was deliberately left alone.
 
 | Date | Document | PR | Subject |
 |---|---|---|---|
+| 2026-10-06 | [`MONTHLY_REPORT_PROGRESS.md`](MONTHLY_REPORT_PROGRESS.md) | — | Approved Monthly report design, milestones, privacy rules, test evidence and restart checkpoints. |
 | 2026-09-24 | [`CODE_REVIEW_2026-09-24.md`](CODE_REVIEW_2026-09-24.md) | — | Five reproduced defect groups corrected: strict PO amounts, foreign-currency receipt prefill, tiled-scan coverage, editable price reconciliation, and preflight OCR/text budgets. Includes 34 regression cases and release/rollback notes. |
 | 2026-09-10 | [`COMMIT_NOTES_2026-09-10_DRAFT_READING_AND_PERFORMANCE.md`](COMMIT_NOTES_2026-09-10_DRAFT_READING_AND_PERFORMANCE.md) | — | Full PO draft/source persistence, mixed-PDF and TIFF completeness, date/budget recovery, bounded background reading and retries, digest/PDF/database caching. September 11 follow-up adds incomplete-response rejection and explicit receipt-section choice preservation. |
 | 2026-08-26 | [`COMMIT_NOTES_2026-08-26_STATE_AND_HANDOFF_REMEDIATION.md`](COMMIT_NOTES_2026-08-26_STATE_AND_HANDOFF_REMEDIATION.md) | — | Explicit PO coding state, workflow-switch persistence, receipt uploader event tracking, browser-local report dates, and fail-closed Smartsheet mappings. Authentication/rate limiting remains deferred. |

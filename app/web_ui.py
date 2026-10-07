@@ -66,6 +66,11 @@ from app.expense_ui import (
     preserve_expense_draft_state,
     render_expense_workflow,
 )
+from app.monthly_report_ui import (
+    MONTHLY_REPORT_WORKFLOW,
+    preserve_report_draft_state,
+    render_monthly_report_workflow,
+)
 from app.job_numbers import (
     RRH_JOB_NUMBERS,
     job_numbers_for_contract,
@@ -335,7 +340,7 @@ CUSTOM_CSS = """
         box-sizing: border-box !important;
         column-gap: 4px !important;
         display: grid !important;
-        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
         padding: 4px !important;
         row-gap: 0 !important;
         width: 100% !important;
@@ -371,6 +376,13 @@ CUSTOM_CSS = """
     .st-key-workflow_mode button[role="radio"] span {
         color: inherit !important;
         font-weight: inherit !important;
+    }
+    /* Three long workflow names need full-width touch targets on phones. */
+    @media (max-width: 540px) {
+        .st-key-workflow_mode div[role="radiogroup"] {
+            grid-template-columns: minmax(0, 1fr) !important;
+            row-gap: 4px !important;
+        }
     }
     @media (hover: hover) and (pointer: fine) {
         .st-key-workflow_mode button[role="radio"][aria-checked="false"]:hover {
@@ -1651,6 +1663,7 @@ def main() -> None:
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     preserve_expense_draft_state()
     preserve_po_draft(st.session_state)
+    preserve_report_draft_state()
 
     # required=True is load-bearing, not cosmetic. A single-select
     # segmented_control defaults to required=False, which lets the operator
@@ -1661,7 +1674,7 @@ def main() -> None:
     # control unable to represent "no workflow" at all.
     workflow_mode = st.segmented_control(
         "Choose workflow",
-        (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW),
+        (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW, MONTHLY_REPORT_WORKFLOW),
         default=PURCHASE_WORKFLOW,
         key="workflow_mode",
         label_visibility="collapsed",
@@ -1671,8 +1684,12 @@ def main() -> None:
     # Defence in depth: required=True prevents deselection, but a stale or
     # hand-set session value could still be None/unknown. Never let an
     # unrecognized mode fall through to the PO branch by accident.
-    if workflow_mode not in (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW):
+    if workflow_mode not in (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW, MONTHLY_REPORT_WORKFLOW):
         workflow_mode = PURCHASE_WORKFLOW
+    if workflow_mode == MONTHLY_REPORT_WORKFLOW:
+        render_monthly_report_workflow(browser_token, browser_timezone)
+        _render_footer()
+        return
     if workflow_mode == EXPENSE_WORKFLOW:
         render_expense_workflow(browser_token, browser_timezone)
         _render_footer()
