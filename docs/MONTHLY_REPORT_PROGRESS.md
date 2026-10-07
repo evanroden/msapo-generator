@@ -14,60 +14,63 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current implementation branch: `feat/monthly-report-directory`, based on main
-`29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Working checkout:
-`/workspace/scratch/monthly-report-directory-work`; venv: `/workspace/scratch/monthly-report-venv`.
-The earlier `ca2afe740bcd/monthly-report` checkout did not survive the environment
-replacement. Do not restart the milestones from the stale status below.
+Current implementation branch: `feat/monthly-report-start`, based on main
+`99cdd2a688bae623d171bbba53a64ee6e59c8139`. Working checkout:
+`/workspace/scratch/monthly-report`; venv: `/workspace/scratch/monthly-report-venv`.
 
 M2 PR #58 merged at `73915b17cd1d3e5dbbe429719121e5a5400d29a8` (738 CI passes).
 M3 PR #59 merged at `012d4a85de7a364358ceee9b128a14d95509605c` (758 CI passes).
-M4 PR #60 merged at `d649cb8a90dd8382982a6a9c074997b78a152498`; exact-head Actions
-run `37634255896`, job `112836173453`: **784 passed, zero skipped**. The public app
-now shows the M4 entry text for monthly uploads/CMMS. No private Render access
-or persistent production test content was used.
+M4 PR #60 merged at `d649cb8a90dd8382982a6a9c074997b78a152498` (784 CI passes).
+PR #62 guided setup merged at `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`
+(802 CI passes). The owner then found the raw fragment queue confusing.
 
-PR #62 merged at `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Final head
-`ddbe835226342749b89ec0fa53984fb7ad96a135` passed Actions `37652428282`:
-802 tests, zero skipped. Public browser/health verified the upload-first entry,
-month/year selectors and removal of demos. The owner then tested it and found
-the item queue and empty identity grid confusing. That feedback is a release
-blocker for the next increment; do not describe the earlier UI as solved.
+PR #63 replaced it with recognizable section expanders. Head
+`41ea6ea8e27e185c1acd48f04c42fbad32d13e06` passed Actions `37666102415`
+attempt 2 / job `112952646771`: **822 passed, zero skipped**. Attempt 1
+timed out downloading LibreOffice before tests; a normal retry passed. GitHub
+initially retained the old PR head after update_ref; reopening the existing PR
+refreshed it and triggered CI on the correct commit. Merge:
+`43269786db1e7f720772e9ea8efc1b2a657da1ec`.
+Public browser verified synthetic upload, section cards, site entry, retained
+independent table schemas, zero/No values and removal of a pricing column. No
+persistent test profile was saved. All eight private DOCX samples were inspected
+locally (12–13 grouped cards); three actual-report AppTest walkthroughs opened
+every section and verified edit retention. Original private reports stay outside
+git/production. Four synthetic DOCX/PDF pages were rendered and visually checked.
 
-Current local increment replaces the fragment queue with recognizable section
-expanders, site selection and a visible remaining-steps list. Native pricing is
-blocked from client output; pricing columns are removed from imported tables;
-vendor page relevance/visual review is required before embedding. All eight
-private DOCX samples have been inspected with this grouping (12–13 cards per
-report). Three isolated AppTest walkthroughs with actual reports opened every
-section and verified edit retention. Their visual previews exposed repeated logos
-and tiny icons; the new importer groups identical design artwork and leaves small
-icons unchecked with an explicit explanation. A four-page synthetic output was
-rendered/visually checked, including price-column removal and zero/false retention.
-The complete local suite passed **815 tests with one CI-only skip**. These
-changes are NOT yet merged/deployed; exact-head CI and public checks are pending.
-PR #63 was opened; head `d14b6ec1cf05b530b0f4fe1769c9f5421bb1a070`
-passed Actions `37662686911` / job `112933919576`: 818 passed, zero skipped.
-Review found additional cases now being fixed before merge: single-Word-section
-TOCs, footer retention, split financial table headings/totals, explicit unread-
-drawing decisions and honoring omissions while merging partial work. Require a
-new green run on the updated head; the 818-pass run does not cover those fixes.
+Directory PR #64 head `80bf6456162b261d548ec04c4887a3a8c97fc3d9`, tree
+`a5312c90f03d4fb813b97fca14ce48a22fa72497`, passed Actions `37666662388` /
+job `112947521546`: **835 passed, zero skipped**. Rechecked main and proved
+its merged tree equaled the tested tree. Merge:
+`99cdd2a688bae623d171bbba53a64ee6e59c8139`.
+Public browser verified its optional directory entry, workbook upload screen
+and confirmation workflow entry. No real workbook or contacts were uploaded
+to production. The actual workbook's 25 tabs/22 detail tabs were read locally.
 
-M5 draft PR #61 remains a documentation checkpoint, now integrated with main at
-head `d9a974e46af6a1dd9d5050bf2d5b537eb749dfa9`. AI/Copilot is NOT implemented.
-Directory work is parked on `feat/monthly-report-directory`, published head
-`c410035342f1fae1cfde5a316385094ff41d07d8`, tree
-`ffb5d03b5fdac3cbe923b080d97d16b2658cc508`. No PR/merge/deployment; its dedicated
-tests now have 12 passing backend/AppTest cases. Directory integration now uses
-the section setup's site selector; the directory editor is optional. The complete
-integrated suite passed 834 tests with one CI-only skip including the newest
-section review fixes, using real LibreOffice Writer and Calc. The real workbook's
-25 tabs/22 detail tabs were inspected locally; no contacts were confirmed or
-uploaded to production. Exact-head remote CI and deployment remain pending.
-No directory PR/merge/deployment yet. PR #63 section review is now published at
-`41ea6ea8e27e185c1acd48f04c42fbad32d13e06`, with a new CI run pending. Its prior
-head passed 818 tests, but review findings were fixed afterward. Do not merge
-without green CI for the updated head or claim it is deployed yet.
+M5 is an unfinished draft PR #61, published head
+`2df5cc47e89f3ff623e09a1d1acdc287062d8142`, verified tree
+`bfb9179d5f4b0566719149a95d806a9df76a750a`. Worktree:
+`/workspace/scratch/monthly-report-m5-work`. It has strict fact/draft JSON,
+evidence citations, caches/bounds, network-only workers, optional OCR, Copilot
+prompt/parser and reviewed suggestion UI. A focused 36-test run passed. It is
+NOT merged/deployed or complete: finish carry-forward issue/proposal status,
+source-review hardening, schema/merge integration and full validation first.
+In particular, preserve old AI/manual source links when appending suggestions,
+make stale-evidence review refresh explicit, and keep unsupported numbers blocked.
+
+Latest owner feedback is the active priority: replace the one-option report
+dropdown with contract cards and site checkboxes; choose a saved design by exact
+membership, offer a same-contract design/general ENFRA template/upload when new,
+remember optional group names and most recent saved designs, and allow free
+navigation. This is implemented locally in the start modules. Final local full
+suite: **840 passed, one CI-only skip** with LibreOffice; Ruff F/E9, dependency
+consistency and diff checks passed. Two actual private DOCX walkthroughs used
+the new contract cards/site selection/upload path, opened all 12/13 sections
+and retained edits across closing/reopening. Expected review blockers remain
+visible; no private data was uploaded to production. PR/CI/deployment are pending. Reused designs
+keep schemas/branding but clear other-site contacts, charts/photos and activity.
+Editable professional org charts, simple contact fields and live page/photo-grid
+preview remain the next part of this usability work. M6 is unfinished.
 
 ## Additional owner decisions October 7
 
