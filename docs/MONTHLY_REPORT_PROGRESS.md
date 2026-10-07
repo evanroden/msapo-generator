@@ -127,9 +127,8 @@ PR review then identified and fixed omitted-logo preservation during design
 copying and missing-logo defaults on first DOCX setup. Existing imported/custom
 logos and subsequent imports remain unchanged. Grid rendering loads branding
 once and reuses each shared image. **78 focused tests passed** after these
-changes; Ruff F/E9 and diff checks passed. The preceding head
-`abcd42bd47b02669b364fc55c3303d1830a7fe73` passed Actions `37698370119`;
-the corrected head still requires its own green CI.
+changes; Ruff F/E9 and diff checks passed. The corrected release passed its
+own complete CI run, recorded below.
 PR #70 final head `95be0a338be3fc0a366da02f401c317bc1d4b40e`, tree
 `9843c459efbc22e2d1e95ec6cd59a8d87a73c250`, passed Actions `37699022024` /
 job `113057727580`: **893 passed, zero skipped**. Logs verified that exact head
@@ -297,6 +296,9 @@ Store a resolved snapshot after generation; keep DOCX even if PDF conversion fai
 Snapshot provenance pins asset versions rather than following future replacements.
 
 ## Verification and release log
+
+These entries preserve earlier checkpoint evidence. Historical pending work
+is superseded by the current release status in “Read first after any interruption.”
 
 - M4 tested checkpoint: bounded local source parsing/cache, SHA-256 duplicates,
   editable facts/classification, selected/captioned pages, serial image preparation
