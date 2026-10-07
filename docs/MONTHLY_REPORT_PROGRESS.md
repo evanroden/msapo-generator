@@ -14,9 +14,9 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current implementation branch: `feat/monthly-report-sections`, based on main
+Current implementation branch: `feat/monthly-report-directory`, based on main
 `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Working checkout:
-`/workspace/scratch/monthly-report`; venv: `/workspace/scratch/monthly-report-venv`.
+`/workspace/scratch/monthly-report-directory-work`; venv: `/workspace/scratch/monthly-report-venv`.
 The earlier `ca2afe740bcd/monthly-report` checkout did not survive the environment
 replacement. Do not restart the milestones from the stale status below.
 
@@ -58,7 +58,16 @@ head `d9a974e46af6a1dd9d5050bf2d5b537eb749dfa9`. AI/Copilot is NOT implemented.
 Directory work is parked on `feat/monthly-report-directory`, published head
 `c410035342f1fae1cfde5a316385094ff41d07d8`, tree
 `ffb5d03b5fdac3cbe923b080d97d16b2658cc508`. No PR/merge/deployment; its dedicated
-tests are unfinished. Resume it after the usability/client-output fix, then M5/M6.
+tests now have 12 passing backend/AppTest cases. Directory integration now uses
+the section setup's site selector; the directory editor is optional. The complete
+integrated suite passed 834 tests with one CI-only skip including the newest
+section review fixes, using real LibreOffice Writer and Calc. The real workbook's
+25 tabs/22 detail tabs were inspected locally; no contacts were confirmed or
+uploaded to production. Exact-head remote CI and deployment remain pending.
+No directory PR/merge/deployment yet. PR #63 section review is now published at
+`41ea6ea8e27e185c1acd48f04c42fbad32d13e06`, with a new CI run pending. Its prior
+head passed 818 tests, but review findings were fixed afterward. Do not merge
+without green CI for the updated head or claim it is deployed yet.
 
 ## Additional owner decisions October 7
 
@@ -89,6 +98,13 @@ tests are unfinished. Resume it after the usability/client-output fix, then M5/M
   not irreversible deletion. A same-month partial import must preserve/append
   current work; a deliberately new month resets monthly attachments/narrative
   while retaining standing information and previous saved versions.
+- The owner supplied a private Excel contract/site/leadership/contact directory.
+  Inspect it outside git; never publish its names, contacts, original or extracts.
+  Add a generic reviewed runtime import, distinguishing index/summary sheets
+  from site-detail sheets. Use confirmed site identities as setup suggestions,
+  not automatic regional membership or authenticated manager identity. Contacts
+  belong in confirmed contact tables, not AI narrative. Preserve source provenance,
+  revision guards and restoration. The original workbook remains unchanged.
 
 ## Owner decisions approved October 6
 

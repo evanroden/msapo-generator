@@ -25,6 +25,10 @@ def plan_signature(plan):
 
 
 def _site_options(contract):
+    from app.monthly_report_directory import load_directory
+    directory = load_directory(contract)
+    if directory:
+        return tuple(site.facility for site in directory.sites if site.active)
     if contract != contracts.RRH_CONTRACT:
         return tuple(Facility(_key(title), title) for title in contracts.sites_for_contract(contract))
     # Explicit owner-confirmed alias relationship. Never group sites by address
