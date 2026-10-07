@@ -5,7 +5,7 @@ import re
 
 import streamlit as st
 
-from app import contracts, monthly_report_library as library
+from app import monthly_report_library as library
 from app.config import operator_today
 from app.memory import (record_report_preferences, record_report_preparer,
                         remembered_report_preferences, remembered_report_preparer)
@@ -75,6 +75,10 @@ def activity_from_sources(sources, existing):
 
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
+    from app.monthly_report_directory_ui import contract_choices, render_directory
+    if st.session_state.get("report_directory_manage", False):
+        render_directory(field)
+        return
     # The legacy detailed editor remains available for layout/reordering; it is
     # not a demo and is not the primary asset-manager experience.
     if st.session_state.get("report_advanced", False):
@@ -85,8 +89,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         render_profile_workflow(browser_token, browser_timezone, field, move)
         return
     last_contract, last_profile = remembered_report_preferences(browser_token)
-    names = contracts.contract_names()
+    names = contract_choices()
     contract = st.selectbox("Contract", names, key=field("report_contract", last_contract if last_contract in names else names[0]))
+    if st.button("Manage contract and site directory", key="report_directory_open"):
+        st.session_state["report_directory_manage"] = True
+        st.rerun()
     period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
     st.caption("Suggested month: previous month on days 1–10; current month thereafter. Change it whenever needed.")
     profiles = library.list_profiles(contract)
@@ -195,6 +202,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     elif step == STEPS[2]:
         st.subheader("Keep what is still correct; update what changed")
         st.write("Check the org chart, outage workflows, facility/vendor contacts and other standing information for these exact sites.")
+        from app.monthly_report_directory_ui import review_contacts
+        review_contacts(draft, prefix, field, assets)
         for key in sorted(included - MONTHLY_BLOCKS):
             spec = specs[key]
             block = blocks.get(key, ResolvedBlock(key, "This month"))

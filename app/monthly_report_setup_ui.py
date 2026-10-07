@@ -160,8 +160,12 @@ def render_setup(contract, period, prepared, field, *, state=None):
         facilities = existing.facilities
         st.write("; ".join(f.title + (" (also: " + ", ".join(f.aliases) + ")" if f.aliases else "") for f in facilities))
     else:
-        rows = _grid(p + "_facilities", [{"Facility": "", "Alternate names": ""}], num_rows="dynamic", hide_index=True)
-        facilities = tuple(Facility(_key(str(r.get("Facility") or "")), str(r["Facility"]).strip(),
+        from app.monthly_report_directory_ui import choose_facilities
+        selected_sites = choose_facilities(contract, p, field)
+        seed = [{"Identity": f.key, "Facility": f.title, "Alternate names": "; ".join(f.aliases)} for f in selected_sites]
+        rows = _grid(p + "_facilities" + ("_" + _signature(seed) if seed else ""), seed or [{"Identity": "", "Facility": "", "Alternate names": ""}],
+                     num_rows="dynamic", hide_index=True, disabled=["Identity"], column_config={"Identity": None})
+        facilities = tuple(Facility(r.get("Identity") or _key(str(r.get("Facility") or "")), str(r["Facility"]).strip(),
                                     tuple(a.strip() for a in str(r.get("Alternate names") or "").split(";") if a.strip()))
                            for r in rows if str(r.get("Facility") or "").strip())
     st.caption("One row per actual site. Separate alternate names with semicolons; aliases are not additional sites. Membership and scope are never inferred from the title.")

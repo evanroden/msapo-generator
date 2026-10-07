@@ -14,8 +14,8 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current implementation branch: `feat/monthly-report-setup`, based on main
-`d649cb8a90dd8382982a6a9c074997b78a152498`. Working checkout:
+Current implementation branch: `feat/monthly-report-directory`, based on main
+`29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Working checkout:
 `/workspace/scratch/monthly-report`; venv: `/workspace/scratch/monthly-report-venv`.
 The earlier `ca2afe740bcd/monthly-report` checkout did not survive the environment
 replacement. Do not restart the milestones from the stale status below.
@@ -27,19 +27,44 @@ run `37634255896`, job `112836173453`: **784 passed, zero skipped**. The public 
 now shows the M4 entry text for monthly uploads/CMMS. No private Render access
 or persistent production test content was used.
 
-M5 draft PR #61 is a documentation-only recovery checkpoint, head
-`ebc7185779f33133738d76015882cbd285e14028`. M5 AI/Copilot is NOT implemented.
+M5 draft PR #61 started as a documentation-only recovery checkpoint, head
+`ebc7185779f33133738d76015882cbd285e14028`. M5 AI/Copilot is NOT implemented yet.
 The owner requested a focused setup/UX increment before continuing it: remove
 the demo switch; upload-first real report setup; month/year only; anonymous
 device/profile preferences; saved partial drafts; and mixed-month item review.
-The current setup branch implements those changes locally. The complete local
+The setup increment implements those changes. The complete local
 suite passed **801 tests with one CI-only skip**, plus compileall/Ruff/pip check,
 privacy/docs-index/diff checks. All six synthetic output pages passed visual QA.
-PR #62 is open. First published head `12c8241699ba9ca4235d755c19908cf1d0c0ee91`
-passed CI run `37651587941`; a final preservation-hardening commit is being
-published. It is NOT merged or deployed yet. Require green CI on the updated
-exact head, then merge and publicly verify. Integrate main into the M5 branch and continue
-M5/M6 rather than claiming the guided action-field append is full AI drafting.
+PR #62 merged at `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Exact feature head
+`ddbe835226342749b89ec0fa53984fb7ad96a135` passed Actions run `37652428282`, job
+`112898927182`: **802 passed, zero skipped**. Final tree
+`1aa781f0b82d34f75563cd48f9ddcae33642a06e` matched local before the protected merge.
+Public deployment verification passed: HTTP 200 health, no demo/library switch,
+September 2026 month/year controls, real-report selector and 128 MB upload-first
+DOCX setup. No persistent public test records or private Render access were used.
+Continue M5/M6 rather than claiming the guided action-field append is full AI drafting.
+
+## Active usability correction (owner screenshots)
+
+The owner tested PR #62 and found the upload workflow confusing. Its low-level
+item queue exposed 158 fragments (including punctuation), mapping destinations
+and an empty facility grid. Prioritize replacing this with recognizable section
+expanders, existing-content previews, plain keep/edit/replace/add controls and a
+clear completion checklist. Do not make an asset manager classify XML fragments.
+Keep mixed-month review and preservation safeguards, but group ordinary content
+by report section and reserve extra review for actual uncertainty. Simplify site
+selection; show human next steps rather than raw dataclass validation messages.
+
+Directory import work is parked on `feat/monthly-report-directory`: local bounded
+sparse XLSX parser, versioned storage and reviewed UI are implemented, but the
+dedicated regression suite and deployment are NOT complete. Existing setup/UI
+tests passed (22). No supplied workbook content was saved into git or production.
+Resume this increment after the section-first usability fix. M5 draft PR #61 now
+has merge checkpoint `d9a974e46af6a1dd9d5050bf2d5b537eb749dfa9`; its tree matched local.
+
+The October 7 `409 environment_offline` interruption is resolved. Its recovery
+checkpoint is preserved in M5 history; no controls were bypassed. The replacement
+checkout and venv above are the current paths, not the earlier session paths.
 
 ## Additional owner decisions October 7
 
@@ -60,6 +85,13 @@ M5/M6 rather than claiming the guided action-field append is full AI drafting.
   not irreversible deletion. A same-month partial import must preserve/append
   current work; a deliberately new month resets monthly attachments/narrative
   while retaining standing information and previous saved versions.
+- The owner supplied a private Excel contract/site/leadership/contact directory.
+  Inspect it outside git; never publish its names, contacts, original or extracts.
+  Add a generic reviewed runtime import, distinguishing index/summary sheets
+  from site-detail sheets. Use confirmed site identities as setup suggestions,
+  not automatic regional membership or authenticated manager identity. Contacts
+  belong in confirmed contact tables, not AI narrative. Preserve source provenance,
+  revision guards and restoration. The original workbook remains unchanged.
 
 ## Owner decisions approved October 6
 
