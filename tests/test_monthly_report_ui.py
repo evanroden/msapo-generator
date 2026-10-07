@@ -121,6 +121,8 @@ def test_guided_placeholder_warning_download_and_review_gates(monkeypatch, tmp_p
     step(app, 4)
     assert next(b for b in app.button if b.label == "Generate DOCX and PDF").disabled
     assert any("template instructions" in e.value for e in app.error)
+    assert any("This month’s work → Monthly Activity Summary" in e.value for e in app.error)
+    assert not any("activity_summary" in e.value for e in app.error)
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("August 2026 activity.").run()
     step(app, 4)
@@ -134,6 +136,22 @@ def test_guided_placeholder_warning_download_and_review_gates(monkeypatch, tmp_p
     step(app, 4)
     assert not app.get("download_button")
     assert not next(w for w in app.checkbox if w.label == "I checked these specific warnings").value
+
+
+def test_completion_messages_name_the_action_and_destination():
+    from app.monthly_report_checks import ReportCheck
+    from app.monthly_report_model import synthetic_draft
+    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    draft = replace(draft, sections=default_sections())
+    text = guided.review_message(ReportCheck("required", "Resolve required block: org_chart.", True, "org_chart"), draft)
+    assert text == "Add organizational chart in Site information → Organizational chart."
+    text = guided.review_message(ReportCheck("required", "Resolve required block: work_orders.", True, "work_orders"), draft)
+    assert "work_orders" not in text
+    assert "work-order summary" in text and "This month’s work → Monthly Activity Summary" in text
+    text = guided.review_message(ReportCheck("client_pages", "internal", True, "water_reports"), draft)
+    assert "Water treatment reports" in text and "no prices" in text
+    text = guided.review_message(ReportCheck("ai_number", "internal", True, "activity_summary"), draft)
+    assert "unsupported numbers" in text and "wording and linked evidence" in text
 
 
 def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, tmp_path):

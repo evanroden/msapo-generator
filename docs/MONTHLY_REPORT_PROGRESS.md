@@ -60,6 +60,13 @@ was used. This proves the new UI release is live, not saved-profile end-to-end
 production acceptance. The remaining operator tasks are reviewed directory import,
 site-specific setup and acceptance of a finished private report.
 
+Final checkpoint PR #68 also replaces internal field IDs in guided review
+messages with the recognizable item name, a concrete action and the destination
+step/section. It does not relax any content/review gate. Focused UI/docs/hygiene
+validation passed **35 tests**; Ruff F/E9 and diff checks passed. PR #68 is the
+authoritative record for its final exact-head CI and merge status; the earlier
+M6 CI total does not cover this subsequent wording change.
+
 All six implementation milestones and the requested UX increments have merged.
 Follow-up work should respond to operator acceptance findings, not restart the
 implementation. The operator guide describes the available controls.
