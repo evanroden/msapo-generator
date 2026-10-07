@@ -14,11 +14,37 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current branch: `feat/monthly-report-m4`.
-Current stage: milestones 1–3 merged/deployed; milestone 4 tested for publication.
-Next action: publish/verify the M4 branch tree and milestone PR, require green
-exact-head CI before merge/public verification. M4 has not been merged or
-deployed. M5 AI and M6 polish follow.
+Current branch: `feat/monthly-report-m5` (recovery checkpoint only).
+Current stage: milestones 1–3 merged and publicly verified; milestone 4 merged,
+with public production verification still pending. M5 and M6 are not implemented.
+Next action: restore normal terminal/browser access, fetch the published M5
+checkpoint and current main, verify M4 on the public production app, then
+implement M5 AI/Copilot and M6 polish. Do not repeat completed milestones.
+
+## October 7 environment interruption
+
+M4 PR #60 merged successfully at d649cb8a90dd8382982a6a9c074997b78a152498.
+Its exact feature head 6222d6d5981d0e0a090f5fa222b864be75724c09 has tree
+09f25f1aa5fd88ec1561237469d6e45994d7c00c. Actions run 37634255896,
+job 112836173453, passed 784 tests with zero skipped. Local/remote tree equality
+was verified before the merge. Main was rechecked immediately before merging.
+
+The terminal disconnected during the post-merge local fetch. A normal retry and
+the public browser both then returned `409 Conflict, environment_offline` /
+`Environment is not connected`. This is an environment availability failure;
+no approval rejection or unsafe-operation determination was reported. Do not
+bypass controls. GitHub remained available, so this documentation-only recovery
+checkpoint was published through the authenticated Git-object connector. No
+untested implementation was added or deployed during the outage.
+
+Last verified local checkout: branch feat/monthly-report-m5 at the M4 feature
+head above, with a clean working tree. The attempted fetch/fast-forward did not
+complete; inspect actual state on resumption. The new remote M5 checkpoint is a
+descendant of the M4 main merge and can be integrated normally after fetching.
+No M5 source edits were made. M4 production deployment/UI has NOT been verified.
+M2 and M3 public UI checks were completed earlier; no persistent production test
+data was created. The supplied private examples were inspected/rendered outside
+git, and synthetic M4 DOCX/PDF QA also remains outside git.
 
 ## Owner decisions approved October 6
 
