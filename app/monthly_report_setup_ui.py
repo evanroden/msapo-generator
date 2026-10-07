@@ -59,7 +59,7 @@ def _image_review(path, item, prefix, field, scope):
     return st.text_area("Corrected image text / review notes", key=field(image_key + "_text_" + _signature(read_text), read_text), height=120)
 
 
-def render_setup(contract, period, prepared, field, *, state=None):
+def render_legacy_setup(contract, period, prepared, field, *, state=None):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else "new", period.key))
     image_scope = (library.imported_review_scope(contract, state.profile.key, period) if state else "") or prefix
     st.subheader("Use a report you already have")
@@ -160,8 +160,12 @@ def render_setup(contract, period, prepared, field, *, state=None):
         facilities = existing.facilities
         st.write("; ".join(f.title + (" (also: " + ", ".join(f.aliases) + ")" if f.aliases else "") for f in facilities))
     else:
-        rows = _grid(p + "_facilities", [{"Facility": "", "Alternate names": ""}], num_rows="dynamic", hide_index=True)
-        facilities = tuple(Facility(_key(str(r.get("Facility") or "")), str(r["Facility"]).strip(),
+        from app.monthly_report_directory_ui import choose_facilities
+        selected_sites = choose_facilities(contract, p, field)
+        seed = [{"Identity": f.key, "Facility": f.title, "Alternate names": "; ".join(f.aliases)} for f in selected_sites]
+        rows = _grid(p + "_facilities" + ("_" + _signature(seed) if seed else ""), seed or [{"Identity": "", "Facility": "", "Alternate names": ""}],
+                     num_rows="dynamic", hide_index=True, disabled=["Identity"], column_config={"Identity": None})
+        facilities = tuple(Facility(r.get("Identity") or _key(str(r.get("Facility") or "")), str(r["Facility"]).strip(),
                                     tuple(a.strip() for a in str(r.get("Alternate names") or "").split(";") if a.strip()))
                            for r in rows if str(r.get("Facility") or "").strip())
     st.caption("One row per actual site. Separate alternate names with semicolons; aliases are not additional sites. Membership and scope are never inferred from the title.")
@@ -201,3 +205,8 @@ def render_setup(contract, period, prepared, field, *, state=None):
             st.rerun()
         except (ValueError, OSError) as exc:
             st.error(str(exc))
+
+
+def render_setup(contract, period, prepared, field, *, state=None):
+    from app.monthly_report_section_ui import render_section_setup
+    return render_section_setup(contract, period, prepared, field, state=state)

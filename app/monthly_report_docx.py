@@ -170,7 +170,7 @@ def outline(draft: ReportDraft) -> tuple[tuple[str, tuple[str, ...], int], ...]:
     result = []
     for section in included_sections(draft.sections):
         images = sum(len(blocks[b.key].asset_hashes) for b in section.blocks if b.key in blocks)
-        has_other = any(blocks[b.key].text or blocks[b.key].rows for b in section.blocks if b.key in blocks)
+        has_other = any(blocks[b.key].text or blocks[b.key].rows or blocks[b.key].extra_tables for b in section.blocks if b.key in blocks)
         result.append((f"{section.number}. {section.title}",
                        tuple(b.key for b in section.blocks if b.key in blocks), 1 + max(1, images + int(has_other))))
     return tuple(result)
@@ -211,7 +211,9 @@ def estimate_bytes(draft: ReportDraft, asset_loader: Callable[[str], bytes] | No
     included_keys = used_block_keys(draft)
     used_blocks = [b for b in draft.blocks if b.key in included_keys and b.source != "Omit"]
     references = used_asset_references(draft)
-    return 150_000 + sum(len(b.text.encode()) + sum(len(c.encode()) for row in b.rows for c in row) for b in used_blocks) + (
+    return 150_000 + sum(len(b.text.encode()) + sum(len(c.encode()) for row in b.rows for c in row)
+                        + sum(len(c.encode()) for t in b.extra_tables for row in (t.columns, *t.rows) for c in row)
+                        for b in used_blocks) + (
         sum(len(asset_loader(ref)) for ref in references) if asset_loader else 0
     )
 
@@ -310,6 +312,18 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
                 for values in block.rows:
                     if len(values) > width:
                         raise ValueError(f"Too many table columns in {spec.key}.")
+                    for cell, value in zip(table.add_row().cells, values):
+                        cell.text = value
+            for imported in block.extra_tables:
+                if not imported.columns or not any(c.strip() for row in imported.rows for c in row):
+                    continue
+                table = document.add_table(rows=1, cols=len(imported.columns))
+                table.style = "Light Shading Accent 1"
+                for cell, title in zip(table.rows[0].cells, imported.columns):
+                    cell.text = title
+                for values in imported.rows:
+                    if len(values) > len(imported.columns):
+                        raise ValueError("An imported table has more cells than columns.")
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = value
     return _save(document)

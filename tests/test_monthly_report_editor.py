@@ -41,6 +41,11 @@ def generate_button(app):
     return next(button for button in app.button if button.label == "Generate DOCX and PDF")
 
 
+def review_pages(app):
+    for key in [w.key for w in app.checkbox if w.label == "I checked all pages in this section: relevant and price-free"]:
+        app.checkbox(key).check().run()
+
+
 def mock_chart_upload(monkeypatch):
     stream = BytesIO()
     Image.new("RGB", (50, 40), "blue").save(stream, "PNG")
@@ -62,6 +67,8 @@ def test_one_off_org_chart_generates_snapshot_without_changing_library(monkeypat
     mock_chart_upload(monkeypatch)
     org_source(app).set_value("Replace once").run()
     assert not app.exception
+    assert generate_button(app).disabled
+    review_pages(app)
     assert not generate_button(app).disabled
     generate_button(app).click().run()
     assert not app.exception
@@ -90,10 +97,12 @@ def test_shared_org_chart_needs_confirmation_and_next_template_uses_it(monkeypat
     assert not app.exception
     state = library.load_profile(profile.contract, profile.key)
     assert state.block("org_chart").asset_hashes
+    review_pages(app)
     assert not generate_button(app).disabled
     app.selectbox("report_month_number").set_value(10).run()
     assert not app.exception
     assert org_source(app).value == "Library"
+    review_pages(app)
     assert not generate_button(app).disabled
 
 
@@ -110,12 +119,14 @@ def test_last_month_keeps_section_and_block_order_and_one_off_assets(monkeypatch
     org_source(app).set_value("Replace once").run()
     next(b for b in app.button if b.key.endswith("_organization_down")).click().run()
     next(b for b in app.button if b.key.endswith("_org_chart_down")).click().run()
+    review_pages(app)
     generate_button(app).click().run()
     saved = library.load_snapshot(profile.contract, profile.key, ReportPeriod(2026, 9))
     assert saved.draft.sections[0].key == "activity"
     assert saved.draft.sections[1].blocks[0].key == "business_hours_workflow"
     app.selectbox("report_month_number").set_value(10).run()
     assert org_source(app).value == "Last month"
+    review_pages(app)
     assert not generate_button(app).disabled
     generate_button(app).click().run()
     next_saved = library.load_snapshot(profile.contract, profile.key, ReportPeriod(2026, 10))

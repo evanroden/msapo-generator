@@ -22,7 +22,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, SectionSpec, ReportSource, default_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -184,6 +184,7 @@ def profile_from_dict(value: dict) -> ReportProfile:
             section_titles=tuple(tuple(v) for v in value.get("section_titles", ())),
             section_block_order=tuple((k, tuple(v)) for k, v in value.get("section_block_order", ())),
             imported_from=value.get("imported_from", ""),
+            asset_tags=tuple(value.get("asset_tags", ())),
         )
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report profile.") from exc
@@ -198,6 +199,10 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             ai_written=value.get("ai_written", False), reviewed_fingerprint=value.get("reviewed_fingerprint", ""),
             pending_library_save=value.get("pending_library_save", False),
             asset_captions=tuple(value.get("asset_captions", ())),
+            extra_tables=tuple(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t.get("reference", "")) for t in value.get("extra_tables", ())),
+            client_reviewed_fingerprint=value.get("client_reviewed_fingerprint", ""),
+            ai_evidence_fingerprint=value.get("ai_evidence_fingerprint", ""),
+            ai_paragraphs=tuple(DraftParagraph(p["text"], tuple(p["fact_ids"]), tuple(p["references"]), tuple(p.get("flags", ()))) for p in value.get("ai_paragraphs", ())),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid saved report block.") from exc
@@ -237,6 +242,8 @@ def source_from_dict(value: dict) -> ReportSource:
     for key in ("tags", "page_texts", "selected_pages", "needs_vision", "notices"):
         fields[key] = tuple(fields.get(key, ()))
     fields["captions"] = tuple(tuple(v) for v in fields.get("captions", ()))
+    fields["client_page_reviews"] = tuple(tuple(v) for v in fields.get("client_page_reviews", ()))
+    fields["facts"] = tuple(EvidenceFact(**{**f, "tags": tuple(f.get("tags", ())), "flags": tuple(f.get("flags", ()))}) for f in fields.get("facts", ()))
     return ReportSource(**fields)
 
 

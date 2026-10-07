@@ -39,11 +39,37 @@ def _preview(block: ResolvedBlock | None, assets: dict[str, bytes], profile: Rep
         st.text(block.text)
     if block.rows:
         st.dataframe(list(block.rows), hide_index=True)
+    for table in block.extra_tables:
+        st.dataframe([dict(zip(table.columns, row)) for row in table.rows], hide_index=True)
     if len(block.asset_hashes) > 1:
         st.caption(f"{len(block.asset_hashes)} prepared images/pages; previewing the first. Review individual pages in monthly evidence.")
     for reference in block.asset_hashes[:1]:
         raw = assets.get(reference) or library.read_asset(profile.contract, profile.key, reference)
         st.image(raw, width="stretch")
+
+
+def review_client_images(draft, assets, prefix, field):
+    """Review visible assets before export, including older saved designs."""
+    from app.monthly_report_model import used_block_keys
+    from app.monthly_report_sections import readable_label
+    blocks = []
+    used = used_block_keys(draft)
+    for block in draft.blocks:
+        if block.source == "Omit" or block.key not in used or not block.asset_hashes:
+            blocks.append(block)
+            continue
+        confirmed = block.client_reviewed_fingerprint == block.fingerprint
+        with st.expander(readable_label(block.key) + (" · pages checked" if confirmed else " · check pages before download")):
+            key = prefix + "_client_" + block.key + "_" + block.fingerprint
+            index = st.selectbox("Page to view", list(range(len(block.asset_hashes))),
+                                 format_func=lambda n, count=len(block.asset_hashes): f"Page {n+1} of {count}", key=field(key + "_page", 0))
+            ref = block.asset_hashes[index]
+            st.image(assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref), width="stretch")
+            st.caption("Check every selected page. Remove pages showing any price, legal-only terms, or no useful report content in the section editor or upload review.")
+            checked = st.checkbox("I checked all pages in this section: relevant and price-free", key=field(key + "_ok", confirmed))
+            block = replace(block, client_reviewed_fingerprint=block.fingerprint if checked else "")
+        blocks.append(block)
+    return replace(draft, blocks=tuple(blocks))
 
 
 def _grid(key: str, seed: list[dict], **kwargs) -> list[dict]:
@@ -83,6 +109,7 @@ def _profile_manager(contract: str, state: library.LibraryState | None, field) -
         ], disabled=["Block"], hide_index=True,
             column_config={"Default source": st.column_config.SelectboxColumn(options=BLOCK_SOURCES, required=True)})
         actor = st.text_input("Library editor name", key=field(prefix + "_actor", ""))
+        tags = st.text_area("Confirmed equipment tags (one per line)", key=field(prefix + "_tags", "\n".join(profile.asset_tags) if profile else ""))
         try:
             facilities = tuple(Facility(
                 row.get("Identity") or _key(row["Facility"]),
@@ -94,7 +121,8 @@ def _profile_manager(contract: str, state: library.LibraryState | None, field) -
                                       excluded_sections=tuple(excluded), block_overrides=profile.block_overrides if profile else (),
                                       section_titles=profile.section_titles if profile else (),
                                       section_block_order=profile.section_block_order if profile else (),
-                                      imported_from=profile.imported_from if profile else "")
+                                      imported_from=profile.imported_from if profile else "",
+                                      asset_tags=tuple(dict.fromkeys(t.strip() for t in tags.splitlines() if t.strip())))
         except (ValueError, TypeError, KeyError) as exc:
             candidate = None
             st.caption(str(exc))
@@ -389,6 +417,7 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
             st.write(title)
             st.caption(f"{', '.join(block_keys)} · at least {pages} pages")
     st.subheader("6. Check and generate")
+    draft = review_client_images(draft, assets, prefix, field)
     estimated = estimate_bytes(draft, loader)
     st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Target: under 15 MB.")
     checks = preflight(draft, estimated)

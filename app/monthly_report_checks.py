@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.monthly_report_model import PLACEHOLDER_PHRASES, ReportDraft, included_sections, layout_blocks, used_block_keys
+from app.monthly_report_content_policy import contains_price, price_column, table_has_pricing
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,33 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     texts = [("cover", draft.profile.title), ("cover", draft.prepared_by), ("footer", draft.address_line)]
     texts.extend(("cover", f.title) for f in draft.profile.facilities)
     texts.append(("cover", draft.profile.contract))
+    for block in draft.blocks:
+        if block.key in used_block_keys(draft) and block.source != "Omit":
+            if block.ai_written and (block.ai_evidence_fingerprint or block.ai_paragraphs):
+                from app.monthly_report_ai import evidence_fingerprint
+                if not block.ai_evidence_fingerprint or block.ai_evidence_fingerprint != evidence_fingerprint(draft.sources, block.references):
+                    checks.append(ReportCheck("ai_evidence", "Evidence changed or a source is missing. Refresh and review the AI draft before generating.", True, block.key))
+            if any("Unsupported number" in flag for paragraph in block.ai_paragraphs for flag in paragraph.flags):
+                checks.append(ReportCheck("ai_number", "Correct unsupported numerical statements in the AI draft.", True, block.key))
+            if block.asset_hashes and block.client_reviewed_fingerprint != block.fingerprint:
+                checks.append(ReportCheck("client_pages", f"Check the images/pages in {block.key.replace('_', ' ')} for relevance and visible pricing before including them.", True, block.key))
+            if block.asset_hashes:
+                from app.monthly_report_content_policy import page_allowed
+                source_index = {s.id: s for s in draft.sources}
+                for reference in block.references:
+                    parts = reference.split(":")
+                    source = source_index.get(parts[0])
+                    if source and len(parts) == 3 and parts[1].isdigit():
+                        page = int(parts[1])
+                        if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):
+                            checks.append(ReportCheck("client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))
+            for table in block.extra_tables:
+                texts.extend((block.key, cell) for row in table.rows for cell in row)
+                texts.extend((block.key, title) for title in table.columns)
+                if table_has_pricing(table.columns, table.rows):
+                    checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, block.key))
+                if any(price_column(title) and any(i < len(r) and r[i].strip() for r in table.rows) for i, title in enumerate(table.columns)):
+                    checks.append(ReportCheck("pricing", "Remove pricing columns from the client report.", True, block.key))
     layout_keys = {spec.key for spec in layout_blocks()} & used_block_keys(draft)
     for block in draft.blocks:
         if block.key in layout_keys and block.source != "Omit":
@@ -87,13 +115,14 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         has_content = False
         for spec in section.blocks:
             block = blocks.get(spec.key)
+            has_extra_tables = bool(block and any(any(c.strip() for row in t.rows for c in row) for t in block.extra_tables))
             present = bool(block and block.source != "Omit" and (
-                block.text.strip() or block.asset_hashes or any(any(c.strip() for c in row) for row in block.rows)
+                block.text.strip() or block.asset_hashes or has_extra_tables or any(any(c.strip() for c in row) for row in block.rows)
             ))
             if present and spec.type in ("image_page", "image_grid", "pdf_pages"):
-                present = bool(block.asset_hashes or (block.source == "Stock text" and spec.stock_text_keys))
+                present = bool(block.asset_hashes or has_extra_tables or (block.source == "Stock text" and spec.stock_text_keys))
             if present and spec.type in ("table", "work_order_grid"):
-                present = bool(block.rows or (block.source == "Stock text" and spec.stock_text_keys))
+                present = bool(block.rows or has_extra_tables or block.asset_hashes or (block.source == "Stock text" and spec.stock_text_keys))
             has_content |= present
             if spec.required and not present:
                 checks.append(ReportCheck("required", f"Resolve required block: {spec.key}.", True, spec.key))
@@ -110,10 +139,16 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 texts.extend((spec.key, caption) for caption in block.asset_captions)
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
                 if block.rows:
+                    if table_has_pricing(tuple(c.title for c in spec.columns), block.rows, work_orders=spec.type == "work_order_grid"):
+                        checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, spec.key))
                     texts.extend((spec.key, col.title) for col in spec.columns)
+                    if any(price_column(col.title, col.type) and any(i < len(r) and r[i].strip() for r in block.rows) for i, col in enumerate(spec.columns)):
+                        checks.append(ReportCheck("pricing", "Remove pricing columns from the client report.", True, spec.key))
         if not has_content:
             checks.append(ReportCheck("empty", f"{section.title} is included but empty.", False, section.key))
     for key, text in texts:
+        if contains_price(text):
+            checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key))
         phrases = placeholder_matches(text)
         if phrases:
             checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key))

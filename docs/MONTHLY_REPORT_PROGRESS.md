@@ -14,9 +14,9 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current implementation branch: `feat/monthly-report-m5`, integrating main
-`29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Working checkout:
-`/workspace/scratch/monthly-report`; venv: `/workspace/scratch/monthly-report-venv`.
+Current implementation branch: `feat/monthly-report-m5`, integrating the released
+section/directory increments. Working checkout:
+`/workspace/scratch/monthly-report-m5-work`; venv: `/workspace/scratch/monthly-report-venv`.
 The earlier `ca2afe740bcd/monthly-report` checkout did not survive the environment
 replacement. Do not restart the milestones from the stale status below.
 
@@ -27,29 +27,61 @@ run `37634255896`, job `112836173453`: **784 passed, zero skipped**. The public 
 now shows the M4 entry text for monthly uploads/CMMS. No private Render access
 or persistent production test content was used.
 
-M5 draft PR #61 started as a documentation-only recovery checkpoint, head
-`ebc7185779f33133738d76015882cbd285e14028`. M5 AI/Copilot is NOT implemented yet.
-The owner requested a focused setup/UX increment before continuing it: remove
-the demo switch; upload-first real report setup; month/year only; anonymous
-device/profile preferences; saved partial drafts; and mixed-month item review.
-The setup increment implements those changes. The complete local
-suite passed **801 tests with one CI-only skip**, plus compileall/Ruff/pip check,
-privacy/docs-index/diff checks. All six synthetic output pages passed visual QA.
-PR #62 merged at `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Exact feature head
-`ddbe835226342749b89ec0fa53984fb7ad96a135` passed Actions run `37652428282`, job
-`112898927182`: **802 passed, zero skipped**. Final tree
-`1aa781f0b82d34f75563cd48f9ddcae33642a06e` matched local before the protected merge.
-Public deployment verification passed: HTTP 200 health, no demo/library switch,
-September 2026 month/year controls, real-report selector and 128 MB upload-first
-DOCX setup. No persistent public test records or private Render access were used.
-Continue M5/M6 rather than claiming the guided action-field append is full AI drafting.
+PR #62 merged at `29476cbc5ec0c43f2b01b19492561e44f24b6cfd`. Final head
+`ddbe835226342749b89ec0fa53984fb7ad96a135` passed Actions `37652428282`:
+802 tests, zero skipped. Public browser/health verified the upload-first entry,
+month/year selectors and removal of demos. The owner then tested it and found
+the item queue and empty identity grid confusing. That feedback is a release
+blocker for the next increment; do not describe the earlier UI as solved.
 
-The October 7 `409 environment_offline` interruption is resolved. Its recovery
-checkpoint is preserved in M5 history; no controls were bypassed. The replacement
-checkout and venv above are the current paths, not the earlier session paths.
+PR #63 replaces the fragment queue with recognizable section
+expanders, site selection and a visible remaining-steps list. Native pricing is
+blocked from client output; pricing columns are removed from imported tables;
+vendor page relevance/visual review is required before embedding. All eight
+private DOCX samples have been inspected with this grouping (12–13 cards per
+report). Three isolated AppTest walkthroughs with actual reports opened every
+section and verified edit retention. Their visual previews exposed repeated logos
+and tiny icons; the new importer groups identical design artwork and leaves small
+icons unchecked with an explicit explanation. A four-page synthetic output was
+rendered/visually checked, including price-column removal and zero/false retention.
+Final head `41ea6ea8e27e185c1acd48f04c42fbad32d13e06` passed Actions
+`37666102415` attempt 2 / job `112952646771`: **822 passed, zero skipped**.
+Attempt 1 timed out downloading LibreOffice before any tests; the retry passed.
+GitHub initially retained the previous PR head after the branch update; closing
+and reopening the same PR refreshed it and triggered the correct exact-head CI.
+PR #63 merged at `43269786db1e7f720772e9ea8efc1b2a657da1ec`.
+Public browser verified the new entry, synthetic upload, section expanders, site
+entry, two preserved table schemas, zero/No values and removed pricing column.
+No persistent test profile was saved. A screenshot is outside git in scratch.
+
+Directory PR #64 head `80bf6456162b261d548ec04c4887a3a8c97fc3d9`, tree
+`a5312c90f03d4fb813b97fca14ce48a22fa72497`, passed Actions `37666662388` /
+job `112947521546`: **835 passed, zero skipped**. Rechecked main at the #63
+merge and proved its merge result equals the tested tree. Merged at
+`99cdd2a688bae623d171bbba53a64ee6e59c8139`. Public directory verification is
+pending at this checkpoint. The real workbook's 25 tabs/22 detail tabs were
+inspected locally; no real contacts were confirmed or uploaded to production.
+
+M5 draft PR #61 is IN PROGRESS, not released. Local source now includes strict
+JSON fact extraction, evidence-linked narrative suggestions, SHA/context caches,
+shared network worker/retry conventions, request bounds, Copilot prompt/parser,
+optional scanned-page reading and reviewed append/replace UI. Nine backend tests
+pass; focused prior UI/source tests pass. New AI AppTest cases and full-suite
+validation are in progress. Carry-forward status/evidence, further review-state
+hardening and real-renderer QA remain before marking M5 ready. M6 is unfinished.
 
 ## Additional owner decisions October 7
 
+- Client-facing monthly output must NEVER include prices. This overrides earlier
+  cost/amount columns and the earlier Copilot prompt's permission to include
+  stated amounts. Retain original evidence privately, but exclude priced pages,
+  legal-only boilerplate and blank/signature-only pages from output. Native/OCR
+  checks are assistive; visually confirm image pages and invalidate review when
+  their content/captions change. Never claim OCR guarantees all prices were found.
+- Test the actual supplied reports locally as a novice operator, not only
+  synthetic fixtures. After upload, show section expanders with existing content
+  and substitution/edit options. Never ask an asset manager to route hundreds of
+  internal XML items. Originals remain unchanged; unmatched work stays reviewable.
 - Only real saved reports in the UI; synthetic builders remain test fixtures.
 - Start with contract and an uploaded preferred report, then confirm explicit
   scope, site identities and aliases. Save logical order/titles/table schemas

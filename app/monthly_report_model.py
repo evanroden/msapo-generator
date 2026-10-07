@@ -54,6 +54,7 @@ class ReportProfile:
     section_titles: tuple[tuple[str, str], ...] = ()
     section_block_order: tuple[tuple[str, tuple[str, ...]], ...] = ()
     imported_from: str = ""
+    asset_tags: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.scope_type not in ("individual", "multi_site", "regional"):
@@ -130,6 +131,13 @@ class SectionSpec:
 
 
 @dataclass(frozen=True)
+class ReportTable:
+    columns: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    reference: str = ""
+
+
+@dataclass(frozen=True)
 class ResolvedBlock:
     key: str
     source: str
@@ -141,16 +149,44 @@ class ResolvedBlock:
     reviewed_fingerprint: str = ""
     pending_library_save: bool = False
     asset_captions: tuple[str, ...] = ()
+    extra_tables: tuple[ReportTable, ...] = ()
+    client_reviewed_fingerprint: str = ""
+    ai_evidence_fingerprint: str = ""
+    ai_paragraphs: tuple[DraftParagraph, ...] = ()
 
     @property
     def fingerprint(self) -> str:
         # Review is evidence-specific, not a sticky boolean. New sources must
         # invalidate it even if the visible paragraph happens to be unchanged.
-        return _digest(replace(self, reviewed_fingerprint=""))
+        return _digest(replace(self, reviewed_fingerprint="", client_reviewed_fingerprint=""))
 
     @property
     def reviewed(self) -> bool:
         return not self.ai_written or self.reviewed_fingerprint == self.fingerprint
+
+
+@dataclass(frozen=True)
+class EvidenceFact:
+    id: str
+    source_id: str
+    page: int
+    kind: str
+    text: str
+    quote: str
+    date: str = ""
+    facility: str = ""
+    vendor: str = ""
+    tags: tuple[str, ...] = ()
+    status: str = ""
+    flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DraftParagraph:
+    text: str
+    fact_ids: tuple[str, ...]
+    references: tuple[str, ...]
+    flags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -177,6 +213,8 @@ class ReportSource:
     needs_vision: tuple[int, ...] = ()
     captions: tuple[tuple[int, str], ...] = ()
     notices: tuple[str, ...] = ()
+    client_page_reviews: tuple[tuple[int, str], ...] = ()
+    facts: tuple[EvidenceFact, ...] = ()
 
     @property
     def fingerprint(self) -> str:
