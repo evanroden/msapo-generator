@@ -59,7 +59,7 @@ def _image_review(path, item, prefix, field, scope):
     return st.text_area("Corrected image text / review notes", key=field(image_key + "_text_" + _signature(read_text), read_text), height=120)
 
 
-def render_setup(contract, period, prepared, field, *, state=None):
+def render_legacy_setup(contract, period, prepared, field, *, state=None):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else "new", period.key))
     image_scope = (library.imported_review_scope(contract, state.profile.key, period) if state else "") or prefix
     st.subheader("Use a report you already have")
@@ -201,3 +201,8 @@ def render_setup(contract, period, prepared, field, *, state=None):
             st.rerun()
         except (ValueError, OSError) as exc:
             st.error(str(exc))
+
+
+def render_setup(contract, period, prepared, field, *, state=None):
+    from app.monthly_report_section_ui import render_section_setup
+    return render_section_setup(contract, period, prepared, field, state=state)

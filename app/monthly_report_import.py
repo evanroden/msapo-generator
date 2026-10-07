@@ -17,6 +17,7 @@ from zipfile import BadZipFile, ZipFile
 
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
+from PIL import Image, UnidentifiedImageError
 
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
@@ -59,6 +60,9 @@ class ImportItem:
     rows: tuple[tuple[str, ...], ...] = ()
     image_part: str = ""
     note: str = ""
+    image_width: int = 0
+    image_height: int = 0
+    image_digest: str = ""
 
     @property
     def label(self) -> str:
@@ -191,6 +195,8 @@ def _heading(text: str) -> str | None:
     compact = re.sub(r"[^a-z]", "", text.casefold())
     if "tableofcontents" in compact or text.casefold().count("section") > 2 or len(text) > 250:
         return None
+    if re.fullmatch(r"(?:section\s*)?\d*[.\s:–-]*water\s+treatment(?:\s+reports?)?", text.strip(), re.I):
+        return "water"
     hits = [key for key, terms in _SECTION_TERMS.items() if any(term in compact for term in terms)]
     if len(hits) == 1:
         return hits[0]
@@ -236,6 +242,7 @@ def inspect_docx(path: Path) -> DocxInspection:
             digest.update(chunk)
     items, titles, notices = [], [], []
     word_section, section, text_total, cell_total = 1, "", 0, 0
+    toc_section = 0
 
     def add(kind, part, position, **kwargs):
         nonlocal text_total, cell_total
@@ -248,6 +255,19 @@ def inspect_docx(path: Path) -> DocxInspection:
     try:
         with _package(path) as archive:
             names = set(archive.namelist())
+            image_metadata = {}
+            def metadata(target):
+                if target not in image_metadata:
+                    with archive.open(target) as stream:
+                        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+                    width, height = 0, 0
+                    try:
+                        with archive.open(target) as stream, Image.open(stream) as picture:
+                            width, height = picture.size  # Header only; no raster decode.
+                    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+                        pass
+                    image_metadata[target] = dict(image_width=width, image_height=height, image_digest=digest)
+                return image_metadata[target]
             rels = _relations(archive, "word/document.xml")
             parts = ["word/document.xml"]
             parts += sorted({target for target, kind in rels.values() if target in names and kind.rsplit("/", 1)[-1] in ("header", "footer", "footnotes", "endnotes")})
@@ -278,8 +298,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                             text = _text(element)
                             detected = None
                             if part == "word/document.xml" and element.tag != W + "tbl":
-                                detected = _heading(text)
-                                if text and len(text) < 100:
+                                if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
+                                    toc_section, section, heading_fragments = word_section, "", []
+                                style = element.find(f"{W}pPr/{W}pStyle")
+                                if (word_section == toc_section and style is not None
+                                        and style.get(W + "val", "").casefold().startswith("heading")
+                                        and not re.match(r"section\s+\d", text, re.I) and _heading(text)):
+                                    toc_section = 0
+                                detected = _heading(text) if word_section != toc_section else None
+                                if word_section == toc_section:
+                                    heading_fragments = []
+                                elif text and len(text) < 100:
                                     if not detected:
                                         detected = _heading(" ".join([*heading_fragments, text]))
                                     heading_fragments = [*heading_fragments, text][-3:]
@@ -324,7 +353,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 supported = safe and Path(target).suffix.lower() in RASTER
                                 add("image" if supported else "unsupported", part, position,
                                     image_part=target if safe else "", suggested_slot=_suggest("image", text, section, heading=bool(detected), part=part) if supported else "",
-                                    note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.")
+                                    note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
+                                    **(metadata(target) if supported else {}))
                             graphics = [e for e in element.iter() if e.tag == A + "graphicData" and not e.get("uri", "").endswith("/picture")]
                             if graphics:
                                 add("unsupported", part, position, text=text,
@@ -349,7 +379,7 @@ def inspect_docx(path: Path) -> DocxInspection:
     return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section)
 
 
-def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True):
+def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, preview: bool = False):
     if item.kind != "image" or not item.image_part.startswith("word/media/"):
         raise ImportError("Select an extractable image.")
     with _package(path) as archive:
@@ -357,7 +387,8 @@ def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True):
         if info.file_size > 30 * 1024 * 1024:
             raise ImportError("This image exceeds 30 MB. Export a smaller copy from Word.")
         raw = archive.read(item.image_part)
-    return normalize_report_image(raw, Path(item.image_part).suffix, line_art=line_art)
+    return normalize_report_image(raw, Path(item.image_part).suffix, line_art=line_art,
+                                  frame=(4, 5) if preview else (7, 9), dpi=96 if preview else 200)
 
 
 def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapping, ...]) -> MappedImport:
@@ -427,5 +458,9 @@ def imported_draft(profile: ReportProfile, period: ReportPeriod, prepared_by: st
     sections = tuple(replace(s, included=any(b.key in keys for b in s.blocks),
                              blocks=tuple(overrides.get(b.key, b) for b in s.blocks)) for s in profile_sections(profile))
     footer = next((b.text for b in mapped.blocks if b.key == "footer_text"), "")
-    return ReportDraft(profile, period, prepared_by, sections,
-                       tuple(replace(b, source="Last month") for b in mapped.blocks), footer)
+    blocks = []
+    for block in mapped.blocks:
+        reviewed = block.client_reviewed_fingerprint == block.fingerprint
+        block = replace(block, source="Last month")
+        blocks.append(replace(block, client_reviewed_fingerprint=block.fingerprint if reviewed else ""))
+    return ReportDraft(profile, period, prepared_by, sections, tuple(blocks), footer)

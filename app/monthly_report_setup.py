@@ -127,7 +127,8 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
                    rows=existing.rows + tuple(r for r in incoming.rows if r not in existing.rows),
                    asset_hashes=tuple(images), asset_captions=tuple(captions),
                    references=tuple(dict.fromkeys((*existing.references, *incoming.references))),
-                   ai_written=existing.ai_written or incoming.ai_written, reviewed_fingerprint="")
+                   extra_tables=existing.extra_tables + tuple(t for t in incoming.extra_tables if t not in existing.extra_tables),
+                   ai_written=existing.ai_written or incoming.ai_written, reviewed_fingerprint="", client_reviewed_fingerprint="")
 
 
 def merge_drafts(existing: ReportDraft | None, incoming: ReportDraft) -> ReportDraft:
@@ -137,7 +138,7 @@ def merge_drafts(existing: ReportDraft | None, incoming: ReportDraft) -> ReportD
         raise ValueError("Only merge drafts for the same confirmed profile and month.")
     old_specs = {b.key: b for s in existing.sections for b in s.blocks} | {b.key: b for b in layout_blocks()}
     old_blocks = {b.key: b for b in existing.blocks}
-    occupied = {b.key for b in existing.blocks if b.text.strip() or b.rows or b.asset_hashes}
+    occupied = {b.key for b in existing.blocks if b.text.strip() or b.rows or b.asset_hashes or b.extra_tables}
     new_specs = {b.key: b for s in incoming.sections for b in s.blocks}
     for s in incoming.sections:
         for spec in s.blocks:
@@ -158,4 +159,5 @@ def merge_drafts(existing: ReportDraft | None, incoming: ReportDraft) -> ReportD
 def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
     """Only an explicitly new month drops period-specific attachments, never a mixed import."""
     return replace(draft, period=period, sources=(), blocks=tuple(
-        ResolvedBlock(b.key, "This month") if b.key in MONTHLY_BLOCKS else b for b in draft.blocks))
+        ResolvedBlock(b.key, "This month", extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables))
+        if b.key in MONTHLY_BLOCKS else b for b in draft.blocks))

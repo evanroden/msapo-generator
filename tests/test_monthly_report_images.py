@@ -58,6 +58,7 @@ def test_images_embed_with_asset_identity_and_remain_deterministic():
     draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
     draft = replace(draft, sections=(replace(draft.sections[0], blocks=(BlockSpec("chart", "image_page", True),)),),
                     blocks=(ResolvedBlock("chart", "Library", asset_hashes=(reference,)),))
+    draft = replace(draft, blocks=tuple(replace(b, client_reviewed_fingerprint=b.fingerprint) for b in draft.blocks))
     loader = lambda key: {reference: image.data}[key]
     data = assemble_docx(draft, asset_loader=loader)
     assert assemble_docx(draft, asset_loader=loader) == data

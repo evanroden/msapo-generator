@@ -74,6 +74,8 @@ def test_native_26_page_pdf_is_not_truncated_to_vision_limit(profile):
 def test_pdf_page_selection_caption_and_cache(profile, monkeypatch):
     content, _ = sources.ingest(profile, "synthetic.pdf", pdf_bytes(3))
     content = replace(content, source=replace(content.source, selected_pages=(1, 3), captions=((3, "Inspected final page"),)))
+    from app.monthly_report_content_policy import page_fingerprint
+    content = replace(content, source=replace(content.source, client_page_reviews=tuple((n, page_fingerprint(content.source, n)) for n in (1, 3))))
     blocks = sources.prepare_pages(profile, (content,), ((content.source.id, "vendor_reports"),))
     assert len(blocks[0].asset_hashes) == 2
     assert blocks[0].asset_captions[-1] == "Inspected final page"

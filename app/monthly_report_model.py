@@ -130,6 +130,13 @@ class SectionSpec:
 
 
 @dataclass(frozen=True)
+class ReportTable:
+    columns: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    reference: str = ""
+
+
+@dataclass(frozen=True)
 class ResolvedBlock:
     key: str
     source: str
@@ -141,12 +148,14 @@ class ResolvedBlock:
     reviewed_fingerprint: str = ""
     pending_library_save: bool = False
     asset_captions: tuple[str, ...] = ()
+    extra_tables: tuple[ReportTable, ...] = ()
+    client_reviewed_fingerprint: str = ""
 
     @property
     def fingerprint(self) -> str:
         # Review is evidence-specific, not a sticky boolean. New sources must
         # invalidate it even if the visible paragraph happens to be unchanged.
-        return _digest(replace(self, reviewed_fingerprint=""))
+        return _digest(replace(self, reviewed_fingerprint="", client_reviewed_fingerprint=""))
 
     @property
     def reviewed(self) -> bool:
@@ -177,6 +186,7 @@ class ReportSource:
     needs_vision: tuple[int, ...] = ()
     captions: tuple[tuple[int, str], ...] = ()
     notices: tuple[str, ...] = ()
+    client_page_reviews: tuple[tuple[int, str], ...] = ()
 
     @property
     def fingerprint(self) -> str:

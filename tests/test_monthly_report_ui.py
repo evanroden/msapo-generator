@@ -119,11 +119,22 @@ def test_guided_placeholder_warning_download_and_review_gates(monkeypatch, tmp_p
     assert not next(w for w in app.checkbox if w.label == "I checked these specific warnings").value
 
 
-def test_upload_first_setup_requires_per_item_review_and_explicit_regional_membership(monkeypatch, tmp_path):
+def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, tmp_path):
     from io import BytesIO
     from test_monthly_report_setup import make_docx
     from app import monthly_report_setup_ui as setup_ui
     from app.monthly_report_import import inspect_docx
+    # AppTest 1.61 does not serialize tracked expander state yet. Preserve its
+    # actual session value alongside the ordinary widget events it does support.
+    from streamlit.testing.v1.element_tree import ElementTree
+    original_states = ElementTree.get_widget_states
+    def states(tree):
+        values = original_states(tree)
+        for key, identity in tree.session_state._state._key_id_mapper._key_id_mapping.items():
+            if key.startswith("report_setup_") and key.endswith("_open"):
+                values.widgets.add(id=identity, bool_value=bool(tree.session_state[key]))
+        return values
+    monkeypatch.setattr(ElementTree, "get_widget_states", states)
     path = make_docx(tmp_path)
     original_bytes = path.read_bytes()
     upload = BytesIO(original_bytes)
@@ -131,32 +142,36 @@ def test_upload_first_setup_requires_per_item_review_and_explicit_regional_membe
     real_upload = setup_ui.st.file_uploader
     monkeypatch.setattr(setup_ui.st, "file_uploader", lambda label, *a, **kw:
                         upload if label == "Older or partially completed report" else real_upload(label, *a, **kw))
-    real_grid = setup_ui._grid
-    monkeypatch.setattr(setup_ui, "_grid", lambda key, *a, **kw:
-                        [{"Facility": "Synthetic North", "Alternate names": "Synthetic Legacy North"},
-                         {"Facility": "Synthetic South", "Alternate names": ""}] if key.endswith("_facilities") else real_grid(key, *a, **kw))
     app = monthly(monkeypatch, tmp_path / "data", saved=False)
     next(b for b in app.button if b.label == "Analyze report").click().run()
     assert not app.exception
     assert not library.list_profiles(RRH_CONTRACT)
-    next(w for w in app.selectbox if w.label == "What are you working on?").set_value("Finish a partially completed report").run()
+    next(w for w in app.text_input if w.label == "Site not listed? Add its name here").set_value("Synthetic North; Synthetic South").run()
+    next(w for w in app.radio if w.label == "This report covers").set_value("A region").run()
     next(w for w in app.text_input if w.label == "Report name").set_value("Synthetic Region").run()
-    next(w for w in app.selectbox if w.label == "Report scope").set_value("regional").run()
+    next(w for w in app.text_input if w.label == "Other names for Synthetic North").set_value("Synthetic Legacy North").run()
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
-    assert next(b for b in app.button if b.label == "Save design and continue this report").disabled
+    assert next(b for b in app.button if b.label == "Continue to this month’s updates").disabled
+    assert not any(w.label in ("Use this item", "Where it belongs", "Content to review") for w in app.selectbox)
     # A stale July cover must not discard September content or unread images.
-    for _ in range(len(inspect_docx(path).items) + 1):
-        selectors = [w for w in app.selectbox if w.label == "Use this item"]
-        if not selectors:
-            break
-        destination = next(w for w in app.selectbox if w.label == "Where it belongs")
-        choice = "Keep in report" if destination.value else "Save for reference"
-        selectors[0].set_value(choice).run()
-        next(b for b in app.button if b.label == "Confirm item and continue").click().run()
+    from app.monthly_report_sections import section_reviews
+    inspection = inspect_docx(path)
+    prefix = "report_setup_" + setup_ui._signature((RRH_CONTRACT, "new", "2026-09")) + "_" + inspection.sha256[:16]
+    for section in section_reviews(inspection):
+        app.session_state[prefix + "_section_" + section.key + "_open"] = True
+        app.run()
+        next(w for w in app.checkbox if w.key.startswith(prefix + "_section_" + section.key + "_ready_")).check().run()
         assert not app.exception
-    next(w for w in app.checkbox if w.label == "I checked the content decisions and confirm these sites, aliases and shared save").check().run()
-    assert not next(b for b in app.button if b.label == "Save design and continue this report").disabled
-    next(b for b in app.button if b.label == "Save design and continue this report").click().run()
+        assert app.session_state[prefix + "_section_plans"][section.key]["approved"], (section.key, [w.value for w in app.error])
+        app.session_state[prefix + "_section_" + section.key + "_open"] = False
+        app.run()
+    # A closed/reopened section retains its content-bound confirmation.
+    app.session_state[prefix + "_section_activity_open"] = True
+    app.run()
+    assert next(w for w in app.checkbox if w.key.startswith(prefix + "_section_activity_ready_")).value
+    next(w for w in app.checkbox if w.label == "Save this report and its reusable design for these sites").check().run()
+    assert not next(b for b in app.button if b.label == "Continue to this month’s updates").disabled, [w.value for w in (*app.info, *app.error)]
+    next(b for b in app.button if b.label == "Continue to this month’s updates").click().run()
     assert not app.exception
     profile = library.list_profiles(RRH_CONTRACT)[0]
     assert profile.scope_type == "regional" and len(profile.facilities) == 2
@@ -166,4 +181,4 @@ def test_upload_first_setup_requires_per_item_review_and_explicit_regional_membe
     assert draft.period == ReportPeriod(2026, 9)
     assert "September 2026 repair" in next(b.text for b in draft.blocks if b.key == "activity_summary")
     assert next(b for b in draft.blocks if b.key == "vendor_reports").asset_hashes
-    assert next(r for r in app.radio if r.label == "Report steps").value == guided.STEPS[0]
+    assert next(r for r in app.radio if r.label == "Report steps").value == guided.STEPS[1]
