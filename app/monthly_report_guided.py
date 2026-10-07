@@ -38,7 +38,10 @@ def _initial_draft(state, period, prepared):
     return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
 
 
-def _edit_content(spec, block, state, prefix, assets, field):
+def _edit_content(spec, block, state, prefix, assets, field, draft=None):
+    if draft is not None and spec.type == "image_grid":
+        from app.monthly_report_visual_ui import edit_photos
+        return edit_photos(draft, block, prefix, assets, field)
     key = prefix + "_edit_" + spec.key
     if block.extra_tables:
         from app.monthly_report_editor import _cell_text
@@ -240,9 +243,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     with st.expander(section.title, expanded=section.key == "activity"):
                         for spec in relevant:
                             block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
-                            if block.source == "Omit" and spec.key != "activity_summary":
+                            if block.source == "Omit" and spec.key != "activity_summary" and spec.type != "image_grid":
                                 continue
-                            blocks[spec.key] = _edit_content(spec, block, state, prefix, assets, field)
+                            blocks[spec.key] = _edit_content(spec, block, state, prefix, assets, field, draft)
     elif step == STEPS[2]:
         st.subheader("Keep what is still correct; update what changed")
         st.write("Check the org chart, outage workflows, facility/vendor contacts and other standing information for these exact sites.")
@@ -253,12 +256,19 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 blocks[key] = _edit_content(specs[key], blocks.get(key, ResolvedBlock(key, "This month")), state, prefix, assets, field)
         from app.monthly_report_directory_ui import review_contacts
         review_contacts(draft, prefix, field, assets)
+        from app.monthly_report_visual_ui import edit_org_chart, edit_contacts
+        from app.monthly_report_sections import readable_label
         for key in sorted(included - MONTHLY_BLOCKS):
             spec = specs[key]
             block = blocks.get(key, ResolvedBlock(key, "This month"))
-            with st.expander(key.replace("_", " ").capitalize()):
-                edit = st.checkbox("Update this item", key=field(prefix + "_change_" + key, False))
-                if edit:
+            with st.expander(readable_label(key)):
+                if key == "org_chart":
+                    blocks[key] = edit_org_chart(draft, block, prefix, assets, field)
+                    if not blocks[key].org_nodes:
+                        blocks[key] = _edit_content(spec, blocks[key], state, prefix, assets, field)
+                elif key in ("contact_matrix", "subcontractor_matrix"):
+                    blocks[key] = edit_contacts(draft, spec, block, prefix, assets, field)
+                elif st.checkbox("Update this item", key=field(prefix + "_change_" + key, False)):
                     blocks[key] = _edit_content(spec, block, state, prefix, assets, field)
                 else:
                     _preview(block, assets, profile)

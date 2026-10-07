@@ -37,6 +37,12 @@ def _preview(block: ResolvedBlock | None, assets: dict[str, bytes], profile: Rep
         return
     if block.text:
         st.text(block.text)
+    if block.org_nodes:
+        from app.monthly_report_visuals import org_page
+        try:
+            st.image(org_page(block.org_nodes), width="stretch")
+        except ValueError as exc:
+            st.info(str(exc))
     if block.rows:
         st.dataframe(list(block.rows), hide_index=True)
     for table in block.extra_tables:
@@ -238,8 +244,9 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
                     # selected behind the error message.
                     st.session_state.pop(once_key, None)
         reference = st.session_state.get(once_key)
-        text = st.text_input("Caption", key=field(key + "_caption", ""))
-        block = ResolvedBlock(spec.key, source, text=text, asset_hashes=(reference,) if reference else ())
+        text = st.text_input("Caption", key=field(key + "_caption", starting.text))
+        block = (ResolvedBlock(spec.key, source, text=text, asset_hashes=(reference,) if reference else ())
+                 if reference or uploaded else replace(starting, source=source, text=text))
     elif spec.type in ("table", "work_order_grid"):
         columns = [c.title for c in spec.columns] or ["Facility", "Item", "Status"]
         seed, config = _typed_table(spec, starting.rows)
@@ -263,7 +270,7 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
         label = st.text_input("Library label", key=field(key + "_label", spec.key.replace("_", " ")))
         confirmation_id = _signature((state.revision, block.fingerprint, actor, label))
         confirmed = st.checkbox("Save this replacement as a new shared library version", key=key + "_confirm_" + confirmation_id)
-        has_content = bool(block.text.strip() or block.rows or block.asset_hashes)
+        has_content = bool(block.text.strip() or block.rows or block.asset_hashes or block.org_nodes or block.extra_tables)
         if st.button("Confirm library replacement", key=key + "_save", disabled=not (confirmed and actor.strip() and has_content)):
             try:
                 library.replace_block(state.profile.contract, state.profile.key, spec.key, replace(block, source="Library"),

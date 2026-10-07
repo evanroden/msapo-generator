@@ -22,7 +22,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, ReportTable, SectionSpec, ReportSource, default_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, OrgChartNode, SectionSpec, ReportSource, default_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -200,6 +200,8 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             asset_captions=tuple(value.get("asset_captions", ())),
             extra_tables=tuple(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t.get("reference", "")) for t in value.get("extra_tables", ())),
             client_reviewed_fingerprint=value.get("client_reviewed_fingerprint", ""),
+            org_nodes=tuple(OrgChartNode(**node) for node in value.get("org_nodes", ())),
+            photos_per_page=int(value.get("photos_per_page", 1)),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid saved report block.") from exc
