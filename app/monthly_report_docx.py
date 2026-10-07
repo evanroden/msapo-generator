@@ -345,6 +345,12 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
                         raise ValueError("An imported table has more cells than columns.")
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = value
+        carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
+        if carried:
+            from app.monthly_report_followups import report_text
+            document.add_heading("Carried-forward items", 2)
+            for item in carried:
+                _text(document, report_text(item))
     return _save(document)
 
 

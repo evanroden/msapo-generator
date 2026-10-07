@@ -227,7 +227,7 @@ def test_photo_upload_caption_layout_and_removal_survive_steps(monkeypatch, tmp_
     draft = next(
         v
         for k, v in app.session_state.filtered_state.items()
-        if k.startswith("report_guided_") and k.endswith("_draft")
+        if k.startswith("report_guided_") and k.endswith("_draft") and hasattr(v,"blocks")
     )
     photos = next(b for b in draft.blocks if b.key == "improvements")
     assert len(photos.asset_hashes) == 2 and photos.photos_per_page == 3

@@ -167,6 +167,15 @@ def merge_drafts(existing: ReportDraft | None, incoming: ReportDraft) -> ReportD
 
 def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
     """Only an explicitly new month drops period-specific attachments, never a mixed import."""
-    return replace(draft, period=period, sources=(), blocks=tuple(
-        ResolvedBlock(b.key, "This month", photos_per_page=b.photos_per_page, extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables))
-        if b.key in MONTHLY_BLOCKS else b for b in draft.blocks))
+    if period == draft.period:
+        return draft
+    from app.monthly_report_followups import seed_followups
+    follow_ups = seed_followups(draft)
+    carried_keys = {"equipment_issues", "proposals"}
+    return replace(draft, period=period, sources=(), follow_ups=follow_ups, blocks=tuple(
+        ResolvedBlock(b.key, "This month", photos_per_page=b.photos_per_page,
+                      asset_hashes=b.asset_hashes if b.key in carried_keys else (),
+                      asset_captions=b.asset_captions if b.key in carried_keys else (),
+                      references=b.references if b.key in carried_keys and b.asset_hashes else (),
+                      extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables))
+        if b.key in MONTHLY_BLOCKS or b.key in carried_keys else b for b in draft.blocks))

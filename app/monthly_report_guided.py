@@ -238,6 +238,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             draft = replace(draft, sections=tuple(replace(s, included=True) if s.key == "activity" else s for s in draft.sections))
         from app.monthly_report_ai_ui import render_drafting
         draft, blocks = render_drafting(draft, blocks, prefix, field)
+        from app.monthly_report_followups import render_followups
+        draft = render_followups(draft, prefix, field)
         st.subheader("Update this month’s text")
         st.caption("Edit the wording below. Suggested text must be checked against its linked evidence before download.")
         monthly_keys = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis"}
@@ -254,6 +256,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     elif step == STEPS[2]:
         st.subheader("Keep what is still correct; update what changed")
         st.write("Check the org chart, outage workflows, facility/vendor contacts and other standing information for these exact sites.")
+        with st.expander("Equipment tags for these sites (optional)"):
+            tags_text = st.text_area("Known equipment tags", key=field(prefix + "_asset_tags", "\n".join(profile.asset_tags)), help="One tag per line, such as the tag printed on a pump or air handler. Suggestions flag tags that are not on this confirmed list.")
+            tags = tuple(dict.fromkeys(t.strip() for t in tags_text.splitlines() if t.strip()))
+            tags_ok = st.checkbox("Remember these equipment tags for these exact report sites", key=prefix + "_tags_ok_" + _signature((tags,state.revision,prepared)))
+            if st.button("Save equipment tags", key=prefix + "_tags_save", disabled=not (tags_ok and prepared.strip())):
+                updated_profile = replace(profile, asset_tags=tags)
+                library.save_profile(updated_profile, expected_revision=state.revision, actor=prepared, confirmed=True)
+                st.session_state[draft_key] = replace(draft, profile=updated_profile)
+                st.rerun()
         with st.expander("Client logo, cover photo and footer", expanded=not blocks.get("client_logo", ResolvedBlock("client_logo", "This month")).asset_hashes):
             st.caption("Drop in a replacement logo or photo. Images fit the available space without stretching; transparent backgrounds are printed on white.")
             for key in ("client_logo", "brand_logo", "cover_photo", "footer_text"):

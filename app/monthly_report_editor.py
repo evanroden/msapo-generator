@@ -17,7 +17,7 @@ from app.memory import record_report_preparer, remembered_report_preparer
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image, outline
 from app.monthly_report_model import (
-    BLOCK_SOURCES, STOCK_TEXTS, BlockSpec, Facility, ReportDraft, ReportPeriod,
+    BLOCK_SOURCES, STOCK_TEXTS, BlockSpec, Facility, ReportDraft,
     ReportProfile, ResolvedBlock, default_sections, layout_blocks, profile_sections,
 )
 from app.ui_highlight import highlight_needed_fields
@@ -225,6 +225,10 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
                               key=field(key + "_stock", spec.stock_text_keys[0]))
         return ResolvedBlock(spec.key, source, text=STOCK_TEXTS[chosen])
     starting = previous.get(spec.key) or saved or ResolvedBlock(spec.key, source)
+    if starting.ai_paragraphs:
+        st.info("Edit this AI wording and its source links in the guided report’s wording and sources box. Save that progress before changing the layout here.")
+        _preview(starting, assets, state.profile)
+        return replace(starting, source=source)
     if spec.type in ("image_page", "image_grid", "pdf_pages"):
         label = "Replace org chart" if spec.key == "org_chart" else "Replace " + spec.key.replace("_", " ")
         uploaded = st.file_uploader(label, type=["png", "jpg", "jpeg", "webp", "heic", "heif"], key=key + "_upload",
@@ -351,7 +355,8 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     st.caption("To import an older or partially completed report, return to the guided report’s first step. Save any current advanced edits first.")
     prefix = "report_draft_" + _signature((contract, profile.key, period.key))
     current = library.load_snapshot(contract, profile.key, period)
-    prior = current or library.load_snapshot(contract, profile.key, ReportPeriod.previous(period.start))
+    from app.monthly_report_start import latest_snapshot
+    prior = current or latest_snapshot(contract, profile.key, period)
     if prior and not current:
         from app.monthly_report_setup import new_month_draft
         prior = replace(prior, draft=new_month_draft(prior.draft, period))
@@ -363,8 +368,11 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
                          or (prior.draft.prepared_by if prior else "ENFRA Asset Management Team"))
     prepared = st.text_input("Prepared by", key=prepared_key)
     from app.monthly_report_upload_ui import render_uploads
+    if prefix + "_evidence" not in st.session_state and from_prior and prior.draft.sources:
+        from app.monthly_report_sources import ingest, source_bytes
+        st.session_state[prefix + "_evidence"] = tuple(replace(ingest(profile, s.filename, source_bytes(profile, s))[0], source=s) for s in prior.draft.sources)
     report_sources, monthly_blocks, monthly_specs = render_uploads(profile, period, prefix, field)
-    st.caption("AI drafts and Copilot context are coming next. Review the extracted facts and enter narrative text in the report blocks now.")
+    st.caption("Use the guided report to draft source-linked wording, review carried issues and edit people/photo pages. These controls manage detailed layout and shared assets.")
 
     st.subheader("5. Assemble the report")
     base_sections = prior.draft.sections if from_prior else profile_sections(profile)
@@ -417,7 +425,8 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
                                     divider_asset=divider.asset_hashes[0] if divider.asset_hashes and divider.source != "Omit" else ""))
     footer = next(b for b in blocks if b.key == "footer_text")
     draft = ReportDraft(profile, period, prepared, tuple(sections), tuple(blocks),
-                        address_line=footer.text if footer.source != "Omit" else "", sources=report_sources)
+                        address_line=footer.text if footer.source != "Omit" else "", sources=report_sources,
+                        follow_ups=prior.draft.follow_ups if from_prior else ())
     loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, profile.key, ref)
     with st.expander("Live outline"):
         for title, block_keys, pages in outline(draft):

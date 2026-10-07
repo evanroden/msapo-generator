@@ -73,6 +73,15 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     texts = [("cover", draft.profile.title), ("cover", draft.prepared_by), ("footer", draft.address_line)]
     texts.extend(("cover", f.title) for f in draft.profile.facilities)
     texts.append(("cover", draft.profile.contract))
+    from app.monthly_report_followups import problems, report_text
+    for item in draft.follow_ups:
+        for message in problems(item, draft):
+            checks.append(ReportCheck("follow_up", message, True, item.key))
+        if item.included:
+            section_key = "issues" if item.category == "issue" else "proposals"
+            if section_key not in {s.key for s in sections}:
+                checks.append(ReportCheck("follow_up_section", "Include the section containing carried work, or explicitly resolve and remove the item.", True, item.key))
+            texts.append((section_key, report_text(item)))
     for block in draft.blocks:
         if block.key in used_block_keys(draft) and block.source != "Omit":
             if block.ai_written and (block.ai_evidence_fingerprint or block.ai_paragraphs):
@@ -123,13 +132,16 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         if not section.title.strip():
             checks.append(ReportCheck("title", "Enter a title for every included section.", True, section.key))
         texts.append((section.key, section.title))
-        has_content = False
+        carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
+        has_content = bool(carried)
         for spec in section.blocks:
             block = blocks.get(spec.key)
             has_extra_tables = bool(block and any(any(c.strip() for row in t.rows for c in row) for t in block.extra_tables))
             present = bool(block and block.source != "Omit" and (
                 block.text.strip() or block.asset_hashes or block.org_nodes or has_extra_tables or any(any(c.strip() for c in row) for row in block.rows)
             ))
+            if spec.key == "equipment_issues" and carried:
+                present = True
             if present and spec.type in ("image_page", "image_grid", "pdf_pages"):
                 present = bool(block.asset_hashes or block.org_nodes or has_extra_tables or (block.source == "Stock text" and spec.stock_text_keys))
             if present and spec.type in ("table", "work_order_grid"):

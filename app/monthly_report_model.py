@@ -233,6 +233,20 @@ class ReportSource:
 
 
 @dataclass(frozen=True)
+class ReportFollowUp:
+    key: str
+    category: str
+    text: str
+    carried_from: str
+    status: str = "ongoing"
+    update: str = ""
+    evidence_note: str = ""
+    references: tuple[str, ...] = ()
+    included: bool = True
+    reviewed_fingerprint: str = ""
+
+
+@dataclass(frozen=True)
 class ReportDraft:
     profile: ReportProfile
     period: ReportPeriod
@@ -242,6 +256,7 @@ class ReportDraft:
     address_line: str = ""
     synthetic: bool = False
     sources: tuple[ReportSource, ...] = ()
+    follow_ups: tuple[ReportFollowUp, ...] = ()
 
     @property
     def fingerprint(self) -> str:

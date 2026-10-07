@@ -56,10 +56,17 @@ def test_latest_saved_design_survives_a_gap_in_reporting(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     profile = synthetic_profiles()[0]
     draft, assets = design_seed(profile, ReportPeriod(2026, 7), "Synthetic Editor")
+    assert not any(c.type=="currency" or c.title in ("Cost","Amount") for s in draft.sections for b in s.blocks for c in b.columns)
     save_design_start(draft, assets, actor="Synthetic Editor", confirmed=True)
     library.save_snapshot(draft, expected_revision=0, entered_editor="Synthetic Editor")
     assert latest_snapshot(profile.contract, profile.key, ReportPeriod(2026, 9)).draft.period.month == 7
     assert latest_snapshot(profile.contract, profile.key, ReportPeriod(2026, 6)) is None
+    # Reusing a saved snapshot must not turn image/text definitions into invalid
+    # table overrides when the new design is saved.
+    source=library.load_profile(profile.contract,profile.key)
+    other=replace(synthetic_profiles()[1],key="another-site-set")
+    copied,images=design_seed(other,ReportPeriod(2026,9),"Synthetic Editor",source)
+    assert save_design_start(copied,images,actor="Synthetic Editor",confirmed=True).profile.key==other.key
 
 
 def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatch, tmp_path):

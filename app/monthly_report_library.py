@@ -22,7 +22,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, ReportTable, OrgChartNode, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -234,6 +234,7 @@ def draft_from_dict(value: dict) -> ReportDraft:
             blocks=tuple(block_from_dict(b) for b in value["blocks"]),
             address_line=value.get("address_line", ""), synthetic=value.get("synthetic", False),
             sources=tuple(source_from_dict(s) for s in value.get("sources", ())),
+            follow_ups=tuple(ReportFollowUp(**{**item, "references":tuple(item.get("references",()))}) for item in value.get("follow_ups",())),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid report snapshot.") from exc
@@ -293,6 +294,8 @@ def _expected(value: dict, revision: int) -> None:
 def _validate_profile(profile: ReportProfile) -> None:
     if not profile.title.strip():
         raise LibraryError("Enter the report profile title.")
+    if len(profile.asset_tags) > 500 or any(not isinstance(tag,str) or not tag.strip() or len(tag)>80 for tag in profile.asset_tags):
+        raise LibraryError("Use at most 500 confirmed equipment tags, each up to 80 characters.")
     skeleton = default_sections()
     if profile.section_order and (len(set(profile.section_order)) != len(profile.section_order)
                                  or set(profile.section_order) != {s.key for s in skeleton}):
