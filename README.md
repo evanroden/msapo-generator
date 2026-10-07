@@ -1,12 +1,15 @@
 # Process Control
 
-Process Control provides two workflows in one Dockerized Streamlit application:
+Process Control provides three workflows in one Dockerized Streamlit application:
 
 1. Purchase Order Process Control turns a vendor quote into a reviewed,
    prefilled Smartsheet request and a two-file supporting package.
 2. Expense Report Process Control turns receipt images/PDFs into the official
    employee-reimbursement workbook, a combined PDF packet, and a ready-to-review
    email draft.
+3. Monthly report assembles an Operations and Maintenance Monthly Review from
+   explicit facility/multi-site/regional profiles, a versioned content library,
+   confirmed DOCX imports and reviewed report content, with DOCX/PDF downloads.
 
 The repository retains its historical `msapo-generator` name. The PO workflow is
 no longer an email generator; email-draft generation is used only by the
@@ -106,6 +109,31 @@ The Smartsheet job-number description is converted to its exact numeric or `VI`
 identifier in the JDE form. Leading zeros in every accounting code are preserved
 as text. Rows are grouped by section and coding, and the appended receipt pages
 follow that same order.
+
+## Monthly report workflow
+
+Choose **Monthly report**, then **Use the profile library**. Create a profile
+with an explicit scope, display title, facility identities and aliases. An alias
+does not create a second facility. Shared saves require entered-editor
+attribution and confirmation; names are not authenticated identities. Passcodes
+remain deferred during owner-authorized internal testing.
+
+**Import an existing DOCX** inspects packages up to 128 MB. Review extracted
+images, text and tables, select destinations/columns, and confirm membership and
+the final mapping set. Save as versioned library defaults or a prior report
+snapshot. Unmapped content remains in the staged review. Native Word charts,
+shapes and unsupported image formats need exported PNG/JPEG replacements; no
+external links, macros or embedded objects are executed. Table schemas and asset
+versions are retained. Shared content lives under EPC_DATA_DIR/monthly_reports.
+
+Assemble sections with Library, Last month, This month, Replace once, Replace and
+save to library, Stock text or Omit. Preflight blocks required gaps, template
+instructions and unreviewed AI content; stale periods and size warnings require
+content-specific acknowledgement. Generate finished DOCX and PDF downloads.
+DOCX remains available if PDF conversion fails. Monthly report never generates
+an email draft or sends/uploads the report. Monthly document ingestion, AI/Copilot
+and final visual polish remain in the next milestones. See
+[the implementation checkpoint](docs/MONTHLY_REPORT_PROGRESS.md).
 
 ## Canonical classification matrix
 

@@ -205,7 +205,7 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
     elif spec.type in ("table", "work_order_grid"):
         columns = [c.title for c in spec.columns] or ["Facility", "Item", "Status"]
         seed, config = _typed_table(spec, starting.rows)
-        rows = _grid(key + "_grid", seed, num_rows="dynamic", hide_index=True, column_config=config)
+        rows = _grid(key + "_grid_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
         # False and zero are real entries; truthiness must not erase them.
         block = ResolvedBlock(spec.key, source, rows=tuple(
             tuple(_cell_text(row.get(col)) for col in columns) for row in rows
@@ -289,6 +289,7 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
         return
     if not profiles:
         st.info("Create a profile below. Each profile can cover one facility, several sites, or a region.")
+        st.caption("Once the profile is saved, Import an existing DOCX can reuse report images, tables and text through confirmed mappings (up to 128 MB).")
         _profile_manager(contract, None, field)
         return
     selected = st.selectbox("Report profile", [p.key for p in profiles],

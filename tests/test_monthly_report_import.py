@@ -200,3 +200,78 @@ def test_untrusted_instructions_remain_content_and_are_blocked_by_preflight(tmp_
     draft = importer.imported_draft(synthetic_profiles()[0], ReportPeriod(2026, 9), "Synthetic Preparer", mapped)
     from app.monthly_report_checks import preflight
     assert any(c.blocking and c.block_key == "training_summary" for c in preflight(draft))
+
+
+def test_restore_table_version_restores_its_schema(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "runtime"))
+    path = synthetic_docx(tmp_path)
+    result = importer.inspect_docx(path)
+    table = next(i for i in result.items if i.kind == "table")
+    one = importer.map_items(path, result, (importer.ImportMapping(table.id, "service_calls", (0, 2)),))
+    two = importer.map_items(path, result, (importer.ImportMapping(table.id, "service_calls", (3, 1)),))
+    profile = synthetic_profiles()[0]
+    library.save_profile(profile, expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    saved = library.save_import(profile.contract, profile.key, one.blocks, overrides=one.overrides,
+                                expected_revision=1, actor="Synthetic Editor", confirmed=True)
+    first_id = saved.versions[-1].id
+    library.save_import(profile.contract, profile.key, two.blocks, overrides=two.overrides,
+                        expected_revision=2, actor="Synthetic Editor", confirmed=True)
+    restored = library.restore_block(profile.contract, profile.key, first_id, expected_revision=3,
+                                     actor="Synthetic Editor", confirmed=True)
+    assert restored.profile.block_overrides == one.overrides
+    assert restored.block("service_calls").rows == one.blocks[0].rows
+
+
+def test_imported_column_headings_are_preflighted(tmp_path):
+    from dataclasses import replace
+    from app.monthly_report_checks import preflight
+    path = synthetic_docx(tmp_path)
+    result = importer.inspect_docx(path)
+    table = next(i for i in result.items if i.kind == "table")
+    modified = replace(table, rows=(("Insert image", *table.rows[0][1:]), *table.rows[1:]))
+    result = replace(result, items=tuple(modified if i.id == table.id else i for i in result.items))
+    mapped = importer.map_items(path, result, (importer.ImportMapping(table.id, "service_calls"),))
+    draft = importer.imported_draft(synthetic_profiles()[0], ReportPeriod(2026, 9), "Synthetic Preparer", mapped)
+    assert any(c.code == "placeholder" and c.blocking for c in preflight(draft))
+
+
+def test_import_ui_confirmations_staging_and_workflow_lifecycle(tmp_path, monkeypatch):
+    from test_monthly_report_editor import app_with_library
+    from app import monthly_report_import_ui as ui
+    app, profile = app_with_library(monkeypatch, tmp_path)
+    source = synthetic_docx(tmp_path)
+    upload = BytesIO(source.read_bytes())
+    upload.size, upload.name = len(upload.getvalue()), "synthetic.docx"
+    original = ui.st.file_uploader
+    monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
+                        upload if label == "Existing monthly report DOCX" else original(label, *args, **kwargs))
+    app.run()
+    next(b for b in app.button if b.label == "Read DOCX for mapping").click().run()
+    assert not app.exception
+    assert library.load_profile(profile.contract, profile.key).revision == 1
+    inspection = importer.inspect_docx(source)
+    table = next(i for i in inspection.items if i.kind == "table")
+    next(w for w in app.selectbox if w.label == "Item to inspect").set_value(table.id).run()
+    next(w for w in app.selectbox if w.label == "Confirmed destination").set_value("service_calls").run()
+    next(b for b in app.button if b.label == "Add confirmed mapping").click().run()
+    assert not app.exception
+    assert next(b for b in app.button if b.label == "Save confirmed DOCX mappings").disabled
+    next(w for w in app.text_input if w.label == "Import editor name").set_value("Synthetic Importer").run()
+    next(w for w in app.checkbox if w.label == "I confirm these facility identities, aliases and scope").check().run()
+    next(w for w in app.checkbox if w.label == "I confirm these mappings and this shared save").check().run()
+    next(b for b in app.button if b.label == "Save confirmed DOCX mappings").click().run()
+    assert not app.exception
+    state = library.load_profile(profile.contract, profile.key)
+    assert state.revision == 2 and state.block("service_calls").rows[0][2:] == ("0", "No")
+    assert state.block("training_summary") is None
+    app.segmented_control[0].set_value("Purchase order").run()
+    app.segmented_control[0].set_value("Monthly report").run()
+    assert not app.exception
+    assert any("retained for review" in w.value for w in app.markdown)
+    next(w for w in app.selectbox if w.key.endswith("_service_calls_source")).set_value("This month").run()
+    assert not app.exception
+    next(w for w in app.checkbox if w.label == "Discard this staged import and unmatched review items").check().run()
+    next(b for b in app.button if b.label == "Discard staged DOCX").click().run()
+    assert not app.exception
+    assert not any(w.label == "Item to inspect" for w in app.selectbox)
+    assert library.load_profile(profile.contract, profile.key).block("service_calls") is not None

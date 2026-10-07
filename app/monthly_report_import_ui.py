@@ -58,15 +58,15 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
         upload = st.file_uploader("Existing monthly report DOCX", type=["docx"], max_upload_size=128, key=prefix + "_upload")
         if st.button("Read DOCX for mapping", key=prefix + "_read", disabled=upload is None):
             try:
-                with st.spinner("Reading document structure and content…"):
-                    staged = _stage(upload)
-                old = st.session_state.get(stage_key)
+                old = st.session_state.pop(stage_key, None)
                 if old:
                     old[0].cleanup()
-                st.session_state[stage_key] = staged
                 st.session_state[prefix + "_mappings"] = {}
                 st.session_state.pop(prefix + "_saved", None)
                 st.session_state.pop(prefix + "_preview", None)
+                with st.spinner("Reading document structure and content…"):
+                    staged = _stage(upload)
+                st.session_state[stage_key] = staged
             except (ValueError, OSError) as exc:
                 st.error(str(exc))
         staged = st.session_state.get(stage_key)
@@ -141,6 +141,33 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                 mappings.pop(remove, None)
                 st.rerun()
             target = st.radio("Save confirmed content as", ["Shared library defaults", "Prior report snapshot"], key=field(document_key + "_target", "Shared library defaults"))
+            if target == "Shared library defaults":
+                with st.expander("Compare library destinations before saving"):
+                    destination = st.selectbox("Destination to compare", list(dict.fromkeys(m.slot for m in mappings.values())), key=document_key + "_compare")
+                    left, right = st.columns(2)
+                    with left:
+                        st.caption("Current library content")
+                        from app.monthly_report_editor import _preview
+                        _preview(state.block(destination), {}, profile)
+                    with right:
+                        st.caption("Confirmed incoming items")
+                        all_items = {i.id: i for i in inspection.items}
+                        for mapping in mappings.values():
+                            if mapping.slot != destination:
+                                continue
+                            incoming = all_items[mapping.item_id]
+                            if incoming.text:
+                                st.text(incoming.text)
+                            if incoming.rows:
+                                indices = mapping.columns or tuple(range(len(incoming.rows[0])))
+                                st.dataframe([[r[i] for i in indices] for r in incoming.rows[:500]], hide_index=True)
+                            if incoming.kind == "image":
+                                st.caption(incoming.label)
+                                preview = st.session_state.get(prefix + "_preview")
+                                if preview and preview[0] == incoming.id:
+                                    st.image(preview[1], width="stretch")
+                                else:
+                                    st.caption("Select this item above and press Preview extracted image to show it here.")
             source_month = st.date_input("Original report month", key=field(document_key + "_month", ReportPeriod.previous(operator_today(browser_timezone)).start),
                                          help="Confirm from the original report. The filename or a cover candidate may contain a stale month.")
             period = ReportPeriod(source_month.year, source_month.month)
@@ -167,7 +194,7 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                             draft = imported_draft(profile, period, prepared, mapped)
                             library.save_snapshot(draft, expected_revision=snapshot.revision if snapshot else 0, assets=mapped.assets,
                                                   entered_editor=actor)
-                        st.session_state[prefix + "_saved"] = f"Saved {len(mapped.mapped_ids)} confirmed items. Unmapped items remain here for review."
+                        st.session_state[prefix + "_saved"] = f"Saved {len(mapped.mapped_ids)} confirmed items. Unmapped items remain here for review. Choose Library as the source for saved defaults, or start the next month from the imported snapshot."
                     st.rerun()
                 except (ValueError, OSError) as exc:
                     st.error(str(exc))

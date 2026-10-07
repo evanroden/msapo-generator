@@ -108,6 +108,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                     checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key))
                 texts.append((spec.key, block.text))
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
+                if block.rows:
+                    texts.extend((spec.key, col.title) for col in spec.columns)
         if not has_content:
             checks.append(ReportCheck("empty", f"{section.title} is included but empty.", False, section.key))
     for key, text in texts:

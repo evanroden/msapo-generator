@@ -2,7 +2,7 @@
 document_type: engineering_handoff
 date: 2026-10-07
 base_commit: 73915b17cd1d3e5dbbe429719121e5a5400d29a8
-status: implementation_checkpoint_not_yet_released
+status: tested_for_publication
 ---
 
 # Monthly report milestone 3 DOCX bootstrap
@@ -68,10 +68,19 @@ informed synthetic regression fixtures; no private report text, names, images or
 contact details enter the repository. The importer parsed all eight supplied
 DOCX packages. Their large-package and layout patterns are not hard-coded.
 
-Focused parser/persistence tests and existing editor tests are being completed;
-full-suite and exact-head CI remain release gates. End-to-end real-client
-acceptance belongs to the owner. No monthly EML, passcode, AI request, PO routing
-or expense approval policy is added or changed.
+The full local suite passed 757 tests with one CI-only skip using real Writer
+and Calc. Focused checks after final comparison-UI/docs changes passed as well.
+AppTest covers reading a synthetic upload, item/column mapping, explicit
+membership/editor confirmation, guarded saving, workflow switching and staged
+cleanup. Regression tests cover schema-aware restoration and placeholder checks
+in imported table headings. A six-page synthetic imported DOCX/PDF rendered
+through LibreOffice; all pages were visually inspected. Compilation, pip check,
+changed-module Ruff F/E9 and patch hygiene passed. A broad Ruff scan also exposed
+two pre-existing findings in the unrelated PO document_generator.py; they were
+not part of this change. Exact-head CI remains mandatory before merge.
+
+End-to-end real-client acceptance belongs to the owner. No monthly EML, passcode,
+AI request, PO routing or expense approval policy is added or changed.
 
 ## Rollback
 

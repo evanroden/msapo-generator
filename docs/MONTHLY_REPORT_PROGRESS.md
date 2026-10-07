@@ -142,8 +142,13 @@ Snapshot provenance pins asset versions rather than following future replacement
   Native Word shapes and unsupported image formats are explicitly flagged for
   replacement by exported images; the source is never executed or fetched.
   Synthetic tests exercise relationship/ZIP/XML safety, table schemas, image
-  mapping and atomic guarded saves. UI lifecycle, restoration and full-suite
-  verification remain before release. See the M3 engineering notes.
+  mapping and atomic guarded saves. The full local suite passed 757 tests with
+  one CI-only skip, followed by focused checks after final comparison-UI/docs
+  changes. Upload/mapping, confirmations, workflow switching, staged cleanup
+  and table-schema restoration pass in AppTest/regressions. A six-page synthetic
+  imported report was generated through real LibreOffice and all pages visually
+  inspected. Exact-head CI and public deployment verification remain before
+  release. See the M3 engineering notes.
 
 - Planning: current main inspected; no monthly-report modules yet. Existing runner
   allows two concurrent network jobs and reserves capacity before preparation.
