@@ -14,19 +14,34 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Latest local increment: `feat/monthly-report-novice-workspaces`, based on the
-PR #83 documentation head. PR #83 merged at
-`08d4696c4e06b7a973b74c8adb0282054b9c88aa` after successful Actions
-`37830532962`. Four owner-authorized reviewers completed novice audits and
-implemented targeted fixes. Named cover/chart uploads, section-based standing
-editing, visible saved pictures, complete scanned-page queue, actual-page action
-citations, price-free editable tables and per-page final review are integrated.
-Local full suite: **955 passed, one CI-only skip**, real LibreOffice.
-Both retained private originals passed all 13 import sections (118 picture
-entries total), with unchanged source hashes and no approvals or saves.
-Subsequent docs metadata is checked separately. This increment is **not yet published, merged or deployed**. See
+Latest novice-workflow increment: **PR #84 merged and public controls verified**.
+Merge `be81a93fd5fb548b9a66f62a2c103002bcff3ddf`; feature head
+`d785644261113962f1b0ef16c7d4bc29b921d73f`; exact Git tree
+`a927853e8bde2055552d0b07be7232162730a634`. Actions `37832296397`,
+job `113500438654`: **957 passed, zero skipped**, testing the exact feature head
+against unchanged main `08d4696c4e06b7a973b74c8adb0282054b9c88aa`.
+Local full suite: **955 passed, one CI-only skip**, with actual LibreOffice;
+subsequent docs/hygiene: **35 passed**. Ruff F/E9, compileall, pip check and diff
+checks passed. No combined local total is claimed.
+
+Four owner-authorized reviewers covered first/return use, cover/organization,
+evidence and remaining sections/final review. Implemented named uploads, visible
+saved-picture cards, section-based editing, complete scanned-page decision queue,
+actual-page action citations, price-free table copies, readable conflict review
+and per-page final approval/removal. Individual/regional private originals passed
+all 13 import sections each (118 picture entries total); hashes stayed unchanged.
+Public health recovered after a transient deployment 502. Supported browser
+verified real DOCX upload/analysis, cover photo/client/ENFRA upload controls and
+separate org-chart/daytime/after-hours/contact-page controls. No private profile or
+final report was approved/saved. Guided saved-workspace and final-page changes
+were tested locally, not asserted as a full live client-output acceptance.
+Screenshot `monthly-report-novice-controls-2026-10-08.jpg` stays outside git.
+
+Release checkpoint branch: `docs/monthly-report-novice-verified`. See
 [novice workspace notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_NOVICE_WORKSPACES.md).
-Runtime private-directory/example seeding remains pending.
+Runtime directory/example seeding and further upload/CMMS simplification remain
+pending. The workbook's copied contract-tab membership ambiguity still requires
+resolution; do not infer membership from that worksheet title.
 
 Latest navigation follow-up: PR #82 merged at
 `61772f922a7267adc8919bc82b3a98e2cae44a40`, head

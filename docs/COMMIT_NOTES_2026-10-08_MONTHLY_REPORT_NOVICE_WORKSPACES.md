@@ -2,7 +2,7 @@
 document_type: implementation_notes
 date: 2026-10-08
 base_commit: 08d4696c4e06b7a973b74c8adb0282054b9c88aa
-status: tested_awaiting_publication
+status: deployed_public_controls_verified
 ---
 
 # Monthly report novice workflow review
@@ -49,14 +49,21 @@ whole workflow is finished.
 
 ## Validation and release state
 
-At this checkpoint the changes are local, not merged or production verified.
+PR #84 merged at `be81a93fd5fb548b9a66f62a2c103002bcff3ddf`. Feature head
+`d785644261113962f1b0ef16c7d4bc29b921d73f`, tree
+`a927853e8bde2055552d0b07be7232162730a634`. Actions `37832296397`,
+job `113500438654`: **957 passed, zero skipped**, exact head against unchanged
+main. Public health recovered following a transient deployment 502. Browser
+verified real DOCX analysis and named cover/client/brand plus chart/outage/contact
+replacement controls. No client profile or final report was approved/saved;
+other guided/final-review flows were verified by local AppTest.
 Full local suite: **955 passed, one CI-only skip**, with actual LibreOffice.
 The subsequent new documentation front matter was corrected and checked separately.
 Private read-only section walkthroughs passed: individual report 13 sections /
 84 pictures / 25 picture groups; regional report 13 sections / 34 pictures /
 16 groups. Every section entered edit mode, all picture groups loaded, original
 file hashes stayed unchanged, and no client content was approved or saved.
-These are control checks, not owner acceptance of report output. Exact-head CI is required before merge.
+These are control checks, not owner acceptance of report output. Exact-head CI passed before expected-head-protected merge.
 The previous documentation checkpoint PR #83 merged at
 `08d4696c4e06b7a973b74c8adb0282054b9c88aa` after successful Actions
 `37830532962`.
