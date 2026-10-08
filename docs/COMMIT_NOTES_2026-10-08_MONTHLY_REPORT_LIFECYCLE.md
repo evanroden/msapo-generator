@@ -117,3 +117,25 @@ The second published head `bb735dd88764750ccedc60ebc1ed9e819bb189af`, tree
 `7dc1b267d80b539c7dbec81bd160ed715af11563`, passed Actions `37718953432`, job
 `113121900245`. It is superseded by the section-order follow-up; merge still
 requires green CI on the final head.
+
+
+### Final release result
+
+Final head `994804067b84a2e790c43a2f8f4a1d218aa0a7b2`, tree
+`38ba56a74678cd8879d076bfee4d75c79a93e66b`, passed Actions `37719217128`
+(job `113122739026`): **901 passed, zero skipped**, verified in job logs.
+PR #72 merged with expected-head protection at
+`393512174da4dc89deb47457fa5b27153d6ac547` after rechecking main.
+The corrected private output matrix completed all thirteen cases (363 PDF pages)
+with all deterministic/original/save/reload/update/conflict/rollover assertions
+passing. This does not broaden the manual-selection and client-acceptance limits
+above. Public deployment verification follows separately.
+
+
+Public verification: Render health returned 200/ok after the deployment restart.
+The supported browser opened Monthly report, selected a contract/site, uploaded
+a small synthetic DOCX without saving it, and analyzed it into section cards.
+The new divider-photo selector and per-picture org/workflow roles were visible,
+confirming the new release. No client document or persistent QA profile was
+created in production. Local AppTest, rather than production, covered persisted
+create/generate/reopen/rollover. Screenshot remains outside git.
