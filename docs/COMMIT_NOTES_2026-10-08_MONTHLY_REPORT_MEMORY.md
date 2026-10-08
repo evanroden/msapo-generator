@@ -2,7 +2,7 @@
 document_type: implementation_notes
 date: 2026-10-08
 base_commit: c9440b067c0bc90628db997d02287e80bacb9093
-status: implementation_validation
+status: deployed_followup_validation
 ---
 
 # Explain report memory and first-report requirements
@@ -78,3 +78,37 @@ Private read-only AppTest walkthroughs also exercised 13 sections each of the
 retained individual and regional samples, displaying 57 and 29 picture cards
 respectively without UI exceptions. Originals were unchanged. This validates
 controls against real files, not approval of their contents or final outputs.
+
+
+## Merge validation
+
+PR #80 merged at `86759459c87ddf1827bee69614b923b84894f119`; published head
+`ad2b52e7081a2c7d3a76560300a5a7df4bc0a27e`, tree
+`7ad261d5f4145650078b3fd98808db55fd3db5a7`. Full final local suite with real
+LibreOffice: **925 passed, one CI-only skip**. Actions `37826810851`, job
+`113481656955`, verified exact feature head against unchanged base: **926 passed,
+zero skipped**. Ruff F/E9, compileall, pip check and diff checks passed. Public
+production checks follow; no private Render workspace or logs were accessed.
+
+Public release recovered from a transient deployment 502. The browser verified
+the new memory/storage controls. Aggregate disk check reported 973.4 MB capacity,
+955.2 MB available and 2.0 MB monthly-report files before sample imports. Existing
+object consolidation linked 30 files with zero duplicate bytes reclaimed: these
+were first canonical copies, not redundant copies. Subsequent available reading
+was 955.1 MB. No history was removed. This approximately 1 GB disk has room now,
+but retaining many distinct 80+ MB originals will need capacity planning.
+
+
+## Live cover walkthrough correction
+
+The public browser uploaded the retained individual report, analyzed it, and
+verified section boxes, picture-adjacent role choices and mixed-month guidance.
+The walkthrough found a real novice-friction bug: several imported pictures had
+the same suggested cover-photo role, so the initial UI showed a conflict before
+the user had chosen anything. Follow-up branch `fix/monthly-report-cover-choice`
+leaves ambiguous single-use suggestions unselected. Choosing a cover photo,
+client/brand logo or divider now automatically replaces its previous picture,
+even on another preview page. The original is retained. The revised navigation
+test checks this cross-page replacement and preserves unrelated choices.
+Twelve focused visual/UI tests passed; exact-head CI is required for this fix.
+No sample profile was saved and no final client output was approved.
