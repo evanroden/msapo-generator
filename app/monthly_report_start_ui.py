@@ -9,7 +9,7 @@ from app.monthly_report_directory_ui import contract_choices
 from app.monthly_report_editor import _key, _signature
 from app.monthly_report_model import Facility, ReportProfile
 from app.monthly_report_section_ui import _site_options
-from app.monthly_report_start import membership_key, matching_profiles, report_key, design_seed, save_design_start
+from app.monthly_report_start import membership_key, matching_profiles, report_key, design_seed, save_design_start, recommended_designs
 
 
 def _logo(contract, state, images):
@@ -133,7 +133,7 @@ def select_sites(contract, profiles, remembered, field, completed=None):
 
 def starting_choice(profile, profiles, period, prepared, field):
     st.subheader("How would you like to start?")
-    available = [p for p in profiles if p.key != profile.key]
+    available = recommended_designs(profile, profiles, period)
     choices = (["Use another report from this contract"] if available else []) + ["Use the general ENFRA monthly report template", "Upload an older or unfinished report from my site"]
     choice_key = field("report_start_choice_" + profile.key, "")
     selected = st.session_state[choice_key]
@@ -169,6 +169,7 @@ def starting_choice(profile, profiles, period, prepared, field):
         return
     source = None
     if selected.startswith("Use another"):
+        st.caption("Suggested order: shared sites first, then the same report scope, then the most recent saved month. This copies the design; it does not add sites to your report.")
         if len(available) == 1:
             st.write("Starting design: " + available[0].title)
             source = library.load_profile(profile.contract, available[0].key)

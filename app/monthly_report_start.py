@@ -30,6 +30,36 @@ def latest_snapshot(contract, key, period):
     return None
 
 
+def latest_saved_draft(contract, key, period, *, before=False):
+    """Choose the newest usable month, including an import not yet generated.
+
+    A later snapshot of that month supersedes its import. An import made against
+    the current snapshot revision is newer work and must win at that same month.
+    """
+    saved = None if before else library.load_snapshot(contract, key, period)
+    saved = saved or latest_snapshot(contract, key, period)
+    imported = library.load_imported_draft(contract, key)
+    if imported and (imported.period.key < period.key if before else imported.period.key <= period.key):
+        if not saved or imported.period.key > saved.draft.period.key:
+            return imported
+        if imported.period == saved.draft.period and library.imported_snapshot_revision(contract, key) == saved.revision:
+            return imported
+    return saved.draft if saved else None
+
+
+def recommended_designs(profile, profiles, period):
+    """Rank explicit site overlap, scope and recency; never infer membership."""
+    candidates = [p for p in profiles if p.contract == profile.contract and p.key != profile.key]
+    target = set(membership_key(profile.facilities))
+    def rank(candidate):
+        seed = latest_saved_draft(candidate.contract, candidate.key, period)
+        return (-len(target & set(membership_key(candidate.facilities))),
+                candidate.scope_type != profile.scope_type,
+                -(seed.period.year * 12 + seed.period.month) if seed else 0,
+                candidate.title.casefold(), candidate.key)
+    return tuple(sorted(candidates, key=rank))
+
+
 def design_seed(profile, period, actor, source=None):
     """Reuse layout/schema/branding, never another site's activity or contacts."""
     if source and source.profile.contract != profile.contract:
@@ -39,8 +69,7 @@ def design_seed(profile, period, actor, source=None):
                           scope_type=profile.scope_type, imported_from="", asset_tags=profile.asset_tags)
     prior_blocks = {}
     if source:
-        saved = library.load_snapshot(source.profile.contract, source.profile.key, period) or latest_snapshot(source.profile.contract, source.profile.key, period)
-        seed = saved.draft if saved else library.load_imported_draft(source.profile.contract, source.profile.key)
+        seed = latest_saved_draft(source.profile.contract, source.profile.key, period)
         if seed:
             prior_blocks = {b.key: b for b in seed.blocks}
             profile = replace(profile, section_order=tuple(s.key for s in seed.sections),

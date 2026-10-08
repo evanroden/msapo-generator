@@ -224,3 +224,24 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     assert "September 2026 repair" in next(b.text for b in draft.blocks if b.key == "activity_summary")
     assert next(b for b in draft.blocks if b.key == "vendor_reports").asset_hashes
     assert next(r for r in app.radio if r.label == "Report steps").value == guided.STEPS[1]
+
+
+def test_section_choices_preserve_content_and_saved_status_across_new_sessions(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
+    box = next(w for w in app.checkbox if w.label == "Include Monthly Activity Summary")
+    box.uncheck().run()
+    next(w for w in app.checkbox if w.label == "Save this draft for others on this report to continue").check().run()
+    next(b for b in app.button if b.label == "Save progress").click().run()
+    assert any("Saved · version 1" in w.value for w in app.success)
+    saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
+    assert not next(s for s in saved.draft.sections if s.key == "activity").included
+    assert next(b for b in saved.draft.blocks if b.key == "activity_summary").text == "Synthetic initial activity."
+    new = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    new.segmented_control[0].set_value("Monthly report").run()
+    choose_report(new, synthetic_profiles()[0].facilities[0].title)
+    assert not next(w for w in new.checkbox if w.label == "Include Monthly Activity Summary").value
+    next(w for w in new.checkbox if w.label == "Include Monthly Activity Summary").check().run()
+    assert any("changes to save" in w.value for w in new.info)
+    next(b for b in new.button if b.label == "Continue to this month’s work").click().run()
+    assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic initial activity."

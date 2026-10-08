@@ -195,8 +195,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         record_report_preferences(browser_token, contract, selected)
         if imported:
             record_report_preparer(browser_token, contract, selected, imported.prepared_by)
-    from app.monthly_report_start import latest_snapshot
+    from app.monthly_report_start import latest_snapshot, latest_saved_draft
     prior = latest_snapshot(contract, selected, period)
+    prior_draft = latest_saved_draft(contract, selected, period, before=True)
     draft_key = prefix + "_draft"
     resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
     if draft_key not in st.session_state or resume:
@@ -212,8 +213,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         elif imported and imported.period == period:
             draft = imported
             using_import = True
-        elif prior:
-            draft = replace(new_month_draft(prior.draft, period), profile=profile)
+        elif prior_draft:
+            draft = replace(new_month_draft(prior_draft, period), profile=profile)
         else:
             draft = _initial_draft(state, period, prepared)
         st.session_state[draft_key] = replace(draft, prepared_by=prepared or draft.prepared_by)
@@ -232,8 +233,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     step_key = field(prefix + "_step", STEPS[0])
     if completed_setup == selected:
         start_standing = st.session_state.pop("report_start_at_site_information", None) == selected
-        st.session_state[step_key] = STEPS[2] if start_standing else STEPS[1]
+        st.session_state[step_key] = STEPS[0] if start_standing else STEPS[1]
     step = st.radio("Report steps", STEPS, horizontal=True, key=step_key)
+    def go_to_step(value):
+        st.session_state[step_key] = value
+
+    save_status = st.empty()
     blocks = {b.key: b for b in draft.blocks}
     specs = {b.key: b for s in draft.sections for b in s.blocks} | {b.key: b for b in layout_blocks()}
     included = {b.key for s in draft.sections if s.included for b in s.blocks}
@@ -241,12 +246,18 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     review_state = prefix + "_standing_reviewed_content"
 
     if step == STEPS[0]:
-        st.subheader("Your report, ready to continue")
+        st.subheader("Choose what belongs in this report")
         st.write(f"{profile.title} · {period.label}")
-        st.info("Continue your saved work below. New monthly uploads are added to this draft; they never silently replace another editor’s text or pages.")
-        st.write("1. Add this month’s files and update the narrative.\n2. Confirm standing site information or replace what changed.\n3. Review and download DOCX / PDF.")
-        if snapshot:
-            st.caption(f"Saved version {snapshot.revision} · entered editor: {snapshot.entered_editor or snapshot.draft.prepared_by}")
+        st.write("Check the sections you need. Unchecking a section leaves it out of the download and keeps its content available if you change your mind. Your saved choices carry forward to the next month.")
+        sections = []
+        for section in draft.sections:
+            with st.expander(section.title):
+                st.caption(section_help(section.key).guidance)
+                keep = st.checkbox("Include " + section.title, key=field(prefix + "_include_" + section.key, section.included))
+                sections.append(replace(section, included=keep))
+        draft = replace(draft, sections=tuple(sections))
+        st.caption(f"{sum(s.included for s in draft.sections)} sections selected. Nothing is deleted when a section is left out.")
+        st.button("Continue to this month’s work", key=prefix + "_next_work", type="primary", on_click=go_to_step, args=(STEPS[1],))
         with st.expander("Upload a report someone already started"):
             from app.monthly_report_setup_ui import render_setup
             render_setup(contract, period, prepared, field, state=state)
@@ -341,12 +352,20 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state[review_state] = standing_signature if st.session_state[reviewed_key] else ""
         st.checkbox("I checked the standing information for these sites", key=reviewed_key,
                     value=st.session_state.get(review_state) == standing_signature, on_change=record_review)
-        st.caption("Changes here apply to this report. Use the advanced editor to confirm a shared default for future reports; one-off changes never silently become site defaults.")
+        st.caption("Save progress to keep these changes. Next month starts from your latest saved report for these exact sites, with monthly work cleared. Shared defaults for other reports are managed separately in the advanced editor.")
     draft = replace(draft, blocks=tuple(blocks.values()))
     footer = blocks.get("footer_text")
     if footer:
         draft = replace(draft, address_line=footer.text if footer.source != "Omit" else "")
     st.session_state[draft_key] = draft
+    if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
+        save_status.success(f"Saved · version {snapshot.revision} · {period.label} · {snapshot.entered_editor or snapshot.draft.prepared_by}")
+    elif snapshot:
+        save_status.info(f"You have changes to save. Version {snapshot.revision} is safely stored; use Save progress below before leaving.")
+    elif prior_draft:
+        save_status.info(f"Starting from your saved {prior_draft.period.label} report for these exact sites. Monthly work and attachments start fresh; standing site information is carried forward for review.")
+    else:
+        save_status.info("Your starting design is saved. Use Save progress below to store the changes you make for this month.")
     from app.monthly_report_preview import render_preview
     render_preview(draft, assets, prefix, field)
     current_revision = snapshot.revision if snapshot else 0
@@ -360,6 +379,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state[prefix + "_revision"] = current_revision
             st.rerun()
     save_ok = st.checkbox("Save this draft for others on this report to continue", key=prefix + "_save_ok_" + draft.fingerprint)
+    if not prepared.strip():
+        st.caption("Enter your name in Prepared by above to save your progress.")
     if st.button("Save progress", key=prefix + "_save", disabled=conflict or not (save_ok and prepared.strip())):
         saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
                                       open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
@@ -384,6 +405,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         estimated = estimate_bytes(draft, loader)
         st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Aim for under 15 MB; fewer attachment pages and more photos per page can help.")
         checks = preflight(draft, estimated)
+        if any(c.blocking for c in checks):
+            st.info("Complete the items below to unlock your downloads. You can leave an entire section out in Report if it does not belong in this month’s report.")
+            for n, (label, target) in enumerate((("Choose included sections", STEPS[0]), ("Update this month’s work", STEPS[1]), ("Check site information", STEPS[2]))):
+                st.button(label, key=prefix + f"_fix_{n}", on_click=go_to_step, args=(target,))
         for check in checks:
             (st.error if check.blocking else st.warning)(review_message(check, draft))
         standing_reviewed = st.session_state.get(review_state) == standing_signature

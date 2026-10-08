@@ -80,10 +80,12 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     next(w for w in app.checkbox if w.label == "Save this design for these sites so we can use it next month").check().run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     assert not app.exception
-    assert next(w for w in app.radio if w.label == "Report steps").value.endswith("Site information")
+    assert next(w for w in app.radio if w.label == "Report steps").value.endswith("Report")
     assert next(w for w in app.text_input if w.label == "Name for this group (optional)").value == "Synthetic Region"
     assert not any(w.label == "Site / report" for w in app.selectbox)
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"
+    assert any(w.label == "Include Organizational Chart" for w in app.checkbox)
+    step(app, 3)
     assert any(w.label == "Updated client logo" for w in app.get("file_uploader"))
     # Navigation is deliberately free: an unfinished standing section does not
     # prevent adding work now, then returning to complete it later.
@@ -92,3 +94,83 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     step(app, 3)
     step(app, 2)
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic partial update."
+
+
+def test_latest_imported_design_wins_over_older_saved_month_without_using_future_work(monkeypatch, tmp_path):
+    from app.monthly_report_start import latest_saved_draft, recommended_designs
+    from app.monthly_report_setup import new_month_draft
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    august, assets = design_seed(profile, ReportPeriod(2026, 8), "Synthetic Editor")
+    august = replace(august, sections=tuple(replace(s, included=s.key == "activity") for s in august.sections))
+    save_design_start(august, assets, actor="Synthetic Editor", confirmed=True)
+    july = replace(august, period=ReportPeriod(2026, 7), sections=tuple(replace(s, included=True) for s in august.sections))
+    library.save_snapshot(july, expected_revision=0)
+    seed = latest_saved_draft(profile.contract, profile.key, ReportPeriod(2026, 9), before=True)
+    assert seed == august
+    assert sum(s.included for s in new_month_draft(seed, ReportPeriod(2026, 9)).sections) == 1
+    assert latest_saved_draft(profile.contract, profile.key, ReportPeriod(2026, 6)) is None
+    changed = replace(august, prepared_by="Synthetic Colleague")
+    library.save_snapshot(changed, expected_revision=0)
+    assert latest_saved_draft(profile.contract, profile.key, ReportPeriod(2026, 8)) == changed
+    other = replace(synthetic_profiles()[1], key="new-report")
+    unrelated = replace(profile, contract="Other Synthetic Contract", key="other-contract")
+    assert recommended_designs(other, (unrelated, profile), ReportPeriod(2026, 9)) == (profile,)
+
+
+from tests.conftest import requires_libreoffice
+
+
+@requires_libreoffice
+def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monkeypatch, tmp_path):
+    from streamlit.testing.v1 import AppTest
+    from test_monthly_report_ui import ROOT, choose_report
+    from app.contracts import RRH_CONTRACT
+    from app.monthly_report_guided import STEPS
+    import fitz
+    app = monthly(monkeypatch, tmp_path, saved=False)
+    next(w for w in app.text_input if w.label == "Site name").set_value("Synthetic Cedar; Synthetic Harbor; Synthetic Meadow").run()
+    next(w for w in app.text_input if w.label == "Name for this group (optional)").set_value("Synthetic Lakes Region").run()
+    next(w for w in app.checkbox if w.label == "This is a regional report").check().run()
+    next(b for b in app.button if b.label == "Use ENFRA template").click().run()
+    next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
+    next(w for w in app.checkbox if w.label == "Save this design for these sites so we can use it next month").check().run()
+    next(b for b in app.button if b.label == "Start this report").click().run()
+    for label in [w.label for w in app.checkbox if w.label.startswith("Include ") and w.label not in ("Include Organizational Chart", "Include Monthly Activity Summary")]:
+        next(w for w in app.checkbox if w.label == label).uncheck().run()
+    next(b for b in app.button if b.label == "Continue to this month’s work").click().run()
+    next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic team completed the September inspection.").run()
+    step(app, 3)
+    next(b for b in app.button if b.label == "Start an editable org chart").click().run()
+    next(w for w in app.text_input if w.label == "Name").set_value("Synthetic Manager").run()
+    next(w for w in app.checkbox if w.label == "I checked the standing information for these sites").check().run()
+    step(app, 4)
+    generate = next(b for b in app.button if b.label == "Generate DOCX and PDF")
+    assert not generate.disabled, [w.value for w in (*app.error, *app.warning)]
+    generate.click().run(timeout=60)
+    assert not app.exception
+    assert {w.label for w in app.get("download_button")} == {"Download DOCX", "Download PDF"}
+    package = next(v for k, v in app.session_state.filtered_state.items() if k.endswith("_package"))
+    with fitz.open(stream=package.pdf, filetype="pdf") as pdf:
+        assert pdf.page_count >= 6
+        assert "September 2026" in pdf[0].get_text()
+        assert "Synthetic team completed" in " ".join(p.get_text() for p in pdf)
+    assert "September 2026" in package.docx_name
+    profile = library.list_profiles(RRH_CONTRACT)[0]
+    saved = library.load_snapshot(RRH_CONTRACT, profile.key, ReportPeriod(2026, 9))
+    assert len(saved.draft.profile.facilities) == 3
+    next_app = AppTest.from_file(ROOT / "run_web.py", default_timeout=30).run()
+    next_app.segmented_control[0].set_value("Monthly report").run()
+    choose_report(next_app)
+    for site in profile.facilities:
+        next(w for w in next_app.checkbox if w.label == site.title).check().run()
+    next_app.selectbox("report_month_number").set_value(10).run()
+    assert next(w for w in next_app.text_input if w.label == "Name for this group (optional)").value == "Synthetic Lakes Region"
+    assert next(w for w in next_app.checkbox if w.label == "This is a regional report").value
+    assert sum(w.value for w in next_app.checkbox if w.label.startswith("Include ")) == 2
+    step(next_app, 2)
+    assert next(w for w in next_app.text_area if w.label == "Activity summary").value == ""
+    step(next_app, 3)
+    assert next(w for w in next_app.text_input if w.label == "Name").value == "Synthetic Manager"
+    assert not next(w for w in next_app.checkbox if w.label == "I checked the standing information for these sites").value
+    assert next(r for r in next_app.radio if r.label == "Report steps").value == STEPS[2]
