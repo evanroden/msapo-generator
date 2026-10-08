@@ -109,20 +109,25 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     selected = st.selectbox("Review source", list(by_id), format_func=lambda v: by_id[v].source.filename, key=selection_key)
     content, source = by_id[selected], by_id[selected].source
     p = key + "_" + selected
-    with st.expander("Source facts and page selection", expanded=True):
-        st.caption("Suggestions come from readable labels and keywords. Review or correct them; blank means not established.")
-        classification = st.selectbox("Classification", sources.CLASSIFICATIONS, key=field(p + "_classification", source.classification))
-        confidence = st.selectbox("Classification confidence", ["low", "medium", "high"], key=field(p + "_confidence", source.confidence))
-        changes = {"classification": classification, "confidence": confidence}
-        for attr, label in (("vendor", "Vendor"), ("service_date", "Service/report date (YYYY-MM-DD)"),
-                            ("facility", "Source facility"), ("work_order", "Job / work-order number")):
-            changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
-        st.caption("Profile facilities and aliases: " + "; ".join(f.title + (" (" + ", ".join(f.aliases) + ")" if f.aliases else "") for f in profile.facilities))
-        tags = st.text_input("Equipment tags (comma-separated)", key=field(p + "_tags", ", ".join(source.tags)))
-        changes["tags"] = tuple(v.strip() for v in tags.split(",") if v.strip())
-        for attr, label in (("actions", "Actions"), ("findings", "Findings"), ("recommendations", "Recommendations"),
-                            ("follow_ups", "Follow-ups"), ("out_of_limit", "Out-of-limit readings")):
-            changes[attr] = st.text_area(label, key=field(p + "_" + attr, getattr(source, attr)), height=70)
+    pending = st.session_state.pop(p + "_page_action", None)
+    if pending:
+        st.session_state[p + "_pages"] = pending[0]
+        st.session_state[p + "_page"] = pending[1]
+    with st.expander("Choose pages for the client report", expanded=True):
+        with st.expander("Edit vendor, date and work details"):
+            st.caption("Suggestions come from readable labels and keywords. Review or correct them; blank means not established.")
+            classification = st.selectbox("Classification", sources.CLASSIFICATIONS, key=field(p + "_classification", source.classification))
+            confidence = st.selectbox("Classification confidence", ["low", "medium", "high"], key=field(p + "_confidence", source.confidence))
+            changes = {"classification": classification, "confidence": confidence}
+            for attr, label in (("vendor", "Vendor"), ("service_date", "Service/report date (YYYY-MM-DD)"),
+                                ("facility", "Source facility"), ("work_order", "Job / work-order number")):
+                changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
+            st.caption("Profile facilities and aliases: " + "; ".join(f.title + (" (" + ", ".join(f.aliases) + ")" if f.aliases else "") for f in profile.facilities))
+            tags = st.text_input("Equipment tags (comma-separated)", key=field(p + "_tags", ", ".join(source.tags)))
+            changes["tags"] = tuple(v.strip() for v in tags.split(",") if v.strip())
+            for attr, label in (("actions", "Actions"), ("findings", "Findings"), ("recommendations", "Recommendations"),
+                                ("follow_ups", "Follow-ups"), ("out_of_limit", "Out-of-limit readings")):
+                changes[attr] = st.text_area(label, key=field(p + "_" + attr, getattr(source, attr)), height=70)
         for notice in source.notices:
             st.warning(notice)
         pages = list(range(1, len(source.page_texts) + 1))
@@ -133,11 +138,13 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         if pages:
             page = st.selectbox("Preview page / item", pages, key=field(p + "_page", pages[0]),
                                 format_func=lambda n: f"Page / item {n} · " + page_status(source.page_texts[n-1], unreadable=n in source.needs_vision)[0].replace("technical", "check before including").replace("review", "needs visual review"))
-            st.text(source.page_texts[page-1][:12000] or "No native text on this page/item.")
+            st.caption(f"Page {page} of {len(pages)}. Check the page itself before including it.")
+            with st.expander("Read extracted text"):
+                st.text(source.page_texts[page-1][:12000] or "No native text on this page/item.")
             if page in sources.image_numbers(content):
                 try:
                     thumbnail = sources.page_image(profile, content, page, preview=True)
-                    st.image(thumbnail.data, width="stretch")
+                    st.image(thumbnail.data, width=650)
                 except (ValueError, OSError) as exc:
                     st.error(str(exc))
                 captions[page] = st.text_input("Page caption", key=field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}")))
@@ -159,8 +166,34 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 reviews.pop(page, None)
             source = replace(source, client_page_reviews=tuple(sorted(reviews.items())))
             left = [n for n in source.selected_pages if n in sources.image_numbers(content) and not page_allowed(source, n)]
-            if left:
-                st.info("Still to check before including: " + ", ".join(f"page {n}" for n in left))
+            checked = sum(page_allowed(source, n) for n in source.selected_pages if n in sources.image_numbers(content))
+            st.caption(f"{checked} selected pages checked · {len(left)} still need review")
+            keep, omit, advance = st.columns(3)
+            action = None
+            if keep.button("Include page and continue", key=p + "_keep_page", disabled=not page_allowed(source, page)):
+                action = "keep"
+            if omit.button("Leave page out and continue", key=p + "_omit_page"):
+                action = "omit"
+            if advance.button("Next page needing review", key=p + "_next_page", disabled=not any(n != page for n in left)):
+                action = "next"
+            if action:
+                chosen = set(source.selected_pages)
+                if action == "keep":
+                    chosen.add(page)
+                elif action == "omit":
+                    chosen.discard(page)
+                remaining = [n for n in pages if n in chosen and n in sources.image_numbers(content)
+                             and not page_allowed(source, n) and n != page]
+                next_page = next((n for n in remaining if n > page), remaining[0] if remaining else page)
+                source = replace(source, selected_pages=tuple(sorted(chosen)))
+                by_id[selected] = replace(content, source=source)
+                st.session_state[key] = tuple(by_id.values())
+                # Apply widget changes before instantiation on the next rerun.
+                st.session_state[p + "_page_action"] = (list(source.selected_pages), next_page)
+                st.rerun()
+            if not left and checked:
+                st.success("Selected pages are checked. Open ‘Embed selected report pages and photographs’ below to prepare them.")
+            st.caption("Leaving a page out keeps the original file. Use the page selector to revisit any page.")
         by_id[selected] = replace(content, source=source)
         contents = tuple(by_id.values())
         st.session_state[key] = contents

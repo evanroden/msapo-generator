@@ -14,6 +14,12 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
+Active follow-up: `feat/monthly-report-page-review`, based on verified main
+`dd1c02bf6efd9e4ce269fe4caeae81aebdce6616` (PR #76 checkpoint merge).
+Monthly source review now has include/leave-out/next actions, progress and
+collapsed optional fact/text editors. Eighteen focused tests passed; full suite **912 passed, one CI-only skip**.
+Documentation/hygiene: **33 passed**. Publication and exact-head CI pending. See [page-review notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_PAGE_REVIEW.md).
+
 Current feature release: PR #74 merged at
 `798e751714064c3d4de91d28c461a784f8c7c3d6`. Published head
 `4db9faf36e4c75f005752d373efc565c4f71644b`, tree

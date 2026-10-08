@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Monthly source page review: [COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_PAGE_REVIEW.md](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_PAGE_REVIEW.md).
+
 Monthly report library handoff: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M2.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M2.md).
 Monthly report bootstrap handoff: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M3.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M3.md).
 Monthly report uploads handoff: [COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M4.md](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_M4.md).
