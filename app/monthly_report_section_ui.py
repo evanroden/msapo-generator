@@ -131,9 +131,9 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 if action != actions[1]:
                     st.text(text[:14000])
                     if len(text) > 14000:
-                        st.caption("Long text: choose Edit to review the full section.")
+                        st.caption(f"Long text: choose ‘{guide.edit}’ above to review the full section.")
                 if contains_price(text):
-                    blocking.append("This text includes pricing. Choose Edit and remove the pricing before including it.")
+                    blocking.append(f"This text includes pricing. Choose ‘{guide.edit}’ above and remove the pricing before including it.")
                 plan["selected"].append(texts[0].id)
                 plan["texts"][texts[0].id] = text
                 if section.key == "cover":
@@ -157,9 +157,9 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     else:
                         st.dataframe(rows[:300], hide_index=True)
                         if len(rows) > 300:
-                            st.caption("Showing the first 300 rows. Choose Edit to inspect all rows.")
+                            st.caption(f"Showing the first 300 rows. Choose ‘{guide.edit}’ above to inspect all rows.")
                     if table_has_pricing(table.columns, table.rows):
-                        blocking.append("A table cell still contains pricing. Choose Edit and remove it.")
+                        blocking.append(f"A table cell still contains pricing. Choose ‘{guide.edit}’ above and remove it.")
                     plan["tables"][item.id] = table
                     plan["selected"].append(item.id)
             images = [i for i in items if i.kind == "image"]
@@ -244,7 +244,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 plan["unsupported_choice"] = choice
                 plan["unsupported_reviewed"] = choice == "Leave these drawings out of this draft" or (choice == "I added replacement pictures for the drawings needed" and bool(plan["new_assets"]))
                 if not plan["unsupported_reviewed"]:
-                    blocking.append(preserve_hint + f"To upload a replacement, choose ‘{actions[1]}’ above. Otherwise choose ‘Leave these drawings out of this draft’.")
+                    if section.key in ("cover", "other"):
+                        blocking.append("Choose ‘Leave these drawings out of this draft’ to retain them only in the original. You can add clear replacement pictures to the appropriate report section after setup.")
+                    else:
+                        blocking.append(preserve_hint + f"To upload a replacement, choose ‘{guide.edit}’ above. Otherwise choose ‘Leave these drawings out of this draft’.")
         _approve_plan(plan, p, field, old, plans, blocking)
 
 
