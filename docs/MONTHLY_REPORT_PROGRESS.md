@@ -21,8 +21,17 @@ Current feature release: PR #74 merged at
 job `113318848451`: **911 passed, zero skipped**. Public health and the supported
 browser verified complete-page preparation, preview, page selection and required
 comparison using a synthetic upload. No persistent profile was saved.
-The follow-up branch `fix/monthly-report-chart-guidance` corrects a stale “Edit”
-instruction and places page controls beside the preview; its CI/release is pending.
+Follow-up PR #75 corrects stale “Edit” instructions and places page controls
+beside the preview. Final head `d5980b615a32b441383d7aea90c4ce7fc47d3336`, tree
+`d810c22ce39a825a60d71f9b9faffe7e5f1aa386`, passed Actions `37781360900`, job
+`113324982948`: **911 passed, zero skipped**. Expected-head merge after a main
+recheck produced `ae303a8338c477b72eef382fdc596a64f1dd6cfd`. Public health and
+the supported browser verified the corrected warning and adjacent page preview,
+purpose and confirmation controls after a fresh synthetic upload. No persistent
+profile was saved. Screenshot proof is outside git at
+`/workspace/scratch/monthly-report-chart-review-2026-10-08.jpg`.
+Documentation checkpoint branch:
+`docs/monthly-report-chart-release`.
 On-demand preservation of reviewed native chart/contact pages is implemented.
 A supplied regional SmartArt chart passed rendered-output inspection. A legacy
 VML example still has distorted labels and needs a replacement; do not claim

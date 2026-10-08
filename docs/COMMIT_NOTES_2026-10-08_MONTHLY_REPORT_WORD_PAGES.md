@@ -4,7 +4,7 @@ date: 2026-10-08
 base_commit: f3afd30cf39dd26f4a167ffb753927c22239f021
 workflow: Monthly report
 change_type: native_chart_import
-status: feature_publicly_verified_guidance_followup
+status: merged_and_publicly_verified
 ---
 
 # Preserve reviewed chart and contact pages
@@ -97,6 +97,26 @@ of asking users to select fewer Word sections through a nonexistent control.
 This changes guidance and presentation, not review gates or document output.
 The follow-up passed **87 focused tests** with real LibreOffice, including
 AppTest, documentation and public hygiene; Ruff F/E9 and diff checks passed.
+Final label corrections also passed **28 focused tests**. These use the displayed
+section labels in pricing and long-text/table instructions, and avoid advertising
+an unavailable replacement uploader for cover/unplaced native drawings.
+
+PR #75 final head `d5980b615a32b441383d7aea90c4ce7fc47d3336`, tree
+`d810c22ce39a825a60d71f9b9faffe7e5f1aa386`, passed Actions `37781360900`,
+job `113324982948`: **911 passed, zero skipped**. Published blobs/tree were
+hash-verified and fetched/diffed locally. Logs confirmed the exact final head
+against main `798e751714064c3d4de91d28c461a784f8c7c3d6`; main was rechecked
+before expected-head merge at `ae303a8338c477b72eef382fdc596a64f1dd6cfd`.
+
+Final public check: health returned 200/ok. A fresh supported-browser session
+uploaded the synthetic fixture again, saw the corrected section-specific warning,
+prepared its page, and displayed page selection/purpose/review beside the image.
+The preview and controls were visually inspected together. The confirmation and
+shared-save boxes were left unchecked; no persistent profile was created. Public
+screenshot proof is outside git at
+`/workspace/scratch/monthly-report-chart-review-2026-10-08.jpg`. No private Render
+workspace, logs or data access was used. Actual phone/iPad rendering was not
+verified; responsive stacking relies on the existing Streamlit layout.
 
 ## What was not verified
 
