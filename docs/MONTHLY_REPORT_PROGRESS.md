@@ -14,19 +14,24 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current work: `feat/monthly-report-lifecycle-validation`, based on main
-`d82903eab8e64d4248c877b1625172c56750b6f2` (branding/checkpoint PRs #70–71
-merged and publicly verified). PR #72 is open; its first head is published but not merged or deployed.
+Current release: PR #72 merged at
+`393512174da4dc89deb47457fa5b27153d6ac547`. Final feature head
+`994804067b84a2e790c43a2f8f4a1d218aa0a7b2`, tree
+`38ba56a74678cd8879d076bfee4d75c79a93e66b`, passed Actions `37719217128`,
+job `113122739026`: **901 passed, zero skipped**. Expected-head merge used
+unchanged main `d82903eab8e64d4248c877b1625172c56750b6f2`.
 See [lifecycle notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_LIFECYCLE.md).
-Recovered private inputs and validation artifacts are outside git under
-`/workspace/scratch/fbb232e099bf/monthly-report-validation/`. Thirteen DOCX
-import/save/update/rollover/output API cases passed with deliberate QA content
-selections. Three private layout UI walkthroughs and the complete synthetic
-regional create/generate/next-month AppTest passed with real LibreOffice. The
-56-page PDF evidence case generated seven selected technical pages and rejected
-a priced page. See notes for native-chart/manual-replacement limitations. Final
-focused release run: 97 passed. First-head CI found two corrected test/docs issues;
-updated-head CI, merge and public verification are pending.
+Recovered private inputs and validation artifacts remain outside git under
+`/workspace/scratch/fbb232e099bf/monthly-report-validation/`. Final corrected
+matrix: all thirteen DOCX cases passed deterministic output, original retention,
+snapshot reload, partial update, revision conflict and next-month checks; 363
+rendered PDF pages in total. Three representative private layouts were exercised
+in AppTest; the synthetic three-site flow generated both downloads and reopened
+the next month. The 56-page PDF evidence case included seven reviewed technical
+pages and rejected a priced page. This is developer QA, not client acceptance:
+four native Word charts used manually rendered replacements and two missing
+charts used explicitly synthetic stand-ins. PDF design bootstrap still requires
+DOCX. Public deployment verification is recorded below when complete.
 
 Previous release checkpoint:
 Current checkpoint branch: `docs/monthly-report-branding-release`, based on main
@@ -487,3 +492,12 @@ and visually inspected outside git. No paid model calls or private client data
 were used in automated tests or production QA. An additional supplied large
 DOCX walkthrough opened all 13 section cards and retained an activity edit;
 expected content/drawing review blockers were preserved, not auto-approved.
+
+
+Public verification: Render health returned 200/ok after the deployment restart.
+The supported browser opened Monthly report, selected a contract/site, uploaded
+a small synthetic DOCX without saving it, and analyzed it into section cards.
+The new divider-photo selector and per-picture org/workflow roles were visible,
+confirming the new release. No client document or persistent QA profile was
+created in production. Local AppTest, rather than production, covered persisted
+create/generate/reopen/rollover. Screenshot remains outside git.
