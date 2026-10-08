@@ -249,6 +249,7 @@ def source_from_dict(value: dict) -> ReportSource:
         fields[key] = tuple(fields.get(key, ()))
     fields["captions"] = tuple(tuple(v) for v in fields.get("captions", ()))
     fields["client_page_reviews"] = tuple(tuple(v) for v in fields.get("client_page_reviews", ()))
+    fields["client_page_exclusions"] = tuple(tuple(v) for v in fields.get("client_page_exclusions", ()))
     fields["facts"] = tuple(EvidenceFact(**{**f, "tags": tuple(f.get("tags", ())), "flags": tuple(f.get("flags", ()))}) for f in fields.get("facts", ()))
     return ReportSource(**fields)
 

@@ -10,6 +10,8 @@ from app.monthly_report_checks import preflight
 from app.monthly_report_docx import assemble_docx
 from app.monthly_report_followups import confirmation, problems
 from app.monthly_report_model import (
+    BlockSpec,
+    ColumnSpec,
     ReportPeriod,
     ReportSource,
     ResolvedBlock,
@@ -27,7 +29,12 @@ def prior_report():
     return replace(
         base,
         sections=tuple(
-            s for s in default_sections() if s.key in ("issues", "proposals")
+            replace(s, blocks=(BlockSpec("proposals", "table", columns=(
+                ColumnSpec("facility", "Facility"), ColumnSpec("vendor", "Vendor"),
+                ColumnSpec("scope", "Scope"), ColumnSpec("amount", "Amount", "currency"),
+                ColumnSpec("status", "Status"),
+            )),)) if s.key == "proposals" else s
+            for s in default_sections() if s.key in ("issues", "proposals")
         ),
         blocks=(
             ResolvedBlock(

@@ -55,25 +55,76 @@ def _preview(block: ResolvedBlock | None, assets: dict[str, bytes], profile: Rep
 
 
 def review_client_images(draft, assets, prefix, field):
-    """Review visible assets before export, including older saved designs."""
+    """Confirm each displayed page, with review bound to the block's content."""
     from app.monthly_report_model import used_block_keys
     from app.monthly_report_sections import readable_label
+
+    def state_key(block):
+        return prefix + "_client_" + block.key + "_" + block.fingerprint
+
+    def set_state(key, value):
+        st.session_state[key] = value
+
     blocks = []
     used = used_block_keys(draft)
     for block in draft.blocks:
         if block.source == "Omit" or block.key not in used or not block.asset_hashes:
             blocks.append(block)
             continue
+        key = state_key(block)
+        count = len(block.asset_hashes)
         confirmed = block.client_reviewed_fingerprint == block.fingerprint
-        with st.expander(readable_label(block.key) + (" · pages checked" if confirmed else " · check pages before download")):
-            key = prefix + "_client_" + block.key + "_" + block.fingerprint
-            index = st.selectbox("Page to view", list(range(len(block.asset_hashes))),
-                                 format_func=lambda n, count=len(block.asset_hashes): f"Page {n+1} of {count}", key=field(key + "_page", 0))
+        checked = set(st.session_state.get(key + "_checked_pages", range(count) if confirmed else ()))
+        removed = st.session_state.get(key + "_remove_page")
+        # Keep removal decisions bound to the original content too: the advanced
+        # editor may reconstruct a library block on every rerun. Follow the
+        # shrinking sequence of copies without changing that library version.
+        while removed is not None and 0 <= removed < count:
+            removal_key = key + "_remove_notice"
+            original = block
+            indexes = tuple(n for n in range(count) if n != removed)
+            block = replace(
+                block, asset_hashes=tuple(original.asset_hashes[n] for n in indexes),
+                asset_captions=tuple(original.asset_captions[n] if n < len(original.asset_captions) else "" for n in indexes),
+                references=tuple(original.references[n] for n in indexes) if len(original.references) == count else original.references,
+                client_reviewed_fingerprint="",
+            )
+            checked = {new for new, old in enumerate(indexes) if old in checked}
+            key = state_key(block)
+            count = len(block.asset_hashes)
+            checked = set(st.session_state.setdefault(key + "_checked_pages", tuple(sorted(checked))))
+            st.session_state.setdefault(key + "_page", min(removed, max(0, count - 1)))
+            if not st.session_state.get(removal_key):
+                st.success("Page removed from this report. The saved original is unchanged.")
+                st.session_state[removal_key] = True
+            removed = st.session_state.get(key + "_remove_page")
+        if not count:
+            blocks.append(block)
+            continue
+        checked &= set(range(count))
+        confirmed = len(checked) == count
+        with st.expander(readable_label(block.key) + (" · pages checked" if confirmed else " · check pages before download"), expanded=not confirmed):
+            index = min(max(0, st.session_state.get(key + "_page", 0)), count - 1)
+            st.caption(f"Page {index + 1} of {count} · {len(checked)} of {count} checked")
+            if count > 1:
+                previous, following = st.columns(2)
+                previous.button("Previous page", key=key + "_previous", disabled=index == 0,
+                                on_click=set_state, args=(key + "_page", index - 1))
+                following.button("Next page", key=key + "_next", disabled=index == count - 1,
+                                 on_click=set_state, args=(key + "_page", index + 1))
             ref = block.asset_hashes[index]
             st.image(assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref), width="stretch")
-            st.caption("Check every selected page. Remove pages showing any price, legal-only terms, or no useful report content in the section editor or upload review.")
-            checked = st.checkbox("I checked all pages in this section: relevant and price-free", key=field(key + "_ok", confirmed))
-            block = replace(block, client_reviewed_fingerprint=block.fingerprint if checked else "")
+            if index < len(block.asset_captions) and block.asset_captions[index]:
+                st.caption(block.asset_captions[index])
+            st.write("Does this page belong in the client report? Check that it shows useful information and no prices. Remove legal-only, blank or signature-only pages.")
+            approve, remove = st.columns(2)
+            approve.button("This page is ready to include", key=key + "_approve", disabled=index in checked,
+                           on_click=set_state, args=(key + "_checked_pages", tuple(sorted(checked | {index}))))
+            remove.button("Remove this page from report", key=key + "_remove", on_click=set_state,
+                          args=(key + "_remove_page", index))
+            if index in checked:
+                st.caption("This page is checked. You can still remove it or review the next page.")
+            block = replace(block, client_reviewed_fingerprint=block.fingerprint if confirmed else "")
         blocks.append(block)
     return replace(draft, blocks=tuple(blocks))
 

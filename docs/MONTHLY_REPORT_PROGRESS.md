@@ -14,6 +14,20 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
+Latest local increment: `feat/monthly-report-novice-workspaces`, based on the
+PR #83 documentation head. PR #83 merged at
+`08d4696c4e06b7a973b74c8adb0282054b9c88aa` after successful Actions
+`37830532962`. Four owner-authorized reviewers completed novice audits and
+implemented targeted fixes. Named cover/chart uploads, section-based standing
+editing, visible saved pictures, complete scanned-page queue, actual-page action
+citations, price-free editable tables and per-page final review are integrated.
+Local full suite: **955 passed, one CI-only skip**, real LibreOffice.
+Both retained private originals passed all 13 import sections (118 picture
+entries total), with unchanged source hashes and no approvals or saves.
+Subsequent docs metadata is checked separately. This increment is **not yet published, merged or deployed**. See
+[novice workspace notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_NOVICE_WORKSPACES.md).
+Runtime private-directory/example seeding remains pending.
+
 Latest navigation follow-up: PR #82 merged at
 `61772f922a7267adc8919bc82b3a98e2cae44a40`, head
 `6e7e77561bcfc76be9db487b025110a601d45412`, tree

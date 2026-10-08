@@ -85,6 +85,39 @@ def _date(value: str) -> str:
     return ""
 
 
+def native_action_lines(source: ReportSource):
+    """Price-free native work lines with their actual selected page origins."""
+    from app.monthly_report_content_policy import contains_price, page_status
+    found = {}
+    for number in source.selected_pages:
+        if not 1 <= number <= len(source.page_texts):
+            continue
+        text = source.page_texts[number - 1]
+        if page_status(text, unreadable=number in source.needs_vision)[0] != "technical":
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if re.search(r"\b(completed|repaired|replaced|inspected)\b", line, re.I) and not contains_price(line):
+                found.setdefault(line, []).append(number)
+    return tuple((line, tuple(dict.fromkeys(pages))) for line, pages in found.items())
+
+
+def action_evidence(source: ReportSource):
+    """Separate supported native action wording from edits needing source review.
+
+    Never rewrite human fields. Unmatched wording may be a valid human summary,
+    but must not acquire invented page citations merely because pages are selected.
+    """
+    supported = dict(native_action_lines(source))
+    accepted, needs_review = [], []
+    for line in dict.fromkeys(line.strip() for line in source.actions.splitlines() if line.strip()):
+        if line in supported:
+            accepted.append((line, supported[line]))
+        else:
+            needs_review.append(line)
+    return tuple(accepted), tuple(needs_review)
+
+
 def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     text = "\n".join(source.page_texts)
     sample = (source.filename + "\n" + text[:30_000]).casefold()
@@ -114,7 +147,7 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
                    vendor=labeled("vendor|contractor|service company"), facility=facility,
                    service_date=_date(date_match[0]) if date_match else "", work_order=labeled("job(?: number)?|wo(?: number)?|work order"),
                    tags=tuple(v.strip() for v in re.split(r"[,;]", labeled("equipment tags?|asset tags?")) if v.strip()),
-                   actions=lines(r"\b(completed|repaired|replaced|inspected)\b"), findings=lines(r"\b(findings?|observed)\b"),
+                   actions="\n".join(line for line, _ in native_action_lines(source))[:6000], findings=lines(r"\b(findings?|observed)\b"),
                    recommendations=lines(r"\brecommend"), follow_ups=lines(r"\b(follow.up|pending|scheduled)\b"),
                    quotes=lines(r"\b(quoted|quotation|quote amount)\b"), out_of_limit=lines(r"\b(out.of.(?:limit|range)|above limit|below limit)\b"))
 
@@ -303,6 +336,9 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         if source.suffix == suffix:
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
+            if data.get("native_action_policy", 0) < 1:
+                # This is the original extraction cache, never a reviewed draft.
+                source = replace(source, actions="\n".join(line for line, _ in native_action_lines(source))[:6000])
             return SourceContent(replace(source, filename=filename), tables, tuple(tuple(p) for p in data.get("image_items", ()))), ()
     library._atomic_write(path, raw)
     page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
@@ -346,11 +382,11 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         raise ValueError("Source text exceeds 400,000 characters; split the input before reading.")
     source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
                           selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
-    source = suggest_facts(source, profile)
     if suffix not in (".csv", ".xlsx"):
         source = replace(source, selected_pages=suggested_pages(source))
+    source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, **asdict(content)}))
     return content, attachments
 
 

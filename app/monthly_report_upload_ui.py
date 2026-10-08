@@ -16,6 +16,13 @@ def _signature(value) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _undecided_pages(content, source):
+    exclusions = dict(source.client_page_exclusions)
+    return [n for n in sources.image_numbers(content)
+            if not (n in source.selected_pages and page_allowed(source, n))
+            and exclusions.get(n) != page_fingerprint(source, n)]
+
+
 def _cmms(content, profile, period, prefix, field):
     source = content.source
     tables = [t for i, t in enumerate(content.tables, 1) if i in source.selected_pages]
@@ -106,7 +113,11 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     selection_key = field(key + "_selected", contents[0].source.id)
     if st.session_state[selection_key] not in by_id:
         st.session_state[selection_key] = contents[0].source.id
-    selected = st.selectbox("Review source", list(by_id), format_func=lambda v: by_id[v].source.filename, key=selection_key)
+    if len(by_id) == 1:
+        selected = next(iter(by_id))
+        st.write("Reviewing " + by_id[selected].source.filename)
+    else:
+        selected = st.selectbox("File to review", list(by_id), format_func=lambda v: by_id[v].source.filename, key=selection_key)
     content, source = by_id[selected], by_id[selected].source
     p = key + "_" + selected
     pending = st.session_state.pop(p + "_page_action", None)
@@ -117,8 +128,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         with st.expander("Edit vendor, date and work details"):
             st.caption("Suggestions come from readable labels and keywords. Review or correct them; blank means not established.")
             classification = st.selectbox("Classification", sources.CLASSIFICATIONS, key=field(p + "_classification", source.classification))
-            confidence = st.selectbox("Classification confidence", ["low", "medium", "high"], key=field(p + "_confidence", source.confidence))
-            changes = {"classification": classification, "confidence": confidence}
+            changes = {"classification": classification}
             for attr, label in (("vendor", "Vendor"), ("service_date", "Service/report date (YYYY-MM-DD)"),
                                 ("facility", "Source facility"), ("work_order", "Job / work-order number")):
                 changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
@@ -165,9 +175,9 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             else:
                 reviews.pop(page, None)
             source = replace(source, client_page_reviews=tuple(sorted(reviews.items())))
-            left = [n for n in source.selected_pages if n in sources.image_numbers(content) and not page_allowed(source, n)]
+            left = _undecided_pages(content, source)
             checked = sum(page_allowed(source, n) for n in source.selected_pages if n in sources.image_numbers(content))
-            st.caption(f"{checked} selected pages checked · {len(left)} still need review")
+            st.caption(f"{checked} pages ready to include · {len(left)} pages still need a decision")
             keep, omit, advance = st.columns(3)
             action = None
             if keep.button("Include page and continue", key=p + "_keep_page", disabled=not page_allowed(source, page)):
@@ -178,21 +188,24 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 action = "next"
             if action:
                 chosen = set(source.selected_pages)
+                exclusions = dict(source.client_page_exclusions)
                 if action == "keep":
                     chosen.add(page)
+                    exclusions.pop(page, None)
                 elif action == "omit":
                     chosen.discard(page)
-                remaining = [n for n in pages if n in chosen and n in sources.image_numbers(content)
-                             and not page_allowed(source, n) and n != page]
+                    exclusions[page] = page_fingerprint(source, page)
+                source = replace(source, selected_pages=tuple(sorted(chosen)),
+                                 client_page_exclusions=tuple(sorted(exclusions.items())))
+                remaining = [n for n in _undecided_pages(content, source) if n != page]
                 next_page = next((n for n in remaining if n > page), remaining[0] if remaining else page)
-                source = replace(source, selected_pages=tuple(sorted(chosen)))
                 by_id[selected] = replace(content, source=source)
                 st.session_state[key] = tuple(by_id.values())
                 # Apply widget changes before instantiation on the next rerun.
                 st.session_state[p + "_page_action"] = (list(source.selected_pages), next_page)
                 st.rerun()
-            if not left and checked:
-                st.success("Selected pages are checked. Open ‘Embed selected report pages and photographs’ below to prepare them.")
+            if not left:
+                st.success("Every page has been checked. Prepare the included pages below." if checked else "Every page has been checked and left out. The original file is still saved.")
             st.caption("Leaving a page out keeps the original file. Use the page selector to revisit any page.")
         by_id[selected] = replace(content, source=source)
         contents = tuple(by_id.values())
@@ -209,7 +222,10 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         for item in contents:
             if not sources.image_numbers(item):
                 continue
-            slot = st.selectbox("Destination · " + item.source.filename, ["Do not embed", *sources.PAGE_DESTINATIONS],
+            labels = {"Do not embed": "Keep as reference only", "vendor_reports": "Maintenance — vendor service pages",
+                      "water_reports": "Water treatment — chemical/service pages", "mbcx_report": "MBCx — commissioning report pages",
+                      "improvements": "Monthly activity — improvement photos"}
+            slot = st.selectbox("Add " + item.source.filename + " to", ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
                                 key=field(key + "_destination_" + item.source.id + "_" + item.source.classification,
                                           defaults.get(item.source.classification, "Do not embed")))
             if slot != "Do not embed":

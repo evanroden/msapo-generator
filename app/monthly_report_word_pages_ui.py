@@ -35,7 +35,7 @@ def chart_page_review(section, path, period, prefix, field, old, plan, blocking)
             return False
         plan["page_layout"] = True
         plan["preserved_assets"], plan["word_page_records"] = [], []
-        st.info("Only the pages you check here will appear in this section. Individual fragments below are replaced in this draft; the original file is retained.")
+        st.info("Keep the complete pages that are still correct. You can add updated charts, outage procedures or contacts below these previews. Uncheck an old page when replacing it. The original file is retained.")
         slots = ("org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix")
         choices = {entry["page"]: entry["slot"] for entry in old.get("word_page_records", ())}
         for page in pages:

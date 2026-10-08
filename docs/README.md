@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Monthly novice workflow review: [COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_NOVICE_WORKSPACES.md](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_NOVICE_WORKSPACES.md).
+
 Monthly memory and first-report guidance: [COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_MEMORY.md](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_MEMORY.md).
 
 Monthly source page review: [COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_PAGE_REVIEW.md](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_PAGE_REVIEW.md).

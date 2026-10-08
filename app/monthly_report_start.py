@@ -67,6 +67,10 @@ def design_seed(profile, period, actor, source=None):
     if source:
         profile = replace(source.profile, key=profile.key, title=profile.title, facilities=profile.facilities,
                           scope_type=profile.scope_type, imported_from="", asset_tags=profile.asset_tags)
+    else:
+        # The RFI appendix is optional in a brand-new general template. A reused
+        # design or saved report keeps its own deliberate section choices.
+        profile = replace(profile, excluded_sections=tuple(dict.fromkeys((*profile.excluded_sections, "rfi"))))
     prior_blocks = {}
     if source:
         seed = latest_saved_draft(source.profile.contract, source.profile.key, period)
