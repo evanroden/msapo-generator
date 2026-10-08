@@ -42,8 +42,17 @@ def generate_button(app):
 
 
 def review_pages(app):
-    for key in [w.key for w in app.checkbox if w.label == "I checked all pages in this section: relevant and price-free"]:
-        app.checkbox(key).check().run()
+    for _ in range(100):
+        approve = next((w for w in app.button if w.label == "This page is ready to include" and not w.disabled), None)
+        if approve:
+            approve.click().run()
+            continue
+        following = next((w for w in app.button if w.label == "Next page" and not w.disabled), None)
+        if following:
+            following.click().run()
+            continue
+        return
+    raise AssertionError("Page review did not finish within the synthetic fixture limit")
 
 
 def mock_chart_upload(monkeypatch):

@@ -129,10 +129,9 @@ def build_section_import(path, inspection, plans):
                 source = f"docx:{inspection.sha256}:word-sections:{','.join(map(str, record['sections']))}:page:{record['page']}"
                 block = grouped.get(slot, ResolvedBlock(slot, "Last month"))
                 grouped[slot] = replace(block, asset_hashes=(*block.asset_hashes, ref), references=(*block.references, source))
-            continue
-        if any(i.kind == "unsupported" for i in sections[plan["key"]].items) and not plan.get("unsupported_reviewed"):
+        if not plan.get("page_layout") and any(i.kind == "unsupported" for i in sections[plan["key"]].items) and not plan.get("unsupported_reviewed"):
             raise ValueError("Choose whether to replace or leave out unread drawings before continuing.")
-        selected = plan.get("selected", ())
+        selected = () if plan.get("page_layout") else plan.get("selected", ())
         for identity in selected:
             item = items[identity]
             slot = plan.get("destinations", {}).get(identity)
@@ -182,7 +181,10 @@ def build_section_import(path, inspection, plans):
                     raise ValueError("Selected images exceed the 60 MB preparation budget.")
                 assets[digest] = image.data
             block = grouped.get(slot, ResolvedBlock(slot, "Replace once"))
-            grouped[slot] = replace(block, asset_hashes=tuple(dict.fromkeys((*block.asset_hashes, digest))))
+            # Choosing a new cover photo/logo replaces that picture only; do
+            # not discard any native text or other report parts in the block.
+            hashes = (digest,) if slot in ("cover_photo", "client_logo", "brand_logo") else tuple(dict.fromkeys((*block.asset_hashes, digest)))
+            grouped[slot] = replace(block, asset_hashes=hashes)
     if not grouped:
         raise ValueError("Keep at least one report section before continuing.")
     # Section confirmation covers the actual selected images and current text.

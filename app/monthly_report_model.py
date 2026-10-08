@@ -225,6 +225,7 @@ class ReportSource:
     captions: tuple[tuple[int, str], ...] = ()
     notices: tuple[str, ...] = ()
     client_page_reviews: tuple[tuple[int, str], ...] = ()
+    client_page_exclusions: tuple[tuple[int, str], ...] = ()
     facts: tuple[EvidenceFact, ...] = ()
 
     @property
@@ -327,12 +328,12 @@ def default_sections() -> tuple[SectionSpec, ...]:
         SectionSpec("issues", "8", "Equipment Performance Issues", (BlockSpec("equipment_issues", "rich_text", True),)),
         SectionSpec("capital", "9", "Priority Capital Renewal List", (
             BlockSpec("capital_renewal", "table", stock_text_keys=("no_capital",), columns=(
-                ColumnSpec("facility", "Facility"), ColumnSpec("priority", "Priority"), ColumnSpec("recommendation", "Recommendation"), ColumnSpec("cost", "Cost", "currency"),
+                ColumnSpec("facility", "Facility"), ColumnSpec("priority", "Priority"), ColumnSpec("recommendation", "Recommendation"),
             )),
             BlockSpec("end_of_life", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("asset", "Asset"), ColumnSpec("end_date", "End of useful life", "date"))),
         )),
         SectionSpec("proposals", "10", "Pending & Declined Proposals", (BlockSpec("proposals", "table", columns=(
-            ColumnSpec("facility", "Facility"), ColumnSpec("vendor", "Vendor"), ColumnSpec("scope", "Scope"), ColumnSpec("amount", "Amount", "currency"), ColumnSpec("status", "Status"),
+            ColumnSpec("facility", "Facility"), ColumnSpec("vendor", "Vendor"), ColumnSpec("scope", "Scope"), ColumnSpec("status", "Status"),
         )),)),
         SectionSpec("training", "11", "Training Summary", (BlockSpec("training_summary", "rich_text", True),)),
         SectionSpec("rfi", "G", "RFI Matrix", (BlockSpec("rfi_matrix", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("item", "Requested item"), ColumnSpec("complete", "Complete", "boolean"))),), included=False, appendix=True),

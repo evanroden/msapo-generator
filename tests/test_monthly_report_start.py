@@ -26,6 +26,26 @@ def test_membership_is_explicit_order_independent_and_name_does_not_change_ident
     assert not matching_profiles((group,), group.facilities[:1])
 
 
+def test_general_template_starts_without_rfi_but_reused_design_keeps_its_choice(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    period = ReportPeriod(2026, 9)
+    profile = replace(synthetic_profiles()[0], excluded_sections=("training",))
+    draft, _ = design_seed(profile, period, "Synthetic Editor")
+    included = {s.key: s.included for s in draft.sections}
+    assert not included["rfi"] and not included["training"] and included["activity"]
+    # An existing contract design explicitly includes RFI, even without a report
+    # snapshot. The new-template default must not override that saved choice.
+    source = library.save_profile(profile, expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    target = replace(synthetic_profiles()[1], key="synthetic-target")
+    reused, _ = design_seed(target, period, "Synthetic Editor", source)
+    assert next(s for s in reused.sections if s.key == "rfi").included
+    # More recent saved section choices take precedence over the profile.
+    saved = replace(reused, profile=profile, sections=tuple(replace(s, included=s.key in ("rfi", "activity")) for s in reused.sections))
+    library.save_snapshot(saved, expected_revision=0, entered_editor="Synthetic Editor")
+    again, _ = design_seed(target, period, "Synthetic Editor", source)
+    assert {s.key for s in again.sections if s.included} == {"rfi", "activity"}
+
+
 def test_new_design_is_atomic_confirmed_and_remembers_assets_without_other_site_content(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     source_profile = synthetic_profiles()[0]
@@ -86,7 +106,7 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"
     assert any(w.label == "Include Organizational Chart" for w in app.checkbox)
     step(app, 3)
-    assert any(w.label == "Updated client logo" for w in app.get("file_uploader"))
+    assert any(w.label == "Upload a new client logo" for w in app.get("file_uploader"))
     # Navigation is deliberately free: an unfinished standing section does not
     # prevent adding work now, then returning to complete it later.
     step(app, 2)

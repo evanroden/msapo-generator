@@ -2,6 +2,11 @@
 
 import hashlib
 import re
+from dataclasses import replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.monthly_report_model import BlockSpec, ResolvedBlock
 
 
 _MONEY = re.compile(r"(?:[$€£]\s*\d|\b(?:USD|CAD|EUR|GBP)\s*\d|\d[\d,.]*\s*(?:USD|CAD|EUR|GBP|dollars?)\b)", re.I)
@@ -48,6 +53,59 @@ def table_has_pricing(columns, rows, *, work_orders=False):
     technical = work_orders or bool(re.search(r"\b(?:counts?|hours?|temperature|pressure|flow|gpm|readings?|work.orders?|PM|CM)\b", " ".join(columns), re.I))
     return not technical and any(any(re.fullmatch(r"(?:grand\s+)?total\s*:?[ ]*", cell.strip(), re.I) for cell in row)
                                  and any(re.fullmatch(r"[\d,.()\s+-]+", cell.strip()) and re.search(r"\d", cell) for cell in row) for row in rows)
+
+
+def price_free_table(spec: "BlockSpec", block: "ResolvedBlock") -> tuple["BlockSpec", "ResolvedBlock", tuple[str, ...]]:
+    """Return an editable client copy and the removed pricing-column labels.
+
+    Saved snapshots and originals are immutable inputs. Only identified pricing
+    columns are removed; money inside narrative/detail cells remains visible
+    for correction and is still rejected by the normal preflight gate. Extra
+    cells with no supplied header get neutral headers instead of being lost.
+    Callers must explain the removed columns before saving this revised draft.
+    """
+    from app.monthly_report_model import ColumnSpec
+
+    removed = []
+
+    def filter_rows(columns, rows, currency=()):
+        width = max((len(row) for row in rows), default=len(columns))
+        headings = tuple(columns) + tuple(
+            f"Detail {n + 1}" for n in range(len(columns), width)
+        )
+        excluded = set(table_price_columns(headings, rows)) | set(currency)
+        removed.extend(headings[n] for n in sorted(excluded))
+        indexes = tuple(n for n in range(len(headings)) if n not in excluded)
+        filtered = tuple(tuple(row[n] if n < len(row) else "" for n in indexes) for row in rows)
+        return headings, indexes, filtered if indexes else ()
+
+    updated_spec = spec
+    updated_rows = block.rows
+    if spec.type in ("table", "work_order_grid"):
+        headings, indexes, updated_rows = filter_rows(
+            tuple(c.title for c in spec.columns), block.rows,
+            tuple(n for n, c in enumerate(spec.columns) if price_column(c.title, c.type)),
+        )
+        keys = {c.key for c in spec.columns}
+        columns = list(spec.columns)
+        for n in range(len(columns), len(headings)):
+            key = f"unmapped_detail_{n + 1}"
+            while key in keys:
+                key += "_extra"
+            keys.add(key)
+            columns.append(ColumnSpec(key, headings[n]))
+        updated_spec = replace(spec, columns=tuple(columns[n] for n in indexes))
+    tables = []
+    for table in block.extra_tables:
+        headings, indexes, rows = filter_rows(table.columns, table.rows)
+        if indexes:
+            tables.append(replace(table, columns=tuple(headings[n] for n in indexes), rows=rows))
+        elif not headings:
+            tables.append(table)
+    updated_block = replace(block, rows=updated_rows, extra_tables=tuple(tables))
+    if updated_spec != spec or updated_block != block:
+        updated_block = replace(updated_block, reviewed_fingerprint="", client_reviewed_fingerprint="")
+    return updated_spec, updated_block, tuple(dict.fromkeys(removed))
 
 
 def page_status(text, *, unreadable=False):

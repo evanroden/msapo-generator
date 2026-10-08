@@ -87,6 +87,30 @@ def _identity(contract, prepared, prefix, field, state):
     return candidate, actor, missing
 
 
+def _replacement_pictures(section, p, plan):
+    """Keep each replacement tied to a named report part across reruns."""
+    if section.key == "cover":
+        labels = {"cover_photo": "New cover photograph", "client_logo": "New client logo", "brand_logo": "New ENFRA logo"}
+        st.caption("Add only what you want to change. Each new picture replaces the selected picture for that purpose; other cover details stay as they are.")
+    elif section.key == "organization":
+        labels = {"org_chart": "New organization chart", "business_hours_workflow": "New daytime outage procedure", "after_hours_workflow": "New after-hours outage procedure", "contact_matrix": "New facility contact page"}
+        st.caption("Add only the parts that changed. Leave out the old picture or uncheck its original page when replacing it. Other selected pages stay in the report.")
+    else:
+        labels = {{"activity": "improvements", "training": "training_summary", "maintenance": "vendor_reports", "water": "water_reports"}.get(section.key, default_slot(section.key)): section_help(section.key).upload_label}
+        st.caption("Choose “Leave out” on the old picture when replacing it. Complete vendor, chemical and MBCx files can be added in This month’s work after setup.")
+    replacements = dict(plan.get("new_assets", ()))
+    for slot, label in labels.items():
+        upload = st.file_uploader(label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=p + "_replacement_" + slot, max_upload_size=30)
+        if upload:
+            try:
+                replacements[slot] = normalize_report_image(upload.getvalue(), Path(upload.name).suffix, line_art=section.key == "organization" or slot.endswith("logo"))
+            except (ValueError, OSError):
+                st.error("This picture could not be read. Choose another image; your previous selection is retained.")
+        if slot in replacements:
+            st.image(replacements[slot].data, width="stretch", caption=label + " — included in this report")
+    plan["new_assets"] = list(replacements.items())
+
+
 def _section_card(section, path, inspection, period, prefix, field, plans, first):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
@@ -110,6 +134,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         else:
             from app.monthly_report_word_pages_ui import chart_page_review
             if chart_page_review(section, path, period, p, field, old, plan, blocking):
+                _replacement_pictures(section, p, plan)
                 _approve_plan(plan, p, field, old, plans, blocking)
                 return
             items = list(section.items)
@@ -165,27 +190,25 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             from app.monthly_report_picture_cards import review_pictures
             review_pictures([i for i in items if i.kind == "image"], section.key,
                             path, p, prefix, field, old, plan, blocking)
-            if action == actions[1] and section.key not in ("cover", "other"):
-                st.caption("Choose “Leave out” on the old picture when replacing it. Complete vendor, chemical and MBCx files can be added in This month’s work after setup.")
-                slot = {"activity": "improvements", "training": "training_summary", "maintenance": "vendor_reports", "water": "water_reports"}.get(section.key, default_slot(section.key))
-                if section.key == "organization":
-                    slot = st.radio("This replacement shows", ["org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix"], format_func=lambda v: {"org_chart": "Organization chart", "business_hours_workflow": "Business-hours outage procedure", "after_hours_workflow": "After-hours outage procedure", "contact_matrix": "Facility contacts"}[v], key=field(p + "_replacement_slot", old.get("new_assets", [("org_chart", None)])[0][0] if old.get("new_assets") else "org_chart"))
-                upload = st.file_uploader(guide.upload_label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=p + "_replacement", max_upload_size=30)
-                if upload:
-                    image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix, line_art=section.key == "organization")
-                    st.image(image.data, width="stretch")
-                    plan["new_assets"] = [(slot, image)]
-                elif plan["new_assets"]:
-                    st.caption("Your replacement picture is retained.")
+            if action == actions[1] and section.key != "other":
+                _replacement_pictures(section, p, plan)
+            elif plan["new_assets"]:
+                from app.monthly_report_sections import readable_label
+                for slot, image in plan["new_assets"]:
+                    st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
             if any(i.kind == "unsupported" for i in section.items):
                 preserve_hint = "Open ‘Preview the original charts and contact lists’ above to preview complete pages. " if section.key == "organization" else ""
                 st.warning("Some charts or artwork in the original Word file could not be displayed. " + preserve_hint + "If they cannot be kept clearly, add replacement pictures or explicitly leave them out. The original is retained.")
-                choice = st.radio("Some content could not be shown. How would you like to continue?", ["Choose an option", "I uploaded clear replacements", "Continue without the content that could not be shown"],
-                                  key=field(p + "_unsupported", old.get("unsupported_choice", "Choose an option")))
+                options = ["Choose an option", "Continue without the content that could not be shown"]
+                if section.key != "other":
+                    options.insert(1, "I uploaded clear replacements")
+                previous = old.get("unsupported_choice", "Choose an option")
+                choice = st.radio("Some content could not be shown. How would you like to continue?", options,
+                                  key=field(p + "_unsupported", previous if previous in options else options[0]))
                 plan["unsupported_choice"] = choice
                 plan["unsupported_reviewed"] = choice == "Continue without the content that could not be shown" or (choice == "I uploaded clear replacements" and bool(plan["new_assets"]))
                 if not plan["unsupported_reviewed"]:
-                    if section.key in ("cover", "other"):
+                    if section.key == "other":
                         blocking.append("Choose ‘Continue without the content that could not be shown’ to retain them only in the original. You can add clear replacement pictures to the appropriate report section after setup.")
                     else:
                         blocking.append(preserve_hint + f"To upload a replacement, choose ‘{guide.edit}’ above. Otherwise choose ‘Continue without the content that could not be shown’.")

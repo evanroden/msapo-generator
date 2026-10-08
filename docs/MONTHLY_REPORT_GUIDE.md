@@ -183,3 +183,18 @@ and sites. Separate reports retain their own choices and history. Use
 batches; repeat if the app says more remain. Neither action removes original
 paths, reports or history. Original Word/PDF files still include their embedded
 media, and different image encodings remain separate files.
+
+
+### Working through the sections
+
+The Report checklist tells you where each section is edited. Open the matching
+section in This month’s work or Site information. Pictures appear beside their
+controls; remove only the ones that do not belong in this report. Cover and
+organization sections have separate inputs for each replacement. At the final
+review, check each displayed page and either approve it or remove it. Every
+included page needs review; saved originals remain available.
+
+Price columns are omitted from the working client report, including older table
+designs that asked for costs. Check the remaining text and pictures for prices.
+Scanned uploads may have unread pages even if none are selected yet; work through
+the page queue before deciding what to include.
