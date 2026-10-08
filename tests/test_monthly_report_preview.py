@@ -130,3 +130,21 @@ def test_real_preview_and_full_bleed_layout_render(monkeypatch, tmp_path):
     assert result.pages == len(fitz.open(stream=package.pdf, filetype="pdf"))
     with fitz.open(stream=result.pdf, filetype="pdf") as pdf:
         assert all("DRAFT - REVIEW ONLY" in p.get_text() for p in pdf)
+
+
+def test_guided_divider_block_is_rendered_and_explicit_omission_wins():
+    from zipfile import ZipFile
+    image = BytesIO()
+    Image.new("RGB", (800, 1000), "green").save(image, "PNG")
+    base = draft()
+    divider = ResolvedBlock("divider_activity", "Last month", asset_hashes=("synthetic.png",))
+    divider = replace(divider, client_reviewed_fingerprint=divider.fingerprint)
+    report = replace(base, blocks=(*base.blocks, divider))
+    raw = assemble_docx(report, asset_loader=lambda ref: image.getvalue())
+    with ZipFile(BytesIO(raw)) as package:
+        assert b'behindDoc="1"' in package.read("word/document.xml")
+    report = replace(report, sections=tuple(replace(s, divider_asset="synthetic.png") for s in report.sections),
+                     blocks=(*base.blocks, replace(divider, source="Omit")))
+    raw = assemble_docx(report, asset_loader=lambda ref: image.getvalue())
+    with ZipFile(BytesIO(raw)) as package:
+        assert b'behindDoc="1"' not in package.read("word/document.xml")

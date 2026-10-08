@@ -14,7 +14,7 @@ from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import imported_draft, read_import_image
 from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import Facility, ReportProfile, ReportTable, default_sections
-from app.monthly_report_sections import section_reviews, table_without_prices, build_section_import, default_slot, small_artwork, apply_section_omissions
+from app.monthly_report_sections import section_reviews, table_without_prices, build_section_import, default_slot, small_artwork, apply_section_omissions, readable_label
 from app.monthly_report_setup import design_profile, merge_drafts, item_findings
 from app.monthly_report_section_help import section_help
 
@@ -164,6 +164,25 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 kept = st.multiselect(guide.picture_label, list(labels), format_func=labels.get,
                                       key=field(p + "_pictures", old.get("picture_choices", suggested)), help="Uncheck old vendor pages, legal terms, blank/signature-only pages and every page showing a price. Unchecked pages remain in the original.")
                 plan["picture_choices"] = kept
+                if section.key not in ("cover", "other"):
+                    divider_slot = "divider_" + section.key
+                    suggested_divider = next((i.id for i in images if i.suggested_slot == divider_slot), "")
+                    saved_divider = next((identity for identity, slot in old.get("destinations", {}).items() if slot == divider_slot), suggested_divider)
+                    divider = st.selectbox("Section divider photograph", ["", *kept],
+                                           format_func=lambda v: labels.get(v, "No divider photograph"),
+                                           key=field(p + "_divider_" + _signature(kept), saved_divider if saved_divider in kept else ""),
+                                           help="Choose the decorative picture behind this section’s title. It will not be treated as a vendor page or org chart.")
+                    if divider:
+                        plan["destinations"][divider] = divider_slot
+                    if section.key == "organization":
+                        for identity in kept:
+                            if identity == divider:
+                                continue
+                            item = next(i for i in images if i.id == identity)
+                            slots = ("org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix")
+                            default = old.get("destinations", {}).get(identity, item.suggested_slot)
+                            plan["destinations"][identity] = st.selectbox(labels[identity] + " shows", slots,
+                                format_func=readable_label, key=field(p + "_purpose_" + identity, default if default in slots else "org_chart"))
                 if len(suggested) < len(images):
                     st.caption("Small icons and thin separator graphics start unchecked. You can select one if it is meaningful report content. All remain in the saved original.")
                 shown = st.selectbox("Picture or page to view", list(labels), format_func=labels.get, key=field(p + "_preview", images[0].id))
@@ -231,7 +250,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             st.caption("Resolve the message above to finish this section.")
 
 
-def render_section_setup(contract, period, prepared, field, *, state=None, identity=None):
+def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
+                         working_draft=None, working_assets=(), working_revision=None):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else identity.key if identity else "new", period.key))
     st.subheader("Start with a report you already have")
     st.write("Upload an older report or a teammate’s unfinished report. Then review its sections below. Your original file will not be changed.")
@@ -298,7 +318,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 current = library.load_snapshot(contract, profile.key, period) if state else None
                 prior_import = library.load_imported_draft(contract, profile.key) if state else None
                 base = current.draft if current else None
-                if prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
+                if working_draft is not None:
+                    if (working_draft.profile.contract, working_draft.profile.key, working_draft.period) != (contract, profile.key, period):
+                        raise ValueError("The open draft belongs to different sites or a different month. Reopen the intended report before importing.")
+                    if working_revision != (current.revision if current else 0):
+                        raise ValueError("Another version was saved while you were working. Compare and accept that version using Save progress before adding this report. Your open draft and upload are preserved.")
+                    base = working_draft
+                elif prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
                     base = merge_drafts(base, prior_import)
                 draft = merge_drafts(base, draft)
                 draft = apply_section_omissions(draft, plans.values())
@@ -307,7 +333,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                           "section_plans": [{k: v for k, v in plan.items() if k != "new_assets"} for plan in plans.values()]}
                 # Normalize dataclass table values for the JSON audit record.
                 review["section_plans"] = [dict(plan, tables={k: asdict(v) for k, v in plan.get("tables", {}).items()}) for plan in review["section_plans"]]
-                library.save_report_setup(profile, draft, path, review, assets=mapped.assets,
+                library.save_report_setup(profile, draft, path, review, assets=tuple(dict((*working_assets, *mapped.assets)).items()),
                                           expected_revision=state.revision if state else 0, actor=actor, confirmed=True,
                                           snapshot_revision=current.revision if current else 0)
                 st.session_state["report_resume_import"] = (contract, profile.key, period.key)

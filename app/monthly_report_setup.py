@@ -81,7 +81,7 @@ def design_profile(profile, inspection, mappings, overrides=()):
     destinations = {m.item_id: m.slot for m in mappings}
     skeleton = default_sections()
     owner = {b.key: s.key for s in skeleton for b in s.blocks}
-    found, order, block_order = {}, [], {}
+    found, order, block_order, included = {}, [], {}, set()
     for item in inspection.items:
         slot = destinations.get(item.id)
         # Layout text/images do not belong to the last body section seen by
@@ -93,15 +93,23 @@ def design_profile(profile, inspection, mappings, overrides=()):
             continue
         if slot and section not in order:
             order.append(section)
+        if slot:
+            included.add(section)
         if item.kind == "text" and _heading(item.text) == section and section not in found:
+            if section not in order:
+                order.append(section)
+            # Floating text boxes can put an address footer, heading and large
+            # decorative section number in the same XML paragraph. Recognizing
+            # a section does not make that whole paragraph a usable title.
             title = re.sub(r"^\s*(?:Section\s+)?\d+[.\s:–-]*", "", item.text, flags=re.I).strip()
-            if title:
-                found[section] = title
+            title = re.sub(r"[\s\n]+\d+[.\s]*$", "", title).strip()
+            if not title or len(title) > 90 or re.search(r"[\d@|\n]", title):
+                title = next(s.title for s in skeleton if s.key == section)
+            found[section] = title
         if slot:
             block_order.setdefault(section, [])
             if slot not in block_order[section]:
                 block_order[section].append(slot)
-    included = set(order)
     for s in skeleton:
         if s.key not in order:
             order.append(s.key)

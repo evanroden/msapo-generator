@@ -376,11 +376,13 @@ def _build_docx(draft, *, asset_loader=None):
     document.add_paragraph("Create. Sustain. Empower.")
     for section in sections:
         _configure_section(document.add_section(WD_SECTION_START.NEW_PAGE), content=False)
-        if section.divider_asset:
+        divider = blocks.get("divider_" + section.key)
+        divider_asset = (divider.asset_hashes[0] if divider.source != "Omit" and divider.asset_hashes else "") if divider else section.divider_asset
+        if divider_asset:
             if asset_loader is None:
                 raise ValueError("The divider image could not be resolved.")
-            _divider_background(document, asset_loader(section.divider_asset))
-        _display_page(document, label=f"Section {section.number}" if not section.appendix else f"Appendix {section.number}", title=section.title, light=bool(section.divider_asset))
+            _divider_background(document, asset_loader(divider_asset))
+        _display_page(document, label=f"Section {section.number}" if not section.appendix else f"Appendix {section.number}", title=section.title, light=bool(divider_asset))
         configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
         document.add_heading(f"{section.number}. {section.title}", 1)
         for spec in section.blocks:

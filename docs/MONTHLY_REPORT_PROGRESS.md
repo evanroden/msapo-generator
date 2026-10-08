@@ -14,6 +14,21 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
+Current work: `feat/monthly-report-lifecycle-validation`, based on main
+`d82903eab8e64d4248c877b1625172c56750b6f2` (branding/checkpoint PRs #70–71
+merged and publicly verified). PR #72 is open; its first head is published but not merged or deployed.
+See [lifecycle notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_LIFECYCLE.md).
+Recovered private inputs and validation artifacts are outside git under
+`/workspace/scratch/fbb232e099bf/monthly-report-validation/`. Thirteen DOCX
+import/save/update/rollover/output API cases passed with deliberate QA content
+selections. Three private layout UI walkthroughs and the complete synthetic
+regional create/generate/next-month AppTest passed with real LibreOffice. The
+56-page PDF evidence case generated seven selected technical pages and rejected
+a priced page. See notes for native-chart/manual-replacement limitations. Final
+focused release run: 97 passed. First-head CI found two corrected test/docs issues;
+updated-head CI, merge and public verification are pending.
+
+Previous release checkpoint:
 Current checkpoint branch: `docs/monthly-report-branding-release`, based on main
 `21d1c27122a3f355565eb5cb4b19e9518bc5015c`. Working checkout:
 `/workspace/scratch/monthly-report`; venv `/workspace/scratch/monthly-report-venv`.

@@ -150,3 +150,5 @@ Worth matching when you add one.
 - **Merge commits, not squash.** Per-fix reasoning stays reachable from history.
 
 - [Monthly report branding and visual choices](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_BRANDING.md) — runtime logo storage and section-specific setup checkpoint.
+
+- [Monthly report lifecycle validation — 2026-10-08](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_LIFECYCLE.md)
