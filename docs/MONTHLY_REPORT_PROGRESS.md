@@ -14,6 +14,19 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
+Latest navigation follow-up: PR #82 merged at
+`61772f922a7267adc8919bc82b3a98e2cae44a40`, head
+`6e7e77561bcfc76be9db487b025110a601d45412`, tree
+`9b1922e0192168e93f51331086ee355481ad9b97`. Actions `37829367774`, job
+`113490389104`: **926 passed, zero skipped**, against unchanged PR #81 main.
+Immediate forward/back controls now use callbacks, so endpoint disabled states
+match the displayed page without an intervening edit. Public production verified
+real DOCX upload/analysis, immediate forward/back endpoint states, direct cover
+selection, replacement and retention across section close/reopen. Screenshot
+`monthly-report-visual-review-2026-10-08.jpg` is outside git. No imported sample
+profile or final client report was approved/saved during these walkthroughs.
+Documentation checkpoint branch: `docs/monthly-report-visual-verified`.
+
 Latest cover-selection follow-up: PR #81 merged at
 `b85375a446e1964a679493c023a17adb6ed0cebd`, head
 `c4b5308216f0b4076f7a0006aab5ed52e3cee2fc`, tree
