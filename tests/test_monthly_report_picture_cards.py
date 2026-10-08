@@ -33,6 +33,12 @@ for error in errors:
     app.radio[0].set_value("client_logo").run()
     app.radio[1].set_value("cover_photo").run()
     next(b for b in app.button if b.label == "Next pictures").click().run()
+    assert not next(b for b in app.button if b.label == "Previous pictures").disabled
+    assert next(b for b in app.button if b.label == "Next pictures").disabled
+    next(b for b in app.button if b.label == "Previous pictures").click().run()
+    assert app.radio[0].value == "client_logo"
+    assert next(b for b in app.button if b.label == "Previous pictures").disabled
+    next(b for b in app.button if b.label == "Next pictures").click().run()
     assert app.session_state["plan"]["destinations"] == {"0": "client_logo", "1": "cover_photo"}
     app.radio[0].set_value("client_logo").run()
     assert not app.error

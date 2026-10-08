@@ -14,6 +14,19 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
+Latest cover-selection follow-up: PR #81 merged at
+`b85375a446e1964a679493c023a17adb6ed0cebd`, head
+`c4b5308216f0b4076f7a0006aab5ed52e3cee2fc`, tree
+`cecc026011b32f8ba690ee4fb7c0ffb9e2e6b90d`. Actions `37828039608`, job
+`113485859674`: **926 passed, zero skipped**, against unchanged PR #80 main.
+The private individual/regional walkthroughs also passed with an added assertion
+that ambiguous cover suggestions never create duplicate single-use roles.
+Public PR #81 check verified unselected ambiguous defaults and automatic cover
+replacement. It exposed stale Previous/Next disabled states after navigation.
+`fix/monthly-report-picture-navigation` corrects this with pre-render callbacks;
+12 focused tests pass, including immediate forward/back and endpoint states.
+This navigation correction awaits publication/CI/deployment.
+
 Latest follow-up: PR #80 merged at `86759459c87ddf1827bee69614b923b84894f119`.
 Feature head `ad2b52e7081a2c7d3a76560300a5a7df4bc0a27e`, exact tree
 `7ad261d5f4145650078b3fd98808db55fd3db5a7`. Actions `37826810851`, job
