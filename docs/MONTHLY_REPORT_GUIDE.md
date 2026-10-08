@@ -46,14 +46,26 @@ its cover is old. Check vendor service dates and actual page contents; do not
 assume every page belongs to the month on the cover. Unknown/mixed content needs
 review. Optional bounded OCR helps read scans but can miss prices and dates.
 
+Pictures are shown in groups of four. Choose what to do directly beneath each
+preview: use it as a cover photo or logo, keep it as a chart/contact list/outage
+procedure, use it behind the section title, or leave it out. Previous/Next buttons
+let you browse without losing your choices. Choosing a new cover photo or logo
+replaces the previous picture for that role automatically. Ambiguous suggestions
+start unselected. **Help me check the date or read small text** is optional help
+for scanned pages; it does not verify the page for you.
+
+You do not need to classify the upload as an old design or an unfinished report.
+The tool describes current/older body evidence against your chosen reporting
+month. You review uncertain material rather than relying on the cover date.
+
 Starting a new month deliberately clears monthly attachments and narrative.
 Uploading a partially finished report into the same month preserves existing
 work and offers the incoming material for review. Excluding material leaves it
 out of this draft; the saved original and earlier versions remain available.
 
-If a chart appears as separate pieces or is missing, open **Keep the original
-chart and contact page layouts** inside Organizational Chart. Choose **Prepare
-chart and contact pages**, then **Use complete pages for this section**. Check
+If a chart appears as separate pieces or is missing, open **Preview the original
+charts and contact lists** inside Organizational Chart. Choose **Show original
+chart pages**, then **Use complete pages for this section**. Check
 only the pages to keep, choose what each contains, and compare every preview with
 the original before confirming it. These pages are saved as reusable pictures.
 If text is distorted or missing, leave that page unchecked and upload a clear

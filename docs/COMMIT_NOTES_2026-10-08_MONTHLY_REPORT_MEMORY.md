@@ -2,7 +2,7 @@
 document_type: implementation_notes
 date: 2026-10-08
 base_commit: c9440b067c0bc90628db997d02287e80bacb9093
-status: deployed_followup_validation
+status: deployed_publicly_verified
 ---
 
 # Explain report memory and first-report requirements
@@ -126,3 +126,29 @@ for the prior page. The focused `fix/monthly-report-picture-navigation` changes
 pages in callbacks before rendering. Its regression goes directly forward and
 back without another edit and checks both endpoint disabled states. Twelve
 focused picture/UI tests passed. Runtime sample profiles remain unsaved.
+
+PR #82 merged at `61772f922a7267adc8919bc82b3a98e2cae44a40` after Actions
+`37829367774` / job `113490389104` passed **926 tests, zero skipped** for head
+`6e7e77561bcfc76be9db487b025110a601d45412` against unchanged PR #81 main.
+The prior live check also confirmed that cover choices survive closing and
+reopening the section. Final navigation deployment verification follows.
+
+
+## Final public verification
+
+The supported browser verified the final deployment using the retained individual
+DOCX. Immediate Next/Previous navigation works without intervening edits; the
+first page correctly disables Previous and enables Next. The visual cover choice
+is beside the actual photograph. Prior live checks verified selecting a second
+cover photo clears the first and closing/reopening the section retains choices.
+No obsolete picture-selector/cover-art multiselect/OCR-checkbox controls were
+present. Proof screenshot `monthly-report-visual-review-2026-10-08.jpg` is outside
+git. The private source is unchanged; no imported client profile or final report
+was approved/saved. Public health/UI recovered normally after deployments.
+
+Remaining runtime work: populate reviewed workbook directories and saved private
+starting examples. A site worksheet duplicates another contract's site headers;
+resolve that ambiguity before assigning membership. Do not treat sheet titles
+as proof or overwrite later saved contact edits. Original archives still consume
+space; the measured approximately 1 GB disk needs planning before retaining many
+distinct 80+ MB reports. No paid disk change or private Render access was made.
