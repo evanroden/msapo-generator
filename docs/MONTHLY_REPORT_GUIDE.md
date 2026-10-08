@@ -146,3 +146,28 @@ stale-month, empty-section or file-size warnings, then generate DOCX and PDF.
 Generation also saves a version. If PDF conversion fails, the completed DOCX
 remains downloadable. Aim below 15 MB by choosing fewer attachment pages or a
 denser photo layout. There is no EML download, email draft or automatic sending.
+
+
+## What memory means
+
+Reports are shared by contract and exact site combination, including an optional
+region name. A new person can select the same sites and continue saved work.
+Their own name is required; the previous report author does not identify them.
+On a browser used before, the last saved selection and entered name are suggested.
+A new device or cleared browser data loses that convenience, not the reports.
+Use **Save progress** before leaving; unsaved edits are not durable autosaves.
+
+For a new month, the latest saved earlier report for those same sites provides
+the layout, logos, charts and standing information. Monthly activity, service/
+water reports and improvement photos start fresh. Open issues and proposals are
+carried as follow-ups for review. Choosing another site's report in the same
+contract copies its layout and branding, not its people, contacts or work.
+
+Open **What will be remembered?** and choose **Check available storage** to see
+live capacity and free space. Monthly file totals include retained originals and
+history. Identical newly stored assets and source files share one copy across all contracts
+and sites. Separate reports retain their own choices and history. Use
+**Consolidate duplicate stored files** to process existing copies in bounded
+batches; repeat if the app says more remain. Neither action removes original
+paths, reports or history. Original Word/PDF files still include their embedded
+media, and different image encodings remain separate files.

@@ -14,14 +14,14 @@ from app.monthly_report_setup import (
 )
 
 
-def _image_review(path, item, prefix, field, scope):
+def _image_review(path, item, prefix, field, scope, *, compact=False):
     from app.monthly_report_image_review import MAX_IMAGE_REVIEWS, prepare_review, read_image, remaining_reviews, complete_review
     from app.receipt_jobs import start_receipt
     image_key = prefix + "_image_" + item.image_part
-    if st.button("Show this image", key=image_key + "_show"):
+    if not compact and st.button("Show this image", key=image_key + "_show"):
         st.session_state[prefix + "_preview"] = (item.id, read_import_image(path, item).data)
     preview = st.session_state.get(prefix + "_preview")
-    if preview and preview[0] == item.id:
+    if not compact and preview and preview[0] == item.id:
         st.image(preview[1], width="stretch")
     readings = st.session_state.setdefault(prefix + "_readings", {})
     job_key = prefix + "_image_job"
@@ -38,8 +38,8 @@ def _image_review(path, item, prefix, field, scope):
         st.info("Reading one image. Other content is unchanged.")
         st.button("Check image reading", key=prefix + "_check_image")
     remaining = remaining_reviews(scope)
-    st.caption(f"Optional visual/OCR reading: {remaining} of {MAX_IMAGE_REVIEWS} new image checks left for this report/month. New-profile setup shares the contract/month allowance until saved. Repeated images reuse cached readings. Unchecked images still require your review. OCR may miss small or handwritten details.")
-    if st.button("Read dates and text in this image", key=image_key + "_read", disabled=job is not None):
+    st.caption(f"{remaining} automatic page checks remaining for this report/month. Check the result against the picture before relying on it." if compact else f"Optional visual/OCR reading: {remaining} of {MAX_IMAGE_REVIEWS} new image checks left for this report/month. New-profile setup shares the contract/month allowance until saved. Repeated images reuse cached readings. Unchecked images still require your review. OCR may miss small or handwritten details.")
+    if st.button("Help read this page" if compact else "Read dates and text in this image", key=image_key + "_read", disabled=job is not None):
         if item.image_part not in readings:
             prepared = []
             def prepare():
@@ -56,7 +56,7 @@ def _image_review(path, item, prefix, field, scope):
     if read_text:
         st.text(read_text)
         st.caption("Machine transcription—not verified evidence. Compare it with the image before deciding.")
-    return st.text_area("Corrected image text / review notes", key=field(image_key + "_text_" + _signature(read_text), read_text), height=120)
+    return st.text_area("What this page says (check and correct if needed)" if compact else "Corrected image text / review notes", key=field(image_key + "_text_" + _signature(read_text), read_text), height=120)
 
 
 def render_legacy_setup(contract, period, prepared, field, *, state=None):
@@ -87,9 +87,8 @@ def render_legacy_setup(contract, period, prepared, field, *, state=None):
         return
     _, path, inspection = staged
     p = prefix + "_" + inspection.sha256[:16]
-    choices = ["Choose how to use this report", "Start a new month from this design", "Finish a partially completed report"]
-    intent = st.selectbox("What are you working on?", choices, key=field(p + "_intent", choices[0]))
-    st.info(f"Output month: {period.label}. Both options require page review. Nothing is removed merely because the title looks old.")
+    intent = "Content-based review"
+    st.info(f"Output month: {period.label}. Each section is reviewed against that month. Nothing is removed merely because the title looks old.")
     for notice in inspection.notices:
         st.warning(notice)
     suggestions = {m.item_id: m for m in suggested_mappings(inspection)}
@@ -181,7 +180,7 @@ def render_legacy_setup(contract, period, prepared, field, *, state=None):
     signature = _signature((asdict(candidate) if candidate else None, period.key, intent, decisions, notes, [asdict(m) for m in kept], actor, state.revision if state else 0))
     confirmed = st.checkbox("I checked the content decisions and confirm these sites, aliases and shared save", key=p + "_confirm_" + signature)
     if st.button("Save design and continue this report", key=p + "_save", type="primary",
-                 disabled=bool(pending) or not (candidate and title.strip() and kept and actor.strip() and confirmed and intent != choices[0])):
+                 disabled=bool(pending) or not (candidate and title.strip() and kept and actor.strip() and confirmed)):
         try:
             with st.spinner("Saving the original, confirmed content and reusable design…"):
                 mapped = map_items(path, inspection, kept)

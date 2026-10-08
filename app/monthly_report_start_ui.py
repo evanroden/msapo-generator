@@ -179,6 +179,14 @@ def starting_choice(profile, profiles, period, prepared, field):
         st.caption("Reuses the section layout, table headings and saved contract logos. You’ll supply this site's org chart, contacts, photos and current work.")
     else:
         st.caption("The available ENFRA and client logos are filled in. Check your org chart, contacts and site information; the tool remembers the design for next time.")
+    with st.container(border=True):
+        st.markdown("**What you’ll need for this first report**")
+        st.write("""1. Choose which sections apply to these sites.
+2. Add or check the site’s org chart, facility/vendor contacts and outage procedures. Reviewed directory contacts may be offered when available.
+3. Check the supplied logos; add a cover photo and footer details if wanted.
+4. Add this month’s work, relevant vendor/chemical reports, photos and any work-order export.
+5. Review the pages and save your progress before leaving.""")
+        st.caption("You can do this in any order. Nothing requires filling unrelated sections. The saved design and standing site information become next month’s starting point for these exact sites.")
     actor = st.text_input("Your name", key=field("report_start_actor_" + profile.key, prepared))
     confirm = st.checkbox("Save this design for these sites so we can use it next month", key="report_start_confirm_" + _signature((profile, source.revision if source else 0, actor)))
     if st.button("Start this report", key="report_start_save_" + profile.key, disabled=not (actor.strip() and confirm), type="primary"):

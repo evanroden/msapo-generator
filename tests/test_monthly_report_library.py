@@ -105,7 +105,9 @@ def test_asset_integrity_and_profile_isolation(profile):
         library.read_asset(profile.contract, "other", reference)
     with pytest.raises(library.LibraryError):
         library.read_asset(profile.contract, profile.key, "../manifest.json")
-    (library._profile_path(profile.contract, profile.key) / "assets" / reference).write_bytes(b"corrupt")
+    damaged = library._profile_path(profile.contract, profile.key) / "assets" / reference
+    damaged.unlink()  # Simulate out-of-band replacement of an immutable link.
+    damaged.write_bytes(b"corrupt")
     with pytest.raises(library.LibraryError, match="integrity"):
         library.read_asset(profile.contract, profile.key, reference)
 

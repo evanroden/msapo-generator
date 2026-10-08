@@ -192,7 +192,9 @@ def test_bad_file_errors_do_not_abort_remaining_batch(profile):
 
 def test_integrity_and_unsafe_reference_rejected(profile):
     content, _ = sources.ingest(profile, "photo.png", image_bytes())
-    sources._path(profile, content.source.sha256, ".png").write_bytes(b"changed")
+    damaged = sources._path(profile, content.source.sha256, ".png")
+    damaged.unlink()  # Simulate out-of-band replacement of an immutable link.
+    damaged.write_bytes(b"changed")
     with pytest.raises(ValueError, match="integrity"):
         sources.source_bytes(profile, content.source)
     with pytest.raises(ValueError, match="reference"):

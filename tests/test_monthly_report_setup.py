@@ -233,3 +233,12 @@ def test_replacement_only_section_keeps_original_position(tmp_path):
                            ResolvedBlock('activity_summary','Last month',text=item.text)),(),(),(item.id,))
     draft = imported_draft(profile,ReportPeriod(2026,9),'Synthetic Editor',mapped)
     assert draft.sections[0].key == 'organization' and draft.sections[0].included
+
+
+def test_period_findings_use_body_evidence_not_cover_or_image_caption():
+    from app.monthly_report_setup import report_period_findings
+    base = ImportItem("cover", "text", "word/document.xml", 1, 1, "cover", text="July 2024")
+    items = (base, replace(base, id="work", section="activity", text="September 2026 repair; August 2026 follow-up."),
+             replace(base, id="scan", kind="image", section="maintenance", text="September 2026"))
+    assert report_period_findings(DocxInspection("a" * 64, items, (), (), 1), ReportPeriod(2026, 9)) == {
+        "current": 1, "older": 1, "images": 1}
