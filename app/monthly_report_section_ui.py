@@ -237,13 +237,14 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 elif plan["new_assets"]:
                     st.caption("Your replacement picture is retained.")
             if any(i.kind == "unsupported" for i in section.items):
-                st.warning("Some Word drawings could not be read as editable pictures. Check this section in the original report and add a replacement picture if needed before marking it ready. The original drawings will be retained for reference.")
+                preserve_hint = "Open ‘Keep the original chart and contact page layouts’ above to preview complete pages. " if section.key == "organization" else ""
+                st.warning("Some Word drawings need a visual check. " + preserve_hint + "If they cannot be kept clearly, add replacement pictures or explicitly leave them out. The original is retained.")
                 choice = st.radio("What should happen to those unread drawings?", ["Choose an option", "I added replacement pictures for the drawings needed", "Leave these drawings out of this draft"],
                                   key=field(p + "_unsupported", old.get("unsupported_choice", "Choose an option")))
                 plan["unsupported_choice"] = choice
                 plan["unsupported_reviewed"] = choice == "Leave these drawings out of this draft" or (choice == "I added replacement pictures for the drawings needed" and bool(plan["new_assets"]))
                 if not plan["unsupported_reviewed"]:
-                    blocking.append("Add replacement pictures using Edit, or explicitly choose to leave the unread drawings out of this draft.")
+                    blocking.append(preserve_hint + f"To upload a replacement, choose ‘{actions[1]}’ above. Otherwise choose ‘Leave these drawings out of this draft’.")
         _approve_plan(plan, p, field, old, plans, blocking)
 
 

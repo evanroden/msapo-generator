@@ -167,7 +167,7 @@ def _bounded_dependency(stream):
 def safe_section_docx(path: Path, sections: tuple[int, ...]) -> bytes:
     """Copy selected Word sections with only the relationships actually needed."""
     if not sections or len(set(sections)) != len(sections) or len(sections) > MAX_SECTIONS or min(sections) < 1:
-        raise ImportError("Choose between one and eight Word sections to preserve.")
+        raise ImportError("Automatic preparation supports between one and eight Word sections. Add replacement chart pictures instead.")
     with _package(path) as archive:
         doc = XML.Element(W + "document")
         body = XML.SubElement(doc, W + "body")
@@ -189,7 +189,7 @@ def safe_section_docx(path: Path, sections: tuple[int, ...]) -> bytes:
                         used.add(number)
                         xml_bytes += len(XML.tostring(element))
                         if xml_bytes > MAX_XML:
-                            raise ImportError("These chart sections exceed the 8 MB XML budget. Preserve fewer pages.")
+                            raise ImportError("These chart sections exceed the 8 MB XML budget. Add replacement chart pictures instead.")
                         _visible(element)
                         body.extend(_clean(element))
                     if boundary:
@@ -222,7 +222,7 @@ def safe_section_docx(path: Path, sections: tuple[int, ...]) -> bytes:
             nonlocal total
             total += len(data)
             if total > MAX_PACKAGE or len(parts) >= MAX_PARTS:
-                raise ImportError("These chart pages exceed the 24 MB preparation budget. Preserve fewer pages.")
+                raise ImportError("These chart pages exceed the 24 MB preparation budget. Add replacement chart pictures instead.")
             parts[name] = data
             content_types[name] = content_type
 
@@ -315,7 +315,7 @@ def _render(path: Path, directory: Path) -> Path:
     except subprocess.TimeoutExpired as exc:
         os.killpg(process.pid, signal.SIGKILL)
         process.communicate()
-        raise ImportError("Chart preparation took too long. Preserve fewer pages or add a replacement picture.") from exc
+        raise ImportError("Chart preparation took too long. Add a replacement chart picture instead.") from exc
     pdf = directory / (path.stem + ".pdf")
     if process.returncode or not pdf.exists() or pdf.stat().st_size > MAX_PACKAGE:
         raise ImportError("These Word pages could not be preserved. Add a replacement picture; your original is unchanged.")
@@ -337,7 +337,7 @@ def preserve_word_pages(path: Path, sections: tuple[int, ...]) -> tuple[WordPage
             result, size = [], 0
             with fitz.open(_render(source, directory)) as pdf:
                 if not 1 <= len(pdf) <= MAX_PAGES:
-                    raise ImportError("These sections contain more than twelve pages. Preserve fewer sections or add a chart picture.")
+                    raise ImportError("These sections contain more than twelve pages. Add replacement chart pictures instead.")
                 for index, page in enumerate(pdf, 1):
                     if max(page.rect.width, page.rect.height) > 1224:
                         raise ImportError("This chart page is too large to prepare.")
@@ -345,7 +345,7 @@ def preserve_word_pages(path: Path, sections: tuple[int, ...]) -> tuple[WordPage
                     raw = pix.tobytes("png")
                     size += len(raw)
                     if size > MAX_PAGE_BYTES:
-                        raise ImportError("Prepared chart pictures exceed 24 MB. Select fewer sections.")
+                        raise ImportError("Prepared chart pictures exceed 24 MB. Add replacement chart pictures instead.")
                     picture = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                     blank = all(low >= 248 for low, _ in picture.getextrema())
                     result.append(WordPage(index, raw, pix.width, pix.height, page.get_text()[:50000], blank))

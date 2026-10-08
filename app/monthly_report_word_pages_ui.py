@@ -42,21 +42,25 @@ def chart_page_review(section, path, period, prefix, field, old, plan, blocking)
             page_key = key + "_" + version + "_" + str(page.number)
             with st.expander(f"Page {page.number} · preview and choose", expanded=page.number == 1):
                 preview = normalize_report_image(page.data, ".png", line_art=True, dpi=96)
-                st.image(preview.data, width=min(preview.width, 700))
+                picture, controls = st.columns([3, 2])
+                with picture:
+                    st.image(preview.data, width=min(preview.width, 460))
+                    st.caption("Use the picture’s fullscreen button to check small text.")
                 status, reason = page_status(page.text, unreadable=not page.text.strip())
                 forbidden = page.blank or status in ("pricing", "legal", "signature") or bool(placeholder_matches(page.text))
-                if forbidden:
-                    st.warning("Leave this page out: " + ("the page is blank." if page.blank else "template instructions were detected." if placeholder_matches(page.text) else reason))
-                keep = st.checkbox(f"Include page {page.number}", disabled=forbidden,
-                                   key=field(page_key + "_keep", page.number in choices and not forbidden))
-                if not keep or forbidden:
-                    continue
-                slot = st.selectbox(f"Page {page.number} contains", slots, format_func=readable_label,
-                                    key=field(page_key + "_slot", choices.get(page.number, "org_chart")))
-                if stale_period_mentions(page.text, period.year, period.month):
-                    st.warning("This page mentions another month. Check that it is still current before keeping it.")
-                checked = st.checkbox(f"Page {page.number} matches the original and is current, complete and price-free",
-                                      key=field(page_key + "_checked_" + slot, False))
+                with controls:
+                    if forbidden:
+                        st.warning("Leave this page out: " + ("the page is blank." if page.blank else "template instructions were detected." if placeholder_matches(page.text) else reason))
+                    keep = st.checkbox(f"Include page {page.number}", disabled=forbidden,
+                                       key=field(page_key + "_keep", page.number in choices and not forbidden))
+                    if not keep or forbidden:
+                        continue
+                    slot = st.selectbox(f"Page {page.number} contains", slots, format_func=readable_label,
+                                        key=field(page_key + "_slot", choices.get(page.number, "org_chart")))
+                    if stale_period_mentions(page.text, period.year, period.month):
+                        st.warning("This page mentions another month. Check that it is still current before keeping it.")
+                    checked = st.checkbox(f"Page {page.number} matches the original and is current, complete and price-free",
+                                          key=field(page_key + "_checked_" + slot, False))
                 if not checked:
                     blocking.append(f"Check page {page.number} against the original before including it.")
                 plan["preserved_assets"].append((slot, ReportImage(page.data, "png", page.width, page.height)))
