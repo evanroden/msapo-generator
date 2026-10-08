@@ -22,9 +22,13 @@ job `113363758419`: **914 passed, zero skipped**. Monthly source review now has
 include/leave-out/next actions, progress and collapsed optional fact/text editors.
 Local full suite: **912 passed, one CI-only skip**; focused: **18 passed**;
 docs/hygiene: **33 passed**. Retained private DOCX preview/exclude/revisit and
-workflow-retention AppTest passed; no client output was approved. Public release
-check pending. Follow-up branch `docs/monthly-report-page-review-release` adds
-first-time help and this checkpoint. See
+workflow-retention AppTest passed; no client output was approved. Help PR #78
+merged at `cb0420399985ebdcabb5c36c6f2d2c4ebf04efef` after Actions
+`37793395998` / job `113366415596` passed **914 tests, zero skipped**. Public
+health recovered after deployment and the supported browser verified the new
+first-time page-review instructions and contract cards. Actual page decisions
+were exercised in local AppTest; no persistent production test profile was saved.
+Final verification checkpoint branch: `docs/monthly-report-page-review-release`. See
 [page-review notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_PAGE_REVIEW.md).
 
 Current feature release: PR #74 merged at

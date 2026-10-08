@@ -2,7 +2,7 @@
 document_type: implementation_notes
 date: 2026-10-08
 base_commit: dd1c02bf6efd9e4ce269fe4caeae81aebdce6616
-status: merged_public_check_pending
+status: merged_and_publicly_verified
 ---
 
 # Guided monthly source page review
@@ -55,3 +55,19 @@ outside git under `/workspace/scratch/page-review-qa/`.
 Follow-up adds the same page-decision instructions to the first-time help panel,
 so users can learn the controls before starting a report. Public checks remain
 limited to health and UI; no private Render access or persistent QA profile.
+
+## Public release verification
+
+Help/checkpoint PR #78 head `e05229cef9d4a3d8695615ca42c5f0ae4fe9a04c`,
+tree `c603b472489077acd1dc08efa2c879d9cee3e3e9`, passed Actions
+`37793395998`, job `113366415596`: **914 passed, zero skipped**. Logs confirmed
+that head against unchanged main `013f7bfdbd514f89175b760f4909182d8b95562d`.
+Expected-head merge produced `cb0420399985ebdcabb5c36c6f2d2c4ebf04efef`.
+
+Public health recovered to HTTP 200/ok after a transient deployment 502. A fresh
+supported-browser load verified Purchase order and Monthly report navigation,
+contract logo cards, and the new include/leave-out instructions in first-time
+help. This proves the updated release is serving. Actual page actions were
+exercised locally in AppTest, not against a saved production profile. No private
+Render access or persistent production test write occurred. Screenshot:
+`/workspace/scratch/monthly-page-review-live-2026-10-08.jpg`, outside git.
