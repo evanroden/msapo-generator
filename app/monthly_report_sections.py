@@ -6,6 +6,7 @@ import hashlib
 import re
 
 from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing
+from app.monthly_report_checks import placeholder_matches
 from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, MAX_NORMALIZED_BYTES
 from app.monthly_report_model import ReportTable, ResolvedBlock, default_sections, layout_blocks
 
@@ -105,6 +106,29 @@ def build_section_import(path, inspection, plans):
         if not plan.get("approved"):
             raise ValueError("Review each included section before continuing.")
         if plan.get("omit"):
+            continue
+        if plan.get("page_layout"):
+            preserved = plan.get("preserved_assets", ())
+            records = plan.get("word_page_records", ())
+            allowed = {"org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix"}
+            if plan["key"] != "organization" or not preserved or len(preserved) != len(records):
+                raise ValueError("Review the complete chart pages before continuing.")
+            for (slot, image), record in zip(preserved, records):
+                digest = hashlib.sha256(image.data).hexdigest()
+                text = record.get("text", "")
+                if (slot not in allowed or record.get("slot") != slot or record.get("sha256") != digest
+                        or not record.get("reviewed") or record.get("blank") or placeholder_matches(text)
+                        or page_status(text, unreadable=not text.strip())[0] in ("pricing", "legal", "signature")):
+                    raise ValueError("A complete chart page changed or contains excluded content. Review it again.")
+                ref = digest + ".png"
+                if ref not in assets:
+                    total += len(image.data)
+                    if total > MAX_NORMALIZED_BYTES:
+                        raise ValueError("Selected images exceed the 60 MB preparation budget.")
+                    assets[ref] = image.data
+                source = f"docx:{inspection.sha256}:word-sections:{','.join(map(str, record['sections']))}:page:{record['page']}"
+                block = grouped.get(slot, ResolvedBlock(slot, "Last month"))
+                grouped[slot] = replace(block, asset_hashes=(*block.asset_hashes, ref), references=(*block.references, source))
             continue
         if any(i.kind == "unsupported" for i in sections[plan["key"]].items) and not plan.get("unsupported_reviewed"):
             raise ValueError("Choose whether to replace or leave out unread drawings before continuing.")

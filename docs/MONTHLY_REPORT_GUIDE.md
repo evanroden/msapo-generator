@@ -51,10 +51,15 @@ Uploading a partially finished report into the same month preserves existing
 work and offers the incoming material for review. Excluding material leaves it
 out of this draft; the saved original and earlier versions remain available.
 
-Native Word shapes and some embedded objects cannot be rebuilt automatically.
-Export a chart/workflow as a PNG/JPEG, or create an editable chart in Site
-information. The importer rebuilds editable sections; it does not promise an
-identical copy of every Word layout.
+If a chart appears as separate pieces or is missing, open **Keep the original
+chart and contact page layouts** inside Organizational Chart. Choose **Prepare
+chart and contact pages**, then **Use complete pages for this section**. Check
+only the pages to keep, choose what each contains, and compare every preview with
+the original before confirming it. These pages are saved as reusable pictures.
+If text is distorted or missing, leave that page unchecked and upload a clear
+PNG/JPEG replacement, or build an editable chart in Site information. Some Word
+drawings and embedded objects cannot be preserved. The importer does not promise
+an identical copy of every Word layout.
 
 ## Update this month's work
 

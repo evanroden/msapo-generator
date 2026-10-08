@@ -14,7 +14,20 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current release: PR #72 merged at
+Current work: `feat/monthly-report-chart-import`, based on main
+`f3afd30cf39dd26f4a167ffb753927c22239f021` (PR #73 documentation checkpoint).
+On-demand preservation of reviewed native chart/contact pages is implemented;
+**82 focused tests passed** with real LibreOffice. A supplied regional SmartArt
+chart passed rendered-output inspection. A legacy VML example still has distorted
+labels and needs a replacement; do not claim universal layout compatibility.
+Full local suite: **909 passed, one CI-only skip**. Documentation/public hygiene,
+Ruff F/E9, compileall, pip check and diff checks passed. Publishing, exact-head CI
+and public verification are pending. See
+[chart-page notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_WORD_PAGES.md).
+The implementation checkout is `/workspace/scratch/monthly-report`; private QA
+is under `/workspace/scratch/fbb232e099bf/chart-import-qa/`, outside git.
+
+Latest deployed feature release: PR #72 merged at
 `393512174da4dc89deb47457fa5b27153d6ac547`. Final feature head
 `994804067b84a2e790c43a2f8f4a1d218aa0a7b2`, tree
 `38ba56a74678cd8879d076bfee4d75c79a93e66b`, passed Actions `37719217128`,

@@ -362,9 +362,11 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
                                     **(metadata(target) if supported else {}))
                             graphics = [e for e in element.iter() if e.tag == A + "graphicData" and not e.get("uri", "").endswith("/picture")]
-                            if graphics:
+                            legacy_groups = element.findall(".//" + V + "group")
+                            legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
+                            if graphics or legacy_groups or legacy_text:
                                 add("unsupported", part, position, text=text,
-                                    note="Native Word shapes/chart: text is available above; appearance needs an exported image. Nothing is executed.")
+                                    note="Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection.")
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
                             if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:

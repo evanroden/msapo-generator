@@ -20,8 +20,9 @@ from app.monthly_report_section_help import section_help
 
 
 def plan_signature(plan):
-    value = {k: v for k, v in plan.items() if k not in ("new_assets", "approved", "approval_stamp")}
+    value = {k: v for k, v in plan.items() if k not in ("new_assets", "preserved_assets", "approved", "approval_stamp")}
     value["new_assets"] = [(slot, hashlib.sha256(image.data).hexdigest()) for slot, image in plan.get("new_assets", ())]
+    value["preserved_assets"] = [(slot, hashlib.sha256(image.data).hexdigest()) for slot, image in plan.get("preserved_assets", ())]
     return _signature(value)
 
 
@@ -107,6 +108,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         if plan["omit"]:
             st.caption("Left out of this draft only. The original and its contents will still be saved for reference.")
         else:
+            from app.monthly_report_word_pages_ui import chart_page_review
+            if chart_page_review(section, path, period, p, field, old, plan, blocking):
+                _approve_plan(plan, p, field, old, plans, blocking)
+                return
             items = list(section.items)
             if section.key == "cover":
                 st.info(f"The cover will use the confirmed sites and {period.label}. Old cover dates and the old contents list are not reused.")
@@ -239,15 +244,19 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 plan["unsupported_reviewed"] = choice == "Leave these drawings out of this draft" or (choice == "I added replacement pictures for the drawings needed" and bool(plan["new_assets"]))
                 if not plan["unsupported_reviewed"]:
                     blocking.append("Add replacement pictures using Edit, or explicitly choose to leave the unread drawings out of this draft.")
-        for message in blocking:
-            st.error(message)
-        stamp = plan_signature(plan)
-        reviewed = st.checkbox("This section is ready — the selected content is relevant and contains no prices, legal-only pages or blank/signature-only pages", key=field(p + "_ready_" + stamp, old.get("approval_stamp") == stamp))
-        plan["approved"] = reviewed and not blocking
-        plan["approval_stamp"] = stamp if plan["approved"] else ""
-        plans[section.key] = plan
-        if blocking:
-            st.caption("Resolve the message above to finish this section.")
+        _approve_plan(plan, p, field, old, plans, blocking)
+
+
+def _approve_plan(plan, p, field, old, plans, blocking):
+    for message in blocking:
+        st.error(message)
+    stamp = plan_signature(plan)
+    reviewed = st.checkbox("This section is ready — the selected content is relevant and contains no prices, legal-only pages or blank/signature-only pages", key=field(p + "_ready_" + stamp, old.get("approval_stamp") == stamp))
+    plan["approved"] = reviewed and not blocking
+    plan["approval_stamp"] = stamp if plan["approved"] else ""
+    plans[plan["key"]] = plan
+    if blocking:
+        st.caption("Resolve the message above to finish this section.")
 
 
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
@@ -330,7 +339,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 draft = apply_section_omissions(draft, plans.values())
                 review = {"sha256": inspection.sha256, "intent": intent, "period": period.key, "image_review_scope": p,
                           "items": [asdict(i) for i in inspection.items],
-                          "section_plans": [{k: v for k, v in plan.items() if k != "new_assets"} for plan in plans.values()]}
+                          "section_plans": [{k: v for k, v in plan.items() if k not in ("new_assets", "preserved_assets")} for plan in plans.values()]}
                 # Normalize dataclass table values for the JSON audit record.
                 review["section_plans"] = [dict(plan, tables={k: asdict(v) for k, v in plan.get("tables", {}).items()}) for plan in review["section_plans"]]
                 library.save_report_setup(profile, draft, path, review, assets=tuple(dict((*working_assets, *mapped.assets)).items()),
