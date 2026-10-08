@@ -159,6 +159,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     last_contract, last_profile = remembered_report_preferences(browser_token)
     with st.expander("First time here? How to finish a monthly report"):
         st.write("1. Choose your contract and check the sites that belong in **one** report.\n2. Use a saved design, the general template, or upload an older/unfinished report.\n3. Open the section boxes to update this month’s work, pictures, people and contacts.\n4. Preview the report, finish the review checks, then download DOCX and PDF.")
+        st.write("For vendor and chemical reports, check each page preview, then choose **Include page and continue** or **Leave page out and continue**. The next page needing review opens for you. Prices, legal-only pages and blank/signature-only pages do not belong in the client report.")
         st.caption("You can move between steps in any order. Save progress before leaving; return to the same sites and month to continue. Chart and photo layouts update beside their fields. Refresh the draft PDF preview when you want to check the whole report.")
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
     contract = choose_contract(last_contract, field)
