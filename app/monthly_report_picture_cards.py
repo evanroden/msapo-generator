@@ -7,6 +7,10 @@ from app.monthly_report_import import read_import_image
 from app.monthly_report_sections import small_artwork
 
 
+def _turn_page(key, delta, last):
+    st.session_state[key] = min(last, max(0, st.session_state.get(key, 0) + delta))
+
+
 def _choose_role(identity, key, choices, plan, prefix, single):
     """Selecting a single-use role replaces its previous choice in one action."""
     slot = st.session_state[key]
@@ -71,10 +75,10 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
     page = min(st.session_state.get(page_key, 0), last)
     if last:
         left, middle, right = st.columns([1, 2, 1])
-        if left.button("Previous pictures", key=page_key + "_prev", disabled=page == 0):
-            page -= 1
-        if right.button("Next pictures", key=page_key + "_next", disabled=page == last):
-            page += 1
+        left.button("Previous pictures", key=page_key + "_prev", disabled=page == 0,
+                    on_click=_turn_page, args=(page_key, -1, last))
+        right.button("Next pictures", key=page_key + "_next", disabled=page == last,
+                     on_click=_turn_page, args=(page_key, 1, last))
         middle.caption(f"Pictures {page * 4 + 1}–{min(page * 4 + 4, len(images))} of {len(images)}")
     st.session_state[page_key] = page
     for index, item in enumerate(images[page * 4:page * 4 + 4], page * 4 + 1):

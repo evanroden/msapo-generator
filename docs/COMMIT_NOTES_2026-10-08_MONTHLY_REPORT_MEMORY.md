@@ -112,3 +112,17 @@ even on another preview page. The original is retained. The revised navigation
 test checks this cross-page replacement and preserves unrelated choices.
 Twelve focused visual/UI tests passed; exact-head CI is required for this fix.
 No sample profile was saved and no final client output was approved.
+
+PR #81 merged at `b85375a446e1964a679493c023a17adb6ed0cebd` after Actions
+`37828039608` / job `113485859674` passed **926 tests, zero skipped** for head
+`c4b5308216f0b4076f7a0006aab5ed52e3cee2fc` against unchanged PR #80 main.
+Private picture-card walkthroughs passed again, this time asserting ambiguous
+cover suggestions cannot select multiple pictures for a single-use role.
+
+Final live PR #81 check verified ambiguous cover choices start unselected and
+choosing a second cover photo clears the first. A separate navigation defect was
+then observed: inline page-number changes rendered Previous/Next disabled states
+for the prior page. The focused `fix/monthly-report-picture-navigation` changes
+pages in callbacks before rendering. Its regression goes directly forward and
+back without another edit and checks both endpoint disabled states. Twelve
+focused picture/UI tests passed. Runtime sample profiles remain unsaved.
