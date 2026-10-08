@@ -14,19 +14,38 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Active follow-up: `fix/monthly-report-memory-guidance` from main
-`c9440b067c0bc90628db997d02287e80bacb9093` (PR #79 checkpoint merge).
-Explicit shared-report/browser-memory guidance, first-report input checklist,
-new-browser attribution correction, and bounded read-only storage summary are
-implemented locally. The owner additionally requested cross-contract asset
-deduplication: a global immutable SHA-256 pool, atomic per-profile hard links,
-streamed originals and bounded legacy consolidation are implemented. Twenty-one
-startup/UI/memory checks passed. Subsequent full memory/storage suite: 923 passed,
-one CI-only skip. Upload review now uses picture-adjacent actions instead of
-disconnected dropdowns, and no longer asks upload intent; 40 focused tests passed.
-The combined complete suite is running; publication/deployment pending. Owner additionally requested runtime seeding from private
-samples to test returning users; that write is not yet performed. See
-[memory notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_MEMORY.md).
+Latest follow-up: PR #80 merged at `86759459c87ddf1827bee69614b923b84894f119`.
+Feature head `ad2b52e7081a2c7d3a76560300a5a7df4bc0a27e`, exact tree
+`7ad261d5f4145650078b3fd98808db55fd3db5a7`. Actions `37826810851`, job
+`113481656955`: **926 passed, zero skipped**, testing that head against unchanged
+base `c9440b067c0bc90628db997d02287e80bacb9093`. Final local full run:
+**925 passed, one CI-only skip**. Forty focused upload/UI/Word-page checks passed;
+Ruff F/E9, compileall, pip check and diff checks passed. One earlier redirected
+full attempt had no summary and is not counted as a pass.
+
+Uploaded pictures now have visible previews with adjacent plain-language roles
+and previous/next navigation, replacing disconnected cover/logo/divider/image
+selectors. The upload-intent question is removed; body dates inform mixed-month
+review while covers and image captions cannot establish page dates. Shared-report
+versus browser memory is explained, new-browser editor attribution is corrected,
+and first-report inputs are listed. Immutable assets and originals share a global
+SHA-256 object pool across all contracts; bounded consolidation and read-only
+capacity/unique-file accounting are available. Original archives and histories
+remain intact; differently encoded images and embedded media in different source
+archives are not deduplicated.
+
+Private read-only UI walkthroughs used retained individual and regional reports:
+13 sections each, 57 and 29 picture cards respectively, no UI exceptions. This
+is control validation, not client-output approval. Production UI verified memory/storage, real DOCX upload/analysis and visual
+section controls. The cover walkthrough found ambiguous suggestions selecting
+multiple cover photos; `fix/monthly-report-cover-choice` fixes initial defaults
+and makes choosing a new single-use role replace its previous picture. Twelve
+focused visual/UI tests passed; fix publication/CI/deployment pending. Runtime sample seeding and workbook directory population are still
+pending. Live storage before sample imports: 973.4 MB capacity, 955.2 MB available, 2.0 MB
+monthly-report files. Consolidation linked 30 existing files, zero duplicate
+bytes reclaimed, without changing histories. The workbook was recovered outside git: 25 tabs, three summary tabs and
+22 site worksheets; review worksheet findings and existing records before saving.
+See [memory and visual-review notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_MEMORY.md).
 
 Latest feature: page-review PR #77 merged at
 `013f7bfdbd514f89175b760f4909182d8b95562d`. Published head
