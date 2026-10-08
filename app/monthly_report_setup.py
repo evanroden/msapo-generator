@@ -94,9 +94,14 @@ def design_profile(profile, inspection, mappings, overrides=()):
         if slot and section not in order:
             order.append(section)
         if item.kind == "text" and _heading(item.text) == section and section not in found:
+            # Floating text boxes can put an address footer, heading and large
+            # decorative section number in the same XML paragraph. Recognizing
+            # a section does not make that whole paragraph a usable title.
             title = re.sub(r"^\s*(?:Section\s+)?\d+[.\s:–-]*", "", item.text, flags=re.I).strip()
-            if title:
-                found[section] = title
+            title = re.sub(r"[\s\n]+\d+[.\s]*$", "", title).strip()
+            if not title or len(title) > 90 or re.search(r"[\d@|\n]", title):
+                title = next(s.title for s in skeleton if s.key == section)
+            found[section] = title
         if slot:
             block_order.setdefault(section, [])
             if slot not in block_order[section]:

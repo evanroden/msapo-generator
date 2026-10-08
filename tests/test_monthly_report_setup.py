@@ -196,3 +196,21 @@ def test_same_month_single_image_conflict_cannot_hide_one_version(tmp_path):
     incoming = replace(draft, blocks=(replace(chart, asset_hashes=("different-image",)),))
     with pytest.raises(ValueError, match="single-image"):
         merge_drafts(draft, incoming)
+
+
+def test_import_title_does_not_include_floating_footer_or_decorative_number(tmp_path):
+    from app.monthly_report_import import inspect_docx, ImportMapping
+    from app.monthly_report_model import synthetic_profiles
+    doc = Document()
+    doc.add_paragraph('100 Example Road | example.invalid\n3MONTHLY SCORECARDS')
+    doc.add_paragraph('Synthetic utility analysis.')
+    doc.add_paragraph('MONTHLY ACTIVITY SUMMARY\n2')
+    doc.add_paragraph('Synthetic completed inspection.')
+    path = tmp_path / 'synthetic-floating-headings.docx'
+    doc.save(path)
+    inspection = inspect_docx(path)
+    mappings = tuple(ImportMapping(i.id, i.suggested_slot) for i in inspection.items if i.suggested_slot)
+    profile = design_profile(synthetic_profiles()[0], inspection, mappings)
+    assert dict(profile.section_titles)['scorecards'] == 'Monthly Scorecards'
+    assert dict(profile.section_titles)['activity'] == 'MONTHLY ACTIVITY SUMMARY'
+    assert all('example.invalid' not in title and '\n' not in title for _, title in profile.section_titles)

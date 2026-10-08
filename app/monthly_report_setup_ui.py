@@ -207,6 +207,6 @@ def render_legacy_setup(contract, period, prepared, field, *, state=None):
             st.error(str(exc))
 
 
-def render_setup(contract, period, prepared, field, *, state=None):
+def render_setup(contract, period, prepared, field, *, state=None, **working):
     from app.monthly_report_section_ui import render_section_setup
-    return render_section_setup(contract, period, prepared, field, state=state)
+    return render_section_setup(contract, period, prepared, field, state=state, **working)

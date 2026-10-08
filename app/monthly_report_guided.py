@@ -178,7 +178,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.caption("Suggested month: previous month on days 1–10; current month thereafter. Change it whenever needed.")
     profiles = library.list_profiles(contract)
     completed_setup = st.session_state.pop("report_setup_done", None)
-    candidate, existing = select_sites(contract, profiles, last_profile if last_contract == contract else "", field, completed_setup)
+    remembered = last_profile if last_contract == contract else ""
+    returning = any(p.key == remembered for p in profiles) and not completed_setup
+    site_box = st.expander("Report sites — expand to change", expanded=False) if returning else st.container()
+    with site_box:
+        candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup)
     if not candidate:
         return
     if not existing:
@@ -187,6 +191,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     selected = existing.key
     state = library.load_profile(contract, selected)
     profile = state.profile
+    st.subheader(profile.title)
     st.caption(profile.scope_type.replace("_", " ").capitalize() + " · " + "; ".join(f.title for f in profile.facilities))
     prefix = "report_guided_" + _signature((contract, selected, period.key))
     snapshot = library.load_snapshot(contract, selected, period)
@@ -260,7 +265,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.button("Continue to this month’s work", key=prefix + "_next_work", type="primary", on_click=go_to_step, args=(STEPS[1],))
         with st.expander("Upload a report someone already started"):
             from app.monthly_report_setup_ui import render_setup
-            render_setup(contract, period, prepared, field, state=state)
+            render_setup(contract, period, prepared, field, state=state, working_draft=draft,
+                         working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
         with st.expander("Advanced layout, shared assets and history"):
             st.caption("Save your progress first. Detailed controls include section order, shared asset replacement, library history and restoration.")
             if st.button("Open advanced editor", key=prefix + "_advanced"):

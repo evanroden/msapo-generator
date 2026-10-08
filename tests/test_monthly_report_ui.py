@@ -245,3 +245,42 @@ def test_section_choices_preserve_content_and_saved_status_across_new_sessions(m
     assert any("changes to save" in w.value for w in new.info)
     next(b for b in new.button if b.label == "Continue to this month’s work").click().run()
     assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic initial activity."
+
+
+def test_importing_partial_report_preserves_unsaved_work(monkeypatch, tmp_path):
+    from io import BytesIO
+    from docx import Document
+    from app import monthly_report_setup_ui as setup_ui
+    from streamlit.testing.v1.element_tree import ElementTree
+    original_states = ElementTree.get_widget_states
+    def states(tree):
+        values = original_states(tree)
+        for key, identity in list(tree.session_state._state._key_id_mapper._key_id_mapping.items()):
+            if key.startswith("report_setup_") and key.endswith("_open"):
+                values.widgets.add(id=identity, bool_value=bool(tree.session_state[key]))
+        return values
+    monkeypatch.setattr(ElementTree, "get_widget_states", states)
+    doc = Document()
+    doc.add_heading("2 Monthly Activity Summary", 1)
+    doc.add_paragraph("Synthetic colleague completed the pump inspection.")
+    upload = BytesIO()
+    doc.save(upload)
+    upload.size, upload.name = len(upload.getvalue()), "synthetic-partial.docx"
+    real_upload = setup_ui.st.file_uploader
+    monkeypatch.setattr(setup_ui.st, "file_uploader", lambda label, *a, **kw:
+                        upload if label == "Older or partially completed report" else real_upload(label, *a, **kw))
+    app = monthly(monkeypatch, tmp_path)
+    next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
+    step(app, 2)
+    next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic unsaved filter replacement.").run()
+    step(app, 1)
+    next(b for b in app.button if b.label == "Analyze report").click().run()
+    next(w for w in app.checkbox if w.label.startswith("This section is ready")).check().run()
+    next(w for w in app.checkbox if w.label == "Save this report and its reusable design for these sites").check().run()
+    next(b for b in app.button if b.label == "Continue to this month’s updates").click().run()
+    assert not app.exception
+    value = next(w for w in app.text_area if w.label == "Activity summary").value
+    assert "Synthetic unsaved filter replacement." in value
+    assert "Synthetic colleague completed the pump inspection." in value
+    imported = library.load_imported_draft(RRH_CONTRACT, "synthetic-guided")
+    assert next(b for b in imported.blocks if b.key == "activity_summary").text == value
