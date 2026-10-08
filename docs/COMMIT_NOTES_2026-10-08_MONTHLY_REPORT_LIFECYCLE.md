@@ -102,3 +102,18 @@ new template setup still lands directly in Site information. Both are corrected;
 the latter now navigates to that step before testing the same chart/contact flow.
 Two local full-suite attempts exited without a summary; no full local pass is
 claimed. Final updated-head CI, merge and public deployment checks remain pending.
+
+
+### Final layout follow-up
+
+Rendered output review found a replacement-only section could be ordered after
+all mapped sections. Recognized source headings now retain their order even when
+all original content is replaced; inclusion still requires actual mapped/replacement
+content. The regression test passed with the setup/UI/start group (**34 passed**).
+The private QA harness was also corrected to explicitly include a newly supplied
+chart, and the thirteen-case output matrix is being rerun with that correction.
+
+The second published head `bb735dd88764750ccedc60ebc1ed9e819bb189af`, tree
+`7dc1b267d80b539c7dbec81bd160ed715af11563`, passed Actions `37718953432`, job
+`113121900245`. It is superseded by the section-order follow-up; merge still
+requires green CI on the final head.
