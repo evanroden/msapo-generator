@@ -4,7 +4,7 @@ date: 2026-10-08
 base_commit: f3afd30cf39dd26f4a167ffb753927c22239f021
 workflow: Monthly report
 change_type: native_chart_import
-status: locally_tested_awaiting_publication
+status: feature_publicly_verified_guidance_followup
 ---
 
 # Preserve reviewed chart and contact pages
@@ -66,6 +66,37 @@ remains the way to build a chart with editable positions and reporting lines.
   Documentation/public hygiene checks passed separately (**32 passed**). Ruff
   F/E9, compileall, pip check and diff checks passed. Exact-head CI, merge and
   public deployment checks remain pending at this checkpoint.
+
+## Published feature and CI
+
+All ten blobs and the assembled tree were verified against local Git before
+publication. Published head `4db9faf36e4c75f005752d373efc565c4f71644b`, tree
+`9387889905592e8c918a632a5ce521a31b6cb80a`, was fetched and diffed before
+reconciling local commit identity. PR #74 passed Actions `37779538777`, job
+`113318848451`: **911 passed, zero skipped**, including the added documentation
+check. Logs confirmed that exact head against unchanged main
+`f3afd30cf39dd26f4a167ffb753927c22239f021`. Expected-head merge produced
+`798e751714064c3d4de91d28c461a784f8c7c3d6`. Public verification follows below.
+
+## Public verification and usability follow-up
+
+Public health recovered to 200/ok after the deployment restart. The supported
+browser selected a contract/site, uploaded a small synthetic Word drawing, and
+analyzed it into section cards. Production successfully prepared its complete
+page, showed the preview, accepted page selection, and required comparison with
+the original before approval. No persistent profile or client content was saved.
+Local AppTest covers saved state; this smoke test does not claim a persisted
+production lifecycle.
+
+That walkthrough exposed a stale instruction to use an “Edit” option no longer
+shown in this flow. The follow-up names the actual section-specific update choice
+and points native-chart users to complete-page preparation first. It puts page
+controls beside a smaller preview (stacked on narrow screens) with a fullscreen
+hint for small text. Bound/timeout messages now offer replacement pictures instead
+of asking users to select fewer Word sections through a nonexistent control.
+This changes guidance and presentation, not review gates or document output.
+The follow-up passed **87 focused tests** with real LibreOffice, including
+AppTest, documentation and public hygiene; Ruff F/E9 and diff checks passed.
 
 ## What was not verified
 

@@ -14,20 +14,26 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Current work: `feat/monthly-report-chart-import`, based on main
-`f3afd30cf39dd26f4a167ffb753927c22239f021` (PR #73 documentation checkpoint).
-On-demand preservation of reviewed native chart/contact pages is implemented;
-**82 focused tests passed** with real LibreOffice. A supplied regional SmartArt
-chart passed rendered-output inspection. A legacy VML example still has distorted
-labels and needs a replacement; do not claim universal layout compatibility.
-Full local suite: **909 passed, one CI-only skip**. Documentation/public hygiene,
-Ruff F/E9, compileall, pip check and diff checks passed. Publishing, exact-head CI
-and public verification are pending. See
+Current feature release: PR #74 merged at
+`798e751714064c3d4de91d28c461a784f8c7c3d6`. Published head
+`4db9faf36e4c75f005752d373efc565c4f71644b`, tree
+`9387889905592e8c918a632a5ce521a31b6cb80a`, passed Actions `37779538777`,
+job `113318848451`: **911 passed, zero skipped**. Public health and the supported
+browser verified complete-page preparation, preview, page selection and required
+comparison using a synthetic upload. No persistent profile was saved.
+The follow-up branch `fix/monthly-report-chart-guidance` corrects a stale “Edit”
+instruction and places page controls beside the preview; its CI/release is pending.
+On-demand preservation of reviewed native chart/contact pages is implemented.
+A supplied regional SmartArt chart passed rendered-output inspection. A legacy
+VML example still has distorted labels and needs a replacement; do not claim
+universal layout compatibility. Full local suite: **909 passed, one CI-only skip**;
+**82 focused tests** and **32 documentation/hygiene checks** passed, as did Ruff
+F/E9, compileall, pip check and diff checks. See
 [chart-page notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_WORD_PAGES.md).
 The implementation checkout is `/workspace/scratch/monthly-report`; private QA
 is under `/workspace/scratch/fbb232e099bf/chart-import-qa/`, outside git.
 
-Latest deployed feature release: PR #72 merged at
+Previous deployed feature release: PR #72 merged at
 `393512174da4dc89deb47457fa5b27153d6ac547`. Final feature head
 `994804067b84a2e790c43a2f8f4a1d218aa0a7b2`, tree
 `38ba56a74678cd8879d076bfee4d75c79a93e66b`, passed Actions `37719217128`,

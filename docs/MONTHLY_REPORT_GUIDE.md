@@ -26,9 +26,9 @@ picture card:
 
 - **Another report from this contract:** copies its layout, headings and saved
   branding. Supply this site's people, contacts, chart, pictures and work.
-- **General ENFRA template:** starts with standard report sections and walks you
-  into Site information to fill the standing details. Available ENFRA and client
-  logos are filled in automatically.
+- **General ENFRA template:** starts with standard report sections. Choose the
+  sections you need, then fill the standing details in Site information. Available
+  ENFRA and client logos are filled in automatically.
 - **Upload an older or unfinished report:** opens section boxes containing the
   extracted text, tables and pictures. DOCX files up to 128 MB are supported.
 
