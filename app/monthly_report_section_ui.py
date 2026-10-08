@@ -8,13 +8,13 @@ import streamlit as st
 
 from app import contracts, monthly_report_library as library
 from app.config import FACILITIES
-from app.monthly_report_content_policy import contains_price, page_status, table_has_pricing
+from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_editor import _grid, _key, _signature
-from app.monthly_report_import import imported_draft, read_import_image
+from app.monthly_report_import import imported_draft
 from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import Facility, ReportProfile, ReportTable, default_sections
-from app.monthly_report_sections import section_reviews, table_without_prices, build_section_import, default_slot, small_artwork, apply_section_omissions, readable_label
+from app.monthly_report_sections import section_reviews, table_without_prices, build_section_import, default_slot, apply_section_omissions
 from app.monthly_report_setup import design_profile, merge_drafts, item_findings
 from app.monthly_report_section_help import section_help
 
@@ -162,70 +162,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                         blocking.append(f"A table cell still contains pricing. Choose ‘{guide.edit}’ above and remove it.")
                     plan["tables"][item.id] = table
                     plan["selected"].append(item.id)
-            images = [i for i in items if i.kind == "image"]
-            if images:
-                labels = {i.id: f"Picture / page {n}" + (" · small artwork" if small_artwork(i) else "") for n, i in enumerate(images, 1)}
-                suggested = [i.id for i in images if not small_artwork(i)]
-                kept = st.multiselect(guide.picture_label, list(labels), format_func=labels.get,
-                                      key=field(p + "_pictures", old.get("picture_choices", suggested)), help="Uncheck old vendor pages, legal terms, blank/signature-only pages and every page showing a price. Unchecked pages remain in the original.")
-                plan["picture_choices"] = kept
-                if section.key not in ("cover", "other"):
-                    divider_slot = "divider_" + section.key
-                    suggested_divider = next((i.id for i in images if i.suggested_slot == divider_slot), "")
-                    saved_divider = next((identity for identity, slot in old.get("destinations", {}).items() if slot == divider_slot), suggested_divider)
-                    divider = st.selectbox("Section divider photograph", ["", *kept],
-                                           format_func=lambda v: labels.get(v, "No divider photograph"),
-                                           key=field(p + "_divider_" + _signature(kept), saved_divider if saved_divider in kept else ""),
-                                           help="Choose the decorative picture behind this section’s title. It will not be treated as a vendor page or org chart.")
-                    if divider:
-                        plan["destinations"][divider] = divider_slot
-                    if section.key == "organization":
-                        for identity in kept:
-                            if identity == divider:
-                                continue
-                            item = next(i for i in images if i.id == identity)
-                            slots = ("org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix")
-                            default = old.get("destinations", {}).get(identity, item.suggested_slot)
-                            plan["destinations"][identity] = st.selectbox(labels[identity] + " shows", slots,
-                                format_func=readable_label, key=field(p + "_purpose_" + identity, default if default in slots else "org_chart"))
-                if len(suggested) < len(images):
-                    st.caption("Small icons and thin separator graphics start unchecked. You can select one if it is meaningful report content. All remain in the saved original.")
-                shown = st.selectbox("Picture or page to view", list(labels), format_func=labels.get, key=field(p + "_preview", images[0].id))
-                image = next(i for i in images if i.id == shown)
-                try:
-                    preview = read_import_image(path, image, preview=True)
-                except (ValueError, OSError) as exc:
-                    preview = None
-                    blocking.append(str(exc))
-                if preview:
-                    st.image(preview.data, width=min(preview.width, 700))
-                st.caption(f"{len(kept)} of {len(images)} pictures/pages selected. Check the actual pages; a stale cover does not mean the work on a page is old.")
-                if section.key == "cover":
-                    st.caption("Repeated page artwork is grouped here once. Choose the cover and logos you want to reuse; other artwork stays in the original.")
-                    for slot, label in (("cover_photo", "Cover photograph"), ("client_logo", "Client logo"), ("brand_logo", "Brand logo")):
-                        default = next((i.id for i in images if i.suggested_slot == "brand_logo"), "") if slot == "brand_logo" else ""
-                        if "destinations" in old:
-                            default = next((identity for identity, saved_slot in old["destinations"].items() if saved_slot == slot), "")
-                        chosen = st.selectbox(label, ["", *labels], format_func=lambda v, labels=labels: labels.get(v, "None selected"), key=field(p + "_cover_" + slot, default))
-                        if chosen and chosen in kept:
-                            plan["selected"].append(chosen)
-                            plan["destinations"][chosen] = slot
-                    if len(plan["selected"]) != len(set(plan["selected"])):
-                        blocking.append("Choose a different picture for each cover photograph or logo.")
-                else:
-                    plan["selected"].extend(kept)
-                if preview and st.checkbox("Read dates and text from the displayed page (optional)", key=field(p + "_read_image", False)):
-                    from app.monthly_report_setup_ui import _image_review
-                    notes = _image_review(path, image, p, field, prefix)
-                    plan["image_notes"][image.image_part] = notes
-                # Persist findings across previews and closed OCR controls.
-                for selected_image in images:
-                    notes = plan["image_notes"].get(selected_image.image_part, "")
-                    kind, reason = page_status(notes, unreadable=not notes.strip())
-                    if kind in ("pricing", "legal", "blank", "signature") and selected_image.id in plan["selected"]:
-                        blocking.append("Uncheck " + labels[selected_image.id] + ": " + reason)
+            from app.monthly_report_picture_cards import review_pictures
+            review_pictures([i for i in items if i.kind == "image"], section.key,
+                            path, p, prefix, field, old, plan, blocking)
             if action == actions[1] and section.key not in ("cover", "other"):
-                st.caption("Uncheck an old picture above when replacing it. Complete vendor, chemical and MBCx files can be added in This month’s work after setup.")
+                st.caption("Choose “Leave out” on the old picture when replacing it. Complete vendor, chemical and MBCx files can be added in This month’s work after setup.")
                 slot = {"activity": "improvements", "training": "training_summary", "maintenance": "vendor_reports", "water": "water_reports"}.get(section.key, default_slot(section.key))
                 if section.key == "organization":
                     slot = st.radio("This replacement shows", ["org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix"], format_func=lambda v: {"org_chart": "Organization chart", "business_hours_workflow": "Business-hours outage procedure", "after_hours_workflow": "After-hours outage procedure", "contact_matrix": "Facility contacts"}[v], key=field(p + "_replacement_slot", old.get("new_assets", [("org_chart", None)])[0][0] if old.get("new_assets") else "org_chart"))
@@ -237,17 +178,17 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 elif plan["new_assets"]:
                     st.caption("Your replacement picture is retained.")
             if any(i.kind == "unsupported" for i in section.items):
-                preserve_hint = "Open ‘Keep the original chart and contact page layouts’ above to preview complete pages. " if section.key == "organization" else ""
-                st.warning("Some Word drawings need a visual check. " + preserve_hint + "If they cannot be kept clearly, add replacement pictures or explicitly leave them out. The original is retained.")
-                choice = st.radio("What should happen to those unread drawings?", ["Choose an option", "I added replacement pictures for the drawings needed", "Leave these drawings out of this draft"],
+                preserve_hint = "Open ‘Preview the original charts and contact lists’ above to preview complete pages. " if section.key == "organization" else ""
+                st.warning("Some charts or artwork in the original Word file could not be displayed. " + preserve_hint + "If they cannot be kept clearly, add replacement pictures or explicitly leave them out. The original is retained.")
+                choice = st.radio("Some content could not be shown. How would you like to continue?", ["Choose an option", "I uploaded clear replacements", "Continue without the content that could not be shown"],
                                   key=field(p + "_unsupported", old.get("unsupported_choice", "Choose an option")))
                 plan["unsupported_choice"] = choice
-                plan["unsupported_reviewed"] = choice == "Leave these drawings out of this draft" or (choice == "I added replacement pictures for the drawings needed" and bool(plan["new_assets"]))
+                plan["unsupported_reviewed"] = choice == "Continue without the content that could not be shown" or (choice == "I uploaded clear replacements" and bool(plan["new_assets"]))
                 if not plan["unsupported_reviewed"]:
                     if section.key in ("cover", "other"):
-                        blocking.append("Choose ‘Leave these drawings out of this draft’ to retain them only in the original. You can add clear replacement pictures to the appropriate report section after setup.")
+                        blocking.append("Choose ‘Continue without the content that could not be shown’ to retain them only in the original. You can add clear replacement pictures to the appropriate report section after setup.")
                     else:
-                        blocking.append(preserve_hint + f"To upload a replacement, choose ‘{guide.edit}’ above. Otherwise choose ‘Leave these drawings out of this draft’.")
+                        blocking.append(preserve_hint + f"To upload a replacement, choose ‘{guide.edit}’ above. Otherwise choose ‘Continue without the content that could not be shown’.")
         _approve_plan(plan, p, field, old, plans, blocking)
 
 
@@ -299,9 +240,20 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         missing = [] if actor.strip() else ["Enter your name."]
     else:
         candidate, actor, missing = _identity(contract, prepared, p, field, state)
-    intent = st.radio("What are you preparing?", ["A new month using this report’s design", "Finish a report someone already started"],
-                      key=field(p + "_intent", "Finish a report someone already started"))
-    st.caption(f"Finished report: {period.label}. Existing work stays selected until you choose to change or leave it out. No pages are removed merely because the cover looks old.")
+    intent = "Content-based review"
+    from app.monthly_report_setup import report_period_findings
+    findings = report_period_findings(inspection, period)
+    if findings["current"] and findings["older"]:
+        message = "Some work refers to this month and some to other months. Parts of this report may already be updated."
+    elif findings["older"]:
+        message = "Some work refers to earlier months. Keep relevant ongoing history and update old monthly work."
+    elif findings["current"]:
+        message = "The report includes work dated this month. Check the sections for anything still needing an update."
+    else:
+        message = "The month is not clear from the readable work details. Review the sections before deciding what to keep."
+    st.info(f"Preparing {period.label}. " + message + " An old cover never decides which work is kept.")
+    if findings["images"]:
+        st.caption("Check the embedded page previews too: nearby headings cannot establish an image’s service date. Uncertain content stays available until you decide.")
     st.subheader("2. Review your report sections")
     st.write("Open a section, check what is already there, and choose whether to keep or change it. Mark it ready when you’re finished. You can add this month’s vendor and water-treatment files in the next step.")
     sections = section_reviews(inspection)

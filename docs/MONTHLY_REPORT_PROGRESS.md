@@ -14,6 +14,20 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
+Active follow-up: `fix/monthly-report-memory-guidance` from main
+`c9440b067c0bc90628db997d02287e80bacb9093` (PR #79 checkpoint merge).
+Explicit shared-report/browser-memory guidance, first-report input checklist,
+new-browser attribution correction, and bounded read-only storage summary are
+implemented locally. The owner additionally requested cross-contract asset
+deduplication: a global immutable SHA-256 pool, atomic per-profile hard links,
+streamed originals and bounded legacy consolidation are implemented. Twenty-one
+startup/UI/memory checks passed. Subsequent full memory/storage suite: 923 passed,
+one CI-only skip. Upload review now uses picture-adjacent actions instead of
+disconnected dropdowns, and no longer asks upload intent; 40 focused tests passed.
+The combined complete suite is running; publication/deployment pending. Owner additionally requested runtime seeding from private
+samples to test returning users; that write is not yet performed. See
+[memory notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_MEMORY.md).
+
 Latest feature: page-review PR #77 merged at
 `013f7bfdbd514f89175b760f4909182d8b95562d`. Published head
 `acc27c209d5b7f9ebb43f85f404918b573ac8bb5`, tree

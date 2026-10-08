@@ -190,6 +190,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     next(b for b in app.button if b.label == "Analyze report").click().run()
     assert not app.exception
     assert not library.list_profiles(RRH_CONTRACT)
+    assert not any(w.label == "What are you preparing?" for w in app.radio)
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
     assert next(b for b in app.button if b.label == "Continue to this month’s updates").disabled
     assert not any(w.label in ("Use this item", "Where it belongs", "Content to review") for w in app.selectbox)
@@ -284,3 +285,49 @@ def test_importing_partial_report_preserves_unsaved_work(monkeypatch, tmp_path):
     assert "Synthetic colleague completed the pump inspection." in value
     imported = library.load_imported_draft(RRH_CONTRACT, "synthetic-guided")
     assert next(b for b in imported.blocks if b.key == "activity_summary").text == value
+
+
+def test_shared_report_never_identifies_a_new_browser_as_its_previous_editor(monkeypatch, tmp_path):
+    from app import web_ui
+    device = ["synthetic-browser-first"]
+    monkeypatch.setattr(web_ui, "device_token", lambda cookies: device[0])
+    app = monthly(monkeypatch, tmp_path)
+    next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic First Editor").run()
+    step(app, 2)
+    next(w for w in app.text_area if w.label == "Activity summary").set_value("Saved work stays available to colleagues.").run()
+    next(w for w in app.checkbox if w.label == "Save this draft for others on this report to continue").check().run()
+    next(b for b in app.button if b.label == "Save progress").click().run()
+    returning = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    returning.segmented_control[0].set_value("Monthly report").run()
+    assert not returning.exception
+    assert next(w for w in returning.text_input if w.label == "Prepared by").value == "Synthetic First Editor"
+    device[0] = "synthetic-browser-new"
+    newcomer = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
+    newcomer.segmented_control[0].set_value("Monthly report").run()
+    choose_report(newcomer, synthetic_profiles()[0].facilities[0].title)
+    assert next(w for w in newcomer.text_input if w.label == "Prepared by").value == ""
+    step(newcomer, 2)
+    assert next(w for w in newcomer.text_area if w.label == "Activity summary").value == "Saved work stays available to colleagues."
+    assert next(b for b in newcomer.button if b.label == "Save progress").disabled
+    device[0] = "synthetic-browser-first"
+    returning.selectbox("report_month_number").set_value(10).run()
+    assert next(w for w in returning.text_input if w.label == "Prepared by").value == "Synthetic First Editor"
+    assert any("saved September 2026" in w.value for w in returning.info)
+    step(returning, 2)
+    assert next(w for w in returning.text_area if w.label == "Activity summary").value == ""
+
+
+def test_new_site_reuses_contract_design_without_another_sites_activity(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    next(w for w in app.checkbox if w.label == synthetic_profiles()[0].facilities[0].title).uncheck().run()
+    next(w for w in app.text_input if w.label == "Site name").set_value("Synthetic New Site").run()
+    next(b for b in app.button if b.label == "Use a contract report").click().run()
+    assert not any(w.label == "Report design to reuse" for w in app.radio)
+    assert any("What you’ll need for this first report" in w.value for w in app.markdown)
+    next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic New Editor").run()
+    next(w for w in app.checkbox if w.label == "Save this design for these sites so we can use it next month").check().run()
+    next(b for b in app.button if b.label == "Start this report").click().run()
+    assert not app.exception
+    step(app, 2)
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == ""
+    assert library.load_profile(RRH_CONTRACT, "synthetic-guided").block("activity_summary").text == "Synthetic initial activity."

@@ -211,7 +211,7 @@ render_section_setup(p.contract, ReportPeriod(2026,9), "Synthetic Editor", _fiel
     prefix = stage_key.removesuffix("_stage") + "_" + inspection.sha256[:16]
     app.session_state[prefix + "_section_organization_open"] = True
     app.run()
-    next(b for b in app.button if b.label == "Prepare chart and contact pages").click().run()
+    next(b for b in app.button if b.label == "Show original chart pages").click().run()
     assert not app.exception
     next(w for w in app.checkbox if w.label == "Use complete pages for this section").check().run()
     assert any("at least one complete page" in e.value for e in app.error)
@@ -222,9 +222,9 @@ render_section_setup(p.contract, ReportPeriod(2026,9), "Synthetic Editor", _fiel
     org_ready().check().run()
     assert app.session_state[prefix + "_section_plans"]["organization"]["approved"]
     # A different purpose invalidates the specific page confirmation.
-    next(w for w in app.selectbox if w.label == "Page 1 contains").set_value("contact_matrix").run()
+    next(w for w in app.radio if w.label == "Use this page as").set_value("contact_matrix").run()
     assert not app.session_state[prefix + "_section_plans"]["organization"]["approved"]
-    next(w for w in app.selectbox if w.label == "Page 1 contains").set_value("org_chart").run()
+    next(w for w in app.radio if w.label == "Use this page as").set_value("org_chart").run()
     next(w for w in app.checkbox if w.label.startswith("Page 1 matches")).check().run()
     org_ready().check().run()
     for key in ("cover", "activity"):

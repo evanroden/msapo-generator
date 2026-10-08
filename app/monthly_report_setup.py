@@ -34,6 +34,29 @@ def month_selector(field, prefix: str, default: ReportPeriod, *, label: str = "R
     return ReportPeriod(year, month)
 
 
+def report_period_findings(inspection, period):
+    """Describe body evidence without classifying a whole mixed report by its cover."""
+    monthly_sections = {"activity", "maintenance", "water", "mbcx", "training"}
+    month = calendar.month_name[period.month]
+    current_pattern = re.compile(
+        rf"\b(?:{month}|{month[:3]}\.?)\s+{period.year}\b|"
+        rf"\b{period.year}-{period.month:02d}-\d{{2}}\b|"
+        rf"\b0?{period.month}/\d{{1,2}}/{period.year}\b", re.I)
+    current = older = images = 0
+    for item in inspection.items:
+        if item.section not in monthly_sections:
+            continue
+        if item.kind == "image":
+            images += 1
+            continue  # nearby text/captions cannot establish an image's service date
+        if item.kind not in ("text", "table"):
+            continue
+        text = "\n".join((item.text, *(" ".join(row) for row in item.rows)))
+        current += bool(current_pattern.search(text))
+        older += bool(stale_period_mentions(text, period.year, period.month))
+    return {"current": current, "older": older, "images": images}
+
+
 def suggested_mappings(inspection: DocxInspection) -> tuple[ImportMapping, ...]:
     """Ambiguous single-image/table destinations stay unmatched, not last-one-wins."""
     specs = {b.key: b for s in default_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}

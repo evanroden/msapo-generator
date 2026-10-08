@@ -16,7 +16,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import tempfile
 
 from app.memory import _data_dir
@@ -126,6 +125,10 @@ def _read(path: Path) -> dict:
 
 
 def _atomic_write(path: Path, raw: bytes) -> None:
+    from app.monthly_report_objects import object_path, store_bytes
+    if object_path(path) is not None:
+        store_bytes(path, raw)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -380,19 +383,8 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
             for reference in block.asset_hashes:
                 read_asset(profile.contract, profile.key, reference)
         original = path / "imports" / (digest + ".docx")
-        original.parent.mkdir(parents=True, exist_ok=True)
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(dir=original.parent, prefix=".pending-", delete=False) as output:
-                temporary = Path(output.name)
-                with source.open("rb") as incoming:
-                    shutil.copyfileobj(incoming, output, length=1024 * 1024)
-                output.flush()
-                os.fsync(output.fileno())
-            os.replace(temporary, original)
-        finally:
-            if temporary:
-                temporary.unlink(missing_ok=True)
+        from app.monthly_report_objects import store_file
+        store_file(original, source)
         _atomic_write(path / "imports" / (digest + ".json"), _json({"schema": 1, **review, "actor": actor, "at": _now()}))
         # Only first setup seeds standing defaults. A partial report cannot
         # silently change everyone else's org chart or contact matrix.

@@ -15,11 +15,11 @@ def chart_page_review(section, path, period, prefix, field, old, plan, blocking)
     if section.key != "organization":
         return False
     key = prefix + "_word_pages"
-    with st.expander("Keep the original chart and contact page layouts", expanded=old.get("page_layout", False)):
+    with st.expander("Preview the original charts and contact lists", expanded=old.get("page_layout", False)):
         st.write("If a chart appears as separate pieces or is missing below, prepare its complete pages here. Check the preview against your original, then choose the pages to keep.")
         st.caption("These become reusable pictures. Names and boxes inside them are not individually editable. You can build an editable chart in Site information instead.")
         sections = tuple(sorted({i.word_section for i in section.items if i.part == "word/document.xml"}))
-        if st.button("Prepare chart and contact pages", key=key + "_prepare"):
+        if st.button("Show original chart pages", key=key + "_prepare"):
             try:
                 with st.spinner("Preparing chart pages…"):
                     st.session_state[key] = preserve_word_pages(path, sections)
@@ -55,7 +55,7 @@ def chart_page_review(section, path, period, prefix, field, old, plan, blocking)
                                        key=field(page_key + "_keep", page.number in choices and not forbidden))
                     if not keep or forbidden:
                         continue
-                    slot = st.selectbox(f"Page {page.number} contains", slots, format_func=readable_label,
+                    slot = st.radio("Use this page as", slots, format_func=readable_label, horizontal=True,
                                         key=field(page_key + "_slot", choices.get(page.number, "org_chart")))
                     if stale_period_mentions(page.text, period.year, period.month):
                         st.warning("This page mentions another month. Check that it is still current before keeping it.")

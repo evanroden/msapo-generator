@@ -145,6 +145,7 @@ def test_reviewed_directory_contacts_can_seed_chart_without_replacing_it_silentl
     save_design_start(draft, {ref: raw.getvalue()}, actor='Synthetic Editor', confirmed=True)
     app = monthly(monkeypatch, tmp_path, saved=False)
     choose_report(app, 'Synthetic North')
+    next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Current Editor').run()
     step(app, 3)
     match = next(w for w in app.selectbox if w.label == 'Directory site for Synthetic North')
     assert match.value == 'directory-north'

@@ -161,6 +161,36 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.write("1. Choose your contract and check the sites that belong in **one** report.\n2. Use a saved design, the general template, or upload an older/unfinished report.\n3. Open the section boxes to update this month’s work, pictures, people and contacts.\n4. Preview the report, finish the review checks, then download DOCX and PDF.")
         st.write("For vendor and chemical reports, check each page preview, then choose **Include page and continue** or **Leave page out and continue**. The next page needing review opens for you. Prices, legal-only pages and blank/signature-only pages do not belong in the client report.")
         st.caption("You can move between steps in any order. Save progress before leaving; return to the same sites and month to continue. Chart and photo layouts update beside their fields. Refresh the draft PDF preview when you want to check the whole report.")
+    with st.expander("What will be remembered?"):
+        st.write("**For these sites:** saved report designs, logos, org charts, contacts and monthly drafts are shared. Anyone choosing the same contract and exact sites can continue the saved report, even on a different device.")
+        st.write("**On this browser:** after you save, we remember your last contract/site selection and the name you entered for that report. A different browser, private browsing or cleared browser data may require selecting them again. Your reports remain saved.")
+        st.write("**Next month:** we reuse the latest saved earlier report for these exact sites. Layout and standing site information carry forward for review; monthly activity, vendor/chemical attachments and photos start fresh. Open issues and proposals remain follow-ups to review.")
+        st.caption("Use Save progress before leaving. Changes are not automatically saved. Your entered name records your edits; it is not a login or verified identity. Check it on a shared device.")
+        if st.button("Check available storage", key="report_storage_check"):
+            from app.monthly_report_storage import storage_summary
+            try:
+                st.session_state["report_storage_summary"] = storage_summary()
+            except OSError:
+                st.session_state.pop("report_storage_summary", None)
+                st.warning("Storage could not be measured right now. Your saved reports were not changed.")
+        if storage := st.session_state.get("report_storage_summary"):
+            from app.monthly_report_storage import readable_bytes
+            st.write(f"Disk capacity: {readable_bytes(storage['total'])} · Available: {readable_bytes(storage['free'])} · Monthly report files: {'at least ' if not storage['complete'] else ''}{readable_bytes(storage['monthly'])}")
+            st.caption("Measured when you click Check available storage. The disk is also used by other app workflows. Originals are retained. Identical new assets and source files share one stored copy across all contracts and sites. Monthly history keeps references, so changing one site's selection does not change another report. Existing files can be consolidated below.")
+            if storage["free"] < max(512 * 1024 * 1024, storage["total"] * .05):
+                st.warning("Storage is running low. Keep space available before importing more large reports. This check does not delete anything.")
+        if st.button("Consolidate duplicate stored files", key="report_storage_consolidate"):
+            from app.monthly_report_objects import consolidate_existing
+            from app.monthly_report_storage import storage_summary, readable_bytes
+            try:
+                with st.spinner("Sharing identical stored files; originals and history remain available…"):
+                    result = consolidate_existing()
+                st.session_state["report_storage_summary"] = storage_summary()
+                st.success(f"Consolidated {result['changed']} files; released {readable_bytes(result['reclaimed'])} from duplicate copies.")
+                if not result["complete"]:
+                    st.info("This batch is complete. Run consolidation again to continue through the remaining files.")
+            except (ValueError, OSError):
+                st.warning("Consolidation stopped. Original paths and report history remain available; completed files can safely be reused when you retry.")
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
     contract = choose_contract(last_contract, field)
     with st.expander("Set up or update the contract’s site/contact list (optional)"):
@@ -223,10 +253,20 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             draft = replace(new_month_draft(prior_draft, period), profile=profile)
         else:
             draft = _initial_draft(state, period, prepared)
-        st.session_state[draft_key] = replace(draft, prepared_by=prepared or draft.prepared_by)
+        # A shared report's author is not the identity of a new visitor.
+        # Only a setup/import just completed in this session can seed that name.
+        current_actor = prepared or (draft.prepared_by if completed_setup == selected or resume else "")
+        st.session_state[draft_key] = replace(draft, prepared_by=current_actor)
         st.session_state[prefix + "_revision"] = library.imported_snapshot_revision(contract, selected) if using_import else snapshot.revision if snapshot else 0
     draft = st.session_state[draft_key]
+    if snapshot:
+        st.info(f"Continue your saved {period.label} report for these sites. Your saved work is here; you do not need to upload the old report again.")
+    elif prior_draft:
+        st.info(f"Your {period.label} starting point is the saved {prior_draft.period.label} report for these exact sites. Add this month’s work and check the carried-forward site information.")
+    else:
+        st.info("Your design for these sites is saved. Choose the sections you need, add site information and this month’s work, then review and download.")
     prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by))
+    st.caption("Use your own name. It is remembered on this browser after saving; another person's saved report does not identify you.")
     draft = replace(draft, prepared_by=prepared)
     if candidate != profile:
         st.caption("The updated group name/scope will be remembered after you save it.")
