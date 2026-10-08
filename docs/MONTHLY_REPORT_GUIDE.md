@@ -69,6 +69,16 @@ pages. Keep only useful client-facing pages. Prices must never appear in the
 monthly report. Leave out pricing pages, legal terms, empty pages and pages that
 contain only a signature. Review image pages visually, even after OCR.
 
+After reading the files, open **Choose pages for the client report**. Vendor/date/
+work details are under **Edit vendor, date and work details** when corrections
+are needed. For each preview, confirm the visual check, then choose **Include
+page and continue** or **Leave page out and continue**. The next selected page
+that still needs review opens automatically. Use **Next page needing review**
+to defer a decision, or the page selector to revisit any page. The checked/
+remaining count shows progress. Once the selected pages are checked, open
+**Embed selected report pages and photographs**, choose their section and prepare
+them. Leaving a page out preserves the original file.
+
 For evidence-linked wording, ask the tool to read a file, review its extracted
 facts, then request suggested wording for the appropriate section. Check the
 linked source pages, edit the paragraphs and confirm review before applying.
