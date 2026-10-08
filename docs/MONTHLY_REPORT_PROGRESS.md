@@ -14,11 +14,18 @@ own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
 
-Active follow-up: `feat/monthly-report-page-review`, based on verified main
-`dd1c02bf6efd9e4ce269fe4caeae81aebdce6616` (PR #76 checkpoint merge).
-Monthly source review now has include/leave-out/next actions, progress and
-collapsed optional fact/text editors. Eighteen focused tests passed; full suite **912 passed, one CI-only skip**.
-Documentation/hygiene: **33 passed**. Publication and exact-head CI pending. See [page-review notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_PAGE_REVIEW.md).
+Latest feature: page-review PR #77 merged at
+`013f7bfdbd514f89175b760f4909182d8b95562d`. Published head
+`acc27c209d5b7f9ebb43f85f404918b573ac8bb5`, tree
+`43b22a04dcfb803cec63b7802b4a9e87c9c6d1cf`, passed Actions `37792632959`,
+job `113363758419`: **914 passed, zero skipped**. Monthly source review now has
+include/leave-out/next actions, progress and collapsed optional fact/text editors.
+Local full suite: **912 passed, one CI-only skip**; focused: **18 passed**;
+docs/hygiene: **33 passed**. Retained private DOCX preview/exclude/revisit and
+workflow-retention AppTest passed; no client output was approved. Public release
+check pending. Follow-up branch `docs/monthly-report-page-review-release` adds
+first-time help and this checkpoint. See
+[page-review notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_PAGE_REVIEW.md).
 
 Current feature release: PR #74 merged at
 `798e751714064c3d4de91d28c461a784f8c7c3d6`. Published head

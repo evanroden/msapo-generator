@@ -2,7 +2,7 @@
 document_type: implementation_notes
 date: 2026-10-08
 base_commit: dd1c02bf6efd9e4ce269fe4caeae81aebdce6616
-status: implemented_local_validation
+status: merged_public_check_pending
 ---
 
 # Guided monthly source page review
@@ -36,3 +36,22 @@ deployment pending.
 Private reports and generated artifacts remain outside git. This increment's
 new regression fixtures are synthetic; it does not repeat or expand the prior
 thirteen-report lifecycle acceptance matrix.
+
+## Publication and retained-sample walkthrough
+
+PR #77 published head `acc27c209d5b7f9ebb43f85f404918b573ac8bb5`, tree
+`43b22a04dcfb803cec63b7802b4a9e87c9c6d1cf`. All six blobs and the tree
+were hash-verified, fetched and compared before local identity reconciliation.
+Actions `37792632959`, job `113363758419`, passed **914 tests, zero skipped**.
+Logs confirmed the exact head against unchanged main `dd1c02bf6efd9e4ce269fe4caeae81aebdce6616`.
+Expected-head merge produced `013f7bfdbd514f89175b760f4909182d8b95562d`.
+
+A retained private DOCX was read locally as monthly evidence. Its cover preview
+was visually inspected. AppTest passed leave-out, revisit and workflow-switch
+retention without approving any client output. This is a targeted UI smoke test,
+not new full-report acceptance. Originals, extracted images and test runtime are
+outside git under `/workspace/scratch/page-review-qa/`.
+
+Follow-up adds the same page-decision instructions to the first-time help panel,
+so users can learn the controls before starting a report. Public checks remain
+limited to health and UI; no private Render access or persistent QA profile.
