@@ -1,0 +1,218 @@
+diff --git a/app/monthly_report_import.py b/app/monthly_report_import.py
+index bcde8c7..e867a15 100644
+--- a/app/monthly_report_import.py
++++ b/app/monthly_report_import.py
+@@ -216,7 +216,8 @@ _SECTION_TERMS = {
+     "issues": ("equipmentperformanceissues",), "capital": ("prioritycapitalrenewallist",),
+     "proposals": ("pendingdeclinedproposals", "pendinganddeclinedproposals"),
+     "training": ("trainingsummary",), "rfi": ("rfimatrix",),
+-    "accounts_receivable": ("accountsreceivable", "accountreceivable", "accountsreceivables", "accountreceivables"),
++    "accounts_receivable": ("accountsreceivable", "accountreceivable", "accountsreceivables", "accountreceivables",
++                            "accountreceivablesummary", "accountsreceivablesummary"),
+ }
+ 
+ 
+@@ -233,6 +234,8 @@ def heading_fragment(text: str) -> str:
+             address = re.search(r"\d+\s*Galleria\s*Blvd", before, re.I)
+             prefix = before[:address.start()] if address else ""
+             line = prefix + " " + after
++        elif re.fullmatch(r"\s*\d+\s+[^|\n]{3,100}\|\s*(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}/?\s*", line, re.I):
++            continue  # A separate address/website line is page chrome, not a title.
+         if line.strip() and not re.fullmatch(r"\s*\d+\s*", line):
+             lines.append(line.strip())
+     return " ".join(lines)
+@@ -245,13 +248,17 @@ def _heading(text: str) -> str | None:
+         return None
+     if re.fullmatch(r"(?:section\s*)?\d*[.\s:–-]*water\s+treatment(?:\s+reports?)?", text.strip(), re.IGNORECASE):
+         return "water"
+-    hits = [key for key, terms in _SECTION_TERMS.items() if any(term in compact for term in terms)]
++    # A section name mentioned in prose is not a heading. Compatibility
++    # Choice/Fallback representations may repeat the same title in one anchor.
++    title = re.sub(r"^(?:section|appendix[a-z])", "", compact)
++    hits = [key for key, terms in _SECTION_TERMS.items()
++            if re.fullmatch("(?:" + "|".join(sorted(terms, key=len, reverse=True)) + ")+", title)]
+     if len(hits) == 1:
+         return hits[0]
+     # Unknown numbered headings and common extra sections must not inherit the
+     # previous recognized destination (e.g. AR tables becoming capital costs).
+     if ((re.match(r"^(?:section\s+)?\d+[.:\s]+[A-Z]", text, re.IGNORECASE) and text.upper() == text)
+-            or any(term in compact for term in ("accountsreceivable", "accountreceivable", "plumbingandelectricalallowance"))):
++            or compact == "plumbingandelectricalallowance"):
+         return "unmatched"
+     return None
+ 
+@@ -446,19 +453,19 @@ def inspect_docx(path: Path) -> DocxInspection:
+                                 elif heading_fragment(text) and len(heading_fragment(text)) < 100:
+                                     fragment = heading_fragment(text)
+                                     if not detected or detected == "unmatched":
+-                                        combined = _heading(" ".join([*heading_fragments, fragment]))
+-                                        if combined not in (None, "unmatched"):
+-                                            detected = combined
+-                                            # Back-mark only the shortest adjoining heading prefix.
+-                                            for count in range(1, len(heading_fragments) + 1):
+-                                                if _heading(" ".join([*heading_fragments[-count:], fragment])) == combined:
+-                                                    positions = set(heading_positions[-count:])
+-                                                    for index, previous in enumerate(items):
+-                                                        if previous.part == part and previous.position in positions:
+-                                                            items[index] = replace(previous, section=combined,
+-                                                                                   suggested_slot="divider_" + combined if previous.kind == "image" else "",
+-                                                                                   note="Native section heading")
+-                                                    break
++                                        # Test the shortest adjoining title first. Older body
++                                        # prose in the three-fragment window is not part of it.
++                                        for count in range(1, len(heading_fragments) + 1):
++                                            combined = _heading(" ".join([*heading_fragments[-count:], fragment]))
++                                            if combined not in (None, "unmatched"):
++                                                detected = combined
++                                                positions = set(heading_positions[-count:])
++                                                for index, previous in enumerate(items):
++                                                    if previous.part == part and previous.position in positions:
++                                                        items[index] = replace(previous, section=combined,
++                                                                               suggested_slot="divider_" + combined if previous.kind == "image" else "",
++                                                                               note="Native section heading")
++                                                break
+                                     heading_positions = [*heading_positions, position][-3:]
+                                     heading_fragments = [*heading_fragments, fragment][-3:]
+                                 elif text:
+diff --git a/app/monthly_report_native_layout.py b/app/monthly_report_native_layout.py
+index 9d731ce..2e133fc 100644
+--- a/app/monthly_report_native_layout.py
++++ b/app/monthly_report_native_layout.py
+@@ -749,6 +749,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+     divider_word_sections = {item.word_section for position in headings for item in items[position]}
+     if section_key and section_key not in set(section_by_pos.values()):
+         raise NativeLayoutError(f"The source layout does not contain the {section_key} section.")
++    from app.monthly_report_native_pages import NativePages
++    unchanged_positions = {item.position for item in inspection.items
++                           if item.part == "word/document.xml" and item.id in unchanged_items}
++    page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master)
+     text_prototypes = defaultdict(list)
+     image_prototypes = defaultdict(list)
+     table_prototypes = defaultdict(list)
+@@ -860,9 +864,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+             # never erase/reappend the already current technical table itself.
+             _clear_images(element)
+             continue
+-        if text and text.casefold().strip() not in _STATIC:
++        if element.tag == qn("w:p") and text and text.casefold().strip() not in _STATIC:
+             if re.fullmatch(r"(?:Monthly Training Update [–—-] )?" + _MONTH.pattern + r"(?: Activity)?", text, re.IGNORECASE):
+                 _set_text(element, _MONTH.sub(draft.period.label, text))
++                page_plan.support.add(element)
+             else:
+                 text_prototypes[slot].append((element, deepcopy(element)))
+                 if element.tag == qn("w:p"):
+@@ -916,6 +921,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+         _clear_images(clone)
+         _set_text(clone, "")
+         section_ends[sec].addprevious(clone)
++        page_plan.assigned(clone, section_ends[sec])
+         return clone
+ 
+     def text_anchor(sec):
+@@ -963,6 +969,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+             for index, value in enumerate(values):
+                 if index < len(anchors):
+                     _set_text(anchors[index][0], value)
++                    page_plan.emitted(anchors[index][0])
+                     anchor = anchors[index][0]
+                 else:
+                     clone = deepcopy(prototype)
+@@ -971,11 +978,13 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+                     _clear_images(clone)
+                     _set_text(clone, value)
+                     anchor.addnext(clone)
++                    page_plan.emitted(clone, anchor)
+                     anchor = clone
+         tables = []
+         if block.rows:
+             tables.append((tuple(c.title for c in spec.columns), block.rows, ""))
+-        tables.extend((t.columns, t.rows, t.reference) for t in block.extra_tables if t.reference not in preserved_table_refs)
++        tables.extend((t.columns, t.rows, t.reference) for t in block.extra_tables
++                      if t.reference not in preserved_table_refs and (t.rows or not master))
+         if tables:
+             anchors = table_prototypes.get(block.key)
+             if not anchors:
+@@ -993,7 +1002,9 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+                 if index >= len(anchors):
+                     anchor = deepcopy(prototype)
+                     last.addnext(anchor)
++                    page_plan.assigned(anchor, last)
+                 _table(anchor, columns, rows)
++                page_plan.emitted(anchor, kind="table")
+                 from app.monthly_report_training_style import style_training_table
+                 style_training_table(anchor, table_reference)
+                 last = anchor
+@@ -1012,23 +1023,35 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+             anchors = image_prototypes.get(block.key)
+             if not anchors:
+                 choices = section_images.get(sec) or global_images
+-                if not choices:
++                if not choices and block.key in ("improvements", "cover_photo", "brand_logo", "client_logo"):
+                     raise NativeLayoutError(f"The source has no native picture frame for {block.key}.")
+-                prototype = choices[0]
++                # Technical content needs the section's page geometry, not an
++                # old photograph. Empty chart pages can accept a new inline frame.
++                prototype = choices[0] if choices else OxmlElement("w:p")
+                 anchors = [(append_native(sec, prototype), prototype)]
+             last = None
+             for index, data in enumerate(images):
+                 anchor, prototype = anchors[min(index, len(anchors) - 1)]
+-                clone = deepcopy(prototype)
+-                for properties in list(clone.iter(qn("w:sectPr"))):
+-                    properties.getparent().remove(properties)
+-                _set_text(clone, "")
+-                _replace_image(document, clone, data)
++                technical = block.key not in ("improvements", "cover_photo", "brand_logo", "client_logo")
++                if technical:
++                    clone = page_plan.technical_picture(document, anchor if index < len(anchors) else last, data, new_page=index > 0,
++                                                        caption=bool(block.asset_captions))
++                else:
++                    clone = deepcopy(prototype)
++                    for properties in list(clone.iter(qn("w:sectPr"))):
++                        properties.getparent().remove(properties)
++                    _set_text(clone, "")
++                    _replace_image(document, clone, data)
+                 if index < len(anchors):
+                     anchor.addprevious(clone)
+-                    anchor.getparent().remove(anchor)
++                    page_plan.emitted(clone, anchor, kind="picture")
++                    # The old frame may own the section boundary. Keep that
++                    # boundary until page accounting has finished its reflow.
++                    if anchor.find(".//" + qn("w:sectPr")) is None:
++                        anchor.getparent().remove(anchor)
+                 else:
+                     last.addnext(clone)
++                    page_plan.emitted(clone, last, kind="picture")
+                 last = clone
+                 caption_index = image_indexes[index] if image_indexes else index
+                 if caption_index < len(block.asset_captions) and block.asset_captions[caption_index].strip():
+@@ -1039,6 +1062,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+                     _clear_images(caption)
+                     _set_text(caption, block.asset_captions[caption_index])
+                     clone.addnext(caption)
++                    page_plan.emitted(caption, clone, kind="caption")
+                     last = caption
+     if section_key:
+         selected_positions = [position for position, sec in section_by_pos.items()
+@@ -1062,6 +1086,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
+                 body.remove(existing)
+             body.append(closing)
+ 
++    page_plan.finish()
++
+     # Source notes and comments are source facts, not current report content.
+     explicit_notes = set(supplied_notes)
+     for node in list(body.iter()):
+diff --git a/docs/README.md b/docs/README.md
+index bf97d61..d7e8b71 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
+ 
+ # Documentation index
+ 
++Replaced content pages and chart fit: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REWRITTEN_PAGES.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REWRITTEN_PAGES.md). Empty-scaffold removal is scoped to proved rewrites; unchanged source geometry remains protected.
++
+ Current next-LLM handoff and owner-requested testing release:
+ [HANDOFF_MONTHLY_REPORT_2026-10-09.md](HANDOFF_MONTHLY_REPORT_2026-10-09.md).
+ Read this before resuming report work; it distinguishes completed fixes from
