@@ -30,9 +30,12 @@ error here.
 from __future__ import annotations
 
 import subprocess
+import logging
+import os
 import shutil
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 import requests
 
@@ -40,6 +43,10 @@ from app.config import PDF_BACKEND, GOTENBERG_URL, OUTPUT_DIR
 
 
 class PDFConversionError(Exception):
+    pass
+
+
+class PDFConversionTimeout(PDFConversionError):
     pass
 
 
@@ -62,75 +69,47 @@ def _convert_libreoffice_locked(docx_path: Path) -> Path:
             "Install it with: sudo apt install libreoffice-writer"
         )
 
-    # Every conversion gets its OWN LibreOffice user profile. Without
-    # -env:UserInstallation each run shares the default profile under $HOME,
-    # which fails in production in ways that never show up in a single-threaded
-    # test run:
-    #   * two concurrent conversions contend for the same profile, and the
-    #     second either refuses to start or attaches to the first instance and
-    #     never performs the conversion -- surfacing as "LibreOffice ran but the
-    #     PDF was not found";
-    #   * a conversion killed mid-flight (timeout, container restart, OOM)
-    #     leaves a lock file behind that poisons the shared profile for every
-    #     later run, so the feature works once and then fails for the life of
-    #     the container;
-    #   * $HOME may not be writable at all in a container.
-    # app/expense_report.convert_expense_workbook_to_pdf already does this for
-    # the Calc path; the Writer path now matches it.
-    with tempfile.TemporaryDirectory(prefix="msapo-libreoffice-") as profile_dir:
-        from app.office_limits import prepare_profile
-        profile_uri = prepare_profile(Path(profile_dir) / 'profile')
-        result = subprocess.run(
-            [
-                lo_bin,
-                "--headless",
-                f"-env:UserInstallation={profile_uri}",
-                "--convert-to",
-                "pdf:writer_pdf_Export",
-                "--outdir",
-                str(OUTPUT_DIR),
-                str(docx_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+    from app.office_limits import prepare_profile
+    from app.office_process import run_office
+    # Private output prevents a failed conversion from returning another job's
+    # PDF. Keep it on the output filesystem for atomic, no-overwrite publication.
+    with tempfile.TemporaryDirectory(prefix=".office-", dir=OUTPUT_DIR) as job_dir:
+        job = Path(job_dir)
+        profile_uri = prepare_profile(job / 'profile')
+        try:
+            result = run_office([
+                lo_bin, "--headless", f"-env:UserInstallation={profile_uri}",
+                "--convert-to", "pdf:writer_pdf_Export", "--outdir", str(job),
+                str(docx_path.resolve()),
+            ], timeout=120)
+        except subprocess.TimeoutExpired as exc:
+            raise PDFConversionTimeout(
+                "PDF conversion took too long. The conversion was stopped."
+            ) from exc
 
-    if result.returncode != 0:
-        raise PDFConversionError(
-            f"LibreOffice conversion failed:\n{result.stderr}"
-        )
-
-    # Deriving the output path from the input STEM is only safe because
-    # document_generator.generate_docx appends a uuid4 suffix to every filename
-    # it saves. OUTPUT_DIR is shared across all sessions, so without that suffix
-    # two operators generating from similar quotes at the same moment would
-    # collide here -- and the failure would not be an error, it would be one
-    # operator's PDF handed to the other. Do not "simplify" the naming there
-    # without changing the lookup here.
-    pdf_path = OUTPUT_DIR / f"{docx_path.stem}.pdf"
-
-    # LibreOffice sometimes outputs .htm instead of .pdf — detect and clean up.
-    # It happens when the DOCX trips a Writer import problem: the process still
-    # exits 0, so returncode alone reports success and the missing PDF is the
-    # only evidence.
-    htm_path = OUTPUT_DIR / f"{docx_path.stem}.htm"
-    if not pdf_path.exists() and htm_path.exists():
-        htm_path.unlink()
-        # STALE MESSAGE, harmless but misleading: the active UI offers no DOCX
-        # download. It hands over the quote and the MSAPO PDF only, so there is
-        # no ".docx file" for the operator to fall back to. Reported, not
-        # changed here -- the string is user-facing copy, not behaviour.
-        raise PDFConversionError(
-            "LibreOffice produced HTML instead of PDF. "
-            "The .docx file is still available for download."
-        )
-
-    if not pdf_path.exists():
-        raise PDFConversionError(
-            "LibreOffice ran but the PDF was not found at the expected path."
-        )
-    return pdf_path
+        produced = job / f"{docx_path.stem}.pdf"
+        if result.returncode or not produced.is_file():
+            logging.getLogger(__name__).warning(
+                "Office conversion failed: exit=%s stdout=%s stderr=%s",
+                result.returncode, result.stdout, result.stderr)
+            raise PDFConversionError(
+                "LibreOffice could not read or render this document. "
+                "Check the starting report and recently added pages before trying again."
+            )
+        with produced.open('rb') as stream:
+            valid = stream.read(5) == b'%PDF-'
+        if not valid or produced.is_symlink():
+            raise PDFConversionError("LibreOffice returned an invalid PDF file.")
+        pdf_path = OUTPUT_DIR / f"{docx_path.stem}-{uuid4().hex}.pdf"
+        try:
+            # A hard link publishes only a complete file and refuses collisions.
+            # Temporary-directory cleanup cannot remove the returned link.
+            os.link(produced, pdf_path)
+        except FileExistsError as exc:
+            raise PDFConversionError(
+                "PDF publication could not reserve a new output file. Try again."
+            ) from exc
+        return pdf_path
 
 
 # ── Gotenberg (Docker API) ───────────────────────────────────────────

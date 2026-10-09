@@ -167,9 +167,7 @@ def test_each_conversion_gets_an_isolated_libreoffice_profile(monkeypatch):
     works once and then fails for the life of the container. The Calc path
     already isolates; this pins the Writer path to the same rule.
     """
-    import subprocess
-
-    from app import pdf_converter
+    from app import office_process, pdf_converter
 
     captured: dict[str, list[str]] = {}
 
@@ -181,12 +179,12 @@ def test_each_conversion_gets_an_isolated_libreoffice_profile(monkeypatch):
     def _fake_run(cmd, **kwargs):
         captured["cmd"] = list(cmd)
         # Produce the file the converter expects so it does not raise.
-        (OUTPUT_DIR / f"{Path(cmd[-1]).stem}.pdf").write_bytes(b"%PDF-1.7\nstub")
+        (Path(cmd[cmd.index("--outdir") + 1]) / f"{Path(cmd[-1]).stem}.pdf").write_bytes(b"%PDF-1.7\nstub")
         return _Result()
 
     monkeypatch.setattr(pdf_converter, "PDF_BACKEND", "libreoffice")
     monkeypatch.setattr(pdf_converter.shutil, "which", lambda _n: "/usr/bin/soffice")
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(office_process, "run_office", _fake_run)
 
     source = OUTPUT_DIR / "_profile_probe.docx"
     document = Document()

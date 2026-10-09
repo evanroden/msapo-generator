@@ -45,6 +45,11 @@ def conversion_slot(*, wait_seconds=10):
                         raise RenderBusy("Another report is rendering. Please try again shortly.") from None
                     time.sleep(min(.05, max(0, deadline - time.monotonic())))
             try:
+                from app.office_process import OfficeCleanupPending, require_idle
+                try:
+                    require_idle()
+                except OfficeCleanupPending as exc:
+                    raise RenderBusy(str(exc)) from exc
                 _CONVERSION_LOCAL.active = True
                 # python-docx package/relationship cycles can otherwise retain
                 # decoded media while the office process starts allocating.

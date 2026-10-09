@@ -159,6 +159,9 @@ be live.
 | [`PUBLIC_REPOSITORY_AND_RELEASE_AUDIT_2026-08-11.md`](PUBLIC_REPOSITORY_AND_RELEASE_AUDIT_2026-08-11.md) | Point-in-time audit of what the public repository exposes. |
 | [`ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md`](ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md) | A drafted email, not a specification. Its AI call-path summary was accurate when written. |
 
+Writer timeout and output cleanup:
+[COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_CONVERTER_CLEANUP.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_CONVERTER_CLEANUP.md).
+
 ## 6. Conventions these notes follow
 
 Worth matching when you add one.
