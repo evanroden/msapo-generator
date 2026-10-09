@@ -25,10 +25,10 @@ def _choose_role(identity, key, choices, plan, prefix, single):
     plan["picture_roles"] = dict(choices)
 
 
-def picture_options(section):
+def picture_options(section, *, allow_branding=True):
     if section == "cover":
         return {"": "Leave out", "cover_photo": "Use as cover photo",
-                "client_logo": "Use as client logo", "brand_logo": "Use as ENFRA logo"}
+                **({"client_logo": "Use as client logo", "brand_logo": "Use as ENFRA logo"} if allow_branding else {})}
     choices = {"": "Leave out"}
     if section == "organization":
         choices.update(org_chart="Keep as organization chart",
@@ -42,10 +42,10 @@ def picture_options(section):
     return choices
 
 
-def review_pictures(images, section, path, prefix, scope, field, old, plan, blocking):
+def review_pictures(images, section, path, prefix, scope, field, old, plan, blocking, *, allow_branding=True):
     if not images:
         return
-    options = picture_options(section)
+    options = picture_options(section, allow_branding=allow_branding)
     single = {"cover_photo", "client_logo", "brand_logo", "divider_" + section}
     # Choices are copied into the section plan before widgets disappear on a
     # page change. A new widget is restored from this durable session plan.
@@ -69,7 +69,8 @@ def review_pictures(images, section, path, prefix, scope, field, old, plan, bloc
     st.write("Pictures found in your report")
     st.caption("Look at each picture, then choose what to do directly underneath it. “Leave out” keeps it in the saved original only.")
     if section == "cover":
-        st.caption("Choose one cover photo and the logos you want. Choosing another picture for the same role replaces your earlier choice.")
+        st.caption("Choose one cover photo. Choosing another replaces your earlier choice." if not allow_branding else
+                   "Choose one cover photo and the logos you want. Choosing another picture for the same role replaces your earlier choice.")
     page_key = prefix + "_picture_page"
     last = (len(images) - 1) // 4
     page = min(st.session_state.get(page_key, 0), last)

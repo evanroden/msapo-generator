@@ -267,7 +267,7 @@ def _suggest(kind: str, text: str, section: str, *, heading: bool = False, part:
             if term in compact:
                 return slot
         return {"organization": "org_chart", "activity": "improvements", "mbcx": "mbcx_report",
-                "maintenance": "vendor_reports", "water": "water_reports"}.get(section, "cover_photo" if not section else "")
+                "maintenance": "vendor_reports", "water": "water_reports", "issues": "equipment_issues_evidence"}.get(section, "cover_photo" if not section else "")
     if kind == "table":
         if section in ("", "unmatched"):
             return ""
@@ -333,6 +333,19 @@ def inspect_docx(path: Path) -> DocxInspection:
         with _package(path) as archive:
             names = set(archive.namelist())
             image_metadata = {}
+            vector_support = {}
+            def supported_image(target):
+                suffix = Path(target).suffix.lower()
+                if suffix in RASTER:
+                    return True
+                if suffix not in {".emf", ".wmf"}:
+                    return False
+                if target not in vector_support:
+                    from app.monthly_report_metafiles import supported_metafile
+                    vector_support[target] = (archive.getinfo(target).file_size <= 30 * 1024 * 1024
+                                              and supported_metafile(archive.read(target), suffix))
+                return vector_support[target]
+
             def metadata(target):
                 if target not in image_metadata:
                     with archive.open(target) as stream:
@@ -482,7 +495,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     continue
                                 seen.add(target)
                                 safe = target in names and kind.endswith("/image") and target.startswith("word/media/")
-                                supported = safe and Path(target).suffix.lower() in RASTER
+                                supported = safe and supported_image(target)
                                 caption = ""
                                 if picture_table:
                                     ancestor = parents.get(node)
@@ -519,7 +532,7 @@ def inspect_docx(path: Path) -> DocxInspection:
             referenced = {i.image_part for i in items if i.image_part}
             for name in sorted(names):
                 if name.startswith("word/media/") and name not in referenced:
-                    add("image" if Path(name).suffix.lower() in RASTER else "unsupported", name, 0, image_part=name,
+                    add("image" if supported_image(name) else "unsupported", name, 0, image_part=name,
                         note="Unplaced package asset; confirm whether it belongs in this report.")
             if risky:
                 for name in sorted(risky):
@@ -554,7 +567,11 @@ def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, pr
             raw = archive.read(item.image_part)
     except (BadZipFile, KeyError, OSError, RuntimeError) as exc:
         raise ImportError("This report picture could not be read. Upload the original DOCX again and choose Analyze report. Saved versions were not changed.") from exc
-    return normalize_report_image(raw, Path(item.image_part).suffix, line_art=line_art,
+    suffix = Path(item.image_part).suffix.lower()
+    if suffix in {".emf", ".wmf"}:
+        from app.monthly_report_metafiles import rasterize_metafile
+        raw, suffix = rasterize_metafile(raw, suffix), ".png"
+    return normalize_report_image(raw, suffix, line_art=line_art,
                                   frame=(4, 5) if preview else (7, 9), dpi=96 if preview else 200)
 
 

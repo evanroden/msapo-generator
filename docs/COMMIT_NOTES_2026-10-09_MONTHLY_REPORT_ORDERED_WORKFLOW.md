@@ -56,8 +56,8 @@ Release is held pending authentic finished-PDF comparison and resolution of
 material converter defects. Same-converter parity below is necessary evidence,
 not sufficient PDF acceptance.
 
-PR #91 checkpoint `4ef198a3720057d15c4879bd56f96ca0c552344d` passed
-1551 tests with zero skips in Actions `37944099206`; container build/health
+PR #91 checkpoint `977af6001b202e76d9cc3453319b837c1fd5ad03` passed
+1556 tests with zero skips in Actions `37945290820`; container build/health
 also passed. Subsequent PDF corrections require fresh final-head CI before
 release. A green suite does not override the visual PDF acceptance gate.
 
@@ -110,6 +110,38 @@ independent proof for retained pictures. The actual replay returns to 20 tables;
 all six affected grids, row counts and image counts are retained. Five unchanged
 tables retain their text exactly, and the sixth contains only the reviewed edit.
 The 56 targeted native/SmartArt/mixed-table tests pass; PDF verification follows.
+
+The independent real application walkthrough confirms both selected Unity/USH
+contact rows, one starting upload, all sections and no duplicate navigation or
+AM logo controls. Additional fixes gate saved team/source-review displays on the
+entered editor name and reuse Prepared by during resumed import. This remains
+attribution, not authentication.
+
+Static EMF/WMF drawings now have bounded validation and exact-frame review rasters.
+Reviewed unchanged drawings retain their original vector bytes; changed or
+removed assets cannot retain old drawings. Both previously unsupported Eastern
+equipment inventory tables were rendered and visually reviewed in full, and map
+to supporting pages in Equipment Performance Issues. Complete export replay is
+still required; unsupported source omissions are not acceptable parity evidence.
+
+Paired master/reference installs now accept an optional finished PDF. Immutable
+composite design pins bind source, reference and strictly versioned measured
+rendering flags. Legacy pins retain native behavior. Cover calibration checks
+identity, image pixels, frame dimensions and position; PDF producer is audit data,
+not a selector. This enables the verified Unity/Eastern zero-origin cover
+correction without changing UMMC. Parsing is isolated and bounded to 512 MB and
+25 seconds with image limits before decoding. Full output and cover previews use
+the same pinned profile; other section previews cannot apply cover corrections.
+
+A universal divider-wrap fix was rejected because it stretched UMMC artwork.
+Only the scoped invisible empty-frame correction is currently enabled globally;
+divider correction needs independent reference evidence. UMMC's official export
+retains 45 pages, every image position and all 18 bookmarks, with zero source
+render pixel changes outside the three removed Cost labels. Authentic residual
+raster differences are embedded-image compression. One original HTTPS link is
+still removed by the existing passive-package policy and is being corrected to
+meet functional PDF parity. Unity/Eastern pagination, typography and remaining
+layering differences still hold release.
 
 Focused ordered save/resume/generation tests passed, as did extraction/pricing,
 manual-edit protection, selected-directory, training and asynchronous preview

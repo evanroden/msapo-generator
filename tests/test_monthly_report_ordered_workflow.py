@@ -88,14 +88,20 @@ def test_unnamed_visitor_does_not_render_saved_contact_pages(monkeypatch, tmp_pa
     from app import monthly_report_section_preview_ui, monthly_report_editor
     calls = []
     image_reviews = []
+    linked_sections = []
+    from app import monthly_report_ai_ui
+    monkeypatch.setattr(monthly_report_ai_ui, "edit_linked_paragraphs",
+                        lambda draft, blocks, prefix, field, allowed: linked_sections.append(allowed) or blocks)
     monkeypatch.setattr(monthly_report_section_preview_ui, "render_section_preview",
                         lambda draft, section, *args, **kwargs: calls.append(section))
     monkeypatch.setattr(monthly_report_editor, "review_client_images",
                         lambda draft, *args, **kwargs: image_reviews.append(True) or draft)
     app.run()
     assert not app.exception
-    assert "organization" not in calls and "subcontractors" not in calls
+    assert not {"organization", "subcontractors", "training"}.intersection(calls)
     assert not image_reviews
+    assert not any({"org_chart", "contact_matrix", "subcontractor_matrix", "training_summary"}.intersection(keys)
+                   for keys in linked_sections)
     next(item for item in app.text_input if item.label == "Prepared by").set_value("Report Author").run()
-    assert "organization" in calls and "subcontractors" in calls
+    assert {"organization", "subcontractors", "training"}.issubset(calls)
     assert image_reviews

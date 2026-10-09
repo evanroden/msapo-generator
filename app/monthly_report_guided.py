@@ -296,6 +296,9 @@ def client_table_draft(draft):
 
 def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field):
     """Edit one report section without splitting standing and monthly content."""
+    if section.key in {"organization", "subcontractors", "training"} and not draft.prepared_by.strip():
+        st.info("Enter Prepared by above to view or edit saved contact and team information.")
+        return draft, blocks
     from app.monthly_report_sections import readable_label
     draft = replace(draft, blocks=tuple(blocks.values()))
     profile, period = draft.profile, draft.period
@@ -553,8 +556,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with editor_column:
             draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field)
         with preview_column:
-            if section.key in {"organization", "subcontractors"} and not prepared.strip():
-                st.caption("Enter Prepared by above to view saved contact pages.")
+            if section.key in {"organization", "subcontractors", "training"} and not prepared.strip():
+                st.caption("Enter Prepared by above to view saved contact and team pages.")
             else:
                 render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}

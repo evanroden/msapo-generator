@@ -25,6 +25,9 @@ def render_design_settings(draft, prefix):
         st.caption("Current master: version " + str(current["revision"]))
     source = st.file_uploader("New ENFRA master design", type=["docx"], max_upload_size=128,
                               key=prefix + "_native_design_upload")
+    companion_pdf = st.file_uploader("Finished PDF for this design (optional)", type=["pdf"],
+                                    max_upload_size=30, key=prefix + "_native_design_pdf")
+    st.caption("Use the matching finished PDF as this design's layout reference.")
     if st.button("Update master report design", key=prefix + "_native_design_save",
                  disabled=source is None or not draft.prepared_by.strip()):
         try:
@@ -32,8 +35,13 @@ def render_design_settings(draft, prefix):
                 with tempfile.TemporaryDirectory(prefix="enfra-design-") as directory:
                     path = Path(directory) / "reference.docx"
                     path.write_bytes(source.getvalue())
+                    pdf_path = None
+                    if companion_pdf is not None:
+                        pdf_path = Path(directory) / "reference.pdf"
+                        pdf_path.write_bytes(companion_pdf.getvalue())
                     digest = designs.install_master(path, actor=draft.prepared_by,
-                                                    expected_revision=current["revision"])
+                                                    expected_revision=current["revision"],
+                                                    companion_pdf=pdf_path)
                     updated = apply_master_design(draft, digest)
                 st.session_state[prefix + "_draft"] = updated
                 st.session_state.pop(prefix + "_section_preview_cache", None)

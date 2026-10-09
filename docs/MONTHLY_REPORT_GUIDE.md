@@ -36,12 +36,15 @@ scratch. Its original cover, dividers, page settings, typography, tables and pag
 artwork supply the document design. Client logos and site photographs come from
 the selected report's saved assets; another client's artwork is not inherited.
 
-To update the master, open **Report → Advanced layout, shared assets and history**,
-upload the new Word file under **New ENFRA master design**, and choose
-**Update master report design**. This saves a new design version for future
+To update the master, open **Report design and version**, upload the new Word
+file under **New ENFRA master design**, optionally include its matching finished
+PDF as the layout reference, and choose **Update master report design**.
+This saves a new design version for future
 reports across contracts without importing that file's monthly facts. Existing
 saved reports retain their design version. **Apply current master to this report**
-updates an existing report explicitly, retaining its content.
+updates an existing report explicitly, retaining its content. The saved PDF
+reference and measured rendering settings belong to that design version;
+asset managers do not choose conversion settings during monthly editing.
 
 The live section preview and DOCX/PDF downloads use the same master renderer.
 Unsupported source elements produce a specific error rather than a generic page

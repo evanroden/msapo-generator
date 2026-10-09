@@ -76,7 +76,8 @@ def preview_report(draft, asset_loader=None):
     try:
         with tempfile.TemporaryDirectory(prefix="report-", dir=scratch) as directory:
             path = Path(directory) / (stem + ".docx")
-            path.write_bytes(rendering_docx(raw))
+            from app.monthly_report_designs import render_profile_for
+            path.write_bytes(rendering_docx(raw, profile=render_profile_for(draft.profile)))
             actual = pdf_converter.convert_to_pdf(path)
             if actual.stat().st_size > 80 * 1024 * 1024:
                 raise ValueError(
@@ -281,7 +282,11 @@ def preview_section(draft, section_key, asset_loader=None):
     try:
         with tempfile.TemporaryDirectory(prefix="monthly-section-preview-") as directory:
             path = Path(directory) / (stem + ".docx")
-            path.write_bytes(rendering_docx(raw))
+            from app.monthly_report_designs import render_profile_for
+            render_profile = render_profile_for(draft.profile)
+            if section_key != "cover":
+                render_profile = {**render_profile, "cover_zero_origin": False}
+            path.write_bytes(rendering_docx(raw, profile=render_profile))
             actual = pdf_converter.convert_to_pdf(path)
             if actual.stat().st_size > MAX_PREVIEW_BYTES:
                 raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")

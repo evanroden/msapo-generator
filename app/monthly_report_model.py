@@ -336,7 +336,7 @@ def default_sections() -> tuple[SectionSpec, ...]:
             ColumnSpec("contact", "Contact"), ColumnSpec("phone", "Phone"), ColumnSpec("msa", "MSA"),
         )),)),
         SectionSpec("water", "7", "Water Treatment Reports", (BlockSpec("water_reports", "pdf_pages"),)),
-        SectionSpec("issues", "8", "Equipment Performance Issues", (BlockSpec("equipment_issues", "rich_text", True),)),
+        SectionSpec("issues", "8", "Equipment Performance Issues", (BlockSpec("equipment_issues", "rich_text", True), BlockSpec("equipment_issues_evidence", "pdf_pages", False))),
         SectionSpec("capital", "9", "Priority Capital Renewal List", (
             BlockSpec("capital_renewal", "table", columns=(
                 ColumnSpec("facility", "Facility"), ColumnSpec("priority", "Priority"), ColumnSpec("recommendation", "Recommendation"),

@@ -1,14 +1,76 @@
 """Compatibility for disposable monthly-report conversion copies only."""
 
 from io import BytesIO
+from copy import deepcopy
 import posixpath
 from zipfile import ZipFile, is_zipfile
 
 from lxml import etree
 
+from app.monthly_report_render_wrap import normalize_invisible_wraps
+from app.monthly_report_render_profile import validate_profile
+
 
 _V = "urn:schemas-microsoft-com:vml"
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+
+
+def _floating_cover_header(root):
+    """Avoid Writer reserving a nonexistent first-page header on a cover."""
+    body = root.find(_W + "body")
+    if body is None:
+        return False
+    cover = []
+    first = None
+    for paragraph in body:
+        if paragraph.tag == _W + "sectPr" and cover:
+            first = paragraph
+            break
+        if paragraph.tag != _W + "p" or len(cover) == 3:
+            return False
+        cover.append(paragraph)
+        first = paragraph.find(".//" + _W + "sectPr")
+        if first is not None:
+            break
+    if first is None:
+        return False
+    cover_text = " ".join(" ".join((node.text or "") for node in p.iter(_W + "t"))
+                          for p in cover).casefold()
+    cover_text = " ".join(cover_text.split())
+    if ("operations and maintenance monthly review" not in cover_text
+            and not ("monthly report" in cover_text and "prepared by" in cover_text)):
+        return False
+    title = first.find(_W + "titlePg")
+    margins = first.find(_W + "pgMar")
+    headers = first.findall(_W + "headerReference")
+    if (title is None or title.get(_W + "val") in {"0", "false", "off"}
+            or margins is None or margins.get(_W + "top") != "0"
+            or margins.get(_W + "bottom") != "0"
+            or not headers or any(h.get(_W + "type") == "first" for h in headers)
+            or first.find(_W + "footerReference") is not None):
+        return False
+    if any("".join(p.xpath("./w:r/w:t/text()", namespaces={"w": _W[1:-1]})).strip()
+           not in {"", "="} for p in cover):
+        return False
+    if any(p.find(".//" + _WP + "inline") is not None for p in cover):
+        return False
+    if not any(anchor.find(_WP + "positionV") is not None
+               and anchor.find(_WP + "positionV").get("relativeFrom") == "paragraph"
+               for p in cover for anchor in p.iter(_WP + "anchor")):
+        return False
+    sections = list(body.iter(_W + "sectPr"))
+    # Removing the cover reference must not remove inherited later headers.
+    following = sections[1] if len(sections) > 1 else None
+    for header in headers:
+        if following is not None and not any(h.get(_W + "type") == header.get(_W + "type")
+                                            for h in following.findall(_W + "headerReference")):
+            following.insert(0, deepcopy(header))
+        first.remove(header)
+    first.remove(title)
+    margins.set(_W + "header", "0")
+    return True
 
 
 def _transparent_png(raw):
@@ -28,14 +90,16 @@ def _transparent_png(raw):
     return False
 
 
-def rendering_docx(raw):
-    """Give alpha-PNG VML frames an explicit transparent background.
+def rendering_docx(raw, *, profile=None):
+    """Apply proven compatibility fixes to a disposable conversion copy.
 
     Word leaves these image frames transparent; LibreOffice otherwise fills
     their entire rectangle white, hiding native artwork below the PNG shadow.
-    Preserve explicit fills, every image byte and all source geometry. Callers
+    Also normalize the scoped invisible wrapping-frame collision. Preserve
+    explicit fills, every image byte and all source geometry. Callers
     keep the native downloadable DOCX and write this copy only for conversion.
     """
+    profile = validate_profile(profile)
     if not is_zipfile(BytesIO(raw)):
         return raw
     parser = etree.XMLParser(resolve_entities=False, no_network=True)
@@ -47,17 +111,19 @@ def rendering_docx(raw):
             if not part.startswith("word/") or not part.endswith(".xml"):
                 continue
             data = source.read(part)
-            if _V.encode() not in data:
+            if part != "word/document.xml" and _V.encode() not in data:
                 continue
             root = etree.fromstring(data, parser)
+            changed = part == "word/document.xml" and normalize_invisible_wraps(root)
+            if part == "word/document.xml":
+                if profile["cover_zero_origin"]:
+                    changed = _floating_cover_header(root) or changed
             shapes = root.findall(".//{" + _V + "}shape")
             relpart = posixpath.join(posixpath.dirname(part), "_rels", posixpath.basename(part) + ".rels")
-            if not shapes or relpart not in names:
-                continue
             relationships = {node.get("Id"): node.get("Target", "")
-                             for node in etree.fromstring(source.read(relpart), parser)
+                             for node in (etree.fromstring(source.read(relpart), parser)
+                                          if relpart in names else ())
                              if node.get("TargetMode") != "External"}
-            changed = False
             for shape in shapes:
                 picture = shape.find("{" + _V + "}imagedata")
                 if (picture is None or shape.get("filled") is not None

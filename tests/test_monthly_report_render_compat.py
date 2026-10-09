@@ -86,3 +86,75 @@ def test_monthly_conversion_uses_copy_and_final_download_stays_native(monkeypatc
         assert len(pages.preserve_word_pages(tmp_path / "source.docx", (1,))) == 1
     assert len(seen) == 1
     assert shapes(seen[0])[0].get("filled") == "f"
+
+
+def floating_cover(*, first_header=False, footer=False, flowing=False, top="0", cover_only=False,
+                   identity="Operations and Maintenance Monthly Review"):
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    wp = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    first = '<w:headerReference w:type="first" r:id="first"/>' if first_header else ""
+    foot = '<w:footerReference w:type="first" r:id="footer"/>' if footer else ""
+    text = "Actual flowing content" if flowing else "="
+    xml = f'''<w:document xmlns:w="{w}" xmlns:r="{R}" xmlns:wp="{wp}"><w:body>
+      <w:p><w:r><w:t>{text}</w:t><w:drawing><wp:anchor><wp:positionV relativeFrom="paragraph"><wp:posOffset>5523001</wp:posOffset></wp:positionV></wp:anchor></w:drawing></w:r></w:p>
+      <w:p><w:r><w:pict><w:txbxContent><w:p><w:r><w:t>{identity}</w:t></w:r></w:p></w:txbxContent></w:pict></w:r><w:pPr><w:sectPr><w:headerReference w:type="default" r:id="default"/>{first}{foot}
+      <w:pgMar w:top="{top}" w:bottom="0" w:header="720"/><w:titlePg/></w:sectPr></w:pPr></w:p>
+      <w:sectPr><w:pgMar w:top="720" w:bottom="720"/></w:sectPr>
+      </w:body></w:document>'''
+    if cover_only:
+        root = etree.fromstring(xml)
+        body = root.find("{" + w + "}body")
+        section = body[1].find(".//{" + w + "}sectPr")
+        section.getparent().remove(section)
+        body.remove(body[-1])
+        body.append(section)
+        xml = etree.tostring(root)
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", xml)
+    return output.getvalue()
+
+
+def test_reference_calibrated_cover_fix_is_opt_in_and_preserves_inherited_header():
+    raw = floating_cover()
+    assert rendering_docx(raw) == raw
+    assert rendering_docx(raw, profile={"version": 1, "cover_zero_origin": False}) == raw
+    fixed = rendering_docx(raw, profile={"version": 1, "cover_zero_origin": True})
+    root = shapes(fixed)
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    sections = list(root.iter(w + "sectPr"))
+    assert sections[0].find(w + "headerReference") is None
+    assert sections[0].find(w + "titlePg") is None
+    assert sections[0].find(w + "pgMar").get(w + "header") == "0"
+    assert sections[1].find(w + "headerReference").get("{" + R + "}id") == "default"
+    assert rendering_docx(fixed, profile={"version": 1, "cover_zero_origin": True}) == fixed
+
+
+def test_cover_only_preview_receives_same_header_fix_without_matching_other_sections():
+    profile = {"version": 1, "cover_zero_origin": True}
+    raw = floating_cover(cover_only=True)
+    result = shapes(rendering_docx(raw, profile=profile))
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    sections = list(result.iter(w + "sectPr"))
+    assert len(sections) == 1
+    assert sections[0].find(w + "headerReference") is None
+    assert sections[0].find(w + "titlePg") is None
+    divider = floating_cover(cover_only=True, identity="MONTHLY SCORECARDS")
+    assert rendering_docx(divider, profile=profile) == divider
+
+
+@pytest.mark.parametrize("arguments", [
+    {"first_header": True}, {"footer": True}, {"flowing": True}, {"top": "720"},
+])
+def test_calibration_does_not_override_explicit_design_or_flowing_covers(arguments):
+    raw = floating_cover(**arguments)
+    assert rendering_docx(raw, profile={"version": 1, "cover_zero_origin": True}) == raw
+
+
+@pytest.mark.parametrize("profile", [
+    {"version": 1, "cover_zero_origin": "true"}, {"version": 2, "cover_zero_origin": True},
+    {"version": 1, "cover_zero_origin": True, "guess": True},
+])
+def test_render_profile_rejects_unvalidated_flags(profile):
+    with pytest.raises(ValueError):
+        rendering_docx(floating_cover(), profile=profile)

@@ -465,7 +465,8 @@ def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
     try:
         with tempfile.TemporaryDirectory(prefix="monthly-report-") as directory:
             input_path = Path(directory) / (stem + ".docx")
-            input_path.write_bytes(rendering_docx(docx))
+            from app.monthly_report_designs import render_profile_for
+            input_path.write_bytes(rendering_docx(docx, profile=render_profile_for(draft.profile)))
             actual_pdf = pdf_converter.convert_to_pdf(input_path)
             pdf = actual_pdf.read_bytes()
             if not pdf.startswith(b"%PDF-"):

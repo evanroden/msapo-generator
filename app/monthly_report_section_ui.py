@@ -58,8 +58,7 @@ def _identity(contract, prepared, prefix, field, state):
     if state:
         profile = state.profile
         st.write(profile.title + " · " + "; ".join(f.title for f in profile.facilities))
-        actor = st.text_input("Your name", key=field(prefix + "_actor", prepared))
-        return profile, actor, [] if actor.strip() else ["Enter your name."]
+        return profile, prepared, [] if prepared.strip() else ["Enter Prepared by above."]
     options = {f.key: f for f in _site_options(contract)}
     selected = st.multiselect("Which sites does this report cover?", list(options),
                               format_func=lambda k: options[k].title + (" (also " + ", ".join(options[k].aliases) + ")" if options[k].aliases else ""),
@@ -110,7 +109,7 @@ def _identity(contract, prepared, prefix, field, state):
 def _replacement_pictures(section, p, plan):
     """Keep each replacement tied to a named report part across reruns."""
     if section.key == "cover":
-        labels = {"cover_photo": "New cover photograph", "client_logo": "New client logo", "brand_logo": "New ENFRA logo"}
+        labels = {"cover_photo": "New cover photograph"}
         st.caption("Add only what you want to change. Each new picture replaces the selected picture for that purpose; other cover details stay as they are.")
     elif section.key == "organization":
         labels = {"org_chart": "New organization chart", "business_hours_workflow": "New daytime outage procedure", "after_hours_workflow": "New after-hours outage procedure", "contact_matrix": "New facility contact page"}
@@ -118,7 +117,8 @@ def _replacement_pictures(section, p, plan):
     else:
         labels = {{"activity": "improvements", "training": "training_summary", "maintenance": "vendor_reports", "water": "water_reports"}.get(section.key, default_slot(section.key)): section_help(section.key).upload_label}
         st.caption("Choose “Leave out” on the old picture when replacing it. Complete vendor, chemical and MBCx files can be added in This month’s work after setup.")
-    replacements = dict(plan.get("new_assets", ()))
+    replacements = {slot: image for slot, image in plan.get("new_assets", ())
+                    if slot not in {"client_logo", "brand_logo"}}
     for slot, label in labels.items():
         upload = st.file_uploader(label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=p + "_replacement_" + slot, max_upload_size=30)
         if upload:
@@ -145,12 +145,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         guide = section_help(section.key)
         st.write(guide.guidance)
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
-        labels = dict(zip(actions, (guide.keep, guide.edit, "Leave this section out")))
+        labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
-        plan = {"key": section.key, "action": action, "target": section.key, "omit": action == actions[2], "selected": [], "texts": {}, "tables": {}, "destinations": {}, "new_assets": old.get("new_assets", []), "image_notes": dict(old.get("image_notes", {})), "automatic": False}
+        plan = {"key": section.key, "action": action, "target": section.key, "omit": action == actions[2], "selected": [], "texts": {}, "tables": {}, "destinations": {}, "new_assets": [(slot, image) for slot, image in old.get("new_assets", []) if slot not in {"brand_logo", "client_logo"}], "image_notes": dict(old.get("image_notes", {})), "automatic": False}
         blocking = []
         if plan["omit"]:
-            st.caption("Left out of this draft only. The original and its contents will still be saved for reference.")
+            st.caption("This section stays in the report. The uploaded content remains in the saved original for reference.")
         else:
             from app.monthly_report_word_pages_ui import chart_page_review
             if chart_page_review(section, path, period, p, field, old, plan, blocking):
@@ -216,8 +216,16 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     plan["tables"][item.id] = table
                     plan["selected"].append(item.id)
             from app.monthly_report_picture_cards import review_pictures
-            review_pictures([i for i in items if i.kind == "image"], section.key,
-                            path, p, prefix, field, old, plan, blocking)
+            pictures = [i for i in items if i.kind == "image"]
+            if section.key == "cover":
+                fixed_logos = [i for i in pictures if old.get("destinations", {}).get(i.id, i.suggested_slot)
+                               in {"brand_logo", "client_logo"}]
+                for item in fixed_logos:
+                    plan["selected"].append(item.id)
+                    plan["destinations"][item.id] = old.get("destinations", {}).get(item.id, item.suggested_slot)
+                pictures = [i for i in pictures if i not in fixed_logos]
+            review_pictures(pictures, section.key,
+                            path, p, prefix, field, old, plan, blocking, allow_branding=False)
             if action == actions[1] and section.key != "other":
                 _replacement_pictures(section, p, plan)
             elif plan["new_assets"]:
@@ -274,7 +282,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             st.error(str(exc))
     if state:
         original = library.imported_original(contract, state.profile.key)
-        if original and st.button("Open the saved original for section review", key=prefix + "_original"):
+        if original and st.button("Open the saved original for section review", key=prefix + "_original", disabled=not prepared.strip()):
             from app.monthly_report_import import inspect_docx
             st.session_state[prefix + "_stage"] = (None, original, inspect_docx(original))
             st.rerun()
@@ -282,6 +290,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     if not staged:
         st.caption("Word DOCX, up to 128 MB. Your original file is retained.")
         return False
+    if state and staged[0] is None and not prepared.strip():
+        st.info("Enter Prepared by above to review the saved original.")
+        return True
     _, path, inspection = staged
     p = prefix + "_" + inspection.sha256[:16]
     if identity:

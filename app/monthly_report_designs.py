@@ -62,24 +62,71 @@ def is_master(profile):
     return bool(master_state().get("default") and not state(profile.contract).get("profiles", {}).get(profile.key))
 
 
+def _metadata(profile, digest):
+    directory = library._root() / "designs" / "master" if is_master(profile) else _directory(profile.contract)
+    path = directory / "metadata" / (digest + ".json")
+    if not path.exists():
+        return {}
+    value = library._read(path)
+    if "companion_sha256" in value:
+        from app.monthly_report_render_profile import identity
+        if any(not isinstance(value.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", value[key]) for key in ("source_sha256", "companion_sha256")):
+            raise ValueError("The saved PDF rendering profile failed its integrity check.")
+        if identity(value.get("source_sha256", ""), value["companion_sha256"], value.get("render_profile")) != digest:
+            raise ValueError("The saved PDF rendering profile failed its integrity check.")
+        companion = directory / (value["companion_sha256"] + ".pdf")
+        if not companion.is_file():
+            raise ValueError("The saved companion PDF failed its integrity check.")
+        with companion.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != value["companion_sha256"]:
+                raise ValueError("The saved companion PDF failed its integrity check.")
+    return value
+
+
+def render_profile_for(profile):
+    from app.monthly_report_render_profile import validate_profile
+    digest = _digest(profile)
+    metadata = _metadata(profile, digest) if digest else {}
+    return validate_profile(metadata.get("render_profile") if "companion_sha256" in metadata else None)
+
+
+def _paired_metadata(source, source_hash, companion_pdf):
+    if companion_pdf is None:
+        return source_hash, {}
+    from app.monthly_report_render_profile import MAX_PDF_BYTES, calibrate, identity
+    companion_pdf = Path(companion_pdf)
+    if not 0 < companion_pdf.stat().st_size <= MAX_PDF_BYTES:
+        raise ValueError("The companion PDF must be nonempty and at most 30 MB.")
+    with companion_pdf.open("rb") as stream:
+        pdf_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+    evidence = calibrate(source, companion_pdf)
+    with companion_pdf.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != pdf_hash:
+            raise ValueError("The companion PDF changed during inspection. Choose it again.")
+    digest = identity(source_hash, pdf_hash, evidence["render_profile"])
+    return digest, {"source_sha256": source_hash, "companion_sha256": pdf_hash, **evidence}
+
+
 def source_for(profile):
     digest = _digest(profile)
     if not digest:
         return None
     if not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise ValueError("The saved report design reference is invalid.")
+    metadata = _metadata(profile, digest)
+    source_hash = metadata["source_sha256"] if "companion_sha256" in metadata else digest
     directory = _directory(profile.contract)
-    candidates = [library._root() / "designs" / "master" / (digest + ".docx")] if is_master(profile) else [directory / (digest + ".docx"),
-                  library._profile_path(profile.contract, profile.key) / "imports" / (digest + ".docx")]
+    candidates = [library._root() / "designs" / "master" / (source_hash + ".docx")] if is_master(profile) else [directory / (source_hash + ".docx"),
+                  library._profile_path(profile.contract, profile.key) / "imports" / (source_hash + ".docx")]
     # A new site can reuse a pinned design within its own contract. Never search
     # another contract, and never choose an import by recency or filename.
     if not is_master(profile):
-        candidates.extend((library._root() / "library" / library._contract_directory(profile.contract)).glob("*/imports/" + digest + ".docx"))
+        candidates.extend((library._root() / "library" / library._contract_directory(profile.contract)).glob("*/imports/" + source_hash + ".docx"))
     for path in candidates:
         if path.is_file():
             with path.open("rb") as stream:
                 actual = hashlib.file_digest(stream, "sha256").hexdigest()
-            if actual != digest:
+            if actual != source_hash:
                 raise ValueError("The saved ENFRA design failed its integrity check.")
             return path
     raise ValueError("The original ENFRA page design is unavailable. Restore its saved reference report in Report design settings.")
@@ -130,7 +177,7 @@ def pin(profile, *, latest_master=False):
     return selected
 
 
-def install_master(source: Path, *, actor, expected_revision):
+def install_master(source: Path, *, actor, expected_revision, companion_pdf=None):
     """Replace the ENFRA master for future reports; retain every older version."""
     actor = library._confirmation(actor, True)
     from app.monthly_report_import import inspect_docx
@@ -142,18 +189,20 @@ def install_master(source: Path, *, actor, expected_revision):
     if missing:
         raise ValueError("The master needs every standard report section. Missing: " + ", ".join(sorted(missing)) + ".")
     passive_docx(source)
+    digest, paired = _paired_metadata(source, inspection.sha256, companion_pdf)
     directory = library._root() / "designs" / "master"
     with library._locked(directory):
         current = master_state()
         if current["revision"] != expected_revision:
             raise library.RevisionConflict("The master design changed. Reopen design settings before updating it.")
-        digest = inspection.sha256
         if current.get("default") == digest:
             return digest
         from app.monthly_report_objects import store_file
-        store_file(directory / (digest + ".docx"), source)
+        store_file(directory / (inspection.sha256 + ".docx"), source)
+        if companion_pdf is not None:
+            store_file(directory / (paired["companion_sha256"] + ".pdf"), Path(companion_pdf))
         library._atomic_write(directory / "metadata" / (digest + ".json"), library._json(
-            {"schema": 1, "hash": digest, "section_order": _inspection_order(inspection)}))
+            {"schema": 1, "hash": digest, "section_order": _inspection_order(inspection), **paired}))
         value = {"schema": 1, "revision": current["revision"] + 1, "default": digest,
                  "history": [*current.get("history", []), {"hash": digest, "actor": actor, "at": library._now()}]}
         library._atomic_write(directory / "history" / f'{value["revision"]:08d}.json', library._json(value))
@@ -161,7 +210,7 @@ def install_master(source: Path, *, actor, expected_revision):
     return digest
 
 
-def install(source: Path, profile, *, actor, expected_revision):
+def install(source: Path, profile, *, actor, expected_revision, companion_pdf=None):
     """Save the reference's layout only; no source values enter the draft."""
     actor = library._confirmation(actor, True)
     from app.monthly_report_import import inspect_docx
@@ -171,16 +220,21 @@ def install(source: Path, profile, *, actor, expected_revision):
         raise ValueError("Choose an ENFRA monthly report with recognizable section headings.")
     # Validate passive rendering before making the reference selectable.
     passive_docx(source)
+    digest, paired = _paired_metadata(source, inspection.sha256, companion_pdf)
     directory = _directory(profile.contract)
     with library._locked(directory):
         current = state(profile.contract)
         if current["revision"] != expected_revision:
             raise library.RevisionConflict("Another report design was saved. Reopen the design settings before replacing it.")
-        digest = inspection.sha256
         if current.get("profiles", {}).get(profile.key) == digest:
             return replace(profile, template=PREFIX + digest)
         from app.monthly_report_objects import store_file
-        store_file(directory / (digest + ".docx"), source)
+        store_file(directory / (inspection.sha256 + ".docx"), source)
+        if companion_pdf is not None:
+            store_file(directory / (paired["companion_sha256"] + ".pdf"), Path(companion_pdf))
+        if paired:
+            library._atomic_write(directory / "metadata" / (digest + ".json"), library._json(
+                {"schema": 1, "hash": digest, "section_order": _inspection_order(inspection), **paired}))
         value = {"schema": 1, "revision": current["revision"] + 1,
                  "default": current.get("default") or digest,
                  "profiles": {**current.get("profiles", {}), profile.key: digest},
