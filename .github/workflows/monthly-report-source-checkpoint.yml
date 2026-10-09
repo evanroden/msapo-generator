@@ -1,0 +1,26 @@
+name: Monthly report source checkpoint
+on:
+  push:
+    branches: [fix/monthly-report-standing-data]
+    paths: [.github/workflows/monthly-report-source-checkpoint.yml]
+permissions:
+  contents: read
+jobs:
+  checkpoint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive tracked public application source only
+        run: |
+          git archive --format=tar.gz HEAD --output="$RUNNER_TEMP/source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/source-sha.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monthly-standing-source
+          path: |
+            ${{ runner.temp }}/source.tar.gz
+            ${{ runner.temp }}/source-sha.txt
+          retention-days: 1
