@@ -329,3 +329,42 @@ def test_extended_properties_keep_only_application_compatibility_identity(tmp_pa
         for name in ('Application', 'AppVersion'):
             assert root.findtext('{' + namespace + '}' + name) == before.findtext('{' + namespace + '}' + name)
         assert all(b'old-private-contact' not in output.read(name) for name in output.namelist() if name.endswith('.xml'))
+
+
+def test_default_image_content_type_matches_uppercase_extension(tmp_path):
+    path = sample(tmp_path)
+    def mutate(parts):
+        parts['word/media/image1.PNG'] = parts.pop('word/media/image1.png')
+        rels = parts['word/_rels/document.xml.rels'].replace(b'image1.png', b'image1.PNG')
+        parts['word/_rels/document.xml.rels'] = rels
+    rewrite(path, mutate)
+    with ZipFile(BytesIO(passive_docx(path))) as result:
+        assert result.read('word/media/image1.PNG').startswith(b'\x89PNG')
+        types = etree.fromstring(result.read('[Content_Types].xml'))
+        assert any(n.get('PartName') == '/word/media/image1.PNG' and n.get('ContentType') == 'image/png' for n in types)
+
+
+def test_static_wmf_rejects_driver_escapes_and_invalid_nested_metafile():
+    import struct
+    from app.monthly_report_native_package import _static_wmf
+    def record(kind, data=b''):
+        return struct.pack('<IH', 3 + len(data)//2, kind) + data
+    def wmf(records):
+        data = b''.join(records + [record(0)])
+        maximum = max(struct.unpack_from('<I', item)[0] for item in records + [record(0)])
+        return struct.pack('<HHHIHIH', 1, 9, 0x300, (18 + len(data))//2, 0, maximum, 0) + data
+    safe = wmf([record(0x103, b'\x01\x00')])
+    assert _static_wmf(safe)
+    assert not _static_wmf(safe[:-2])
+    assert not _static_wmf(wmf([record(0x626, struct.pack('<HH', 9, 0))]))
+    header = bytearray(88); struct.pack_into('<II', header, 0, 1, 88)
+    header[40:44] = b' EMF'; struct.pack_into('<II', header, 48, 108, 2)
+    emf = bytes(header) + struct.pack('<IIIII', 14, 20, 0, 0, 20)
+    def embedded(payload):
+        metadata = struct.pack('<HHIIIHIIIII', 15, 34 + len(payload), 0x43464d57, 1, 0x10000,
+                               0, 0, 1, len(payload), 0, len(payload))
+        return wmf([record(0x626, metadata + payload)])
+    assert _static_wmf(embedded(emf))
+    unsafe = bytearray(emf); struct.pack_into('<I', unsafe, 88, 105)
+    assert not _static_wmf(embedded(bytes(unsafe)))
+    assert not _static_wmf(embedded(emf) + b'\x00\x00')

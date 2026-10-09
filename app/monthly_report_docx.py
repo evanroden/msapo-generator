@@ -25,6 +25,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from app.monthly_report_render_compat import rendering_docx
 from app import pdf_converter
 from app.ocr import SUPPORTED_IMAGE_SUFFIXES, _MAX_PIXELS_PER_FRAME
 from app.monthly_report_checks import preflight
@@ -464,7 +465,7 @@ def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
     try:
         with tempfile.TemporaryDirectory(prefix="monthly-report-") as directory:
             input_path = Path(directory) / (stem + ".docx")
-            input_path.write_bytes(docx)
+            input_path.write_bytes(rendering_docx(docx))
             actual_pdf = pdf_converter.convert_to_pdf(input_path)
             pdf = actual_pdf.read_bytes()
             if not pdf.startswith(b"%PDF-"):

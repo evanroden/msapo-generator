@@ -51,10 +51,15 @@ does not introduce a new authentication system.
 
 ## Validation checkpoint
 
-PR #91 checkpoint `8ff301ef1c334bb5dab3d157f67f147e826ad53b` passed
-1505 tests with zero skips in Actions `37938836694`; container build/health
-also passed. Later cover, training, named-contact display and explicit master
-switch fixes require final-head CI before release.
+The owner explicitly reaffirmed that PDFs must be functionally identical too.
+Release is held pending authentic finished-PDF comparison and resolution of
+material converter defects. Same-converter parity below is necessary evidence,
+not sufficient PDF acceptance.
+
+PR #91 checkpoint `9ddb3678e50bb5bbb20580360a0722589d5770d5` passed
+1518 tests with zero skips in Actions `37939930809`; container build/health
+also passed. Subsequent PDF corrections require fresh final-head CI before
+release. A green suite does not override the visual PDF acceptance gate.
 
 September native continuations now pass against their supplied Word sources
 rendered by LibreOffice 24.2 with the verified fonts:
@@ -69,6 +74,20 @@ measures source-to-generated fidelity under the same renderer, not equivalence
 to a Microsoft Word export. Unmodified Portland, RGH and Central CT sources
 already exhibit converter-specific artwork or pagination defects; these remain
 documented limitations, not passing evidence of authentic Word/PDF fidelity.
+
+The authentic Eastern and Unity August PDFs were produced with Acrobat PDFMaker
+for Word, while the authentic UMMC PDF used LibreOffice 24.2. Their font and
+pagination differences need measured correction, not an assumption of different
+report versions. Unity's clipped capital dashboard is present in its source
+metafile. Eastern also exposed an actual importer defect: one SmartArt branch
+was omitted, while another survived incidentally through neighboring logos.
+
+Verified corrective work: RGH uppercase image extensions now resolve their
+declared content types; bounded static WMF support preserves Central CT's primary
+art without accepting driver commands. A disposable PDF conversion copy gives
+alpha-PNG VML image frames explicit transparency, preserving the original DOCX
+and fixing Portland's white boxes over divider art. Font metrics and SmartArt
+coverage/provenance are still under correction. No new production release yet.
 
 Focused ordered save/resume/generation tests passed, as did extraction/pricing,
 manual-edit protection, selected-directory, training and asynchronous preview

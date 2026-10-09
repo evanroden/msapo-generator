@@ -27,6 +27,7 @@ from defusedxml import ElementTree as ET
 import fitz
 from PIL import Image
 
+from app.monthly_report_render_compat import rendering_docx
 from app import monthly_report_library as library
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_import import W, R, A, V, _package, _relations, _visible, ImportError
@@ -333,7 +334,7 @@ def preserve_word_pages(path: Path, sections: tuple[int, ...]) -> tuple[WordPage
         with tempfile.TemporaryDirectory(prefix="chart-", dir=root) as directory:
             directory = Path(directory)
             source = directory / "passive-chart.docx"
-            source.write_bytes(package)
+            source.write_bytes(rendering_docx(package))
             result, size = [], 0
             with fitz.open(_render(source, directory)) as pdf:
                 if not 1 <= len(pdf) <= MAX_PAGES:

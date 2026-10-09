@@ -15,6 +15,7 @@ from docx import Document
 from docx.oxml.ns import qn
 from PIL import Image
 
+from app.monthly_report_render_compat import rendering_docx
 from app import monthly_report_library as library, pdf_converter
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import _build_docx, _save, normalize_report_image
@@ -75,7 +76,7 @@ def preview_report(draft, asset_loader=None):
     try:
         with tempfile.TemporaryDirectory(prefix="report-", dir=scratch) as directory:
             path = Path(directory) / (stem + ".docx")
-            path.write_bytes(raw)
+            path.write_bytes(rendering_docx(raw))
             actual = pdf_converter.convert_to_pdf(path)
             if actual.stat().st_size > 80 * 1024 * 1024:
                 raise ValueError(
@@ -280,7 +281,7 @@ def preview_section(draft, section_key, asset_loader=None):
     try:
         with tempfile.TemporaryDirectory(prefix="monthly-section-preview-") as directory:
             path = Path(directory) / (stem + ".docx")
-            path.write_bytes(raw)
+            path.write_bytes(rendering_docx(raw))
             actual = pdf_converter.convert_to_pdf(path)
             if actual.stat().st_size > MAX_PREVIEW_BYTES:
                 raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
