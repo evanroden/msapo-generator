@@ -1,5 +1,11 @@
 # Monthly report builder: next-LLM handoff
 
+Read the newer [October 9 usability audit ledger](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md)
+alongside this handoff. Its automatic active-work and standing-data direction
+supersedes the routine manual Save instructions below; it does not imply those
+changes have all shipped. F01-F16 and the separate release evidence remain open
+except where specifically verified.
+
 Updated October 9, 2026, America/New_York. Read this before changing the report
 builder. This is a testing release, not a declaration of complete PDF fidelity.
 

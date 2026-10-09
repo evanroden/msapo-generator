@@ -159,6 +159,9 @@ be live.
 | [`PUBLIC_REPOSITORY_AND_RELEASE_AUDIT_2026-08-11.md`](PUBLIC_REPOSITORY_AND_RELEASE_AUDIT_2026-08-11.md) | Point-in-time audit of what the public repository exposes. |
 | [`ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md`](ENFRA_IT_AI_API_REVIEW_EMAIL_2026-08-11.md) | A drafted email, not a specification. Its AI call-path summary was accurate when written. |
 
+Writer timeout and output cleanup:
+[COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_CONVERTER_CLEANUP.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_CONVERTER_CLEANUP.md).
+
 ## 6. Conventions these notes follow
 
 Worth matching when you add one.
@@ -193,3 +196,13 @@ Shared contacts in working reports:
 
 Hospital-only training roster:
 [COMMIT_NOTES_2026-10-09_HOSPITAL_TRAINING_ROSTER.md](COMMIT_NOTES_2026-10-09_HOSPITAL_TRAINING_ROSTER.md).
+
+Final revision view and comment-safe exports:
+[COMMIT_NOTES_2026-10-09_REVISION_VIEW_AND_COMMENTS.md](COMMIT_NOTES_2026-10-09_REVISION_VIEW_AND_COMMENTS.md).
+
+October 9 owner usability audit and focused Training-note repair:
+[MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md).
+This supplements the earlier handoff and supersedes its routine manual-save UX.
+
+Combined reliability release:
+[COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RELIABILITY_RELEASE.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RELIABILITY_RELEASE.md).

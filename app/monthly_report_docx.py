@@ -482,7 +482,10 @@ def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
                 raise ValueError("The converter returned an invalid PDF.")
     except Exception as exc:  # noqa: BLE001 - keep the finished DOCX on any backend failure
         pdf = None
-        error = f"PDF conversion failed ({type(exc).__name__}). The DOCX is ready to download; retry PDF generation."
+        if isinstance(exc, pdf_converter.PDFConversionTimeout):
+            error = "PDF conversion took too long. The DOCX is ready to download."
+        else:
+            error = f"PDF conversion failed ({type(exc).__name__}). The DOCX is ready to download; retry PDF generation."
     finally:
         for path in {actual_pdf, expected_pdf} - {None}:
             try:

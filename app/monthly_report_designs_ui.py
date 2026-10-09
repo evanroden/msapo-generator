@@ -20,6 +20,7 @@ def apply_master_design(draft, digest):
 def render_design_settings(draft, prefix):
     st.markdown("**Master report design**")
     st.caption("Every new report starts with the ENFRA master, including reports started without an upload. Replace it here with a newer Word report to update future reports across contracts. Existing saved reports keep their design version.")
+    st.caption("Report copies use the final accepted text and omit Word comments. Uploaded originals remain unchanged.")
     current = designs.master_state()
     if current["revision"]:
         st.caption("Current master: version " + str(current["revision"]))
