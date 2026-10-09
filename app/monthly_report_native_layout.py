@@ -102,11 +102,15 @@ def _clear_source_drawing_metadata(document):
                         del node.attrib[attr]
 
 
-def _clear_images(element, *, preserve_decoration=False):
+def _clear_diagrams(element):
     # A diagram may share a drawing canvas with a retained text-box frame.
     # Its relationship payload must still disappear when that content is cleared.
     for diagram in list(element.iter("{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds")):
         diagram.getparent().remove(diagram)
+
+
+def _clear_images(element, *, preserve_decoration=False):
+    _clear_diagrams(element)
     # Remove the drawing itself, not its paragraph or section break.
     for node in list(element.iter()):
         if node.tag in (qn("w:drawing"), qn("w:pict")):
@@ -138,6 +142,9 @@ def _clear_images(element, *, preserve_decoration=False):
 
 
 def _replace_image(document, element, data):
+    # Mixed picture/SmartArt paragraphs are cloned as image frames. Updating a
+    # raster is not proof that the neighboring source diagram is current.
+    _clear_diagrams(element)
     rid, _ = document.part.get_or_add_image(BytesIO(data))
     images = [n for n in element.iter() if n.tag in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata")]
     if not images:
@@ -674,6 +681,9 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             continue
         group = items[position]
         if sec == "cover":
+            # Cover/company marks have a separate asset binding. Unsupported
+            # SmartArt there must not lend source client facts to a fresh report.
+            _clear_diagrams(element)
             if position <= (first_word_end or len(original)):
                 _cover(element, draft, preserve_issue_date=preserve_issue_date)
             cover_images(element, group)
@@ -934,6 +944,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         name = str(part.partname)
         if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
             continue
+        _clear_diagrams(part.element)
         for paragraph in part.element.iter(qn("w:p")):
             visible = deepcopy(paragraph)
             for fallback in list(visible.iter("{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback")):

@@ -56,8 +56,8 @@ Release is held pending authentic finished-PDF comparison and resolution of
 material converter defects. Same-converter parity below is necessary evidence,
 not sufficient PDF acceptance.
 
-PR #91 checkpoint `9ddb3678e50bb5bbb20580360a0722589d5770d5` passed
-1518 tests with zero skips in Actions `37939930809`; container build/health
+PR #91 checkpoint `fda7f74ee61d22e0cdd8f5a833a8767d3f68f125` passed
+1548 tests with zero skips in Actions `37943022525`; container build/health
 also passed. Subsequent PDF corrections require fresh final-head CI before
 release. A green suite does not override the visual PDF acceptance gate.
 
@@ -72,8 +72,8 @@ rendered by LibreOffice 24.2 with the verified fonts:
 Both have zero changed pixels outside the intentional label redactions. This
 measures source-to-generated fidelity under the same renderer, not equivalence
 to a Microsoft Word export. Unmodified Portland, RGH and Central CT sources
-already exhibit converter-specific artwork or pagination defects; these remain
-documented limitations, not passing evidence of authentic Word/PDF fidelity.
+already exhibit converter-specific artwork or pagination defects. Those defects
+remain release blockers, not passing evidence of authentic Word/PDF fidelity.
 
 The authentic Eastern and Unity August PDFs were produced with Acrobat PDFMaker
 for Word, while the authentic UMMC PDF used LibreOffice 24.2. Their font and
@@ -86,8 +86,22 @@ Verified corrective work: RGH uppercase image extensions now resolve their
 declared content types; bounded static WMF support preserves Central CT's primary
 art without accepting driver commands. A disposable PDF conversion copy gives
 alpha-PNG VML image frames explicit transparency, preserving the original DOCX
-and fixing Portland's white boxes over divider art. Font metrics and SmartArt
-coverage/provenance are still under correction. No new production release yet.
+and fixing Portland's white boxes over divider art. Closed SmartArt graphs now
+require complete matching visible text before retention. Independent Eastern and
+RGH audits retain both charts and all ten original diagram parts byte-for-byte;
+removing the current chart text removes its diagrams even when neighboring logos
+remain. Negative tests also cover cover/header and mixed image-frame paths.
+
+The production font set now adds Carlito and Caladea with explicit Calibri and
+Cambria aliases. The isolated authentic UMMC control has 45 matching page texts
+and zero matched text-baseline displacement, improving the prior maximum 0.8pt
+offset. A broader Arial Narrow replacement was rejected after it moved UMMC
+cover content. These measurements do not establish complete visual equality.
+
+Unity's cover image displacement is traced to first-page header interpretation:
+a disposable no-header control places the photo within 0.1pt of its authentic
+PDF. A safe conversion predicate and remaining title, pagination and metafile
+clipping differences are still under investigation. No new production release yet.
 
 Focused ordered save/resume/generation tests passed, as did extraction/pricing,
 manual-edit protection, selected-directory, training and asynchronous preview

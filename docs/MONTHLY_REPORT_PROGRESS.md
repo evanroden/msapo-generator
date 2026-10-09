@@ -29,7 +29,7 @@ monthly wizard, and photo-decode/preview failure containment. A legacy imported
 report keeps its own native design ahead of the company master; explicit pins
 remain authoritative. Replacement cover photos retain their native frame.
 
-PR #91 checkpoint `8ff301e` passed 1505 tests with zero skips and the container
+PR #91 checkpoint `fda7f74` passed 1548 tests with zero skips and the container
 build/health gate. Later fixes still require final-head CI. Both September
 continuations preserve 39 pages with zero pixel differences outside three Cost
 labels deliberately removed from each report, measured against source Word
@@ -38,6 +38,12 @@ conversion defects in unmodified Portland, RGH and Central CT files; authentic
 Word/PDF fidelity for every supplied variant is not established. Do not claim
 all ten references pass. The valid-photo crash was not
 reproduced; the confirmed malformed-photo crash and stale preview paths are fixed.
+The owner confirmed authentic PDF fidelity is a release requirement; PR #91
+remains held. Both SmartArt branches now survive Eastern/RGH import with exact
+diagram parts, and independent removal tests prevent stale chart leakage. The
+Carlito/Caladea-only font control matches all authentic UMMC text baselines; a
+broader Narrow replacement was rejected. Unity cover header handling is isolated,
+while remaining title, pagination and metafile defects still require correction.
 See [ordered workflow notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md)
 and [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
 

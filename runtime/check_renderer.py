@@ -11,6 +11,11 @@ FONT_MATCHES = {
     "Arial Narrow:style=Bold": "texgyreheroscn-bold.otf",
     "Times New Roman": "LiberationSerif-Regular.ttf",
     "Symbol": "opens___.ttf",
+    "Calibri": "Carlito-Regular.ttf",
+    "Calibri:style=Bold": "Carlito-Bold.ttf",
+    "Calibri:style=Italic": "Carlito-Italic.ttf",
+    "Cambria": "Caladea-Regular.ttf",
+    "Cambria:style=Bold": "Caladea-Bold.ttf",
 }
 
 

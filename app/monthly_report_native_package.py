@@ -78,6 +78,7 @@ def _static_wmf(raw):
     Driver escapes are rejected. The sole supported escape is Microsoft's
     META_ESCAPE_ENHANCED_METAFILE framing, whose complete embedded stream must
     independently pass the same static EMF validator as a standalone image.
+    Framing: MS-WMF section 2.3.6.25 (META_ESCAPE_ENHANCED_METAFILE).
     """
     if not 24 <= len(raw) <= 32 * 1024 * 1024 or len(raw) % 2:
         return False
