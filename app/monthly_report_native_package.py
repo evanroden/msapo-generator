@@ -20,7 +20,7 @@ R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 REL = 'http://schemas.openxmlformats.org/package/2006/relationships'
 CT = 'http://schemas.openxmlformats.org/package/2006/content-types'
 SAFE_FIELDS = {'PAGE', 'NUMPAGES', 'SECTION', 'SECTIONPAGES'}
-IMPLICIT = {'styles', 'numbering', 'theme', 'fontTable', 'settings'}
+IMPLICIT = {'styles', 'numbering', 'theme', 'fontTable', 'settings', 'webSettings'}
 NOTE_KINDS = {'footnotes', 'endnotes'}
 XML_KINDS = IMPLICIT | NOTE_KINDS | {'header', 'footer', 'diagramData', 'diagramLayout', 'diagramQuickStyle', 'diagramColors', 'diagramDrawing'}
 REMOVE = {'attachedTemplate', 'updateFields', 'mailMerge', 'dataBinding', 'printerSettings', 'docVars'}
@@ -133,6 +133,9 @@ def _passive_markup(root):
                 raise ImportError('This report contains an unbalanced Word field.')
         if name in {'imagedata', 'fill'} and any(node.get(k) for k in ('src', 'href')):
             raise ImportError('This native report contains a linked drawing without a local image.')
+        for attribute in list(node.attrib):
+            if XML.QName(attribute).localname.lower() in {'href', 'action', 'onload', 'onclick'}:
+                del node.attrib[attribute]
     if stack:
         raise ImportError('This report contains an unbalanced Word field.')
     for group in groups:
@@ -197,6 +200,7 @@ def passive_docx(path: Path) -> bytes:
                 output[name] = raw
             else:
                 root = _xml(raw)
+                original_xml = XML.tostring(root)
                 _passive_markup(root)
                 if name == 'word/document.xml':
                     for note_kind in NOTE_KINDS:
@@ -268,7 +272,7 @@ def passive_docx(path: Path) -> bytes:
                     retained = {rel.get('Id') for rel in kept}
                     for rid in sorted(borrowed_diagrams - retained):
                         kept.append(doc_relations[rid])
-                output[name] = XML.tostring(root, encoding='UTF-8', xml_declaration=True, standalone=True)
+                output[name] = raw if XML.tostring(root) == original_xml else XML.tostring(root, encoding='UTF-8', xml_declaration=True, standalone=True)
                 if len(kept):
                     output[relname] = XML.tostring(kept, encoding='UTF-8', xml_declaration=True)
             visiting.remove(name)
@@ -279,9 +283,11 @@ def passive_docx(path: Path) -> bytes:
         # grouped shapes and text boxes even when document.xml is unchanged.
         app_properties = 'docProps/app.xml'
         if app_properties in names:
-            app_root = _xml(archive.read(app_properties))
+            app_raw = archive.read(app_properties)
+            app_root = _xml(app_raw)
+            app_xml = XML.tostring(app_root)
             _passive_markup(app_root)
-            output[app_properties] = XML.tostring(app_root, encoding='UTF-8', xml_declaration=True, standalone=True)
+            output[app_properties] = app_raw if XML.tostring(app_root) == app_xml else XML.tostring(app_root, encoding='UTF-8', xml_declaration=True, standalone=True)
         content = XML.Element('{' + CT + '}Types', nsmap={None: CT})
         XML.SubElement(content, '{' + CT + '}Default', Extension='rels', ContentType='application/vnd.openxmlformats-package.relationships+xml')
         for extension, content_type in sorted(defaults.items()):
@@ -302,6 +308,14 @@ def passive_docx(path: Path) -> bytes:
         output['_rels/.rels'] = XML.tostring(rootrels, encoding='UTF-8', xml_declaration=True)
         buffer = BytesIO()
         with ZipFile(buffer, 'w', ZIP_DEFLATED) as result:
+            # Keep the source member order/metadata for retained parts. Changed
+            # XML and rebuilt relationships are the only rewritten payloads.
+            retained_names = tuple(output)
+            for name in archive.namelist():
+                if name.endswith('/') and any(part.startswith(name) for part in retained_names):
+                    result.writestr(archive.getinfo(name), b'')
+                if name in output:
+                    result.writestr(archive.getinfo(name), output.pop(name))
             for name, data in sorted(output.items()):
                 result.writestr(name, data)
         return buffer.getvalue()

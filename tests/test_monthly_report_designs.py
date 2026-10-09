@@ -1,5 +1,4 @@
 from dataclasses import replace
-from pathlib import Path
 
 from docx import Document
 import pytest
@@ -149,3 +148,26 @@ def test_output_and_live_preview_use_same_pinned_master(tmp_path, monkeypatch):
     designs.install_master(master_reference(tmp_path, "second", "New master"), actor="Editor", expected_revision=1)
     assert section_preview_fingerprint(draft, "cover") == before
     assert section_preview_fingerprint(replace(draft, profile=designs.pin(draft.profile, latest_master=True)), "cover") != before
+
+
+def test_fresh_report_ui_automatically_uses_master_and_keeps_it_when_saved(tmp_path, monkeypatch):
+    from test_monthly_report_ui import monthly, step
+    from app.contracts import RRH_CONTRACT
+    from app.monthly_report_model import ReportPeriod
+    app = monthly(monkeypatch, tmp_path, saved=False)
+    digest = designs.install_master(master_reference(tmp_path), actor="Editor", expected_revision=0)
+    app.run()
+    next(w for w in app.text_input if w.label == "Site name").set_value("Synthetic New Site").run()
+    assert not any(w.label == "Use ENFRA template" for w in app.button)
+    assert any("master design version 1" in w.value for w in app.caption)
+    next(w for w in app.text_input if w.label == "Your name").set_value("Editor").run()
+    next(w for w in app.button if w.label == "Start this report").click().run()
+    assert not app.exception
+    step(app, 2)
+    next(w for w in app.text_area if w.label == "Activity summary").set_value("Current site work.").run()
+    next(w for w in app.button if w.label == "Save progress").click().run()
+    assert not app.exception
+    profile = library.list_profiles(RRH_CONTRACT)[0]
+    saved = library.load_snapshot(RRH_CONTRACT, profile.key, ReportPeriod(2026, 9))
+    assert saved.draft.profile.template == designs.MASTER_PREFIX + digest
+    assert next(b.text for b in saved.draft.blocks if b.key == "activity_summary") == "Current site work."

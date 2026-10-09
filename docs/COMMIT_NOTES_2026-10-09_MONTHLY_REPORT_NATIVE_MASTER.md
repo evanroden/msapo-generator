@@ -36,3 +36,30 @@ chrome, rather than assuming a fixed pair of Word sections per report section.
 Validation includes source-package fidelity, absence of previous source data,
 master reuse across contracts, design-version pinning, current-content rendering,
 native section preview, and visual comparisons against supplied originals.
+
+## Checkpoint evidence
+
+Draft PR #90 initial head `3071e15bc26c90e13532c4bed18fa865a1241c29`
+(tree `13b65d8e60e143e4c0d093d44a8df0a7d1cbe5df`) passed Actions
+`37921482195`, job `113790193342`: **1392 passed, zero skips**. This is a
+code regression result, not completed-report visual acceptance.
+
+Subsequent UMMC replay found and corrected divider/content routing, photo-grid
+tables incorrectly treated as work-order data, missing image captions, and
+end-of-life table placement. Source photos now occupy individual native frames.
+Only explicitly matched current payloads qualify for retaining their original
+styled nodes. Large body pictures cannot become master decorations merely from
+their dimensions. The fresh-report UI automatically selects and saves the master
+version without requiring an upload or another template choice.
+
+Current targeted checks: 61 import/section/native-renderer tests passed; a separate
+46-test master/section/package run passed. These overlapping counts are not added.
+The complete private UMMC replay records three Cost-column removals from the
+existing content policy; they must be reported separately from layout defects.
+
+Visual acceptance remains blocked. The bundled converter identifies itself as
+LibreOfficeDev 26.8 alpha. Physically removing unrelated package parts changes
+whether native decorations render, even when retained drawing XML and image bytes
+are identical. Controlled package comparisons and both fresh-master and
+starting-report replay outputs remain outside Git. Do not merge this checkpoint
+or describe its output as identical until every-page comparison passes.

@@ -234,6 +234,31 @@ def _suggest(kind: str, text: str, section: str, *, heading: bool = False, part:
             "training": "training_summary"}.get(section, "")
 
 
+def _is_native_divider_background(element, text=""):
+    """Recognize ENFRA's geometric divider, never an ordinary full-page photo.
+
+    Geometry alone is insufficient: a vendor scan can also fill a page. Native
+    dividers carry the lime/green shape palette and only a heading or numerals.
+    """
+    remaining = re.sub(r"[^a-z]", "", text.casefold())
+    for term in sorted({term for terms in _SECTION_TERMS.values() for term in terms}, key=len, reverse=True):
+        remaining = remaining.replace(term, "")
+    if remaining.replace("section", ""):
+        return False
+    colors = {node.get("val", "").casefold() for node in element.iter(A + "srgbClr")}
+    for node in element.iter():
+        fill = node.get("fillcolor", "").lower()
+        colors.update(re.findall(r"#([0-9a-f]{6})", fill))
+    if not colors.intersection({"d6ef4b", "d5ee4a"}) or not colors.intersection({"547e7e", "557f7f"}):
+        return False
+    wp = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+    return any(extent is not None and int(extent.get("cx", "0")) > 6_000_000
+               and int(extent.get("cy", "0")) > 6_000_000
+               and any(node.tag == A + "blip" for node in anchor.iter())
+               for anchor in element.iter(wp + "anchor")
+               for extent in (anchor.find(wp + "extent"),))
+
+
 def inspect_docx(path: Path) -> DocxInspection:
     """No python-docx object model or whole-archive extraction for large inputs."""
     digest = hashlib.sha256()
@@ -241,6 +266,9 @@ def inspect_docx(path: Path) -> DocxInspection:
         for chunk in iter(lambda: raw.read(1024 * 1024), b""):
             digest.update(chunk)
     items, titles, notices = [], [], []
+    background_positions = []
+    content_slot = ""
+    note_owners = {}
     word_section, section, text_total, cell_total = 1, "", 0, 0
     toc_section = 0
     toc_headings = set()
@@ -297,6 +325,12 @@ def inspect_docx(path: Path) -> DocxInspection:
                             position += 1
                             _visible(element)
                             text = _text(element)
+                            source_note = ""
+                            if part in ("word/footnotes.xml", "word/endnotes.xml"):
+                                kind = "footnote" if "footnotes" in part else "endnote"
+                                identity = parent.get(W + "id", "") if parent is not None else element.get(W + "id", "")
+                                section, content_slot = note_owners.get((kind, identity), ("unmatched", ""))
+                                source_note = kind + ":" + identity
                             detected = None
                             if part == "word/document.xml" and element.tag != W + "tbl":
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
@@ -322,8 +356,29 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     heading_fragments = []
                             if detected:
                                 section = detected
+                                content_slot = ""
+                            compact_text = re.sub(r"[^a-z]", "", text.casefold())
+                            if section == "activity":
+                                if compact_text in ("workorderstatus", "pmstatus"):
+                                    content_slot = "work_orders"
+                                elif compact_text == "activitysummary":
+                                    content_slot = "activity_summary"
+                                elif "improvementhighlights" in compact_text:
+                                    content_slot = "improvements"
+                            elif section == "capital" and "assetendofusefullifeschedule" in compact_text:
+                                content_slot = "end_of_life"
+                            if detected:
                                 if detected != "unmatched":
                                     heading_fragments = []
+                            if part == "word/document.xml":
+                                for kind in ("footnote", "endnote"):
+                                    for reference in element.iter(W + kind + "Reference"):
+                                        note_owners[(kind, reference.get(W + "id", ""))] = (section, content_slot)
+                            picture_table = element.tag == W + "tbl" and section == "activity" and content_slot == "improvements" and any(
+                                node.tag in (A + "blip", V + "imagedata") for node in element.iter())
+                            parents = {child: parent for parent in element.iter() for child in parent} if picture_table else {}
+                            if part == "word/document.xml" and _is_native_divider_background(element, text):
+                                background_positions.append((position, word_section))
                             if element.tag == W + "tbl":
                                 rows = []
                                 for row in element.findall(W + "tr"):
@@ -338,13 +393,13 @@ def inspect_docx(path: Path) -> DocxInspection:
                                             raise ImportError("Table is too wide to review safely.")
                                         cells.extend([""] * (count - 1))
                                     rows.append(tuple(cells))
-                                if rows:
+                                if rows and not picture_table:
                                     width = max(map(len, rows))
                                     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
-                                    add("table", part, position, rows=rows, suggested_slot=_suggest("table", text, section),
+                                    add("table", part, position, rows=rows, suggested_slot=content_slot or _suggest("table", text, section),
                                         note="Merged cells retain text in the first column of their span. Confirm headers and columns.")
                             elif text:
-                                add("text", part, position, text=text, suggested_slot=_suggest("text", text, section, heading=bool(detected), part=part))
+                                add("text", part, position, text=text, note=source_note, suggested_slot=(content_slot if content_slot and not detected else _suggest("text", text, section, heading=bool(detected), part=part)))
                                 if part == "word/document.xml" and not section and len(titles) < 12:
                                     titles.extend(line for line in text.splitlines() if 3 < len(line) < 180 and line not in titles)
                             image_nodes = [e for e in element.iter() if e.tag in (A + "blip", V + "imagedata")]
@@ -357,7 +412,14 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 seen.add(target)
                                 safe = target in names and kind.endswith("/image") and target.startswith("word/media/")
                                 supported = safe and Path(target).suffix.lower() in RASTER
-                                add("image" if supported else "unsupported", part, position,
+                                caption = ""
+                                if picture_table:
+                                    ancestor = parents.get(node)
+                                    while ancestor is not None and ancestor.tag != W + "tc":
+                                        ancestor = parents.get(ancestor)
+                                    if ancestor is not None:
+                                        caption = _text(ancestor)
+                                add("image" if supported else "unsupported", part, position, text=caption,
                                     image_part=target if safe else "", suggested_slot=_suggest("image", text, section, heading=bool(detected), part=part) if supported else "",
                                     note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
                                     **(metadata(target) if supported else {}))
@@ -366,7 +428,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                             legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
                             if graphics or legacy_groups or legacy_text:
                                 add("unsupported", part, position, text=text,
-                                    note="Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection.")
+                                    note=("Native divider artwork" if detected and detected != "unmatched" else
+                                          "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection."))
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
                             if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:
@@ -384,6 +447,20 @@ def inspect_docx(path: Path) -> DocxInspection:
                     add("unsupported", name, 0, note="Embedded object or macro; not opened or executed.")
     except (BadZipFile, KeyError, DefusedXmlException, ET.ParseError, OSError, RuntimeError) as exc:
         raise ImportError("This DOCX could not be safely read. No library content was changed.") from exc
+    # Full-page native divider art can precede its title (and many empty anchor
+    # paragraphs). Associate it with the next heading in that same Word section.
+    for position, word_number in background_positions:
+        heading = next((item for item in items if item.part == "word/document.xml"
+                        and item.word_section == word_number and item.position >= position
+                        and item.kind == "text" and _heading(item.text) not in (None, "unmatched")), None)
+        if heading is None:
+            continue
+        target = _heading(heading.text)
+        for index, item in enumerate(items):
+            if item.part == "word/document.xml" and position <= item.position <= heading.position:
+                slot = "divider_" + target if item.kind == "image" else ""
+                items[index] = replace(item, section=target, suggested_slot=slot,
+                                       note="Native divider artwork" if item.position <= heading.position else item.note)
     return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section)
 
 
@@ -430,7 +507,8 @@ def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapp
                 assets[digest] = normalized.data
             contexts = dict(block.asset_provenance)
             contexts[digest] = tuple(dict.fromkeys((*contexts.get(digest, ()), reference)))
-            block = replace(block, asset_hashes=block.asset_hashes + (digest,), asset_provenance=tuple(contexts.items()))
+            block = replace(block, asset_hashes=block.asset_hashes + (digest,), asset_provenance=tuple(contexts.items()),
+                            asset_captions=block.asset_captions + (item.text,))
         elif item.kind == "table":
             if spec.type not in ("table", "work_order_grid") and mapping.slot != "contact_matrix":
                 raise ImportError("A table needs a table destination.")

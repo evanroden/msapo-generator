@@ -3,8 +3,6 @@ from io import BytesIO
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from docx import Document
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 from lxml import etree
 from PIL import Image
 import pytest
@@ -64,7 +62,7 @@ def test_preserves_page_chrome_styles_geometry_and_original_raster(tmp_path):
     result = passive_docx(path)
     assert path.read_bytes() == raw
     with ZipFile(BytesIO(raw)) as old, ZipFile(BytesIO(result)) as new:
-        for name in ('word/document.xml', 'word/styles.xml', 'word/numbering.xml', 'word/fontTable.xml', 'word/theme/theme1.xml', 'word/header1.xml', 'word/footer1.xml', 'docProps/app.xml'):
+        for name in ('word/document.xml', 'word/styles.xml', 'word/numbering.xml', 'word/fontTable.xml', 'word/webSettings.xml', 'word/theme/theme1.xml', 'word/header1.xml', 'word/footer1.xml', 'docProps/app.xml'):
             # Structural comparison avoids serializer declaration differences.
             assert etree.tostring(etree.fromstring(new.read(name)), method='c14n') == etree.tostring(etree.fromstring(old.read(name)), method='c14n')
         assert new.read('word/media/image1.png') == old.read('word/media/image1.png')
@@ -260,3 +258,18 @@ def test_smartart_drawing_relationship_can_be_document_scoped(tmp_path):
     with ZipFile(BytesIO(passive_docx(path))) as output:
         assert 'word/diagrams/drawing.xml' in output.namelist()
         assert b'rDrawing' in output.read('word/_rels/document.xml.rels')
+
+
+def test_preserves_only_nonempty_original_package_directories(tmp_path):
+    path = sample(tmp_path)
+    def mutate(parts):
+        parts['word/'] = b''
+        parts['word/media/'] = b''
+        parts['customXml/'] = b''
+        parts['unused/'] = b''
+    rewrite(path, mutate)
+    with ZipFile(BytesIO(passive_docx(path))) as output:
+        assert 'word/' in output.namelist()
+        assert 'word/media/' in output.namelist()
+        assert 'customXml/' not in output.namelist()
+        assert 'unused/' not in output.namelist()

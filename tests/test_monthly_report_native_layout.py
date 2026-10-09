@@ -209,3 +209,99 @@ def test_stale_import_reference_does_not_authorize_old_source_payload(tmp_path):
     generated=Document(BytesIO(build_native_docx(draft(block),path)))
     text='\n'.join(p.text for p in generated.paragraphs)
     assert 'Changed current text' in text and 'OLD PRIVATE ACTIVITY' not in text
+
+
+def test_inspection_associates_early_divider_picture_with_following_heading(tmp_path):
+    from app.monthly_report_import import inspect_docx
+    from docx.enum.section import WD_SECTION_START
+    document=Document()
+    document.add_heading('MONTHLY ACTIVITY SUMMARY',1)
+    document.add_section(WD_SECTION_START.NEW_PAGE)
+    data=BytesIO(); Image.new('RGB',(25,25),'blue').save(data,format='PNG')
+    paragraph=document.add_paragraph()
+    shape=paragraph.add_run().add_picture(BytesIO(data.getvalue()),width=Inches(8),height=Inches(8))
+    shape._inline.tag=qn('wp:anchor')
+    for value in ('D6EF4B','547E7E'):
+        fill=OxmlElement('a:solidFill');color=OxmlElement('a:srgbClr');color.set('val',value);fill.append(color);shape._inline.append(fill)
+    for _ in range(20): document.add_paragraph()
+    document.add_heading('SUB-CONTRACTOR STATUS',1)
+    path=tmp_path/'early-divider.docx'; document.save(path)
+    image=next(item for item in inspect_docx(path).items if item.kind=='image')
+    assert image.section=='subcontractors' and image.suggested_slot=='divider_subcontractors'
+
+
+def test_inspection_photo_grid_captures_cell_captions_not_work_orders(tmp_path):
+    from app.monthly_report_import import inspect_docx
+    document=Document()
+    document.add_heading('MONTHLY ACTIVITY SUMMARY',1)
+    document.add_paragraph('Improvement Highlights and Pics')
+    table=document.add_table(rows=1,cols=2)
+    for index,cell in enumerate(table.rows[0].cells):
+        cell.text=f'Supplied caption {index+1}'
+        data=BytesIO(); Image.new('RGB',(20,20),('red','green')[index]).save(data,format='PNG')
+        cell.paragraphs[0].add_run().add_picture(BytesIO(data.getvalue()))
+    path=tmp_path/'photo-grid.docx'; document.save(path)
+    items=inspect_docx(path).items
+    images=[item for item in items if item.kind=='image']
+    assert [item.text for item in images]==['Supplied caption 1','Supplied caption 2']
+    assert all(item.suggested_slot=='improvements' for item in images)
+    assert not any(item.kind=='table' for item in items)
+
+
+def test_inspection_routes_end_of_life_separately_from_capital_renewal(tmp_path):
+    from app.monthly_report_import import inspect_docx
+    document=Document()
+    document.add_heading('PRIORITY CAPITAL RENEWAL LIST',1)
+    document.add_paragraph('Contract Asset End of Useful Life Schedule')
+    table=document.add_table(rows=2,cols=2)
+    table.cell(0,0).text='Asset';table.cell(0,1).text='Year'
+    table.cell(1,0).text='Boiler';table.cell(1,1).text='2030'
+    path=tmp_path/'end-of-life.docx';document.save(path)
+    item=next(item for item in inspect_docx(path).items if item.kind=='table')
+    assert item.suggested_slot=='end_of_life'
+
+
+def test_current_image_caption_is_visible_and_does_not_reuse_old_caption(tmp_path):
+    from app.monthly_report_import import inspect_docx, map_items, ImportMapping
+    document=Document()
+    document.add_heading('MONTHLY ACTIVITY SUMMARY',1)
+    document.add_paragraph('Improvement Highlights and Pics')
+    table=document.add_table(rows=1,cols=1)
+    table.cell(0,0).text='Old supplied caption'
+    data=BytesIO();Image.new('RGB',(40,30),'red').save(data,format='PNG')
+    table.cell(0,0).paragraphs[0].add_run().add_picture(BytesIO(data.getvalue()),width=Inches(2))
+    path=tmp_path/'caption-edit.docx';document.save(path)
+    inspection=inspect_docx(path)
+    item=next(item for item in inspection.items if item.kind=='image')
+    mapped=map_items(path,inspection,(ImportMapping(item.id,'improvements'),))
+    block=replace(mapped.blocks[0],asset_captions=('Changed current caption',))
+    generated=build_native_docx(draft(block),path,asset_loader=dict(mapped.assets).__getitem__)
+    with ZipFile(BytesIO(generated)) as archive:
+        xml=archive.read('word/document.xml').decode()
+    assert 'Changed current caption' in xml and 'Old supplied caption' not in xml
+
+
+def test_native_footer_uses_current_address(tmp_path):
+    path=source(tmp_path)
+    document=Document(path)
+    document.sections[0].footer.paragraphs[0].text='Old company address | enfrasolutions.com'
+    document.save(path)
+    value=replace(draft(),address_line='Current company address | enfrasolutions.com')
+    generated=Document(BytesIO(build_native_docx(value,path)))
+    assert generated.sections[0].footer.paragraphs[0].text=='Current company address | enfrasolutions.com'
+
+
+def test_large_source_photo_is_not_mistaken_for_following_divider(tmp_path):
+    from app.monthly_report_import import inspect_docx
+    document=Document()
+    document.add_heading('MONTHLY ACTIVITY SUMMARY',1)
+    data=BytesIO();Image.new('RGB',(25,25),'red').save(data,format='PNG')
+    shape=document.add_paragraph().add_run().add_picture(BytesIO(data.getvalue()),width=Inches(8),height=Inches(8))
+    shape._inline.tag=qn('wp:anchor')
+    document.add_heading('MONTHLY SCORECARDS',1)
+    path=tmp_path/'large-source-photo.docx';document.save(path)
+    item=next(item for item in inspect_docx(path).items if item.kind=='image')
+    assert item.section=='activity' and item.suggested_slot=='improvements'
+    result=build_native_docx(draft(),path,master=True)
+    with ZipFile(BytesIO(result)) as archive:
+        assert data.getvalue() not in [archive.read(name) for name in archive.namelist()]
