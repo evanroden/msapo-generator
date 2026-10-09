@@ -55,8 +55,25 @@ def price_column(title, kind=""):
     return not _mixed_price_heading(title) and (kind == "currency" or _price_heading(title))
 
 
+def logical_table_columns(columns):
+    """Recover the one unambiguous four-column ENFRA capital header variant.
+
+    Other mixed headers stay ambiguous. This recognizes the complete ordered
+    canonical label sequence and the exact four-cell grid, never data values.
+    """
+    values = tuple(columns)
+    if (len(values) == 4
+            and re.sub(r"[^a-z]", "", values[0].casefold()) ==
+            "equipmentdescriptionendofusefullifecostsummaryofdeficiency"
+            and all(not title.strip() or re.fullmatch(r"(?:Column|Detail)\s+[234]", title.strip(), re.I)
+                    for title in values[1:])):
+        return ("Equipment Description", "End of Useful Life", "Cost", "Summary of deficiency")
+    return values
+
+
 def _table_headings(columns, rows):
     """Inspect adjacent header lines before the first numeric data row."""
+    columns = logical_table_columns(columns)
     header_rows = [columns]
     for row in rows[:3]:
         if any(re.search(r"\d", str(cell)) for cell in row):
@@ -72,7 +89,7 @@ def ambiguous_price_columns(columns, rows=()):
 
 def receivable_amount_columns(columns):
     """Aged receivable buckets are monetary only in an explicit invoice context."""
-    headings = tuple(" ".join(str(c).casefold().split()) for c in columns)
+    headings = tuple(" ".join(str(c).casefold().split()) for c in logical_table_columns(columns))
     invoice = any(re.search(r"\binvoice\b|accounts? receivable", c) for c in headings)
     money = any(re.search(r"\bamount(?: due)?\b|\bbalance\b", c) for c in headings)
     if not (invoice and money):
@@ -120,6 +137,7 @@ def price_free_table(spec: "BlockSpec", block: "ResolvedBlock") -> tuple["BlockS
         headings = tuple(columns) + tuple(
             f"Detail {n + 1}" for n in range(len(columns), width)
         )
+        headings = logical_table_columns(headings)
         excluded = (set(table_price_columns(headings, rows)) | set(currency)) - set(ambiguous_price_columns(headings, rows))
         removed.extend(headings[n] for n in sorted(excluded))
         indexes = tuple(n for n in range(len(headings)) if n not in excluded)
@@ -134,7 +152,7 @@ def price_free_table(spec: "BlockSpec", block: "ResolvedBlock") -> tuple["BlockS
             tuple(n for n, c in enumerate(spec.columns) if price_column(c.title, c.type)),
         )
         keys = {c.key for c in spec.columns}
-        columns = list(spec.columns)
+        columns = [replace(column, title=headings[n]) for n, column in enumerate(spec.columns)]
         for n in range(len(columns), len(headings)):
             key = f"unmapped_detail_{n + 1}"
             while key in keys:

@@ -70,6 +70,8 @@ def seed_matrix(profile, block, stored, directory=None):
     if existing:
         return validate_matrix(existing)
     columns, rows = [], []
+    from app.monthly_report_directory import suggest_contact_bindings
+    bindings = suggest_contact_bindings(directory, profile.facilities) if directory else {}
     selected = {f.key: f for f in profile.facilities}
     for key in selected:
         columns.extend(stored.get("sites", {}).get(key, {}).get("columns", ()))
@@ -83,7 +85,7 @@ def seed_matrix(profile, block, stored, directory=None):
             known.add(row[0].casefold())
         if directory:
             # Client representatives are not assumed to be ENFRA employees.
-            contacts = [contact for s in directory.sites if s.key == key for contact in s.contacts]
+            contacts = [contact for s in directory.sites if s.key == bindings.get(key) for contact in s.contacts]
             for contact in contacts:
                 role = contact.role.casefold()
                 if contact.name.strip() and contact.name.casefold() not in known and any(

@@ -409,7 +409,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     from app.monthly_report_sections import table_without_prices
     reference_prefix = f"docx:{inspection.sha256}:"
     cover_periods = {match.group().casefold() for title in inspection.title_candidates
-                     for match in _MONTH.finditer(title)}
+                     for match in _MONTH.finditer(re.split(r"\bDate\s*:", title, flags=re.IGNORECASE)[0])}
     cover_names = {re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
                    for title in inspection.title_candidates}
     source_preparers = {re.split(r"\s+Date\s*:", re.sub(r"^\s*Prepared\s+by\s*:\s*", "", title,
@@ -426,6 +426,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     redacted_table_columns = {}
     supplied_tables_by_position = {}
     retained_mixed_cells = set()
+    mixed_price_headers = set()
     destinations = {spec.key: section.key for section in draft.sections for spec in section.blocks}
     for block in draft.blocks:
         if block.source == "Omit":
@@ -480,7 +481,14 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     current_row = supplied.columns if row_index == 0 else supplied.rows[row_index - 1]
                     current_column = kept_columns.index(column) if column in kept_columns else -1
                     value = _text(cell)
-                    if (current_column >= 0 and current_column < len(current_row)
+                    from app.monthly_report_content_policy import logical_table_columns
+                    logical_headers = logical_table_columns(source_item.rows[0])
+                    if (row_index == 0 and column == 0 and width == len(logical_headers)
+                            and logical_headers != tuple(source_item.rows[0])
+                            and tuple(logical_headers[i] for i in kept_columns) == supplied.columns):
+                        retained_mixed_cells.add((position, row_index, column))
+                        mixed_price_headers.add((position, row_index, column))
+                    elif (current_column >= 0 and current_column < len(current_row)
                             and current_row[current_column] == (value.strip() if row_index == 0 else value)
                             and not contains_price(value)):
                         retained_mixed_cells.add((position, row_index, column))
@@ -532,6 +540,14 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     cover_items = [item for item in inspection.items if item.kind == "image"
                    and item.part == "word/document.xml"
                    and (not item.section or item.position <= (first_word_end or len(original)))]
+    first_cover_images = [item for item in cover_items
+                          if item.position <= (first_word_end or len(original))]
+    primary_brand = next((item.image_part for item in first_cover_images
+                          if item.image_height and item.image_width / item.image_height > 4), None)
+    photo_candidates = [item for item in first_cover_images if item.image_part != primary_brand
+                        and item.image_width >= 256 and item.image_height >= 256]
+    primary_photo = max(photo_candidates, key=lambda item: item.image_width * item.image_height,
+                        default=None)
     # Explicit import destinations are authoritative. Aspect ratio cannot tell
     # a wide hospital logo from ENFRA branding or a landscape hospital photo.
     for item in cover_items:
@@ -551,7 +567,12 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 break
         if item.image_part not in cover_roles and item.image_height:
             ratio = item.image_width / item.image_height
-            cover_roles[item.image_part] = "brand_logo" if ratio > 4 else "client_logo" if ratio > 2 else "cover_photo"
+            if master:
+                cover_roles[item.image_part] = ("brand_logo" if item.image_part == primary_brand else
+                                                "cover_photo" if primary_photo and item.image_part == primary_photo.image_part else
+                                                "client_logo")
+            else:
+                cover_roles[item.image_part] = "brand_logo" if ratio > 4 else "client_logo" if ratio > 2 else "cover_photo"
 
     def unchanged_cover(role):
         block = blocks.get(role)
@@ -669,6 +690,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     if (excluded.intersection(range(logical_column, logical_column + width))
                             and (position, row_index, logical_column) not in retained_mixed_cells):
                         _set_text(cell, "")
+                    if (position, row_index, logical_column) in mixed_price_headers:
+                        for node in cell.iter(qn("w:t")):
+                            if node.text:
+                                node.text = re.sub(r"Cost", "", node.text, flags=re.IGNORECASE)
                     logical_column += width
             continue
         text = _text(element)
@@ -802,8 +827,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     anchor = clone
         tables = []
         if block.rows:
-            tables.append((tuple(c.title for c in spec.columns), block.rows))
-        tables.extend((t.columns, t.rows) for t in block.extra_tables if t.reference not in preserved_table_refs)
+            tables.append((tuple(c.title for c in spec.columns), block.rows, ""))
+        tables.extend((t.columns, t.rows, t.reference) for t in block.extra_tables if t.reference not in preserved_table_refs)
         if tables:
             anchors = table_prototypes.get(block.key)
             if not anchors:
@@ -816,12 +841,14 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     raise NativeLayoutError(f"The source has no native table geometry for {block.key}.")
                 anchors = [(append_native(sec, prototype), prototype)]
             last = None
-            for index, (columns, rows) in enumerate(tables):
+            for index, (columns, rows, table_reference) in enumerate(tables):
                 anchor, prototype = anchors[min(index, len(anchors) - 1)]
                 if index >= len(anchors):
                     anchor = deepcopy(prototype)
                     last.addnext(anchor)
                 _table(anchor, columns, rows)
+                from app.monthly_report_training_style import style_training_table
+                style_training_table(anchor, table_reference)
                 last = anchor
         images = []
         if block.org_nodes:

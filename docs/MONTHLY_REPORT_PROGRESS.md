@@ -29,11 +29,14 @@ monthly wizard, and photo-decode/preview failure containment. A legacy imported
 report keeps its own native design ahead of the company master; explicit pins
 remain authoritative. Replacement cover photos retain their native frame.
 
-Focused UI and pipeline tests pass. Obsolete navigation tests are being updated;
-a full local run and final CI remain release gates. Actual September continuation
-and fidelity checks are in progress, with the other supplied report variants
-assigned separately. Do not claim all ten references pass or merge this follow-up
-until their material layout findings are resolved. The valid-photo crash was not
+PR #91 checkpoint `8ff301e` passed 1505 tests with zero skips and the container
+build/health gate. Later fixes still require final-head CI. Both September
+continuations preserve 39 pages with zero pixel differences outside three Cost
+labels deliberately removed from each report, measured against source Word
+renderings under the same stable converter. The broader source set also reveals
+conversion defects in unmodified Portland, RGH and Central CT files; authentic
+Word/PDF fidelity for every supplied variant is not established. Do not claim
+all ten references pass. The valid-photo crash was not
 reproduced; the confirmed malformed-photo crash and stale preview paths are fixed.
 See [ordered workflow notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md)
 and [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).

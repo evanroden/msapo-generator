@@ -553,7 +553,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with editor_column:
             draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field)
         with preview_column:
-            render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
+            if section.key in {"organization", "subcontractors"} and not prepared.strip():
+                st.caption("Enter Prepared by above to view saved contact pages.")
+            else:
+                render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
     draft = complete_guided_sections(replace(draft, blocks=tuple(blocks.values())))
     footer = blocks.get("footer_text")
@@ -601,7 +604,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     with st.container():
         st.subheader("Review and download")
         from app.monthly_report_editor import review_client_images
-        draft = review_client_images(draft, assets, prefix, field)
+        if prepared.strip():
+            draft = review_client_images(draft, assets, prefix, field)
         st.session_state[draft_key] = draft
         if package and package.fingerprint != draft.fingerprint:
             st.session_state.pop(prefix + "_package", None)

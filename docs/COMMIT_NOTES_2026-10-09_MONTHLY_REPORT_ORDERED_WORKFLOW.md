@@ -16,7 +16,9 @@ renderer and replaces the AM navigation with a single page in report order.
 
 - Contract, month and sites precede the inline directory. Selected sites appear
   together; revisions and editor attribution guard shared saves.
-- Cover and all twelve sections have adjacent native previews. A bounded worker
+- Cover and every section have adjacent native previews. All eleven core sections
+  remain present; source designs retain their RFI or Accounts Receivable appendix
+  and actual section order. A bounded worker
   serializes conversion, discards stale results and stops fragment polling after
   work completes. Edits do not wait for all sections to render.
 - Shared logo replacement and the legacy low-resolution preview download are
@@ -36,8 +38,37 @@ renderer and replaces the AM navigation with a single page in report order.
   probes passed; the user's valid-photo crash was not reproduced exactly.
 - Legacy imported profiles retain their source design ahead of the global master.
   New profiles use the master; explicit saved design pins remain authoritative.
+- Explicit inline contact saves also update the current report's contact table
+  and preview. Other report snapshots remain unchanged; normal Save progress
+  persists the edited report. Opening the directory does not replace contacts.
+- Native continuation preserves linked headers, supported visible JPEG/PNG image
+  effects, unchanged cover typography and same-report issue dates. Import
+  provenance takes precedence over image proportions when binding cover assets.
+
+Named-editor requirements provide attribution, not authenticated authorization.
+Master maintenance remains in its collapsed design/version control; deployment
+does not introduce a new authentication system.
 
 ## Validation checkpoint
+
+PR #91 checkpoint `8ff301ef1c334bb5dab3d157f67f147e826ad53b` passed
+1505 tests with zero skips in Actions `37938836694`; container build/health
+also passed. Later cover, training, named-contact display and explicit master
+switch fixes require final-head CI before release.
+
+September native continuations now pass against their supplied Word sources
+rendered by LibreOffice 24.2 with the verified fonts:
+
+| Report | Source/output pages | Pixel-identical pages | Remaining differences |
+| --- | --- | --- | --- |
+| Unity/USH September | 39 / 39 | 37 | Three Cost labels on pages 28 and 32 |
+| UMMC September | 39 / 39 | 37 | Three Cost labels on pages 29 and 32 |
+
+Both have zero changed pixels outside the intentional label redactions. This
+measures source-to-generated fidelity under the same renderer, not equivalence
+to a Microsoft Word export. Unmodified Portland, RGH and Central CT sources
+already exhibit converter-specific artwork or pagination defects; these remain
+documented limitations, not passing evidence of authentic Word/PDF fidelity.
 
 Focused ordered save/resume/generation tests passed, as did extraction/pricing,
 manual-edit protection, selected-directory, training and asynchronous preview

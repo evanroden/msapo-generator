@@ -74,7 +74,11 @@ def test_price_free_table_import_keeps_every_schema_and_zero(tmp_path, monkeypat
     library.save_report_setup(profile, draft, path, {'sha256': inspection.sha256}, assets=mapped.assets,
                               expected_revision=0, actor='Synthetic Editor', confirmed=True)
     raw = assemble_docx(draft)
-    assert assemble_docx(draft) == raw
+    # ZIP envelope timestamps can tick between exports; all document parts
+    # and assets must remain identical.
+    from zipfile import ZipFile
+    with ZipFile(BytesIO(raw)) as first, ZipFile(BytesIO(assemble_docx(draft))) as second:
+        assert {name: first.read(name) for name in first.namelist()} == {name: second.read(name) for name in second.namelist()}
     output = Document(BytesIO(raw))
     assert len(output.tables) == 2
     values = [[c.text for row in table.rows for c in row.cells] for table in output.tables]

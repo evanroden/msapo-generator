@@ -110,6 +110,9 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
     """
     from app.monthly_report_visual_ui import edit_contacts, edit_org_chart
 
+    if not draft.prepared_by.strip():
+        st.info("Enter your name above to view or edit saved people and contacts.")
+        return blocks
     updated = dict(blocks)
     active_key = prefix + "_organization_change"
     st.caption("People and contacts carry forward. Open Change only when details need updating.")

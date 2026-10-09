@@ -5,7 +5,7 @@ from collections import defaultdict
 import hashlib
 import re
 
-from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing
+from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing, logical_table_columns
 from app.monthly_report_checks import placeholder_matches
 from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, MAX_NORMALIZED_BYTES
 from app.monthly_report_model import ReportTable, ResolvedBlock, known_sections, layout_blocks
@@ -83,11 +83,12 @@ def table_without_prices(item):
     rows = item.rows
     if not rows:
         return None, ()
-    removed = table_price_columns(rows[0], rows[1:])
+    headings = logical_table_columns(rows[0])
+    removed = table_price_columns(headings, rows[1:])
     keep = [i for i in range(len(rows[0])) if i not in removed]
     if not keep:
         return None, removed
-    columns = tuple(rows[0][i].strip() or f"Column {n+1}" for n, i in enumerate(keep))
+    columns = tuple(headings[i].strip() or f"Column {n+1}" for n, i in enumerate(keep))
     # Repeated/merged titles must not cause data_editor dictionaries to lose cells.
     columns = tuple(title + (f" ({n+1})" if title in columns[:n] else "") for n, title in enumerate(columns))
     values = tuple(tuple(row[i] if i < len(row) else "" for i in keep) for row in rows[1:])

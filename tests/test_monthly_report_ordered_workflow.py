@@ -9,6 +9,7 @@ from streamlit.testing.v1 import AppTest
 
 def test_report_order_all_editors_and_direct_previews(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
+    next(item for item in app.text_input if item.label == "Prepared by").set_value("Report Author").run()
     from app import monthly_report_section_preview_ui
     calls = []
     monkeypatch.setattr(monthly_report_section_preview_ui, "render_section_preview",
@@ -80,3 +81,21 @@ def test_native_core_only_design_does_not_gain_optional_sections():
     profile = replace(synthetic_profiles()[0], template="enfra_native:" + "b" * 64, section_order=order)
     draft = ReportDraft(profile, ReportPeriod(2026, 9), "Editor", default_sections(), ())
     assert tuple(section.key for section in guided.complete_guided_sections(draft).sections) == order
+
+
+def test_unnamed_visitor_does_not_render_saved_contact_pages(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    from app import monthly_report_section_preview_ui, monthly_report_editor
+    calls = []
+    image_reviews = []
+    monkeypatch.setattr(monthly_report_section_preview_ui, "render_section_preview",
+                        lambda draft, section, *args, **kwargs: calls.append(section))
+    monkeypatch.setattr(monthly_report_editor, "review_client_images",
+                        lambda draft, *args, **kwargs: image_reviews.append(True) or draft)
+    app.run()
+    assert not app.exception
+    assert "organization" not in calls and "subcontractors" not in calls
+    assert not image_reviews
+    next(item for item in app.text_input if item.label == "Prepared by").set_value("Report Author").run()
+    assert "organization" in calls and "subcontractors" in calls
+    assert image_reviews

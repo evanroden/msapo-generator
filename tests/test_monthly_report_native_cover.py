@@ -13,14 +13,14 @@ from app.monthly_report_model import (
 from app.monthly_report_native_layout import build_native_docx
 
 
-def cover_source(tmp_path, *, combined=False):
+def cover_source(tmp_path, *, combined=False, issued_date='10/06/2026'):
     document = Document()
     title = 'Synthetic Hospital With A Long Facility Name'
     document.add_paragraph(title).runs[0].font.size = Pt(27)
     document.add_paragraph('September 2026')
     document.add_paragraph('Prepared by: Source Editor' + (' Date: October 6th, 2026' if combined else ''))
     if not combined:
-        document.add_paragraph('Date: 10/06/2026')
+        document.add_paragraph('Date: ' + issued_date)
     document.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
     document.add_paragraph('Completed technical inspection.')
     path = tmp_path / 'cover.docx'
@@ -45,6 +45,13 @@ def test_same_report_keeps_issue_date_and_long_title_font(tmp_path, combined):
     text = '\n'.join(p.text for p in actual.paragraphs)
     assert ('Date: October 6th, 2026' if combined else 'Date: 10/06/2026') in text
     assert text.count(draft.profile.title) == 1
+
+
+@pytest.mark.parametrize('issued_date', ['October 6, 2026', 'October 2026'])
+def test_issue_date_does_not_count_as_another_reporting_period(tmp_path, issued_date):
+    path, draft = cover_source(tmp_path, issued_date=issued_date)
+    actual = Document(BytesIO(build_native_docx(draft, path)))
+    assert 'Date: ' + issued_date in '\n'.join(p.text for p in actual.paragraphs)
 
 
 @pytest.mark.parametrize('change', ['master', 'month', 'client', 'editor', 'no_import'])

@@ -227,6 +227,9 @@ def _contact_rows(columns, rows, p, field):
 
 
 def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True):
+    if not draft.prepared_by.strip():
+        st.info("Enter your name above to view or edit saved contacts.")
+        return block
     block = preserve_asset_reviews(block, block)
     p = prefix + "_contacts_" + block.key
     tables = list(block.extra_tables)

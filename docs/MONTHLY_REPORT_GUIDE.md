@@ -75,8 +75,9 @@ There are no duplicate contract or site selectors. Saved directory contacts fill
 an empty report contact table after you enter your name.
 Exact site names and confirmed aliases select the relevant site contacts;
 contract-wide contacts remain labelled separately. Existing report contacts are
-retained. Use **Compare contacts with the saved directory** when you need to
-replace an existing table.
+retained until you explicitly choose **Save contacts to directory and report**.
+That action updates the current report table and preview; **Save progress**
+persists the edited report. Other saved reports keep their contact snapshots.
 
 Upload thermal capacity once for the contract. PDFs, Word files, spreadsheets,
 CSV/text and supported images are accepted. Check the extracted values, units and
@@ -141,7 +142,7 @@ confirmation is required.
 If PDF conversion fails, the completed DOCX remains available. The tool does not
 send email.
 
-Shared directory and logo administration, version history and advanced layout
-settings are available outside the normal editing flow. The contact directory's
+Versioned master maintenance is in **Report design and version**. Asset managers
+do not have shared logo replacement controls in the report flow. The directory's
 full-workbook import saves usable contract and site contacts together, displays
 excluded records, and avoids duplicate revisions on an identical re-import.

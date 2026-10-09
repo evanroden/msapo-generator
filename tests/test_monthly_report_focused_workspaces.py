@@ -197,6 +197,7 @@ def test_live_previews_receive_each_section_and_current_edits(monkeypatch, tmp_p
     from app import monthly_report_preview as whole_preview, monthly_report_section_preview_ui as section_preview
     previews, full_previews = [], []
     app = monthly(monkeypatch, tmp_path)
+    next(item for item in app.text_input if item.label == "Prepared by").set_value("Synthetic Editor").run()
     monkeypatch.setattr(section_preview, "render_section_preview", lambda draft, key, assets, prefix, **kwargs:
                         previews.append((draft, key, kwargs)))
     monkeypatch.setattr(whole_preview, "render_preview", lambda draft, assets, prefix, field:

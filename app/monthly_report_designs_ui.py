@@ -9,6 +9,14 @@ import streamlit as st
 from app import monthly_report_designs as designs
 
 
+def apply_master_design(draft, digest):
+    """An explicit design switch adopts that version's order, keeping report data."""
+    from app.monthly_report_guided import complete_guided_sections
+    profile = designs.pin(replace(draft.profile, template=designs.MASTER_PREFIX + digest,
+                                  section_order=()))
+    return complete_guided_sections(replace(draft, profile=profile))
+
+
 def render_design_settings(draft, prefix):
     st.markdown("**Master report design**")
     st.caption("Every new report starts with the ENFRA master, including reports started without an upload. Replace it here with a newer Word report to update future reports across contracts. Existing saved reports keep their design version.")
@@ -26,8 +34,7 @@ def render_design_settings(draft, prefix):
                     path.write_bytes(source.getvalue())
                     digest = designs.install_master(path, actor=draft.prepared_by,
                                                     expected_revision=current["revision"])
-                    profile = replace(draft.profile, template=designs.MASTER_PREFIX + digest)
-                updated = replace(draft, profile=profile)
+                    updated = apply_master_design(draft, digest)
                 st.session_state[prefix + "_draft"] = updated
                 st.session_state.pop(prefix + "_section_preview_cache", None)
                 st.session_state[prefix + "_design_saved"] = True
@@ -38,6 +45,6 @@ def render_design_settings(draft, prefix):
         st.success("ENFRA master design saved. New reports will use it automatically. Report content was not changed.")
     if current.get("default") and draft.profile.template != designs.MASTER_PREFIX + current["default"]:
         if st.button("Apply current master to this report", key=prefix + "_native_design_apply"):
-            st.session_state[prefix + "_draft"] = replace(draft, profile=replace(draft.profile, template=designs.MASTER_PREFIX + current["default"]))
+            st.session_state[prefix + "_draft"] = apply_master_design(draft, current["default"])
             st.session_state.pop(prefix + "_section_preview_cache", None)
             st.rerun()

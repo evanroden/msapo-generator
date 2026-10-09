@@ -257,3 +257,32 @@ def test_optional_ar_does_not_change_default_rrh_and_clears_only_on_new_month():
     draft = ReportDraft(profile, ReportPeriod(2026, 9), 'Editor', profile_sections(profile), (block,))
     assert new_month_draft(draft, ReportPeriod(2026, 9)).blocks[0].rows == block.rows
     assert not new_month_draft(draft, ReportPeriod(2026, 10)).blocks[0].rows
+
+
+@pytest.mark.parametrize('first_ar', [False, True])
+def test_explicit_master_switch_replaces_saved_variant_order_but_preserves_content(tmp_path, monkeypatch, first_ar):
+    from app.monthly_report_designs_ui import apply_master_design
+    from app.monthly_report_model import default_sections, profile_sections, ReportDraft, ReportPeriod, ResolvedBlock
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
+    hashes = []
+    for revision, ar in enumerate((first_ar, not first_ar)):
+        document = Document()
+        for section in default_sections():
+            if not section.appendix:
+                document.add_heading(section.title, 1)
+        document.add_heading('Accounts Receivable' if ar else 'RFI Matrix', 1)
+        source = tmp_path / f'master-{revision}.docx'
+        document.save(source)
+        hashes.append(designs.install_master(source, actor='Editor', expected_revision=revision))
+        if revision == 0:
+            profile = designs.pin(synthetic_profiles()[0])
+    content = ResolvedBlock('activity_summary', 'This month', text='AM current-month edits')
+    original = ReportDraft(profile, ReportPeriod(2026, 9), 'Editor', profile_sections(profile), (content,))
+    updated = apply_master_design(original, hashes[1])
+    expected, excluded = ('rfi', 'accounts_receivable') if first_ar else ('accounts_receivable', 'rfi')
+    assert updated.profile.template == designs.MASTER_PREFIX + hashes[1]
+    assert expected in updated.profile.section_order and excluded not in updated.profile.section_order
+    assert expected in {section.key for section in updated.sections}
+    assert excluded not in {section.key for section in updated.sections}
+    assert updated.blocks == original.blocks
+    assert original.profile.template == designs.MASTER_PREFIX + hashes[0]

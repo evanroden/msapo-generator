@@ -182,3 +182,43 @@ render_training(st.session_state['draft'], {}, 'anonymous', lambda k, v: k)
     app.run()
     assert not app.exception
     assert app.info and not app.dataframe
+
+
+def test_training_directory_alias_binding_ignores_ambiguous_and_inactive(profile):
+    single = replace(profile, facilities=(Facility('legacy-a', 'Site A', ('North',)),), scope_type='individual')
+    contact = DirectoryContact('ENFRA Technician', 'Sam')
+    directory = DirectoryState(profile.contract, 1, (DirectorySite('directory-a', 'North', contacts=(contact,)),), 'Editor', 'today')
+    block = ResolvedBlock('training_summary', 'This month')
+    assert seed_matrix(single, block, {}, directory).rows == (('Sam', 'Site A'),)
+    ambiguous = replace(directory, sites=(*directory.sites, DirectorySite('other', 'Site A', contacts=(contact,))))
+    assert not seed_matrix(single, block, {}, ambiguous).rows
+    inactive = replace(directory, sites=(replace(directory.sites[0], active=False),))
+    assert not seed_matrix(single, block, {}, inactive).rows
+
+
+def test_native_training_style_preserves_geometry_font_header_and_colors_status():
+    from docx import Document
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from app.monthly_report_training_style import style_training_table
+    document = Document()
+    table = document.add_table(rows=2, cols=3)
+    for cells, values in zip(table.rows, [('Team member', 'Site', 'Safety'), ('Sam', 'Site A', 'Completed')]):
+        for cell, value in zip(cells.cells, values):
+            cell.text = value
+            cell.paragraphs[0].runs[0].font.name = 'Arial'
+    height = OxmlElement('w:trHeight')
+    height.set(qn('w:val'), '9000')
+    table.rows[1]._tr.get_or_add_trPr().append(height)
+    grid = table._tbl.find(qn('w:tblGrid')).xml
+    header = table.cell(0, 2)._tc.xml
+    style_training_table(table._tbl, MATRIX_REF)
+    assert table._tbl.find(qn('w:tblGrid')).xml == grid
+    assert not list(table._tbl.iter(qn('w:trHeight')))
+    assert table.cell(0, 2).text == 'Safety'
+    assert table.cell(0, 2).paragraphs[0].runs[0].font.name == 'Arial'
+    assert table.cell(1, 2)._tc.find('./' + qn('w:tcPr') + '/' + qn('w:shd')).get(qn('w:fill')) == 'D8F3DC'
+    assert 'Safety' in header
+    unmodified = table._tbl.xml
+    style_training_table(table._tbl, 'source:original')
+    assert table._tbl.xml == unmodified

@@ -183,6 +183,7 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     for site in profile.facilities:
         next(w for w in next_app.checkbox if w.label == site.title).check().run()
     next_app.selectbox("report_month_number").set_value(10).run()
+    next(w for w in next_app.text_input if w.label == "Prepared by").set_value("Synthetic Returning Editor").run()
     assert next(w for w in next_app.text_input if w.label == "Name for this group (optional)").value == "Synthetic Lakes Region"
     assert next(w for w in next_app.checkbox if w.label == "This is a regional report").value
     assert not any(w.label.startswith("Include ") for w in next_app.checkbox)
