@@ -37,6 +37,19 @@ def _edit_contacts(site, prefix):
                  for r in rows if any(str(r.get(k) or "").strip() for k in ("Role", "Name", "Phone", "Email")))
 
 
+def _edit_contract_contacts(contacts, prefix):
+    st.write("Contract-wide contacts")
+    st.caption("These people support the contract. They are kept separate from individual site contacts.")
+    rows = _grid(prefix + "_contract_contacts", [
+        {"Role": c.role, "Name": c.name, "Phone": c.phone, "Email": c.email, "Source": c.source}
+        for c in contacts] or [{"Role": "", "Name": "", "Phone": "", "Email": "", "Source": ""}],
+        num_rows="dynamic", hide_index=True, disabled=["Source"], column_config={"Source": None})
+    return tuple(directory.DirectoryContact(*(str(row.get(key) or "").strip()
+                 for key in ("Role", "Name", "Phone", "Email", "Source")))
+                 for row in rows if any(str(row.get(key) or "").strip()
+                                        for key in ("Role", "Name", "Phone", "Email")))
+
+
 def _site_editor(sites, existing, prefix, *, importing=False):
     by_id = {s.key: s for s in sites}
     existing_by_title = {s.title: s for s in existing}
@@ -125,7 +138,8 @@ def _render_directory(field):
     if not actor.strip():
         st.info("Enter your name before viewing or changing saved contact lists.")
         return
-    mode = st.radio("Directory task", ["Import a workbook", "Review saved directory"], key=field("report_directory_mode", "Import a workbook"), horizontal=True)
+    mode = st.radio("Directory task", ["Import a workbook", "Import all contract contacts", "Review saved directory"], key=field("report_directory_mode", "Import a workbook"), horizontal=True)
+    contract_contacts = None
     if mode == "Review saved directory":
         names = directory.directory_contracts(include_archived=True)
         if not names:
@@ -140,6 +154,7 @@ def _render_directory(field):
             _directory_history(contract, state, prefix, actor)
             return
         sites = _site_editor(state.sites, (), prefix)
+        contract_contacts = _edit_contract_contacts(state.contract_contacts, prefix)
         raw, source_sha, sheet_name = None, state.source_sha256, state.source_sheet
     else:
         upload = st.file_uploader("Contract / site directory workbook", type=["xlsx"], max_upload_size=30, key="report_directory_upload")
@@ -152,6 +167,10 @@ def _render_directory(field):
         if not staged:
             return
         raw, inspection = staged
+        if mode == "Import all contract contacts":
+            from app.monthly_report_directory_batch_ui import render_batch
+            render_batch(inspection, raw, actor, "report_directory_batch_" + inspection.sha256[:16])
+            return
         for notice in inspection.notices:
             st.caption(notice)
         sheets = {s.name: s for s in inspection.sheets}
@@ -197,11 +216,11 @@ def _render_directory(field):
         source_sha, sheet_name = inspection.sha256, sheet.name
         st.caption(f"Saving {len(incoming)} reviewed site records; {len(sites) - len(incoming)} other saved records remain unchanged. Other workbook tabs are not imported into this contract.")
     revision = state.revision if state else 0
-    signature = _signature((contract, revision, [asdict(s) for s in sites], actor, source_sha, sheet_name))
+    signature = _signature((contract, revision, [asdict(s) for s in sites], contract_contacts, actor, source_sha, sheet_name))
     confirmed = st.checkbox("I reviewed all included sites and contacts and confirm this shared save", key=prefix + "_confirm_" + signature)
-    if st.button("Save contract directory", key=prefix + "_save", type="primary", disabled=not (sites and actor.strip() and confirmed)):
+    if st.button("Save contract directory", key=prefix + "_save", type="primary", disabled=not ((sites or contract_contacts) and actor.strip() and confirmed)):
         directory.save_directory(contract, sites, expected_revision=revision, actor=actor, confirmed=confirmed,
-                                 raw=raw, source_sha256=source_sha, source_sheet=sheet_name)
+                                 raw=raw, source_sha256=source_sha, source_sheet=sheet_name, contract_contacts=contract_contacts)
         st.session_state["report_directory_message"] = "Directory saved. Existing reports and their selected sites were not changed. You can review another tab or return to report setup."
         st.rerun()
     if state:
@@ -221,6 +240,10 @@ def _directory_history(contract, state, prefix, actor):
         prior = directory.load_directory(contract, number)
         st.caption(f"Version {number} · {prior.actor} · {prior.updated_at} · {prior.action}")
         st.dataframe([{"Site": s.title, "Aliases": "; ".join(s.aliases), "Active": s.active, "Contacts": len(s.contacts)} for s in prior.sites], hide_index=True)
+        if prior.contract_contacts:
+            st.caption(f"{len(prior.contract_contacts)} contract-wide contacts in this version.")
+            st.dataframe([{"Role": c.role, "Name": c.name, "Phone": c.phone, "Email": c.email}
+                          for c in prior.contract_contacts], hide_index=True)
         restore = st.checkbox("Restore this directory version as a new revision", key=prefix + f"_restore_ok_{number}_" + _signature(actor))
         if st.button("Restore directory", key=prefix + "_restore", disabled=not (restore and actor.strip() and (state.archived or number != state.revision))):
             directory.restore_directory(contract, number, expected_revision=state.revision, actor=actor, confirmed=restore)
@@ -233,6 +256,8 @@ def choose_facilities(contract, prefix, field):
     if not state:
         return ()
     active = {s.key: s for s in state.sites if s.active}
+    if not active:
+        return ()
     key = field(prefix + "_directory_sites", [])
     if any(k not in active for k in st.session_state[key]):
         st.warning("The directory changed. Reconfirm the report’s site selection.")
@@ -255,9 +280,12 @@ def review_contacts(draft, prefix, field, assets):
         links = {r.split(":")[1]: r.split(":")[2] for r in current.references if r.startswith("directory-site:") and len(r.split(":")) == 3} if current else {}
         active = {s.key: s for s in state.sites if s.active}
         suggestions = directory.suggest_contact_bindings(state, draft.profile.facilities, links)
-        st.caption("Matching site names are suggested below. Check the sites and people before using these contacts in your report.")
+        if state.sites:
+            st.caption("Matching site names are suggested below. Check the sites and people before using these contacts in your report.")
+        else:
+            st.caption("This directory contains contract-wide contacts only. They do not select or identify this report’s sites.")
         bindings = {}
-        for facility in draft.profile.facilities:
+        for facility in draft.profile.facilities if state.sites else ():
             default = suggestions.get(facility.key, "")
             key = field(prefix + "_directory_link_" + facility.key, default if default in active else "")
             if st.session_state[key] not in ("", *active):
