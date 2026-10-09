@@ -161,6 +161,7 @@ Worth matching when you add one.
   test caught; deleting that record invites the same attempt again.
 - **Merge commits, not squash.** Per-fix reasoning stays reachable from history.
 
+- [Monthly report focused editing](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_FOCUSED_EDITING.md) — section workspaces, individual-picture review, local uploads and direct save.
 - [Monthly report branding and visual choices](COMMIT_NOTES_2026-10-07_MONTHLY_REPORT_BRANDING.md) — runtime logo storage and section-specific setup checkpoint.
 
 - [Monthly report lifecycle validation — 2026-10-08](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_LIFECYCLE.md)

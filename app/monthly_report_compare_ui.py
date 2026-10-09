@@ -1,9 +1,10 @@
 """Read-only, human-readable comparison before accepting a newer saved revision."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import streamlit as st
 
+from app.monthly_report_asset_review import normalize_asset_reviews, pending_asset_indexes
 from app.monthly_report_sections import readable_label
 
 
@@ -58,7 +59,8 @@ def _block_summary(block, spec, draft):
     if block.ai_written:
         values.append("Suggested wording reviewed" if block.reviewed else "Suggested wording needs review")
     if block.asset_hashes:
-        values.append("Pictures/pages reviewed" if block.client_reviewed_fingerprint == block.fingerprint else "Pictures/pages need review")
+        pending = len(pending_asset_indexes(block, draft.sources))
+        values.append("Pictures/pages reviewed" if not pending else f"{pending} of {len(block.asset_hashes)} pictures/pages need review")
     if block.references:
         values.append("Linked evidence: " + _lines(s.filename for s in draft.sources
                        if any(ref == s.id or ref.startswith(s.id + ":") for ref in block.references)))
@@ -119,7 +121,9 @@ def compare_drafts(working, saved):
     after_blocks = {b.key: b for b in working.blocks}
     for key in dict.fromkeys((*before_blocks, *after_blocks)):
         before, after = before_blocks.get(key), after_blocks.get(key)
-        if before == after and saved_specs.get(key) == working_specs.get(key):
+        comparable_before = replace(normalize_asset_reviews(before), client_reviewed_fingerprint="") if before else None
+        comparable_after = replace(normalize_asset_reviews(after), client_reviewed_fingerprint="") if after else None
+        if comparable_before == comparable_after and saved_specs.get(key) == working_specs.get(key):
             continue
         before_text = _block_summary(before, saved_specs.get(key), saved)
         after_text = _block_summary(after, working_specs.get(key), working)

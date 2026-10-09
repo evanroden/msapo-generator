@@ -132,7 +132,9 @@ def price_free_table(spec: "BlockSpec", block: "ResolvedBlock") -> tuple["BlockS
             tables.append(table)
     updated_block = replace(block, rows=updated_rows, extra_tables=tuple(tables))
     if updated_spec != spec or updated_block != block:
+        from app.monthly_report_asset_review import preserve_asset_reviews
         updated_block = replace(updated_block, reviewed_fingerprint="", client_reviewed_fingerprint="")
+        updated_block = preserve_asset_reviews(block, updated_block)
     return updated_spec, updated_block, tuple(dict.fromkeys(removed))
 
 

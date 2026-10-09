@@ -23,6 +23,38 @@ def _undecided_pages(content, source):
             and exclusions.get(n) != page_fingerprint(source, n)]
 
 
+def _sync_source_fields(source, prefix, field):
+    """Refresh stale widgets when another section edited the canonical source.
+
+    Only external changes are copied. A widget's pending input on this rerun is
+    preserved when the canonical source still matches this view's last render.
+    """
+    previous = st.session_state.get(prefix + "_canonical_view")
+    if previous is None or previous == source:
+        return
+    attributes = ("classification", "vendor", "service_date", "facility", "work_order",
+                  "actions", "findings", "recommendations", "follow_ups", "out_of_limit")
+    for attr in attributes:
+        if getattr(previous, attr) != getattr(source, attr):
+            st.session_state[field(prefix + "_" + attr, getattr(source, attr))] = getattr(source, attr)
+    if previous.tags != source.tags:
+        value = ", ".join(source.tags)
+        st.session_state[field(prefix + "_tags", value)] = value
+    if previous.selected_pages != source.selected_pages:
+        value = list(source.selected_pages)
+        st.session_state[field(prefix + "_pages", value)] = value
+    before, after = dict(previous.captions), dict(source.captions)
+    for number in set(before) | set(after):
+        if before.get(number) != after.get(number):
+            value = after.get(number, f"{source.filename} · page/item {number}")
+            st.session_state[field(prefix + f"_caption_{number}", value)] = value
+    if previous.client_page_reviews != source.client_page_reviews:
+        for number in range(1, len(source.page_texts) + 1):
+            fingerprint = page_fingerprint(source, number)
+            value = page_allowed(source, number)
+            st.session_state[field(prefix + f"_client_page_{number}_" + fingerprint, value)] = value
+
+
 def _cmms(content, profile, period, prefix, field):
     source = content.source
     tables = [t for i, t in enumerate(content.tables, 1) if i in source.selected_pages]
@@ -120,6 +152,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         selected = st.selectbox("File to review", list(by_id), format_func=lambda v: by_id[v].source.filename, key=selection_key)
     content, source = by_id[selected], by_id[selected].source
     p = key + "_" + selected
+    _sync_source_fields(source, p, field)
     pending = st.session_state.pop(p + "_page_action", None)
     if pending:
         st.session_state[p + "_pages"] = pending[0]
@@ -201,6 +234,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 next_page = next((n for n in remaining if n > page), remaining[0] if remaining else page)
                 by_id[selected] = replace(content, source=source)
                 st.session_state[key] = tuple(by_id.values())
+                st.session_state[p + "_canonical_view"] = source
                 # Apply widget changes before instantiation on the next rerun.
                 st.session_state[p + "_page_action"] = (list(source.selected_pages), next_page)
                 st.rerun()
@@ -210,6 +244,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         by_id[selected] = replace(content, source=source)
         contents = tuple(by_id.values())
         st.session_state[key] = contents
+        st.session_state[p + "_canonical_view"] = source
         if st.button("Remove source from this draft", key=p + "_remove"):
             st.session_state[key] = tuple(c for c in contents if c.source.id != selected)
             st.rerun()
@@ -265,3 +300,185 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 specs.update((s.key, s) for s in mapped.specs)
                 st.caption("Use Add prepared pages and tables to this draft below to include these work-order totals and service calls.")
     return tuple(c.source for c in contents), blocks, specs
+
+
+def _render_section_page_review(profile, content, prefix, field, blocks):
+    """Review new page content once, with an explicit include/leave-out action."""
+    from app.monthly_report_section_uploads import included_pages
+
+    source = content.source
+    p = prefix + "_" + source.id
+    _sync_source_fields(source, p, field)
+    image_pages = sources.image_numbers(content)
+    existing = included_pages(blocks)
+    if not image_pages:
+        st.info("This file contains extracted text or tables. Its original is saved. Use the section's text/table editor, or the work-order spreadsheet tools, to include that content.")
+        with st.expander("Read this file"):
+            st.text("\n\n".join(source.page_texts)[:12000] or "No readable text was found.")
+        return content
+    with st.expander("File details (optional)"):
+        st.caption("These are suggested facts from the file. Blank means not established; adding it here does not change its classification.")
+        changes = {}
+        st.caption("File classification: " + source.classification)
+        for attr, label in (("vendor", "Vendor"), ("service_date", "Service/report date (YYYY-MM-DD)"),
+                            ("facility", "Source facility"), ("work_order", "Job / work-order number")):
+            changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
+        source = replace(source, **changes)
+    for notice in source.notices:
+        st.warning(notice)
+    undecided = [n for n in _undecided_pages(content, source) if (source.id, n) not in existing]
+    page_key = field(p + "_page", undecided[0] if undecided else image_pages[0])
+    pending = st.session_state.pop(p + "_next_page", None)
+    if pending in image_pages:
+        st.session_state[page_key] = pending
+    if st.session_state[page_key] not in image_pages:
+        st.session_state[page_key] = image_pages[0]
+    page_labels = {n: f"Page {n}" + (" · already in report" if (source.id, n) in existing
+                  else " · included" if n in source.selected_pages and page_allowed(source, n)
+                  else " · left out" if dict(source.client_page_exclusions).get(n) == page_fingerprint(source, n)
+                  else " · needs review") for n in image_pages}
+    page = st.selectbox("Page to review", image_pages, key=page_key, format_func=page_labels.get)
+    preview_ok = False
+    try:
+        thumbnail = sources.page_image(profile, content, page, preview=True)
+        st.image(thumbnail.data, width=650)
+        preview_ok = True
+    except (ValueError, OSError) as exc:
+        st.error(str(exc))
+    with st.expander("Read extracted text"):
+        st.text(source.page_texts[page - 1][:12000] or "No native text on this page. Review the image above.")
+    if (source.id, page) in existing:
+        st.caption("This page is already in the report. Edit its caption or remove it using the included pages below.")
+    else:
+        captions = dict(source.captions)
+        caption_key = field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}"))
+        captions[page] = st.text_input("Page caption", key=caption_key)
+        source = replace(source, captions=tuple(sorted(captions.items())))
+        kind, reason = page_status(source.page_texts[page - 1], unreadable=page in source.needs_vision)
+        from app.monthly_report_content_policy import contains_price
+        blocked = kind in ("pricing", "legal", "blank", "signature") or contains_price(captions[page])
+        (st.warning if blocked else st.caption)(reason)
+        st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content.")
+        keep, omit = st.columns(2)
+        action = None
+        if keep.button("Include page and continue", key=p + "_keep_page", disabled=blocked or not preview_ok):
+            action = "keep"
+        if omit.button("Leave page out and continue", key=p + "_omit_page"):
+            action = "omit"
+        if action:
+            selected = set(source.selected_pages)
+            reviews, exclusions = dict(source.client_page_reviews), dict(source.client_page_exclusions)
+            if action == "keep":
+                selected.add(page)
+                reviews[page] = page_fingerprint(source, page)
+                exclusions.pop(page, None)
+            else:
+                selected.discard(page)
+                reviews.pop(page, None)
+                exclusions[page] = page_fingerprint(source, page)
+            source = replace(source, selected_pages=tuple(sorted(selected)),
+                             client_page_reviews=tuple(sorted(reviews.items())),
+                             client_page_exclusions=tuple(sorted(exclusions.items())))
+            remaining = [n for n in _undecided_pages(content, source) if (source.id, n) not in existing]
+            st.session_state[p + "_next_page"] = next((n for n in remaining if n > page), remaining[0] if remaining else page)
+            # The caller persists this source before rerunning, retaining every
+            # other section's canonical evidence object unchanged.
+            st.session_state[prefix + "_review_rerun"] = True
+    st.session_state[p + "_canonical_view"] = source
+    return replace(content, source=source)
+
+
+def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field,
+                           destination: str, *, blocks=None, assets=None):
+    """Return an addition only on its apply click; callers merge it atomically.
+
+    The existing canonical evidence cache is shared with the optional batch/CMMS
+    workspace. Section routing never changes a saved source's classification.
+    """
+    from app.monthly_report_section_uploads import (
+        SECTION_UPLOADS, pending_pages, prepare_section_pages, section_contents, source_destinations,
+    )
+    if destination not in SECTION_UPLOADS:
+        raise ValueError("Unknown report section for uploaded pages.")
+    blocks = blocks or {}
+    title, upload_label = SECTION_UPLOADS[destination]
+    key = prefix + "_evidence"
+    local_key = key + "_section_" + destination
+    contents = st.session_state.setdefault(key, ())
+    bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
+    st.markdown("**" + title + "**")
+    st.caption("Choose a file, check its useful pages, then add them here. Existing report content is kept.")
+    upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
+                             accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
+    picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
+    signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
+    if picked and st.session_state.get(local_key + "_read") != signature:
+        before = {c.source.id for c in contents}
+        owners = source_destinations(contents, bindings, blocks)
+        with st.spinner("Reading files and checking duplicates…"):
+            contents, messages = sources.ingest_batch(profile, picked, contents)
+        messages = list(messages)
+        for content in contents:
+            if content.source.id not in before:
+                bindings[content.source.id] = destination
+        for _, raw in picked:
+            identity = hashlib.sha256(raw).hexdigest()
+            assigned = owners.get(identity, set())
+            if identity in before and not assigned:
+                bindings[identity] = destination
+            elif assigned and destination not in assigned:
+                messages.append("This file already belongs to another report section. Its pages and saved classification were kept there.")
+        st.session_state[key] = contents
+        st.session_state[key + "_section_routes"] = bindings
+        st.session_state[local_key + "_messages"] = tuple(messages)
+        st.session_state[local_key + "_read"] = signature
+    elif not picked:
+        st.session_state.pop(local_key + "_read", None)
+    for message in st.session_state.get(local_key + "_messages", ()):
+        st.warning(message)
+    owners = source_destinations(contents, bindings, blocks)
+    unassigned = [c for c in contents if not owners[c.source.id]]
+    if unassigned:
+        with st.expander("Use a file already saved in this draft"):
+            choices = {c.source.id: c for c in unassigned}
+            choice_key = field(local_key + "_saved_choice", next(iter(choices)))
+            if st.session_state[choice_key] not in choices:
+                st.session_state[choice_key] = next(iter(choices))
+            chosen = st.selectbox("Saved file", list(choices), format_func=lambda v: choices[v].source.filename, key=choice_key)
+            if st.button("Review this file here", key=local_key + "_use_saved"):
+                bindings[chosen] = destination
+                st.session_state[key + "_section_routes"] = bindings
+    scoped = section_contents(contents, destination, bindings, blocks)
+    if not scoped:
+        return tuple(c.source for c in contents), {}, {}
+    choices = {c.source.id: c for c in scoped}
+    selected_key = field(local_key + "_selected", next(iter(choices)))
+    if st.session_state[selected_key] not in choices:
+        st.session_state[selected_key] = next(iter(choices))
+    if len(choices) == 1:
+        selected = next(iter(choices))
+        st.caption("Reviewing " + choices[selected].source.filename)
+    else:
+        selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
+    revised = _render_section_page_review(profile, choices[selected], local_key, field, blocks)
+    contents = tuple(revised if c.source.id == selected else c for c in contents)
+    st.session_state[key] = contents
+    if st.session_state.pop(local_key + "_review_rerun", False):
+        st.rerun()
+    scoped = section_contents(contents, destination, bindings, blocks)
+    pending = pending_pages(scoped, destination, blocks)
+    by_id = {c.source.id: c for c in scoped}
+    ready = bool(pending) and all(page_allowed(by_id[identity].source, number) for identity, number in pending)
+    if pending:
+        st.caption(f"{sum(page_allowed(by_id[identity].source, n) for identity, n in pending)} of {len(pending)} selected new pages checked.")
+    else:
+        st.caption("No new pages selected. Previously added pages remain in your report.")
+    additions = {}
+    if st.button("Add reviewed pages", key=local_key + "_apply", disabled=not ready, type="primary"):
+        try:
+            with st.spinner("Adding the reviewed pages…"):
+                additions = prepare_section_pages(profile, scoped, destination, blocks, assets)
+        except (ValueError, OSError) as exc:
+            st.error(str(exc))
+            st.caption("Your existing report is unchanged. The selected files and reviews are retained for another attempt.")
+    return tuple(c.source for c in contents), additions, {}

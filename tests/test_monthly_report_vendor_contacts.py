@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from app.monthly_report_asset_review import normalize_asset_reviews, pending_asset_indexes
 from app.monthly_report_editor import _cell_text, _typed_table
 from app.monthly_report_model import default_sections
 
@@ -47,8 +48,9 @@ def test_vendor_pages_show_with_empty_or_populated_table_without_requiring_revie
     app = vendor_app(rows)
     assert not app.exception
     assert "View or change saved vendor pages" in [e.label for e in app.expander]
-    assert any(b.label == "Remove this picture" for b in app.button)
-    assert vendor_block(app) == app.session_state["original"]
+    assert any(b.label == "View or change pictures" for b in app.button)
+    assert not any(b.label == "Remove this picture" for b in app.button)
+    assert vendor_block(app) == normalize_asset_reviews(app.session_state["original"])
     app.run()
     assert not app.exception
     block = vendor_block(app)
@@ -70,6 +72,8 @@ def test_vendor_agreement_edit_preserves_unknown_and_invalidates_only_changed_co
     assert block.asset_hashes == ("vendor-page.png",)
     app.run()
     assert vendor_block(app) == block
+    assert not pending_asset_indexes(block)
+    next(b for b in app.button if b.label == "View or change pictures").click().run()
     next(b for b in app.button if b.label == "Remove this picture").click().run()
     assert not app.exception
     assert vendor_block(app).rows == block.rows

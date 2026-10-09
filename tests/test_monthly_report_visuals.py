@@ -70,7 +70,8 @@ def test_chart_structure_and_prices_cannot_slip_through_as_picture_text():
 
 def test_chart_persistence_and_large_teams_remain_readable():
     block = ResolvedBlock("org_chart", "This month", org_nodes=nodes())
-    assert block_from_dict(asdict(block)) == block
+    from app.monthly_report_asset_review import normalize_asset_reviews
+    assert block_from_dict(asdict(block)) == normalize_asset_reviews(block)
     assert block_from_dict({"key": "org_chart", "source": "Library"}).org_nodes == ()
     large = (
         nodes()[0],
@@ -147,12 +148,14 @@ def test_reviewed_directory_contacts_can_seed_chart_without_replacing_it_silentl
     choose_report(app, 'Synthetic North')
     next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Current Editor').run()
     step(app, 3)
+    next(w for w in app.toggle if w.label == 'Compare contacts with the saved directory').set_value(True).run()
     match = next(w for w in app.selectbox if w.label == 'Directory site for Synthetic North')
     assert match.value == 'directory-north'
     assert next(b for b in app.button if b.label == 'Use reviewed contact table').disabled
     next(c for c in app.checkbox if c.label == 'Replace this report’s contact matrix with this reviewed directory table').check().run()
     next(b for b in app.button if b.label == 'Use reviewed contact table').click().run()
     assert not app.exception
+    next(b for b in app.button if b.label == 'Change team chart').click().run()
     choices = next(w for w in app.multiselect if w.label == 'People to include in the org chart')
     assert len(choices.options) == 2 and not any('Other Site' in str(v) for v in choices.options)
     assert next(b for b in app.button if b.label == 'Start an editable org chart').disabled
@@ -165,7 +168,6 @@ def test_reviewed_directory_contacts_can_seed_chart_without_replacing_it_silentl
     assert next(w for w in app.selectbox if w.label == 'Reports to').value == ''
     step(app, 2)
     step(app, 3)
-    next(c for c in app.checkbox if c.label == 'Save this draft for others on this report to continue').check().run()
     next(b for b in app.button if b.label == 'Save progress').click().run()
     assert not app.exception
     saved = library.load_snapshot(RRH_CONTRACT, profile.key, ReportPeriod(2026, 9)).draft
@@ -206,7 +208,8 @@ def test_preview_pages_are_the_images_embedded_in_deterministic_docx():
             and photo_page(block, loader, 1) in images
         )
     assert docx == assemble_docx(draft, asset_loader=loader)
-    assert block_from_dict(asdict(block)) == block
+    from app.monthly_report_asset_review import normalize_asset_reviews
+    assert block_from_dict(asdict(block)) == normalize_asset_reviews(block)
 
 
 def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_path):
@@ -225,6 +228,7 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     ).check().run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     step(app, 3)
+    next(b for b in app.button if b.label == "Change team chart").click().run()
     next(
         b for b in app.button if b.label == "Start an editable org chart"
     ).click().run()
@@ -239,6 +243,7 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     [w for w in app.selectbox if w.label == "Reports to"][1].set_value(
         "position-1"
     ).run()
+    next(b for b in app.button if b.label == "Change facility contacts").click().run()
     next(b for b in app.button if b.label == "Create editable contacts").click().run()
     next(w for w in app.text_input if w.label == "Email").set_value(
         "operations@example.invalid"
@@ -257,18 +262,15 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     assert not app.exception
     step(app, 2)
     step(app, 3)
+    next(b for b in app.button if b.label == "Change team chart").click().run()
     assert [
         w.value for w in app.text_input if w.label == "Name" and "_org_person_" in w.key
     ] == ["Synthetic Lead", "Synthetic Technician"]
+    next(b for b in app.button if b.label == "Change facility contacts").click().run()
     assert (
         next(w for w in app.text_input if w.label == "Email").value
         == "retained@example.invalid"
     )
-    next(
-        w
-        for w in app.checkbox
-        if w.label == "Save this draft for others on this report to continue"
-    ).check().run()
     next(b for b in app.button if b.label == "Save progress").click().run()
     assert not app.exception
     from app import monthly_report_library as library
@@ -310,13 +312,13 @@ def test_photo_upload_caption_layout_and_removal_survive_steps(monkeypatch, tmp_
     next(w for w in app.select_slider if w.label == "Photos per page").set_value(
         3
     ).run()
-    next(w for w in app.checkbox if w.label == "Include this photo").uncheck().run()
-    next(b for b in app.button if b.label == "Apply photo selection").click().run()
-    assert len([w for w in app.checkbox if w.label == "Include this photo"]) == 2
+    next(b for b in app.button if b.label == "Remove photo").click().run()
+    assert not any(w.label == "Include this photo" for w in app.checkbox)
+    assert len([b for b in app.button if b.label == "Remove photo"]) == 2
     step(app, 3)
     step(app, 2)
     assert next(w for w in app.select_slider if w.label == "Photos per page").value == 3
-    assert len([w for w in app.checkbox if w.label == "Include this photo"]) == 2
+    assert len([b for b in app.button if b.label == "Remove photo"]) == 2
     draft = next(
         v
         for k, v in app.session_state.filtered_state.items()

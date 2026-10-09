@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 
 from app import monthly_report_library as library
+from app.monthly_report_asset_review import pending_asset_indexes, preserve_asset_reviews
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_editor import _signature
 from app.monthly_report_model import OrgChartNode, ReportTable
@@ -14,7 +15,7 @@ from app.monthly_report_visuals import contact_positions, validate_org, org_grou
 
 def _install(draft, prefix, block, *, spec=None, clear=""):
     blocks = {b.key: b for b in draft.blocks}
-    blocks[block.key] = block
+    blocks[block.key] = preserve_asset_reviews(blocks[block.key], block) if block.key in blocks else block
     sections = tuple(
         replace(
             s, blocks=tuple(spec if spec and b.key == spec.key else b for b in s.blocks)
@@ -226,6 +227,7 @@ def _contact_rows(columns, rows, p, field):
 
 
 def edit_contacts(draft, spec, block, prefix, assets, field):
+    block = preserve_asset_reviews(block, block)
     p = prefix + "_contacts_" + block.key
     tables = list(block.extra_tables)
     has_primary = bool(block.rows or (spec.columns and not tables))
@@ -271,6 +273,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
                         block,
                         source="Replace once",
                         asset_hashes=(reference,),
+                        asset_provenance=((reference, ()),),
                         asset_captions=(),
                         references=(),
                         reviewed_fingerprint="",
@@ -351,21 +354,20 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
     )
     if changed == block:
         return block
-    return replace(changed, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
+    return preserve_asset_reviews(block, replace(changed, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint=""))
 
 
 def edit_photos(draft, block, prefix, assets, field):
+    block = preserve_asset_reviews(block, block)
     p = prefix + "_photos_" + block.key
-    st.caption(
-        "Add progress photos, write captions, then choose how many fit on each page. The preview uses the same page image as the DOCX/PDF."
-    )
-    uploads = st.file_uploader(
-        "Progress photos",
-        type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
-        accept_multiple_files=True,
-        max_upload_size=30,
-        key=p + "_files",
-    )
+    with st.expander("Add progress photos", expanded=not block.asset_hashes):
+        uploads = st.file_uploader(
+            "Progress photos",
+            type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
+            accept_multiple_files=True,
+            max_upload_size=30,
+            key=p + "_files",
+        )
     if uploads and st.button("Add these photos", key=p + "_add"):
         if (
             len(uploads) + len(block.asset_hashes) > 60
@@ -374,6 +376,7 @@ def edit_photos(draft, block, prefix, assets, field):
             st.error("Add at most 60 photos per section and 120 MB in one batch.")
         else:
             refs, captions = list(block.asset_hashes), list(block.asset_captions)
+            provenance = dict(block.asset_provenance)
             captions.extend("" for _ in range(len(refs) - len(captions)))
             try:
                 for upload in uploads:
@@ -383,6 +386,7 @@ def edit_photos(draft, block, prefix, assets, field):
                     ref = library.asset_reference(normalized.data, normalized.extension)
                     if ref not in refs:
                         refs.append(ref)
+                        provenance[ref] = ()
                         captions.append("")
                         assets[ref] = normalized.data
                 _install(
@@ -392,6 +396,7 @@ def edit_photos(draft, block, prefix, assets, field):
                         block,
                         source="This month",
                         asset_hashes=tuple(refs),
+                        asset_provenance=tuple(provenance.items()),
                         asset_captions=tuple(captions),
                     ),
                 )
@@ -400,6 +405,16 @@ def edit_photos(draft, block, prefix, assets, field):
     if not block.asset_hashes:
         st.info("Add photos when you have them. You can work on another section first.")
         return block
+    editing_key = p + "_editing"
+    if not pending_asset_indexes(block) and not st.session_state.get(editing_key):
+        st.caption(f"{len(block.asset_hashes)} photos ready. Captions and reviews are saved.")
+        if st.button("Edit photos or captions", key=p + "_edit"):
+            st.session_state[editing_key] = True
+            st.rerun()
+        return block
+    if st.session_state.get(editing_key) and st.button("Done editing photos", key=p + "_done"):
+        st.session_state[editing_key] = False
+        st.rerun()
     left, right = st.columns([1, 1])
     with left:
         number = st.select_slider(
@@ -407,15 +422,12 @@ def edit_photos(draft, block, prefix, assets, field):
             options=list(range(1, 7)),
             key=field(p + "_count", block.photos_per_page),
         )
-        refs, captions = [], []
+        captions = []
         identity = _signature(block.asset_hashes)
         for n, ref in enumerate(block.asset_hashes):
             with st.expander(
                 "Photo " + str(n + 1), expanded=len(block.asset_hashes) <= 2
             ):
-                keep = st.checkbox(
-                    "Include this photo", key=field(p + f"_keep_{identity}_{n}", True)
-                )
                 caption = st.text_area(
                     "Caption",
                     key=field(
@@ -427,24 +439,23 @@ def edit_photos(draft, block, prefix, assets, field):
                     max_chars=600,
                     height=90,
                 )
-                if keep:
-                    refs.append(ref)
-                    captions.append(caption)
-        # Keep omitted photos in the editor until an explicit apply. This avoids
-        # changing row identities while a user is still comparing pictures.
-        candidate = replace(
-            block,
-            source="This month",
-            asset_hashes=tuple(refs),
-            asset_captions=tuple(captions),
-            photos_per_page=number,
-        )
-        if len(refs) != len(block.asset_hashes) and st.button(
-            "Apply photo selection", key=p + "_selection"
-        ):
-            _install(draft, prefix, candidate, clear=p + "_keep_")
-        if len(refs) == len(block.asset_hashes):
-            block = candidate
+                captions.append(caption)
+                if st.button("Remove photo", key=p + f"_remove_{identity}_{n}"):
+                    current_captions = (*captions, *block.asset_captions[n + 1 :])
+                    indexes = tuple(i for i in range(len(block.asset_hashes)) if i != n)
+                    replacement = replace(
+                        block,
+                        source="This month",
+                        asset_hashes=tuple(block.asset_hashes[i] for i in indexes),
+                        asset_captions=tuple(current_captions[i] if i < len(current_captions) else "" for i in indexes),
+                        photos_per_page=number,
+                    )
+                    _install(draft, prefix, preserve_asset_reviews(block, replacement), clear=p + "_caption_")
+        existing_captions = tuple(block.asset_captions[n] if n < len(block.asset_captions) else "" for n in range(len(block.asset_hashes)))
+        candidate = replace(block, asset_captions=block.asset_captions if tuple(captions) == existing_captions else tuple(captions), photos_per_page=number)
+        if candidate != block:
+            block = preserve_asset_reviews(block, replace(candidate, source="This month"))
+        candidate = block
     with right:
         st.write("Photo page preview")
         try:
@@ -462,7 +473,7 @@ def edit_photos(draft, block, prefix, assets, field):
                     f"{count} photo pages. Images keep their original proportions."
                 )
             else:
-                st.info("No photos selected. Apply the selection to leave them out.")
+                st.info("No photos are included.")
         except ValueError as exc:
             st.error(str(exc))
     return block

@@ -105,8 +105,12 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     assert not any(w.label == "Site / report" for w in app.selectbox)
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"
     assert any(w.label == "Include Organizational Chart" for w in app.checkbox)
+    assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
+    next(w for w in app.button if w.label == "Change logos").click().run()
+    assert any(w.label == "New client logo" for w in app.get("file_uploader"))
+    next(w for w in app.button if w.label == "Done with cover changes").click().run()
     step(app, 3)
-    assert any(w.label == "Upload a new client logo" for w in app.get("file_uploader"))
+    assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
     # Navigation is deliberately free: an unfinished standing section does not
     # prevent adding work now, then returning to complete it later.
     step(app, 2)

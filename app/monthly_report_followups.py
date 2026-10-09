@@ -196,7 +196,124 @@ def report_text(item):
     )
 
 
-def render_followups(draft, prefix, field):
+def render_followups(draft, prefix, field, *, category=None):
+    """Edit carried items in their section, retaining every other category."""
+    if category is not None:
+        if category not in ("issue", "proposal"):
+            raise ValueError("Choose equipment issues or proposals to review.")
+        return _render_section_followups(draft, prefix, field, category)
+    return _render_all_followups(draft, prefix, field)
+
+
+def _render_section_followups(draft, prefix, field, category):
+    import streamlit as st
+
+    if not any(item.category == category for item in draft.follow_ups):
+        return draft
+    proposal = category == "proposal"
+    st.markdown("**Carried proposals**" if proposal else "**Open and recently resolved issues**")
+    st.caption("Keep what is still correct. Open an item only when its details or status changed.")
+    options = {
+        source_reference(s, n): f"{s.filename} · page {n}"
+        for s in draft.sources
+        for n in range(1, len(s.page_texts) + 1)
+    }
+    items = []
+    for original in draft.follow_ups:
+        if original.category != category:
+            items.append(original)
+            continue
+        item = normalize_proposal(original)
+        p = prefix + "_follow_" + item.key + "_compact"
+        edit_key = field(p + "_editing", False)
+        confirmed = replace(item, reviewed_fingerprint=confirmation(item, draft.period))
+        needs_correction = problems(confirmed, draft)
+        if needs_correction:
+            st.session_state[edit_key] = True
+        with st.container():
+            st.write(item.text)
+            state = _status_label(item.status)
+            visibility = "Included" if item.included else "Left out of this report"
+            st.caption(f"{state} · {visibility} · Carried from {item.carried_from}")
+            if item.update.strip():
+                st.text(item.update)
+            actions = st.columns(3 if not proposal and item.status != "resolved" else 2)
+            keep_label = "Still open" if not proposal and item.status == "ongoing" else "Still correct"
+            with actions[0]:
+                if st.button(keep_label, key=p + "_keep", disabled=bool(needs_correction)):
+                    item = confirmed
+                    st.session_state[edit_key] = False
+            with actions[1]:
+                if st.button("Update proposal" if proposal else "Update issue", key=p + "_edit"):
+                    st.session_state[edit_key] = True
+            if len(actions) == 3:
+                with actions[2]:
+                    if st.button("Mark resolved", key=p + "_resolve"):
+                        item = replace(item, status="resolved", reviewed_fingerprint="")
+                        st.session_state[p + "_status"] = "resolved"
+                        st.session_state[edit_key] = True
+            if st.session_state[edit_key]:
+                text = st.text_area(
+                    "Proposal scope" if proposal else "Issue description",
+                    key=field(p + "_text", item.text), height=90, max_chars=4000,
+                )
+                status = st.radio(
+                    "Proposal decision" if proposal else "Current status",
+                    PROPOSAL_STATUSES if proposal else ISSUE_STATUSES,
+                    format_func=_status_label, key=field(p + "_status", item.status), horizontal=True,
+                )
+                update = st.text_area(
+                    "What changed this month?", key=field(p + "_update", item.update),
+                    height=90, max_chars=4000,
+                )
+                evidence = st.text_area(
+                    "Evidence or explanation for the status", key=field(p + "_note", item.evidence_note),
+                    height=90, max_chars=4000,
+                )
+                selected = st.multiselect(
+                    "Supporting source pages (optional)", list(options), format_func=options.get,
+                    key=field(p + "_sources_" + _digest(list(options)),
+                              [ref for ref in item.references if ref in options]),
+                ) if options else []
+                missing = tuple(ref for ref in item.references if ref not in options)
+                if missing:
+                    st.warning("Some saved source links are unavailable. Replace them with current evidence, or explicitly remove them.")
+                    if st.checkbox("Remove unavailable source links", key=field(p + "_remove_missing_" + _digest(missing), False)):
+                        missing = ()
+                excluded = not item.included
+                if proposal or status == "resolved":
+                    excluded = st.checkbox(
+                        "Leave this proposal out of the report" if proposal else "Leave this resolved item out of the report",
+                        key=field(p + "_excluded", excluded),
+                    )
+                elif excluded:
+                    st.warning("An open issue must be included in the report.")
+                    if st.button("Include this issue again", key=p + "_include"):
+                        excluded = False
+                        st.session_state[p + "_excluded"] = False
+                revised = replace(
+                    item, text=text, status=status, update=update, evidence_note=evidence,
+                    references=(*selected, *missing), included=not excluded,
+                )
+                signature = confirmation(revised, draft.period)
+                revised = replace(revised, reviewed_fingerprint=signature if item.reviewed_fingerprint == signature else "")
+                confirmed = replace(revised, reviewed_fingerprint=signature)
+                errors = problems(confirmed, draft)
+                for message in errors:
+                    st.warning(message)
+                if st.button("Confirm update", key=p + "_confirm", disabled=bool(errors)):
+                    revised = confirmed
+                    st.session_state[edit_key] = False
+                item = revised
+            if item.reviewed_fingerprint == confirmation(item, draft.period):
+                st.caption(f"Confirmed for {draft.period.label}.")
+            elif not st.session_state[edit_key]:
+                st.caption(f"Confirm this item for {draft.period.label}.")
+            items.append(item)
+    return replace(draft, follow_ups=tuple(items))
+
+
+def _render_all_followups(draft, prefix, field):
     import streamlit as st
 
     if not draft.follow_ups:

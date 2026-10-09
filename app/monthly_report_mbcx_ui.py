@@ -20,8 +20,7 @@ def _choose_sentence(text_key, sentence, choice_key):
 def render_mbcx(status, pages, prefix, field, edit_pages):
     """Return edited blocks; the caller supplies its shared page editor.
 
-    Upload preparation remains in the existing monthly-files workflow. This
-    view does not imply that image-only replacement controls accept PDFs.
+    The caller provides this section's file workflow before the page editor.
     """
     st.write("**System performance checks (MBCx)**")
     st.caption("Use this section for results from ongoing checks of building equipment, such as an ENFRA Connect report. Add the results you received or a short update about their availability.")
@@ -64,7 +63,7 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
                                    key=prefix + "_mbcx_update_review_" + status.fingerprint)
             status = replace(status, reviewed_fingerprint=status.fingerprint if approved else "")
     st.write("**Report pages for this month**")
-    st.caption("To add a complete PDF or Word report, use Monthly source files above and choose MBCx. Review its pages, then add the prepared pages to this draft. Keep only relevant results without prices or legal-only pages.")
+    st.caption("Add a PDF or Word report using the files area in this section. Include the relevant results; previously reviewed pages stay ready.")
     if not pages.asset_hashes:
         st.caption("No report pages added. A confirmed status update can be used on its own.")
     if pages.text.strip():

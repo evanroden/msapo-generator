@@ -107,14 +107,21 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 texts.extend((block.key, value) for node in block.org_nodes for value in (node.name, node.role, node.team))
             if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
                 checks.append(ReportCheck("photo_layout", "Choose between 1 and 6 photos per page.", True, block.key))
-            if block.asset_hashes and block.client_reviewed_fingerprint != block.fingerprint:
-                checks.append(ReportCheck("client_pages", f"Check the images/pages in {block.key.replace('_', ' ')} for relevance and visible pricing before including them.", True, block.key))
+            from app.monthly_report_asset_review import pending_asset_indexes
+            pending_pictures = pending_asset_indexes(block, draft.sources)
+            if pending_pictures:
+                count = len(pending_pictures)
+                checks.append(ReportCheck("client_pages", f"Check {count} new or changed picture{'s' if count != 1 else ''} in {block.key.replace('_', ' ')} for relevance and visible pricing before including them.", True, block.key))
             if block.asset_hashes:
                 from app.monthly_report_content_policy import page_allowed
+                from app.monthly_report_asset_review import asset_context
                 source_index = {s.id: s for s in draft.sources}
+                image_references = {reference for n in range(len(block.asset_hashes)) for reference in asset_context(block, n)}
                 for reference in block.references:
                     parts = reference.split(":")
                     source = source_index.get(parts[0])
+                    if source is None and reference in image_references and len(parts) == 3 and parts[1].isdigit():
+                        checks.append(ReportCheck("client_source_missing", "The original source for an included picture is missing. Restore its source file or replace/remove the picture before generating.", True, block.key))
                     if source and len(parts) == 3 and parts[1].isdigit():
                         page = int(parts[1])
                         if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):

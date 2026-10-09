@@ -76,7 +76,6 @@ def test_guided_progress_is_persistent_and_resumes_same_month(monkeypatch, tmp_p
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic colleague's partial work.").run()
-    next(w for w in app.checkbox if w.label == "Save this draft for others on this report to continue").check().run()
     next(b for b in app.button if b.label == "Save progress").click().run()
     assert not app.exception
     saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
@@ -232,7 +231,6 @@ def test_section_choices_preserve_content_and_saved_status_across_new_sessions(m
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
     box = next(w for w in app.checkbox if w.label == "Include Monthly Activity Summary")
     box.uncheck().run()
-    next(w for w in app.checkbox if w.label == "Save this draft for others on this report to continue").check().run()
     next(b for b in app.button if b.label == "Save progress").click().run()
     assert any("Saved · version 1" in w.value for w in app.success)
     saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
@@ -295,7 +293,6 @@ def test_shared_report_never_identifies_a_new_browser_as_its_previous_editor(mon
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic First Editor").run()
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Saved work stays available to colleagues.").run()
-    next(w for w in app.checkbox if w.label == "Save this draft for others on this report to continue").check().run()
     next(b for b in app.button if b.label == "Save progress").click().run()
     returning = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     returning.segmented_control[0].set_value("Monthly report").run()

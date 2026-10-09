@@ -11,6 +11,7 @@ import re
 from app.monthly_report_checks import stale_period_mentions
 from app.monthly_report_import import DocxInspection, ImportMapping, _heading
 from app.monthly_report_model import BlockSpec, ReportDraft, ReportPeriod, ResolvedBlock, default_sections, layout_blocks
+from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews, preserve_asset_reviews
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
@@ -148,8 +149,10 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
     """Append evidence to a partial draft. Never substitute it for another editor's work."""
     if existing is None or existing.source == "Omit":
         return incoming
-    if incoming.fingerprint == existing.fingerprint:
-        return existing
+    if (incoming.fingerprint == existing.fingerprint
+            and all(asset_fingerprint(incoming, n) == asset_fingerprint(existing, n)
+                    for n in range(len(existing.asset_hashes)))):
+        return preserve_asset_reviews(incoming, existing)
     if ((existing.org_nodes and incoming.asset_hashes) or (incoming.org_nodes and existing.asset_hashes)
             or (existing.org_nodes and incoming.org_nodes and existing.org_nodes != incoming.org_nodes)):
         raise ValueError("The incoming report has a different org chart. Keep it for reference and explicitly replace the existing chart after import; neither chart was overwritten.")
@@ -177,11 +180,23 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
     for reviewed in (existing, incoming):
         reviewed_captions = reviewed.asset_captions + ("",) * (len(reviewed.asset_hashes) - len(reviewed.asset_captions))
         if (reviewed.client_reviewed_fingerprint == reviewed.fingerprint
-                and merged == replace(reviewed, source=merged.source, asset_captions=reviewed_captions,
-                                      reviewed_fingerprint="", client_reviewed_fingerprint="")):
+                and replace(merged, client_asset_reviews=(), asset_provenance=())
+                == replace(reviewed, source=merged.source, asset_captions=reviewed_captions,
+                           reviewed_fingerprint="", client_reviewed_fingerprint="",
+                           client_asset_reviews=(), asset_provenance=())):
             merged = replace(merged, client_reviewed_fingerprint=merged.fingerprint)
             break
-    return merged
+    # Each import names the provenance of its own pictures. Adding a different
+    # picture/table never broadens the context of previously reviewed pictures.
+    # The same bytes from a different source do acquire the combined provenance
+    # and must be checked again under that changed context.
+    contexts = {}
+    for block in (normalize_asset_reviews(existing), normalize_asset_reviews(incoming)):
+        for reference, context in block.asset_provenance:
+            contexts[reference] = tuple(sorted(set((*contexts.get(reference, ()), *context))))
+    merged = replace(merged, asset_provenance=tuple(contexts.items()))
+    merged = preserve_asset_reviews(existing, merged)
+    return preserve_asset_reviews(incoming, merged)
 
 
 def merge_report_block(existing: ResolvedBlock | None, incoming: ResolvedBlock,
@@ -328,9 +343,9 @@ def normalize_mbcx(draft: ReportDraft) -> ReportDraft:
                                  ai_paragraphs=paragraphs, ai_evidence_fingerprint="")
             else:
                 status = incoming
-            blocks["mbcx_report"] = replace(legacy, text="", ai_written=False, ai_paragraphs=(),
+            blocks["mbcx_report"] = preserve_asset_reviews(legacy, replace(legacy, text="", ai_written=False, ai_paragraphs=(),
                                              ai_evidence_fingerprint="", reviewed_fingerprint="",
-                                             client_reviewed_fingerprint="")
+                                             client_reviewed_fingerprint=""))
     if status is None:
         status = ResolvedBlock("mbcx_status", "This month")
     blocks["mbcx_status"] = status
@@ -357,9 +372,9 @@ def carried_period(block: ResolvedBlock, current_period: ReportPeriod) -> Report
 def confirm_current_period(block: ResolvedBlock, period: ReportPeriod) -> ResolvedBlock:
     """Explicit current-month confirmation preserves original evidence and dates."""
     references = tuple(r for r in block.references if not r.startswith("report-period:"))
-    return replace(block, source="Omit" if block.source == "Omit" else "This month",
+    return preserve_asset_reviews(block, replace(block, source="Omit" if block.source == "Omit" else "This month",
                    references=(*references, "report-period:" + period.key),
-                   reviewed_fingerprint="", client_reviewed_fingerprint="")
+                   reviewed_fingerprint="", client_reviewed_fingerprint=""))
 
 
 def _carry_period_content(block: ResolvedBlock, period: ReportPeriod) -> ResolvedBlock:
@@ -371,8 +386,8 @@ def _carry_period_content(block: ResolvedBlock, period: ReportPeriod) -> Resolve
         references = (*references, "report-period:" + period.key)
     if not any(r.startswith("report-origin:") for r in references):
         references = (*references, "report-origin:" + period.key)
-    return replace(block, source="Omit" if block.source == "Omit" else "Last month", references=references,
-                   reviewed_fingerprint="", client_reviewed_fingerprint="")
+    return preserve_asset_reviews(block, replace(block, source="Omit" if block.source == "Omit" else "Last month", references=references,
+                   reviewed_fingerprint="", client_reviewed_fingerprint=""))
 
 
 def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
@@ -384,11 +399,11 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
     follow_ups = seed_followups(draft)
     carried_keys = {"equipment_issues", "proposals"}
     blocks = tuple(
-        ResolvedBlock(b.key, "This month", photos_per_page=b.photos_per_page,
+        preserve_asset_reviews(b, ResolvedBlock(b.key, "This month", photos_per_page=b.photos_per_page,
                       asset_hashes=b.asset_hashes if b.key in carried_keys else (),
                       asset_captions=b.asset_captions if b.key in carried_keys else (),
                       references=b.references if b.key in carried_keys and b.asset_hashes else (),
-                      extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables))
+                      extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables)))
         if b.key in MONTHLY_BLOCKS or b.key in carried_keys else _carry_period_content(b, draft.period) for b in draft.blocks)
     # Keep evidence backing carried content at its original date and hash;
     # removing all sources would strand reviewed wording and attached charts.

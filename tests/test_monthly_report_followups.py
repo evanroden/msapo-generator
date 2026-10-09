@@ -152,11 +152,8 @@ def test_returning_user_reviews_carried_status_and_can_save_unfinished_work(
     app.segmented_control[0].set_value("Monthly report").run()
     choose_report(app, profile.facilities[0].title)
     step(app, 2)
-    assert len([w for w in app.radio if w.label == "Current status"]) == 1
-    assert len([w for w in app.radio if w.label == "Proposal decision"]) == 1
-    next(w for w in app.radio if w.label == "Current status").set_value(
-        "resolved"
-    ).run()
+    assert not any(w.label in ("Current status", "Proposal decision") for w in app.radio)
+    next(b for b in app.button if b.label == "Mark resolved").click().run()
     next(
         w for w in app.text_area if w.label == "Evidence or explanation for the status"
     ).set_value("Synthetic maintenance inspection verified resolution.").run()
@@ -165,17 +162,15 @@ def test_returning_user_reviews_carried_status_and_can_save_unfinished_work(
         for w in app.checkbox
         if w.label == "Leave this resolved item out of the report"
     ).check().run()
-    next(
-        w
-        for w in app.checkbox
-        if w.label == "I confirmed this item’s status and supporting information"
-    ).check().run()
+    next(b for b in app.button if b.label == "Confirm update").click().run()
     assert not app.exception
     step(app, 3)
     step(app, 2)
-    assert next(w for w in app.radio if w.label == "Current status").value == "resolved"
-    assert next(
-        w
-        for w in app.checkbox
-        if w.label == "Leave this resolved item out of the report"
-    ).value
+    working = next(value for key, value in app.session_state.filtered_state.items()
+                   if key.startswith("report_guided_") and key.endswith("_draft"))
+    issue = next(item for item in working.follow_ups if item.category == "issue")
+    assert issue.status == "resolved" and not issue.included
+    assert not problems(issue, working)
+    next(w for w in app.selectbox if w.label == "Section to update").set_value("proposals").run()
+    assert any(b.label == "Still correct" for b in app.button)
+    assert not any(b.label == "Mark resolved" for b in app.button)
