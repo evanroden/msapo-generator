@@ -27,6 +27,7 @@ from docx.shared import Inches, Pt, RGBColor
 
 from app.monthly_report_render_compat import rendering_docx
 from app import pdf_converter
+from app import monthly_report_render_jobs as monthly_render_jobs
 from app.ocr import SUPPORTED_IMAGE_SUFFIXES, _MAX_PIXELS_PER_FRAME
 from app.monthly_report_checks import preflight
 from app.monthly_report_model import ReportDraft, included_sections, report_filename, used_block_keys, used_asset_references
@@ -467,7 +468,7 @@ def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
             input_path = Path(directory) / (stem + ".docx")
             from app.monthly_report_designs import render_profile_for
             input_path.write_bytes(rendering_docx(docx, profile=render_profile_for(draft.profile)))
-            actual_pdf = pdf_converter.convert_to_pdf(input_path)
+            actual_pdf = monthly_render_jobs.convert_to_pdf(input_path, wait_seconds=130)
             pdf = actual_pdf.read_bytes()
             if not pdf.startswith(b"%PDF-"):
                 raise ValueError("The converter returned an invalid PDF.")

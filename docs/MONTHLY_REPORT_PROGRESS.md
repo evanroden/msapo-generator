@@ -6,6 +6,12 @@ base_commit: 6ffaa1577f491694bd63950acd3a5838600368a2
 
 # Monthly report implementation checkpoint
 
+**Owner's latest direction, October 9:** wrap up and deploy the completed work
+for owner testing now, with remaining fidelity defects documented for the next
+LLM. This supersedes the earlier PR #91 hold described below. Read
+[the current handoff](HANDOFF_MONTHLY_REPORT_2026-10-09.md) first. Final deployment
+and test evidence is recorded in PR #91; unfinished prototypes are kept separately.
+
 Latest work (2026-10-09): the native-layout release is live. PR #90 merged as
 `a26c691c0b427c2373a902a72c3f4b728b3c595c`. Final feature CI and merged-main CI
 both passed 1424 tests, zero skips, plus production Docker build/health checks.
@@ -54,6 +60,13 @@ preserving UMMC. Version 3 independently measures divider title color, preservin
 UMMC's black titles and restoring proven white titles for Unity and Eastern.
 Existing design pins remain immutable. Cover typography, remaining Word-export
 pagination and divider layering still hold release.
+Version 4's actual install controls now align Unity/Eastern cover baselines to
+within 0.14 points while preserving UMMC's native baseline positions. The fresh
+master audit also found generic table schemas replacing native column grids;
+that initialization defect is being corrected. Shared conversion locking and
+automatic preview contention retry are implemented. Latest-head CI is pending;
+`381c863` passed container checks but timed out downloading test prerequisites,
+so the bounded test-job allowance is now 45 minutes.
 See [ordered workflow notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md)
 and [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
 

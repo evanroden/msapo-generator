@@ -13,10 +13,11 @@ from zipfile import ZipFile
 from lxml import etree
 from PIL import Image, ImageChops, ImageStat
 
-VERSION = 3
+VERSION = 4
 LEGACY_DEFAULT = {"version": 1, "cover_zero_origin": False}
 VERSION_TWO_DEFAULT = {"version": 2, "cover_zero_origin": False, "divider_wrap_none": False}
-DEFAULT = {"version": VERSION, "cover_zero_origin": False, "divider_wrap_none": False, "divider_white_text": False}
+VERSION_THREE_DEFAULT = {"version": 3, "cover_zero_origin": False, "divider_wrap_none": False, "divider_white_text": False}
+DEFAULT = {**VERSION_THREE_DEFAULT, "version": VERSION, "cover_metrics": []}
 MAX_PDF_BYTES = 30 * 1024 * 1024
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
       "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
@@ -28,12 +29,16 @@ def validate_profile(value=None):
     value = dict(DEFAULT) if value is None else value
     if not isinstance(value, dict) or type(value.get("version")) is not int:
         raise ValueError("Unsupported saved PDF rendering profile.")
-    schema = {1: LEGACY_DEFAULT, 2: VERSION_TWO_DEFAULT, VERSION: DEFAULT}.get(value["version"])
-    if schema is None or set(value) != set(schema) or any(type(value[key]) is not bool for key in schema if key != "version"):
+    schema = {1: LEGACY_DEFAULT, 2: VERSION_TWO_DEFAULT, 3: VERSION_THREE_DEFAULT, VERSION: DEFAULT}.get(value["version"])
+    if schema is None or set(value) != set(schema) or any(type(value[key]) is not bool for key in schema if key not in {"version", "cover_metrics"}):
         raise ValueError("Unsupported saved PDF rendering profile.")
     # Version-one profiles remain byte-for-byte equivalent in identity payloads.
     # Do not add the new false flag to an already pinned paired design.
-    return dict(value)
+    result = dict(value)
+    if "cover_metrics" in result:
+        from app.monthly_report_cover_metrics import validate_records
+        result["cover_metrics"] = validate_records(result["cover_metrics"])
+    return result
 
 
 def identity(source_hash, pdf_hash, profile):
@@ -332,7 +337,7 @@ def _match_title_colors(titles, observed):
     return matches
 
 
-def _pdf_evidence(path, dividers=(), divider_titles=()):
+def _pdf_evidence(path, dividers=(), divider_titles=(), cover_queries=()):
     """Runs only in the bounded subprocess, never executes document actions."""
     import pymupdf as fitz
     with fitz.open(path) as pdf:
@@ -356,17 +361,19 @@ def _pdf_evidence(path, dividers=(), divider_titles=()):
                 images.append({"bbox": info["bbox"], "thumbnail": _thumbnail(data["image"])})
         divider_images = _pdf_divider_images(pdf, dividers)
         title_colors = _pdf_title_colors(pdf, divider_titles)
-        return {"text": text, "images": images, "divider_images": divider_images, "divider_title_colors": title_colors, "producer": str((pdf.metadata or {}).get("producer", ""))[:500],
+        from app.monthly_report_cover_metrics import pdf_cover_lines
+        cover_lines = pdf_cover_lines(page, list(cover_queries))
+        return {"cover_lines": cover_lines, "text": text, "images": images, "divider_images": divider_images, "divider_title_colors": title_colors, "producer": str((pdf.metadata or {}).get("producer", ""))[:500],
                 "pages": len(pdf)}
 
 
-def inspect_companion(path, dividers=(), divider_titles=()):
+def inspect_companion(path, dividers=(), divider_titles=(), *, cover_queries=()):
     path = Path(path)
     if not 0 < path.stat().st_size <= MAX_PDF_BYTES:
         raise ValueError("The companion PDF must be nonempty and at most 30 MB.")
     try:
         result = subprocess.run([sys.executable, "-m", __name__, str(path.resolve())],
-                                input=json.dumps({"dividers": dividers, "divider_titles": divider_titles}).encode(),
+                                input=json.dumps({"dividers": dividers, "divider_titles": divider_titles, "cover_queries": list(cover_queries)}).encode(),
                                 capture_output=True, timeout=25, check=False)
     except subprocess.TimeoutExpired as exc:
         raise ValueError("Reference PDF inspection timed out. The existing design is unchanged.") from exc
@@ -452,10 +459,13 @@ def calibrate(source, companion_pdf):
     title_measurements = _match_title_colors(source_titles, evidence.get("divider_title_colors", ()))
     white_titles = bool(source_titles) and len(title_measurements) == len(source_titles)
     profile = {"version": VERSION, "cover_zero_origin": zero, "divider_wrap_none": divider_none,
-               "divider_white_text": white_titles}
-    return {"render_profile":profile, "divider_measurements":divider_measurements,
+               "divider_white_text": white_titles, "cover_metrics": []}
+    from app.monthly_report_cover_metrics import calibrate_cover_metrics
+    metrics, metrics_audit = calibrate_cover_metrics(source, companion_pdf, profile)
+    profile["cover_metrics"] = metrics
+    return {"render_profile":profile, "cover_typography":metrics_audit, "divider_measurements":divider_measurements,
             "divider_title_measurements":title_measurements, "producer":evidence['producer'], "cover_measurements":measurements,
-            "pair_status":"measured-zero-origin" if zero else "measured-divider-wrap" if divider_none else "preserve-native", "pages":evidence['pages']}
+            "pair_status":"measured-cover-typography" if metrics else "measured-zero-origin" if zero else "measured-divider-wrap" if divider_none else "preserve-native", "pages":evidence['pages']}
 
 
 if __name__ == '__main__':
@@ -473,6 +483,6 @@ if __name__ == '__main__':
             raise ValueError("Invalid divider title candidates.")
         if not isinstance(filters, list) or len(filters) > 8:
             raise ValueError("Too many divider candidates.")
-        print(json.dumps(_pdf_evidence(sys.argv[1], filters, titles)))
+        print(json.dumps(_pdf_evidence(sys.argv[1], filters, titles, request.get("cover_queries", []))))
     except Exception:
         sys.exit(1)

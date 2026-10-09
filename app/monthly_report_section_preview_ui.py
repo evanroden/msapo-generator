@@ -4,10 +4,12 @@ from base64 import b64encode
 from html import escape
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore
+from time import monotonic
 
 import streamlit as st
 
 from app import monthly_report_library as library
+from app.monthly_report_render_jobs import RenderBusy
 from app.monthly_report_preview import (
     MAX_PREVIEW_BYTES, preview_page, preview_section, section_preview_fingerprint,
 )
@@ -120,6 +122,8 @@ def _build_preview_entry(draft, section_key, assets, title):
     try:
         preview = preview_section(draft, section_key, loader)
         return {"html": _page_window(preview, title), "pages": preview.pages}
+    except RenderBusy:
+        return {"busy": True}
     except Exception as exc:
         return {"error": str(exc) if isinstance(exc, ValueError) else
                 "The section preview could not update. Your edits are still here. Retry the preview when ready."}
@@ -151,10 +155,21 @@ def _advance_preview_queue(state):
             entry = {"error": "The section preview could not update. Your edits are still here."}
         # An edit made during conversion invalidates that result immediately.
         if state["wanted"].get(section) == fingerprint:
-            state["cache"][section] = {"fingerprint": fingerprint, **entry}
+            if entry.get("busy"):
+                request = state.get("running_request")
+                if request is not None:
+                    state["queue"].setdefault(section, request)
+                    state["retry_after"] = monotonic() + 2
+                else:
+                    state["wanted"].pop(section, None)
+            else:
+                state["cache"][section] = {"fingerprint": fingerprint, **entry}
         state["running"] = None
+        state.pop("running_request", None)
         _bound_ordered_preview_cache(state)
     if state.get("running") or not state["queue"]:
+        return
+    if monotonic() < state.get("retry_after", 0):
         return
     if not _PREVIEW_SLOT.acquire(blocking=False):
         return
@@ -167,6 +182,7 @@ def _advance_preview_queue(state):
         state["cache"][section] = {"fingerprint": fingerprint, "error": "The preview could not start. Your edits are still here."}
     else:
         state["running"] = (section, fingerprint, future)
+        state["running_request"] = (fingerprint, draft, assets, title)
 
 
 def _ordered_preview_state(prefix):

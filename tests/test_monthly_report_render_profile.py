@@ -108,7 +108,8 @@ def test_profile_flags_are_finite_typed_and_versioned():
 
 
 @pytest.mark.parametrize("profile", [{"version":1,"cover_zero_origin":True},
-                                     {"version":2,"cover_zero_origin":True,"divider_wrap_none":True}])
+                                     {"version":2,"cover_zero_origin":True,"divider_wrap_none":True},
+                                     {**DEFAULT,"cover_zero_origin":True,"cover_metrics":[{"anchor":"A1234567","signature":"a"*64,"line":296,"y_delta":-4.34}]}])
 def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(tmp_path,monkeypatch,profile):
     from app import monthly_report_docx as output, monthly_report_preview as preview
     from app.monthly_report_model import ReportPeriod, synthetic_draft
@@ -131,7 +132,10 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
     assert package.docx==b'native-download' and package.pdf
     preview.preview_section(draft,'cover')
     preview.preview_section(draft,'training')
-    assert calls==[(b'native-download',profile),(b'native-preview',profile),(b'native-preview',{**profile,'cover_zero_origin':False})]
+    section_profile={**profile,'cover_zero_origin':False}
+    if 'cover_metrics' in section_profile:
+        section_profile['cover_metrics']=[]
+    assert calls==[(b'native-download',profile),(b'native-preview',profile),(b'native-preview',section_profile)]
 
 
 def test_oversized_cover_images_are_checked_before_any_pixel_decoding(monkeypatch):

@@ -9,6 +9,7 @@ from lxml import etree
 
 from app.monthly_report_render_wrap import normalize_divider_wraps, normalize_invisible_wraps
 from app.monthly_report_render_profile import validate_profile
+from app.monthly_report_cover_metrics import apply_cover_metrics
 
 
 _V = "urn:schemas-microsoft-com:vml"
@@ -142,6 +143,7 @@ def rendering_docx(raw, *, profile=None):
             if color_styles:
                 changed = _divider_text_fill(root) or changed
             if part == "word/document.xml":
+                changed = apply_cover_metrics(root, profile.get("cover_metrics", [])) or changed
                 if profile.get("divider_wrap_none", False):
                     changed = normalize_divider_wraps(root) or changed
                 if profile["cover_zero_origin"]:

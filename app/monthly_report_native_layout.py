@@ -510,7 +510,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         if block.source == "Omit" or block.key not in destinations:
             continue
         selected = [item for item in inspection.items if item.kind == "text"
-                    and item.section == destinations[block.key]
+                    and (item.section == destinations[block.key] or item.note == "Native divider artwork")
                     and reference_prefix + item.id in block.references]
         expected = "\n\n".join(item.text.strip() for item in selected)
         if selected and block.text.strip() == expected.strip():
@@ -524,7 +524,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             continue
         selected_images = [item for item in inspection.items if item.kind == "image"
                            and item.part == "word/document.xml"
-                           and item.section == destinations[block.key]
+                           and (item.section == destinations[block.key] or item.note == "Native divider artwork")
                            and reference_prefix + item.id in block.references]
         image_values = [(item, _source_image_digest(str(source_path), inspection.sha256, item,
                         block.key not in ("cover_photo", "improvements"))) for item in selected_images]
@@ -727,6 +727,9 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         if detected:
             section = detected
         section_by_pos[position] = section
+        if (any(i.note == "Native divider artwork" for i in group)
+                and _is_native_divider_background(element, _text(element))):
+            headings.add(position)
         if any(i.note == "Native section heading" or
                (i.kind == "text" and not i.suggested_slot and _heading(i.text)) for i in group):
             headings.add(position)
@@ -787,6 +790,21 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             continue
         group = items[position]
         if position in headings:
+            if _is_native_divider_background(element, _text(element)):
+                # Older saved mappings may have mistaken the images in a
+                # grouped divider for organization photos. Their proven native
+                # frames are already present; do not append another full-page
+                # canvas for each previously selected constituent image.
+                for item in group:
+                    if item.kind != "image" or item.note != "Native divider artwork":
+                        continue
+                    for block in draft.blocks:
+                        if (block.source != "Omit" and reference_prefix + item.id in block.references
+                                and block.asset_hashes):
+                            digest = _source_image_digest(str(source_path), inspection.sha256, item,
+                                                         block.key not in ("cover_photo", "improvements"))
+                            if digest in block.asset_hashes:
+                                retained_images[block.key].add(digest)
             diagrams = [item for item in group if item.note == "Validated native SmartArt text"]
             unproved_diagram = (any(True for _ in element.iter(
                 "{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds"))

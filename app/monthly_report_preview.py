@@ -17,6 +17,7 @@ from PIL import Image
 
 from app.monthly_report_render_compat import rendering_docx
 from app import monthly_report_library as library, pdf_converter
+from app import monthly_report_render_jobs as monthly_render_jobs
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import _build_docx, _save, normalize_report_image
 from app.monthly_report_model import COVER_ASSET_KEYS, included_sections
@@ -78,7 +79,7 @@ def preview_report(draft, asset_loader=None):
             path = Path(directory) / (stem + ".docx")
             from app.monthly_report_designs import render_profile_for
             path.write_bytes(rendering_docx(raw, profile=render_profile_for(draft.profile)))
-            actual = pdf_converter.convert_to_pdf(path)
+            actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > 80 * 1024 * 1024:
                 raise ValueError(
                     "Preview exceeds the 80 MB conversion bound. Preview fewer sections or reduce image sizes."
@@ -286,8 +287,10 @@ def preview_section(draft, section_key, asset_loader=None):
             render_profile = render_profile_for(draft.profile)
             if section_key != "cover":
                 render_profile = {**render_profile, "cover_zero_origin": False}
+                if "cover_metrics" in render_profile:
+                    render_profile["cover_metrics"] = []
             path.write_bytes(rendering_docx(raw, profile=render_profile))
-            actual = pdf_converter.convert_to_pdf(path)
+            actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > MAX_PREVIEW_BYTES:
                 raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
             with fitz.open(actual) as pdf:

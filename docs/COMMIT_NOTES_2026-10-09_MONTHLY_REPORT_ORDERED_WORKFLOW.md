@@ -2,10 +2,16 @@
 document_type: implementation_checkpoint
 date: 2026-10-09
 base_commit: a26c691c0b427c2373a902a72c3f4b728b3c595c
-status: validation_in_progress
+status: owner_requested_testing_release
 ---
 
 # Ordered monthly report workspace
+
+The owner subsequently requested an immediate wrap-up and production testing
+release because weekly usage was nearly exhausted. That instruction supersedes
+the earlier fidelity release hold below. The unfinished items remain documented
+requirements, not completed acceptance. See the
+[next-LLM handoff](HANDOFF_MONTHLY_REPORT_2026-10-09.md).
 
 The owner's Unity/USH walkthrough found redundant navigation, unrelated directory
 selection, prominent logo controls and missing upload-driven workflows. Exact
@@ -158,6 +164,26 @@ Version 3 measures divider title color independently. Unity and Eastern prove
 opaque white title text, while UMMC preserves its black titles. Only matching
 source styles and unambiguous visible reference text can enable the correction;
 existing version 1 and 2 profile identities retain their exact schemas.
+
+Version 4 calibrates cover text baselines using at most three bounded cover-only
+renders. Actual Unity and Eastern installs independently measured the same line
+advance and anchor correction; final baseline errors were 0.01 and 0.14 points,
+with complete visible lettering. UMMC's native baselines already match and receive
+no correction. Records bind the source anchor, geometry and font metrics; stale
+or ambiguous records cannot apply. Versions 1–3 retain their exact identities.
+Monthly conversions now share a bounded process/thread lock, and section previews
+automatically retry temporary contention without caching it as a permanent error.
+
+The independent new-report audit found generic table schemas replacing some
+master-specific column grids. Identity/facts clear correctly and all sections
+remain, but table initialization still needs correction before from-scratch
+layout acceptance. This is distinct from the passing UMMC continuation.
+
+The later `381c863` container gate passed, but its test job timed out while
+downloading Ubuntu renderer packages before tests began. The job budget is now
+45 minutes; renderer tests remain mandatory. The exact `1c7f6fa` divider-color
+checkpoint passed 65 local profile/compatibility/scope tests. Full latest-head
+CI and authentic PDF acceptance remain required before release.
 
 Focused ordered save/resume/generation tests passed, as did extraction/pricing,
 manual-edit protection, selected-directory, training and asynchronous preview

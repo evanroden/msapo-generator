@@ -304,6 +304,12 @@ def safe_section_docx(path: Path, sections: tuple[int, ...]) -> bytes:
 
 
 def _render(path: Path, directory: Path) -> Path:
+    from app.monthly_report_render_jobs import conversion_slot
+    with conversion_slot(wait_seconds=130):
+        return _render_locked(path, directory)
+
+
+def _render_locked(path: Path, directory: Path) -> Path:
     binary = shutil.which("libreoffice") or shutil.which("soffice")
     if not binary:
         raise ImportError("Word page preservation is unavailable. Add a chart picture instead.")

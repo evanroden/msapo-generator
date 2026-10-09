@@ -288,6 +288,13 @@ def _is_native_divider_background(element, text=""):
     Geometry alone is insufficient: a vendor scan can also fill a page. Native
     dividers carry the lime/green shape palette and only a heading or numerals.
     """
+    text = text + " " + _text(element)
+    if any(char.isalpha() and not char.isascii() for char in text):
+        return False
+    if any(node.tag in (W + "object", W + "altChunk")
+           or node.tag.endswith("}relIds") or node.tag.endswith("}OLEObject")
+           for node in element.iter()):
+        return False
     remaining = re.sub(r"[^a-z]", "", text.casefold())
     for term in sorted({term for terms in _SECTION_TERMS.values() for term in terms}, key=len, reverse=True):
         remaining = remaining.replace(term, "")
@@ -297,14 +304,35 @@ def _is_native_divider_background(element, text=""):
     for node in element.iter():
         fill = node.get("fillcolor", "").lower()
         colors.update(re.findall(r"#([0-9a-f]{6})", fill))
-    if not colors.intersection({"d6ef4b", "d5ee4a"}) or not colors.intersection({"547e7e", "557f7f"}):
+    if not colors.intersection({"d6ef4b", "d5ee4a", "d4ed49", "d3ec48"}) or not colors.intersection({"547e7e", "557f7f", "527c7c", "537d7d"}):
         return False
     wp = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
-    return any(extent is not None and int(extent.get("cx", "0")) > 6_000_000
+    if any(extent is not None and int(extent.get("cx", "0")) > 6_000_000
                and int(extent.get("cy", "0")) > 6_000_000
                and any(node.tag == A + "blip" for node in anchor.iter())
                for anchor in element.iter(wp + "anchor")
-               for extent in (anchor.find(wp + "extent"),))
+               for extent in (anchor.find(wp + "extent"),)):
+        return True
+    # Older Word exports express the same page-backed divider as a VML group.
+    # Require physical page coordinates, the ENFRA two-colour palette and no
+    # uninspected text or embedded object inside the grouped artwork.
+    if any(node.tag == A + "t"
+           or (node.tag == V + "textpath" and node.get("string", "").strip())
+           for node in element.iter()):
+        return False
+    for group in element.iter(V + "group"):
+        style = dict(part.strip().lower().split(":", 1) for part in group.get("style", "").split(";") if ":" in part)
+        if (style.get("position") != "absolute"
+                or style.get("mso-position-horizontal-relative") != "page"
+                or style.get("mso-position-vertical-relative") != "page"
+                or not any(node.tag == V + "imagedata" and node.get(R + "id") for node in group.iter())):
+            continue
+        def points(value):
+            match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(pt|in)", value)
+            return float(match[1]) * (72 if match[2] == "in" else 1) if match else 0
+        if all(470 < points(style.get(axis, "")) < 1600 for axis in ("width", "height")):
+            return True
+    return False
 
 
 def inspect_docx(path: Path) -> DocxInspection:
@@ -544,15 +572,22 @@ def inspect_docx(path: Path) -> DocxInspection:
     for position, word_number in background_positions:
         heading = next((item for item in items if item.part == "word/document.xml"
                         and item.word_section == word_number and item.position >= position
-                        and item.kind == "text" and _heading(item.text) not in (None, "unmatched")), None)
+                        and item.kind == "text" and (item.note == "Native section heading"
+                            or _heading(item.text) not in (None, "unmatched"))), None)
         if heading is None:
             continue
-        target = _heading(heading.text)
+        between = [item for item in items if item.part == "word/document.xml"
+                   and position < item.position < heading.position]
+        if any(item.kind == "table" or (item.kind == "text"
+               and item.note != "Native section heading"
+               and not re.fullmatch(r"(?:\d{1,3}[.)]?\s*)*", heading_fragment(item.text))) for item in between):
+            continue  # A real narrative/table interrupts the decorative canvas.
+        target = heading.section if heading.note == "Native section heading" else _heading(heading.text)
         for index, item in enumerate(items):
             if item.part == "word/document.xml" and position <= item.position <= heading.position:
                 slot = "divider_" + target if item.kind == "image" else ""
                 items[index] = replace(item, section=target, suggested_slot=slot,
-                                       note="Native divider artwork" if item.position <= heading.position else item.note)
+                                       note=item.note if item.note == "Native section heading" else "Native divider artwork")
     return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section)
 
 

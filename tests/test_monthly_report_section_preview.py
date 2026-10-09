@@ -261,6 +261,52 @@ def test_ordered_preview_failure_releases_conversion_slot(monkeypatch):
     assert slot.acquire(False)
 
 
+def test_busy_preview_retries_snapshot_after_poll_without_caching_failure(monkeypatch):
+    from concurrent.futures import Future
+    from threading import BoundedSemaphore
+    jobs = []
+    class Worker:
+        def submit(self, fn, *args):
+            future = Future()
+            jobs.append((future, args))
+            return future
+    clock = [10.0]
+    monkeypatch.setattr(ui, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(ui, '_PREVIEW_WORKER', Worker())
+    slot = BoundedSemaphore(1)
+    monkeypatch.setattr(ui, '_PREVIEW_SLOT', slot)
+    snapshot = ('current', draft(), {'picture': b'pixels'}, 'Activity')
+    state = {'wanted': {'activity': 'current'}, 'queue': {'activity': snapshot},
+             'cache': {}, 'running': None}
+    ui._advance_preview_queue(state)
+    jobs[0][0].set_result({'busy': True})
+    slot.release()
+    ui._advance_preview_queue(state)
+    assert state['cache'] == {} and state['queue']['activity'] == snapshot
+    ui._advance_preview_queue(state)
+    assert len(jobs) == 1
+    clock[0] += 2
+    ui._advance_preview_queue(state)
+    assert len(jobs) == 2 and jobs[0][1] == jobs[1][1]
+    jobs[1][0].set_result({'html': 'Current page', 'pages': 1})
+    slot.release()
+    ui._advance_preview_queue(state)
+    assert state['cache']['activity']['html'] == 'Current page'
+    assert not state['queue'] and state['running'] is None
+
+
+def test_busy_conversion_is_transient_and_releases_preview_slot(monkeypatch):
+    from threading import BoundedSemaphore
+    slot = BoundedSemaphore(1)
+    assert slot.acquire(False)
+    monkeypatch.setattr(ui, '_PREVIEW_SLOT', slot)
+    def busy(*args):
+        raise ui.RenderBusy('Another export is running')
+    monkeypatch.setattr(ui, 'preview_section', busy)
+    assert ui._build_preview_entry(draft(), 'activity', {}, 'Activity') == {'busy': True}
+    assert slot.acquire(False)
+
+
 def test_ordered_preview_pane_stays_visible_and_editor_is_usable_while_rendering(monkeypatch):
     from concurrent.futures import Future
     from threading import BoundedSemaphore
