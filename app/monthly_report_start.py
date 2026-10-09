@@ -121,6 +121,8 @@ def design_seed(profile, period, actor, source=None):
             block = ResolvedBlock(spec.key, "This month", extra_tables=tuple(replace(t, columns=tuple(c for c in t.columns if not price_column(c)), rows=(), reference="") for t in prior.extra_tables) if prior else ())
         blocks.append(block)
     from app.monthly_report_branding import apply_defaults
+    from app.monthly_report_designs import pin
+    profile = pin(profile, latest_master=True)
     draft = ReportDraft(profile, period, actor, profile_sections(profile), tuple(blocks))
     return apply_defaults(draft, assets), assets
 

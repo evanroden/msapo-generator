@@ -6,6 +6,27 @@ base_commit: 6ffaa1577f491694bd63950acd3a5838600368a2
 
 # Monthly report implementation checkpoint
 
+Latest work (2026-10-09): native ENFRA master layout, based on PR #89 merge
+`f0e7fa32a20d95a9ae7338060397d9de34fab42c`. PR #89's simplification is live;
+its exact-head and merged-main CI passed 1353 tests with zero skips. PR #88
+loaded the reviewed directory: 40 contracts, 108 sites, 555 contact assignments.
+
+The owner requires completed-report replay as the acceptance test: start fresh,
+supply the known report's data through the builder, generate Word/PDF, and compare
+every page with the reference. The generic renderer is not an acceptable match.
+Native master storage/version pinning, advanced-only master replacement, fresh
+report selection and shared output/preview routing are implemented locally.
+Two authorized agents are working on passive Word-package preservation and native
+payload bindings. UMMC, Unity/USH, Eastern Region and AH source documents were
+recovered outside git. Do not commit source reports or private runtime data.
+
+Validation is still in progress: divider photographs disappear in a minimized
+Word package, and completed-report replay has not yet passed. The supplied UMMC
+PDF has 45 pages; rendering its supplied Word file with this environment gives
+46, so compare both the same-engine source render and supplied PDF and report
+that distinction. Do not deploy or claim exact fidelity until this is resolved.
+See [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
+
 Latest work: continuing simplification on `feat/monthly-report-focused-editing`,
 based on PR #86 merge `66f832f3f19f9ae4c67d4c7753a72b09e4b21790`.
 One active section, focused Cover/Organization controls, local page uploads,

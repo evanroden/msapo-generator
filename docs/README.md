@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Native ENFRA master design: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md). Source Word page design replaces generic layout reconstruction; new reports automatically use a versioned master.
+
 Current monthly defaults and live editing: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_AUTOMATIC_DEFAULTS.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_AUTOMATIC_DEFAULTS.md). This supersedes earlier section-inclusion, standing-confirmation and equipment-tag instructions.
 
 Shared contact workbook import: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIRECTORY_BATCH.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIRECTORY_BATCH.md).

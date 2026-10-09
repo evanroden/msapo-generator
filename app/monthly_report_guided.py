@@ -424,6 +424,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         # Only a setup/import just completed in this session can seed that name.
         current_actor = prepared or (draft.prepared_by if completed_setup == selected or resume else "")
         draft = complete_guided_sections(replace(draft, prepared_by=current_actor))
+        from app.monthly_report_designs import pin
+        draft = replace(draft, profile=pin(draft.profile, latest_master=not bool(snapshot)))
         if not preserve_saved_defaults:
             from app.monthly_report_capacity import resolve_capacity
             from app.monthly_report_workflow_standards import apply_defaults as apply_workflow_defaults
@@ -483,7 +485,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             render_section_setup(contract, period, prepared, field, state=state,
                                  working_draft=replace(draft, blocks=tuple(blocks.values())),
                                  working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
-            with st.expander("Advanced layout, shared assets and history"):
+            with st.expander("Advanced layout, shared assets and history", key=prefix + "_advanced_settings", on_change="rerun") as advanced:
+                if advanced.open:
+                    from app.monthly_report_designs_ui import render_design_settings
+                    render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
                 st.caption("Save your progress first. Detailed controls include section order, shared asset replacement, library history and restoration.")
                 if st.button("Open advanced editor", key=prefix + "_advanced"):
                     st.session_state["report_advanced"] = True
