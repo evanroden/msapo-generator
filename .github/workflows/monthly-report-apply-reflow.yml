@@ -14,12 +14,13 @@ jobs:
     timeout-minutes: 45
     env:
       FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
-      EPC_DATA_DIR: ${{ runner.temp }}/monthly-report-tests
       ANTHROPIC_API_KEY: test-key-not-used
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Use isolated runner storage
+        run: echo "EPC_DATA_DIR=$RUNNER_TEMP/monthly-report-tests" >> "$GITHUB_ENV"
       - name: Confirm existing application still matches the tested baseline
         run: git diff --exit-code 59293a785a198ac017f0025b88ce8c5280a1bee4 HEAD -- app/monthly_report_import.py app/monthly_report_native_layout.py docs/README.md
       - name: Install production renderers
