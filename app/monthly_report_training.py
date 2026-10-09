@@ -162,8 +162,10 @@ def add_event(table, *, title, when, mode, participants, hours, period):
 
 
 def apply_tables(block, matrix, events):
-    tables = tuple(t for t in block.extra_tables if t.reference not in (MATRIX_REF, EVENT_REF))
-    if len(matrix.columns) > 2 and matrix.rows:
+    # None means the standing matrix could not be loaded/validated, not deletion.
+    replaced_refs = (MATRIX_REF, EVENT_REF) if matrix is not None else (EVENT_REF,)
+    tables = tuple(t for t in block.extra_tables if t.reference not in replaced_refs)
+    if matrix is not None and len(matrix.columns) > 2 and matrix.rows:
         tables += (validate_matrix(matrix),)
     if events and events.rows:
         tables += (events,)

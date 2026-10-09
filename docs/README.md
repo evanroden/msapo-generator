@@ -193,3 +193,7 @@ Shared contacts in working reports:
 
 Hospital-only training roster:
 [COMMIT_NOTES_2026-10-09_HOSPITAL_TRAINING_ROSTER.md](COMMIT_NOTES_2026-10-09_HOSPITAL_TRAINING_ROSTER.md).
+
+October 9 owner usability audit and focused Training-note repair:
+[MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md).
+This supplements the earlier handoff and supersedes its routine manual-save UX.
