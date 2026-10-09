@@ -208,7 +208,7 @@ def section_preview_fingerprint(draft, section_key):
              "extra_tables": [asdict(table) for table in block.extra_tables]})
     from app.monthly_report_followups import report_text
     value = {
-        "version": 4,
+        "version": 5,
         "period": draft.period.key,
         "title": draft.profile.title,
         "contract": draft.profile.contract,

@@ -188,6 +188,11 @@ def _local(node):
 
 
 def _passive_markup(root):
+    from app.monthly_report_revision_view import current_view
+    try:
+        current_view(root)
+    except ValueError as exc:
+        raise ImportError(str(exc)) from exc
     # Fields must be evaluated as complete groups, because instruction text is
     # routinely split across runs. Non-whitelisted instructions retain only their
     # cached result, never a live command or an external-document request.

@@ -193,3 +193,6 @@ Shared contacts in working reports:
 
 Hospital-only training roster:
 [COMMIT_NOTES_2026-10-09_HOSPITAL_TRAINING_ROSTER.md](COMMIT_NOTES_2026-10-09_HOSPITAL_TRAINING_ROSTER.md).
+
+Final revision view and comment-safe exports:
+[COMMIT_NOTES_2026-10-09_REVISION_VIEW_AND_COMMENTS.md](COMMIT_NOTES_2026-10-09_REVISION_VIEW_AND_COMMENTS.md).
