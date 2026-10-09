@@ -5,6 +5,11 @@ FROM ubuntu:24.04
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
+    OMP_NUM_THREADS=1 \
+    OPENBLAS_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    MALLOC_ARENA_MAX=2 \
     PATH="/opt/venv/bin:$PATH"
 
 # Calc renders the official reimbursement workbook plus receipt worksheet as a

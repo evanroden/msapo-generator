@@ -14,6 +14,7 @@ from app.monthly_report_model import (
     ReportPeriod, ResolvedBlock, default_sections, synthetic_draft, synthetic_profiles,
 )
 from tests.conftest import requires_libreoffice
+from report_preview_test_support import immediate_worker, enable_view, payload, completed_entry
 
 
 def draft():
@@ -141,6 +142,7 @@ def test_vector_pdf_and_sharp_pages_keep_bounds_and_clean_temporary_outputs(monk
 
 
 def preview_app(monkeypatch, tmp_path):
+    immediate_worker(monkeypatch)
     calls = fake_converter(monkeypatch, tmp_path)
     app = AppTest.from_string('''
 import streamlit as st
@@ -158,6 +160,8 @@ draft = replace(base, prepared_by="", sections=default_sections(), blocks=(
 st.session_state["preview"] = render_section_preview(draft, section, {}, "synthetic")
 ''', default_timeout=15).run()
     assert not app.exception
+    assert not calls
+    enable_view(app, 'synthetic', 'activity')
     return app, calls
 
 
@@ -165,14 +169,17 @@ def test_ui_updates_on_edits_is_scrollable_and_reuses_only_unchanged_section(mon
     app, calls = preview_app(monkeypatch, tmp_path)
     assert len(calls) == 1
     assert not app.button and not app.get("download_button")
-    frame = app.get("iframe")[0].proto
-    assert frame.scrolling
-    assert "data:image/png;base64," in frame.srcdoc and "<a " not in frame.srcdoc
+    frame = app.get("bidi_component")[0].proto
+    assert 'overflow:auto' in frame.css_content
+    assert payload(app)['ready'] and payload(app)['pages']
+    assert '<a ' not in frame.html_content
     app.text_input[0].set_value("Unrelated edit").run()
     assert len(calls) == 1
     app.text_area[0].set_value("New selected section text").run()
     assert len(calls) == 2
     app.selectbox[0].set_value("training").run()
+    assert len(calls) == 2  # An offscreen pane is not rendered speculatively.
+    enable_view(app, 'synthetic', 'training')
     assert len(calls) == 3
     app.selectbox[0].set_value("activity").run()
     assert len(calls) == 3
@@ -188,13 +195,13 @@ def test_failed_rerender_hides_stale_page_and_retry_preserves_the_edit(monkeypat
     monkeypatch.setattr(ui, "preview_section", fail)
     app.text_area[0].set_value("Still here after rendering failure").run()
     assert not app.exception
-    assert not app.get("iframe")
+    assert not payload(app)['pages']
     assert any("Your edits are still here" in value.value for value in app.warning)
     app.run()
     assert app.button[0].label == "Retry preview"
     monkeypatch.setattr(ui, "preview_section", engine.preview_section)
     app.button[0].click().run()
-    assert not app.exception and app.get("iframe")
+    assert not app.exception and payload(app)["pages"]
     assert app.text_area[0].value == "Still here after rendering failure"
 
 
@@ -229,22 +236,27 @@ def test_ordered_queue_runs_one_job_and_discards_a_result_after_edit(monkeypatch
     monkeypatch.setattr(ui, '_PREVIEW_WORKER', Worker())
     slot = BoundedSemaphore(1)
     monkeypatch.setattr(ui, '_PREVIEW_SLOT', slot)
-    state = {'wanted': {'activity': 'new', 'training': 'train'},
+    state = {'wanted': {'activity': 'old', 'training': 'train'},
              'queue': {'activity': ('old', draft(), {}, 'Activity'),
                        'training': ('train', draft(), {}, 'Training')},
              'cache': {}, 'running': None}
     ui._advance_preview_queue(state)
     ui._advance_preview_queue(state)
     assert len(jobs) == 1 and state['running'][0] == 'activity'
-    jobs[0][0].set_result({'html': 'OUTDATED PAGE'})
+    state['wanted']['activity'] = 'new'
+    old_entry = completed_entry(state, 'OUTDATED PAGE')
+    jobs[0][0].set_result(old_entry)
     slot.release()
     ui._advance_preview_queue(state)
     assert 'activity' not in state['cache']
     assert len(jobs) == 2 and state['running'][0] == 'training'
-    jobs[1][0].set_result({'html': 'Current training page', 'pages': 1})
+    current_entry = completed_entry(state, 'Current training page')
+    jobs[1][0].set_result(current_entry)
     slot.release()
     ui._advance_preview_queue(state)
-    assert state['cache']['training']['html'] == 'Current training page'
+    assert state['cache']['training']['ticket'] == current_entry['ticket']
+    assert not ui.STORE.available(state['owner'], old_entry['ticket'])
+    assert ui.STORE.available(state['owner'], current_entry['ticket'])
     assert state['running'] is None
 
 
@@ -288,10 +300,11 @@ def test_busy_preview_retries_snapshot_after_poll_without_caching_failure(monkey
     clock[0] += 2
     ui._advance_preview_queue(state)
     assert len(jobs) == 2 and jobs[0][1] == jobs[1][1]
-    jobs[1][0].set_result({'html': 'Current page', 'pages': 1})
+    current_entry = completed_entry(state, 'Current page')
+    jobs[1][0].set_result(current_entry)
     slot.release()
     ui._advance_preview_queue(state)
-    assert state['cache']['activity']['html'] == 'Current page'
+    assert state['cache']['activity']['ticket'] == current_entry['ticket']
     assert not state['queue'] and state['running'] is None
 
 
@@ -319,6 +332,7 @@ def test_ordered_preview_pane_stays_visible_and_editor_is_usable_while_rendering
     monkeypatch.setattr(ui, '_PREVIEW_WORKER', Worker())
     slot = BoundedSemaphore(1)
     monkeypatch.setattr(ui, '_PREVIEW_SLOT', slot)
+    monkeypatch.setattr(ui, 'DEBOUNCE_SECONDS', 0)
     app = AppTest.from_string('''
 import streamlit as st
 from dataclasses import replace
@@ -330,19 +344,26 @@ draft = replace(draft, sections=default_sections(), blocks=(ResolvedBlock("activ
 render_section_preview(draft, "activity", {}, "ordered", deferred=True)
 ''', default_timeout=15).run()
     assert not app.exception
-    assert app.info and not app.get('iframe') and len(jobs) == 1
+    assert app.get('bidi_component') and not payload(app)['pages'] and not jobs
+    enable_view(app, 'ordered', 'activity')
+    assert len(jobs) == 1
     app.text_area[0].set_value('A saved new edit').run()
     assert not app.exception and app.text_area[0].value == 'A saved new edit'
     assert len(jobs) == 1
-    jobs[0].set_result({'html': '<p>Old preview</p>', 'pages': 1})
+    state = app.session_state['ordered_ordered_previews']
+    old_entry = completed_entry(state, 'Old preview')
+    jobs[0].set_result(old_entry)
     slot.release()
     app.run()
-    assert not app.get('iframe') and len(jobs) == 2
-    jobs[1].set_result({'html': '<p>Current preview</p>', 'pages': 1})
+    assert not payload(app)['pages'] and len(jobs) == 2
+    assert not ui.STORE.available(state['owner'], old_entry['ticket'])
+    current = completed_entry(state, 'Current preview')
+    jobs[1].set_result(current)
     slot.release()
     app.run()
-    assert not app.exception and app.get('iframe')
-    assert 'Current preview' in app.get('iframe')[0].proto.srcdoc
+    assert not app.exception and payload(app)['pages']
+    assert state['cache']['activity']['ticket'] == current['ticket']
+    assert app.text_area[0].value == 'A saved new edit'
 
 
 def test_missing_preview_source_does_not_crash_the_editor(monkeypatch, tmp_path):

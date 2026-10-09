@@ -14,6 +14,7 @@ from app.monthly_report_model import (
 )
 from tests.conftest import requires_libreoffice
 from test_monthly_report_ui import monthly, step
+from report_preview_test_support import immediate_worker, enable_view, payload
 
 
 def draft():
@@ -75,14 +76,18 @@ def test_live_preview_failure_keeps_current_edit_and_hides_stale_pages(monkeypat
     real_section_preview = monthly_report_section_preview_ui.render_section_preview
     fake_converter(monkeypatch, tmp_path)
     app = monthly(monkeypatch, tmp_path)
-    # Failure/retry semantics are deterministic in the synchronous renderer;
-    # the deferred queue has its own AppTest coverage.
+    # AppTest injects the browser visibility event. Real preview assembly and
+    # failure/retry paths still execute; this is not a browser-upload claim.
+    immediate_worker(monkeypatch)
     monkeypatch.setattr(monthly_report_section_preview_ui, "render_section_preview",
                         lambda draft, section, assets, prefix, **kwargs:
                         real_section_preview(draft, section, assets, prefix) if section == "activity" else None)
     step(app, 2)
     assert not app.exception
-    assert any("data:image/png;base64," in frame.proto.srcdoc for frame in app.get("iframe"))
+    prefix = next(key.removesuffix('_ordered_previews') for key in app.session_state.filtered_state
+                  if key.endswith('_ordered_previews'))
+    enable_view(app, prefix, 'activity')
+    assert payload(app)['pages']
     assert not any(button.label in ("Create preview PDF", "Refresh preview PDF") for button in app.button)
     assert not any(w.label == "Download draft preview PDF" for w in app.get("download_button"))
     def fail(path):
@@ -91,13 +96,12 @@ def test_live_preview_failure_keeps_current_edit_and_hides_stale_pages(monkeypat
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic updated maintenance.").run()
     assert not app.exception
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic updated maintenance."
-    assert not any("data:image/png;base64," in frame.proto.srcdoc and "Monthly Activity Summary" in frame.proto.srcdoc
-                   for frame in app.get("iframe"))
+    assert not payload(app)['pages']
     assert any("Your edits are still here" in w.value for w in app.warning)
     fake_converter(monkeypatch, tmp_path)
     next(button for button in app.button if button.label == "Retry preview" and button.key.endswith("_activity")).click().run()
     assert not app.exception
-    assert any("data:image/png;base64," in frame.proto.srcdoc for frame in app.get("iframe"))
+    assert payload(app)['pages']
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic updated maintenance."
 
 

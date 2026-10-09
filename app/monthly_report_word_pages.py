@@ -314,6 +314,8 @@ def _render_locked(path: Path, directory: Path) -> Path:
     if not binary:
         raise ImportError("Word page preservation is unavailable. Add a chart picture instead.")
     profile = directory / "office-profile"
+    from app.office_limits import prepare_profile
+    prepare_profile(profile)
     process = subprocess.Popen([sys.executable, "-c", _LIMIT_EXEC, binary, "--headless", "--norestore", "-env:UserInstallation=" + profile.as_uri(),
                                 "--convert-to", "pdf:writer_pdf_Export", "--outdir", str(directory), str(path)],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)

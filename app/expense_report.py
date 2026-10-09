@@ -1038,23 +1038,26 @@ def convert_expense_workbook_to_pdf(workbook_bytes: bytes) -> bytes:
         # successfully having written no file at all -- which surfaces here as
         # the "could not render" branch below, intermittently, only under load.
         # The Writer path in app/pdf_converter.py had to learn this separately.
-        profile_uri = (temp / "libreoffice-profile").resolve().as_uri()
-        result = subprocess.run(
-            [
-                executable,
-                "--headless",
-                f"-env:UserInstallation={profile_uri}",
-                "--convert-to",
-                "pdf:calc_pdf_Export",
-                "--outdir",
-                str(temp),
-                str(source),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
+        from app.office_limits import prepare_profile
+        from app.monthly_report_render_jobs import conversion_slot
+        profile_uri = prepare_profile(temp / 'libreoffice-profile')
+        with conversion_slot(wait_seconds=130):
+            result = subprocess.run(
+                [
+                    executable,
+                    "--headless",
+                    f"-env:UserInstallation={profile_uri}",
+                    "--convert-to",
+                    "pdf:calc_pdf_Export",
+                    "--outdir",
+                    str(temp),
+                    str(source),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
         # check=False, then test for the OUTPUT FILE. LibreOffice routinely
         # exits 0 while converting nothing (missing import filter, profile
         # lock, unreadable input), so trusting the return code is how a

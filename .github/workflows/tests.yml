@@ -89,3 +89,20 @@ jobs:
       - name: Remove smoke-test container
         if: always()
         run: docker rm --force msapo-render-check || true
+
+  monthly-report-resources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image for capped resource test
+        run: docker build --tag msapo-resource-check .
+      - name: Exercise two preview visitors and final export at Starter limits
+        run: |
+          docker run --name msapo-resource-check --memory=512m --memory-swap=512m --cpus=0.5 \
+            --env RESOURCE_REQUIRE_512_MB=1 --env ANTHROPIC_API_KEY=test-key-not-used \
+            --entrypoint python msapo-resource-check scripts/qa_monthly_report_resources.py
+          test "$(docker inspect --format='{{.State.OOMKilled}}' msapo-resource-check)" = false
+      - name: Remove synthetic resource container
+        if: always()
+        run: docker rm --force msapo-resource-check || true
