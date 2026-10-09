@@ -240,6 +240,7 @@ def _fit_cover_photo(node, image_width, image_height):
 
 
 def _table(element, columns, rows):
+    explicit_header = bool(columns)
     native_rows = element.findall(qn("w:tr"))
     if not native_rows:
         raise NativeLayoutError("The source table has no row geometry.")
@@ -286,6 +287,9 @@ def _table(element, columns, rows):
         for height in list(row.iter(qn("w:trHeight"))):
             height.set(qn("w:hRule"), "atLeast")
         element.append(row)
+    if explicit_header and rows:
+        from app.monthly_report_table_pagination import keep_current_header_with_rows
+        keep_current_header_with_rows(element)
 
 
 def _cover(element, draft, *, preserve_issue_date=False):
@@ -1085,6 +1089,16 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             for existing in list(body.findall(qn("w:sectPr"))):
                 body.remove(existing)
             body.append(closing)
+
+    contact = next((block for block in draft.blocks if block.key == "contact_matrix"), None)
+    if contact is not None and not contact.rows and not any(table.rows for table in contact.extra_tables):
+        # An explicitly empty current contact table must not leave an orphan
+        # heading below an independently retained chart. Other source tables and
+        # any boundary-bearing or emitted table keep their existing page proof.
+        for anchor, _ in table_prototypes.get("contact_matrix", ()):
+            if (anchor.getparent() is not None and anchor not in page_plan.live
+                    and anchor.find(".//" + qn("w:sectPr")) is None):
+                anchor.getparent().remove(anchor)
 
     page_plan.finish()
 
