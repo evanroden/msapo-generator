@@ -749,6 +749,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     divider_word_sections = {item.word_section for position in headings for item in items[position]}
     if section_key and section_key not in set(section_by_pos.values()):
         raise NativeLayoutError(f"The source layout does not contain the {section_key} section.")
+    from app.monthly_report_native_pages import NativePages
+    unchanged_positions = {item.position for item in inspection.items
+                           if item.part == "word/document.xml" and item.id in unchanged_items}
+    page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master)
     text_prototypes = defaultdict(list)
     image_prototypes = defaultdict(list)
     table_prototypes = defaultdict(list)
@@ -860,9 +864,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             # never erase/reappend the already current technical table itself.
             _clear_images(element)
             continue
-        if text and text.casefold().strip() not in _STATIC:
+        if element.tag == qn("w:p") and text and text.casefold().strip() not in _STATIC:
             if re.fullmatch(r"(?:Monthly Training Update [–—-] )?" + _MONTH.pattern + r"(?: Activity)?", text, re.IGNORECASE):
                 _set_text(element, _MONTH.sub(draft.period.label, text))
+                page_plan.support.add(element)
             else:
                 text_prototypes[slot].append((element, deepcopy(element)))
                 if element.tag == qn("w:p"):
@@ -916,6 +921,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         _clear_images(clone)
         _set_text(clone, "")
         section_ends[sec].addprevious(clone)
+        page_plan.assigned(clone, section_ends[sec])
         return clone
 
     def text_anchor(sec):
@@ -963,6 +969,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             for index, value in enumerate(values):
                 if index < len(anchors):
                     _set_text(anchors[index][0], value)
+                    page_plan.emitted(anchors[index][0])
                     anchor = anchors[index][0]
                 else:
                     clone = deepcopy(prototype)
@@ -971,11 +978,13 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     _clear_images(clone)
                     _set_text(clone, value)
                     anchor.addnext(clone)
+                    page_plan.emitted(clone, anchor)
                     anchor = clone
         tables = []
         if block.rows:
             tables.append((tuple(c.title for c in spec.columns), block.rows, ""))
-        tables.extend((t.columns, t.rows, t.reference) for t in block.extra_tables if t.reference not in preserved_table_refs)
+        tables.extend((t.columns, t.rows, t.reference) for t in block.extra_tables
+                      if t.reference not in preserved_table_refs and (t.rows or not master))
         if tables:
             anchors = table_prototypes.get(block.key)
             if not anchors:
@@ -993,7 +1002,9 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 if index >= len(anchors):
                     anchor = deepcopy(prototype)
                     last.addnext(anchor)
+                    page_plan.assigned(anchor, last)
                 _table(anchor, columns, rows)
+                page_plan.emitted(anchor, kind="table")
                 from app.monthly_report_training_style import style_training_table
                 style_training_table(anchor, table_reference)
                 last = anchor
@@ -1012,23 +1023,35 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             anchors = image_prototypes.get(block.key)
             if not anchors:
                 choices = section_images.get(sec) or global_images
-                if not choices:
+                if not choices and block.key in ("improvements", "cover_photo", "brand_logo", "client_logo"):
                     raise NativeLayoutError(f"The source has no native picture frame for {block.key}.")
-                prototype = choices[0]
+                # Technical content needs the section's page geometry, not an
+                # old photograph. Empty chart pages can accept a new inline frame.
+                prototype = choices[0] if choices else OxmlElement("w:p")
                 anchors = [(append_native(sec, prototype), prototype)]
             last = None
             for index, data in enumerate(images):
                 anchor, prototype = anchors[min(index, len(anchors) - 1)]
-                clone = deepcopy(prototype)
-                for properties in list(clone.iter(qn("w:sectPr"))):
-                    properties.getparent().remove(properties)
-                _set_text(clone, "")
-                _replace_image(document, clone, data)
+                technical = block.key not in ("improvements", "cover_photo", "brand_logo", "client_logo")
+                if technical:
+                    clone = page_plan.technical_picture(document, anchor if index < len(anchors) else last, data, new_page=index > 0,
+                                                        caption=bool(block.asset_captions))
+                else:
+                    clone = deepcopy(prototype)
+                    for properties in list(clone.iter(qn("w:sectPr"))):
+                        properties.getparent().remove(properties)
+                    _set_text(clone, "")
+                    _replace_image(document, clone, data)
                 if index < len(anchors):
                     anchor.addprevious(clone)
-                    anchor.getparent().remove(anchor)
+                    page_plan.emitted(clone, anchor, kind="picture")
+                    # The old frame may own the section boundary. Keep that
+                    # boundary until page accounting has finished its reflow.
+                    if anchor.find(".//" + qn("w:sectPr")) is None:
+                        anchor.getparent().remove(anchor)
                 else:
                     last.addnext(clone)
+                    page_plan.emitted(clone, last, kind="picture")
                 last = clone
                 caption_index = image_indexes[index] if image_indexes else index
                 if caption_index < len(block.asset_captions) and block.asset_captions[caption_index].strip():
@@ -1039,6 +1062,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     _clear_images(caption)
                     _set_text(caption, block.asset_captions[caption_index])
                     clone.addnext(caption)
+                    page_plan.emitted(caption, clone, kind="caption")
                     last = caption
     if section_key:
         selected_positions = [position for position, sec in section_by_pos.items()
@@ -1061,6 +1085,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             for existing in list(body.findall(qn("w:sectPr"))):
                 body.remove(existing)
             body.append(closing)
+
+    page_plan.finish()
 
     # Source notes and comments are source facts, not current report content.
     explicit_notes = set(supplied_notes)
