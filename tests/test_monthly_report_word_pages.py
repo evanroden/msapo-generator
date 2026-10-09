@@ -189,7 +189,7 @@ def test_guided_native_page_selection_save_reopen_and_review_invalidation(tmp_pa
     upload.name, upload.size = path.name, len(upload.getvalue())
     real_upload = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *a, **kw:
-                        upload if label == "Older or partially completed report" else real_upload(label, *a, **kw))
+                        upload if label == "Starting report" else real_upload(label, *a, **kw))
     original_states = ElementTree.get_widget_states
     def states(tree):
         values = original_states(tree)
@@ -206,6 +206,7 @@ p = synthetic_profiles()[0]
 render_section_setup(p.contract, ReportPeriod(2026,9), "Synthetic Editor", _field, identity=p)
 ''', default_timeout=30).run()
     next(b for b in app.button if b.label == "Analyze report").click().run()
+    next(w for w in app.multiselect if w.label == "Sites shown in the starting report").set_value(["north"]).run()
     inspection = inspect_docx(path)
     stage_key = next(k for k in app.session_state.filtered_state if k.endswith("_stage"))
     prefix = stage_key.removesuffix("_stage") + "_" + inspection.sha256[:16]
@@ -227,12 +228,9 @@ render_section_setup(p.contract, ReportPeriod(2026,9), "Synthetic Editor", _fiel
     next(w for w in app.radio if w.label == "Use this page as").set_value("org_chart").run()
     next(w for w in app.checkbox if w.label.startswith("Page 1 matches")).check().run()
     org_ready().check().run()
-    for key in ("cover", "activity"):
-        app.session_state[prefix + "_section_" + key + "_open"] = True
-        app.run()
-        next(w for w in app.radio if w.key == prefix + "_section_" + key + "_action").set_value("Leave this section out").run()
-        next(w for w in app.checkbox if w.key.startswith(prefix + "_section_" + key + "_ready_")).check().run()
-    next(w for w in app.checkbox if w.label == "Save this report and its reusable design for these sites").check().run()
+    # Readable sections no longer require a second, manual approval pass.
+    assert all(app.session_state[prefix + "_section_plans"][key]["approved"]
+               for key in ("cover", "activity"))
     next(b for b in app.button if b.label == "Continue to this month’s updates").click().run()
     assert not app.exception
     profile = synthetic_profiles()[0]

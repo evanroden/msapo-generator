@@ -1,6 +1,7 @@
 from io import BytesIO
 
 from app import monthly_report_upload_ui as ui
+from app.monthly_report_content_policy import page_allowed
 from test_monthly_report_editor import app_with_library
 from test_monthly_report_sources import pdf_bytes
 
@@ -11,6 +12,11 @@ def button(app, label):
 
 def select(app, label):
     return next(w for w in app.selectbox if w.label == label)
+
+
+def reviewed_source(app):
+    return next(value[0].source for key, value in app.session_state.filtered_state.items()
+                if key.endswith("_evidence") and isinstance(value, tuple) and value)
 
 
 def upload(monkeypatch, name, data):
@@ -31,7 +37,7 @@ def test_upload_selection_invalidation_and_workflow_retention(monkeypatch, tmp_p
     select(app, "Classification").set_value("Vendor service").run()
     for page in (1, 2, 3):
         select(app, "Preview page / item").set_value(page).run()
-        next(w for w in app.checkbox if w.label.startswith("I checked this page:")).check().run()
+        button(app, "Include page and continue").click().run()
     button(app, "Prepare selected pages").click().run()
     assert not app.exception
     next(w for w in app.selectbox if w.key.endswith("_vendor_reports_source")).set_value("This month").run()
@@ -61,13 +67,17 @@ def test_cmms_mapping_applies_real_schema_and_invalidates_on_change(monkeypatch,
                          ("Facility column", "Facility"), ("PM/CM category column", "Type")):
         select(app, label).set_value(value).run()
     next(w for w in app.multiselect if w.label == "Category values that mean PM").set_value(["PM"]).run()
-    next(w for w in app.checkbox if w.label == "I confirm this CMMS mapping and coverage").check().run()
+    assert not any(w.label == "I confirm this CMMS mapping and coverage" for w in app.checkbox)
     button(app, "Apply CMMS mapping").click().run()
     assert not app.exception
     next(w for w in app.selectbox if w.key.endswith("_service_calls_source")).set_value("This month").run()
     assert any(w.label == "This month's content" for w in app.radio)
     select(app, "Finish date column").set_value("").run()
     assert not app.exception
+    assert not any(w.label == "This month's content" for w in app.radio)
+    button(app, "Apply CMMS mapping").click().run()
+    assert not app.exception
+    assert any("Map the finish date and work-order identity" in w.value for w in app.error)
     assert not any(w.label == "This month's content" for w in app.radio)
 
 
@@ -76,27 +86,25 @@ def test_guided_page_review_keeps_omits_and_invalidates_caption(monkeypatch, tmp
     upload(monkeypatch, "synthetic.pdf", pdf_bytes(3))
     app.run()
     button(app, "Read monthly files").click().run()
-    assert button(app, "Include page and continue").disabled
-    next(w for w in app.checkbox if w.label.startswith("I checked this page:")).check().run()
+    assert not button(app, "Include page and continue").disabled
+    assert not any(w.label.startswith("I checked this page:") for w in app.checkbox)
     button(app, "Include page and continue").click().run()
     assert not app.exception
     assert select(app, "Preview page / item").value == 2
     button(app, "Leave page out and continue").click().run()
     assert select(app, "Preview page / item").value == 3
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 3]
-    next(w for w in app.checkbox if w.label.startswith("I checked this page:")).check().run()
     button(app, "Include page and continue").click().run()
     assert button(app, "Next page needing review").disabled
     select(app, "Preview page / item").set_value(1).run()
     next(w for w in app.text_input if w.label == "Page caption").set_value("Changed caption").run()
-    assert button(app, "Include page and continue").disabled
+    assert not page_allowed(reviewed_source(app), 1)
     app.segmented_control[0].set_value("Expense reimbursement").run()
     app.segmented_control[0].set_value("Monthly report").run()
     assert not app.exception
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 3]
-    assert button(app, "Include page and continue").disabled
+    assert not page_allowed(reviewed_source(app), 1)
     select(app, "Preview page / item").set_value(2).run()
-    next(w for w in app.checkbox if w.label.startswith("I checked this page:")).check().run()
     button(app, "Include page and continue").click().run()
     assert select(app, "Preview page / item").value == 1
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 2, 3]
@@ -114,7 +122,26 @@ def test_priced_page_cannot_be_included_by_guided_action(monkeypatch, tmp_path):
     button(app, "Read monthly files").click().run()
     assert not app.exception
     assert button(app, "Include page and continue").disabled
-    assert next(w for w in app.checkbox if w.label.startswith("I checked this page:")).disabled
+    assert not any(w.label.startswith("I checked this page:") for w in app.checkbox)
     button(app, "Leave page out and continue").click().run()
     assert not app.exception
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == []
+
+
+def test_include_action_requires_visible_page_and_price_free_caption(monkeypatch, tmp_path):
+    app, _ = app_with_library(monkeypatch, tmp_path)
+    upload(monkeypatch, "synthetic.pdf", pdf_bytes(1))
+    app.run()
+    button(app, "Read monthly files").click().run()
+    assert not button(app, "Include page and continue").disabled
+    next(w for w in app.text_input if w.label == "Page caption").set_value("Invoice total: $500").run()
+    assert button(app, "Include page and continue").disabled
+    assert not page_allowed(reviewed_source(app), 1)
+    next(w for w in app.text_input if w.label == "Page caption").set_value("Equipment inspection").run()
+    def missing_preview(*args, **kwargs):
+        raise OSError("Synthetic preview unavailable")
+    monkeypatch.setattr(ui.sources, "page_image", missing_preview)
+    app.run()
+    assert not app.exception and button(app, "Include page and continue").disabled
+    assert not page_allowed(reviewed_source(app), 1)
+    assert any("Synthetic preview unavailable" in w.value for w in app.error)

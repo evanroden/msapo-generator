@@ -187,3 +187,28 @@ def test_including_omitted_linked_update_preserves_sources_and_requires_source_r
     assert not app.exception and not app.text_area and not app.checkbox and not app.button
     assert app.session_state["status"] == included
     assert app.session_state["pages"].asset_hashes == ("page0",)
+
+
+def test_legacy_suggested_update_has_one_use_action_and_keeps_review_until_edited():
+    status = ResolvedBlock("mbcx_status", "This month", text="Synthetic monitoring shows stable operation.",
+                           ai_written=True, references=("source-1:1",))
+    app = app_for(status=status)
+    assert not app.exception and not app.checkbox
+    assert not app.session_state["status"].reviewed
+    next(b for b in app.button if b.label == "Use this update").click().run()
+    assert app.session_state["status"].reviewed
+    app.run()
+    assert not app.exception and not app.button and not app.checkbox
+    assert any("review is retained" in c.value for c in app.caption)
+    app.text_area[0].set_value("Synthetic monitoring found a sensor fault.").run()
+    assert not app.session_state["status"].reviewed
+    assert any(b.label == "Use this update" for b in app.button)
+
+
+def test_user_entered_update_does_not_need_a_remember_or_review_choice():
+    app = app_for("Synthetic operator entered an update.")
+    assert not app.exception and not app.checkbox and not app.button
+    app.text_area[0].set_value("Synthetic operator updated the result.").run()
+    app.run()
+    assert app.session_state["status"].text == "Synthetic operator updated the result."
+    assert not app.checkbox and not app.button

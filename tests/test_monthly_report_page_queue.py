@@ -37,13 +37,11 @@ def test_scanned_pages_advance_through_initially_unselected_pages(monkeypatch, t
     destination = next(x for x in app.selectbox if x.label == "Add synthetic-scanned.pdf to")
     assert "Maintenance — vendor service pages" in destination.options
     assert "vendor_reports" not in destination.options
-    next(x for x in app.checkbox if x.label.startswith("I checked this page:")).check().run()
     button(app, "Include page and continue").click().run()
     assert select(app, "Preview page / item").value == 2
     assert not any("Every page has been checked" in x.value for x in app.success)
     button(app, "Leave page out and continue").click().run()
     assert select(app, "Preview page / item").value == 3
-    next(x for x in app.checkbox if x.label.startswith("I checked this page:")).check().run()
     button(app, "Include page and continue").click().run()
     assert button(app, "Next page needing review").disabled
     assert any("Every page has been checked" in x.value for x in app.success)

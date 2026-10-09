@@ -53,7 +53,7 @@ def _page_number(label, count, prefix, field):
     )
 
 
-def edit_org_chart(draft, block, prefix, assets, field):
+def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
     p = prefix + "_org"
     if not block.org_nodes:
         if block.asset_hashes:
@@ -116,7 +116,7 @@ def edit_org_chart(draft, block, prefix, assets, field):
                 )
                 _install(draft, prefix, new, clear=p + "_person_")
         return block
-    left, right = st.columns([1, 1])
+    left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
     nodes = []
     with left:
         for node in block.org_nodes:
@@ -156,8 +156,7 @@ def edit_org_chart(draft, block, prefix, assets, field):
                 nodes.append(
                     replace(node, name=name, role=role, team=team, reports_to=parent)
                 )
-                remove = st.checkbox("Remove this position", key=key + "_remove")
-                if remove and st.button("Remove position", key=key + "_remove_button"):
+                if st.button("Remove position", key=key + "_remove_button"):
                     kept = tuple(
                         replace(n, reports_to="") if n.reports_to == node.key else n
                         for n in (*nodes[:-1], *block.org_nodes[len(nodes) :])
@@ -181,18 +180,19 @@ def edit_org_chart(draft, block, prefix, assets, field):
                 replace(block, org_nodes=(*nodes, OrgChartNode(f"position-{number}"))),
                 clear=p + "_person_",
             )
-    with right:
-        st.write("Org chart preview")
-        try:
-            count = len(org_groups(block.org_nodes))
-            page = _page_number("Chart page", count, p, field)
-            st.image(org_page(block.org_nodes, page), width="stretch")
-            if count > 1:
-                st.caption(
-                    f"{count} pages keep larger teams readable. Reporting lines are exactly the ones you selected."
-                )
-        except ValueError as exc:
-            st.info(str(exc))
+    if show_preview:
+        with right:
+            st.write("Org chart preview")
+            try:
+                count = len(org_groups(block.org_nodes))
+                page = _page_number("Chart page", count, p, field)
+                st.image(org_page(block.org_nodes, page), width="stretch")
+                if count > 1:
+                    st.caption(
+                        f"{count} pages keep larger teams readable. Reporting lines are exactly the ones you selected."
+                    )
+            except ValueError as exc:
+                st.info(str(exc))
     return block
 
 
@@ -226,7 +226,7 @@ def _contact_rows(columns, rows, p, field):
     return tuple(edited), remove_index
 
 
-def edit_contacts(draft, spec, block, prefix, assets, field):
+def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True):
     block = preserve_asset_reviews(block, block)
     p = prefix + "_contacts_" + block.key
     tables = list(block.extra_tables)
@@ -245,6 +245,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
                 p + "_pages",
                 lambda ref: assets.get(ref)
                 or library.read_asset(draft.profile.contract, draft.profile.key, ref),
+                show_preview=show_preview,
             )
     if not tables:
         with st.expander("View or change saved contact pages", expanded=not block.asset_hashes):
@@ -256,6 +257,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
                     p + "_pages",
                     lambda ref: assets.get(ref)
                     or library.read_asset(draft.profile.contract, draft.profile.key, ref),
+                    show_preview=show_preview,
                 )
             upload = st.file_uploader(
                 "Replacement facility contact page",
@@ -304,7 +306,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
             )
             _install(draft, prefix, new, clear=p + "_table_")
         return block
-    left, right = st.columns([1, 1])
+    left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
     updated = []
     with left:
         st.caption(
@@ -336,17 +338,18 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
                     client_reviewed_fingerprint="",
                 )
                 _install(draft, prefix, new, clear=p + "_table_")
-    with right:
-        st.write("Contacts in this report")
-        for table in updated:
-            st.dataframe(
-                [dict(zip(table.columns, row)) for row in table.rows],
-                hide_index=True,
-                width="stretch",
+    if show_preview:
+        with right:
+            st.write("Contacts in this report")
+            for table in updated:
+                st.dataframe(
+                    [dict(zip(table.columns, row)) for row in table.rows],
+                    hide_index=True,
+                    width="stretch",
+                )
+            st.caption(
+                "These same values appear in the report’s contact table. Use Save progress to keep them for the next report."
             )
-        st.caption(
-            "These same values appear in the report’s contact table. Use Save progress to keep them for the next report."
-        )
     changed = replace(
         block,
         rows=updated[0].rows if has_primary else (),
@@ -357,7 +360,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
     return preserve_asset_reviews(block, replace(changed, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint=""))
 
 
-def edit_photos(draft, block, prefix, assets, field):
+def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     block = preserve_asset_reviews(block, block)
     p = prefix + "_photos_" + block.key
     with st.expander("Add progress photos", expanded=not block.asset_hashes):
@@ -406,7 +409,8 @@ def edit_photos(draft, block, prefix, assets, field):
         st.info("Add photos when you have them. You can work on another section first.")
         return block
     editing_key = p + "_editing"
-    if not pending_asset_indexes(block) and not st.session_state.get(editing_key):
+    pending_indexes = pending_asset_indexes(block)
+    if not pending_indexes and not st.session_state.get(editing_key):
         st.caption(f"{len(block.asset_hashes)} photos ready. Captions and reviews are saved.")
         if st.button("Edit photos or captions", key=p + "_edit"):
             st.session_state[editing_key] = True
@@ -415,16 +419,24 @@ def edit_photos(draft, block, prefix, assets, field):
     if st.session_state.get(editing_key) and st.button("Done editing photos", key=p + "_done"):
         st.session_state[editing_key] = False
         st.rerun()
-    left, right = st.columns([1, 1])
+    editing = st.session_state.get(editing_key, False)
+    if not editing and len(pending_indexes) < len(block.asset_hashes):
+        st.caption(f"{len(pending_indexes)} new or changed photos. Earlier photos keep their captions and reviews.")
+        if st.button("Edit all photos or captions", key=p + "_edit_all"):
+            st.session_state[editing_key] = True
+            st.rerun()
+    visible = tuple(range(len(block.asset_hashes))) if editing else pending_indexes
+    left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
     with left:
         number = st.select_slider(
             "Photos per page",
             options=list(range(1, 7)),
             key=field(p + "_count", block.photos_per_page),
         )
-        captions = []
+        existing_captions = tuple(block.asset_captions[n] if n < len(block.asset_captions) else "" for n in range(len(block.asset_hashes)))
+        captions = list(existing_captions)
         identity = _signature(block.asset_hashes)
-        for n, ref in enumerate(block.asset_hashes):
+        for n in visible:
             with st.expander(
                 "Photo " + str(n + 1), expanded=len(block.asset_hashes) <= 2
             ):
@@ -439,41 +451,40 @@ def edit_photos(draft, block, prefix, assets, field):
                     max_chars=600,
                     height=90,
                 )
-                captions.append(caption)
+                captions[n] = caption
                 if st.button("Remove photo", key=p + f"_remove_{identity}_{n}"):
-                    current_captions = (*captions, *block.asset_captions[n + 1 :])
                     indexes = tuple(i for i in range(len(block.asset_hashes)) if i != n)
                     replacement = replace(
                         block,
                         source="This month",
                         asset_hashes=tuple(block.asset_hashes[i] for i in indexes),
-                        asset_captions=tuple(current_captions[i] if i < len(current_captions) else "" for i in indexes),
+                        asset_captions=tuple(captions[i] for i in indexes),
                         photos_per_page=number,
                     )
                     _install(draft, prefix, preserve_asset_reviews(block, replacement), clear=p + "_caption_")
-        existing_captions = tuple(block.asset_captions[n] if n < len(block.asset_captions) else "" for n in range(len(block.asset_hashes)))
         candidate = replace(block, asset_captions=block.asset_captions if tuple(captions) == existing_captions else tuple(captions), photos_per_page=number)
         if candidate != block:
             block = preserve_asset_reviews(block, replace(candidate, source="This month"))
         candidate = block
-    with right:
-        st.write("Photo page preview")
-        try:
-            count = photo_count(candidate)
-            if count:
-                page = _page_number("Photo page", count, p, field)
-                loader = lambda ref: (
-                    assets.get(ref)
-                    or library.read_asset(
-                        draft.profile.contract, draft.profile.key, ref
+    if show_preview:
+        with right:
+            st.write("Photo page preview")
+            try:
+                count = photo_count(candidate)
+                if count:
+                    page = _page_number("Photo page", count, p, field)
+                    loader = lambda ref: (
+                        assets.get(ref)
+                        or library.read_asset(
+                            draft.profile.contract, draft.profile.key, ref
+                        )
                     )
-                )
-                st.image(photo_page(candidate, loader, page), width="stretch")
-                st.caption(
-                    f"{count} photo pages. Images keep their original proportions."
-                )
-            else:
-                st.info("No photos are included.")
-        except ValueError as exc:
-            st.error(str(exc))
+                    st.image(photo_page(candidate, loader, page), width="stretch")
+                    st.caption(
+                        f"{count} photo pages. Images keep their original proportions."
+                    )
+                else:
+                    st.info("No photos are included.")
+            except ValueError as exc:
+                st.error(str(exc))
     return block

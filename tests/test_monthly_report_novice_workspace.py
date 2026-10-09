@@ -46,7 +46,6 @@ def test_general_template_sections_have_one_editing_home(monkeypatch, tmp_path):
     next(w for w in app.text_input if w.label == 'Site name').set_value('Synthetic Cedar').run()
     next(b for b in app.button if b.label == 'Use ENFRA template').click().run()
     next(w for w in app.text_input if w.label == 'Your name').set_value('Synthetic Editor').run()
-    next(w for w in app.checkbox if w.label == 'Save this design for these sites so we can use it next month').check().run()
     next(b for b in app.button if b.label == 'Start this report').click().run()
     step(app, 2)
     chooser = next(w for w in app.selectbox if w.label == 'Section to update')
@@ -70,9 +69,8 @@ def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_m
     from app.contracts import RRH_CONTRACT
     app = monthly(monkeypatch, tmp_path)
     next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Editor').run()
-    next(w for w in app.checkbox if w.label == 'Include Monthly Activity Summary').uncheck().run()
-    next(w for w in app.checkbox if w.label == 'Include MBCx Reports').check().run()
     step(app, 2)
+    next(w for w in app.selectbox if w.label == 'Section to update').set_value('mbcx').run()
     update = next(w for w in app.text_area if w.label == 'Update to include in the report')
     assert update.value == ''
     next(b for b in app.button if b.label == 'Reporting has not started').click().run()
@@ -84,4 +82,5 @@ def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_m
     assert next(b for b in saved.draft.blocks if b.key == 'mbcx_status').text == 'Synthetic equipment monitoring is awaiting activation.'
     app.selectbox('report_month_number').set_value(10).run()
     step(app, 2)
+    next(w for w in app.selectbox if w.label == 'Section to update').set_value('mbcx').run()
     assert next(w for w in app.text_area if w.label == 'Update to include in the report').value == 'Synthetic equipment monitoring is awaiting activation.'

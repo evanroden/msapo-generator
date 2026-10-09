@@ -9,7 +9,7 @@ import streamlit as st
 from app import monthly_report_sources as sources
 from app.monthly_report_cmms import CMMSMapping, map_cmms, month_window
 from app.monthly_report_model import ReportPeriod, ReportProfile
-from app.monthly_report_content_policy import page_status, page_fingerprint, page_allowed
+from app.monthly_report_content_policy import page_status, page_fingerprint, page_allowed, contains_price
 
 
 def _signature(value) -> str:
@@ -48,13 +48,6 @@ def _sync_source_fields(source, prefix, field):
         if before.get(number) != after.get(number):
             value = after.get(number, f"{source.filename} · page/item {number}")
             st.session_state[field(prefix + f"_caption_{number}", value)] = value
-    if previous.client_page_reviews != source.client_page_reviews:
-        for number in range(1, len(source.page_texts) + 1):
-            fingerprint = page_fingerprint(source, number)
-            value = page_allowed(source, number)
-            st.session_state[field(prefix + f"_client_page_{number}_" + fingerprint, value)] = value
-
-
 def _cmms(content, profile, period, prefix, field):
     source = content.source
     tables = [t for i, t in enumerate(content.tables, 1) if i in source.selected_pages]
@@ -96,13 +89,13 @@ def _cmms(content, profile, period, prefix, field):
     mapping = CMMSMapping(**values, assigned_facility=assigned, completed_statuses=tuple(statuses), pm_values=tuple(pm),
                           cm_values=tuple(cm), date_format=date_format, complete_months=tuple(months), complete_facilities=tuple(facilities))
     signature = _signature((source.fingerprint, asdict(mapping), period.key))
-    confirmation = st.checkbox("I confirm this CMMS mapping and coverage", key=prefix + "_confirm_" + signature)
     result_key = prefix + "_result"
     result = st.session_state.get(result_key)
     if result and result[0] != signature:
         st.session_state.pop(result_key, None)
         result = None
-    if st.button("Apply CMMS mapping", key=prefix + "_apply", disabled=not confirmation):
+    st.caption("Applying uses the columns and complete-coverage selections shown above. Months without confirmed coverage stay blank.")
+    if st.button("Apply CMMS mapping", key=prefix + "_apply"):
         try:
             index = content.tables.index(table) + 1
             mapped = map_cmms(table, mapping, profile, period, sources.source_reference(source, index))
@@ -178,6 +171,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                                        help="Readable technical pages are suggested. Pages with prices, legal terms, no useful content or unreadable images are not automatically included. Inspect image pages to decide. Originals remain saved.")
         changes["selected_pages"] = tuple(selected_pages)
         captions = dict(source.captions)
+        preview_ok = False
         if pages:
             page = st.selectbox("Preview page / item", pages, key=field(p + "_page", pages[0]),
                                 format_func=lambda n: f"Page / item {n} · " + page_status(source.page_texts[n-1], unreadable=n in source.needs_vision)[0].replace("technical", "check before including").replace("review", "needs visual review"))
@@ -188,6 +182,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 try:
                     thumbnail = sources.page_image(profile, content, page, preview=True)
                     st.image(thumbnail.data, width=650)
+                    preview_ok = True
                 except (ValueError, OSError) as exc:
                     st.error(str(exc))
                 captions[page] = st.text_input("Page caption", key=field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}")))
@@ -195,25 +190,23 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         source = replace(source, **changes)
         if pages and page in sources.image_numbers(content):
             kind, reason = page_status(source.page_texts[page-1], unreadable=page in source.needs_vision)
-            blocked = kind in ("pricing", "legal", "blank", "signature")
+            blocked_content = kind in ("pricing", "legal", "blank", "signature")
+            priced_caption = contains_price(captions.get(page, ""))
+            blocked = blocked_content or priced_caption
+            if priced_caption:
+                reason = "Remove pricing from the caption before including this page."
             (st.warning if blocked else st.caption)(reason)
-            if blocked and page in selected_pages:
-                st.error("Remove this page from Included pages above. A page containing prices cannot be included, even if it also describes useful work.")
+            if blocked_content and page in selected_pages:
+                st.error("Leave this page out. Pages with prices, legal-only, blank or signature-only content cannot be included.")
             fingerprint = page_fingerprint(source, page)
-            reviewed = st.checkbox("I checked this page: relevant work, no prices, no legal-only or blank/signature-only content",
-                                   key=field(p + f"_client_page_{page}_" + fingerprint, page_allowed(source, page)), disabled=blocked)
             reviews = dict(source.client_page_reviews)
-            if reviewed and not blocked:
-                reviews[page] = fingerprint
-            else:
-                reviews.pop(page, None)
-            source = replace(source, client_page_reviews=tuple(sorted(reviews.items())))
+            st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content. That review is kept until the page or caption changes.")
             left = _undecided_pages(content, source)
             checked = sum(page_allowed(source, n) for n in source.selected_pages if n in sources.image_numbers(content))
             st.caption(f"{checked} pages ready to include · {len(left)} pages still need a decision")
             keep, omit, advance = st.columns(3)
             action = None
-            if keep.button("Include page and continue", key=p + "_keep_page", disabled=not page_allowed(source, page)):
+            if keep.button("Include page and continue", key=p + "_keep_page", disabled=blocked or not preview_ok):
                 action = "keep"
             if omit.button("Leave page out and continue", key=p + "_omit_page"):
                 action = "omit"
@@ -224,11 +217,14 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 exclusions = dict(source.client_page_exclusions)
                 if action == "keep":
                     chosen.add(page)
+                    reviews[page] = fingerprint
                     exclusions.pop(page, None)
                 elif action == "omit":
                     chosen.discard(page)
+                    reviews.pop(page, None)
                     exclusions[page] = page_fingerprint(source, page)
                 source = replace(source, selected_pages=tuple(sorted(chosen)),
+                                 client_page_reviews=tuple(sorted(reviews.items())),
                                  client_page_exclusions=tuple(sorted(exclusions.items())))
                 remaining = [n for n in _undecided_pages(content, source) if n != page]
                 next_page = next((n for n in remaining if n > page), remaining[0] if remaining else page)
@@ -355,8 +351,9 @@ def _render_section_page_review(profile, content, prefix, field, blocks):
         captions[page] = st.text_input("Page caption", key=caption_key)
         source = replace(source, captions=tuple(sorted(captions.items())))
         kind, reason = page_status(source.page_texts[page - 1], unreadable=page in source.needs_vision)
-        from app.monthly_report_content_policy import contains_price
         blocked = kind in ("pricing", "legal", "blank", "signature") or contains_price(captions[page])
+        if contains_price(captions[page]):
+            reason = "Remove pricing from the caption before including this page."
         (st.warning if blocked else st.caption)(reason)
         st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content.")
         keep, omit = st.columns(2)

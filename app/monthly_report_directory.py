@@ -743,7 +743,7 @@ def contact_block(state: DirectoryState, facilities: tuple[Facility, ...], bindi
 
 
 def apply_contacts(draft, block):
-    """Called only after a visible side-by-side, content-bound confirmation."""
+    """Apply a reviewed replacement or an unambiguous saved-directory default."""
     sections = tuple(replace(s, included=True, blocks=tuple(CONTACT_SPEC if b.key == "contact_matrix" else b for b in s.blocks))
                      if any(b.key == "contact_matrix" for b in s.blocks) else s for s in draft.sections)
     if not any(b.key == "contact_matrix" for s in sections for b in s.blocks):
@@ -751,3 +751,27 @@ def apply_contacts(draft, block):
     blocks = {b.key: b for b in draft.blocks}
     blocks[block.key] = block
     return replace(draft, sections=sections, blocks=tuple(blocks.values()))
+
+
+def apply_defaults(draft):
+    """Fill an empty report from saved contacts without overwriting report work.
+
+    The named editor gate matches directory access. Exact unique site matches
+    reuse the already reviewed directory; ambiguous sites remain unfilled.
+    """
+    if not draft.prepared_by.strip():
+        return draft
+    current = next((b for b in draft.blocks if b.key == "contact_matrix"), None)
+    if current and (current.text.strip() or current.rows or any(t.rows for t in current.extra_tables)
+                    or current.asset_hashes or current.org_nodes):
+        return draft
+    if not any(b.key == "contact_matrix" for s in draft.sections for b in s.blocks):
+        return draft
+    state = load_directory(draft.profile.contract)
+    if not state:
+        return draft
+    bindings = suggest_contact_bindings(state, draft.profile.facilities)
+    block, _ = contact_block(state, draft.profile.facilities, bindings)
+    if not block.rows:
+        return draft
+    return apply_contacts(draft, replace(block, source="Library"))

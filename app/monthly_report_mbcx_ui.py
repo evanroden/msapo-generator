@@ -58,10 +58,13 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
             if chose_sentence:
                 status = replace(status, ai_written=False, ai_paragraphs=(), ai_evidence_fingerprint="", references=())
         if status.ai_written:
-            st.caption("This update contains suggested wording. Check it against its sources before using it.")
-            approved = st.checkbox("I checked this update against its sources", value=status.reviewed,
-                                   key=prefix + "_mbcx_update_review_" + status.fingerprint)
-            status = replace(status, reviewed_fingerprint=status.fingerprint if approved else "")
+            if status.reviewed:
+                st.caption("This wording has been checked. Its review is retained until the wording or sources change.")
+            else:
+                st.caption("Check this suggested wording against its sources, then use the update. Your choice is saved with this wording.")
+                if st.button("Use this update", key=prefix + "_mbcx_update_review_" + status.fingerprint,
+                             disabled=status.source == "Omit"):
+                    status = replace(status, reviewed_fingerprint=status.fingerprint)
     st.write("**Report pages for this month**")
     st.caption("Add a PDF or Word report using the files area in this section. Include the relevant results; previously reviewed pages stay ready.")
     if not pages.asset_hashes:

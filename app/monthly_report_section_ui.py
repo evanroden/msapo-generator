@@ -14,7 +14,7 @@ from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import imported_draft
 from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import Facility, ReportProfile, ReportTable, default_sections
-from app.monthly_report_sections import section_reviews, table_without_prices, build_section_import, default_slot, apply_section_omissions
+from app.monthly_report_sections import section_reviews, table_without_prices, default_slot
 from app.monthly_report_setup import design_profile, merge_drafts, item_findings
 from app.monthly_report_section_help import section_help
 
@@ -137,7 +137,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Leave this section out")))
         action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
-        plan = {"key": section.key, "action": action, "target": section.key, "omit": action == actions[2], "selected": [], "texts": {}, "tables": {}, "destinations": {}, "new_assets": old.get("new_assets", []), "image_notes": dict(old.get("image_notes", {}))}
+        plan = {"key": section.key, "action": action, "target": section.key, "omit": action == actions[2], "selected": [], "texts": {}, "tables": {}, "destinations": {}, "new_assets": old.get("new_assets", []), "image_notes": dict(old.get("image_notes", {})), "automatic": False}
         blocking = []
         if plan["omit"]:
             st.caption("Left out of this draft only. The original and its contents will still be saved for reference.")
@@ -248,9 +248,9 @@ def _approve_plan(plan, p, field, old, plans, blocking):
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
                          working_draft=None, working_assets=(), working_revision=None):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else identity.key if identity else "new", period.key))
-    st.subheader("Start with a report you already have")
-    st.write("Upload an older report or a teammate’s unfinished report. Then review its sections below. Your original file will not be changed.")
-    upload = st.file_uploader("Older or partially completed report", type=["docx"], max_upload_size=128, key=prefix + "_upload")
+    st.subheader("Start with any report from this contract")
+    st.caption("Use an earlier month, another site, or a report already underway. We’ll identify its sites and dates and bring across the relevant content.")
+    upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128, key=prefix + "_upload")
     if st.button("Analyze report", key=prefix + "_analyze", disabled=upload is None, type="primary"):
         try:
             with st.spinner("Finding report sections and pictures…"):
@@ -270,8 +270,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             st.rerun()
     staged = st.session_state.get(prefix + "_stage")
     if not staged:
-        st.caption("DOCX up to 128 MB. After upload, you’ll see the report’s sections—not a list of document fragments.")
-        return
+        st.caption("Word DOCX, up to 128 MB. Your original file is retained.")
+        return False
     _, path, inspection = staged
     p = prefix + "_" + inspection.sha256[:16]
     if identity:
@@ -281,46 +281,82 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         missing = [] if actor.strip() else ["Enter your name."]
     else:
         candidate, actor, missing = _identity(contract, prepared, p, field, state)
-    intent = "Content-based review"
-    from app.monthly_report_setup import report_period_findings
-    findings = report_period_findings(inspection, period)
-    if findings["current"] and findings["older"]:
-        message = "Some work refers to this month and some to other months. Parts of this report may already be updated."
-    elif findings["older"]:
-        message = "Some work refers to earlier months. Keep relevant ongoing history and update old monthly work."
-    elif findings["current"]:
-        message = "The report includes work dated this month. Check the sections for anything still needing an update."
+    if not candidate:
+        for message in missing:
+            st.info(message)
+        return True
+    from app.monthly_report_start_import import analyze_starting_report, automatic_section_plans, build_starting_import
+    profiles = library.list_profiles(contract)
+    known_sites = {f.key: f for f in (*_site_options(contract), *(f for profile in profiles for f in profile.facilities), *candidate.facilities)}
+    analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(), known_profiles=profiles)
+    if analysis.site_relation == "unknown":
+        st.info("The starting report does not clearly name its sites. Confirm them once so another site's contacts and work are not copied into this report.")
+        source_keys = st.multiselect("Sites shown in the starting report", list(known_sites),
+                                    format_func=lambda key: known_sites[key].title,
+                                    key=field(p + "_source_sites", []))
+        with st.expander("A source site is not listed"):
+            source_names = st.text_input("Source site name", key=field(p + "_source_site_name", ""),
+                                         help="For several source sites, separate the names with semicolons.")
+        confirmed_sites = [known_sites[key] for key in source_keys]
+        for name in (n.strip() for n in source_names.split(";")):
+            if name:
+                if not _key(name):
+                    st.error("Enter the source site's name using letters or numbers.")
+                    return True
+                confirmed_sites.append(next((f for f in known_sites.values() if name.casefold() in
+                                              {n.casefold() for n in (f.title, *f.aliases)}), Facility(_key(name), name)))
+        if not confirmed_sites:
+            return True
+        analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(),
+                                          confirmed_sites=tuple({f.key: f for f in confirmed_sites}.values()))
+    source_names = "; ".join(site.title for site in analysis.source_sites)
+    st.caption("Starting report: " + source_names + (f" · {analysis.source_period[0]}-{analysis.source_period[1]:02d}" if analysis.source_period else " · source month not stated"))
+    if analysis.site_relation == "other":
+        st.info("This report covers different sites. Its layout and table headings will be reused; your selected sites keep their own contacts, photos and work.")
+    elif analysis.older_items:
+        st.info(f"Preparing {period.label}. Earlier monthly work stays in the original. Standing information and any work already updated for this month are carried across.")
     else:
-        message = "The month is not clear from the readable work details. Review the sections before deciding what to keep."
-    st.info(f"Preparing {period.label}. " + message + " An old cover never decides which work is kept.")
-    if findings["images"]:
-        st.caption("Check the embedded page previews too: nearby headings cannot establish an image’s service date. Uncertain content stays available until you decide.")
-    st.subheader("2. Review your report sections")
-    st.write("Open a section, check what is already there, and choose whether to keep or change it. Mark it ready when you’re finished. You can add this month’s vendor and water-treatment files in the next step.")
+        st.info(f"Preparing {period.label}. Existing work is carried across so you can finish the remaining sections.")
+    from app.monthly_report_branding import find_logo, load_branding
+    branding = load_branding()
+    preferred_logos = tuple(key for key in ("brand_logo", "client_logo")
+                            if (state and state.block(key) and state.block(key).asset_hashes)
+                            or (branding and find_logo(contract, brand=key == "brand_logo", state=branding)))
+    seed = automatic_section_plans(inspection, analysis, preferred_logos=preferred_logos)
+    seed_signature = _signature((analysis, preferred_logos))
+    if st.session_state.get(p + "_analysis_signature") != seed_signature:
+        st.session_state[p + "_section_plans"] = seed
+        st.session_state[p + "_analysis_signature"] = seed_signature
+    intent = "Automatic starting report"
     sections = section_reviews(inspection)
     plans = st.session_state.setdefault(p + "_section_plans", {})
-    for index, section in enumerate(sections):
-        _section_card(section, path, inspection, period, p, field, plans, index == 0)
+    questions = [section for section in sections if seed[section.key].get("questions")]
+    if questions:
+        st.subheader("A few details need a check")
+        for index, section in enumerate(questions):
+            for message in seed[section.key]["questions"]:
+                st.caption(section.title + ": " + message)
+            _section_card(section, path, inspection, period, p, field, plans, index == 0)
+    with st.expander("Review what will be carried across (optional)", key=p + "_check_import", on_change="rerun") as details:
+        if details.open:
+            for section in sections:
+                if section not in questions:
+                    st.caption(section.title + (" · ready" if plans[section.key].get("selected") else " · starts blank"))
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
-    st.subheader("3. Continue when you’re ready")
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
     for message in todo:
         st.info(message)
     if not todo:
         st.success("Your sites and sections are ready. Continue to add this month’s files and finish the report.")
     st.caption("Saving remembers this design and its site information for next month. Saved content is shared in this public internal-testing app. Your entered name records the change; it is not a login.")
-    fingerprint = _signature((asdict(candidate) if candidate else None, actor, [plan_signature(plan) for plan in plans.values()], intent, state.revision if state else 0))
-    confirmed = st.checkbox("Save this report and its reusable design for these sites", key=p + "_save_ok_" + fingerprint)
-    if st.button("Continue to this month’s updates", key=p + "_save", type="primary", disabled=bool(todo) or not (candidate and confirmed)):
+    if st.button("Continue to this month’s updates", key=p + "_save", type="primary", disabled=bool(todo) or not candidate):
         try:
             with st.spinner("Saving your report and its reusable design…"):
-                mapped, mappings = build_section_import(path, inspection, tuple(plans[s.key] for s in sections))
+                mapped, mappings = build_starting_import(path, inspection, tuple(plans[s.key] for s in sections))
                 profile = candidate if state else design_profile(candidate, inspection, mappings, mapped.overrides)
+                profile = replace(profile, excluded_sections=())
                 draft = imported_draft(profile, period, actor, mapped)
-                # A replacement may be the only selected content in a section.
-                present = {s.key for s in draft.sections if s.included}
-                profile = replace(profile, excluded_sections=tuple(s for s in profile.excluded_sections if s not in present))
-                draft = replace(draft, profile=profile)
+                draft = replace(draft, sections=tuple(replace(s, included=True) for s in draft.sections))
                 current = library.load_snapshot(contract, profile.key, period) if state else None
                 prior_import = library.load_imported_draft(contract, profile.key) if state else None
                 base = current.draft if current else None
@@ -333,13 +369,26 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 elif prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
                     base = merge_drafts(base, prior_import)
                 draft = merge_drafts(base, draft)
-                draft = apply_section_omissions(draft, plans.values())
+                # Existing reviewed logos belong to the selected sites/contract.
+                # A starting report must not replace them with older artwork.
+                assets = dict((*working_assets, *mapped.assets))
+                blocks = {b.key: b for b in draft.blocks}
+                for key in preferred_logos:
+                    saved = state.block(key) if state else None
+                    if saved and saved.asset_hashes and key not in blocks:
+                        blocks[key] = saved
+                        for reference in saved.asset_hashes:
+                            assets[reference] = library.read_asset(contract, profile.key, reference)
+                from app.monthly_report_branding import apply_defaults
+                draft = apply_defaults(replace(draft, blocks=tuple(blocks.values()),
+                                               sections=tuple(replace(s, included=True) for s in draft.sections)), assets)
                 review = {"sha256": inspection.sha256, "intent": intent, "period": period.key, "image_review_scope": p,
+                          "inferred_source": asdict(analysis),
                           "items": [asdict(i) for i in inspection.items],
                           "section_plans": [{k: v for k, v in plan.items() if k not in ("new_assets", "preserved_assets")} for plan in plans.values()]}
                 # Normalize dataclass table values for the JSON audit record.
                 review["section_plans"] = [dict(plan, tables={k: asdict(v) for k, v in plan.get("tables", {}).items()}) for plan in review["section_plans"]]
-                library.save_report_setup(profile, draft, path, review, assets=tuple(dict((*working_assets, *mapped.assets)).items()),
+                library.save_report_setup(profile, draft, path, review, assets=tuple(assets.items()),
                                           expected_revision=state.revision if state else 0, actor=actor, confirmed=True,
                                           snapshot_revision=current.revision if current else 0)
                 st.session_state["report_resume_import"] = (contract, profile.key, period.key)
@@ -347,3 +396,4 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             st.rerun()
         except (ValueError, OSError) as exc:
             st.error(str(exc))
+    return True

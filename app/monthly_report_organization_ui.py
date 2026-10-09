@@ -6,6 +6,7 @@ import streamlit as st
 
 from app import monthly_report_library as library
 from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_workflow_standards import WORKFLOW_KEYS
 
 
 ORGANIZATION_PARTS = (
@@ -36,7 +37,7 @@ def _preview_table(columns, rows):
     )
 
 
-def _preview_part(draft, spec, block, prefix, assets, title):
+def _preview_part(draft, spec, block, prefix, assets, title, *, show_preview=True):
     has_content = bool(block.text.strip() or block.rows or block.extra_tables
                        or block.asset_hashes or block.org_nodes)
     if block.source == "Omit":
@@ -45,6 +46,8 @@ def _preview_part(draft, spec, block, prefix, assets, title):
         st.caption("Current report content")
     else:
         st.caption("Not added yet")
+    if not show_preview:
+        return
     if block.text.strip():
         st.text(block.text)
     _preview_table(tuple(c.title for c in spec.columns), block.rows)
@@ -98,7 +101,7 @@ def _edit_notes(block, prefix, field):
                    client_reviewed_fingerprint="")
 
 
-def render_organization(draft, blocks, specs, prefix, assets, field, edit_content):
+def render_organization(draft, blocks, specs, prefix, assets, field, edit_content, *, show_preview=True):
     """Return updated blocks; only an explicit Change opens a part's editor.
 
     ``edit_content(spec, block)`` supplies the existing procedure/image editor.
@@ -109,38 +112,47 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
 
     updated = dict(blocks)
     active_key = prefix + "_organization_change"
-    st.caption("These four parts carry forward. Open Change only for something that needs updating.")
-    for key, title in ORGANIZATION_PARTS:
+    st.caption("People and contacts carry forward. Open Change only when details need updating.")
+
+    def render_part(key, title):
         if key not in specs:
-            continue
+            return
         spec = specs[key]
         block = updated.get(key, ResolvedBlock(key, "This month" if spec.required else "Omit"))
         st.markdown("#### " + title)
         current_draft = replace(draft, blocks=tuple(updated.values()))
-        _preview_part(current_draft, spec, block, prefix, assets, title)
+        _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=show_preview)
         if st.session_state.get(active_key) != key:
             st.button("Change " + title.lower(), key=prefix + "_organization_open_" + key,
                       on_click=st.session_state.__setitem__, args=(active_key, key))
-            continue
+            return
         st.button("Done changing " + title.lower(), key=prefix + "_organization_close_" + key,
                   on_click=st.session_state.__setitem__, args=(active_key, ""))
         if key == "contact_matrix":
-            changed = edit_contacts(current_draft, spec, block, prefix, assets, field)
+            changed = edit_contacts(current_draft, spec, block, prefix, assets, field, show_preview=show_preview)
             changed = _edit_notes(changed, prefix, field)
         elif key == "org_chart":
             if block.org_nodes:
-                changed = edit_org_chart(current_draft, block, prefix, assets, field)
+                changed = edit_org_chart(current_draft, block, prefix, assets, field, show_preview=show_preview)
                 changed = _edit_notes(changed, prefix, field)
             else:
                 changed = edit_content(spec, block)
                 with st.expander("Build an editable team chart (optional)"):
                     changed = edit_org_chart(
                         replace(current_draft, blocks=tuple(changed if b.key == key else b for b in current_draft.blocks)),
-                        changed, prefix, assets, field,
+                        changed, prefix, assets, field, show_preview=show_preview,
                     )
         else:
             changed = edit_content(spec, block)
         # Some older editors mark their source just by being opened. Opening
         # and closing an unchanged part must not invalidate its saved review.
         updated[key] = block if replace(changed, source=block.source) == block else changed
+    for key, title in ORGANIZATION_PARTS:
+        if key not in WORKFLOW_KEYS:
+            render_part(key, title)
+    with st.expander("ENFRA outage procedures", expanded=False):
+        st.caption("The daytime and after-hours procedures are reused across contracts. Saved report procedures stay in place; changes here apply to this report.")
+        for key, title in ORGANIZATION_PARTS:
+            if key in WORKFLOW_KEYS:
+                render_part(key, title)
     return updated

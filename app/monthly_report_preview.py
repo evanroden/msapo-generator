@@ -1,18 +1,24 @@
-"""Low-resolution, watermarked preview; finished downloads keep strict gates."""
+"""Report previews use the real layout; finished downloads keep strict gates."""
 
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import asdict, dataclass, replace
 from functools import lru_cache
+import hashlib
 from io import BytesIO
+import json
 from pathlib import Path
 import tempfile
 from uuid import uuid4
 
 import fitz
+from docx import Document
+from docx.oxml.ns import qn
 from PIL import Image
 
 from app import monthly_report_library as library, pdf_converter
 from app.monthly_report_checks import preflight
-from app.monthly_report_docx import _build_docx, normalize_report_image
+from app.monthly_report_docx import _build_docx, _save, normalize_report_image
+from app.monthly_report_model import COVER_ASSET_KEYS, included_sections
 
 
 @dataclass(frozen=True)
@@ -136,13 +142,155 @@ def preview_report(draft, asset_loader=None):
                 pass
 
 
-def preview_page(preview, index):
+def preview_page(preview, index, *, dpi=150):
+    if dpi not in (96, 150, 200):
+        raise ValueError("Choose a supported preview resolution.")
     with fitz.open(stream=preview.pdf, filetype="pdf") as pdf:
         if not 0 <= index < len(pdf):
             raise ValueError("Choose an existing preview page.")
         return (
-            pdf[index].get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False).tobytes("png")
+            pdf[index].get_pixmap(matrix=fitz.Matrix(dpi / 72, dpi / 72), alpha=False).tobytes("png")
         )
+
+
+def _section_scope(draft, section_key):
+    """Keep numbering, but resolve assets/content only for the visible section."""
+    sections = included_sections(draft.sections)
+    if section_key == "cover":
+        keys = set(COVER_ASSET_KEYS)
+        selected = None
+    else:
+        selected = next((section for section in sections if section.key == section_key), None)
+        if selected is None:
+            raise ValueError("Choose an existing report section to preview.")
+        keys = {spec.key for spec in selected.blocks} | {"brand_logo", "divider_" + section_key}
+    # Empty scaffolding retains the section's true number without reading other
+    # sections' images. The scaffolding is removed BEFORE PDF conversion.
+    scope = replace(
+        draft,
+        sections=tuple(section if section == selected else replace(section, blocks=(), divider_asset="")
+                       for section in sections) if selected else (),
+        blocks=tuple(block for block in draft.blocks if block.key in keys),
+        follow_ups=tuple(item for item in draft.follow_ups
+                         if ("issues" if item.category == "issue" else "proposals") == section_key),
+    )
+    return scope, selected
+
+
+def section_preview_fingerprint(draft, section_key):
+    """Review toggles and changes to another section do not rerender this one."""
+    scope, section = _section_scope(draft, section_key)
+    blocks = []
+    for block in scope.blocks:
+        if block.source == "Omit":
+            # Keep explicit omission of a divider, which overrides its design.
+            blocks.append({"key": block.key, "source": "Omit"})
+            continue
+        blocks.append({name: getattr(block, name) for name in (
+            "key", "text", "rows", "asset_hashes", "asset_captions", "photos_per_page",
+        )} | {"org_nodes": [asdict(node) for node in block.org_nodes],
+             "extra_tables": [asdict(table) for table in block.extra_tables]})
+    from app.monthly_report_followups import report_text
+    value = {
+        "version": 1,
+        "contract": draft.profile.contract,
+        "profile": draft.profile.key,
+        "section": asdict(section) if section else "cover",
+        "blocks": blocks,
+        "address": draft.address_line if section else "",
+        "follow_ups": [report_text(item) for item in scope.follow_ups if item.included],
+    }
+    if section is None:
+        value["cover"] = {"title": draft.profile.title, "period": draft.period.key,
+                          "prepared_by": draft.prepared_by, "synthetic": draft.synthetic,
+                          "facilities": [facility.title for facility in draft.profile.facilities]}
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _slice_document_sections(raw, first, count):
+    """Slice Word section boundaries, including overflow pages and page chrome.
+
+    A cover or long contents table can occupy several pages. Hard-coded PDF page
+    offsets would show the wrong pages, so scope the DOCX before pagination.
+    """
+    document = Document(BytesIO(raw))
+    body = document.element.body
+    children = list(body)
+    endings = []
+    for index, child in enumerate(children):
+        properties = child if child.tag == qn("w:sectPr") else child.find("./" + qn("w:pPr") + "/" + qn("w:sectPr"))
+        if properties is not None:
+            endings.append((index, properties))
+    if first < 0 or count < 1 or first + count > len(endings):
+        raise ValueError("The section preview could not be matched to the report layout.")
+    start = endings[first - 1][0] + 1 if first else 0
+    stop, properties = endings[first + count - 1]
+    selected = children[start:stop]
+    final_properties = deepcopy(properties)
+    body.clear_content()
+    # clear_content preserves the old final sectPr; replace it with the selected
+    # section's properties (especially cover margins and header/footer links).
+    for child in list(body):
+        body.remove(child)
+    for child in selected:
+        body.append(child)
+    body.append(final_properties)
+    return _save(document)
+
+
+def section_preview_docx(draft, section_key, asset_loader=None):
+    """Private unfinished preview input, never an approved client download."""
+    scope, section = _section_scope(draft, section_key)
+    checks_scope = replace(scope, sections=(section,) if section else ())
+    unfinished_codes = _REVIEW_CODES | {
+        "sections", "placeholder", "carried_period", "client_source_page", "client_source_missing",
+    }
+    blockers = [check.message for check in preflight(checks_scope)
+                if check.blocking and check.code not in unfinished_codes]
+    if blockers:
+        raise ValueError(" ".join(blockers))
+
+    @lru_cache(maxsize=12)
+    def image_asset(ref):
+        if asset_loader is None:
+            raise ValueError("The saved picture is not available for this preview.")
+        return normalize_report_image(asset_loader(ref), Path(ref).suffix, line_art=True, dpi=150).data
+
+    raw = _build_docx(scope, asset_loader=image_asset if asset_loader else None)
+    index = next((n for n, value in enumerate(scope.sections) if value.key == section_key), 0)
+    return _slice_document_sections(raw, 2 + 2 * index if section else 0, 2 if section else 1)
+
+
+def preview_section(draft, section_key, asset_loader=None):
+    """High-quality, section-only preview with bounded, cleaned-up conversion."""
+    raw = section_preview_docx(draft, section_key, asset_loader)
+    stem = "section-preview-" + uuid4().hex
+    expected = pdf_converter.OUTPUT_DIR / (stem + ".pdf")
+    actual = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="monthly-section-preview-") as directory:
+            path = Path(directory) / (stem + ".docx")
+            path.write_bytes(raw)
+            actual = pdf_converter.convert_to_pdf(path)
+            if actual.stat().st_size > MAX_PREVIEW_BYTES:
+                raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
+            with fitz.open(actual) as pdf:
+                if len(pdf) > MAX_PREVIEW_PAGES:
+                    raise ValueError("This section preview is limited to 150 pages.")
+                if not len(pdf):
+                    raise ValueError("The renderer returned an empty section preview.")
+                # Keep the real PDF's vector text and diagrams. Draft status is
+                # shown in the editor, outside the page, so layout stays legible.
+                result = pdf.tobytes(garbage=3, deflate=True)
+                if len(result) > MAX_PREVIEW_BYTES:
+                    raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
+                return ReportPreview(result, len(pdf), section_preview_fingerprint(draft, section_key), draft.period.label)
+    finally:
+        for path in {actual, expected} - {None}:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def render_preview(draft, assets, prefix, field):
