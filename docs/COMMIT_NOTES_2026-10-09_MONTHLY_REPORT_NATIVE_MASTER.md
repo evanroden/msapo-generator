@@ -99,3 +99,33 @@ Latest replay before the TOC tagline correction was 43/46 pixel-identical:
 the remaining differences were the three Cost headings on two pages and a TOC
 brand variant incorrectly replaced with the cover logo. That variant binding is
 now corrected for an unchanged current brand; changed branding still updates it.
+
+## Final acceptance checkpoint for this session
+
+Draft head `23b91f929fe87736d526948f89a6ba6cc30b58c9` preserves the source-data
+and native-binding fixes (tree `3bae0dc6bc638be639a0cae99d98a25e249e8363`).
+Actions run `37926730104` was started for this exact tree. The next small change
+removes the duplicate terminal Word section in active-section previews; its
+native renderer suite passes 31 tests and lint is clean.
+
+Actual `run_web.py` AppTest generation produced DOCX/PDF and saved a snapshot.
+Inputs came through the real source import pipeline into a new current draft,
+then were supplied to AppTest session state. This is not a literal browser file
+upload walkthrough. The browser could not reach the local application server.
+A separate unmocked section-preview UI run displays an iframe with exactly four
+activity pages and no exceptions. Cover plus all twelve section DOCX previews
+also generated successfully.
+
+Fresh different-contract blank and changed-input Word packages pass checks for
+current identity and absence of source contact emails, site names, client cover
+images and hidden drawing caches. Current narrative, photo and caption placement
+was visually inspected. Empty native sections require no invented facts.
+
+Exact PDF acceptance FAILS. Best earlier paired normal exports had 43/46
+pixel-identical pages and 44/46 text-identical pages before the final TOC variant
+fix. A later actual UI export had only 27 pixel-identical and 31 text-identical
+pages because native divider/cover content rendered inconsistently. Do not quote
+the best render as a completed acceptance result. A stable official LibreOffice
+24.2.7 scratch extraction could not start (UNO bootstrap exceptions); no stable
+converter comparison was obtained. The speculative image-swapping change was
+reverted. Production remains on PR #89, with this work held in draft PR #90.

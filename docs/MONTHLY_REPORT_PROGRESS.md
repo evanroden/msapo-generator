@@ -28,6 +28,11 @@ heading removals on the other two. This is not a visual acceptance pass. The sup
 PDF has 45 pages; rendering its supplied Word file with this environment gives
 46, so compare both the same-engine source render and supplied PDF and report
 that distinction. Do not deploy or claim exact fidelity until this is resolved.
+Actual AppTest Generate now produces both files and saves the snapshot. A real
+activity preview displays exactly four pages. New-contract Word outputs pass
+source-data isolation checks, including hidden metadata. Exact PDF acceptance
+still fails; a stable converter could not start locally. All work remains in
+draft PR #90; production is unchanged.
 See [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
 
 Latest work: continuing simplification on `feat/monthly-report-focused-editing`,

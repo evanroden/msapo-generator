@@ -527,3 +527,19 @@ def test_current_activity_keeps_period_heading_and_uses_narrative_anchor(tmp_pat
     assert 'October 2026 Activity' in values
     assert values.index('Activity Summary') < values.index('Current activity narrative')
     assert 'Old activity narrative' not in values
+
+
+def test_section_preview_does_not_open_empty_trailing_word_section(tmp_path):
+    from docx.enum.section import WD_SECTION_START
+    doc = Document()
+    doc.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    doc.add_paragraph('Previous activity')
+    doc.add_section(WD_SECTION_START.NEW_PAGE)
+    doc.add_heading('TRAINING SUMMARY', 1)
+    doc.add_paragraph('Other section data')
+    path = tmp_path/'sections.docx'; doc.save(path)
+    current = draft(ResolvedBlock('activity_summary', 'This month', text='Current activity'))
+    output = Document(BytesIO(build_native_docx(current, path, section_key='activity')))
+    assert len(output.sections) == 1
+    assert 'Current activity' in '\n'.join(p.text for p in output.paragraphs)
+    assert 'Other section data' not in '\n'.join(p.text for p in output.paragraphs)

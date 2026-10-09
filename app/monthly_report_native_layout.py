@@ -733,6 +733,12 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     closing = deepcopy(properties)
                     break
         if closing is not None:
+            # The selected range's final paragraph break becomes the document's
+            # terminal section properties. Keeping both opens an empty next page.
+            last_selected = original[max(selected_positions) - 1]
+            last_boundary = last_selected.find(".//" + qn("w:sectPr"))
+            if last_boundary is not None:
+                last_boundary.getparent().remove(last_boundary)
             for existing in list(body.findall(qn("w:sectPr"))):
                 body.remove(existing)
             body.append(closing)
