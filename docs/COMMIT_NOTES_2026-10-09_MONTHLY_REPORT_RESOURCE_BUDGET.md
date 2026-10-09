@@ -3,7 +3,7 @@ document_type: implementation_checkpoint
 date: 2026-10-09
 base_commit: 59293a785a198ac017f0025b88ce8c5280a1bee4
 workflow: Monthly report
-status: local_validation_complete_ci_pending
+status: capped_export_regression_under_validation
 ---
 
 # Monthly report resource budget
@@ -34,7 +34,8 @@ content, design pins, review gates, source objects and saved history must surviv
   user workflows are unchanged. A second workflow cannot launch a competing
   LibreOffice process while a monthly report converts.
 - Each disposable LibreOffice profile uses a 48 MB graphic-cache threshold and
-  lossless graphic swapping. Final-export image quality, fonts, crop, colors,
+  lossless graphic swapping with a zero-second allowed-idle floor. Final-export
+  image quality, fonts, crop, colors,
   geometry and PDF options are unchanged. Preview-only embedded rasters can be
   downsized without changing XML geometry or downloadable DOCX image bytes.
 - Production numerical-library thread counts are bounded to one and allocator
@@ -80,3 +81,24 @@ There is no persistent data migration. Old preview caches are disposable and
 are dropped. Revert the merge to roll back code; do not roll back or remove
 report libraries, contact/capacity records or immutable design versions. Access
 remains public testing with editor attribution, not authenticated access.
+
+## Capped export regression found during PR validation
+
+The first capped run completed both previews but killed a converter process
+during final export. The diagnostic rerun recorded one cgroup OOM and one OOM
+kill, with a sampled peak of 536,842,240 bytes under the 536,870,912-byte cap.
+The DOCX remained available, but the resource gate correctly failed.
+
+LibreOffice 24.2's graphic manager also applies a ten-second minimum idle time
+before swapping decoded images. That made the 48 MB cache threshold ineffective
+for freshly used photographs during a short export. Setting the disposable
+profile's allowed idle time to zero enables the existing lossless swap mechanism
+earlier; it does not resample an image or change the export format.
+
+A controlled local conversion of the same eight-photo DOCX measured converter
+peak RSS with `/usr/bin/time`: 600,056 KiB before versus 374,072 KiB with the idle
+setting. All eight PDF pages remained pixel-identical at 96 dpi, with identical
+text, image geometry and PDF byte counts. This is an uncapped same-converter
+comparison, not a production-memory or authentic-reference acceptance result.
+The separate PDF image-cache experiment did not materially reduce peak RSS and
+was not included. Exact-head capped CI remains mandatory.

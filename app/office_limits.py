@@ -12,6 +12,8 @@ def prepare_profile(profile):
     user.mkdir(parents=True, exist_ok=True)
     settings = user / 'registrymodifications.xcu'
     # Cache pressure causes lossless graphic swapping, not image resampling.
+    # A ten-second idle floor otherwise retains every freshly decoded picture
+    # during short CLI exports, even after the cache threshold is exceeded.
     # Do not set PDF quality, font, page, crop, color or transparency options.
     settings.write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -20,5 +22,6 @@ def prepare_profile(profile):
         '<prop oor:name="GraphicMemoryLimit" oor:op="fuse"><value>'
         + str(GRAPHIC_MEMORY_BYTES) + '</value></prop>'
         '<prop oor:name="GraphicSwappingEnabled" oor:op="fuse"><value>true</value></prop>'
+        '<prop oor:name="GraphicAllowedIdleTime" oor:op="fuse"><value>0</value></prop>'
         '</item></oor:items>', encoding='utf-8')
     return profile.resolve().as_uri()
