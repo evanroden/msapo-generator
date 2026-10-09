@@ -28,6 +28,7 @@ MAX_PART_BYTES = 16 * 1024 * 1024
 MAX_CELLS = 100_000
 MAX_TEXT = 4_000_000
 MAX_SITES = 500
+MAX_CONTACTS = 50
 MAX_XML_ELEMENTS = 750_000
 MAX_XML_TEXT = 8_000_000
 MAX_XML_DEPTH = 64
@@ -104,6 +105,7 @@ class DirectoryState:
     source_sheet: str = ""
     action: str = "save"
     archived: bool = False
+    contract_contacts: tuple[DirectoryContact, ...] = ()
 
 
 def _coord(address):
@@ -398,7 +400,7 @@ def suggest_matrix(sheet: DirectorySheet):
     label_col = min((c for _, c in values), default=1)
     labels = {r: values.get((r, label_col), "") for r in rows}
     address = next((r for r in rows if "address" in labels[r].casefold()), 0)
-    roles = [r for r in rows if re.search(r"manager|director|executive|administrator|engineer|supervisor|leadership|analyst|point of contact", labels[r], re.I)
+    roles = [r for r in rows if re.search(r"manager|director|executive|administrator|engineer|supervisor|leadership|analyst|point of contact|sustainability|sales", labels[r], re.I)
              and not re.search(r"phone|email|address", labels[r], re.I)]
     boundary = min([*roles, *([address] if address else [])], default=50)
     counts = Counter(r for (r, c), value in values.items() if c > label_col and value)
@@ -411,6 +413,14 @@ def suggest_matrix(sheet: DirectorySheet):
         email = next((r for r in rows if row < r < min(next_role, row + 5) and re.search(r"e.?mail", labels[r], re.I)), 0)
         groups.append({"Use": True, "Role": labels[row], "Name row": row, "Phone row": phone, "Email row": email})
     return header, label_col, address, groups
+
+
+def contact_value(value):
+    """Normalize empty contact cells without changing ordinary workbook data."""
+    value = str(value if value is not None else "").strip()
+    if re.fullmatch(r"0(?:\.0+)?", value):
+        return ""
+    return value
 
 
 def matrix_sites(workbook: DirectoryWorkbook, sheet: DirectorySheet, header_row: int, label_column: int,
@@ -430,7 +440,7 @@ def matrix_sites(workbook: DirectoryWorkbook, sheet: DirectorySheet, header_row:
             if not role:
                 raise ValueError("Give every included contact group a role.")
             def at(key):
-                return values.get((int(group.get(key) or 0), column), "")
+                return contact_value(values.get((int(group.get(key) or 0), column), ""))
             fields = (at("Name row"), at("Phone row"), at("Email row"))
             if any(fields):
                 coordinates = ",".join(f"{column_name(column)}{int(group[k])}" for k in ("Name row", "Phone row", "Email row") if group.get(k))
@@ -458,7 +468,7 @@ def sheet_findings(workbook, selected):
             findings.append(f"{len(overlap)} proposed site name(s) also appear on worksheet {sheet.name}. Confirm which contract owns them; copied worksheet headings are not proof of membership.")
     _, _, _, groups = suggest_matrix(selected)
     contact_rows = {int(g[k]) for g in groups for k in ("Name row", "Phone row", "Email row") if g[k]}
-    if not any(c.value for c in selected.cells if c.row in contact_rows and c.column > 1):
+    if not any(contact_value(c.value) for c in selected.cells if c.row in contact_rows and c.column > 1):
         findings.append("No populated leadership/contact records were found for the suggested roles. Check that this tab is current rather than an unfinished template.")
     return tuple(findings)
 
@@ -530,7 +540,8 @@ def _state(value):
                       "contacts": tuple(DirectoryContact(**c) for c in s.get("contacts", ())) })) for s in value["sites"])
         return DirectoryState(value["contract"], value["revision"], sites, value["actor"], value["updated_at"],
                               value.get("source_sha256", ""), value.get("source_sheet", ""), value.get("action", "save"),
-                              value.get("archived", False))
+                              value.get("archived", False),
+                              tuple(DirectoryContact(**c) for c in value.get("contract_contacts", ())))
     except (KeyError, TypeError, ValueError) as exc:
         raise library.LibraryError("Saved site directory could not be read; existing data was preserved.") from exc
 
@@ -568,21 +579,32 @@ def directory_contracts(*, include_archived=False):
 
 
 def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=None,
-                   source_sha256="", source_sheet="", action="save", _archived=False):
+                   source_sha256="", source_sheet="", action="save", _archived=False,
+                   contract_contacts=None):
     actor = library._confirmation(actor, confirmed)
     sites = tuple(sites)
-    if not sites or len(sites) > MAX_SITES:
-        raise ValueError("Confirm between 1 and 500 sites.")
+    if len(sites) > MAX_SITES:
+        raise ValueError("Confirm no more than 500 sites.")
+    def validate_contacts(contacts):
+        if len(contacts) > MAX_CONTACTS or any(
+            len(getattr(c, field)) > 2000
+            for c in contacts for field in ("role", "name", "phone", "email", "source")
+        ):
+            raise ValueError("Contact record exceeds its review budget.")
+        if any(not c.role.strip() for c in contacts):
+            raise ValueError("Every contact needs a role.")
+
+    if contract_contacts is not None:
+        contract_contacts = tuple(contract_contacts)
+        validate_contacts(contract_contacts)
     for site in sites:
         library._valid_key(site.key)
-        if len(site.title) > 200 or len(site.address) > 2000 or len(site.contacts) > 50 or len(site.aliases) > 30:
+        if len(site.title) > 200 or len(site.address) > 2000 or len(site.contacts) > MAX_CONTACTS or len(site.aliases) > 30:
             raise ValueError("Site record exceeds its review budget.")
-        if any(len(getattr(c, field)) > 2000 for c in site.contacts for field in ("role", "name", "phone", "email", "source")):
-            raise ValueError("Contact record exceeds its review budget.")
-        if any(not c.role.strip() for c in site.contacts):
-            raise ValueError("Every contact needs a role.")
+        validate_contacts(site.contacts)
     # Reuse the explicit facility identity/alias ambiguity checks without inferring scope.
-    ReportProfile(contract, "directory-check", "Directory validation", tuple(s.facility for s in sites), "multi_site")
+    if sites:
+        ReportProfile(contract, "directory-check", "Directory validation", tuple(s.facility for s in sites), "multi_site")
     if raw is not None:
         inspection = inspect_workbook(raw)
         if source_sha256 != inspection.sha256 or source_sheet not in {s.name for s in inspection.sheets}:
@@ -597,10 +619,14 @@ def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=
         current = load_directory(contract, include_archived=True)
         if expected_revision != (current.revision if current else 0):
             raise library.RevisionConflict("Someone changed this directory. Reload and review the new version before saving.")
+        contacts = contract_contacts if contract_contacts is not None else (current.contract_contacts if current else ())
+        validate_contacts(contacts)
+        if not sites and not contacts:
+            raise ValueError("Confirm at least one site or contract-wide contact.")
         # Preserve legacy spelling when updating its existing history so a
         # separately saved collision remains explicitly addressable.
         stored_contract = current.contract if current else canonical_contract(contract)
-        state = DirectoryState(stored_contract, expected_revision + 1, sites, actor, library._now(), source_sha256, source_sheet, action, _archived)
+        state = DirectoryState(stored_contract, expected_revision + 1, sites, actor, library._now(), source_sha256, source_sheet, action, _archived, contacts)
         encoded = library._json({"schema": 1, **asdict(state)})
         if raw is not None:
             library._atomic_write(library._root() / "directory_sources" / (source_sha256 + ".xlsx"), raw)
@@ -622,7 +648,8 @@ def restore_directory(contract, revision, *, expected_revision, actor, confirmed
     actor = library._confirmation(actor, confirmed)
     prior = load_directory(contract, revision)
     return save_directory(contract, prior.sites, expected_revision=expected_revision, actor=actor, confirmed=confirmed,
-                          source_sha256=prior.source_sha256, source_sheet=prior.source_sheet, action=f"restore:{revision}")
+                          source_sha256=prior.source_sha256, source_sheet=prior.source_sheet, action=f"restore:{revision}",
+                          contract_contacts=prior.contract_contacts)
 
 
 def archive_directory(contract, *, expected_revision, actor, confirmed):
@@ -634,7 +661,7 @@ def archive_directory(contract, *, expected_revision, actor, confirmed):
         raise library.RevisionConflict("Someone changed this directory. Reload and review the new version before archiving.")
     return save_directory(contract, current.sites, expected_revision=expected_revision, actor=actor, confirmed=confirmed,
                           source_sha256=current.source_sha256, source_sheet=current.source_sheet,
-                          action="archive", _archived=True)
+                          action="archive", _archived=True, contract_contacts=current.contract_contacts)
 
 
 CONTACT_SPEC = BlockSpec("contact_matrix", "table", columns=tuple(
@@ -695,11 +722,16 @@ def suggest_contact_bindings(state, facilities, confirmed=None):
 def contact_block(state: DirectoryState, facilities: tuple[Facility, ...], bindings=None):
     by_id = {s.key: s for s in state.sites}
     bindings = bindings or {}
-    rows, missing, used, links = [], [], set(), []
+    rows = [(f"{state.contract} (contract-wide)", c.role, c.name, c.phone, c.email)
+            for c in state.contract_contacts]
+    missing, used, links = [], set(), []
     for facility in facilities:
         site = by_id.get(bindings.get(facility.key, facility.key))
         if not site or not site.active:
-            missing.append(facility.title)
+            # A contract-only directory makes no claims about site membership.
+            # Once any sites are recorded, preserve the explicit match review.
+            if state.sites or not state.contract_contacts:
+                missing.append(facility.title)
             continue
         if site.key in used:
             raise ValueError("Two report facilities link to one directory site. Review membership and aliases first.")
