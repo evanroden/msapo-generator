@@ -206,3 +206,6 @@ This supplements the earlier handoff and supersedes its routine manual-save UX.
 
 Combined reliability release:
 [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RELIABILITY_RELEASE.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RELIABILITY_RELEASE.md).
+
+Current table heading pagination:
+[COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_TABLE_PAGINATION.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_TABLE_PAGINATION.md).
