@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Current monthly defaults and live editing: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_AUTOMATIC_DEFAULTS.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_AUTOMATIC_DEFAULTS.md). This supersedes earlier section-inclusion, standing-confirmation and equipment-tag instructions.
+
 Shared contact workbook import: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIRECTORY_BATCH.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIRECTORY_BATCH.md).
 
 Review A fixes and thirteen section audits: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md).

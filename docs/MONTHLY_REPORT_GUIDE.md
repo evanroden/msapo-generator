@@ -5,196 +5,103 @@ workflow: Monthly report
 
 # Making a monthly report
 
-Choose **Monthly report** at the top of Email Process Control. You can visit the
-steps in any order. Use **Save progress** before leaving the page.
+Choose **Monthly report** at the top of Email Process Control. Select the contract,
+the sites belonging in one report, and the reporting month. Several selected sites
+produce one combined report. A region or group name is optional.
 
-## Choose the report
+## Start or continue
 
-1. Select the contract card. The search field narrows a long list. Reviewed client
-   logos appear on the cards; saved custom logos remain available in reports.
-2. Check the sites that belong in **this one report**. To produce separate site
-   reports, run the tool separately. Several checked sites combine into one file.
-3. A group name is optional. Enter a name such as “Western Region” and check the
-   regional option if appropriate. The same site combination recalls its name;
-   you can rename it. Alternate names describe the same site, not extra sites.
-4. Choose month and year. In the first ten days of a month, the previous month is
-   suggested. You can always change it.
+Saved work for those sites and that month opens automatically. A new month starts
+from the latest saved earlier report for the same sites.
 
-When this site combination has a saved design, the tool resumes that month's
-saved work or starts from its most recent earlier report. Otherwise, choose a
-picture card:
+Use the single **Starting report** upload for an older report, a report from
+another site on the contract, or a partially finished current report. Word DOCX
+files up to 128 MB are supported. The tool identifies the source sites and dates,
+reuses appropriate information, and retains the original. It asks about a source
+site only when the document does not identify it clearly.
 
-- **Another report from this contract:** copies its layout, headings and saved
-  branding. Supply this site's people, contacts, chart, pictures and work.
-- **General ENFRA template:** starts with standard report sections. Choose the
-  sections you need, then fill the standing details in Site information. Available
-  ENFRA and client logos are filled in automatically.
-- **Upload an older or unfinished report:** opens section boxes containing the
-  extracted text, tables and pictures. DOCX files up to 128 MB are supported.
+An older same-site report supplies standing information. Current work is retained
+when the body has already been updated, even if its cover is stale. Historical
+tables remain available. Another site's report supplies layout, headings and
+branding; its people, photos and work do not become this site's content.
 
-Confirm the sites, content decisions and entered editor name before saving a
-shared design. Anyone with access to this internal-testing app can see shared
-content. The entered name records who saved it; it is not an authenticated login.
+Without a file, use a saved contract design or the ENFRA template. Enter your name
+and start the report. The tool remembers the design without a separate permission
+checkbox. The name records the editor; it is not an authenticated login.
 
-## Review an uploaded report
+## Edit the report
 
-Open each recognizable section box. Its choices describe that section: check
-people and contacts, update utility results, review water readings, change
-proposal status, or update training, for example. Keep useful content, edit the
-labeled fields or replace the relevant pictures. A report can contain both old and current work even when
-its cover is old. Check vendor service dates and actual page contents; do not
-assume every page belongs to the month on the cover. Unknown/mixed content needs
-review. Optional bounded OCR helps read scans but can miss prices and dates.
+Every standard section is included, including sections that are blank or waiting
+for data. There is no section-inclusion checklist.
 
-Pictures are shown in groups of four. Choose what to do directly beneath each
-preview: use it as a cover photo or logo, keep it as a chart/contact list/outage
-procedure, use it behind the section title, or leave it out. Previous/Next buttons
-let you browse without losing your choices. Choosing a new cover photo or logo
-replaces the previous picture for that role automatically. Ambiguous suggestions
-start unselected. **Help me check the date or read small text** is optional help
-for scanned pages; it does not verify the page for you.
+- **Report:** check the sites, month and preparer. Existing cover artwork and logos
+  are retained. Rare appearance changes are under **Report appearance**.
+- **This month's work:** choose a section and add the month's information or files.
+- **Site information:** update people, contacts or other standing information only
+  when it changes. Established outage procedures use the shared ENFRA diagrams.
+- **Review & download:** resolve specific content issues, then generate DOCX/PDF.
 
-You do not need to classify the upload as an old design or an unfinished report.
-The tool describes current/older body evidence against your chosen reporting
-month. You review uncertain material rather than relying on the cover date.
+The right half of the editor shows a scrollable preview of the selected section's
+actual document layout. It updates after an edit is committed. Switching sections
+retains your edits. The whole-report preview is available in Review.
 
-Starting a new month deliberately clears monthly attachments and narrative.
-Uploading a partially finished report into the same month preserves existing
-work and offers the incoming material for review. Excluding material leaves it
-out of this draft; the saved original and earlier versions remain available.
+### Shared information
 
-If a chart appears as separate pieces or is missing, open **Preview the original
-charts and contact lists** inside Organizational Chart. Choose **Show original
-chart pages**, then **Use complete pages for this section**. Check
-only the pages to keep, choose what each contains, and compare every preview with
-the original before confirming it. These pages are saved as reusable pictures.
-If text is distorted or missing, leave that page unchecked and upload a clear
-PNG/JPEG replacement, or build an editable chart in Site information. Some Word
-drawings and embedded objects cannot be preserved. The importer does not promise
-an identical copy of every Word layout.
+Saved directory contacts fill an empty contact table after you enter your name.
+Exact site names and confirmed aliases select the relevant site contacts;
+contract-wide contacts remain labelled separately. Existing report contacts are
+retained. Use **Compare contacts with the saved directory** when you need to
+replace an existing table.
 
-## Update this month's work
+Upload thermal capacity once for the contract. PDFs, Word files, spreadsheets,
+CSV/text and supported images are accepted. Check the extracted values, units and
+site matches, then save the capacity tables. All matched sites become available
+to their asset managers, including on their first report. Separate steam and
+chilled-water tables keep their original meanings and headings. Unclear site
+matches or conflicting table structures need a decision; missing numbers are not
+invented. Existing reports retain their saved/manual values.
 
-Upload service reports, chemical/water reports, photos or CMMS files. Duplicate
-files are detected. Check the classification, facility, service date and selected
-pages. Keep only useful client-facing pages. Prices must never appear in the
-monthly report. Leave out pricing pages, legal terms, empty pages and pages that
-contain only a signature. Review image pages visually, even after OCR.
+Reviewed outage diagrams saved in the system supply shared ENFRA defaults across
+contracts. Procedure changes are under **ENFRA outage procedures**. A different
+site's later diagram does not silently overwrite an established standard.
 
-After reading the files, open **Choose pages for the client report**. Vendor/date/
-work details are under **Edit vendor, date and work details** when corrections
-are needed. For each preview, confirm the visual check, then choose **Include
-page and continue** or **Leave page out and continue**. The next selected page
-that still needs review opens automatically. Use **Next page needing review**
-to defer a decision, or the page selector to revisit any page. The checked/
-remaining count shows progress. Once the selected pages are checked, open
-**Embed selected report pages and photographs**, choose their section and prepare
-them. Leaving a page out preserves the original file.
+### New files and pictures
 
-For evidence-linked wording, ask the tool to read a file, review its extracted
-facts, then request suggested wording for the appropriate section. Check the
-linked source pages, edit the paragraphs and confirm review before applying.
-The tool does not automatically approve AI text. Changed wording or evidence
-requires review again. Optional Copilot notes use the copy prompt provided in the
-app; they do not send messages or connect to your mailbox.
+Upload service, water-treatment, utility, work-order or photographic evidence
+within the relevant section. For source pages, use **Include page and continue**
+or **Leave page out and continue**. Including a page records your review of its
+current contents and caption. Prices, legal-only pages, blank pages and
+signature-only pages do not belong in the report.
 
-Enter actual CMMS column mappings. Monthly service-call rows use the selected
-reporting month. Unsupported historical figures in the twelve-month grid stay
-blank. For a carried issue or proposal, choose ongoing, updated or resolved and
-record the basis for that status. Removing a resolved item is an explicit choice.
+Previously reviewed, unchanged pictures stay reviewed. New or changed pictures
+receive attention; use the optional all-picture editor when needed. The preview
+on the right shows their placement. Keep only the pages useful to the client.
 
-## Check site information
+For suggested wording, check the linked facts and source pages before applying.
+AI text and unreadable scans can contain errors. Correct unsupported numbers,
+prices and outdated statements. Changing reviewed wording or its evidence can
+require a new targeted review.
 
-- **Org chart:** retain the uploaded chart or explicitly replace it with editable
-  people/positions and reporting lines. If the report has editable contacts,
-  choose which people to start with, then choose who they report to. Phone/email
-  fields are not copied into the chart. Its layout updates beside the fields;
-  larger teams split into readable pages.
-- **Contacts:** edit the labeled fields; the table below reflects the changes.
-  Confirm a directory suggestion before it replaces the report's contacts.
-- **Logos:** keep the saved logo, choose the current shared logo offered beside
-  it, or upload a replacement. Existing reports do not change when shared logos
-  are updated. Aspect ratio is preserved and images fit their allotted frames.
-- **Other standing pictures:** use the item-specific update control to replace
-  an outage workflow, capacity table or other site information.
-- **Progress photos:** add captions and choose one to six photos per page. The
-  displayed page layout is the layout placed into DOCX/PDF.
+For carried issues or proposals, record whether the item remains open, changed or
+was resolved, with the basis for that status. Open items carry forward automatically.
+Monthly source files and completed activity start fresh in a new reporting month.
 
-Confirm the standing details after checking them. A report-only edit is not
-silently made a shared library default. Saving this report allows the next month
-to start from it. The advanced editor has explicit shared replacements, section
-ordering and version history/restoration.
+## Save and download
 
-The optional contract/site directory accepts a workbook with contract tabs and
-site columns. Review the extracted sites/roles/contacts before confirming a
-shared import. A directory helps with setup; it never decides report membership.
-Match a worksheet's different spelling to the same listed site and keep its
-alternate names in Aliases. Importing only some sites keeps the other known sites
-available; explicitly inactive sites remain in history. Matching names suggest
-contacts, but the report's contact table changes only after your confirmation.
+**Save progress** stores unfinished work and editor attribution. Return to the
+same sites and month to continue. If another editor saved meanwhile, compare the
+versions before saving; neither person's draft is silently discarded.
 
-Shared logos are maintained under **Shared contract logos (optional)**. Reviewed
-collections include source links, review dates and explicit contract mappings.
-An entered editor name and confirmation are required; old collections can be
-restored. Artwork stays on the persistent disk. Reports retain their own pinned
-logo copies. A logo collection is not a contract/site directory.
+In **Review & download**, correct specific problems with content that is present:
+pricing, template instructions, unreviewed new pictures or AI wording, and
+stale-month warnings. Blank sections are allowed. No blanket standing-information
+confirmation is required.
 
-## Preview, save and download
+**Generate DOCX and PDF** also saves a report version. Aim for files under 15 MB.
+If PDF conversion fails, the completed DOCX remains available. The tool does not
+send email.
 
-**Preview the report at any time** builds a low-resolution PDF with a visible
-draft watermark. It helps with layout before work is finished. Refresh it after
-changes; an out-of-date preview cannot be downloaded until refreshed. This is
-separate from the immediate org-chart and photo layout previews.
-
-**Save progress** stores unfinished work and the entered editor name. Return to
-the same sites and month to resume. If another editor has saved meanwhile, compare
-the versions before accepting a new save; neither draft is silently overwritten.
-Browser memory recalls the last report/preparer on that browser, not a verified
-person across every device.
-
-In **Review & download**, resolve required gaps and review every selected image
-page. Correct prices, template instructions and unreviewed AI text. Check any
-stale-month, empty-section or file-size warnings, then generate DOCX and PDF.
-Generation also saves a version. If PDF conversion fails, the completed DOCX
-remains downloadable. Aim below 15 MB by choosing fewer attachment pages or a
-denser photo layout. There is no EML download, email draft or automatic sending.
-
-
-## What memory means
-
-Reports are shared by contract and exact site combination, including an optional
-region name. A new person can select the same sites and continue saved work.
-Their own name is required; the previous report author does not identify them.
-On a browser used before, the last saved selection and entered name are suggested.
-A new device or cleared browser data loses that convenience, not the reports.
-Use **Save progress** before leaving; unsaved edits are not durable autosaves.
-
-For a new month, the latest saved earlier report for those same sites provides
-the layout, logos, charts and standing information. Monthly activity, service/
-water reports and improvement photos start fresh. Open issues and proposals are
-carried as follow-ups for review. Choosing another site's report in the same
-contract copies its layout and branding, not its people, contacts or work.
-
-Open **What will be remembered?** and choose **Check available storage** to see
-live capacity and free space. Monthly file totals include retained originals and
-history. Identical newly stored assets and source files share one copy across all contracts
-and sites. Separate reports retain their own choices and history. Use
-**Consolidate duplicate stored files** to process existing copies in bounded
-batches; repeat if the app says more remain. Neither action removes original
-paths, reports or history. Original Word/PDF files still include their embedded
-media, and different image encodings remain separate files.
-
-
-### Working through the sections
-
-The Report checklist tells you where each section is edited. Open the matching
-section in This month’s work or Site information. Pictures appear beside their
-controls; remove only the ones that do not belong in this report. Cover and
-organization sections have separate inputs for each replacement. At the final
-review, check each displayed page and either approve it or remove it. Every
-included page needs review; saved originals remain available.
-
-Price columns are omitted from the working client report, including older table
-designs that asked for costs. Check the remaining text and pictures for prices.
-Scanned uploads may have unread pages even if none are selected yet; work through
-the page queue before deciding what to include.
+Shared directory and logo administration, version history and advanced layout
+settings are available outside the normal editing flow. The contact directory's
+full-workbook import saves usable contract and site contacts together, displays
+excluded records, and avoids duplicate revisions on an identical re-import.

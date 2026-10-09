@@ -83,17 +83,13 @@ def design_seed(profile, period, actor, source=None):
     if source:
         profile = replace(source.profile, key=profile.key, title=profile.title, facilities=profile.facilities,
                           scope_type=profile.scope_type, imported_from="", asset_tags=profile.asset_tags)
-    else:
-        # The RFI appendix is optional in a brand-new general template. A reused
-        # design or saved report keeps its own deliberate section choices.
-        profile = replace(profile, excluded_sections=tuple(dict.fromkeys((*profile.excluded_sections, "rfi"))))
     prior_blocks = {}
     if source:
         seed = latest_saved_draft(source.profile.contract, source.profile.key, period)
         if seed:
             prior_blocks = {b.key: b for b in seed.blocks}
             profile = replace(profile, section_order=tuple(s.key for s in seed.sections),
-                              excluded_sections=tuple(s.key for s in seed.sections if not s.included),
+                              excluded_sections=(),
                               section_titles=tuple((s.key, s.title) for s in seed.sections),
                               section_block_order=tuple((s.key, tuple(b.key for b in s.blocks)) for s in seed.sections),
                               block_overrides=tuple(b for s in seed.sections for b in s.blocks if b.type == "table" and b.columns))
@@ -107,7 +103,7 @@ def design_seed(profile, period, actor, source=None):
                 columns = tuple(c for c in spec.columns if not price_column(c.title,c.type))
                 if columns:
                     overrides[spec.key] = replace(spec, type="table", columns=columns)
-    profile = replace(profile, block_overrides=tuple(overrides.values()))
+    profile = replace(profile, block_overrides=tuple(overrides.values()), excluded_sections=())
     blocks, assets = [], {}
     specs = (*[b for s in profile_sections(profile) for b in s.blocks], *layout_blocks())
     for spec in specs:

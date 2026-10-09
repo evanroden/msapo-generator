@@ -84,7 +84,7 @@ def test_utility_upload_has_readable_destination_and_prepared_pages(monkeypatch,
     destination = select(app, "Add synthetic-utility.pdf to")
     assert destination.value == "utility_analysis"
     assert "Monthly scorecards — utility results and charts" in destination.options
-    next(w for w in app.checkbox if w.label.startswith("I checked this page:")).check().run()
+    button(app, "Include page and continue").click().run()
     button(app, "Prepare selected pages").click().run()
     assert not app.exception
     assert any("Reviewed pages are ready" in w.value for w in app.success)

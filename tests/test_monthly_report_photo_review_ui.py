@@ -64,3 +64,55 @@ def test_layout_change_preserves_review_and_unchanged_caption_edits_are_noops():
     button(app, "Done editing photos").click().run()
     assert not app.text_area and not app.select_slider
     assert not app.exception
+
+
+def test_only_changed_photo_opens_until_all_photos_are_requested():
+    from dataclasses import replace
+
+    app = AppTest.from_string(SCRIPT).run()
+    original = app.session_state.photos_draft
+    block = replace(original.blocks[0], asset_captions=("First photo", "Changed second caption"))
+    app.session_state.photos_draft = replace(original, blocks=(block,))
+    app.run()
+    assert [value.value for value in app.text_area] == ["Changed second caption"]
+    assert pending_asset_indexes(app.session_state.photos_draft.blocks[0]) == (1,)
+    app.text_area[0].set_value("Corrected second caption").run()
+    assert app.session_state.photos_draft.blocks[0].asset_captions == ("First photo", "Corrected second caption")
+    assert pending_asset_indexes(app.session_state.photos_draft.blocks[0]) == (1,)
+    button(app, "Edit all photos or captions").click().run()
+    assert [value.value for value in app.text_area] == ["First photo", "Corrected second caption"]
+    assert not app.exception
+
+
+def test_guided_photos_use_full_editor_width_without_a_duplicate_thumbnail():
+    script = SCRIPT.replace('assets, _field)', 'assets, _field, show_preview=False)')
+    app = AppTest.from_string(script).run()
+    button(app, "Edit photos or captions").click().run()
+    assert len(app.text_area) == 2
+    assert not app.get("image")
+    assert not app.get("column")
+    assert not app.exception
+
+
+def test_org_position_removal_is_one_action_and_retained_reporting_lines_are_valid():
+    app = AppTest.from_string('''
+from dataclasses import replace
+import streamlit as st
+from app.monthly_report_model import synthetic_draft, synthetic_profiles, ReportPeriod, ResolvedBlock, OrgChartNode
+from app.monthly_report_ui import _field
+from app.monthly_report_visual_ui import edit_org_chart
+if "chart_draft" not in st.session_state:
+    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    block = ResolvedBlock("org_chart", "Library", org_nodes=(
+        OrgChartNode("lead", "Synthetic Lead", "Manager"),
+        OrgChartNode("worker", "Synthetic Worker", "Technician", "lead")))
+    st.session_state.chart_draft = replace(draft, blocks=(block,))
+draft = st.session_state.chart_draft
+changed = edit_org_chart(draft, draft.blocks[0], "chart", {}, _field, show_preview=False)
+st.session_state.chart_draft = replace(draft, blocks=(changed,))
+''').run()
+    assert not app.checkbox and not app.get("image")
+    button(app, "Remove position").click().run()
+    assert not app.exception
+    nodes = app.session_state.chart_draft.blocks[0].org_nodes
+    assert len(nodes) == 1 and nodes[0].key == "worker" and nodes[0].reports_to == ""

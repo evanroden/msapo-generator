@@ -221,11 +221,6 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     next(w for w in app.text_input if w.label == "Your name").set_value(
         "Synthetic Editor"
     ).run()
-    next(
-        w
-        for w in app.checkbox
-        if w.label == "Save this design for these sites so we can use it next month"
-    ).check().run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     step(app, 3)
     next(b for b in app.button if b.label == "Change team chart").click().run()

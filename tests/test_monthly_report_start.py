@@ -26,24 +26,22 @@ def test_membership_is_explicit_order_independent_and_name_does_not_change_ident
     assert not matching_profiles((group,), group.facilities[:1])
 
 
-def test_general_template_starts_without_rfi_but_reused_design_keeps_its_choice(monkeypatch, tmp_path):
+def test_general_template_and_reused_design_always_include_every_section(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     period = ReportPeriod(2026, 9)
     profile = replace(synthetic_profiles()[0], excluded_sections=("training",))
     draft, _ = design_seed(profile, period, "Synthetic Editor")
     included = {s.key: s.included for s in draft.sections}
-    assert not included["rfi"] and not included["training"] and included["activity"]
-    # An existing contract design explicitly includes RFI, even without a report
-    # snapshot. The new-template default must not override that saved choice.
+    assert all(included.values())
+    # A report includes its full structure even if older designs hid sections.
     source = library.save_profile(profile, expected_revision=0, actor="Synthetic Editor", confirmed=True)
     target = replace(synthetic_profiles()[1], key="synthetic-target")
     reused, _ = design_seed(target, period, "Synthetic Editor", source)
     assert next(s for s in reused.sections if s.key == "rfi").included
-    # More recent saved section choices take precedence over the profile.
     saved = replace(reused, profile=profile, sections=tuple(replace(s, included=s.key in ("rfi", "activity")) for s in reused.sections))
     library.save_snapshot(saved, expected_revision=0, entered_editor="Synthetic Editor")
     again, _ = design_seed(target, period, "Synthetic Editor", source)
-    assert {s.key for s in again.sections if s.included} == {"rfi", "activity"}
+    assert all(s.included for s in again.sections)
 
 
 def test_new_design_is_atomic_confirmed_and_remembers_assets_without_other_site_content(monkeypatch, tmp_path):
@@ -97,14 +95,14 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     assert not any(w.label == "Starting point" for w in app.radio)
     next(w for w in app.button if w.key and "report_start_card_use-the-general" in w.key).click().run()
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
-    next(w for w in app.checkbox if w.label == "Save this design for these sites so we can use it next month").check().run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     assert not app.exception
     assert next(w for w in app.radio if w.label == "Report steps").value.endswith("Report")
     assert next(w for w in app.text_input if w.label == "Name for this group (optional)").value == "Synthetic Region"
     assert not any(w.label == "Site / report" for w in app.selectbox)
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"
-    assert any(w.label == "Include Organizational Chart" for w in app.checkbox)
+    assert not any(w.label.startswith("Include ") for w in app.checkbox)
+    assert any(w.label == "Report appearance" for w in app.expander)
     assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
     next(w for w in app.button if w.label == "Change logos").click().run()
     assert any(w.label == "New client logo" for w in app.get("file_uploader"))
@@ -158,10 +156,8 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(w for w in app.checkbox if w.label == "This is a regional report").check().run()
     next(b for b in app.button if b.label == "Use ENFRA template").click().run()
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
-    next(w for w in app.checkbox if w.label == "Save this design for these sites so we can use it next month").check().run()
     next(b for b in app.button if b.label == "Start this report").click().run()
-    for label in [w.label for w in app.checkbox if w.label.startswith("Include ") and w.label not in ("Include Organizational Chart", "Include Monthly Activity Summary")]:
-        next(w for w in app.checkbox if w.label == label).uncheck().run()
+    assert not any(w.label.startswith("Include ") for w in app.checkbox)
     next(b for b in app.button if b.label == "Continue to this month’s work").click().run()
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic team completed the September inspection.").run()
     step(app, 3)
@@ -169,7 +165,6 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(b for b in app.button if b.label == "Change team chart").click().run()
     next(b for b in app.button if b.label == "Start an editable org chart").click().run()
     next(w for w in app.text_input if w.label == "Name").set_value("Synthetic Manager").run()
-    next(w for w in app.checkbox if w.label == "I checked the standing information for these sites").check().run()
     step(app, 4)
     generate = next(b for b in app.button if b.label == "Generate DOCX and PDF")
     assert not generate.disabled, [w.value for w in (*app.error, *app.warning)]
@@ -193,12 +188,12 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next_app.selectbox("report_month_number").set_value(10).run()
     assert next(w for w in next_app.text_input if w.label == "Name for this group (optional)").value == "Synthetic Lakes Region"
     assert next(w for w in next_app.checkbox if w.label == "This is a regional report").value
-    assert sum(w.value for w in next_app.checkbox if w.label.startswith("Include ")) == 2
+    assert not any(w.label.startswith("Include ") for w in next_app.checkbox)
     step(next_app, 2)
     assert next(w for w in next_app.text_area if w.label == "Activity summary").value == ""
     step(next_app, 3)
     assert not any(w.label == "Name" for w in next_app.text_input)
     next(b for b in next_app.button if b.label == "Change team chart").click().run()
     assert next(w for w in next_app.text_input if w.label == "Name").value == "Synthetic Manager"
-    assert not next(w for w in next_app.checkbox if w.label == "I checked the standing information for these sites").value
+    assert not any(w.label == "I checked the standing information for these sites" for w in next_app.checkbox)
     assert next(r for r in next_app.radio if r.label == "Report steps").value == STEPS[2]

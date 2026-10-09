@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_sources as sources, monthly_report_upload_ui as ui
 from app.monthly_report_asset_review import pending_asset_indexes
-from app.monthly_report_content_policy import page_fingerprint
+from app.monthly_report_content_policy import page_allowed, page_fingerprint
 from app.monthly_report_model import ResolvedBlock, synthetic_profiles
 from app.monthly_report_section_uploads import prepare_section_pages, section_contents, source_destinations
 from test_monthly_report_sources import pdf_bytes
@@ -202,7 +202,8 @@ else:
     next(w for w in app.radio if w.label == "View").set_value("Batch").run()
     assert not app.exception
     assert next(w for w in app.text_input if w.label == "Vendor").value == "Synthetic updated vendor"
-    assert next(w for w in app.checkbox if w.label.startswith("I checked this page:")).value
+    assert page_allowed(app.session_state["synthetic_evidence"][0].source, 1)
+    assert not any(w.label.startswith("I checked this page:") for w in app.checkbox)
     next(w for w in app.text_input if w.label == "Page caption").set_value("Batch edited caption").run()
     next(w for w in app.radio if w.label == "View").set_value("Section").run()
     assert not app.exception

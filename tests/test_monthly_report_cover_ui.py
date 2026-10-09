@@ -45,7 +45,7 @@ def button(app, label):
     return next(v for v in app.button if v.label == label)
 
 
-def test_cover_opens_with_current_content_and_no_change_or_review_questions(monkeypatch):
+def test_cover_keeps_appearance_controls_collapsed_and_reuses_saved_artwork(monkeypatch):
     def unexpected(*args, **kwargs):
         raise AssertionError("Shared logo picker should stay closed")
     monkeypatch.setattr("app.monthly_report_branding_ui.offer_logo", unexpected)
@@ -53,9 +53,14 @@ def test_cover_opens_with_current_content_and_no_change_or_review_questions(monk
     original = dict(app.session_state.blocks)
     assert not app.exception
     assert not app.get("file_uploader") and not app.checkbox and not app.radio and not app.text_area
-    assert {b.label for b in app.button} == {"Change cover photo", "Change logos", "Edit footer"}
+    assert len(app.expander) == 1
+    appearance = app.expander[0]
+    assert appearance.label == "Report appearance"
+    assert appearance.proto.expanded is False
+    assert {b.label for b in appearance.button} == {"Change cover photo", "Change logos", "Edit footer"}
+    assert len(appearance.button) == len(app.button)
     assert any("September 2026" in v.value for v in app.markdown)
-    assert any("final page layout" in v.value for v in app.caption)
+    assert any("Saved artwork is used automatically" in v.value for v in app.caption)
     app.run()
     assert app.session_state.blocks == original
 
@@ -133,9 +138,12 @@ def test_shared_logo_choices_only_open_with_explicit_action(monkeypatch):
     monkeypatch.setattr("app.monthly_report_branding_ui.offer_logo", lambda block, *a: calls.append(block.key) or block)
     app = cover_app()
     assert calls == []
+    assert app.expander[0].proto.expanded is False
+    assert not app.get("file_uploader")
     button(app, "Change logos").click().run()
     assert calls == ["client_logo", "brand_logo"]
     assert [v.label for v in app.get("file_uploader")] == ["New client logo", "New ENFRA logo"]
+    assert len(app.expander[0].get("file_uploader")) == 2
     button(app, "Done with cover changes").click().run()
     assert not app.get("file_uploader")
 

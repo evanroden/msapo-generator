@@ -45,7 +45,7 @@ def remove_saved_picture(block, index):
     ))
 
 
-def edit_saved_pictures(block, key, loader):
+def edit_saved_pictures(block, key, loader, *, show_preview=True):
     """Return the current block; the caller retains it in its working draft.
 
     Buttons record an exact image-list decision before rerun, so removal happens
@@ -61,35 +61,42 @@ def edit_saved_pictures(block, key, loader):
         st.caption("No pictures are included here. Add a picture below when you need one.")
         return block
     editing_key = key + "_editing"
-    ready = not pending_asset_indexes(block)
+    pending_indexes = pending_asset_indexes(block)
+    ready = not pending_indexes
     if ready and not st.session_state.get(editing_key):
         st.caption(f"{count} {'picture is' if count == 1 else 'pictures are'} ready. Earlier reviews are saved.")
         st.button("View or change pictures", key=key + "_edit", on_click=_set_editing, args=(editing_key, True))
         return block
-    if ready:
+    editing = st.session_state.get(editing_key, False)
+    if editing:
         st.button("Done editing pictures", key=key + "_done", on_click=_set_editing, args=(editing_key, False))
+    elif len(pending_indexes) < count:
+        st.caption(f"{len(pending_indexes)} new or changed pictures. The other pictures keep their saved reviews.")
+        st.button("View all pictures", key=key + "_edit_all", on_click=_set_editing, args=(editing_key, True))
+    visible = tuple(range(count)) if editing else pending_indexes
     page_key = key + "_picture_page"
-    last = (count - 1) // 4
+    last = (len(visible) - 1) // 4
     page = min(max(0, st.session_state.get(page_key, 0)), last)
     st.session_state[page_key] = page
     if last:
         previous, status, following = st.columns([1, 2, 1])
         previous.button("Previous pictures", key=key + "_previous", disabled=page == 0,
                         on_click=_move_page, args=(page_key, -1, last))
-        status.caption(f"Pictures {page * 4 + 1}–{min(page * 4 + 4, count)} of {count}")
+        status.caption(f"Pictures {page * 4 + 1}–{min(page * 4 + 4, len(visible))} of {len(visible)}")
         following.button("Next pictures", key=key + "_next", disabled=page == last,
                          on_click=_move_page, args=(page_key, 1, last))
     st.caption("These pictures are included in this report. Removing one changes this draft; saved originals remain available.")
     version = hashlib.sha256(repr(block.asset_hashes).encode()).hexdigest()[:16]
-    for index in range(page * 4, min(page * 4 + 4, count)):
+    for index in visible[page * 4:page * 4 + 4]:
         with st.container():
             caption = block.asset_captions[index] if index < len(block.asset_captions) else ""
             label = caption or ("Current picture" if count == 1 else f"Picture {index + 1}")
             st.write(label)
-            try:
-                st.image(loader(block.asset_hashes[index]), width="stretch")
-            except (ValueError, OSError):
-                st.warning("This picture could not be displayed. Replace it with a clear copy or remove it from this draft.")
+            if show_preview:
+                try:
+                    st.image(loader(block.asset_hashes[index]), width="stretch")
+                except (ValueError, OSError):
+                    st.warning("This picture could not be displayed. Replace it with a clear copy or remove it from this draft.")
             st.button("Remove this picture" if count == 1 else f"Remove picture {index + 1}",
                       key=key + f"_remove_{version}_{index}", on_click=_request_removal,
                       args=(pending_key, block.asset_hashes, index))

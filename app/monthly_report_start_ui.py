@@ -147,40 +147,21 @@ def select_sites(contract, profiles, remembered, field, completed=None):
 
 
 def starting_choice(profile, profiles, period, prepared, field):
-    st.subheader("How would you like to start?")
+    from app.monthly_report_section_ui import render_section_setup
+    if render_section_setup(profile.contract, period, prepared, field, identity=profile):
+        return
     available = recommended_designs(profile, profiles, period)
-    choices = (["Use another report from this contract"] if available else []) + ["Use the general ENFRA monthly report template", "Upload an older or unfinished report from my site"]
+    choices = (["Use another report from this contract"] if available else []) + ["Use the general ENFRA monthly report template"]
     choice_key = field("report_start_choice_" + profile.key, "")
     selected = st.session_state[choice_key]
-    from app.monthly_report_branding import find_logo, read_logo, card_image, load_branding
-    state = load_branding()
-    brand = find_logo(brand=True, state=state) if state else None
-    st.caption("Choose one starting point. You can work through the report sections in any order.")
-    cards = {
-        "Use another report from this contract": ("Another report from this contract", "Reuse an existing layout and logos. You’ll add the people, contacts and work for your selected sites.", _logo(profile.contract, state, {}) if available else None, ":material/library_books:"),
-        "Use the general ENFRA monthly report template": ("ENFRA monthly report template", "Start with the standard sections and available client logo. We’ll walk you through your site information.", card_image(read_logo(brand)) if brand else None, ":material/description:"),
-        "Upload an older or unfinished report from my site": ("A report you already have", "Upload a Word report from your sites—an older example or a teammate’s unfinished report. Review and update it section by section.", None, ":material/upload_file:"),
-    }
+    st.caption("No report file? Start from a saved contract design or the standard template.")
     for column, choice in zip(st.columns(len(choices)), choices):
-        title, description, logo, icon = cards[choice]
-        with column, st.container(border=True):
-            if logo:
-                st.image(logo, width="stretch")
-            else:
-                st.markdown("# " + icon)
-            st.markdown("**" + title + "**")
-            st.caption(description)
-            button_label = {choices[-1]: "Upload my report", "Use another report from this contract": "Use a contract report", "Use the general ENFRA monthly report template": "Use ENFRA template"}[choice]
-            if st.button("Selected · " + button_label if selected == choice else button_label, icon=icon, type="primary" if selected == choice else "secondary", key="report_start_card_" + _key(choice) + "_" + profile.key, width="stretch"):
-                st.session_state[choice_key] = choice
-                st.rerun()
+        label = "Use a contract report" if choice.startswith("Use another") else "Use ENFRA template"
+        if column.button(label, key="report_start_card_" + _key(choice) + "_" + profile.key,
+                         type="primary" if selected == choice else "secondary", width="stretch"):
+            st.session_state[choice_key] = choice
+            st.rerun()
     if selected not in choices:
-        st.info("Choose a starting point above to continue.")
-        return
-    st.write("Starting with: **" + cards[selected][0] + "**")
-    if selected.startswith("Upload"):
-        from app.monthly_report_section_ui import render_section_setup as render_setup
-        render_setup(profile.contract, period, prepared, field, identity=profile)
         return
     source = None
     if selected.startswith("Use another"):
@@ -194,17 +175,9 @@ def starting_choice(profile, profiles, period, prepared, field):
         st.caption("Reuses the section layout, table headings and saved contract logos. You’ll supply this site's org chart, contacts, photos and current work.")
     else:
         st.caption("The available ENFRA and client logos are filled in. Check your org chart, contacts and site information; the tool remembers the design for next time.")
-    with st.container(border=True):
-        st.markdown("**What you’ll need for this first report**")
-        st.write("""1. Choose which sections apply to these sites.
-2. Add or check the site’s org chart, facility/vendor contacts and outage procedures. Reviewed directory contacts may be offered when available.
-3. Check the supplied logos; add a cover photo and footer details if wanted.
-4. Add this month’s work, relevant vendor/chemical reports, photos and any work-order export.
-5. Review the pages and save your progress before leaving.""")
-        st.caption("You can do this in any order. Nothing requires filling unrelated sections. The saved design and standing site information become next month’s starting point for these exact sites.")
+    st.caption("All report sections are included. Add the information available now and continue unfinished sections later.")
     actor = st.text_input("Your name", key=field("report_start_actor_" + profile.key, prepared))
-    confirm = st.checkbox("Save this design for these sites so we can use it next month", key="report_start_confirm_" + _signature((profile, source.revision if source else 0, actor)))
-    if st.button("Start this report", key="report_start_save_" + profile.key, disabled=not (actor.strip() and confirm), type="primary"):
+    if st.button("Start this report", key="report_start_save_" + profile.key, disabled=not actor.strip(), type="primary"):
         try:
             draft, assets = design_seed(profile, period, actor, source)
             save_design_start(draft, assets, actor=actor, confirmed=True)

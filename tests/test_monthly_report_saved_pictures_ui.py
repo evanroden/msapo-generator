@@ -2,7 +2,7 @@
 from streamlit.testing.v1 import AppTest
 
 
-def app_for(count=6, references=None):
+def app_for(count=6, references=None, show_preview=True):
     return AppTest.from_string('''
 from io import BytesIO
 from PIL import Image
@@ -13,8 +13,8 @@ raw=BytesIO(); Image.new("RGB", (160,160), "navy").save(raw, "PNG")
 original=ResolvedBlock("org_chart", "Library", asset_hashes=tuple(str(n) for n in range(COUNT)), asset_captions=tuple("Caption " + str(n) for n in range(COUNT)), references=REFERENCES, client_reviewed_fingerprint="previous-review", reviewed_fingerprint="previous-ai-review")
 st.session_state.setdefault("original",original)
 block=st.session_state.get("draft", original)
-st.session_state["draft"]=edit_saved_pictures(block, "report_saved_cards", lambda ref:raw.getvalue())
-'''.replace('COUNT', str(count)).replace('REFERENCES', repr(references if references is not None else tuple('source-'+str(n) for n in range(count))))).run()
+st.session_state["draft"]=edit_saved_pictures(block, "report_saved_cards", lambda ref:raw.getvalue(), show_preview=SHOW_PREVIEW)
+'''.replace('COUNT', str(count)).replace('SHOW_PREVIEW', repr(show_preview)).replace('REFERENCES', repr(references if references is not None else tuple('source-'+str(n) for n in range(count))))).run()
 
 
 def test_saved_picture_removal_survives_navigation_and_preserves_associations(monkeypatch, tmp_path):
@@ -62,7 +62,7 @@ def test_reviewed_gallery_is_optional_and_removing_one_keeps_other_reviews():
     app.session_state["draft"] = approve_all_assets(app.session_state["draft"])
     app.run()
     assert [b.label for b in app.button] == ["View or change pictures"]
-    assert not app.get("imgs")
+    assert not app.get("image")
     app.button[0].click().run()
     assert len([b for b in app.button if b.label.startswith("Remove")]) == 2
     next(b for b in app.button if b.label == "Remove picture 1").click().run()
@@ -97,3 +97,26 @@ def test_removal_uses_source_mapping_and_retains_shared_or_native_evidence():
     assert remove_saved_picture(shared, 0).references == reviewed.references
     native = replace(reviewed, text="This narrative uses both reports.")
     assert remove_saved_picture(native, 0).references == native.references
+
+
+def test_one_changed_saved_picture_does_not_reopen_unchanged_pictures():
+    from dataclasses import replace
+    from app.monthly_report_asset_review import approve_all_assets, pending_asset_indexes
+
+    app = app_for(3)
+    original = approve_all_assets(app.session_state["draft"])
+    app.session_state["draft"] = replace(original, asset_captions=("Caption 0", "Changed caption", "Caption 2"))
+    app.run()
+    assert [button.label for button in app.button if button.label.startswith("Remove")] == ["Remove picture 2"]
+    assert len(app.get("image")) == 1
+    next(button for button in app.button if button.label == "Remove picture 2").click().run()
+    assert app.session_state["draft"].asset_hashes == ("0", "2")
+    assert not pending_asset_indexes(app.session_state["draft"])
+    assert not app.get("image") and not app.exception
+
+
+def test_guided_saved_picture_editor_leaves_document_preview_to_the_right_pane():
+    app = app_for(2, show_preview=False)
+    assert not app.get("image")
+    assert len([button for button in app.button if button.label.startswith("Remove")]) == 2
+    assert not app.exception

@@ -52,10 +52,25 @@ def test_four_current_parts_need_no_keep_or_change_questions():
     }
     assert not at.text_area and not at.checkbox and not at.radio and not at.selectbox
     assert len(at.button) == 4
+    procedures = next(item for item in at.expander if item.label == "ENFRA outage procedures")
+    assert procedures.proto.expanded is False
+    assert {item.label for item in procedures.button} == {
+        "Change daytime outage procedure", "Change after-hours outage procedure",
+    }
     assert at.session_state["editor_calls"] == []
     assert at.session_state["blocks"] == at.session_state["original"]
     # Duplicate or blank headings must not erase a custom imported cell.
     assert any("Keep this custom cell" in frame.value.to_string() for frame in at.dataframe)
+
+
+def test_live_preview_mode_has_no_duplicate_picture_or_table_previews():
+    script = SCRIPT.replace('"test", assets, _field, editor)',
+                            '"test", assets, _field, editor, show_preview=False)')
+    at = AppTest.from_string(script).run()
+    assert not at.exception
+    assert not at.get("image") and not at.dataframe
+    assert not at.get("file_uploader") and not at.checkbox
+    assert at.session_state["blocks"] == at.session_state["original"]
 
 
 def test_after_hours_change_preserves_other_three_parts_and_provenance():

@@ -72,8 +72,8 @@ def render_cover(draft, blocks, prefix, assets, field, asset_loader):
     """Return edited cover blocks without changing shared defaults or identity.
 
     Place this once in the Report step. Title, scope, month and preparer are the
-    caller's existing report controls. This is a content overview, not a rendered
-    approximation of the exported cover.
+    caller's existing report controls. Saved artwork is reused automatically;
+    appearance changes stay inside the optional, collapsed settings.
     """
     result = dict(blocks)
     prefix += "_cover"
@@ -83,62 +83,64 @@ def render_cover(draft, blocks, prefix, assets, field, asset_loader):
     st.write(draft.period.label + " · " + draft.profile.contract)
     st.caption("Sites: " + "; ".join(site.title for site in draft.profile.facilities))
     st.caption("Prepared by: " + (draft.prepared_by.strip() or "Enter your name above"))
-    st.caption("Current details and artwork are shown below. Review & download shows the final page layout.")
-    preview = st.container()
-    actions = st.columns(3)
-    for column, label, action in zip(actions, ("Change cover photo", "Change logos", "Edit footer"), ("photo", "logos", "footer")):
-        column.button(label, key=prefix + "_" + action,
-                      on_click=_set_action, args=(action_key, action))
-    action = st.session_state.get(action_key, "")
-    if action == "photo":
-        st.markdown("**Change cover photo**")
-        st.caption("The cover photo is optional. Your current photo stays until you use a replacement or remove it.")
-        original = block = result.get("cover_photo", ResolvedBlock("cover_photo", "Omit"))
-        block = _upload_picture(block, "Cover photo", prefix, assets)
-        if block.asset_hashes and block.source != "Omit" and st.button("Remove cover photo", key=prefix + "_remove_photo"):
-            block = preserve_asset_reviews(block, replace(
-                block, source="Omit", asset_hashes=(), asset_captions=(),
-                references=(), reviewed_fingerprint="", client_reviewed_fingerprint="",
-            ))
-            st.success("Cover photo removed from this draft. Save progress to keep the change.")
-        if block != original:
-            result["cover_photo"] = block
-    elif action == "logos":
-        st.caption("Existing logos stay as saved. A change here applies to this report; shared defaults are unchanged.")
-        from app.monthly_report_branding_ui import offer_logo
-        for key, title in PICTURES[:2]:
-            st.markdown("**" + title + "**")
-            original = block = result.get(key, ResolvedBlock(key, "Omit"))
-            try:
-                block = offer_logo(block, draft.profile.contract, prefix, assets)
-            except (ValueError, OSError):
-                st.warning("The shared logo could not be loaded. The current logo is retained; you can upload a replacement below.")
-            block = _upload_picture(block, title, prefix, assets)
-            if block != original:
-                result[key] = block
-    elif action == "footer":
-        block = result.get("footer_text", ResolvedBlock("footer_text", "This month", text=draft.address_line))
-        default = "" if block.source == "Omit" else block.text
-        value = st.text_area("Report footer (optional)",
-                             key=field(prefix + "_footer_value_" + _signature((block.text, block.source)), default),
-                             help="For example, the facility address. Leave it blank for no footer.")
-        if st.button("Use footer text", key=prefix + "_footer_save"):
-            if value != default:
-                result["footer_text"] = preserve_asset_reviews(block, replace(
-                    block, source="This month", text=value,
-                    reviewed_fingerprint="", client_reviewed_fingerprint="",
+    st.caption("Saved artwork is used automatically.")
+    with st.expander("Report appearance", expanded=False):
+        st.caption("Optional changes to this report’s artwork and footer.")
+        preview = st.container()
+        actions = st.columns(3)
+        for column, label, action in zip(actions, ("Change cover photo", "Change logos", "Edit footer"), ("photo", "logos", "footer")):
+            column.button(label, key=prefix + "_" + action,
+                          on_click=_set_action, args=(action_key, action))
+        action = st.session_state.get(action_key, "")
+        if action == "photo":
+            st.markdown("**Change cover photo**")
+            st.caption("The cover photo is optional. Your current photo stays until you use a replacement or remove it.")
+            original = block = result.get("cover_photo", ResolvedBlock("cover_photo", "Omit"))
+            block = _upload_picture(block, "Cover photo", prefix, assets)
+            if block.asset_hashes and block.source != "Omit" and st.button("Remove cover photo", key=prefix + "_remove_photo"):
+                block = preserve_asset_reviews(block, replace(
+                    block, source="Omit", asset_hashes=(), asset_captions=(),
+                    references=(), reviewed_fingerprint="", client_reviewed_fingerprint="",
                 ))
-            st.success("Footer updated in this draft. Save progress to keep the change.")
-    if action:
-        st.button("Done with cover changes", key=prefix + "_done",
-                  on_click=_set_action, args=(action_key, ""))
-    with preview:
-        columns = st.columns([1, 1, 2])
-        for column, (key, title) in zip(columns, PICTURES):
-            with column:
-                _preview_picture(result.get(key, ResolvedBlock(key, "Omit")), title, asset_loader)
-        footer = result.get("footer_text")
-        text = (footer.text if footer.source != "Omit" else "") if footer else draft.address_line
-        if text.strip():
-            st.caption("Footer: " + text)
+                st.success("Cover photo removed from this draft. Save progress to keep the change.")
+            if block != original:
+                result["cover_photo"] = block
+        elif action == "logos":
+            st.caption("Existing logos stay as saved. A change here applies to this report; shared defaults are unchanged.")
+            from app.monthly_report_branding_ui import offer_logo
+            for key, title in PICTURES[:2]:
+                st.markdown("**" + title + "**")
+                original = block = result.get(key, ResolvedBlock(key, "Omit"))
+                try:
+                    block = offer_logo(block, draft.profile.contract, prefix, assets)
+                except (ValueError, OSError):
+                    st.warning("The shared logo could not be loaded. The current logo is retained; you can upload a replacement below.")
+                block = _upload_picture(block, title, prefix, assets)
+                if block != original:
+                    result[key] = block
+        elif action == "footer":
+            block = result.get("footer_text", ResolvedBlock("footer_text", "This month", text=draft.address_line))
+            default = "" if block.source == "Omit" else block.text
+            value = st.text_area("Report footer (optional)",
+                                 key=field(prefix + "_footer_value_" + _signature((block.text, block.source)), default),
+                                 help="For example, the facility address. Leave it blank for no footer.")
+            if st.button("Use footer text", key=prefix + "_footer_save"):
+                if value != default:
+                    result["footer_text"] = preserve_asset_reviews(block, replace(
+                        block, source="This month", text=value,
+                        reviewed_fingerprint="", client_reviewed_fingerprint="",
+                    ))
+                st.success("Footer updated in this draft. Save progress to keep the change.")
+        if action:
+            st.button("Done with cover changes", key=prefix + "_done",
+                      on_click=_set_action, args=(action_key, ""))
+        with preview:
+            columns = st.columns([1, 1, 2])
+            for column, (key, title) in zip(columns, PICTURES):
+                with column:
+                    _preview_picture(result.get(key, ResolvedBlock(key, "Omit")), title, asset_loader)
+            footer = result.get("footer_text")
+            text = (footer.text if footer.source != "Omit" else "") if footer else draft.address_line
+            if text.strip():
+                st.caption("Footer: " + text)
     return result
