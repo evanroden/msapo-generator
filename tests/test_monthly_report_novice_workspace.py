@@ -58,3 +58,26 @@ def test_general_template_sections_have_one_editing_home(monkeypatch, tmp_path):
     assert not any(w.label in ('Equipment issues', 'Utility analysis') for w in app.text_area)
     assert not any(w.label.startswith('Change the ') for w in app.checkbox)
     assert not any(w.label in ('Pictures/pages to keep', 'Picture/page to view') for w in (*app.selectbox, *app.multiselect))
+
+
+def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_month(monkeypatch, tmp_path):
+    from app import monthly_report_library as library
+    from app.contracts import RRH_CONTRACT
+    app = monthly(monkeypatch, tmp_path)
+    next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Editor').run()
+    next(w for w in app.checkbox if w.label == 'Include Monthly Activity Summary').uncheck().run()
+    next(w for w in app.checkbox if w.label == 'Include MBCx Reports').check().run()
+    step(app, 2)
+    update = next(w for w in app.text_area if w.label == 'Update to include in the report')
+    assert update.value == ''
+    next(b for b in app.button if b.label == 'Reporting has not started').click().run()
+    update = next(w for w in app.text_area if w.label == 'Update to include in the report')
+    assert 'has not started' in update.value
+    update.set_value('Synthetic equipment monitoring is awaiting activation.').run()
+    next(w for w in app.checkbox if w.label == 'Save this draft for others on this report to continue').check().run()
+    next(b for b in app.button if b.label == 'Save progress').click().run()
+    saved = library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', ReportPeriod(2026, 9))
+    assert next(b for b in saved.draft.blocks if b.key == 'mbcx_status').text == 'Synthetic equipment monitoring is awaiting activation.'
+    app.selectbox('report_month_number').set_value(10).run()
+    step(app, 2)
+    assert next(w for w in app.text_area if w.label == 'Update to include in the report').value == 'Synthetic equipment monitoring is awaiting activation.'

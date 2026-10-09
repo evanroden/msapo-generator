@@ -10,7 +10,13 @@ from app.monthly_report_editor import _grid, _preview, _signature
 
 
 def contract_choices():
-    return list(dict.fromkeys([*contracts.contract_names(), *directory.directory_contracts()]))
+    # The catalog's display spelling wins; case/spacing variants are one choice.
+    # A legacy saved name must not create duplicate landing-page button IDs.
+    choices = {}
+    for name in (*contracts.contract_names(), *directory.directory_contracts()):
+        identity = " ".join(name.casefold().split())
+        choices.setdefault(identity, name)
+    return list(choices.values())
 
 
 def _known_sites(contract, state):
@@ -111,16 +117,28 @@ def _render_directory(field):
     flash = st.session_state.pop("report_directory_message", "")
     if flash:
         st.success(flash)
+    # Do this before listing, loading, or rendering any saved contact record.
+    # This remains an attribution gate for the owner's no-login testing mode,
+    # never a claim that the entered name authenticates a visitor.
+    actor = st.text_input("Directory editor name", key=field("report_directory_actor", ""), max_chars=160)
+    st.caption("Your name records directory changes. It is not a login or verified identity; this testing app has no sign-in protection.")
+    if not actor.strip():
+        st.info("Enter your name before viewing or changing saved contact lists.")
+        return
     mode = st.radio("Directory task", ["Import a workbook", "Review saved directory"], key=field("report_directory_mode", "Import a workbook"), horizontal=True)
     if mode == "Review saved directory":
-        names = directory.directory_contracts()
+        names = directory.directory_contracts(include_archived=True)
         if not names:
             st.info("No directory has been saved yet. Import a workbook to begin.")
             return
         contract = st.selectbox("Saved contract directory", names, key="report_directory_existing")
-        state = directory.load_directory(contract)
+        state = directory.load_directory(contract, include_archived=True)
         prefix = "report_directory_saved_" + _signature((contract, state.revision))
         st.caption(f"Revision {state.revision} · entered editor: {state.actor} · {state.updated_at}")
+        if state.archived:
+            st.info("This contact list is archived. It is no longer offered for new reports. Restore a saved version below to use it again.")
+            _directory_history(contract, state, prefix, actor)
+            return
         sites = _site_editor(state.sites, (), prefix)
         raw, source_sha, sheet_name = None, state.source_sha256, state.source_sheet
     else:
@@ -154,7 +172,10 @@ def _render_directory(field):
         contract = st.text_input("Contract name", key=field(p + "_name_" + sheet.name, clean_title)) if selected_contract == "Add another contract" else selected_contract
         if not contract.strip():
             return
-        state = directory.load_directory(contract)
+        state = directory.load_directory(contract, include_archived=True)
+        if state and state.archived:
+            st.info("This contract’s contact list is archived. Open Review saved directory and restore it before importing changes.")
+            return
         prefix = p + "_" + _signature((contract, sheet.name, state.revision if state else 0))
         header, label, address, groups = directory.suggest_matrix(sheet)
         with st.expander("Check how the worksheet is read"):
@@ -176,8 +197,6 @@ def _render_directory(field):
         source_sha, sheet_name = inspection.sha256, sheet.name
         st.caption(f"Saving {len(incoming)} reviewed site records; {len(sites) - len(incoming)} other saved records remain unchanged. Other workbook tabs are not imported into this contract.")
     revision = state.revision if state else 0
-    actor = st.text_input("Directory editor name", key=field(prefix + "_actor", ""))
-    st.caption("Entered names are attribution, not verified identity. The saved original workbook and confirmed directory are shared in this public internal-testing app. Only upload information approved for that exposure.")
     signature = _signature((contract, revision, [asdict(s) for s in sites], actor, source_sha, sheet_name))
     confirmed = st.checkbox("I reviewed all included sites and contacts and confirm this shared save", key=prefix + "_confirm_" + signature)
     if st.button("Save contract directory", key=prefix + "_save", type="primary", disabled=not (sites and actor.strip() and confirmed)):
@@ -186,16 +205,27 @@ def _render_directory(field):
         st.session_state["report_directory_message"] = "Directory saved. Existing reports and their selected sites were not changed. You can review another tab or return to report setup."
         st.rerun()
     if state:
-        with st.expander("History and restoration"):
-            number = int(st.number_input("Directory version to inspect", 1, state.revision, value=state.revision, key=prefix + "_history"))
-            prior = directory.load_directory(contract, number)
-            st.caption(f"Version {number} · {prior.actor} · {prior.updated_at} · {prior.action}")
-            st.dataframe([{"Site": s.title, "Aliases": "; ".join(s.aliases), "Active": s.active, "Contacts": len(s.contacts)} for s in prior.sites], hide_index=True)
-            restore = st.checkbox("Restore this directory version as a new revision", key=prefix + f"_restore_ok_{number}_" + _signature(actor))
-            if st.button("Restore directory", key=prefix + "_restore", disabled=not (restore and actor.strip() and number != state.revision)):
-                directory.restore_directory(contract, number, expected_revision=state.revision, actor=actor, confirmed=restore)
-                st.session_state["report_directory_message"] = "Directory restored as a new revision. Report snapshots were not changed."
+        _directory_history(contract, state, prefix, actor)
+        with st.expander("Remove this contact list from use"):
+            st.write(f"Archive the shared contact list for **{contract}**. It will stop supplying site and contact suggestions. Saved reports, source workbooks and directory history stay available.")
+            confirmed_archive = st.checkbox("Archive this contract’s contact list", key=prefix + "_archive_ok_" + _signature(actor))
+            if st.button("Archive contact list", key=prefix + "_archive", disabled=not confirmed_archive):
+                directory.archive_directory(contract, expected_revision=state.revision, actor=actor, confirmed=confirmed_archive)
+                st.session_state["report_directory_message"] = "Contact list archived. You can restore it from Review saved directory. Saved reports were not changed."
                 st.rerun()
+
+
+def _directory_history(contract, state, prefix, actor):
+    with st.expander("History and restoration", expanded=state.archived):
+        number = int(st.number_input("Directory version to inspect", 1, state.revision, value=state.revision, key=prefix + "_history"))
+        prior = directory.load_directory(contract, number)
+        st.caption(f"Version {number} · {prior.actor} · {prior.updated_at} · {prior.action}")
+        st.dataframe([{"Site": s.title, "Aliases": "; ".join(s.aliases), "Active": s.active, "Contacts": len(s.contacts)} for s in prior.sites], hide_index=True)
+        restore = st.checkbox("Restore this directory version as a new revision", key=prefix + f"_restore_ok_{number}_" + _signature(actor))
+        if st.button("Restore directory", key=prefix + "_restore", disabled=not (restore and actor.strip() and (state.archived or number != state.revision))):
+            directory.restore_directory(contract, number, expected_revision=state.revision, actor=actor, confirmed=restore)
+            st.session_state["report_directory_message"] = "Directory restored as a new revision. Report snapshots were not changed."
+            st.rerun()
 
 
 def choose_facilities(contract, prefix, field):
@@ -214,6 +244,9 @@ def choose_facilities(contract, prefix, field):
 
 
 def review_contacts(draft, prefix, field, assets):
+    if not draft.prepared_by.strip():
+        st.caption("Enter your name in Report before comparing contacts with the saved site directory.")
+        return draft
     state = directory.load_directory(draft.profile.contract)
     if not state:
         return draft

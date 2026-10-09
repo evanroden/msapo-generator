@@ -69,6 +69,7 @@ def test_kept_complete_chart_and_new_outage_picture_both_reach_saved_design(monk
     app = app_for("organization")
     next(w for w in app.button if w.label == "Show original chart pages").click().run()
     next(w for w in app.checkbox if w.label == "Use complete pages for this section").check().run()
+    next(w for w in app.radio if w.label == "What would you like to do?").set_value("Edit text or change pictures").run()
     assert "New daytime outage procedure" in [w.label for w in app.get("file_uploader")]
     next(w for w in app.checkbox if w.label == "Include page 1").check().run()
     next(w for w in app.checkbox if w.label.startswith("Page 1 matches")).check().run()

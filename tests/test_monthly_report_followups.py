@@ -63,9 +63,10 @@ def test_new_month_carries_issues_and_proposals_without_costs_or_silent_resoluti
     prior = prior_report()
     current = new_month_draft(prior, ReportPeriod(2026, 9))
     assert len(current.follow_ups) == 2
-    assert all(i.status == "ongoing" and i.included for i in current.follow_ups)
+    assert [i.status for i in current.follow_ups] == ["ongoing", "pending"]
+    assert all(i.included for i in current.follow_ups)
     assert not any("1200" in i.text for i in current.follow_ups)
-    assert "Pending" in current.follow_ups[1].text
+    assert "Status:" not in current.follow_ups[1].text
     assert not any(b.text or b.rows for b in current.blocks)
     assert any(c.code == "follow_up" for c in preflight(current))
     assert new_month_draft(prior, prior.period) == prior
@@ -151,7 +152,8 @@ def test_returning_user_reviews_carried_status_and_can_save_unfinished_work(
     app.segmented_control[0].set_value("Monthly report").run()
     choose_report(app, profile.facilities[0].title)
     step(app, 2)
-    assert len([w for w in app.radio if w.label == "Current status"]) == 2
+    assert len([w for w in app.radio if w.label == "Current status"]) == 1
+    assert len([w for w in app.radio if w.label == "Proposal decision"]) == 1
     next(w for w in app.radio if w.label == "Current status").set_value(
         "resolved"
     ).run()

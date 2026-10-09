@@ -84,5 +84,8 @@ def offer_logo(block, contract, prefix, assets):
         label = "Use this logo in this report" if block.asset_hashes else "Add this logo to this report"
         if st.button(label, key=prefix + "_official_" + block.key + "_" + logo.asset):
             assets[logo.asset] = branding.read_logo(logo)
-            return replace(block, source="Replace once", asset_hashes=(logo.asset,), asset_captions=(), references=(), client_reviewed_fingerprint="")
+            block = replace(block, source="Replace once", asset_hashes=(logo.asset,), asset_captions=(), references=(), client_reviewed_fingerprint="")
+            # Selecting verified artwork from the reviewed shared collection
+            # does not require another pricing/page review in this report.
+            return replace(block, client_reviewed_fingerprint=block.fingerprint)
     return block

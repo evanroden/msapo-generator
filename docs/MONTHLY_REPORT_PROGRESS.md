@@ -6,6 +6,18 @@ base_commit: 6ffaa1577f491694bd63950acd3a5838600368a2
 
 # Monthly report implementation checkpoint
 
+Latest work: six Review A repros fixed and thirteen dedicated section audits
+completed on `feat/monthly-report-section-experiences`. Includes earlier uncommitted
+MBCx/price-heading work plus period protection, no-op review reuse, reviewed shared
+logos, recoverable directory archive, contact-page updates and atomic CMMS conflict
+guards. See [Review A release notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md)
+for implemented behavior, access limitation, evidence and remaining section work.
+PR #86 holds the release. Final full local run: 1110 passed, 8 skipped. Independent
+review added raw XML name/namespace/token bounds before expansion; 11 new
+adversarial regressions and the existing 30 directory/access tests passed.
+Exact-head CI/publication pending; PR #86 records the final release evidence.
+No persistent production QA data created. Prior checkpoints below remain history.
+
 ## Read first after any interruption
 
 The owner requested the complete six-milestone Monthly report workflow for
@@ -13,6 +25,17 @@ Email Process Control. Each milestone must be independently tested and have its
 own PR. This file is the durable restart point. Update it at every checkpoint;
 push after coherent changes and approximately every 20–30 minutes of longer
 work. Never rely on an ephemeral checkout or conversation summary alone.
+
+Latest local increment: `feat/monthly-report-section-experiences`, based on
+PR #85 merge `f685aaa10285bce9587a4998ff0462894c5741ab` (Actions `37833282220`
+succeeded). The owner clarified that each section needs its own dedicated design
+exploration. Thirteen individual section designers completed first/partial/return
+flows; [section experience designs](MONTHLY_REPORT_SECTION_DESIGNS.md) preserves
+those recommendations and unimplemented work. The first implementation separates
+MBCx status from monthly pages and provides its own editor; it also prevents loss
+of equipment descriptions from ambiguous imported pricing headings and offers
+explicit heading correction. Focused tests passed. Full suite, publication, CI and
+public verification are pending. See [implementation notes](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_SECTION_EXPERIENCES.md).
 
 Latest novice-workflow increment: **PR #84 merged and public controls verified**.
 Merge `be81a93fd5fb548b9a66f62a2c103002bcff3ddf`; feature head

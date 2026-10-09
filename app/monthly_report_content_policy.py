@@ -29,21 +29,49 @@ def contains_price(text):
     return False
 
 
+def _price_heading(title):
+    return bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
+
+
+def _mixed_price_heading(title):
+    """A flattened Word heading can name several different columns at once.
+
+    Removing that physical column would discard technical content rather than
+    reliably remove prices. Preserve it until its headings have been reviewed.
+    """
+    return _price_heading(title) and bool(re.search(
+        r"\b(?:description|recommendation|deficienc(?:y|ies)|scope|condition|useful\s+life|replacement\s+timing)\b",
+        title, re.I,
+    ))
+
+
 def price_column(title, kind=""):
-    return kind == "currency" or bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
+    # Even a supplied currency type is not enough to discard a mixed heading.
+    return not _mixed_price_heading(title) and (kind == "currency" or _price_heading(title))
 
 
-def table_price_columns(columns, rows):
+def _table_headings(columns, rows):
     """Inspect adjacent header lines before the first numeric data row."""
     header_rows = [columns]
     for row in rows[:3]:
         if any(re.search(r"\d", str(cell)) for cell in row):
             break
         header_rows.append(row)
-    return tuple(i for i in range(len(columns)) if price_column(" ".join(row[i] for row in header_rows if i < len(row))))
+    return tuple(" ".join(row[i] for row in header_rows if i < len(row)) for i in range(len(columns)))
+
+
+def ambiguous_price_columns(columns, rows=()):
+    """Columns needing header correction before any price filtering is safe."""
+    return tuple(i for i, title in enumerate(_table_headings(columns, rows)) if _mixed_price_heading(title))
+
+
+def table_price_columns(columns, rows):
+    return tuple(i for i, title in enumerate(_table_headings(columns, rows)) if price_column(title))
 
 
 def table_has_pricing(columns, rows, *, work_orders=False):
+    if ambiguous_price_columns(columns, rows) and any(any(str(cell).strip() for cell in row) for row in rows):
+        return True
     if any(contains_price("\t".join(row)) for row in rows):
         return True
     if any(any(i < len(row) and re.search(r"\d", row[i]) for row in rows) for i in table_price_columns(columns, rows)):
@@ -73,7 +101,7 @@ def price_free_table(spec: "BlockSpec", block: "ResolvedBlock") -> tuple["BlockS
         headings = tuple(columns) + tuple(
             f"Detail {n + 1}" for n in range(len(columns), width)
         )
-        excluded = set(table_price_columns(headings, rows)) | set(currency)
+        excluded = (set(table_price_columns(headings, rows)) | set(currency)) - set(ambiguous_price_columns(headings, rows))
         removed.extend(headings[n] for n in sorted(excluded))
         indexes = tuple(n for n in range(len(headings)) if n not in excluded)
         filtered = tuple(tuple(row[n] if n < len(row) else "" for n in indexes) for row in rows)

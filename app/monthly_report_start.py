@@ -16,6 +16,22 @@ def matching_profiles(profiles, facilities):
     return tuple(p for p in profiles if membership_key(p.facilities) == membership_key(facilities))
 
 
+def refresh_profile_identity(draft, current_profile):
+    """Apply a saved group rename to working reports for these exact sites.
+
+    Saved snapshots stay immutable and retain their original table/design
+    schemas. Only the current group's visible identity is refreshed, never
+    content, section choices, or a report with different site membership.
+    """
+    old = draft.profile
+    if ((old.contract, old.key) != (current_profile.contract, current_profile.key)
+            or membership_key(old.facilities) != membership_key(current_profile.facilities)):
+        return draft
+    identity = replace(old, title=current_profile.title, facilities=current_profile.facilities,
+                       scope_type=current_profile.scope_type)
+    return replace(draft, profile=identity)
+
+
 def report_key(facilities):
     # The saved identity survives renaming a site combination.
     return "sites-" + hashlib.sha256("\0".join(membership_key(facilities)).encode()).hexdigest()[:20]

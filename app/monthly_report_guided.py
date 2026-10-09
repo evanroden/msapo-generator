@@ -18,7 +18,7 @@ from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selecto
 from app.monthly_report_section_help import section_help
 
 # UI location is separate from next-month clearing: issues and renewal plans carry forward.
-MONTHLY_EDIT_KEYS = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis", "capital_renewal", "end_of_life", "proposals", "rfi_matrix"}
+MONTHLY_EDIT_KEYS = MONTHLY_BLOCKS | {"equipment_issues", "utility_analysis", "capital_renewal", "end_of_life", "proposals", "rfi_matrix", "mbcx_status"}
 
 STEPS = ("1 · Report", "2 · This month’s work", "3 · Site information", "4 · Review & download")
 
@@ -56,7 +56,7 @@ def review_message(check, draft):
 def _standing_signature(blocks, included):
     keys = included | {b.key for b in layout_blocks()}
     return _signature(sorted((b.key, b.fingerprint) for b in blocks
-                             if b.key not in MONTHLY_BLOCKS and b.key in keys))
+                             if b.key not in MONTHLY_EDIT_KEYS and b.key in keys))
 
 
 def _initial_draft(state, period, prepared):
@@ -72,15 +72,36 @@ def _initial_draft(state, period, prepared):
     return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
 
 
+def _review_carried_update(block, period, prefix):
+    from app.monthly_report_setup import carried_period, confirm_current_period
+    previous = carried_period(block, period)
+    if previous is None:
+        return block
+    st.info(f"This update was carried from {previous.label}. Check its wording and any charts for {period.label} before including it.")
+    if st.button(f"This update is correct for {period.label}", key=prefix + "_current_period_" + block.key + "_" + block.fingerprint):
+        return confirm_current_period(block, period)
+    return block
+
+
 def _edit_content(spec, block, state, prefix, assets, field, draft=None):
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field)
     key = prefix + "_edit_" + spec.key
+    if spec.type not in ("rich_text", "stock_text") and block.text.strip():
+        if block.ai_paragraphs:
+            st.caption("Edit these source-linked notes in the wording and sources editor above.")
+            st.text(block.text)
+        else:
+            notes = st.text_area("Notes included in this section", key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
+            if notes != block.text:
+                block = replace(block, source="This month", text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
     if block.extra_tables:
         from app.monthly_report_editor import _cell_text
         tables = []
         for n, table in enumerate(block.extra_tables):
+            from app.monthly_report_table_review_ui import review_table_headings
+            table = review_table_headings(table, key + f"_imported_{n}", field)
             st.write(f"Table {n+1}")
             rows = _grid(key + f"_imported_{n}_" + _signature(table.columns), [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)], num_rows="dynamic", hide_index=True)
             tables.append(replace(table, rows=tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows if any(v is not None and v != "" for v in r.values()))))
@@ -90,21 +111,44 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
         st.text(block.text)
     elif spec.type in ("rich_text", "stock_text"):
         text = st.text_area(spec.key.replace("_", " ").capitalize(), key=field(key + "_text_" + _signature(block.references), block.text), height=140)
-        block = replace(block, source="This month", text=text, reviewed_fingerprint=block.reviewed_fingerprint if text == block.text else "")
+        if text != block.text:
+            block = replace(block, source="This month", text=text, reviewed_fingerprint="", client_reviewed_fingerprint="")
     elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
         from app.monthly_report_editor import _cell_text
         columns = [c.title for c in spec.columns] or ["Facility", "Item", "Status"]
-        block = replace(block, source="This month", rows=tuple(tuple(_cell_text(row.get(c)) for c in columns) for row in rows
-                                                               if any(v is not None and v != "" for v in row.values())))
+        edited_rows = tuple(tuple(_cell_text(row.get(c)) for c in columns) for row in rows
+                            if any(v is not None and v != "" for v in row.values()))
+        if rows != seed and edited_rows != block.rows:
+            block = replace(block, source="This month", rows=edited_rows, reviewed_fingerprint="", client_reviewed_fingerprint="")
     if block.asset_hashes:
         from app.monthly_report_saved_pictures_ui import edit_saved_pictures
         block = edit_saved_pictures(block, key, lambda ref: assets.get(ref) or library.read_asset(state.profile.contract, state.profile.key, ref))
     if spec.type in ("rich_text", "stock_text", "table", "work_order_grid"):
+        if spec.key in ("training_summary", "equipment_issues"):
+            with st.expander("Add a supporting photo (optional)"):
+                photo = st.file_uploader("Photo to add to this section", type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_add_photo")
+                if photo and st.button("Add this photo", key=key + "_add_photo_save"):
+                    from pathlib import Path
+                    try:
+                        normalized = normalize_report_image(photo.getvalue(), Path(photo.name).suffix)
+                        reference = library.asset_reference(normalized.data, normalized.extension)
+                        assets[reference] = normalized.data
+                        if reference not in block.asset_hashes:
+                            captions = (*block.asset_captions, *("" for _ in range(len(block.asset_hashes) - len(block.asset_captions))), "")
+                            block = replace(block, source="This month", asset_hashes=(*block.asset_hashes, reference), asset_captions=captions,
+                                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+                    except (ValueError, OSError):
+                        st.error("This photo could not be read. Choose another image; the existing section is retained.")
         return block
     from app.monthly_report_sections import readable_label
-    upload = st.file_uploader("Upload a new " + readable_label(spec.key).lower(), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
+    if spec.type == "pdf_pages":
+        st.caption("Add complete reports through Monthly source files above. To replace the included pages with one image, open the optional control below.")
+        with st.expander("Replace all report pages with one image (optional)"):
+            upload = st.file_uploader("Replacement image for all pages in this part", type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
+    else:
+        upload = st.file_uploader("Upload a new " + readable_label(spec.key).lower(), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
     if upload and st.button("Use this replacement in this report", key=key + "_replace"):
         from pathlib import Path
         image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix,
@@ -247,7 +291,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         record_report_preferences(browser_token, contract, selected)
         if imported:
             record_report_preparer(browser_token, contract, selected, imported.prepared_by)
-    from app.monthly_report_start import latest_snapshot, latest_saved_draft
+    from app.monthly_report_start import latest_snapshot, latest_saved_draft, refresh_profile_identity
     prior = latest_snapshot(contract, selected, period)
     prior_draft = latest_saved_draft(contract, selected, period, before=True)
     draft_key = prefix + "_draft"
@@ -274,7 +318,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         current_actor = prepared or (draft.prepared_by if completed_setup == selected or resume else "")
         st.session_state[draft_key] = replace(draft, prepared_by=current_actor)
         st.session_state[prefix + "_revision"] = library.imported_snapshot_revision(contract, selected) if using_import else snapshot.revision if snapshot else 0
-    draft, removed_prices = client_table_draft(st.session_state[draft_key])
+    from app.monthly_report_setup import normalize_mbcx
+    draft, removed_prices = client_table_draft(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile)))
     if removed_prices:
         st.info("Price columns were left out of this working report: " + ", ".join(removed_prices) + ". The saved original remains available. Check the remaining wording and images for prices before download.")
     if snapshot:
@@ -344,15 +389,21 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         report_sources, monthly_blocks, monthly_specs = render_uploads(profile, period, prefix, field)
         draft = replace(draft, sources=report_sources)
         if monthly_blocks and st.button("Add prepared pages and tables to this draft", key=prefix + "_apply_uploads"):
-            applied = set()
-            for key, block in monthly_blocks.items():
-                if block.rows and blocks.get(key) and blocks[key].rows and specs.get(key) != monthly_specs.get(key, specs.get(key)):
-                    st.error("The existing table has different columns. Review it in the advanced editor; nothing was replaced.")
-                    continue
-                blocks[key] = merge_blocks(blocks.get(key), block)
-                applied.add(key)
-            draft = replace(draft, sections=tuple(replace(s, included=s.included or any(b.key in applied for b in s.blocks),
-                                                         blocks=tuple(monthly_specs.get(b.key, b) if b.key in applied else b for b in s.blocks)) for s in draft.sections))
+            from app.monthly_report_setup import merge_report_block
+            proposed = dict(blocks)
+            try:
+                for key, block in monthly_blocks.items():
+                    if block.rows and blocks.get(key) and blocks[key].rows and specs.get(key) != monthly_specs.get(key, specs.get(key)):
+                        raise ValueError("The existing table has different columns. Review it in the advanced editor; nothing was replaced.")
+                    proposed[key] = merge_report_block(blocks.get(key), block, specs.get(key), monthly_specs.get(key, specs.get(key)))
+            except ValueError as exc:
+                st.error(str(exc))
+                st.caption("No prepared pages or tables were added. Your current draft is retained.")
+            else:
+                blocks = proposed
+                applied = set(monthly_blocks)
+                draft = replace(draft, sections=tuple(replace(s, included=s.included or any(b.key in applied for b in s.blocks),
+                                                             blocks=tuple(monthly_specs.get(b.key, b) if b.key in applied else b for b in s.blocks)) for s in draft.sections))
         activity = blocks.get("activity_summary", ResolvedBlock("activity_summary", "This month"))
         from app.monthly_report_sources import action_evidence
         action_sources = [s for s in report_sources if s.classification in ("Vendor service", "Water treatment") and s.actions.strip()]
@@ -378,11 +429,23 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 if relevant:
                     with st.expander(section.title, expanded=section.key == "activity"):
                         st.caption(section_help(section.key).guidance)
+                        if section.key == "mbcx":
+                            from app.monthly_report_mbcx_ui import render_mbcx
+                            status = blocks.get("mbcx_status", ResolvedBlock("mbcx_status", "This month"))
+                            pages = blocks.get("mbcx_report", ResolvedBlock("mbcx_report", "This month"))
+                            blocks["mbcx_status"], blocks["mbcx_report"] = render_mbcx(
+                                status, pages, prefix, field,
+                                lambda block: _edit_content(specs["mbcx_report"], block, state, prefix, assets, field, draft))
+                            blocks["mbcx_status"] = _review_carried_update(blocks["mbcx_status"], period, prefix)
+                            continue
                         for spec in relevant:
                             block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
+                            from app.monthly_report_sections import readable_label
+                            st.markdown("**" + readable_label(spec.key) + "**")
                             if spec.key in ("vendor_reports", "water_reports", "mbcx_report"):
-                                st.caption("Add a PDF or other service file using Upload this month's files above. Review its pages, then add the prepared pages to this draft. Existing included pages are shown below.")
+                                st.caption("Add a PDF or other service file using Monthly source files above. Review its pages, then add the prepared pages to this draft. Existing included pages are shown below.")
                             blocks[spec.key] = _edit_content(spec, block, state, prefix, assets, field, draft)
+                            blocks[spec.key] = _review_carried_update(blocks[spec.key], period, prefix)
     elif step == STEPS[2]:
         st.subheader("Keep what is still correct; update what changed")
         st.write("Check the org chart, outage workflows, facility/vendor contacts and other standing information for these exact sites.")

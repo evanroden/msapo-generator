@@ -231,15 +231,54 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
     has_primary = bool(block.rows or (spec.columns and not tables))
     if has_primary:
         tables.insert(0, ReportTable(tuple(c.title for c in spec.columns), block.rows))
-    if not tables:
-        if block.asset_hashes:
-            st.image(
-                assets.get(block.asset_hashes[0])
-                or library.read_asset(
-                    draft.profile.contract, draft.profile.key, block.asset_hashes[0]
-                ),
-                width="stretch",
+    if tables and block.asset_hashes:
+        # A vendor matrix may be a preserved page, native rows, or both.
+        # Having editable columns must not hide the pages that will be printed.
+        from app.monthly_report_saved_pictures_ui import edit_saved_pictures
+
+        label = "View or change saved vendor pages" if block.key == "subcontractor_matrix" else "View or change saved contact pages"
+        with st.expander(label):
+            block = edit_saved_pictures(
+                block,
+                p + "_pages",
+                lambda ref: assets.get(ref)
+                or library.read_asset(draft.profile.contract, draft.profile.key, ref),
             )
+    if not tables:
+        with st.expander("View or change saved contact pages", expanded=not block.asset_hashes):
+            if block.asset_hashes:
+                from app.monthly_report_saved_pictures_ui import edit_saved_pictures
+
+                block = edit_saved_pictures(
+                    block,
+                    p + "_pages",
+                    lambda ref: assets.get(ref)
+                    or library.read_asset(draft.profile.contract, draft.profile.key, ref),
+                )
+            upload = st.file_uploader(
+                "Replacement facility contact page",
+                type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
+                max_upload_size=30,
+                key=p + "_page_upload",
+            )
+            st.caption("A replacement changes all contact-page pictures in this report. The org chart and outage procedures stay as they are.")
+            if st.button("Use this contact page", key=p + "_page_replace", disabled=upload is None):
+                try:
+                    image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix, line_art=True)
+                    reference = library.asset_reference(image.data, image.extension)
+                    assets[reference] = image.data
+                    new = replace(
+                        block,
+                        source="Replace once",
+                        asset_hashes=(reference,),
+                        asset_captions=(),
+                        references=(),
+                        reviewed_fingerprint="",
+                        client_reviewed_fingerprint="",
+                    )
+                    _install(draft, prefix, new)
+                except (ValueError, OSError):
+                    st.error("This contact page could not be read. Choose another image; your current pages are retained.")
         st.caption(
             "Create editable contact fields, or keep the uploaded contact page. Saved originals remain available in history."
         )
@@ -290,6 +329,8 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
                     source="This month",
                     rows=updated[0].rows if has_primary else (),
                     extra_tables=tuple(updated[1:] if has_primary else updated),
+                    reviewed_fingerprint="",
+                    client_reviewed_fingerprint="",
                 )
                 _install(draft, prefix, new, clear=p + "_table_")
     with right:
@@ -303,12 +344,14 @@ def edit_contacts(draft, spec, block, prefix, assets, field):
         st.caption(
             "These same values appear in the report’s contact table. Use Save progress to keep them for the next report."
         )
-    return replace(
+    changed = replace(
         block,
-        source="This month",
         rows=updated[0].rows if has_primary else (),
         extra_tables=tuple(updated[1:] if has_primary else updated),
     )
+    if changed == block:
+        return block
+    return replace(changed, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
 
 
 def edit_photos(draft, block, prefix, assets, field):

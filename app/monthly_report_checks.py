@@ -80,10 +80,16 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         if item.included:
             section_key = "issues" if item.category == "issue" else "proposals"
             if section_key not in {s.key for s in sections}:
-                checks.append(ReportCheck("follow_up_section", "Include the section containing carried work, or explicitly resolve and remove the item.", True, item.key))
+                message = ("Include the Proposals section or explicitly leave this proposal out." if item.category == "proposal"
+                           else "Include the section containing carried work, or explicitly resolve and remove the item.")
+                checks.append(ReportCheck("follow_up_section", message, True, item.key))
             texts.append((section_key, report_text(item)))
     for block in draft.blocks:
         if block.key in used_block_keys(draft) and block.source != "Omit":
+            from app.monthly_report_setup import carried_period
+            prior_period = carried_period(block, draft.period)
+            if prior_period:
+                checks.append(ReportCheck("carried_period", f"This content was last confirmed for {prior_period.label}. Update it or confirm it is correct for {draft.period.label} before including it.", True, block.key))
             if block.ai_written and (block.ai_evidence_fingerprint or block.ai_paragraphs):
                 from app.monthly_report_ai import evidence_fingerprint, ai_references
                 if not block.ai_evidence_fingerprint or block.ai_evidence_fingerprint != evidence_fingerprint(draft.sources, ai_references(block)):
