@@ -628,7 +628,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)
         if st.button("Generate DOCX and PDF", key=prefix + "_generate", type="primary",
                      disabled=conflict or any(c.blocking for c in checks) or not warnings_ok):
-            package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
+            try:
+                package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
+            except ValueError as exc:
+                st.error(str(exc))
+                st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
+                return
             st.session_state[prefix + "_package"] = package
             try:
                 saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,

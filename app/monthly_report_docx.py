@@ -455,6 +455,14 @@ def _build_docx(draft, *, asset_loader=None):
 
 def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
                     asset_loader: Callable[[str], bytes] | None = None) -> ReportPackage:
+    try:
+        with monthly_render_jobs.work_slot():
+            return _generate_report(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader)
+    except monthly_render_jobs.RenderBusy as exc:
+        raise ValueError(str(exc)) from exc
+
+
+def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
     docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader)
     pdf = None
     error = ""

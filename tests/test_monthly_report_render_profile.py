@@ -118,12 +118,15 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
     monkeypatch.setattr(output,'assemble_docx',lambda *a,**kw:b'native-download')
     monkeypatch.setattr(preview,'section_preview_docx',lambda *a,**kw:b'native-preview')
     calls=[]
+    converted_document=Document()
+    converted_document.add_paragraph('conversion-only')
+    conversion=BytesIO(); converted_document.save(conversion)
     def render(raw,*,profile):
-        calls.append((raw,profile));return b'conversion-only'
+        calls.append((raw,profile));return conversion.getvalue()
     monkeypatch.setattr(output,'rendering_docx',render)
     monkeypatch.setattr(preview,'rendering_docx',render)
     def convert(path):
-        assert path.read_bytes()==b'conversion-only'
+        assert Document(path).paragraphs[0].text=='conversion-only'
         result=tmp_path/'converted.pdf'
         pdf=fitz.open();pdf.new_page();pdf.save(result);pdf.close()
         return result

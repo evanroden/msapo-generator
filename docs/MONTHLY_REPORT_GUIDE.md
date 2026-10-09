@@ -65,9 +65,12 @@ The cover and every report section appear on one page in report order, separated
 by clear headings. Update them as you scroll; there is no second section selector
 or step navigator. Shared logo controls are not part of the asset-manager flow.
 
-Each section has its own scrollable preview on the right. Previews are prepared
-in a bounded background queue, so you can keep editing. Only the affected section
-is refreshed after an edit; an older preview is not presented as the current one.
+Each section has its own scrollable preview on the right. A preview updates
+automatically while its section is in view, after a short pause in editing. Only
+the visible pages are loaded as you scroll. Other sections do not convert until
+you view them. You can keep editing and save while a preview is queued; an older
+preview is not presented as the current one. Downloads take priority over queued
+previews when the service is busy.
 Review and download is at the bottom of the page.
 
 ### Shared information

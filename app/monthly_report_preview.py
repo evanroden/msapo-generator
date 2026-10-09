@@ -49,6 +49,11 @@ _REVIEW_CODES = {
 
 
 def preview_report(draft, asset_loader=None):
+    with monthly_render_jobs.work_slot(preview=True):
+        return _preview_report(draft, asset_loader)
+
+
+def _preview_report(draft, asset_loader=None):
     blockers = [
         c.message
         for c in preflight(draft)
@@ -59,12 +64,15 @@ def preview_report(draft, asset_loader=None):
     if not draft.sections:
         raise ValueError("Add report sections before creating a preview.")
 
-    @lru_cache(maxsize=12)
+    photo_assets = {ref for block in draft.blocks if block.key in ('cover_photo', 'improvements')
+                    for ref in block.asset_hashes}
+
+    @lru_cache(maxsize=4)
     def small_asset(ref):
         if asset_loader is None:
             raise ValueError("Preview needs the saved report images.")
         image = normalize_report_image(
-            asset_loader(ref), Path(ref).suffix, line_art=True, dpi=96
+            asset_loader(ref), Path(ref).suffix, line_art=ref not in photo_assets, dpi=96
         )
         return image.data
 
@@ -78,7 +86,12 @@ def preview_report(draft, asset_loader=None):
         with tempfile.TemporaryDirectory(prefix="report-", dir=scratch) as directory:
             path = Path(directory) / (stem + ".docx")
             from app.monthly_report_designs import render_profile_for
-            path.write_bytes(rendering_docx(raw, profile=render_profile_for(draft.profile)))
+            compatible = rendering_docx(raw, profile=render_profile_for(draft.profile))
+            del raw
+            from app.monthly_report_preview_images import write_preview_docx
+            write_preview_docx(compatible, path)
+            del compatible
+            small_asset.cache_clear()
             actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > 80 * 1024 * 1024:
                 raise ValueError(
@@ -190,12 +203,12 @@ def section_preview_fingerprint(draft, section_key):
             blocks.append({"key": block.key, "source": "Omit"})
             continue
         blocks.append({name: getattr(block, name) for name in (
-            "key", "text", "rows", "asset_hashes", "asset_captions", "photos_per_page",
+            "key", "text", "rows", "asset_hashes", "asset_captions", "photos_per_page", "references",
         )} | {"org_nodes": [asdict(node) for node in block.org_nodes],
              "extra_tables": [asdict(table) for table in block.extra_tables]})
     from app.monthly_report_followups import report_text
     value = {
-        "version": 3,
+        "version": 4,
         "period": draft.period.key,
         "title": draft.profile.title,
         "contract": draft.profile.contract,
@@ -261,7 +274,7 @@ def section_preview_docx(draft, section_key, asset_loader=None):
     source = source_for(draft.profile)
     if source is not None:
         from app.monthly_report_native_layout import build_native_docx
-        return build_native_docx(draft, source, asset_loader=asset_loader, section_key=section_key, master=is_master(draft.profile))
+        return build_native_docx(scope, source, asset_loader=asset_loader, section_key=section_key, master=is_master(draft.profile))
 
     @lru_cache(maxsize=12)
     def image_asset(ref):
@@ -276,6 +289,11 @@ def section_preview_docx(draft, section_key, asset_loader=None):
 
 def preview_section(draft, section_key, asset_loader=None):
     """High-quality, section-only preview with bounded, cleaned-up conversion."""
+    with monthly_render_jobs.work_slot(preview=True):
+        return _preview_section(draft, section_key, asset_loader)
+
+
+def _preview_section(draft, section_key, asset_loader=None):
     raw = section_preview_docx(draft, section_key, asset_loader)
     stem = "section-preview-" + uuid4().hex
     expected = pdf_converter.OUTPUT_DIR / (stem + ".pdf")
@@ -289,7 +307,11 @@ def preview_section(draft, section_key, asset_loader=None):
                 render_profile = {**render_profile, "cover_zero_origin": False}
                 if "cover_metrics" in render_profile:
                     render_profile["cover_metrics"] = []
-            path.write_bytes(rendering_docx(raw, profile=render_profile))
+            compatible = rendering_docx(raw, profile=render_profile)
+            del raw
+            from app.monthly_report_preview_images import write_preview_docx
+            write_preview_docx(compatible, path)
+            del compatible
             actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > MAX_PREVIEW_BYTES:
                 raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")

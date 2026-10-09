@@ -46,6 +46,15 @@ class PDFConversionError(Exception):
 # ── LibreOffice headless ──────────────────────────────────────────────
 
 def _convert_libreoffice(docx_path: Path) -> Path:
+    # All Writer callers, including purchase orders, share the same slot as
+    # monthly reports and Calc. Multiple 300+ MB office processes cannot fit
+    # inside the testing service's 512 MB instance.
+    from app.monthly_report_render_jobs import conversion_slot
+    with conversion_slot(wait_seconds=130):
+        return _convert_libreoffice_locked(docx_path)
+
+
+def _convert_libreoffice_locked(docx_path: Path) -> Path:
     lo_bin = shutil.which("libreoffice") or shutil.which("soffice")
     if lo_bin is None:
         raise PDFConversionError(
@@ -69,7 +78,8 @@ def _convert_libreoffice(docx_path: Path) -> Path:
     # app/expense_report.convert_expense_workbook_to_pdf already does this for
     # the Calc path; the Writer path now matches it.
     with tempfile.TemporaryDirectory(prefix="msapo-libreoffice-") as profile_dir:
-        profile_uri = (Path(profile_dir) / "profile").resolve().as_uri()
+        from app.office_limits import prepare_profile
+        profile_uri = prepare_profile(Path(profile_dir) / 'profile')
         result = subprocess.run(
             [
                 lo_bin,
