@@ -65,11 +65,13 @@ remain gated. No automatic paid reading or source-generated facts are introduced
 Focused synthetic tests passed for first reports, section switching, partial edits,
 direct save, hidden-source-reading completion, excluded sections, targeted review
 links, unchanged picture approvals, changed captions, source provenance, logo
-reuse and section-local upload decisions. The first full run recorded 1197 passed,
-8 renderer-dependent skips and two integration failures already corrected during
-that run; their focused checks pass. A final run on the stable tree and exact-head
-CI with real LibreOffice are required before merge. Compilation, changed-file
-Ruff F/E9, dependency and diff checks passed. The release PR records final outcomes.
+reuse and section-local upload decisions. The stable-tree full local run passed
+1199 tests with 8 renderer-dependent skips. The first CI run with real LibreOffice
+passed 1206 tests and found one older end-to-end test still expecting the former
+always-open Organization editor. That test now follows the explicit Change action
+on both the first report and the next month. A passing final CI run is required
+before merge. Compilation, changed-file Ruff F/E9, dependency and diff checks
+passed. PR #87 records the final CI and deployment outcomes.
 
 This does not complete every proposed section design. Native Word chart-page
 preservation beyond Organization, dated work-order/training ledgers, richer

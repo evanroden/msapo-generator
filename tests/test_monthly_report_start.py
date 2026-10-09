@@ -165,6 +165,8 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(b for b in app.button if b.label == "Continue to this month’s work").click().run()
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic team completed the September inspection.").run()
     step(app, 3)
+    assert not any(b.label == "Start an editable org chart" for b in app.button)
+    next(b for b in app.button if b.label == "Change team chart").click().run()
     next(b for b in app.button if b.label == "Start an editable org chart").click().run()
     next(w for w in app.text_input if w.label == "Name").set_value("Synthetic Manager").run()
     next(w for w in app.checkbox if w.label == "I checked the standing information for these sites").check().run()
@@ -195,6 +197,8 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     step(next_app, 2)
     assert next(w for w in next_app.text_area if w.label == "Activity summary").value == ""
     step(next_app, 3)
+    assert not any(w.label == "Name" for w in next_app.text_input)
+    next(b for b in next_app.button if b.label == "Change team chart").click().run()
     assert next(w for w in next_app.text_input if w.label == "Name").value == "Synthetic Manager"
     assert not next(w for w in next_app.checkbox if w.label == "I checked the standing information for these sites").value
     assert next(r for r in next_app.radio if r.label == "Report steps").value == STEPS[2]

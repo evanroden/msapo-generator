@@ -10,8 +10,10 @@ Latest work: continuing simplification on `feat/monthly-report-focused-editing`,
 based on PR #86 merge `66f832f3f19f9ae4c67d4c7753a72b09e4b21790`.
 One active section, focused Cover/Organization controls, local page uploads,
 scoped writing/follow-ups, direct Save and individual-picture approvals are
-integrated. Focused synthetic regressions and source-context checks pass; final
-full release validation is in progress. See
+integrated. Stable-tree local suite: 1199 passed, 8 renderer-dependent skips.
+CI passed 1206 tests and identified one old Organization navigation expectation
+in the document-generation walkthrough, now being corrected. PR #87 records
+the final CI and deployment evidence. See
 [focused editing notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_FOCUSED_EDITING.md).
 
 PR #86 is deployed. Exact-head Actions `37870060294` and merged-main Actions
