@@ -106,16 +106,20 @@ Focused regressions cover all six owner reports, recoverable directory archives,
 new image/period behavior, proposals, issues, org replacement and utility uploads.
 The final full local run passed 1110 tests, skipped 8 (renderer/CI-dependent).
 Independent release review then found ElementTree caches distinct expanded tag
-names even with a SAX target. A follow-up caps the global name vocabulary and
-expanded name bytes, including attributes and namespace expansion. Dedicated
-regressions cover all four XML parts and cross-part name budgets. Exact-head CI
-must run with real LibreOffice installed before merge. Compilation, changed-file Ruff F/E9 and diff checks passed. Broader Ruff
+names even with a SAX target. A first raw streaming validation pass now bounds
+names, namespace declarations and incomplete tokens before namespace expansion;
+the semantic pass also caps the global expanded-name vocabulary. DTDs/entities
+remain forbidden. The 11 new regressions pass, including all four XML parts,
+cross-part budgets and namespace/start-tag amplification below 2 MB traced peak.
+The existing 30 directory/access tests also pass. Exact-head CI must run with
+real LibreOffice installed before merge. Compilation, changed-file Ruff F/E9
+and diff checks passed. Broader Ruff
 also found two preexisting findings in unrelated document_generator.py; unchanged.
 
 No real contacts, private documents, runtime images or output reports are committed.
 Render verification remains public-only per the existing owner instruction.
 No persistent synthetic production profile or directory should be created for QA.
-Publication, final CI and public verification are recorded in the next checkpoint.
+PR #86 records publication, final CI and public verification as they complete.
 
 Rollback: revert the feature merge. Preserve newer snapshots before rollback;
 mbcx_status, utility source classification and proposal statuses need this code for

@@ -13,7 +13,9 @@ logos, recoverable directory archive, contact-page updates and atomic CMMS confl
 guards. See [Review A release notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md)
 for implemented behavior, access limitation, evidence and remaining section work.
 PR #86 holds the release. Final full local run: 1110 passed, 8 skipped. Independent
-review added a distinct-XML-name cache bound; exact-head CI/publication pending.
+review added raw XML name/namespace/token bounds before expansion; 11 new
+adversarial regressions and the existing 30 directory/access tests passed.
+Exact-head CI/publication pending; PR #86 records the final release evidence.
 No persistent production QA data created. Prior checkpoints below remain history.
 
 ## Read first after any interruption

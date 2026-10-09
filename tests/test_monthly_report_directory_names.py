@@ -67,7 +67,7 @@ def test_expanded_namespace_name_bytes_are_bounded(attribute):
 
 def test_namespace_rejects_before_many_attribute_names_are_expanded():
     namespace = "urn:synthetic:" + "x" * 100_000
-    attributes = " ".join(f'ns:n{n}=""' for n in range(64))
+    attributes = " ".join(f'ns:n{n}=""' for n in range(63))
     raw = workbook_with_parts({
         "xl/worksheets/sheet1.xml": f'<worksheet xmlns:ns="{namespace}" {attributes}/>',
     })
@@ -75,6 +75,19 @@ def test_namespace_rejects_before_many_attribute_names_are_expanded():
     tracemalloc.start()
     try:
         with pytest.raises(ValueError, match="XML names exceed the safe parsing budget"):
+            directory.inspect_workbook(raw)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 2 * 1024 * 1024
+
+
+def test_oversized_start_tag_rejects_before_attribute_map_is_built():
+    attributes = " ".join(f'a{n}=""' for n in range(25000))
+    raw = workbook_with_parts({"xl/worksheets/sheet1.xml": f'<worksheet {attributes}/>'})
+    tracemalloc.start()
+    try:
+        with pytest.raises(ValueError, match="XML token exceeds the safe parsing budget"):
             directory.inspect_workbook(raw)
         _, peak = tracemalloc.get_traced_memory()
     finally:

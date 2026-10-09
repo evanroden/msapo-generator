@@ -13,6 +13,7 @@ from io import BytesIO
 import hashlib
 import re
 from zipfile import BadZipFile, ZipFile
+from xml.parsers import expat
 
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
@@ -33,6 +34,7 @@ MAX_XML_DEPTH = 64
 MAX_XML_NAMES = 512
 MAX_XML_NAME_BYTES = 128 * 1024
 MAX_XML_NAMESPACE_BYTES = 4096
+MAX_XML_TOKEN_BYTES = 128 * 1024
 S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
@@ -132,6 +134,59 @@ class _XmlBudget:
     name_bytes: int = 0
 
 
+def _guard_xml_names(archive, part):
+    """Validate raw names before Expat can expand namespace-qualified attributes.
+
+    Namespace callbacks happen after native expansion. A first streaming pass
+    with namespace processing disabled avoids that allocation; the existing
+    namespace-aware parser then reads only bounded declarations and start tags.
+    """
+    parser = expat.ParserCreate()
+    names, name_bytes, depth = set(), 0, 0
+
+    def forbidden(*args):
+        raise ValueError("Workbook XML contains a forbidden DTD or entity.")
+
+    def start(tag, attrs):
+        nonlocal name_bytes, depth
+        depth += 1
+        if depth > MAX_XML_DEPTH or len(attrs) > 64:
+            raise ValueError("Workbook XML exceeds the safe parsing budget.")
+        for name in (tag, *attrs):
+            if name not in names:
+                name_bytes += len(name.encode("utf-8"))
+                if len(names) >= MAX_XML_NAMES or name_bytes > MAX_XML_NAME_BYTES:
+                    raise ValueError("Workbook XML names exceed the safe parsing budget.")
+                names.add(name)
+        for name, uri in attrs.items():
+            if name == "xmlns" or name.startswith("xmlns:"):
+                if len(uri) > MAX_XML_NAMESPACE_BYTES or len(uri.encode("utf-8")) > MAX_XML_NAMESPACE_BYTES:
+                    raise ValueError("Workbook XML names exceed the safe parsing budget.")
+
+    def end(tag):
+        nonlocal depth
+        depth -= 1
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.StartDoctypeDeclHandler = forbidden
+    parser.EntityDeclHandler = forbidden
+    parser.ExternalEntityRefHandler = forbidden
+    fed = 0
+    try:
+        with archive.open(part) as stream:
+            while chunk := stream.read(16 * 1024):
+                # CurrentByteIndex stops at an unfinished token. Enforce its
+                # bound before the next feed could finish a huge attribute map.
+                if fed - parser.CurrentByteIndex + len(chunk) > MAX_XML_TOKEN_BYTES:
+                    raise ValueError("Workbook XML token exceeds the safe parsing budget.")
+                parser.Parse(chunk, False)
+                fed += len(chunk)
+            parser.Parse(b"", True)
+    except expat.ExpatError as exc:
+        raise ValueError("Choose a valid XLSX workbook.") from exc
+
+
 def _stream_xml(archive, part, budget, consume):
     """Read events without building a tree, including unknown/ignored XML.
 
@@ -141,6 +196,8 @@ def _stream_xml(archive, part, budget, consume):
     ElementTree also caches expanded element/attribute names without a tree, so
     bound that vocabulary across every workbook part before retaining more names.
     """
+    _guard_xml_names(archive, part)
+
     class Target:
         def __init__(self):
             self.path = []
