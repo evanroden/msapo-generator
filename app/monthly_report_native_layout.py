@@ -103,6 +103,10 @@ def _clear_source_drawing_metadata(document):
 
 
 def _clear_images(element, *, preserve_decoration=False):
+    # A diagram may share a drawing canvas with a retained text-box frame.
+    # Its relationship payload must still disappear when that content is cleared.
+    for diagram in list(element.iter("{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds")):
+        diagram.getparent().remove(diagram)
     # Remove the drawing itself, not its paragraph or section break.
     for node in list(element.iter()):
         if node.tag in (qn("w:drawing"), qn("w:pict")):
@@ -384,7 +388,8 @@ def _unchanged_blocks(draft, inspection, source_path, *, section_key=None):
                 if item.part != "word/document.xml":
                     continue
                 for neighbor in by_position[item.position]:
-                    if neighbor.kind in ("text", "table", "image") and neighbor.id not in supported:
+                    if ((neighbor.kind in ("text", "table", "image") and neighbor.id not in supported)
+                            or neighbor.note.startswith("Unmapped native SmartArt")):
                         valid = False
             if not valid:
                 del candidates[key]
@@ -675,11 +680,18 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             continue
         group = items[position]
         if position in headings:
-            if any(item.kind == "image" for item in group) and not _is_native_divider_background(element, _text(element)):
+            diagrams = [item for item in group if item.note == "Validated native SmartArt text"]
+            unproved_diagram = (any(True for _ in element.iter(
+                "{http://schemas.openxmlformats.org/drawingml/2006/diagram}relIds"))
+                and (not diagrams or any(item.id not in unchanged_items for item in diagrams)
+                     or any(item.note.startswith("Unmapped native SmartArt") for item in group)))
+            if (unproved_diagram or (any(item.kind == "image" for item in group)
+                    and not _is_native_divider_background(element, _text(element)))):
                 _clear_images(element)
             continue
         substantive = [item for item in group if item.kind in ("text", "table", "image")]
-        if substantive and all(item.id in unchanged_items for item in substantive):
+        if (substantive and all(item.id in unchanged_items for item in substantive)
+                and not any(item.note.startswith("Unmapped native SmartArt") for item in group)):
             for row_index, row in enumerate(element.findall(qn("w:tr"))):
                 before = row.find("./" + qn("w:trPr") + "/" + qn("w:gridBefore"))
                 logical_column = int(before.get(qn("w:val"), "0")) if before is not None else 0

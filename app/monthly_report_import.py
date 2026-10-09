@@ -216,7 +216,7 @@ _SECTION_TERMS = {
     "issues": ("equipmentperformanceissues",), "capital": ("prioritycapitalrenewallist",),
     "proposals": ("pendingdeclinedproposals", "pendinganddeclinedproposals"),
     "training": ("trainingsummary",), "rfi": ("rfimatrix",),
-    "accounts_receivable": ("accountsreceivable", "accountreceivable"),
+    "accounts_receivable": ("accountsreceivable", "accountreceivable", "accountsreceivables", "accountreceivables"),
 }
 
 
@@ -498,9 +498,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                             legacy_groups = element.findall(".//" + V + "group")
                             legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
                             if graphics or legacy_groups or legacy_text:
-                                add("unsupported", part, position, text=text,
-                                    note=("Native divider artwork" if detected and detected != "unmatched" else
-                                          "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection."))
+                                from app.monthly_report_smartart import closed_smartart_text
+                                smartart = closed_smartart_text(archive, graphics, relations) if section == "organization" and not legacy_groups and not legacy_text else None
+                                if smartart is not None:
+                                    add("text", part, position, text=smartart, suggested_slot="org_chart",
+                                        note="Validated native SmartArt text")
+                                else:
+                                    diagram = any(e.get("uri", "").endswith("/diagram") for e in graphics)
+                                    add("unsupported", part, position, text=text,
+                                        note=("Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
+                                              "Native divider artwork" if detected and detected != "unmatched" else
+                                              "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection."))
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
                             if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:
@@ -604,7 +612,7 @@ def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapp
             rows = item.rows[1:] if mapping.first_row_header else item.rows
             block = replace(block, rows=tuple(tuple(row[i] for i in indices) for row in rows))
         else:
-            if spec.type not in ("rich_text", "stock_text"):
+            if spec.type not in ("rich_text", "stock_text") and not (mapping.slot == "org_chart" and item.note == "Validated native SmartArt text"):
                 raise ImportError("Text needs a narrative or footer destination.")
             block = replace(block, text="\n\n".join(t for t in (block.text, item.text) if t))
         grouped[mapping.slot] = replace(block, references=block.references + (reference,))

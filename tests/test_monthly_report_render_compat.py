@@ -50,7 +50,7 @@ def test_explicit_fill_and_opaque_images_remain_byte_identical(explicit):
     assert rendering_docx(opaque) == opaque
 
 
-@pytest.mark.parametrize("operation", ["final", "section", "preview"])
+@pytest.mark.parametrize("operation", ["final", "section", "preview", "word_page"])
 def test_monthly_conversion_uses_copy_and_final_download_stays_native(monkeypatch, tmp_path, operation):
     from app import monthly_report_docx as output, monthly_report_preview as preview
     from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
@@ -77,7 +77,12 @@ def test_monthly_conversion_uses_copy_and_final_download_stays_native(monkeypatc
         assert result.pdf.startswith(b"%PDF-")
     elif operation == "section":
         assert preview.preview_section(draft, "activity").pages == 1
-    else:
+    elif operation == "preview":
         assert preview.preview_report(draft).pages == 1
+    else:
+        from app import monthly_report_word_pages as pages
+        monkeypatch.setattr(pages, "safe_section_docx", lambda *a, **kw: raw)
+        monkeypatch.setattr(pages, "_render", lambda path, directory: convert(path))
+        assert len(pages.preserve_word_pages(tmp_path / "source.docx", (1,))) == 1
     assert len(seen) == 1
     assert shapes(seen[0])[0].get("filled") == "f"

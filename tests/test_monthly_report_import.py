@@ -351,3 +351,16 @@ def test_accounts_receivable_import_redacts_aging_balances_not_invoice_dates(tmp
     assert tuple(c.title for c in spec.columns) == ('Invoice', 'Invoice Date', 'Description')
     assert block.rows == (('INV-001', '2026-09-01', 'Maintenance services'),)
     assert set(removed) == {'Amount Due', 'Current', '31-60', '61-G0', 'G1-120', '121-Over'}
+
+
+@pytest.mark.parametrize('title', ['ACCOUNT RECEIVABLES', 'ACCOUNTS RECEIVABLES', 'ACCOUNT RECEIVABLE', 'ACCOUNTS RECEIVABLE'])
+def test_ar_plural_dividers_preserve_full_page_enfra_background(title):
+    from xml.etree.ElementTree import fromstring
+    element = fromstring('''<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+        xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+        <wp:anchor><wp:extent cx="7000000" cy="9000000"/><a:blip/>
+        <a:srgbClr val="D6EF4B"/><a:srgbClr val="547E7E"/></wp:anchor></w:p>''')
+    assert importer._heading(title) == 'accounts_receivable'
+    assert importer._is_native_divider_background(element, title)
+    assert not importer._is_native_divider_background(element, title + ' Invoice balance 500')

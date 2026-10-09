@@ -69,7 +69,12 @@ def rendering_docx(raw):
                 if not target or member not in names:
                     continue
                 if member not in alpha:
-                    alpha[member] = _transparent_png(source.read(member))
+                    # Large report photos need no decoding or full read here.
+                    with source.open(member) as image:
+                        header = image.read(26)
+                    alpha[member] = (_transparent_png(header) or
+                                    (header.startswith(b"\x89PNG\r\n\x1a\n")
+                                     and _transparent_png(source.read(member))))
                 if not alpha[member]:
                     continue
                 shape.set("filled", "f")

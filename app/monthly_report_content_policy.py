@@ -56,10 +56,10 @@ def price_column(title, kind=""):
 
 
 def logical_table_columns(columns):
-    """Recover the one unambiguous four-column ENFRA capital header variant.
+    """Recover the explicit four- and five-column ENFRA capital header variants.
 
     Other mixed headers stay ambiguous. This recognizes the complete ordered
-    canonical label sequence and the exact four-cell grid, never data values.
+    canonical label sequences and their exact grid widths, never data values.
     """
     values = tuple(columns)
     if (len(values) == 4
@@ -68,6 +68,15 @@ def logical_table_columns(columns):
             and all(not title.strip() or re.fullmatch(r"(?:Column|Detail)\s+[234]", title.strip(), re.I)
                     for title in values[1:])):
         return ("Equipment Description", "End of Useful Life", "Cost", "Summary of deficiency")
+    # This five-column Word header has two visual lines. The second line
+    # contains “Life” (column 2) and “Sub.” (column 5), but OOXML flattens
+    # both after the first line. Recover only this complete known sequence.
+    if (len(values) == 5
+            and re.sub(r"[^a-z]", "", values[0].casefold()) ==
+            "equipmentdescriptionendofusefulcostsummaryofdeficiencydatelifesub"
+            and all(not title.strip() or re.fullmatch(r"(?:Column|Detail)\s+[2345]", title.strip(), re.I)
+                    for title in values[1:])):
+        return ("Equipment Description", "End of Useful Life", "Cost", "Summary of deficiency", "Date Sub.")
     return values
 
 
