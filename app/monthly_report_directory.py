@@ -7,7 +7,7 @@ restorable history; directory updates never mutate profiles or report snapshots.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from collections import Counter
 from io import BytesIO
 import hashlib
@@ -30,6 +30,9 @@ MAX_SITES = 500
 MAX_XML_ELEMENTS = 750_000
 MAX_XML_TEXT = 8_000_000
 MAX_XML_DEPTH = 64
+MAX_XML_NAMES = 512
+MAX_XML_NAME_BYTES = 128 * 1024
+MAX_XML_NAMESPACE_BYTES = 4096
 S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
@@ -125,6 +128,8 @@ def column_name(column):
 class _XmlBudget:
     elements: int = 0
     text: int = 0
+    names: set[str] = field(default_factory=set)
+    name_bytes: int = 0
 
 
 def _stream_xml(archive, part, budget, consume):
@@ -133,15 +138,38 @@ def _stream_xml(archive, part, budget, consume):
     Clearing only cells leaves all other elements attached to the root. A SAX
     target allocates no Element objects; budgets also cover metadata, rich text,
     attributes and unexpected elements rather than only recognized cell values.
+    ElementTree also caches expanded element/attribute names without a tree, so
+    bound that vocabulary across every workbook part before retaining more names.
     """
     class Target:
         def __init__(self):
             self.path = []
 
+        def _name(self, name):
+            if name not in budget.names:
+                if len(name) > MAX_XML_NAME_BYTES:
+                    raise ValueError("Workbook XML names exceed the safe parsing budget.")
+                name_bytes = len(name.encode("utf-8"))
+                if (len(budget.names) >= MAX_XML_NAMES
+                        or budget.name_bytes + name_bytes > MAX_XML_NAME_BYTES):
+                    raise ValueError("Workbook XML names exceed the safe parsing budget.")
+                budget.names.add(name)
+                budget.name_bytes += name_bytes
+
+        def start_ns(self, prefix, uri):
+            # Expat expands a URI into every qualified attribute before start().
+            # Reject oversized declarations first, before that amplification.
+            if len(uri) > MAX_XML_NAMESPACE_BYTES or len(uri.encode("utf-8")) > MAX_XML_NAMESPACE_BYTES:
+                raise ValueError("Workbook XML names exceed the safe parsing budget.")
+            self._name(prefix)
+            self._name(uri)
+
         def start(self, tag, attrs):
             budget.elements += 1
             if budget.elements > MAX_XML_ELEMENTS or len(self.path) >= MAX_XML_DEPTH or len(attrs) > 64:
                 raise ValueError("Workbook XML exceeds the safe parsing budget.")
+            for name in (tag, *attrs):
+                self._name(name)
             self._text(sum(len(k) + len(v) for k, v in attrs.items()))
             self.path.append(tag)
             consume("start", tuple(self.path), attrs)

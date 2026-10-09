@@ -12,7 +12,8 @@ MBCx/price-heading work plus period protection, no-op review reuse, reviewed sha
 logos, recoverable directory archive, contact-page updates and atomic CMMS conflict
 guards. See [Review A release notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md)
 for implemented behavior, access limitation, evidence and remaining section work.
-First full local run: 1104 passed, 8 skipped; final CI/publication pending.
+PR #86 holds the release. Final full local run: 1110 passed, 8 skipped. Independent
+review added a distinct-XML-name cache bound; exact-head CI/publication pending.
 No persistent production QA data created. Prior checkpoints below remain history.
 
 ## Read first after any interruption

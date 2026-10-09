@@ -21,7 +21,7 @@ with additional rollover protection discovered during this review.
 | Nameless directory read/write/restore | Require entered editor name before contacts/history load or render. Clearing the name hides them. Report contact comparison uses the same rule. |
 | Renamed group prints old cover | Refresh current title/scope/site labels on resumed working drafts without overwriting their schema or historical snapshots. DOCX regression checks actual cover text. |
 | Second import after reviewed contact table fails | Ignore unused incoming template schemas. Align genuinely compatible contact headings; preserve manual rows and unknown columns. Real schema conflicts still block. |
-| Small XLSX causes large XML tree allocation | Stream all workbook XML through callbacks without building trees. Global node/text/depth budgets include ignored nodes and metadata. Four <25 KB crafted ZIPs reject below 8 MB traced peak allocation. |
+| Small XLSX causes large XML tree allocation | Stream all workbook XML through callbacks without building trees. Global node/text/depth/name budgets include ignored nodes, attributes, namespaces and metadata. Repeated-node crafted ZIPs reject below 8 MB traced peak; distinct-name files reject below 2 MB. |
 
 Directory removal is a confirmed, attributed archive with revision guards and
 restorable history. It does not delete source workbooks, contacts or snapshots.
@@ -104,10 +104,12 @@ not a claim that thirteen complete new editors are deployed. See the original
 
 Focused regressions cover all six owner reports, recoverable directory archives,
 new image/period behavior, proposals, issues, org replacement and utility uploads.
-The first full local run passed 1104 tests, skipped 8 (renderer/CI-dependent).
-Five later section-audit tests passed separately; do not add these counts and claim
-one full run. Final exact-head CI must run with real LibreOffice installed before
-merge. Compilation, changed-file Ruff F/E9 and diff checks passed. Broader Ruff
+The final full local run passed 1110 tests, skipped 8 (renderer/CI-dependent).
+Independent release review then found ElementTree caches distinct expanded tag
+names even with a SAX target. A follow-up caps the global name vocabulary and
+expanded name bytes, including attributes and namespace expansion. Dedicated
+regressions cover all four XML parts and cross-part name budgets. Exact-head CI
+must run with real LibreOffice installed before merge. Compilation, changed-file Ruff F/E9 and diff checks passed. Broader Ruff
 also found two preexisting findings in unrelated document_generator.py; unchanged.
 
 No real contacts, private documents, runtime images or output reports are committed.
