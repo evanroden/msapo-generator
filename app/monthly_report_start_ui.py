@@ -59,7 +59,9 @@ def choose_contract(last_contract, field):
                 branding = find_logo(name, state=state) if state else None
                 if branding and branding.title.casefold() != name.casefold():
                     st.caption(branding.title)
-                if st.button(name, key="report_contract_card_" + _key(name), width="stretch"):
+                # A display slug is not a unique identity (case, punctuation
+                # and the 60-character limit can collapse different names).
+                if st.button(name, key="report_contract_card_" + _signature(name), width="stretch"):
                     st.session_state[current_key] = name
                     st.session_state["report_change_contract"] = False
                     st.rerun()
@@ -99,10 +101,23 @@ def select_sites(contract, profiles, remembered, field, completed=None):
         custom = st.text_input("Site name", key=field(prefix + "_new_site", ""), help="Use a semicolon between names when adding several actual sites.")
         for name in custom.split(";"):
             if name.strip():
-                selected.append(Facility(_key(name.strip()), name.strip()))
+                try:
+                    selected.append(Facility(_key(name.strip()), name.strip()))
+                except ValueError:
+                    st.warning("Give each new site a name containing letters or numbers.")
+                    return None, None
     facilities = tuple(selected)
     if not facilities:
         st.info("Check at least one site to continue.")
+        return None, None
+    # Validate before creating per-site widgets. Duplicate keys previously
+    # crashed on the alias text inputs before ReportProfile could reject them,
+    # including on every rerun with the saved text still in the input.
+    try:
+        ReportProfile(contract, "selection", "Selected sites", facilities,
+                      "individual" if len(facilities) == 1 else "multi_site")
+    except ValueError:
+        st.warning("A site or alternate name was included more than once. Keep one checkbox/name per actual site. Remove any duplicate from Site name above to continue.")
         return None, None
     with st.expander("Other names for these sites (optional)"):
         amended = []

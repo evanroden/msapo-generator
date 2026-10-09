@@ -68,7 +68,7 @@ def readable_label(key):
             "activity_summary": "Work completed this month", "work_orders": "Work-order summary",
             "service_calls": "Service calls", "vendor_reports": "Vendor service reports", "water_reports": "Water treatment reports",
             "improvements": "Improvement photos", "mbcx_report": "MBCx report", "subcontractor_matrix": "Vendor contacts",
-            "capital_renewal": "Priority capital renewal", "proposals": "Pending and declined proposals"}.get(key, key.replace("_", " ").capitalize())
+            "mbcx_status": "Commissioning update", "capital_renewal": "Priority capital renewal", "proposals": "Pending and declined proposals"}.get(key, key.replace("_", " ").capitalize())
 
 
 def default_slot(section):
@@ -101,6 +101,8 @@ def build_section_import(path, inspection, plans):
     known = {b.key for s in default_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     grouped, assets, mappings, total = {}, {}, [], 0
     items = {i.id: i for i in inspection.items}
+    image_references = {f"docx:{inspection.sha256}:{i.id}" for i in inspection.items if i.kind == "image"}
+    preserved_page_prefix = f"docx:{inspection.sha256}:word-sections:"
     sections = {s.key: s for s in section_reviews(inspection)}
     for plan in plans:
         if not plan.get("approved"):
@@ -183,8 +185,17 @@ def build_section_import(path, inspection, plans):
             block = grouped.get(slot, ResolvedBlock(slot, "Replace once"))
             # Choosing a new cover photo/logo replaces that picture only; do
             # not discard any native text or other report parts in the block.
-            hashes = (digest,) if slot in ("cover_photo", "client_logo", "brand_logo") else tuple(dict.fromkeys((*block.asset_hashes, digest)))
-            grouped[slot] = replace(block, asset_hashes=hashes)
+            if slot in ("org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix"):
+                # A named replacement changes that entire pictured part. Keep
+                # native text/tables and their provenance, not references to the
+                # superseded pictures or preserved Word pages.
+                references = tuple(ref for ref in block.references
+                                   if ref not in image_references and not ref.startswith(preserved_page_prefix))
+                grouped[slot] = replace(block, source="Replace once", asset_hashes=(digest,),
+                                        asset_captions=(), references=references)
+            else:
+                hashes = (digest,) if slot in ("cover_photo", "client_logo", "brand_logo") else tuple(dict.fromkeys((*block.asset_hashes, digest)))
+                grouped[slot] = replace(block, asset_hashes=hashes)
     if not grouped:
         raise ValueError("Keep at least one report section before continuing.")
     # Section confirmation covers the actual selected images and current text.

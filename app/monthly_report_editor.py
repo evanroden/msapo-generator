@@ -355,22 +355,32 @@ def _cell_text(value) -> str:
 
 def _typed_table(spec: BlockSpec, rows) -> tuple[list[dict], dict]:
     """Convert persisted strings back to typed, editable values without guessing."""
+    rows = tuple(rows)
     config = {}
     converters = {}
-    for column in spec.columns:
+    for index, column in enumerate(spec.columns):
         if column.type in ("number", "currency"):
             config[column.title] = st.column_config.NumberColumn(format="%.2f" if column.type == "currency" else None)
             converters[column.title] = float
+        elif column.type == "date" and spec.key == "end_of_life":
+            config[column.title] = st.column_config.TextColumn(help="Enter a year, month, date, or leave blank if unknown.")
+            converters[column.title] = str
         elif column.type == "date":
             config[column.title] = st.column_config.DateColumn(format="YYYY-MM-DD")
             converters[column.title] = date.fromisoformat
+        elif column.type == "boolean" and spec.key == "rfi_matrix":
+            config[column.title] = st.column_config.TextColumn(help="Keep the recorded status or symbol; confirm its meaning before changing it.")
+            converters[column.title] = str
         elif column.type == "boolean":
-            config[column.title] = st.column_config.CheckboxColumn()
-            def boolean(value):
-                if value.casefold() not in ("yes", "no", "true", "false", "x", "✓"):
-                    raise ValueError("Use Yes or No in a checkbox column.")
-                return value.casefold() in ("yes", "true", "x", "✓")
-            converters[column.title] = boolean
+            recognized = ("yes", "no", "true", "false", "x", "✓")
+            if any(index < len(row) and row[index] != "" and row[index].casefold() not in recognized for row in rows):
+                # Legacy checkbox schemas can contain meaningful unknown or
+                # partial statuses. Keep the entire column as entered text.
+                config[column.title] = st.column_config.TextColumn()
+                converters[column.title] = str
+            else:
+                config[column.title] = st.column_config.CheckboxColumn()
+                converters[column.title] = lambda value: value.casefold() in ("yes", "true", "x", "✓")
         else:
             config[column.title] = st.column_config.TextColumn()
             converters[column.title] = str

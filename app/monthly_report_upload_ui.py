@@ -88,7 +88,7 @@ def _cmms(content, profile, period, prefix, field):
 
 
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field):
-    st.subheader("Add this month’s vendor reports, chemical reports and photos")
+    st.subheader("Add this month’s report files and photos")
     st.write("Only relevant, price-free pages belong in the client report. Check the suggested pages below; originals are kept for reference.")
     st.caption("PDF, images including HEIC, DOCX, XLSX, CSV, EML and MSG. Files are stored with this profile on the persistent disk; emails are read only. No email drafts or sending.")
     st.caption("Limits: 50 sources / 180 MB per report including attachments; 30 MB per file (DOCX 128 MB); 800,000 extracted characters. Up to 150 image/PDF pages can be embedded. OCR/vision is limited separately to 20 pages per report.")
@@ -218,12 +218,13 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     blocks, specs = {}, {}
     with st.expander("Embed selected report pages and photographs"):
         destinations = []
-        defaults = {"Vendor service": "vendor_reports", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Improvement / training photo": "improvements"}
+        defaults = {"Vendor service": "vendor_reports", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Utility results": "utility_analysis", "Improvement / training photo": "improvements"}
         for item in contents:
             if not sources.image_numbers(item):
                 continue
             labels = {"Do not embed": "Keep as reference only", "vendor_reports": "Maintenance — vendor service pages",
                       "water_reports": "Water treatment — chemical/service pages", "mbcx_report": "MBCx — commissioning report pages",
+                      "utility_analysis": "Monthly scorecards — utility results and charts",
                       "improvements": "Monthly activity — improvement photos"}
             slot = st.selectbox("Add " + item.source.filename + " to", ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
                                 key=field(key + "_destination_" + item.source.id + "_" + item.source.classification,
@@ -262,5 +263,5 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             if mapped:
                 blocks.update((b.key, b) for b in mapped.blocks)
                 specs.update((s.key, s) for s in mapped.specs)
-                st.caption("Choose This month → Uploaded content for Work orders and Service calls to include these mapped tables.")
+                st.caption("Use Add prepared pages and tables to this draft below to include these work-order totals and service calls.")
     return tuple(c.source for c in contents), blocks, specs

@@ -413,11 +413,13 @@ def reviewed_block(block, sources):
 
 def ai_references(block):
     """Narrative evidence excludes unrelated manual/image/import references."""
-    return (
+    references = (
         tuple(dict.fromkeys(r for p in block.ai_paragraphs for r in p.references))
         if block.ai_paragraphs
         else block.references
     )
+    # Carry-forward bookkeeping identifies report periods, not source pages.
+    return tuple(r for r in references if not r.startswith(("report-period:", "report-origin:")))
 
 
 def refresh_evidence(block, sources):

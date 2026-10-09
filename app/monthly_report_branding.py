@@ -201,5 +201,9 @@ def apply_defaults(draft, assets):
         logo = find_logo(draft.profile.contract, brand=key == "brand_logo", state=state)
         if logo:
             assets[logo.asset] = read_logo(logo)
-            blocks[key] = ResolvedBlock(key, "Library", asset_hashes=(logo.asset,))
+            block = ResolvedBlock(key, "Library", asset_hashes=(logo.asset,))
+            # The shared collection was explicitly reviewed when saved, and
+            # read_logo verified these exact bytes. Reusing it is not a new
+            # client-page review; a later custom replacement changes this stamp.
+            blocks[key] = replace(block, client_reviewed_fingerprint=block.fingerprint)
     return replace(draft, blocks=tuple(blocks.values()))

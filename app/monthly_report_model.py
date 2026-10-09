@@ -307,11 +307,12 @@ def default_sections() -> tuple[SectionSpec, ...]:
             BlockSpec("improvements", "image_grid"),
         )),
         SectionSpec("scorecards", "3", "Monthly Scorecards", (
-            BlockSpec("utility_analysis", "stock_text", stock_text_keys=("utility_pending",)),
+            BlockSpec("utility_analysis", "rich_text"),
             BlockSpec("thermal_capacity", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("service", "Service"), ColumnSpec("capacity", "Capacity", "number"), ColumnSpec("units", "Units"))),
         )),
         SectionSpec("mbcx", "4", "MBCx Reports", (
-            BlockSpec("mbcx_report", "pdf_pages", stock_text_keys=("mbcx_pending",)),
+            BlockSpec("mbcx_status", "rich_text"),
+            BlockSpec("mbcx_report", "pdf_pages"),
         )),
         SectionSpec("maintenance", "5", "Maintenance Schedule / In-House Maintenance", (
             BlockSpec("service_calls", "table", stock_text_keys=("cmms_pending",), columns=(
@@ -322,21 +323,21 @@ def default_sections() -> tuple[SectionSpec, ...]:
         )),
         SectionSpec("subcontractors", "6", "Sub-Contractor Status", (BlockSpec("subcontractor_matrix", "table", columns=(
             ColumnSpec("facility", "Facility"), ColumnSpec("discipline", "Discipline"), ColumnSpec("vendor", "Vendor"),
-            ColumnSpec("contact", "Contact"), ColumnSpec("phone", "Phone"), ColumnSpec("msa", "MSA", "boolean"),
+            ColumnSpec("contact", "Contact"), ColumnSpec("phone", "Phone"), ColumnSpec("msa", "MSA"),
         )),)),
         SectionSpec("water", "7", "Water Treatment Reports", (BlockSpec("water_reports", "pdf_pages"),)),
         SectionSpec("issues", "8", "Equipment Performance Issues", (BlockSpec("equipment_issues", "rich_text", True),)),
         SectionSpec("capital", "9", "Priority Capital Renewal List", (
-            BlockSpec("capital_renewal", "table", stock_text_keys=("no_capital",), columns=(
+            BlockSpec("capital_renewal", "table", columns=(
                 ColumnSpec("facility", "Facility"), ColumnSpec("priority", "Priority"), ColumnSpec("recommendation", "Recommendation"),
             )),
-            BlockSpec("end_of_life", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("asset", "Asset"), ColumnSpec("end_date", "End of useful life", "date"))),
+            BlockSpec("end_of_life", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("asset", "Asset"), ColumnSpec("end_date", "Expected replacement timing"))),
         )),
         SectionSpec("proposals", "10", "Pending & Declined Proposals", (BlockSpec("proposals", "table", columns=(
             ColumnSpec("facility", "Facility"), ColumnSpec("vendor", "Vendor"), ColumnSpec("scope", "Scope"), ColumnSpec("status", "Status"),
         )),)),
         SectionSpec("training", "11", "Training Summary", (BlockSpec("training_summary", "rich_text", True),)),
-        SectionSpec("rfi", "G", "RFI Matrix", (BlockSpec("rfi_matrix", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("item", "Requested item"), ColumnSpec("complete", "Complete", "boolean"))),), included=False, appendix=True),
+        SectionSpec("rfi", "G", "RFI Matrix", (BlockSpec("rfi_matrix", "table", columns=(ColumnSpec("facility", "Facility"), ColumnSpec("item", "Requested item"), ColumnSpec("complete", "Status"))),), included=False, appendix=True),
     )
 
 
@@ -361,6 +362,11 @@ def profile_sections(profile: ReportProfile) -> tuple[SectionSpec, ...]:
     for section in default_sections():
         blocks = {b.key: overrides.get(b.key, b) for b in section.blocks}
         order = block_orders.get(section.key, tuple(blocks))
+        if section.key == "mbcx" and "mbcx_report" in order and "mbcx_status" not in order:
+            # Older designs stored their explanation and report pages together.
+            # Keep their chosen order while making the separate update editable.
+            index = order.index("mbcx_report")
+            order = (*order[:index], "mbcx_status", *order[index:])
         sections[section.key] = replace(section, title=titles.get(section.key, section.title),
                                         included=section.key not in profile.excluded_sections,
                                         blocks=tuple(blocks[k] for k in order))

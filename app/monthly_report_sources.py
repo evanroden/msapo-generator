@@ -29,7 +29,7 @@ from app.monthly_report_model import ReportProfile, ReportSource, ResolvedBlock
 
 CLASSIFICATIONS = (
     "Vendor service", "Water treatment", "Improvement / training photo", "CMMS export",
-    "MBCx", "Proposal / quote", "Capital renewal", "Training", "Reference only",
+    "MBCx", "Utility results", "Proposal / quote", "Capital renewal", "Training", "Reference only",
 )
 MAX_FILE_BYTES = 30 * 1024 * 1024
 MAX_REPORT_BYTES = 180 * 1024 * 1024
@@ -41,7 +41,7 @@ MAX_VISION_PAGES = ocr._MAX_PDF_PAGES
 MAX_TABLE_CELLS = 200_000
 MAX_TABLE_ROWS = 20_000
 SUPPORTED = ocr.SUPPORTED_IMAGE_SUFFIXES | {".pdf", ".docx", ".xlsx", ".csv", ".eml", ".msg", ".txt"}
-PAGE_DESTINATIONS = ("vendor_reports", "water_reports", "mbcx_report", "improvements")
+PAGE_DESTINATIONS = ("vendor_reports", "water_reports", "mbcx_report", "utility_analysis", "improvements")
 
 
 @dataclass(frozen=True)
@@ -97,7 +97,12 @@ def native_action_lines(source: ReportSource):
             continue
         for line in text.splitlines():
             line = line.strip()
-            if re.search(r"\b(completed|repaired|replaced|inspected)\b", line, re.I) and not contains_price(line):
+            uncertain_work = re.search(
+                r"\b(?:not|never|cannot|unable|recommend\w*|propos\w*|planned?|planning|"
+                r"scheduled?|pending|awaiting|will|would|should|could|must|needs?|required|"
+                r"if|unless|to be)\b|\b\w+n['’]t\b", line, re.I)
+            if (re.search(r"\b(completed|repaired|replaced|inspected)\b", line, re.I)
+                    and not uncertain_work and not contains_price(line)):
                 found.setdefault(line, []).append(number)
     return tuple((line, tuple(dict.fromkeys(pages))) for line, pages in found.items())
 
@@ -124,6 +129,7 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     patterns = (("Water treatment", ("water treatment", "conductivity", "water analysis")),
                 ("CMMS export", ("work order", "cmms", "task code")),
                 ("MBCx", ("mbcx", "commissioning")),
+                ("Utility results", ("utility results", "utility analysis", "utility consumption", "utility scorecard", "energy consumption")),
                 ("Proposal / quote", ("proposal", "quotation", "quote")),
                 ("Capital renewal", ("capital renewal", "end of useful life")),
                 ("Training", ("training", "safety briefing")),

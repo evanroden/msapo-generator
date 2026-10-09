@@ -1,6 +1,6 @@
 """A synthetic worksheet matrix; never embed an owner-supplied directory."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from io import BytesIO
 from zipfile import ZipFile, ZIP_DEFLATED
 from xml.sax.saxutils import escape
@@ -210,11 +210,11 @@ def test_directory_upload_preview_confirmation_and_save_in_app(tmp_path,monkeypa
     app=AppTest.from_file(Path(__file__).resolve().parents[1]/'run_web.py',default_timeout=20).run()
     app.segmented_control[0].set_value('Monthly report').run()
     next(b for b in app.button if b.label=='Manage contract and site directory').click().run()
+    next(t for t in app.text_input if t.label=='Directory editor name').set_value('Synthetic Editor').run()
     next(b for b in app.button if b.label=='Read workbook').click().run()
     assert not app.exception
     assert next(b for b in app.button if b.label=='Save contract directory').disabled
     assert directory.load_directory('Synthetic Contract') is None
-    next(t for t in app.text_input if t.label=='Directory editor name').set_value('Synthetic Editor').run()
     next(c for c in app.checkbox if c.label=='I reviewed all included sites and contacts and confirm this shared save').check().run()
     next(b for b in app.button if b.label=='Save contract directory').click().run()
     assert not app.exception
@@ -226,3 +226,137 @@ def test_directory_upload_preview_confirmation_and_save_in_app(tmp_path,monkeypa
     assert not app.exception
     assert any(b.label == 'Synthetic Contract' for b in app.button)
     assert not library.list_profiles('Synthetic Contract')  # Directory is not report membership.
+
+
+def replace_workbook_part(raw, name, value):
+    result = BytesIO()
+    with ZipFile(BytesIO(raw)) as old, ZipFile(result, "w", ZIP_DEFLATED) as new:
+        for part in old.infolist():
+            if part.filename != name:
+                new.writestr(part.filename, old.read(part.filename))
+        new.writestr(name, value)
+    return result.getvalue()
+
+
+@pytest.mark.parametrize("part,root", [
+    ("xl/worksheets/sheet1.xml", "worksheet"),
+    ("xl/sharedStrings.xml", "sst"),
+    ("xl/workbook.xml", "workbook"),
+    ("xl/_rels/workbook.xml.rels", "Relationships"),
+])
+def test_unknown_xml_elements_are_bounded_without_retaining_tree(part, root):
+    # This tiny ZIP used to retain hundreds of thousands of irrelevant nodes,
+    # including in metadata parts parsed eagerly by ElementTree.
+    import tracemalloc
+    xml = f'<{root} xmlns="{directory.S[1:-1]}">' + '<ignored/>' * (directory.MAX_XML_ELEMENTS + 1) + f'</{root}>'
+    raw = replace_workbook_part(workbook(), part, xml)
+    assert len(raw) < 25_000
+    tracemalloc.start()
+    try:
+        with pytest.raises(ValueError, match="XML exceeds the safe parsing budget"):
+            directory.inspect_workbook(raw)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 8 * 1024 * 1024
+
+
+def test_xml_depth_and_ignored_text_are_bounded(monkeypatch):
+    xml = "<x>" * (directory.MAX_XML_DEPTH + 1) + "</x>" * (directory.MAX_XML_DEPTH + 1)
+    with pytest.raises(ValueError, match="XML exceeds the safe parsing budget"):
+        directory.inspect_workbook(replace_workbook_part(workbook(), "xl/worksheets/sheet1.xml", xml))
+    monkeypatch.setattr(directory, "MAX_XML_TEXT", 2000)
+    with pytest.raises(ValueError, match="XML text exceeds the safe parsing budget"):
+        directory.inspect_workbook(replace_workbook_part(workbook(), "xl/workbook.xml", "<ignored>" + "x" * 3000 + "</ignored>"))
+
+
+def test_streamed_rich_shared_strings_and_inline_values_keep_text():
+    raw = replace_workbook_part(workbook(), "xl/sharedStrings.xml",
+        f'<sst xmlns="{directory.S[1:-1]}"><si><r><t>Synthetic </t></r><r><t>North</t></r></si></sst>')
+    raw = replace_workbook_part(raw, "xl/worksheets/sheet1.xml",
+        f'<worksheet xmlns="{directory.S[1:-1]}"><sheetData><row><c r="A1" t="s"><v>0</v></c>'
+        '<c r="B1" t="inlineStr"><is><r><t>Manager </t></r><r><t>name</t></r></is></c>'
+        '<c r="C1" t="b"><v>1</v></c><c r="D1" t="e"><f>1/0</f><v>#DIV/0!</v></c>'
+        '</row></sheetData></worksheet>')
+    sheet = directory.inspect_workbook(raw).sheets[0]
+    assert sheet.values() == {(1, 1): "Synthetic North", (1, 2): "Manager name", (1, 3): "Yes", (1, 4): ""}
+    assert sheet.cells[-1].formula
+
+
+def seed_legacy_directory(contract, sites, *, revision=1):
+    # Seed the pre-normalization on-disk layout without using the new writer.
+    state = directory.DirectoryState(contract, revision, sites, "Synthetic Editor", "2026-10-08T00:00:00Z")
+    path = library._root() / "directory" / library._contract_directory(contract)
+    encoded = library._json({"schema": 1, **asdict(state)})
+    library._atomic_write(path / "manifest.json", encoded)
+    library._atomic_write(path / "history" / f"{revision:08d}.json", encoded)
+    return path, state
+
+
+def test_legacy_lowercase_contract_reuses_storage_and_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    _, _, _, sites = inspected()
+    path, prior = seed_legacy_directory("rochester regional health", sites)
+    history = (path / "history" / "00000001.json").read_bytes()
+    assert directory.directory_contracts() == ("Rochester Regional Health",)
+    assert directory.load_directory("Rochester Regional Health") == prior
+    updated = directory.save_directory(" Rochester   Regional Health ", sites,
+        expected_revision=1, actor="Synthetic Editor", confirmed=True)
+    assert updated.revision == 2
+    assert directory.load_directory("ROCHESTER REGIONAL HEALTH") == updated
+    assert (path / "history" / "00000001.json").read_bytes() == history
+    assert len(list((library._root() / "directory").glob("*/manifest.json"))) == 1
+    with pytest.raises(library.RevisionConflict):
+        directory.save_directory("ROCHESTER REGIONAL HEALTH", sites,
+            expected_revision=0, actor="Synthetic Editor", confirmed=True)
+
+
+def test_new_known_contract_case_variants_share_one_revision(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    _, _, _, sites = inspected()
+    saved = directory.save_directory(" rochester   regional health ", sites,
+        expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    assert saved.contract == "Rochester Regional Health"
+    with pytest.raises(library.RevisionConflict):
+        directory.save_directory("ROCHESTER REGIONAL HEALTH", sites,
+            expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    assert directory.directory_contracts() == ("Rochester Regional Health",)
+
+
+def test_legacy_case_collision_can_be_archived_and_restored_without_data_loss(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    _, _, _, sites = inspected()
+    main_path, main = seed_legacy_directory("Rochester Regional Health", sites)
+    legacy_path, legacy = seed_legacy_directory("rochester regional health", (replace(sites[0], title="Legacy North"),))
+    assert directory.directory_contracts() == ("Rochester Regional Health",)
+    assert directory.directory_contracts(include_archived=True) == ("Rochester Regional Health", "rochester regional health")
+    saved_bytes = (legacy_path / "history" / "00000001.json").read_bytes()
+    with pytest.raises(library.LibraryError):
+        directory.archive_directory(legacy.contract, expected_revision=1, actor="", confirmed=True)
+    archived = directory.archive_directory(legacy.contract, expected_revision=1, actor="Synthetic Editor", confirmed=True)
+    assert archived.archived and archived.action == "archive" and archived.revision == 2
+    assert directory.load_directory(legacy.contract) == main  # Canonical suggestions use the remaining live list.
+    assert directory.load_directory(legacy.contract, include_archived=True) == archived
+    assert directory.load_directory(main.contract) == main
+    assert (legacy_path / "history" / "00000001.json").read_bytes() == saved_bytes
+    assert directory.load_directory(legacy.contract, 1) == legacy
+    with pytest.raises(library.RevisionConflict):
+        directory.archive_directory(legacy.contract, expected_revision=1, actor="Synthetic Editor", confirmed=True)
+    restored = directory.restore_directory(legacy.contract, 1, expected_revision=2, actor="Synthetic Editor", confirmed=True)
+    assert not restored.archived and restored.sites == legacy.sites and restored.revision == 3
+    assert directory.load_directory(main.contract) == main
+    assert (main_path / "history" / "00000001.json").exists()
+
+    directory.archive_directory(main.contract, expected_revision=1, actor="Synthetic Editor", confirmed=True)
+    assert directory.load_directory(main.contract) == restored
+
+
+def test_archive_hides_custom_contract_and_requires_confirmation_before_read(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    _, _, _, sites = inspected()
+    directory.save_directory("Synthetic Contract", sites, expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    directory.archive_directory("Synthetic Contract", expected_revision=1, actor="Synthetic Editor", confirmed=True)
+    assert directory.directory_contracts() == ()
+    assert directory.directory_contracts(include_archived=True) == ("Synthetic Contract",)
+    with pytest.raises(library.LibraryError, match="name"):
+        directory.restore_directory("Missing Contract", 1, expected_revision=0, actor="", confirmed=True)

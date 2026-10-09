@@ -56,7 +56,17 @@ def _identity(contract, prepared, prefix, field, state):
                               key=field(prefix + "_sites", []), help="Select only the sites in this report. You can make separate reports for other sites on the same contract.")
     custom = st.text_input("Site not listed? Add its name here", key=field(prefix + "_custom_site", ""),
                            help="For more than one missing site, separate their names with a semicolon.")
-    facilities = tuple(options[k] for k in selected) + tuple(Facility(_key(v.strip()), v.strip()) for v in custom.split(";") if v.strip())
+    try:
+        facilities = tuple(options[k] for k in selected) + tuple(Facility(_key(v.strip()), v.strip()) for v in custom.split(";") if v.strip())
+        # Validate before rendering widgets keyed by facility identity, so a
+        # repeated custom site remains editable instead of crashing every run.
+        if facilities:
+            ReportProfile(contract, "selection", "Selected sites", facilities,
+                          "individual" if len(facilities) == 1 else "multi_site")
+    except ValueError:
+        message = "A site was selected twice, shares an alternate name, or has no letters/numbers. Keep one entry per actual site and correct the added site name above."
+        st.warning(message)
+        return None, prepared, [message]
     scope_label = st.radio("This report covers", ["One site", "A group of sites", "A region"], key=field(prefix + "_scope", "One site"), horizontal=True)
     scope = {"One site": "individual", "A group of sites": "multi_site", "A region": "regional"}[scope_label]
     actor = st.text_input("Your name", key=field(prefix + "_actor", prepared), help="Shown as the report preparer and recorded when you save.")
@@ -94,7 +104,7 @@ def _replacement_pictures(section, p, plan):
         st.caption("Add only what you want to change. Each new picture replaces the selected picture for that purpose; other cover details stay as they are.")
     elif section.key == "organization":
         labels = {"org_chart": "New organization chart", "business_hours_workflow": "New daytime outage procedure", "after_hours_workflow": "New after-hours outage procedure", "contact_matrix": "New facility contact page"}
-        st.caption("Add only the parts that changed. Leave out the old picture or uncheck its original page when replacing it. Other selected pages stay in the report.")
+        st.caption("Add only the parts that changed. A new picture replaces all previous pictures for that part; the other organization pages stay in the report.")
     else:
         labels = {{"activity": "improvements", "training": "training_summary", "maintenance": "vendor_reports", "water": "water_reports"}.get(section.key, default_slot(section.key)): section_help(section.key).upload_label}
         st.caption("Choose “Leave out” on the old picture when replacing it. Complete vendor, chemical and MBCx files can be added in This month’s work after setup.")
@@ -134,7 +144,12 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         else:
             from app.monthly_report_word_pages_ui import chart_page_review
             if chart_page_review(section, path, period, p, field, old, plan, blocking):
-                _replacement_pictures(section, p, plan)
+                if action == actions[1]:
+                    _replacement_pictures(section, p, plan)
+                elif plan["new_assets"]:
+                    from app.monthly_report_sections import readable_label
+                    for slot, image in plan["new_assets"]:
+                        st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
                 _approve_plan(plan, p, field, old, plans, blocking)
                 return
             items = list(section.items)
@@ -171,13 +186,16 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             for n, item in enumerate((i for i in items if i.kind == "table"), 1):
                 table, removed = table_without_prices(item)
                 table = old.get("tables", {}).get(item.id, table)
+                if table:
+                    from app.monthly_report_table_review_ui import review_table_headings
+                    table = review_table_headings(table, p + "_table_" + item.id, field)
                 if removed:
                     st.caption("Pricing columns were removed from this client-facing table. The original table is retained in the uploaded report.")
                 if table:
                     st.write(f"Table {n}")
                     rows = [dict(zip(table.columns, r)) for r in table.rows]
                     if action == actions[1]:
-                        rows = _grid(p + "_table_" + item.id, rows, num_rows="dynamic", hide_index=True)
+                        rows = _grid(p + "_table_" + item.id + "_" + _signature(table.columns), rows, num_rows="dynamic", hide_index=True)
                         table = ReportTable(table.columns, tuple(tuple("" if r.get(c) is None else str(r[c]) for c in table.columns) for r in rows))
                     else:
                         st.dataframe(rows[:300], hide_index=True)

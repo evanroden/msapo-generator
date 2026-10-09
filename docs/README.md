@@ -6,6 +6,12 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Review A fixes and thirteen section audits: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md).
+
+Section design implementation: [COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_SECTION_EXPERIENCES.md](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_SECTION_EXPERIENCES.md).
+
+Dedicated section experience designs: [MONTHLY_REPORT_SECTION_DESIGNS.md](MONTHLY_REPORT_SECTION_DESIGNS.md).
+
 Monthly novice workflow review: [COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_NOVICE_WORKSPACES.md](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_NOVICE_WORKSPACES.md).
 
 Monthly memory and first-report guidance: [COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_MEMORY.md](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_MEMORY.md).

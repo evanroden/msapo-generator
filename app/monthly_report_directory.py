@@ -18,7 +18,7 @@ from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
 from app import monthly_report_library as library
-from app.monthly_report_import import _relations
+from app.monthly_report_import import _resolve
 from app.monthly_report_model import BlockSpec, ColumnSpec, Facility, ReportProfile, ResolvedBlock
 
 MAX_UPLOAD_BYTES = 30 * 1024 * 1024
@@ -27,6 +27,9 @@ MAX_PART_BYTES = 16 * 1024 * 1024
 MAX_CELLS = 100_000
 MAX_TEXT = 4_000_000
 MAX_SITES = 500
+MAX_XML_ELEMENTS = 750_000
+MAX_XML_TEXT = 8_000_000
+MAX_XML_DEPTH = 64
 S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 
@@ -95,6 +98,7 @@ class DirectoryState:
     source_sha256: str = ""
     source_sheet: str = ""
     action: str = "save"
+    archived: bool = False
 
 
 def _coord(address):
@@ -117,6 +121,80 @@ def column_name(column):
     return result
 
 
+@dataclass
+class _XmlBudget:
+    elements: int = 0
+    text: int = 0
+
+
+def _stream_xml(archive, part, budget, consume):
+    """Read events without building a tree, including unknown/ignored XML.
+
+    Clearing only cells leaves all other elements attached to the root. A SAX
+    target allocates no Element objects; budgets also cover metadata, rich text,
+    attributes and unexpected elements rather than only recognized cell values.
+    """
+    class Target:
+        def __init__(self):
+            self.path = []
+
+        def start(self, tag, attrs):
+            budget.elements += 1
+            if budget.elements > MAX_XML_ELEMENTS or len(self.path) >= MAX_XML_DEPTH or len(attrs) > 64:
+                raise ValueError("Workbook XML exceeds the safe parsing budget.")
+            self._text(sum(len(k) + len(v) for k, v in attrs.items()))
+            self.path.append(tag)
+            consume("start", tuple(self.path), attrs)
+
+        def end(self, tag):
+            consume("end", tuple(self.path), None)
+            self.path.pop()
+
+        def _text(self, size):
+            budget.text += size
+            if budget.text > MAX_XML_TEXT:
+                raise ValueError("Workbook XML text exceeds the safe parsing budget.")
+
+        def data(self, value):
+            self._text(len(value))
+            consume("text", tuple(self.path), value)
+
+        def close(self):
+            return None
+
+    parser = ET.XMLParser(target=Target(), forbid_dtd=True)
+    with archive.open(part) as stream:
+        while chunk := stream.read(16 * 1024):
+            parser.feed(chunk)
+        parser.close()
+
+
+def _workbook_metadata(archive, names, budget):
+    relations, sheets = {}, []
+    rel_tag = "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+
+    def relationship(event, path, value):
+        if event == "start" and len(path) == 2 and path[-1] == rel_tag:
+            identity = value.get("Id", "")
+            if identity in relations:
+                raise ValueError("Duplicate workbook relationship identity.")
+            if len(relations) >= 2000:
+                raise ValueError("Workbook relationships exceed the safe parsing budget.")
+            target = "" if value.get("TargetMode", "").casefold() == "external" else _resolve("xl/workbook.xml", value.get("Target", ""))
+            relations[identity] = target, value.get("Type", "")
+
+    def worksheet(event, path, value):
+        if event == "start" and path == (S + "workbook", S + "sheets", S + "sheet"):
+            if len(sheets) >= 50:
+                raise ValueError("Directory exceeds 50 worksheets; split it before importing.")
+            sheets.append(dict(value))
+
+    if "xl/_rels/workbook.xml.rels" in names:
+        _stream_xml(archive, "xl/_rels/workbook.xml.rels", budget, relationship)
+    _stream_xml(archive, "xl/workbook.xml", budget, worksheet)
+    return relations, sheets
+
+
 def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
     if not raw or len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError("Choose a nonempty XLSX directory up to 30 MB.")
@@ -133,65 +211,88 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                 raise ValueError("Choose a valid XLSX workbook.")
             if any("vbaproject" in n.casefold() for n in names):
                 raise ValueError("Macro-enabled workbooks are not supported. Save a macro-free XLSX copy.")
+            budget = _XmlBudget()
             strings, total_text = [], 0
+            string_parts, string_length = None, 0
+
+            def shared_text(event, path, value):
+                nonlocal string_parts, string_length, total_text
+                if event == "start" and path == (S + "sst", S + "si"):
+                    string_parts, string_length = [], 0
+                elif event == "text" and string_parts is not None and path[-1] == S + "t":
+                    string_length += len(value)
+                    if string_length > 10000:
+                        raise ValueError("Workbook shared text exceeds the review budget.")
+                    string_parts.append(value)
+                elif event == "end" and path == (S + "sst", S + "si"):
+                    text = "".join(string_parts)
+                    total_text += len(text)
+                    if len(strings) >= MAX_CELLS or total_text > MAX_TEXT:
+                        raise ValueError("Workbook shared text exceeds the review budget.")
+                    strings.append(text)
+                    string_parts = None
+
             if "xl/sharedStrings.xml" in names:
-                with archive.open("xl/sharedStrings.xml") as stream:
-                    for _, node in ET.iterparse(stream, events=("end",), forbid_dtd=True):
-                        if node.tag == S + "si":
-                            value = "".join(n.text or "" for n in node.iter(S + "t"))
-                            total_text += len(value)
-                            if len(strings) >= MAX_CELLS or total_text > MAX_TEXT:
-                                raise ValueError("Workbook shared text exceeds the review budget.")
-                            strings.append(value)
-                            node.clear()
-            relations = _relations(archive, "xl/workbook.xml")
-            with archive.open("xl/workbook.xml") as stream:
-                root = ET.parse(stream, forbid_dtd=True).getroot()
-            sheet_nodes = list(root.findall(S + "sheets/" + S + "sheet"))
-            if len(sheet_nodes) > 50:
-                raise ValueError("Directory exceeds 50 worksheets; split it before importing.")
+                _stream_xml(archive, "xl/sharedStrings.xml", budget, shared_text)
+            relations, sheet_nodes = _workbook_metadata(archive, names, budget)
             sheets, total_cells, formulas = [], 0, 0
             for node in sheet_nodes:
                 target, kind = relations.get(node.get(R + "id"), ("", ""))
                 if not target or not target.startswith("xl/worksheets/") or not kind.endswith("/worksheet") or target not in names:
                     raise ValueError("Workbook has a missing, external or unsafe worksheet relationship.")
                 cells, seen = [], set()
-                with archive.open(target) as stream:
-                    for _, cell in ET.iterparse(stream, events=("end",), forbid_dtd=True):
-                        if cell.tag != S + "c":
-                            continue
-                        coordinate = _coord(cell.get("r"))
+                cell, cell_path, cached, inline, cell_length, is_formula = None, (), [], [], 0, False
+
+                def worksheet_cell(event, path, value):
+                    nonlocal cell, cell_path, cached, inline, cell_length, is_formula
+                    nonlocal total_cells, total_text, formulas
+                    if event == "start" and path[-1] == S + "c":
+                        if cell is not None:
+                            raise ValueError("Workbook contains nested cells.")
+                        coordinate = _coord(value.get("r"))
                         if coordinate in seen:
                             raise ValueError("Workbook contains duplicate cell coordinates.")
                         seen.add(coordinate)
                         total_cells += 1
                         if total_cells > MAX_CELLS:
                             raise ValueError("Workbook exceeds 100,000 stored cells. Remove unused formatting or split it.")
-                        is_formula = cell.find(S + "f") is not None
-                        formulas += int(is_formula)
-                        value = cell.findtext(S + "v", "")
-                        kind = cell.get("t", "")
-                        if kind == "s":
-                            try:
-                                index = int(value)
-                                if index < 0:
-                                    raise IndexError
-                                value = strings[index]
-                            except (ValueError, IndexError) as exc:
-                                raise ValueError("Invalid workbook shared-string reference.") from exc
-                        elif kind == "inlineStr":
-                            value = "".join(n.text or "" for n in cell.iter(S + "t"))
-                        elif kind == "b":
-                            value = "Yes" if value == "1" else "No" if value == "0" else ""
-                        elif kind == "e":
-                            value = ""  # Failed formulas must not become contact identities.
-                        value = value.strip()
-                        total_text += len(value)
-                        if len(value) > 10000 or total_text > MAX_TEXT:
-                            raise ValueError("Workbook cell text exceeds the review budget.")
-                        if value or is_formula:
-                            cells.append(DirectoryCell(*coordinate, value, is_formula))
-                        cell.clear()
+                        cell, cell_path = (coordinate, value.get("t", "")), path
+                        cached, inline, cell_length, is_formula = [], [], 0, False
+                    elif cell is not None:
+                        if event == "start" and path == (*cell_path, S + "f"):
+                            is_formula = True
+                        elif event == "text" and (path == (*cell_path, S + "v") or path[-1] == S + "t"):
+                            cell_length += len(value)
+                            if cell_length > 10000:
+                                raise ValueError("Workbook cell text exceeds the review budget.")
+                            (cached if path[-1] == S + "v" else inline).append(value)
+                        elif event == "end" and path == cell_path:
+                            coordinate, kind = cell
+                            value = "".join(cached)
+                            if kind == "s":
+                                try:
+                                    index = int(value)
+                                    if index < 0:
+                                        raise IndexError
+                                    value = strings[index]
+                                except (ValueError, IndexError) as exc:
+                                    raise ValueError("Invalid workbook shared-string reference.") from exc
+                            elif kind == "inlineStr":
+                                value = "".join(inline)
+                            elif kind == "b":
+                                value = "Yes" if value == "1" else "No" if value == "0" else ""
+                            elif kind == "e":
+                                value = ""  # Failed formulas must not become contact identities.
+                            value = value.strip()
+                            total_text += len(value)
+                            if len(value) > 10000 or total_text > MAX_TEXT:
+                                raise ValueError("Workbook cell text exceeds the review budget.")
+                            formulas += int(is_formula)
+                            if value or is_formula:
+                                cells.append(DirectoryCell(*coordinate, value, is_formula))
+                            cell = None
+
+                _stream_xml(archive, target, budget, worksheet_cell)
                 sheets.append(DirectorySheet(node.get("name", ""), tuple(cells), node.get("state", "visible") != "visible"))
             if not sheets or len({s.name for s in sheets}) != len(sheets):
                 raise ValueError("Workbook needs uniquely named worksheets.")
@@ -296,8 +397,46 @@ def proposed_contacts(existing, incoming):
     return tuple(result)
 
 
+def _contract_identity(contract):
+    library._contract_directory(contract)  # Preserve the shared length/blank validation.
+    return " ".join(contract.casefold().split())
+
+
+def canonical_contract(contract):
+    """Canonical spelling only; no fuzzy aliases or routing changes."""
+    from app import contracts
+    identity = _contract_identity(contract)
+    return next((name for name in contracts.contract_names() if _contract_identity(name) == identity),
+                " ".join(contract.split()))
+
+
+def _directory_records():
+    root = library._root() / "directory"
+    return tuple((path.parent, _state(library._read(path))) for path in sorted(root.glob("*/manifest.json")))
+
+
 def _path(contract):
-    return library._root() / "directory" / library._contract_directory(contract)
+    """Reuse old case-sensitive storage paths, keeping history in place.
+
+    Exact legacy names remain addressable if pre-existing directories collide.
+    New saves cannot create another case/whitespace variant of a known record.
+    """
+    identity = _contract_identity(contract)
+    direct = library._root() / "directory" / library._contract_directory(contract)
+    if (direct / "manifest.json").exists():
+        if _state(library._read(direct / "manifest.json")).contract != contract:
+            raise library.LibraryError("Directory contract identity mismatch.")
+        return direct
+    matches = [(path, state) for path, state in _directory_records() if _contract_identity(state.contract) == identity]
+    if len(matches) == 1:
+        return matches[0][0]
+    if matches:
+        for label in (contract, canonical_contract(contract)):
+            exact = [path for path, state in matches if state.contract == label]
+            if len(exact) == 1:
+                return exact[0]
+        raise library.LibraryError("More than one saved contact list uses this contract name. Open the saved directory and archive the duplicate by its original name.")
+    return library._root() / "directory" / library._contract_directory(canonical_contract(contract))
 
 
 def _state(value):
@@ -305,30 +444,46 @@ def _state(value):
         sites = tuple(DirectorySite(**(s | {"aliases": tuple(s.get("aliases", ())),
                       "contacts": tuple(DirectoryContact(**c) for c in s.get("contacts", ())) })) for s in value["sites"])
         return DirectoryState(value["contract"], value["revision"], sites, value["actor"], value["updated_at"],
-                              value.get("source_sha256", ""), value.get("source_sheet", ""), value.get("action", "save"))
+                              value.get("source_sha256", ""), value.get("source_sheet", ""), value.get("action", "save"),
+                              value.get("archived", False))
     except (KeyError, TypeError, ValueError) as exc:
         raise library.LibraryError("Saved site directory could not be read; existing data was preserved.") from exc
 
 
-def load_directory(contract, revision=None):
+def load_directory(contract, revision=None, *, include_archived=False):
     if revision is not None and (type(revision) is not int or revision < 1):
         raise ValueError("Invalid directory revision.")
     path = _path(contract) / (f"history/{revision:08d}.json" if revision else "manifest.json")
     if not path.exists() and revision is None:
         return None
     state = _state(library._read(path))
-    if state.contract != contract:
+    if _contract_identity(state.contract) != _contract_identity(contract):
         raise library.LibraryError("Directory contract identity mismatch.")
+    if revision is None and state.archived and not include_archived:
+        # Archiving one legacy spelling must not hide the remaining live list
+        # for the same canonical contract from report setup.
+        live = [other for _, other in _directory_records()
+                if not other.archived and _contract_identity(other.contract) == _contract_identity(contract)]
+        if len(live) > 1:
+            raise library.LibraryError("More than one active contact list uses this contract name. Archive the duplicate lists by their original names.")
+        return live[0] if live else None
     return state
 
 
-def directory_contracts():
-    root = library._root() / "directory"
-    return tuple(sorted({_state(library._read(p)).contract for p in root.glob("*/manifest.json")}, key=str.casefold))
+def directory_contracts(*, include_archived=False):
+    states = [state for _, state in _directory_records()]
+    if include_archived:
+        # Keep legacy colliding records individually reachable for recovery.
+        return tuple(sorted({state.contract for state in states}, key=lambda name: (name.casefold(), name)))
+    result = {}
+    for state in sorted(states, key=lambda state: (state.contract.casefold(), state.contract)):
+        if not state.archived:
+            result.setdefault(_contract_identity(state.contract), canonical_contract(state.contract))
+    return tuple(sorted(result.values(), key=str.casefold))
 
 
 def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=None,
-                   source_sha256="", source_sheet="", action="save"):
+                   source_sha256="", source_sheet="", action="save", _archived=False):
     actor = library._confirmation(actor, confirmed)
     sites = tuple(sites)
     if not sites or len(sites) > MAX_SITES:
@@ -349,12 +504,18 @@ def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=
             raise ValueError("Directory source no longer matches the reviewed workbook.")
     elif source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
         raise ValueError("Invalid directory source fingerprint.")
-    path = _path(contract)
-    with library._locked(path):
-        current = load_directory(contract)
+    identity = _contract_identity(contract)
+    # One lock covers every casing, including concurrent first saves.
+    lock = library._root() / "directory_locks" / library._contract_directory(identity)
+    with library._locked(lock):
+        path = _path(contract)
+        current = load_directory(contract, include_archived=True)
         if expected_revision != (current.revision if current else 0):
             raise library.RevisionConflict("Someone changed this directory. Reload and review the new version before saving.")
-        state = DirectoryState(contract, expected_revision + 1, sites, actor, library._now(), source_sha256, source_sheet, action)
+        # Preserve legacy spelling when updating its existing history so a
+        # separately saved collision remains explicitly addressable.
+        stored_contract = current.contract if current else canonical_contract(contract)
+        state = DirectoryState(stored_contract, expected_revision + 1, sites, actor, library._now(), source_sha256, source_sheet, action, _archived)
         encoded = library._json({"schema": 1, **asdict(state)})
         if raw is not None:
             library._atomic_write(library._root() / "directory_sources" / (source_sha256 + ".xlsx"), raw)
@@ -373,9 +534,22 @@ def merge_sites(existing, incoming):
 
 
 def restore_directory(contract, revision, *, expected_revision, actor, confirmed):
+    actor = library._confirmation(actor, confirmed)
     prior = load_directory(contract, revision)
     return save_directory(contract, prior.sites, expected_revision=expected_revision, actor=actor, confirmed=confirmed,
                           source_sha256=prior.source_sha256, source_sheet=prior.source_sheet, action=f"restore:{revision}")
+
+
+def archive_directory(contract, *, expected_revision, actor, confirmed):
+    actor = library._confirmation(actor, confirmed)
+    current = load_directory(contract, include_archived=True)
+    if current is None:
+        raise library.LibraryError("That contact list no longer exists.")
+    if current.revision != expected_revision:
+        raise library.RevisionConflict("Someone changed this directory. Reload and review the new version before archiving.")
+    return save_directory(contract, current.sites, expected_revision=expected_revision, actor=actor, confirmed=confirmed,
+                          source_sha256=current.source_sha256, source_sheet=current.source_sheet,
+                          action="archive", _archived=True)
 
 
 CONTACT_SPEC = BlockSpec("contact_matrix", "table", columns=tuple(
