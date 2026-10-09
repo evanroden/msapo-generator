@@ -1,0 +1,26 @@
+name: Monthly report pricing baseline
+
+on:
+  push:
+    branches: [fix/monthly-report-pricing-accuracy]
+    paths: [.github/workflows/monthly-report-pricing-verify.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Archive only the public source baseline
+        run: git archive --format=tar.gz f517d39f519c8161359050088401acea0b1707d4 > "$RUNNER_TEMP/pricing-baseline.tar.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pricing-baseline-source
+          path: ${{ runner.temp }}/pricing-baseline.tar.gz
+          retention-days: 1
