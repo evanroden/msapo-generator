@@ -428,7 +428,9 @@ def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapp
                 if total > MAX_NORMALIZED_BYTES:
                     raise ImportError("Selected normalized images exceed 60 MB. Import fewer assets at a time.")
                 assets[digest] = normalized.data
-            block = replace(block, asset_hashes=block.asset_hashes + (digest,))
+            contexts = dict(block.asset_provenance)
+            contexts[digest] = tuple(dict.fromkeys((*contexts.get(digest, ()), reference)))
+            block = replace(block, asset_hashes=block.asset_hashes + (digest,), asset_provenance=tuple(contexts.items()))
         elif item.kind == "table":
             if spec.type not in ("table", "work_order_grid") and mapping.slot != "contact_matrix":
                 raise ImportError("A table needs a table destination.")
@@ -470,8 +472,9 @@ def imported_draft(profile: ReportProfile, period: ReportPeriod, prepared_by: st
                              blocks=tuple(overrides.get(b.key, b) for b in s.blocks)) for s in profile_sections(profile))
     footer = next((b.text for b in mapped.blocks if b.key == "footer_text"), "")
     blocks = []
+    from app.monthly_report_asset_review import preserve_asset_reviews
     for block in mapped.blocks:
         reviewed = block.client_reviewed_fingerprint == block.fingerprint
-        block = replace(block, source="Last month")
+        block = preserve_asset_reviews(block, replace(block, source="Last month"))
         blocks.append(replace(block, client_reviewed_fingerprint=block.fingerprint if reviewed else ""))
     return ReportDraft(profile, period, prepared_by, sections, tuple(blocks), footer)

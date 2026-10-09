@@ -105,8 +105,12 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     assert not any(w.label == "Site / report" for w in app.selectbox)
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"
     assert any(w.label == "Include Organizational Chart" for w in app.checkbox)
+    assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
+    next(w for w in app.button if w.label == "Change logos").click().run()
+    assert any(w.label == "New client logo" for w in app.get("file_uploader"))
+    next(w for w in app.button if w.label == "Done with cover changes").click().run()
     step(app, 3)
-    assert any(w.label == "Upload a new client logo" for w in app.get("file_uploader"))
+    assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
     # Navigation is deliberately free: an unfinished standing section does not
     # prevent adding work now, then returning to complete it later.
     step(app, 2)
@@ -161,6 +165,8 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(b for b in app.button if b.label == "Continue to this month’s work").click().run()
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic team completed the September inspection.").run()
     step(app, 3)
+    assert not any(b.label == "Start an editable org chart" for b in app.button)
+    next(b for b in app.button if b.label == "Change team chart").click().run()
     next(b for b in app.button if b.label == "Start an editable org chart").click().run()
     next(w for w in app.text_input if w.label == "Name").set_value("Synthetic Manager").run()
     next(w for w in app.checkbox if w.label == "I checked the standing information for these sites").check().run()
@@ -191,6 +197,8 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     step(next_app, 2)
     assert next(w for w in next_app.text_area if w.label == "Activity summary").value == ""
     step(next_app, 3)
+    assert not any(w.label == "Name" for w in next_app.text_input)
+    next(b for b in next_app.button if b.label == "Change team chart").click().run()
     assert next(w for w in next_app.text_input if w.label == "Name").value == "Synthetic Manager"
     assert not next(w for w in next_app.checkbox if w.label == "I checked the standing information for these sites").value
     assert next(r for r in next_app.radio if r.label == "Report steps").value == STEPS[2]

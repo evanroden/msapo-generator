@@ -9,6 +9,7 @@ from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_branding as branding, monthly_report_library as library
 from app.monthly_report_checks import preflight
+from app.monthly_report_asset_review import pending_asset_indexes
 from app.monthly_report_model import ResolvedBlock, ReportPeriod, synthetic_profiles
 from app.monthly_report_setup import new_month_draft
 from app.monthly_report_start import design_seed
@@ -94,3 +95,21 @@ def test_shared_defaults_validate_saved_bytes_before_reusing_review(shared_logos
     path.write_bytes(b"changed artwork")
     with pytest.raises(ValueError, match="fingerprint"):
         design_seed(profile, ReportPeriod(2026, 9), "Synthetic Editor")
+
+
+def test_shared_logo_replacement_drops_old_per_picture_metadata(shared_logos):
+    _, logos, _ = shared_logos
+    app = AppTest.from_string('''
+import streamlit as st
+from app.monthly_report_asset_review import approve_all_assets
+from app.monthly_report_branding_ui import offer_logo
+from app.monthly_report_model import ResolvedBlock, synthetic_profiles
+original = approve_all_assets(ResolvedBlock("client_logo", "Library", asset_hashes=("old-custom.png",), references=("old-origin",)))
+block = st.session_state.setdefault("block", original)
+st.session_state["block"] = offer_logo(block, synthetic_profiles()[0].contract, "reviewed-replacement", {})
+''').run()
+    assert not app.exception
+    next(button for button in app.button if button.label == "Use this logo in this report").click().run()
+    assert not app.exception
+    assert app.session_state["block"].asset_hashes == (logos[0].asset,)
+    assert not pending_asset_indexes(app.session_state["block"])

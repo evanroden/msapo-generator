@@ -52,3 +52,48 @@ def test_stale_removal_never_removes_a_different_picture():
     app.session_state["report_saved_cards_remove_request"] = (("older-image",), 0)
     app.run()
     assert app.session_state["draft"].asset_hashes == ("0", "1")
+
+
+def test_reviewed_gallery_is_optional_and_removing_one_keeps_other_reviews():
+    from dataclasses import replace
+    from app.monthly_report_asset_review import approve_all_assets, pending_asset_indexes
+
+    app = app_for(2)
+    app.session_state["draft"] = approve_all_assets(app.session_state["draft"])
+    app.run()
+    assert [b.label for b in app.button] == ["View or change pictures"]
+    assert not app.get("imgs")
+    app.button[0].click().run()
+    assert len([b for b in app.button if b.label.startswith("Remove")]) == 2
+    next(b for b in app.button if b.label == "Remove picture 1").click().run()
+    assert app.session_state["draft"].asset_hashes == ("1",)
+    assert not pending_asset_indexes(app.session_state["draft"])
+    next(b for b in app.button if b.label == "Done editing pictures").click().run()
+    assert [b.label for b in app.button] == ["View or change pictures"]
+    original = app.session_state["draft"]
+    app.session_state["draft"] = replace(original, asset_captions=("Changed caption",))
+    app.run()
+    assert pending_asset_indexes(app.session_state["draft"]) == (0,)
+    assert any(b.label == "Remove this picture" for b in app.button)
+    assert not app.exception
+
+
+def test_removal_uses_source_mapping_and_retains_shared_or_native_evidence():
+    from dataclasses import replace
+    from app.monthly_report_asset_review import approve_all_assets, pending_asset_indexes
+    from app.monthly_report_model import ResolvedBlock
+    from app.monthly_report_saved_pictures_ui import remove_saved_picture
+
+    block = ResolvedBlock(
+        "vendor_reports", "This month", asset_hashes=("one.png", "two.png"),
+        references=("first-source", "second-source"),
+        asset_provenance=(("one.png", ("second-source",)), ("two.png", ("first-source",))),
+    )
+    reviewed = approve_all_assets(block)
+    removed = remove_saved_picture(reviewed, 0)
+    assert removed.references == ("first-source",)
+    assert not pending_asset_indexes(removed)
+    shared = replace(reviewed, asset_provenance=(("one.png", ("first-source",)), ("two.png", ("first-source",))))
+    assert remove_saved_picture(shared, 0).references == reviewed.references
+    native = replace(reviewed, text="This narrative uses both reports.")
+    assert remove_saved_picture(native, 0).references == native.references

@@ -205,5 +205,6 @@ def apply_defaults(draft, assets):
             # The shared collection was explicitly reviewed when saved, and
             # read_logo verified these exact bytes. Reusing it is not a new
             # client-page review; a later custom replacement changes this stamp.
-            blocks[key] = replace(block, client_reviewed_fingerprint=block.fingerprint)
+            from app.monthly_report_asset_review import approve_all_assets
+            blocks[key] = approve_all_assets(block)
     return replace(draft, blocks=tuple(blocks.values()))

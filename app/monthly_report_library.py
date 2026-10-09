@@ -195,7 +195,8 @@ def profile_from_dict(value: dict) -> ReportProfile:
 
 def block_from_dict(value: dict) -> ResolvedBlock:
     try:
-        return ResolvedBlock(
+        from app.monthly_report_asset_review import normalize_asset_reviews
+        block = ResolvedBlock(
             key=value["key"], source=value["source"], text=value.get("text", ""),
             rows=tuple(tuple(str(cell) for cell in row) for row in value.get("rows", ())),
             asset_hashes=tuple(value.get("asset_hashes", ())), references=tuple(value.get("references", ())),
@@ -208,7 +209,13 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             ai_paragraphs=tuple(DraftParagraph(p["text"], tuple(p["fact_ids"]), tuple(p["references"]), tuple(p.get("flags", ()))) for p in value.get("ai_paragraphs", ())),
             org_nodes=tuple(OrgChartNode(**node) for node in value.get("org_nodes", ())),
             photos_per_page=int(value.get("photos_per_page", 1)),
+            client_asset_reviews=tuple(value.get("client_asset_reviews", ())),
+            asset_provenance=tuple((reference, tuple(context)) for reference, context in value.get("asset_provenance", ())),
         )
+        # Only migrate actual legacy approvals while their old content digest
+        # is still exact. Unreviewed historical blocks stay unchanged on read.
+        return (normalize_asset_reviews(block) if block.client_reviewed_fingerprint == block.fingerprint
+                and not block.client_asset_reviews and not block.asset_provenance else block)
     except (KeyError, TypeError, ValueError) as exc:
         raise LibraryError("Invalid saved report block.") from exc
 

@@ -99,3 +99,21 @@ ui.render_conflict_comparison(*ui._test_inputs, working_asset_loader=ui._test_lo
     assert len(app.warning) == 4
     assert all("private storage path" not in warning.value for warning in app.warning)
     assert any("first 4 of 8" in caption.value for caption in app.caption)
+
+
+
+def test_comparison_does_not_show_migration_as_a_change_or_text_edit_as_picture_review():
+    from app.monthly_report_asset_review import normalize_asset_reviews, preserve_asset_reviews
+
+    block = ResolvedBlock("activity_summary", "Library", text="Original summary", asset_hashes=("one.png", "two.png"), asset_captions=("One", "Two"))
+    block = replace(block, client_reviewed_fingerprint=block.fingerprint)
+    saved = replace(example(), blocks=(block,))
+    migrated = normalize_asset_reviews(block)
+    assert compare_drafts(replace(saved, blocks=(migrated,)), saved) == ()
+    edited = preserve_asset_reviews(migrated, replace(migrated, text="Updated summary", client_reviewed_fingerprint=""))
+    change, = compare_drafts(replace(saved, blocks=(edited,)), saved)
+    assert "Pictures/pages reviewed" in change.working
+    assert "need review" not in change.working
+    caption_edit = replace(edited, asset_captions=("A changed caption", "Two"))
+    change, = compare_drafts(replace(saved, blocks=(caption_edit,)), saved)
+    assert "1 of 2 pictures/pages need review" in change.working

@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from app.monthly_report_asset_review import normalize_asset_reviews, pending_asset_indexes
 from app.monthly_report_guided import MONTHLY_EDIT_KEYS, _standing_signature
 from app.monthly_report_model import ResolvedBlock
 
@@ -80,13 +81,13 @@ def test_viewing_imported_content_with_chart_preserves_source_and_approval(kind)
     assert not app.exception
     app.run()
     assert not app.exception
-    assert app.session_state.block == app.session_state.original
+    assert app.session_state.block == normalize_asset_reviews(app.session_state.original)
     assert app.session_state.block.source == "Last month"
     assert app.session_state.block.client_reviewed_fingerprint == app.session_state.block.fingerprint
 
 
 @pytest.mark.parametrize("kind", ("text", "table"))
-def test_editing_imported_content_with_chart_invalidates_approval(kind):
+def test_editing_imported_text_or_table_keeps_unchanged_chart_approval(kind):
     app = editor_app(kind)
     assert not app.exception
     if kind == "text":
@@ -106,6 +107,7 @@ def test_editing_imported_content_with_chart_invalidates_approval(kind):
     changed = app.session_state.block
     assert changed.source == "This month"
     assert changed.client_reviewed_fingerprint == ""
+    assert not pending_asset_indexes(changed)
     assert changed.asset_hashes == app.session_state.original.asset_hashes
     if kind == "text":
         assert changed.text == "Updated utility results."

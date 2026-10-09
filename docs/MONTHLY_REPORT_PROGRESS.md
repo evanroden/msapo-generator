@@ -6,6 +6,21 @@ base_commit: 6ffaa1577f491694bd63950acd3a5838600368a2
 
 # Monthly report implementation checkpoint
 
+Latest work: continuing simplification on `feat/monthly-report-focused-editing`,
+based on PR #86 merge `66f832f3f19f9ae4c67d4c7753a72b09e4b21790`.
+One active section, focused Cover/Organization controls, local page uploads,
+scoped writing/follow-ups, direct Save and individual-picture approvals are
+integrated. Stable-tree local suite: 1199 passed, 8 renderer-dependent skips.
+CI passed 1206 tests and identified one old Organization navigation expectation
+in the document-generation walkthrough, now being corrected. PR #87 records
+the final CI and deployment evidence. See
+[focused editing notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_FOCUSED_EDITING.md).
+
+PR #86 is deployed. Exact-head Actions `37870060294` and merged-main Actions
+`37870394259` each passed 1129 tests with zero skips. Public browser verified the
+blank-name directory gate and duplicate Unity warning/recovery. No persistent
+QA profile or directory was created. Its PR body contains final release evidence.
+
 Latest work: six Review A repros fixed and thirteen dedicated section audits
 completed on `feat/monthly-report-section-experiences`. Includes earlier uncommitted
 MBCx/price-heading work plus period protection, no-op review reuse, reviewed shared

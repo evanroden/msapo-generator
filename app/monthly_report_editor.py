@@ -55,15 +55,23 @@ def _preview(block: ResolvedBlock | None, assets: dict[str, bytes], profile: Rep
 
 
 def review_client_images(draft, assets, prefix, field):
-    """Confirm each displayed page, with review bound to the block's content."""
+    """Review only new or changed pictures, retaining each earlier decision."""
+    from app.monthly_report_asset_review import (
+        approve_asset, asset_fingerprint, asset_reviewed,
+        pending_asset_indexes, refresh_asset_source_context,
+    )
     from app.monthly_report_model import used_block_keys
     from app.monthly_report_sections import readable_label
-
-    def state_key(block):
-        return prefix + "_client_" + block.key + "_" + block.fingerprint
+    from app.monthly_report_saved_pictures_ui import remove_saved_picture
 
     def set_state(key, value):
         st.session_state[key] = value
+
+    def state_key(block):
+        # Content text and table edits must not send every picture back through
+        # review. Keep removal decisions tied to this exact ordered picture set.
+        identity = tuple(asset_fingerprint(block, i) for i in range(len(block.asset_hashes)))
+        return prefix + "_client_" + block.key + "_" + _signature(identity)
 
     blocks = []
     used = used_block_keys(draft)
@@ -71,29 +79,28 @@ def review_client_images(draft, assets, prefix, field):
         if block.source == "Omit" or block.key not in used or not block.asset_hashes:
             blocks.append(block)
             continue
+        block = refresh_asset_source_context(block, draft.sources)
+        approval_key = prefix + "_client_" + block.key + "_approved_pictures"
+        approvals = set(st.session_state.get(approval_key, ()))
+        # The advanced editor rebuilds library blocks on rerun. Session decisions
+        # are reapplied only to the exact asset, caption and review context.
+        for index in range(len(block.asset_hashes)):
+            identity = asset_fingerprint(block, index)
+            if asset_reviewed(block, index):
+                approvals.add(identity)
+            elif identity in approvals:
+                block = approve_asset(block, index)
+        st.session_state[approval_key] = tuple(sorted(approvals))
+        # Missing source evidence cannot be approved by an old session action.
+        block = refresh_asset_source_context(block, draft.sources)
         key = state_key(block)
         count = len(block.asset_hashes)
-        confirmed = block.client_reviewed_fingerprint == block.fingerprint
-        checked = set(st.session_state.get(key + "_checked_pages", range(count) if confirmed else ()))
         removed = st.session_state.get(key + "_remove_page")
-        # Keep removal decisions bound to the original content too: the advanced
-        # editor may reconstruct a library block on every rerun. Follow the
-        # shrinking sequence of copies without changing that library version.
         while removed is not None and 0 <= removed < count:
             removal_key = key + "_remove_notice"
-            original = block
-            indexes = tuple(n for n in range(count) if n != removed)
-            block = replace(
-                block, asset_hashes=tuple(original.asset_hashes[n] for n in indexes),
-                asset_captions=tuple(original.asset_captions[n] if n < len(original.asset_captions) else "" for n in indexes),
-                references=tuple(original.references[n] for n in indexes) if len(original.references) == count else original.references,
-                client_reviewed_fingerprint="",
-            )
-            checked = {new for new, old in enumerate(indexes) if old in checked}
+            block = remove_saved_picture(block, removed)
             key = state_key(block)
             count = len(block.asset_hashes)
-            checked = set(st.session_state.setdefault(key + "_checked_pages", tuple(sorted(checked))))
-            st.session_state.setdefault(key + "_page", min(removed, max(0, count - 1)))
             if not st.session_state.get(removal_key):
                 st.success("Page removed from this report. The saved original is unchanged.")
                 st.session_state[removal_key] = True
@@ -101,33 +108,59 @@ def review_client_images(draft, assets, prefix, field):
         if not count:
             blocks.append(block)
             continue
-        checked &= set(range(count))
-        confirmed = len(checked) == count
-        with st.expander(readable_label(block.key) + (" · pages checked" if confirmed else " · check pages before download"), expanded=not confirmed):
-            index = min(max(0, st.session_state.get(key + "_page", 0)), count - 1)
-            st.caption(f"Page {index + 1} of {count} · {len(checked)} of {count} checked")
-            if count > 1:
+        pending = pending_asset_indexes(block)
+        block = replace(block, client_reviewed_fingerprint=block.fingerprint if not pending else "")
+        ready = count - len(pending)
+        title = readable_label(block.key)
+        edit_key = prefix + "_client_" + block.key + "_view_ready"
+        editing = bool(st.session_state.get(edit_key))
+        if not pending and not editing:
+            left, right = st.columns([3, 1])
+            left.caption(f"{title} · {count} {'picture' if count == 1 else 'pictures'} ready")
+            right.button("View or edit", key=key + "_view", on_click=set_state, args=(edit_key, True))
+            blocks.append(block)
+            continue
+        with st.expander(title + (" · ready" if not pending else f" · {len(pending)} to check"), expanded=True):
+            if editing:
+                st.button("Done viewing", key=key + "_done", on_click=set_state, args=(edit_key, False))
+            else:
+                st.caption(f"Only new or changed pictures need review. {ready} already ready.")
+                if ready:
+                    st.button("View checked pictures too", key=key + "_show_ready", on_click=set_state, args=(edit_key, True))
+            indexes = tuple(range(count)) if editing else tuple(pending)
+            position = min(max(0, st.session_state.get(key + "_page", 0)), len(indexes) - 1)
+            index = indexes[position]
+            st.caption(f"Picture {index + 1} of {count}" + (" · ready" if asset_reviewed(block, index) else " · needs review"))
+            if len(indexes) > 1:
                 previous, following = st.columns(2)
-                previous.button("Previous page", key=key + "_previous", disabled=index == 0,
-                                on_click=set_state, args=(key + "_page", index - 1))
-                following.button("Next page", key=key + "_next", disabled=index == count - 1,
-                                 on_click=set_state, args=(key + "_page", index + 1))
+                previous.button("Previous page", key=key + "_previous", disabled=position == 0,
+                                on_click=set_state, args=(key + "_page", position - 1))
+                following.button("Next page", key=key + "_next", disabled=position == len(indexes) - 1,
+                                 on_click=set_state, args=(key + "_page", position + 1))
             ref = block.asset_hashes[index]
-            st.image(assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref), width="stretch")
+            displayed = True
+            try:
+                st.image(assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref), width="stretch")
+            except (ValueError, OSError):
+                displayed = False
+                st.warning("This picture could not be displayed. Replace it in its section or remove it from this report.")
             if index < len(block.asset_captions) and block.asset_captions[index]:
                 st.caption(block.asset_captions[index])
-            st.write("Does this page belong in the client report? Check that it shows useful information and no prices. Remove legal-only, blank or signature-only pages.")
-            approve, remove = st.columns(2)
-            approve.button("This page is ready to include", key=key + "_approve", disabled=index in checked,
-                           on_click=set_state, args=(key + "_checked_pages", tuple(sorted(checked | {index}))))
+            if not asset_reviewed(block, index):
+                st.write("Check that this picture belongs in the report and contains no prices or legal-only, blank or signature-only pages.")
+                approvable = asset_reviewed(refresh_asset_source_context(approve_asset(block, index), draft.sources), index)
+                if not approvable:
+                    st.info("This picture’s source record is unavailable. Replace it in its section or remove it from this report.")
+                approve, remove = st.columns(2)
+                approve.button("This page is ready to include", key=key + "_approve_" + asset_fingerprint(block, index), disabled=not displayed or not approvable,
+                               on_click=set_state, args=(approval_key, tuple(sorted(approvals | {asset_fingerprint(block, index)}))))
+            else:
+                st.caption("Already reviewed. No action is needed unless this picture changes.")
+                remove = st
             remove.button("Remove this page from report", key=key + "_remove", on_click=set_state,
                           args=(key + "_remove_page", index))
-            if index in checked:
-                st.caption("This page is checked. You can still remove it or review the next page.")
-            block = replace(block, client_reviewed_fingerprint=block.fingerprint if confirmed else "")
         blocks.append(block)
     return replace(draft, blocks=tuple(blocks))
-
 
 def _grid(key: str, seed: list[dict], **kwargs) -> list[dict]:
     """Keep the editor's input stable while Streamlit reapplies edit deltas."""
@@ -336,7 +369,8 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
                 st.rerun()
             except (library.LibraryError, OSError) as exc:
                 st.error(str(exc))
-        if saved != replace(block, source="Library"):
+        from app.monthly_report_asset_review import normalize_asset_reviews
+        if saved is None or normalize_asset_reviews(saved) != normalize_asset_reviews(replace(block, source="Library")):
             block = replace(block, pending_library_save=True)
     else:
         _preview(block, assets, state.profile)

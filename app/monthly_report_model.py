@@ -164,12 +164,22 @@ class ResolvedBlock:
     ai_paragraphs: tuple[DraftParagraph, ...] = ()
     org_nodes: tuple[OrgChartNode, ...] = ()
     photos_per_page: int = 1
+    # Picture review is independent of surrounding prose and table edits. The
+    # provenance map is keyed by content-addressed asset reference, not position.
+    client_asset_reviews: tuple[str, ...] = ()
+    asset_provenance: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def fingerprint(self) -> str:
         # Review is evidence-specific, not a sticky boolean. New sources must
         # invalidate it even if the visible paragraph happens to be unchanged.
-        return _digest(replace(self, reviewed_fingerprint="", client_reviewed_fingerprint=""))
+        value = asdict(replace(self, reviewed_fingerprint="", client_reviewed_fingerprint=""))
+        # Preserve the historical content digest so an exact legacy approval can
+        # be migrated safely. Neither review metadata nor its derived provenance
+        # map changes the content represented by the original fields.
+        value.pop("client_asset_reviews")
+        value.pop("asset_provenance")
+        return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     @property
     def reviewed(self) -> bool:

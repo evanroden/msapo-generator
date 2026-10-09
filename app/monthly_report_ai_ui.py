@@ -176,9 +176,11 @@ def _start(prefix, draft, job, prepare, read=ai.request_json):
         st.warning(str(exc))
 
 
-def edit_linked_paragraphs(draft, blocks, prefix, field):
+def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
     facts = {f.id: (s, f) for s in draft.sources for f in s.facts}
     for block in tuple(blocks.values()):
+        if allowed_keys is not None and block.key not in allowed_keys:
+            continue
         if not block.ai_paragraphs or block.source == "Omit":
             continue
         with st.expander(
@@ -255,19 +257,27 @@ def edit_linked_paragraphs(draft, blocks, prefix, field):
     return blocks
 
 
-def render_drafting(draft, blocks, prefix, field):
+def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
     """Return updated draft/blocks; caller still owns snapshot confirmation."""
     _finish_job(draft, prefix)
     busy = prefix + "_ai_job" in st.session_state
     evidence_key = prefix + "_evidence"
     contents = st.session_state.get(evidence_key, ())
-    with st.expander("Help write this month’s updates", expanded=bool(contents)):
+    draft = replace(draft, sources=tuple(content.source for content in contents))
+    targets = [key for key in LABELS if allowed_keys is None or key in allowed_keys]
+    if not targets:
+        return draft, edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
+    if allowed_keys is not None and not st.toggle(
+        "Show writing help", key=field(prefix + "_writing_help_" + ai.digest(sorted(allowed_keys)), False),
+        help="Optional source reading and wording suggestions for this section.",
+    ):
+        return draft, edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
+    with st.expander("Writing help (optional)", expanded=False):
         st.write(
             "Read the useful facts from your files, then review suggested wording before adding it. Existing text and pages are preserved."
         )
-        st.caption(
-            "No prices in suggestions. Maximum 80 reading/drafting requests per report/month; cached results are reused. Each source read is limited to 60,000 characters. Image reading shares the report's 20-image allowance."
-        )
+        with st.expander("Reading limits"):
+            st.caption("No prices in suggestions. Maximum 80 reading/drafting requests per report/month; cached results are reused. Each source read is limited to 60,000 characters. Image reading shares the report's 20-image allowance.")
         if contents:
             by_id = {c.source.id: c for c in contents}
             chosen = st.selectbox(
@@ -472,12 +482,14 @@ def render_drafting(draft, blocks, prefix, field):
                     st.warning(str(exc))
         sources = tuple(c.source for c in st.session_state.get(evidence_key, ()))
         draft = replace(draft, sources=sources)
-        target = st.selectbox(
-            "Section to help write",
-            list(LABELS),
-            format_func=LABELS.get,
-            key=prefix + "_ai_target",
-        )
+        if len(targets) == 1:
+            target = targets[0]
+            st.caption("Suggested wording will go in " + LABELS[target].lower() + ".")
+        else:
+            target_key = field(prefix + "_ai_target", targets[0])
+            if st.session_state[target_key] not in targets:
+                st.session_state[target_key] = targets[0]
+            target = st.selectbox("Part to help write", targets, format_func=LABELS.get, key=target_key)
         instruction = st.text_input(
             "Optional redraft instruction",
             key=field(prefix + "_ai_instruction", ""),
@@ -525,7 +537,7 @@ def render_drafting(draft, blocks, prefix, field):
             except ValueError as exc:
                 st.warning(str(exc))
         suggestion = st.session_state.get(prefix + "_ai_suggestion")
-        if suggestion:
+        if suggestion and suggestion.key in targets:
             st.subheader("Check the suggested wording")
             st.caption(
                 "Nothing below replaces your report until you choose Add or Replace."
@@ -617,5 +629,5 @@ def render_drafting(draft, blocks, prefix, field):
                 st.success(
                     "Checked wording added. Existing pictures and tables were retained."
                 )
-    blocks = edit_linked_paragraphs(draft, blocks, prefix, field)
+    blocks = edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
     return draft, blocks

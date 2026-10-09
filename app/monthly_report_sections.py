@@ -9,6 +9,7 @@ from app.monthly_report_content_policy import contains_price, page_status, table
 from app.monthly_report_checks import placeholder_matches
 from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, MAX_NORMALIZED_BYTES
 from app.monthly_report_model import ReportTable, ResolvedBlock, default_sections, layout_blocks
+from app.monthly_report_asset_review import approve_all_assets
 
 
 @dataclass(frozen=True)
@@ -130,7 +131,10 @@ def build_section_import(path, inspection, plans):
                     assets[ref] = image.data
                 source = f"docx:{inspection.sha256}:word-sections:{','.join(map(str, record['sections']))}:page:{record['page']}"
                 block = grouped.get(slot, ResolvedBlock(slot, "Last month"))
-                grouped[slot] = replace(block, asset_hashes=(*block.asset_hashes, ref), references=(*block.references, source))
+                contexts = dict(block.asset_provenance)
+                contexts[ref] = tuple(dict.fromkeys((*contexts.get(ref, ()), source)))
+                grouped[slot] = replace(block, asset_hashes=(*block.asset_hashes, ref), references=(*block.references, source),
+                                        asset_provenance=tuple(contexts.items()))
         if not plan.get("page_layout") and any(i.kind == "unsupported" for i in sections[plan["key"]].items) and not plan.get("unsupported_reviewed"):
             raise ValueError("Choose whether to replace or leave out unread drawings before continuing.")
         selected = () if plan.get("page_layout") else plan.get("selected", ())
@@ -156,6 +160,9 @@ def build_section_import(path, inspection, plans):
                     assets[digest] = image.data
                 if digest not in block.asset_hashes:
                     block = replace(block, asset_hashes=(*block.asset_hashes, digest))
+                contexts = dict(block.asset_provenance)
+                contexts[digest] = tuple(dict.fromkeys((*contexts.get(digest, ()), reference)))
+                block = replace(block, asset_provenance=tuple(contexts.items()))
             elif item.kind == "table":
                 table, _ = table_without_prices(item)
                 if item.id in plan.get("tables", {}):
@@ -192,14 +199,17 @@ def build_section_import(path, inspection, plans):
                 references = tuple(ref for ref in block.references
                                    if ref not in image_references and not ref.startswith(preserved_page_prefix))
                 grouped[slot] = replace(block, source="Replace once", asset_hashes=(digest,),
-                                        asset_captions=(), references=references)
+                                        asset_captions=(), references=references, asset_provenance=((digest, ()),))
             else:
                 hashes = (digest,) if slot in ("cover_photo", "client_logo", "brand_logo") else tuple(dict.fromkeys((*block.asset_hashes, digest)))
-                grouped[slot] = replace(block, asset_hashes=hashes)
+                contexts = dict(block.asset_provenance)
+                contexts[digest] = ()
+                grouped[slot] = replace(block, asset_hashes=hashes,
+                                        asset_provenance=tuple((ref, contexts[ref]) for ref in hashes))
     if not grouped:
         raise ValueError("Keep at least one report section before continuing.")
     # Section confirmation covers the actual selected images and current text.
-    blocks = tuple(replace(b, client_reviewed_fingerprint=b.fingerprint) for b in grouped.values())
+    blocks = tuple(approve_all_assets(b) for b in grouped.values())
     return MappedImport(blocks, (), tuple(assets.items()), tuple(m.item_id for m in mappings)), tuple(mappings)
 
 
