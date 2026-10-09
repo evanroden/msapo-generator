@@ -319,6 +319,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                      if item.kind == "table" and item.part == "word/document.xml"}
     preserved_table_refs = set()
     redacted_table_columns = {}
+    supplied_tables_by_position = {}
+    retained_mixed_cells = set()
     destinations = {spec.key: section.key for section in draft.sections for spec in section.blocks}
     for block in draft.blocks:
         if block.source == "Omit":
@@ -335,6 +337,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                         unchanged_items.add(item.id)
                         if removed:
                             redacted_table_columns[item.position] = removed
+                            supplied_tables_by_position[item.position] = table
     # Keep independently supplied unchanged text runs even when a neighboring
     # table has an intentionally excluded pricing column.
     preserved_text = {}
@@ -351,19 +354,32 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     document = Document(BytesIO(passive_docx(source_path)))
     body = document.element.body
     original = list(body)
-    # A mixed-span cell cannot be partly redacted in place. Rebuild that table
-    # from the supplied sanitized values so kept technical content is not lost.
+    # A merged technical cell may cross a removed price column. Preserve its
+    # geometry only when its text is explicitly present in the supplied filtered
+    # table. A cell beginning in a removed column is redacted in full.
+    from app.monthly_report_content_policy import contains_price
     for position, excluded in list(redacted_table_columns.items()):
         mixed = False
-        for row in original[position - 1].findall(qn("w:tr")):
+        supplied = supplied_tables_by_position[position]
+        source_item = next(item for item in native_tables.values() if item.position == position)
+        kept_columns = [i for i in range(len(source_item.rows[0])) if i not in excluded]
+        for row_index, row in enumerate(original[position - 1].findall(qn("w:tr"))):
             before = row.find("./" + qn("w:trPr") + "/" + qn("w:gridBefore"))
             column = int(before.get(qn("w:val"), "0")) if before is not None else 0
             for cell in row.findall(qn("w:tc")):
                 span = cell.find("./" + qn("w:tcPr") + "/" + qn("w:gridSpan"))
                 width = int(span.get(qn("w:val"), "1")) if span is not None else 1
                 covered = set(range(column, column + width))
-                if covered.intersection(excluded) and covered.difference(excluded) and _text(cell):
-                    mixed = True
+                if covered.intersection(excluded) and covered.difference(excluded) and _text(cell) and column not in excluded:
+                    current_row = supplied.columns if row_index == 0 else supplied.rows[row_index - 1]
+                    current_column = kept_columns.index(column) if column in kept_columns else -1
+                    value = _text(cell)
+                    if (current_column >= 0 and current_column < len(current_row)
+                            and current_row[current_column] == (value.strip() if row_index == 0 else value)
+                            and not contains_price(value)):
+                        retained_mixed_cells.add((position, row_index, column))
+                    else:
+                        mixed = True
                 column += width
         if mixed:
             del redacted_table_columns[position]
@@ -519,14 +535,15 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             continue
         substantive = [item for item in group if item.kind in ("text", "table", "image")]
         if substantive and all(item.id in unchanged_items for item in substantive):
-            for row in element.findall(qn("w:tr")):
+            for row_index, row in enumerate(element.findall(qn("w:tr"))):
                 before = row.find("./" + qn("w:trPr") + "/" + qn("w:gridBefore"))
                 logical_column = int(before.get(qn("w:val"), "0")) if before is not None else 0
                 excluded = set(redacted_table_columns.get(position, ()))
                 for cell in row.findall(qn("w:tc")):
                     span = cell.find("./" + qn("w:tcPr") + "/" + qn("w:gridSpan"))
                     width = int(span.get(qn("w:val"), "1")) if span is not None else 1
-                    if excluded.intersection(range(logical_column, logical_column + width)):
+                    if (excluded.intersection(range(logical_column, logical_column + width))
+                            and (position, row_index, logical_column) not in retained_mixed_cells):
                         _set_text(cell, "")
                     logical_column += width
             continue

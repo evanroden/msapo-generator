@@ -543,3 +543,36 @@ def test_section_preview_does_not_open_empty_trailing_word_section(tmp_path):
     assert len(output.sections) == 1
     assert 'Current activity' in '\n'.join(p.text for p in output.paragraphs)
     assert 'Other section data' not in '\n'.join(p.text for p in output.paragraphs)
+
+
+@pytest.mark.parametrize('merged_start,merged_text', [(1, 'Replace pump after inspection'), (2, '$123.00')])
+def test_filtered_table_preserves_safe_cross_column_merge_geometry(tmp_path, merged_start, merged_text):
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_sections import table_without_prices
+    document = Document()
+    document.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    table = document.add_table(rows=3, cols=4)
+    for cell, value in zip(table.rows[0].cells, ('Task', 'Description', 'Cost', 'Status')):
+        cell.text = value
+    for cell, value in zip(table.rows[1].cells, ('Pump 1', 'Inspection', '$456.00', 'Done')):
+        cell.text = value
+    table.cell(2, 0).text = 'Pump 2'
+    table.cell(2, merged_start).merge(table.cell(2, merged_start + 1)).text = merged_text
+    table.columns[1].width = Inches(3.1)
+    path = tmp_path / 'merged-priced.docx'
+    document.save(path)
+    inspection = inspect_docx(path)
+    item = next(item for item in inspection.items if item.kind == 'table')
+    supplied, removed = table_without_prices(item)
+    assert removed == (2,)
+    supplied = replace(supplied, reference=f'docx:{inspection.sha256}:{item.id}')
+    output = build_native_docx(draft(ResolvedBlock('work_orders', 'This month', extra_tables=(supplied,))), path)
+    actual = Document(BytesIO(output)).tables[0]
+    assert actual._tbl.tblGrid.xml == Document(path).tables[0]._tbl.tblGrid.xml
+    merged = actual.rows[2]._tr.findall(qn('w:tc'))[merged_start]
+    assert merged.find('./' + qn('w:tcPr') + '/' + qn('w:gridSpan')).get(qn('w:val')) == '2'
+    with ZipFile(BytesIO(output)) as archive:
+        xml = archive.read('word/document.xml')
+    assert b'$123.00' not in xml and b'$456.00' not in xml and b'>Cost<' not in xml
+    if merged_start == 1:
+        assert b'Replace pump after inspection' in xml

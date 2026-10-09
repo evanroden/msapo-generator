@@ -1,11 +1,11 @@
 import os
+import runpy
 from pathlib import Path
 
 import pytest
 
 from app.expense_report import _SIGNATURE_FONT_CANDIDATES
 from tests.conftest import libreoffice_can_convert
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -99,7 +99,10 @@ def test_ci_installs_the_same_document_renderers_as_the_image():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     workflow = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
 
-    renderers = {"libreoffice-writer", "libreoffice-calc"}
+    renderers = {
+        "libreoffice-writer", "libreoffice-calc", "fontconfig",
+        "fonts-liberation", "fonts-texgyre", "fonts-opensymbol",
+    }
     for package in renderers:
         assert package in dockerfile, f"{package} missing from the image"
         assert package in workflow, (
@@ -110,3 +113,47 @@ def test_ci_installs_the_same_document_renderers_as_the_image():
     # Signature fonts must match too -- see the candidate-path test above.
     for package in set(_FONT_DIRECTORY_PACKAGES.values()):
         assert package in workflow, f"{package} missing from CI"
+
+
+def test_document_runtime_is_fixed_and_verified_before_release():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+    assert "FROM ubuntu:24.04" in dockerfile
+    assert "python3.12 -m venv /opt/venv" in dockerfile
+    assert 'PATH="/opt/venv/bin:$PATH"' in dockerfile
+    assert "runs-on: ubuntu-24.04" in workflow
+    assert "ubuntu-latest" not in workflow
+    for config in (dockerfile, workflow):
+        assert "FONTCONFIG_FILE" in config
+        assert "runtime/fonts.conf" in config
+        assert "python runtime/check_renderer.py" in config
+    assert "docker build" in workflow
+    assert "State.Health.Status" in workflow
+
+
+@pytest.mark.parametrize("version", ["LibreOffice 25.2.7.2", "LibreOfficeDev 26.8.0.0.alpha0"])
+def test_renderer_gate_rejects_unverified_renderer(monkeypatch, version):
+    gate = runpy.run_path(str(ROOT / "runtime/check_renderer.py"))
+    monkeypatch.setattr("subprocess.check_output", lambda *args, **kwargs: version)
+    with pytest.raises(RuntimeError, match="verified LibreOffice 24.2"):
+        gate["check_renderer"]()
+
+
+def test_renderer_gate_rejects_wrong_font_even_if_renderer_is_correct(monkeypatch):
+    gate = runpy.run_path(str(ROOT / "runtime/check_renderer.py"))
+    results = iter(["LibreOffice 24.2.7.2", "/fonts/DejaVuSans.ttf"])
+    monkeypatch.setattr("subprocess.check_output", lambda *args, **kwargs: next(results))
+    with pytest.raises(RuntimeError, match="LiberationSans-Regular.ttf"):
+        gate["check_renderer"]()
+
+
+def test_renderer_gate_accepts_verified_fonts_and_security_patch(monkeypatch, tmp_path):
+    gate = runpy.run_path(str(ROOT / "runtime/check_renderer.py"))
+    results = ["LibreOffice 24.2.7.2 420(Build:2)"]
+    for font in gate["FONT_MATCHES"].values():
+        path = tmp_path / font
+        path.touch()
+        results.append(str(path))
+    responses = iter(results)
+    monkeypatch.setattr("subprocess.check_output", lambda *args, **kwargs: next(responses))
+    gate["check_renderer"]()

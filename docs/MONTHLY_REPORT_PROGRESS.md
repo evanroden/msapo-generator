@@ -16,23 +16,19 @@ supply the known report's data through the builder, generate Word/PDF, and compa
 every page with the reference. The generic renderer is not an acceptable match.
 Native master storage/version pinning, advanced-only master replacement, fresh
 report selection and shared output/preview routing are implemented locally.
-Two authorized agents are working on passive Word-package preservation and native
-payload bindings. UMMC, Unity/USH, Eastern Region and AH source documents were
-recovered outside git. Do not commit source reports or private runtime data.
+Source documents and private runtime data remain outside Git.
 
-Draft PR #90 second checkpoint passed 1402 CI tests with zero skips. Validation
-is still in progress: identical generated Word content produces inconsistent
-divider backgrounds in the local LibreOffice alpha converter. Normal replay
-produces 46 pages, with identical text on 44 pages and only intentional Cost
-heading removals on the other two. This is not a visual acceptance pass. The supplied UMMC
-PDF has 45 pages; rendering its supplied Word file with this environment gives
-46, so compare both the same-engine source render and supplied PDF and report
-that distinction. Do not deploy or claim exact fidelity until this is resolved.
-Actual AppTest Generate now produces both files and saves the snapshot. A real
-activity preview displays exactly four pages. New-contract Word outputs pass
-source-data isolation checks, including hidden metadata. Exact PDF acceptance
-still fails; a stable converter could not start locally. All work remains in
-draft PR #90; production is unchanged.
+Stable-renderer acceptance now passes: LibreOffice 24.2 with the correct fonts
+produces 45 pages, with repeat exports identical on every page. Generated output
+matches the source Word rendering on 43 pages; on the other two pages the only
+changed pixels are the three intentionally removed Cost labels. The supplied PDF
+has the same normalized text on all 45 pages, with small export-position offsets;
+the earlier claim that it was a different content version is withdrawn.
+Actual AppTest Generate produces both files and a snapshot without errors. New
+production/CI configuration fixes the renderer release line and font mappings;
+CI also builds and health-checks the production image. Full final-head CI,
+fresh/changed input and live-preview checks, then production deployment/master
+installation are the remaining release steps. PR #90 is not deployed yet.
 See [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
 
 Latest work: continuing simplification on `feat/monthly-report-focused-editing`,

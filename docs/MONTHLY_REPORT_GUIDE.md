@@ -47,6 +47,11 @@ The live section preview and DOCX/PDF downloads use the same master renderer.
 Unsupported source elements produce a specific error rather than a generic page
 that silently loses the original design.
 
+Deployment uses the verified LibreOffice 24.2 renderer and fixed font mappings.
+The build checks both before allowing an image to ship, and CI renders reports
+with the same configuration. Updating the renderer requires repeating the
+completed-report visual comparison as well as the regression tests.
+
 ## Edit the report
 
 Every standard section is included, including sections that are blank or waiting
