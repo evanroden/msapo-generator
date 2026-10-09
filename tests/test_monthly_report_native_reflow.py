@@ -120,8 +120,11 @@ def test_empty_scorecards_does_not_emit_unpopulated_template_pages(tmp_path):
 
 @requires_libreoffice
 @pytest.mark.parametrize('section,pages', [('organization', 2), ('scorecards', 1), ('mbcx', 2)])
-def test_rewritten_sections_render_without_blank_tail_pages(tmp_path, section, pages):
-    from app.pdf_converter import convert_to_pdf
+def test_rewritten_sections_render_without_blank_tail_pages(tmp_path, monkeypatch, section, pages):
+    from app import pdf_converter
+    # Each render owns its temporary output; no persistent PDFs between test runs.
+    monkeypatch.setattr(pdf_converter, "OUTPUT_DIR", tmp_path)
+    convert_to_pdf = pdf_converter.convert_to_pdf
     import fitz
     source, draft = scenario(tmp_path)
     raw = build_native_docx(draft, source, section_key=section, master=True, asset_loader=lambda _: chart())

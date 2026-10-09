@@ -83,6 +83,7 @@ class DocxInspection:
     title_candidates: tuple[str, ...]
     notices: tuple[str, ...]
     word_sections: int
+    revision_view_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -155,7 +156,12 @@ def _relations(archive: ZipFile, part: str) -> dict[str, tuple[str, str]]:
     return result
 
 
-def _visible(element) -> None:
+def _visible(element):
+    from app.monthly_report_revision_view import current_view
+    try:
+        normalized = current_view(element)
+    except ValueError as exc:
+        raise ImportError(str(exc)) from exc
     # Word emits the same drawing twice: modern Choice and legacy Fallback.
     # Prefer the first Choice; keep Fallback when it is the only representation.
     for parent in list(element.iter()):
@@ -166,9 +172,7 @@ def _visible(element) -> None:
             for child in list(parent):
                 if child is not selected:
                     parent.remove(child)
-        for child in list(parent):
-            if child.tag == W + "del":
-                parent.remove(child)
+    return normalized
 
 
 def _remove_page_field_results(element, fields):
@@ -350,6 +354,7 @@ def inspect_docx(path: Path) -> DocxInspection:
             digest.update(chunk)
     items, titles, notices = [], [], []
     background_positions = []
+    revision_changes = comment_changes = 0
     content_slot = ""
     note_owners = {}
     word_section, section, text_total, cell_total = 1, "", 0, 0
@@ -368,6 +373,7 @@ def inspect_docx(path: Path) -> DocxInspection:
         with _package(path) as archive:
             names = set(archive.namelist())
             image_metadata = {}
+            revision_removed_images = set()
             vector_support = {}
             def supported_image(target):
                 suffix = Path(target).suffix.lower()
@@ -421,7 +427,15 @@ def inspect_docx(path: Path) -> DocxInspection:
                         is_unit = parent is not None and parent.tag in (W + "body", W + "hdr", W + "ftr", W + "footnote", W + "endnote")
                         if is_unit:
                             position += 1
-                            _visible(element)
+                            old_pictures = {relations.get(node.get(R + "embed") or node.get(R + "id"), ("", ""))[0]
+                                            for node in element.iter() if node.tag in (A + "blip", V + "imagedata")}
+                            normalized = _visible(element)
+                            if normalized.revisions:
+                                current_pictures = {relations.get(node.get(R + "embed") or node.get(R + "id"), ("", ""))[0]
+                                                    for node in element.iter() if node.tag in (A + "blip", V + "imagedata")}
+                                revision_removed_images.update(old_pictures - current_pictures)
+                            revision_changes += normalized.revisions
+                            comment_changes += normalized.comments
                             if part.startswith(("word/header", "word/footer")):
                                 _remove_page_field_results(element, page_fields)
                             text = _text(element)
@@ -566,7 +580,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                         stack.pop()
             referenced = {i.image_part for i in items if i.image_part}
             for name in sorted(names):
-                if name.startswith("word/media/") and name not in referenced:
+                if name.startswith("word/media/") and name not in referenced and name not in revision_removed_images:
                     add("image" if supported_image(name) else "unsupported", name, 0, image_part=name,
                         note="Unplaced package asset; confirm whether it belongs in this report.")
             if risky:
@@ -595,7 +609,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                 slot = "divider_" + target if item.kind == "image" else ""
                 items[index] = replace(item, section=target, suggested_slot=slot,
                                        note=item.note if item.note == "Native section heading" else "Native divider artwork")
-    return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section)
+    version = 0
+    if revision_changes:
+        from app.monthly_report_revision_view import VERSION
+        version = VERSION
+        # Old ordinal IDs must not silently bind to a different item after
+        # removal of move-from content or deleted rows. Original hashes stay true.
+        items = [replace(item, id=f"current-v{version}-" + item.id) for item in items]
+        notices.append("Tracked changes use their final accepted view. Deleted and moved-from text is excluded; the uploaded original is unchanged.")
+    if comment_changes:
+        notices.append("Word comments are excluded from report previews and downloads; the uploaded original is unchanged.")
+    return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section, version)
 
 
 def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, preview: bool = False):

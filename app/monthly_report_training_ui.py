@@ -1,4 +1,4 @@
-"""A team training matrix and a short monthly training wizard."""
+"""Hospital training: local validation preserves independent monthly edits."""
 from dataclasses import replace
 
 import streamlit as st
@@ -16,11 +16,13 @@ def render_training(draft, blocks, prefix, field):
         st.info("Enter your name above to view or edit saved team training.")
         return blocks
     block = training_block(blocks)
+    original_block = block
     key = prefix + "_training_" + _signature((draft.profile.contract, tuple(f.key for f in draft.profile.facilities), draft.period.key))
     had_conflict = bool(st.session_state.get(key + "_conflict"))
     if had_conflict:
         blocks = _reload_matrix(draft, blocks, block, key)
         block = training_block(blocks)
+    matrix = None
     try:
         store_key = key + "_saved"
         if store_key not in st.session_state:
@@ -45,8 +47,9 @@ def render_training(draft, blocks, prefix, field):
             if title.casefold() in {c.casefold() for c in matrix.columns}:
                 st.error("That training already has a column.")
             else:
-                matrix = replace(matrix, columns=(*matrix.columns, title), rows=tuple((*r, "Not recorded") for r in matrix.rows))
-                stored = save_training(draft.profile, matrix, expected_revision=stored["revision"], actor=draft.prepared_by)
+                proposed = replace(matrix, columns=(*matrix.columns, title), rows=tuple((*r, "Not recorded") for r in matrix.rows))
+                stored = save_training(draft.profile, proposed, expected_revision=stored["revision"], actor=draft.prepared_by)
+                matrix = proposed
                 st.session_state[store_key] = stored
                 st.session_state[matrix_key] = matrix
         sites = [facility.title for facility in draft.profile.facilities]
@@ -64,28 +67,6 @@ def render_training(draft, blocks, prefix, field):
             st.session_state[store_key] = stored
             st.session_state[matrix_key] = edited
             matrix = edited
-        events = events_for_period(block, draft.period)
-        st.write("Training completed this month")
-        if events:
-            st.dataframe([dict(zip(events.columns, row)) for row in events.rows], hide_index=True)
-            remove = st.multiselect("Remove a training entry", range(len(events.rows)), format_func=lambda n: f"{events.rows[n][1]} · {events.rows[n][0]}", key=key + "_remove_events_" + _signature(events.rows))
-            if st.button("Remove selected entries", key=key + "_remove_button", disabled=not remove):
-                events = replace(events, rows=tuple(row for i, row in enumerate(events.rows) if i not in remove))
-        with st.form(key + "_event_form", clear_on_submit=True):
-            title = st.text_input("Training topic")
-            when = st.date_input("Training date", value=draft.period.start, min_value=draft.period.start, max_value=draft.period.end)
-            mode = st.selectbox("How was the training completed?", FORMATS)
-            participants = st.multiselect("Participants", list(dict.fromkeys(r[0] for r in matrix.rows)), accept_new_options=True)
-            hours = st.text_input("Hours (leave blank if unknown)")
-            submit = st.form_submit_button("Add completed training")
-        if submit:
-            events = add_event(events, title=title, when=when, mode=mode, participants=participants, hours=hours, period=draft.period)
-        block = apply_tables(block, matrix, events)
-        notes = st.text_area("Training notes", key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
-        if notes != block.text:
-            block = replace(block, text=notes, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
-        blocks = dict(blocks)
-        blocks[block.key] = block
     except library.RevisionConflict as exc:
         st.session_state[key + "_conflict"] = str(exc)
         st.error(str(exc))
@@ -93,6 +74,35 @@ def render_training(draft, blocks, prefix, field):
             blocks = _reload_matrix(draft, blocks, block, key)
     except (ValueError, OSError) as exc:
         st.error(str(exc))
+
+    # Always render monthly fields. A rejected matrix/event must not let
+    # Streamlit discard a sibling widget or its in-flight value.
+    events = events_for_period(block, draft.period)
+    st.write("Training completed this month")
+    if events:
+        st.dataframe([dict(zip(events.columns, row)) for row in events.rows], hide_index=True)
+        remove = st.multiselect("Remove a training entry", range(len(events.rows)), format_func=lambda n: f"{events.rows[n][1]} · {events.rows[n][0]}", key=key + "_remove_events_" + _signature(events.rows))
+        if st.button("Remove selected entries", key=key + "_remove_button", disabled=not remove):
+            events = replace(events, rows=tuple(row for i, row in enumerate(events.rows) if i not in remove))
+    with st.form(key + "_event_form", clear_on_submit=False):
+        title = st.text_input("Training topic", key=key + "_event_topic")
+        when = st.date_input("Training date", value=draft.period.start, min_value=draft.period.start, max_value=draft.period.end, key=key + "_event_date")
+        mode = st.selectbox("How was the training completed?", FORMATS, key=key + "_event_format")
+        participants = st.multiselect("Participants", list(dict.fromkeys(r[0] for r in (matrix.rows if matrix is not None else ()))), accept_new_options=True, key=key + "_event_participants")
+        hours = st.text_input("Hours (leave blank if unknown)", key=key + "_event_hours")
+        submit = st.form_submit_button("Add completed training")
+    if submit:
+        try:
+            events = add_event(events, title=title, when=when, mode=mode, participants=participants, hours=hours, period=draft.period)
+        except ValueError as exc:
+            st.error(str(exc))
+    block = apply_tables(block, matrix, events)
+    notes = st.text_area("Training notes", key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
+    if notes != block.text:
+        block = replace(block, text=notes, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
+    if block != original_block or block.key in blocks:
+        blocks = dict(blocks)
+        blocks[block.key] = block
     return blocks
 
 
