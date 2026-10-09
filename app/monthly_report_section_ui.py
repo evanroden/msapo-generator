@@ -1,22 +1,32 @@
 """Upload a report, confirm its sites, then review recognizable report sections."""
 
-from dataclasses import asdict, replace
 import hashlib
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import streamlit as st
 
-from app import contracts, monthly_report_library as library
+from app import contracts
+from app import monthly_report_library as library
 from app.config import FACILITIES
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import imported_draft
 from app.monthly_report_import_ui import _stage
-from app.monthly_report_model import Facility, ReportProfile, ReportTable, default_sections
-from app.monthly_report_sections import section_reviews, table_without_prices, default_slot
-from app.monthly_report_setup import design_profile, merge_drafts, item_findings
+from app.monthly_report_model import (
+    Facility,
+    ReportProfile,
+    ReportTable,
+    default_sections,
+)
 from app.monthly_report_section_help import section_help
+from app.monthly_report_sections import (
+    default_slot,
+    section_reviews,
+    table_without_prices,
+)
+from app.monthly_report_setup import design_profile, item_findings, merge_drafts
 
 
 def plan_signature(plan):
@@ -285,7 +295,11 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         for message in missing:
             st.info(message)
         return True
-    from app.monthly_report_start_import import analyze_starting_report, automatic_section_plans, build_starting_import
+    from app.monthly_report_start_import import (
+        analyze_starting_report,
+        automatic_section_plans,
+        build_starting_import,
+    )
     profiles = library.list_profiles(contract)
     known_sites = {f.key: f for f in (*_site_options(contract), *(f for profile in profiles for f in profile.facilities), *candidate.facilities)}
     analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(), known_profiles=profiles)
@@ -322,8 +336,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     preferred_logos = tuple(key for key in ("brand_logo", "client_logo")
                             if (state and state.block(key) and state.block(key).asset_hashes)
                             or (branding and find_logo(contract, brand=key == "brand_logo", state=branding)))
-    seed = automatic_section_plans(inspection, analysis, preferred_logos=preferred_logos)
-    seed_signature = _signature((analysis, preferred_logos))
+    from app.monthly_report_designs import source_for
+    native_design = source_for(candidate) is not None
+    seed = automatic_section_plans(inspection, analysis, preferred_logos=preferred_logos, native_design=native_design)
+    seed_signature = _signature((analysis, preferred_logos, native_design))
     if st.session_state.get(p + "_analysis_signature") != seed_signature:
         st.session_state[p + "_section_plans"] = seed
         st.session_state[p + "_analysis_signature"] = seed_signature

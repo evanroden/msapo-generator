@@ -7,13 +7,19 @@ in the saved original document.
 """
 
 import calendar
-from dataclasses import dataclass, replace
 import re
+from dataclasses import dataclass, replace
 
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_import import MappedImport
 from app.monthly_report_model import default_sections, layout_blocks
-from app.monthly_report_sections import build_section_import, default_slot, section_reviews, small_artwork, table_without_prices
+from app.monthly_report_sections import (
+    build_section_import,
+    default_slot,
+    section_reviews,
+    small_artwork,
+    table_without_prices,
+)
 from app.monthly_report_setup import MONTHLY_BLOCKS
 
 
@@ -78,7 +84,7 @@ def mentioned_periods(text):
     periods = set()
     for month in range(1, 13):
         name = calendar.month_name[month]
-        for match in re.finditer(rf"\b(?:{name}|{name[:3]}\.?)\s+(?:\d{{1,2}},?\s+)?(20\d{{2}})\b", text, re.I):
+        for match in re.finditer(rf"\b(?:{name}|{name[:3]}\.?)\s+(?:\d{{1,2}},?\s+)?(20\d{{2}})\b", text, re.IGNORECASE):
             periods.add((int(match[1]), month))
     for match in re.finditer(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])(?:[-/]\d{1,2})?\b", text):
         periods.add((int(match[1]), int(match[2])))
@@ -145,7 +151,7 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period)
 
 
-def automatic_section_plans(inspection, analysis, *, preferred_logos=()):
+def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False):
     """Pre-fill recognizable content; ask only about unresolved source content.
 
     'approved' satisfies the existing import builder's structural validation.
@@ -155,14 +161,16 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=()):
     known = {b.key for s in default_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     result = {}
     for section in section_reviews(inspection):
-        plan = dict(key=section.key, action="Keep and review", target=section.key,
-                    omit=False, selected=[], texts={}, tables={}, destinations={},
-                    new_assets=[], image_notes={}, automatic=True, approved=True)
+        plan = {"key": section.key, "action": "Keep and review", "target": section.key,
+                "omit": False, "selected": [], "texts": {}, "tables": {}, "destinations": {},
+                "new_assets": [], "image_notes": {}, "automatic": True, "approved": True}
         if analysis.site_relation != "same":
             plan["unsupported_reviewed"] = True
         questions = []
         for item in section.items:
             slot = item.suggested_slot
+            if native_design and slot.startswith("divider_"):
+                continue  # The pinned native master owns its page art, not monthly content.
             design = slot in ("brand_logo", "client_logo") or slot.startswith("divider_")
             if analysis.site_relation != "same" and not design:
                 # Different sites may reuse table headings, never their rows.
@@ -225,7 +233,10 @@ def build_starting_import(path, inspection, plans):
     mapped, mappings = build_section_import(path, inspection, active)
     automatic_refs = {f"docx:{inspection.sha256}:{identity}" for p in active if p.get("automatic")
                       for identity in p.get("selected", ())}
-    from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews
+    from app.monthly_report_asset_review import (
+        asset_fingerprint,
+        normalize_asset_reviews,
+    )
     blocks = []
     for block in mapped.blocks:
         block = normalize_asset_reviews(block)

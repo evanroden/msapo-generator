@@ -52,14 +52,50 @@ styled nodes. Large body pictures cannot become master decorations merely from
 their dimensions. The fresh-report UI automatically selects and saves the master
 version without requiring an upload or another template choice.
 
-Current targeted checks: 61 import/section/native-renderer tests passed; a separate
-46-test master/section/package run passed. These overlapping counts are not added.
+The second draft head `f8b6a36d0332f83d5d705c8541e5e539aeb65ca8` passed
+Actions `37923262461`, job `113796046634`: **1402 passed, zero skips**.
+Later targeted native/import/start checks passed 71 tests and the passive-package
+checks passed 19 tests. These are separate checkpoints, not an additive total.
 The complete private UMMC replay records three Cost-column removals from the
 existing content policy; they must be reported separately from layout defects.
 
 Visual acceptance remains blocked. The bundled converter identifies itself as
-LibreOfficeDev 26.8 alpha. Physically removing unrelated package parts changes
-whether native decorations render, even when retained drawing XML and image bytes
-are identical. Controlled package comparisons and both fresh-master and
+LibreOfficeDev 26.8 alpha. Normal starting-report and fresh-master exports now
+produce 46 pages; 44 pages have identical text, with only three intentional Cost
+heading removals on the other two pages. Two generated DOCX archives had identical
+ZIP-part contents but their converted PDFs differed substantially in divider
+backgrounds. This isolates a nondeterministic converter defect; a successful
+single render does not establish reliable fidelity. The default graphic cache reproduced mismatches on 20 pages of identical input.
+Three isolated exports with swapping disabled were pixel-identical, but a fourth
+still differed on 15 pages. Disabling swapping is therefore NOT an established
+fix and cannot justify release. A stable official LibreOffice build is being
+prepared for a controlled comparison against the bundled alpha.
+Controlled package comparisons and both fresh-master and
 starting-report replay outputs remain outside Git. Do not merge this checkpoint
 or describe its output as identical until every-page comparison passes.
+
+The scratch replay uses the normal generation and review gates, with source
+pictures visually inspected once. Original report passthrough is not the export
+implementation. Blank and changed-input cases and every active-section preview
+are separate acceptance probes. An empty native-master section now remains
+included without requiring fabricated organization nodes; pricing and review
+gates remain active. Hidden Office drawing round-trip caches are stripped without
+decoding them; removing all 138 caches from the original preserved all 46 rendered
+pages pixel-for-pixel in a controlled comparison.
+
+Independent synthetic review additionally found and fixed two source-data leaks:
+pricing redaction must address logical grid columns through merged cells and
+row offsets, and page-number fields must not exempt adjacent old client text
+from header cleanup. Regressions exercise both merged-cell forms and the mixed
+client-label/PAGE case. A local whole-suite checkpoint collected before the final
+regressions completed with 1400 passed and 9 renderer/environment skips; exact
+final-head CI is still the release gate.
+
+The real different-contract blank-report probe also found old contact addresses
+in Word extended-property title indexes. The passive reader now retains only
+application/version compatibility properties, removes source-content metadata,
+and tests that those private strings do not survive anywhere in output XML.
+Latest replay before the TOC tagline correction was 43/46 pixel-identical:
+the remaining differences were the three Cost headings on two pages and a TOC
+brand variant incorrectly replaced with the cover logo. That variant binding is
+now corrected for an unchanged current brand; changed branding still updates it.

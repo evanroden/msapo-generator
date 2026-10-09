@@ -10,9 +10,17 @@ from docx.oxml.ns import qn
 from docx.shared import Inches
 from PIL import Image
 
-from app.monthly_report_model import (BlockSpec, ColumnSpec, Facility, ReportDraft,
-    ReportPeriod, ReportProfile, ResolvedBlock, SectionSpec)
-from app.monthly_report_native_layout import build_native_docx, NativeLayoutError
+from app.monthly_report_model import (
+    BlockSpec,
+    ColumnSpec,
+    Facility,
+    ReportDraft,
+    ReportPeriod,
+    ReportProfile,
+    ResolvedBlock,
+    SectionSpec,
+)
+from app.monthly_report_native_layout import NativeLayoutError, build_native_docx
 
 
 def draft(*blocks):
@@ -212,8 +220,9 @@ def test_stale_import_reference_does_not_authorize_old_source_payload(tmp_path):
 
 
 def test_inspection_associates_early_divider_picture_with_following_heading(tmp_path):
-    from app.monthly_report_import import inspect_docx
     from docx.enum.section import WD_SECTION_START
+
+    from app.monthly_report_import import inspect_docx
     document=Document()
     document.add_heading('MONTHLY ACTIVITY SUMMARY',1)
     document.add_section(WD_SECTION_START.NEW_PAGE)
@@ -262,7 +271,7 @@ def test_inspection_routes_end_of_life_separately_from_capital_renewal(tmp_path)
 
 
 def test_current_image_caption_is_visible_and_does_not_reuse_old_caption(tmp_path):
-    from app.monthly_report_import import inspect_docx, map_items, ImportMapping
+    from app.monthly_report_import import ImportMapping, inspect_docx, map_items
     document=Document()
     document.add_heading('MONTHLY ACTIVITY SUMMARY',1)
     document.add_paragraph('Improvement Highlights and Pics')
@@ -305,3 +314,216 @@ def test_large_source_photo_is_not_mistaken_for_following_divider(tmp_path):
     result=build_native_docx(draft(),path,master=True)
     with ZipFile(BytesIO(result)) as archive:
         assert data.getvalue() not in [archive.read(name) for name in archive.namelist()]
+
+
+def test_source_image_fingerprint_cache_invalidates_for_new_verified_source(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.monthly_report_import import ImportItem
+    from app.monthly_report_native_layout import _source_image_digest
+    calls=[]
+    def normalize(path,item,*,line_art):
+        calls.append((path,item,line_art))
+        return SimpleNamespace(data=b'synthetic normalized pixels',extension='png')
+    monkeypatch.setattr('app.monthly_report_import.read_import_image',normalize)
+    item=ImportItem('item-1','image','word/document.xml',1,1,image_part='word/media/picture.png')
+    _source_image_digest.cache_clear()
+    try:
+        first=_source_image_digest('/verified/source.docx','source-sha-a',item,False)
+        assert _source_image_digest('/verified/source.docx','source-sha-a',item,False)==first
+        assert len(calls)==1
+        _source_image_digest('/verified/source.docx','source-sha-b',item,False)
+        assert len(calls)==2
+        _source_image_digest('/verified/source.docx','source-sha-b',item,True)
+        assert len(calls)==3
+    finally:
+        _source_image_digest.cache_clear()
+
+
+def test_native_starting_import_omits_master_dividers_but_keeps_unknown_art_questions():
+    from app.monthly_report_import import DocxInspection, ImportItem
+    from app.monthly_report_start_import import (
+        StartingReportAnalysis,
+        automatic_section_plans,
+    )
+    inspection=DocxInspection('a'*64,(
+        ImportItem('divider','image','word/document.xml',2,1,'activity','divider_activity',image_part='word/media/art.png',image_width=1000,image_height=1000),
+        ImportItem('unknown','unsupported','word/document.xml',5,2,'issues',note='Unrecognized source drawing'),
+    ),(),(),2)
+    analysis=StartingReportAnalysis((),'same',(),(),())
+    generic=automatic_section_plans(inspection,analysis)
+    native=automatic_section_plans(inspection,analysis,native_design=True)
+    assert 'divider' in generic['activity']['selected']
+    assert 'divider' not in native['activity']['selected']
+    assert native['issues']['questions']
+
+
+def test_exact_filtered_table_retains_native_grid_without_prices(tmp_path):
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_sections import table_without_prices
+    doc = Document()
+    doc.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    table = doc.add_table(rows=2, cols=3)
+    for cell, value in zip(table.rows[0].cells, ('Task', 'Cost', 'Status')):
+        cell.text = value
+    for cell, value in zip(table.rows[1].cells, ('Supplied task', '$123.00', 'Done')):
+        cell.text = value
+    table.columns[0].width = Inches(2.1)
+    path = tmp_path / 'priced.docx'; doc.save(path)
+    inspection = inspect_docx(path)
+    item = next(item for item in inspection.items if item.kind == 'table')
+    supplied, removed = table_without_prices(item)
+    assert removed == (1,)
+    supplied = replace(supplied, reference=f'docx:{inspection.sha256}:{item.id}')
+    block = ResolvedBlock('work_orders', 'This month', extra_tables=(supplied,))
+    result = Document(BytesIO(build_native_docx(draft(block), path)))
+    actual = result.tables[0]
+    assert len(actual.columns) == 3
+    assert actual.cell(0,1).text == actual.cell(1,1).text == ''
+    assert actual.cell(1,0).text == 'Supplied task'
+    assert actual.cell(1,2).text == 'Done'
+    assert actual.columns[0].width == Document(path).tables[0].columns[0].width
+
+
+def test_footer_import_excludes_cached_page_fields(tmp_path):
+    from app.monthly_report_import import inspect_docx
+    doc = Document()
+    p = doc.sections[0].footer.paragraphs[0]
+    p.add_run('ENFRA address | enfrasolutions.com')
+    for kind in ('begin', 'separate', 'end'):
+        if kind == 'separate':
+            instruction = OxmlElement('w:instrText'); instruction.text = ' PA'
+            p.add_run()._r.append(instruction)
+            instruction = OxmlElement('w:instrText'); instruction.text = 'GE '
+            p.add_run()._r.append(instruction)
+        node = OxmlElement('w:fldChar'); node.set(qn('w:fldCharType'), kind)
+        p.add_run()._r.append(node)
+        if kind == 'separate': p.add_run('2')
+    simple = OxmlElement('w:fldSimple'); simple.set(qn('w:instr'), ' NUMPAGES ')
+    run = OxmlElement('w:r'); value = OxmlElement('w:t'); value.text = '46'; run.append(value); simple.append(run); p._p.append(simple)
+    path = tmp_path / 'footer.docx'; doc.save(path)
+    inspection = inspect_docx(path)
+    footer = next(item for item in inspection.items if item.suggested_slot == 'footer_text')
+    assert footer.text == 'ENFRA address | enfrasolutions.com'
+    from app.monthly_report_import import ImportMapping, imported_draft, map_items
+    mapped = map_items(path, inspection, (ImportMapping(footer.id, 'footer_text'),))
+    current = draft()
+    imported = imported_draft(current.profile, current.period, current.prepared_by, mapped)
+    assert imported.address_line == footer.text
+    assert '2' in Document(path).sections[0].footer.paragraphs[0].text
+
+
+def test_verified_cover_brand_keeps_native_header_variant_changed_brand_replaces(tmp_path):
+    import hashlib
+
+    from app.monthly_report_import import inspect_docx, read_import_image
+    doc = Document()
+    cover = BytesIO(); Image.new('RGB', (600, 80), 'green').save(cover, format='PNG')
+    header = BytesIO(); Image.new('RGB', (600, 80), 'black').save(header, format='PNG')
+    changed = BytesIO(); Image.new('RGB', (600, 80), 'red').save(changed, format='PNG')
+    doc.add_picture(BytesIO(cover.getvalue()), width=Inches(3))
+    doc.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(header.getvalue()), width=Inches(3))
+    tagline = BytesIO(); Image.new('RGB', (600, 80), 'orange').save(tagline, format='PNG')
+    doc.add_section()
+    doc.add_picture(BytesIO(tagline.getvalue()), width=Inches(3))
+    doc.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    path = tmp_path/'brand.docx'; doc.save(path)
+    inspection = inspect_docx(path)
+    item = next(i for i in inspection.items if i.kind == 'image' and i.part == 'word/document.xml')
+    normalized = read_import_image(path, item, line_art=True)
+    reference = hashlib.sha256(normalized.data).hexdigest()+'.'+normalized.extension
+    current = draft(ResolvedBlock('brand_logo', 'Library', asset_hashes=(reference,)))
+    output = Document(BytesIO(build_native_docx(current, path, asset_loader=lambda _: normalized.data)))
+    assert any(p.blob == header.getvalue() for p in output.sections[0].header.part.related_parts.values())
+    assert output.part.related_parts[output.inline_shapes[1]._inline.graphic.graphicData.pic.blipFill.blip.embed].blob == tagline.getvalue()
+    current = draft(ResolvedBlock('brand_logo', 'Library', asset_hashes=('changed',)))
+    output = Document(BytesIO(build_native_docx(current, path, asset_loader=lambda _: changed.getvalue())))
+    assert any(p.blob == changed.getvalue() for p in output.sections[0].header.part.related_parts.values())
+    assert not any(p.blob == header.getvalue() for p in output.sections[0].header.part.related_parts.values())
+    assert output.part.related_parts[output.inline_shapes[1]._inline.graphic.graphicData.pic.blipFill.blip.embed].blob == changed.getvalue()
+
+
+def test_native_master_allows_empty_and_pending_sections_without_relaxing_content_gates():
+    from app.monthly_report_checks import preflight
+    from app.monthly_report_model import default_sections
+    current = draft()
+    current = replace(current, profile=replace(current.profile, template='enfra_master:'+'a'*64),
+                      sections=default_sections(), blocks=())
+    assert not any(c.code == 'required' for c in preflight(current))
+    pending = replace(current, blocks=(ResolvedBlock('org_chart', 'This month', text='Pending data.'),))
+    assert not any(c.code == 'required' for c in preflight(pending))
+    unsafe = replace(pending, blocks=(ResolvedBlock('activity_summary', 'This month', text='Cost: $500'),))
+    assert any(c.code == 'pricing' and c.blocking for c in preflight(unsafe))
+    legacy = replace(current, profile=replace(current.profile, template=''))
+    assert any(c.code == 'required' and c.blocking for c in preflight(legacy))
+
+
+@pytest.mark.parametrize('offset_kind', ['span', 'before'])
+def test_price_redaction_uses_logical_grid_after_merged_or_omitted_cells(tmp_path, offset_kind):
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_sections import table_without_prices
+    document = Document()
+    document.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    table = document.add_table(rows=2, cols=3)
+    table.cell(0, 0).text = 'Task'
+    table.cell(0, 1).text = 'Detail'
+    table.cell(0, 2).text = 'Cost'
+    if offset_kind == 'span':
+        table.cell(1, 0).merge(table.cell(1, 1)).text = 'Supplied task'
+    else:
+        row = table.rows[1]._tr
+        row.remove(row.findall(qn('w:tc'))[0])
+        properties = OxmlElement('w:trPr')
+        before = OxmlElement('w:gridBefore'); before.set(qn('w:val'), '1')
+        properties.append(before); row.insert(0, properties)
+        row.findall(qn('w:tc'))[0].find(qn('w:p')).append(OxmlElement('w:r'))
+        from docx.table import _Cell
+        _Cell(row.findall(qn('w:tc'))[0], table).text = 'Supplied task'
+    from docx.table import _Cell
+    _Cell(table.rows[1]._tr.findall(qn('w:tc'))[-1], table).text = '$123.00'
+    path = tmp_path / 'logical-price.docx'; document.save(path)
+    inspection = inspect_docx(path)
+    item = next(item for item in inspection.items if item.kind == 'table')
+    supplied, removed = table_without_prices(item)
+    assert removed == (2,)
+    supplied = replace(supplied, reference=f'docx:{inspection.sha256}:{item.id}')
+    output = build_native_docx(draft(ResolvedBlock('work_orders', 'This month', extra_tables=(supplied,))), path)
+    with ZipFile(BytesIO(output)) as archive:
+        xml = archive.read('word/document.xml')
+    assert b'$123.00' not in xml and b'>Cost<' not in xml
+    assert b'Supplied task' in xml
+
+
+def test_blank_master_does_not_keep_client_header_beside_safe_page_field(tmp_path):
+    document = Document()
+    document.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    paragraph = document.sections[0].header.paragraphs[0]
+    paragraph.add_run('OLD PRIVATE CLIENT ')
+    for kind in ('begin', 'separate', 'end'):
+        marker = OxmlElement('w:fldChar'); marker.set(qn('w:fldCharType'), kind)
+        paragraph.add_run()._r.append(marker)
+        if kind == 'begin':
+            instruction = OxmlElement('w:instrText'); instruction.text = ' PAGE '
+            paragraph.add_run()._r.append(instruction)
+        if kind == 'separate':
+            paragraph.add_run('1')
+    path = tmp_path / 'client-header.docx'; document.save(path)
+    output = build_native_docx(draft(), path, master=True)
+    with ZipFile(BytesIO(output)) as archive:
+        header = archive.read('word/header1.xml')
+    assert b'OLD PRIVATE CLIENT' not in header
+
+
+def test_current_activity_keeps_period_heading_and_uses_narrative_anchor(tmp_path):
+    doc = Document()
+    doc.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    doc.add_paragraph('August 2026 Activity')
+    doc.add_paragraph('Activity Summary')
+    doc.add_paragraph('Old activity narrative')
+    path = tmp_path/'activity.docx'; doc.save(path)
+    current = draft(ResolvedBlock('activity_summary', 'This month', text='Current activity narrative'))
+    result = Document(BytesIO(build_native_docx(current, path)))
+    values = [p.text for p in result.paragraphs]
+    assert 'October 2026 Activity' in values
+    assert values.index('Activity Summary') < values.index('Current activity narrative')
+    assert 'Old activity narrative' not in values

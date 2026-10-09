@@ -6,20 +6,25 @@ cleared before current values are written. Unsupported bindings fail explicitly.
 """
 from __future__ import annotations
 
-from collections import defaultdict
-from copy import deepcopy
-from io import BytesIO
-from functools import lru_cache
-from pathlib import Path
+import hashlib
 import re
 import tempfile
-import hashlib
+from collections import defaultdict
+from copy import deepcopy
+from functools import lru_cache
+from io import BytesIO
+from pathlib import Path
 
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-from app.monthly_report_import import inspect_docx, _text, _heading, _is_native_divider_background
+from app.monthly_report_import import (
+    _heading,
+    _is_native_divider_background,
+    _text,
+    inspect_docx,
+)
 
 
 class NativeLayoutError(ValueError):
@@ -38,7 +43,7 @@ _DEFAULT_TEXT = {"organization": "contact_matrix", "activity": "activity_summary
                  "water": "water_reports", "issues": "equipment_issues",
                  "capital": "capital_renewal", "proposals": "proposals",
                  "training": "training_summary", "rfi": "rfi_matrix"}
-_MONTH = re.compile(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d\d\b", re.I)
+_MONTH = re.compile(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d\d\b", re.IGNORECASE)
 
 
 def _set_text(element, value):
@@ -69,10 +74,26 @@ def _set_text(element, value):
             node.text = ""
 
 
-def _clear_images(element):
+def _clear_images(element, *, preserve_decoration=False):
     # Remove the drawing itself, not its paragraph or section break.
     for node in list(element.iter()):
         if node.tag in (qn("w:drawing"), qn("w:pict")):
+            # Pure native rectangles and rules are decoration, not payloads.
+            presets = list(node.iter(qn("a:prstGeom")))
+            colors = {n.get("val", "").lower() for n in node.iter(qn("a:srgbClr"))}
+            shapes = list(node.iter("{urn:schemas-microsoft-com:vml}shape"))
+            custom = list(node.iter(qn("a:custGeom")))
+            basic = bool(presets) and all(p.get("prst") in {"rect", "line", "parallelogram"} for p in presets)
+            basic |= bool(custom) and colors <= {"547e7e", "557f7f", "d5ee4a", "d6ef4b"} and bool(colors) and all(
+                len(list(g.iter(qn("a:pt")))) <= 6 and not list(g.iter(qn("a:cubicBezTo")))
+                and not list(g.iter(qn("a:quadBezTo"))) and not list(g.iter(qn("a:arcTo"))) for g in custom)
+            basic |= bool(shapes) and all(s.get("fillcolor", "").lower() in {"#547e7e", "#557f7f", "#d5ee4a", "#d6ef4b"}
+                and re.fullmatch(r"[0-9,mlrxe -]{1,150}", s.get("path", "")) for s in shapes)
+            if (preserve_decoration and basic
+                    and not any(n.tag in (qn("w:t"), qn("a:t"), qn("a:blip"))
+                                or any(k in n.attrib for k in (qn("r:embed"), qn("r:link"), qn("r:id")))
+                                for n in node.iter())):
+                continue
             # Text-box shapes are layout, not image payloads.
             if any(True for _ in node.iter(qn("w:txbxContent"))):
                 for image in list(node.iter()):
@@ -164,7 +185,7 @@ def _cover(element, draft):
         text = _text(paragraph)
         if not text:
             continue
-        if re.search(r"prepared\s+by", text, re.I):
+        if re.search(r"prepared\s+by", text, re.IGNORECASE):
             _set_text(paragraph, "Prepared by: " + draft.prepared_by)
         elif _MONTH.search(text):
             _set_text(paragraph, _MONTH.sub(draft.period.label, text))
@@ -195,19 +216,24 @@ def _source_image_digest(source_path, source_digest, item, line_art):
     return hashlib.sha256(normalized.data).hexdigest() + "." + normalized.extension
 
 
-def _unchanged_blocks(draft, inspection, source_path):
+def _unchanged_blocks(draft, inspection, source_path, *, section_key=None):
     """Prove source facts were explicitly supplied unchanged in current inputs."""
     by_id = {item.id: item for item in inspection.items}
     prefix = f"docx:{inspection.sha256}:"
     specs = {spec.key: spec for section in draft.sections for spec in section.blocks}
+    destinations = {spec.key: section.key for section in draft.sections for spec in section.blocks}
     candidates, owners = {}, {}
     for block in draft.blocks:
-        if block.source == "Omit" or block.org_nodes:
+        if (block.source == "Omit" or block.org_nodes or block.key not in destinations
+                or (section_key is not None and destinations[block.key] != section_key)):
             continue
         identities = tuple(dict.fromkeys(ref[len(prefix):] for ref in block.references
                                         if ref.startswith(prefix) and ref[len(prefix):] in by_id))
         selected = [by_id[identity] for identity in identities]
         if not selected or any(item.kind == "unsupported" for item in selected):
+            continue
+        if block.key in destinations and any(item.part == "word/document.xml" and item.section
+                                             and item.section != destinations[block.key] for item in selected):
             continue
         text = "\n\n".join(item.text.strip() for item in selected if item.kind == "text")
         if block.text.strip() != text.strip():
@@ -283,7 +309,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
 
     source_path = Path(source_path)
     inspection = inspect_docx(source_path)
-    unchanged = _unchanged_blocks(draft, inspection, source_path)
+    unchanged = _unchanged_blocks(draft, inspection, source_path, section_key=section_key)
     unchanged_items = set().union(*unchanged.values()) if unchanged else set()
     # Editing one imported table must not rebuild its unchanged neighboring
     # tables (which may have different geometry and span several pages).
@@ -292,22 +318,59 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     native_tables = {reference_prefix + item.id: item for item in inspection.items
                      if item.kind == "table" and item.part == "word/document.xml"}
     preserved_table_refs = set()
+    redacted_table_columns = {}
+    destinations = {spec.key: section.key for section in draft.sections for spec in section.blocks}
     for block in draft.blocks:
         if block.source == "Omit":
             continue
         for table in block.extra_tables:
             item = native_tables.get(table.reference)
-            if item is not None:
+            if item is not None and item.section == destinations.get(block.key):
                 expected, removed = table_without_prices(item)
-                if not removed and expected is not None and (table.columns, table.rows) == (expected.columns, expected.rows):
+                if expected is not None and (table.columns, table.rows) == (expected.columns, expected.rows):
                     neighbors = [other for other in inspection.items
                                  if other.part == item.part and other.position == item.position]
                     if all(other.kind == "table" for other in neighbors):
                         preserved_table_refs.add(table.reference)
                         unchanged_items.add(item.id)
+                        if removed:
+                            redacted_table_columns[item.position] = removed
+    # Keep independently supplied unchanged text runs even when a neighboring
+    # table has an intentionally excluded pricing column.
+    preserved_text = {}
+    for block in draft.blocks:
+        if block.source == "Omit" or block.key not in destinations:
+            continue
+        selected = [item for item in inspection.items if item.kind == "text"
+                    and item.section == destinations[block.key]
+                    and reference_prefix + item.id in block.references]
+        expected = "\n\n".join(item.text.strip() for item in selected)
+        if selected and block.text.strip() == expected.strip():
+            preserved_text[block.key] = True
+            unchanged_items.update(item.id for item in selected)
     document = Document(BytesIO(passive_docx(source_path)))
     body = document.element.body
     original = list(body)
+    # A mixed-span cell cannot be partly redacted in place. Rebuild that table
+    # from the supplied sanitized values so kept technical content is not lost.
+    for position, excluded in list(redacted_table_columns.items()):
+        mixed = False
+        for row in original[position - 1].findall(qn("w:tr")):
+            before = row.find("./" + qn("w:trPr") + "/" + qn("w:gridBefore"))
+            column = int(before.get(qn("w:val"), "0")) if before is not None else 0
+            for cell in row.findall(qn("w:tc")):
+                span = cell.find("./" + qn("w:tcPr") + "/" + qn("w:gridSpan"))
+                width = int(span.get(qn("w:val"), "1")) if span is not None else 1
+                covered = set(range(column, column + width))
+                if covered.intersection(excluded) and covered.difference(excluded) and _text(cell):
+                    mixed = True
+                column += width
+        if mixed:
+            del redacted_table_columns[position]
+            for reference, item in native_tables.items():
+                if item.position == position:
+                    preserved_table_refs.discard(reference)
+                    unchanged_items.discard(item.id)
     # Word inherits each header/footer kind independently. Materialize those
     # references before slicing so a section preview retains its page chrome.
     inherited = {}
@@ -338,9 +401,26 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                               and item.text.strip() in block.text for block in draft.blocks)}
     source_titles = {title.casefold().strip() for title in inspection.title_candidates
                      if len(title) < 70 and not _MONTH.search(title)
-                     and not re.search(r"prepared|section|enfra|monthly|maintenance|insert|confidential|contents", title, re.I)}
+                     and not re.search(r"prepared|section|enfra|monthly|maintenance|insert|confidential|contents", title, re.IGNORECASE)}
     current_columns = {spec.key: tuple(column.title for column in spec.columns)
                        for section in draft.sections for spec in section.blocks}
+
+    brand = blocks.get("brand_logo")
+    unchanged_master_brand = bool(brand and brand.source != "Omit" and brand.asset_hashes and any(
+        item.kind == "image" and item.part == "word/document.xml"
+        and item.position <= (first_word_end or len(original))
+        and item.image_height and item.image_width / item.image_height > 4
+        and _source_image_digest(str(source_path), inspection.sha256, item, True) in brand.asset_hashes
+        for item in inspection.items))
+    unchanged_client_brand = False
+    client_brand = blocks.get("client_logo")
+    if client_brand and client_brand.source != "Omit" and client_brand.asset_hashes:
+        unchanged_client_brand = any(
+            item.kind == "image" and item.part == "word/document.xml"
+            and item.position <= (first_word_end or len(original))
+            and item.image_height and 2 < item.image_width / item.image_height <= 4
+            and _source_image_digest(str(source_path), inspection.sha256, item, True) in client_brand.asset_hashes
+            for item in inspection.items)
 
     def cover_images(element, group):
         roles = {}
@@ -362,6 +442,9 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             role = roles.get(target)
             block = blocks.get(role)
             if block and block.source != "Omit" and block.asset_hashes:
+                if ((role == "client_logo" and unchanged_client_brand)
+                        or (role == "brand_logo" and unchanged_master_brand)):
+                    continue
                 supplied = next((item for item in group if item.kind == "image" and item.image_part == target), None)
                 if supplied is not None and _source_image_digest(str(source_path), inspection.sha256, supplied,
                                                                 role != "cover_photo") in block.asset_hashes:
@@ -395,6 +478,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 for previous in range(position, heading_position):
                     section_by_pos[previous] = section_by_pos[heading_position]
                 break
+    divider_word_sections = {item.word_section for position in headings for item in items[position]}
     if section_key and section_key not in set(section_by_pos.values()):
         raise NativeLayoutError(f"The source layout does not contain the {section_key} section.")
     text_prototypes = defaultdict(list)
@@ -424,7 +508,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             continue
         group = items[position]
         if sec == "cover":
-            _cover(element, draft)
+            if position <= (first_word_end or len(original)):
+                _cover(element, draft)
             cover_images(element, group)
             continue
         group = items[position]
@@ -434,6 +519,16 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             continue
         substantive = [item for item in group if item.kind in ("text", "table", "image")]
         if substantive and all(item.id in unchanged_items for item in substantive):
+            for row in element.findall(qn("w:tr")):
+                before = row.find("./" + qn("w:trPr") + "/" + qn("w:gridBefore"))
+                logical_column = int(before.get(qn("w:val"), "0")) if before is not None else 0
+                excluded = set(redacted_table_columns.get(position, ()))
+                for cell in row.findall(qn("w:tc")):
+                    span = cell.find("./" + qn("w:tcPr") + "/" + qn("w:gridSpan"))
+                    width = int(span.get(qn("w:val"), "1")) if span is not None else 1
+                    if excluded.intersection(range(logical_column, logical_column + width)):
+                        _set_text(cell, "")
+                    logical_column += width
             continue
         text = _text(element)
         slots = [i.suggested_slot for i in group if i.suggested_slot and not i.suggested_slot.startswith("divider_")]
@@ -453,12 +548,12 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 image_prototypes[image_slot].append((frame, deepcopy(frame)))
                 section_images[sec].append(deepcopy(frame))
         if text and text.casefold().strip() not in _STATIC:
-            text_prototypes[slot].append((element, deepcopy(element)))
-            if element.tag == qn("w:p"):
-                section_text[sec].append(deepcopy(element))
-            if re.fullmatch(r"(?:Monthly Training Update [–—-] )?" + _MONTH.pattern + r"(?: Activity)?", text, re.I):
+            if re.fullmatch(r"(?:Monthly Training Update [–—-] )?" + _MONTH.pattern + r"(?: Activity)?", text, re.IGNORECASE):
                 _set_text(element, _MONTH.sub(draft.period.label, text))
             else:
+                text_prototypes[slot].append((element, deepcopy(element)))
+                if element.tag == qn("w:p"):
+                    section_text[sec].append(deepcopy(element))
                 _set_text(element, "")
                 for paragraph in element.iter(qn("w:p")):
                     if not _text(paragraph):
@@ -470,7 +565,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                             number = OxmlElement("w:numId"); number.set(qn("w:val"), "0")
                             numbering.append(number); properties.append(numbering)
         # Every non-heading body picture/table is old report content.
-        _clear_images(element)
+        _clear_images(element, preserve_decoration=any(
+            item.word_section in divider_word_sections for item in group))
         if element.tag == qn("w:tbl"):
             if picture_table:
                 for cell in element.iter(qn("w:tc")):
@@ -490,7 +586,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                         header_text = _text(cell)
                         safe = (len(header_text) < 85 and header_text.casefold().strip() not in source_titles and not re.search(
                             r"@|\b(?:director|manager|price|cost|amount|total recommendations|hospital|medical|regional)\b|\d{3}[ .()-]*\d{3}[ .-]*\d{4}",
-                            header_text, re.I))
+                            header_text, re.IGNORECASE))
                         if safe:
                             for text_node in cell.iter(qn("w:t")):
                                 text_node.text = _MONTH.sub(draft.period.label, text_node.text or "")
@@ -539,7 +635,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             continue
         if sec not in section_ends:
             raise NativeLayoutError(f"The source has no native layout for {sec}.")
-        text_value = block.text
+        text_value = "" if block.key in preserved_text else block.text
         for identity, item in supplied_notes.items():
             kind, note_id = identity.split(":", 1)
             if (reference_prefix + item.id in block.references
@@ -648,20 +744,24 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             kind = "footnote" if node.tag == qn("w:footnoteReference") else "endnote"
             if kind + ":" + node.get(qn("w:id"), "") not in explicit_notes:
                 node.getparent().remove(node)
-    brand = blocks.get("brand_logo")
     for part in list(document.part.package.parts):
         name = str(part.partname)
         if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
             continue
         for paragraph in part.element.iter(qn("w:p")):
-            text = _text(paragraph)
+            visible = deepcopy(paragraph)
+            for fallback in list(visible.iter("{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback")):
+                fallback.getparent().remove(fallback)
+            from app.monthly_report_import import _remove_page_field_results
+            _remove_page_field_results(visible, [])
+            text = _text(visible)
             if "enfrasolutions.com" in text.casefold() and draft.address_line.strip():
-                _set_text(paragraph, draft.address_line)
+                if text != draft.address_line:
+                    _set_text(paragraph, draft.address_line)
                 continue
             if (text and "enfrasolutions.com" not in text.casefold()
-                    and text.strip().casefold() not in {"enfra", "author:", "client utility rate analysis"}
-                    and not text.strip().isdigit()
-                    and not any(True for _ in paragraph.iter(qn("w:fldChar")))):
+                    and not re.fullmatch(r"(?:enfra|author:|client utility rate analysis)(?:\s+(?:author:|client utility rate analysis))*", text.strip(), re.IGNORECASE)
+                    and not text.strip().isdigit()):
                 _set_text(paragraph, "")
         if brand and brand.source != "Omit" and brand.asset_hashes:
             if asset_loader is None:
@@ -672,6 +772,13 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             for node in part.element.iter(qn("a:blip")):
                 rel = part.rels.get(node.get(qn("r:embed")))
                 if rel and not rel.is_external and str(rel.target_part.partname).lstrip("/") in source_brands:
+                    if unchanged_master_brand:
+                        continue
+                    source_item = next((item for item in inspection.items
+                                        if item.kind == "image" and item.part == name.lstrip("/")
+                                        and item.image_part == str(rel.target_part.partname).lstrip("/")), None)
+                    if source_item is not None and _source_image_digest(str(source_path), inspection.sha256, source_item, True) in brand.asset_hashes:
+                        continue
                     rid, _ = part.get_or_add_image(BytesIO(asset_loader(brand.asset_hashes[0])))
                     node.set(qn("r:embed"), rid)
     result = BytesIO()

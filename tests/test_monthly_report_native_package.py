@@ -62,7 +62,7 @@ def test_preserves_page_chrome_styles_geometry_and_original_raster(tmp_path):
     result = passive_docx(path)
     assert path.read_bytes() == raw
     with ZipFile(BytesIO(raw)) as old, ZipFile(BytesIO(result)) as new:
-        for name in ('word/document.xml', 'word/styles.xml', 'word/numbering.xml', 'word/fontTable.xml', 'word/webSettings.xml', 'word/theme/theme1.xml', 'word/header1.xml', 'word/footer1.xml', 'docProps/app.xml'):
+        for name in ('word/document.xml', 'word/styles.xml', 'word/numbering.xml', 'word/fontTable.xml', 'word/webSettings.xml', 'word/theme/theme1.xml', 'word/header1.xml', 'word/footer1.xml'):
             # Structural comparison avoids serializer declaration differences.
             assert etree.tostring(etree.fromstring(new.read(name)), method='c14n') == etree.tostring(etree.fromstring(old.read(name)), method='c14n')
         assert new.read('word/media/image1.png') == old.read('word/media/image1.png')
@@ -273,3 +273,52 @@ def test_preserves_only_nonempty_original_package_directories(tmp_path):
         assert 'word/media/' in output.namelist()
         assert 'customXml/' not in output.namelist()
         assert 'unused/' not in output.namelist()
+
+
+def test_missing_referenced_note_cannot_disappear_silently(tmp_path):
+    path = sample(tmp_path)
+    rewrite(path, lambda parts: body_change(parts, lambda body: etree.SubElement(etree.SubElement(etree.SubElement(body, '{' + W + '}p'), '{' + W + '}r'), '{' + W + '}footnoteReference', {'{' + W + '}id': '99'})))
+    with pytest.raises(ImportError, match='missing note part'):
+        passive_docx(path)
+
+
+def test_drawing_roundtrip_cache_is_removed_without_decoding(tmp_path, monkeypatch):
+    import base64
+    path = sample(tmp_path)
+    office = 'urn:schemas-microsoft-com:office:office'
+    vml = 'urn:schemas-microsoft-com:vml'
+    def append(body):
+        pict = etree.SubElement(etree.SubElement(etree.SubElement(body, '{' + W + '}p'), '{' + W + '}r'), '{' + W + '}pict')
+        etree.SubElement(pict, '{' + vml + '}shape', {'{' + office + '}gfxdata': 'intentionally-invalid-hidden-old-image-cache', 'id': 'live-vector', 'fillcolor': '#557F7F', 'style': 'width:100pt;height:20pt'})
+    rewrite(path, lambda parts: body_change(parts, append))
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Drawing caches must never be decoded')
+    monkeypatch.setattr(base64, 'b64decode', forbidden)
+    with ZipFile(BytesIO(passive_docx(path))) as output:
+        raw = output.read('word/document.xml')
+        assert b'gfxdata' not in raw and b'hidden-old-image-cache' not in raw
+        assert b'live-vector' in raw and b'#557F7F' in raw
+
+
+def test_extended_properties_keep_only_application_compatibility_identity(tmp_path):
+    path = sample(tmp_path)
+    namespace = 'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'
+    def mutate(parts):
+        root = etree.fromstring(parts['docProps/app.xml'])
+        for name in ('TitlesOfParts', 'HeadingPairs', 'Company', 'Manager', 'HyperlinkBase'):
+            for existing in list(root.findall('{' + namespace + '}' + name)):
+                root.remove(existing)
+            etree.SubElement(root, '{' + namespace + '}' + name).text = 'old-private-contact@example.invalid'
+        app = root.find('{' + namespace + '}Application')
+        app.set('sourceFact', 'old-private-contact@example.invalid')
+        etree.SubElement(app, 'hidden').text = 'old-private-contact@example.invalid'
+        parts['docProps/app.xml'] = etree.tostring(root)
+    rewrite(path, mutate)
+    with ZipFile(path) as original:
+        before = etree.fromstring(original.read('docProps/app.xml'))
+    with ZipFile(BytesIO(passive_docx(path))) as output:
+        root = etree.fromstring(output.read('docProps/app.xml'))
+        assert {etree.QName(child).localname for child in root} == {'Application', 'AppVersion'}
+        for name in ('Application', 'AppVersion'):
+            assert root.findtext('{' + namespace + '}' + name) == before.findtext('{' + namespace + '}' + name)
+        assert all(b'old-private-contact' not in output.read(name) for name in output.namelist() if name.endswith('.xml'))

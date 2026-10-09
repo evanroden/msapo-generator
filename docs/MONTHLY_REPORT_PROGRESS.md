@@ -20,8 +20,11 @@ Two authorized agents are working on passive Word-package preservation and nativ
 payload bindings. UMMC, Unity/USH, Eastern Region and AH source documents were
 recovered outside git. Do not commit source reports or private runtime data.
 
-Validation is still in progress: divider photographs disappear in a minimized
-Word package, and completed-report replay has not yet passed. The supplied UMMC
+Draft PR #90 second checkpoint passed 1402 CI tests with zero skips. Validation
+is still in progress: identical generated Word content produces inconsistent
+divider backgrounds in the local LibreOffice alpha converter. Normal replay
+produces 46 pages, with identical text on 44 pages and only intentional Cost
+heading removals on the other two. This is not a visual acceptance pass. The supplied UMMC
 PDF has 45 pages; rendering its supplied Word file with this environment gives
 46, so compare both the same-engine source render and supplied PDF and report
 that distinction. Do not deploy or claim exact fidelity until this is resolved.

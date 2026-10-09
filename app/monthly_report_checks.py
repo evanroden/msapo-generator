@@ -7,8 +7,18 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-from app.monthly_report_model import PLACEHOLDER_PHRASES, ReportDraft, included_sections, layout_blocks, used_block_keys
-from app.monthly_report_content_policy import contains_price, price_column, table_has_pricing
+from app.monthly_report_content_policy import (
+    contains_price,
+    price_column,
+    table_has_pricing,
+)
+from app.monthly_report_model import (
+    PLACEHOLDER_PHRASES,
+    ReportDraft,
+    included_sections,
+    layout_blocks,
+    used_block_keys,
+)
 
 
 @dataclass(frozen=True)
@@ -21,14 +31,14 @@ class ReportCheck:
 
 def placeholder_matches(text: str) -> tuple[str, ...]:
     return tuple(phrase for phrase in PLACEHOLDER_PHRASES if re.search(
-        r"(?<!\w)" + r"\s+".join(re.escape(w) for w in phrase.split()) + r"(?!\w)", text, re.I,
+        r"(?<!\w)" + r"\s+".join(re.escape(w) for w in phrase.split()) + r"(?!\w)", text, re.IGNORECASE,
     ))
 
 
 _MONTHS = {name.casefold(): i for i in range(1, 13) for name in (calendar.month_name[i], calendar.month_abbr[i])}
 _MONTH_RE = re.compile(
     r"\b(" + "|".join(sorted(_MONTHS, key=len, reverse=True))
-    + r")\b(?:\s+\d{1,2}(?!\d)(?:st|nd|rd|th)?[,]?)?(?:\s+(\d{4}))?", re.I,
+    + r")\b(?:\s+\d{1,2}(?!\d)(?:st|nd|rd|th)?[,]?)?(?:\s+(\d{4}))?", re.IGNORECASE,
 )
 _DATE_RE = re.compile(r"\b(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2})/(\d{2,4}))\b")
 
@@ -40,7 +50,7 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
             continue
         # Historical wording is exempt only immediately before this reference.
         # "Since July. June activity" must still warn about the second sentence.
-        if re.search(r"\bsince\s+$", text[max(0, match.start() - 12):match.start()], re.I):
+        if re.search(r"\bsince\s+$", text[max(0, match.start() - 12):match.start()], re.IGNORECASE):
             continue
         if _MONTHS[match[1].casefold()] != month or (match[2] and int(match[2]) != year):
             findings.append(match[0])
@@ -59,6 +69,8 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
 
 def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck, ...]:
     checks = []
+    from app.monthly_report_designs import is_master
+    native_master = is_master(draft.profile)
     sections = included_sections(draft.sections)
     if not draft.prepared_by.strip():
         checks.append(ReportCheck("prepared_by", "Enter who prepared this report.", True))
@@ -91,7 +103,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             if prior_period:
                 checks.append(ReportCheck("carried_period", f"This content was last confirmed for {prior_period.label}. Update it or confirm it is correct for {draft.period.label} before including it.", True, block.key))
             if block.ai_written and (block.ai_evidence_fingerprint or block.ai_paragraphs):
-                from app.monthly_report_ai import evidence_fingerprint, ai_references
+                from app.monthly_report_ai import ai_references, evidence_fingerprint
                 if not block.ai_evidence_fingerprint or block.ai_evidence_fingerprint != evidence_fingerprint(draft.sources, ai_references(block)):
                     checks.append(ReportCheck("ai_evidence", "Evidence changed or a source is missing. Refresh and review the AI draft before generating.", True, block.key))
             if any("Unsupported number" in flag for paragraph in block.ai_paragraphs for flag in paragraph.flags):
@@ -113,8 +125,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 count = len(pending_pictures)
                 checks.append(ReportCheck("client_pages", f"Check {count} new or changed picture{'s' if count != 1 else ''} in {block.key.replace('_', ' ')} for relevance and visible pricing before including them.", True, block.key))
             if block.asset_hashes:
-                from app.monthly_report_content_policy import page_allowed
                 from app.monthly_report_asset_review import asset_context
+                from app.monthly_report_content_policy import page_allowed
                 source_index = {s.id: s for s in draft.sources}
                 image_references = {reference for n in range(len(block.asset_hashes)) for reference in asset_context(block, n)}
                 for reference in block.references:
@@ -160,7 +172,9 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             if present and spec.type in ("table", "work_order_grid"):
                 present = bool(block.rows or has_extra_tables or block.asset_hashes or (block.source == "Stock text" and spec.stock_text_keys))
             has_content |= present
-            if spec.required and not present:
+            # Native ENFRA pages remain included when this month has no data.
+            # Empty or explicit pending content must not force fabricated facts.
+            if spec.required and not present and not native_master:
                 checks.append(ReportCheck("required", f"Resolve required block: {spec.key}.", True, spec.key))
             if block and block.source not in spec.allowed_sources:
                 checks.append(ReportCheck("source", f"Unsupported source for {spec.key}.", True, spec.key))

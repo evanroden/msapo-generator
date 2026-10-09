@@ -105,6 +105,12 @@ def _passive_markup(root):
     for node in list(root.iter()):
         if not isinstance(node.tag, str):
             continue
+        # Office's opaque round-trip drawing cache is itself a base64 ZIP. It
+        # can retain old embedded images after the visible shape was edited,
+        # and its expansion is outside the outer DOCX budgets. The explicit
+        # DrawingML/VML geometry and live text are authoritative; never decode
+        # or forward this redundant nested package to the office renderer.
+        node.attrib.pop('{urn:schemas-microsoft-com:office:office}gfxdata', None)
         name = _local(node)
         if name in REJECT:
             raise ImportError(f'This report contains unsupported visible {name} content; its native layout cannot be preserved automatically.')
@@ -206,6 +212,9 @@ def passive_docx(path: Path) -> bytes:
                     for note_kind in NOTE_KINDS:
                         note_ids[note_kind] = {node.get('{' + W + '}id') for node in root.iter('{' + W + '}' + note_kind[:-1] + 'Reference')}
                 if kind in NOTE_KINDS:
+                    available = {note.get('{' + W + '}id') for note in root}
+                    if note_ids[kind] - available:
+                        raise ImportError('A native report references a missing note.')
                     for note in list(root):
                         if note.get('{' + W + '}id') not in note_ids[kind] and note.get('{' + W + '}type') not in {'separator', 'continuationSeparator', 'continuationNotice'}:
                             root.remove(note)
@@ -215,6 +224,10 @@ def passive_docx(path: Path) -> bytes:
                 # fallback. Ordinary PNG/JPEG imgLayers are visible components
                 # (the standard blip can be a plain placeholder), so retain them.
                 by_id = {rel.get('Id'): rel for rel in relationships}
+                if name == 'word/document.xml':
+                    kinds = {rel.get('Type', '').rsplit('/', 1)[-1] for rel in relationships}
+                    if any(note_ids[kind] and kind not in kinds for kind in NOTE_KINDS):
+                        raise ImportError('A native report references a missing note part.')
                 for node in list(root.iter('{http://schemas.microsoft.com/office/drawing/2010/main}imgProps')):
                     layers = list(node.iter('{http://schemas.microsoft.com/office/drawing/2010/main}imgLayer'))
                     layer_rels = [by_id.get(layer.get('{' + R + '}embed')) for layer in layers]
@@ -227,10 +240,13 @@ def passive_docx(path: Path) -> bytes:
                     target = _resolve(name, fallback.get('Target', ''))
                     if target not in names:
                         raise ImportError('A native HD Photo editing layer has no local rendered fallback.')
-                    with Image.open(BytesIO(archive.read(target))) as image:
-                        if image.format not in {'PNG', 'JPEG'} or min(image.size) < 256:
-                            raise ImportError('A native HD Photo editing layer has no usable rendered fallback.')
-                        image.verify()
+                    try:
+                        with Image.open(BytesIO(archive.read(target))) as image:
+                            if image.format not in {'PNG', 'JPEG'} or min(image.size) < 256:
+                                raise ImportError('A native HD Photo editing layer has no usable rendered fallback.')
+                            image.verify()
+                    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+                        raise ImportError('A native HD Photo editing layer has no usable rendered fallback.') from exc
                     node.getparent().remove(node)
                 seen = set()
                 used = {v for n in root.iter() for k, v in n.attrib.items() if v and (k.startswith('{' + R + '}') or k == 'relId')}
@@ -286,6 +302,19 @@ def passive_docx(path: Path) -> bytes:
             app_raw = archive.read(app_properties)
             app_root = _xml(app_raw)
             app_xml = XML.tostring(app_root)
+            # Extended properties may contain a full heading/title index, names,
+            # company details and even contact addresses from removed content.
+            # Only the originating application identity is compatibility data.
+            for child in list(app_root):
+                if _local(child) not in {'Application', 'AppVersion'}:
+                    app_root.remove(child)
+                else:
+                    child.attrib.clear()
+                    for nested in list(child):
+                        child.remove(nested)
+                    child.tail = None
+            app_root.attrib.clear()
+            app_root.text = None
             _passive_markup(app_root)
             output[app_properties] = app_raw if XML.tostring(app_root) == app_xml else XML.tostring(app_root, encoding='UTF-8', xml_declaration=True, standalone=True)
         content = XML.Element('{' + CT + '}Types', nsmap={None: CT})

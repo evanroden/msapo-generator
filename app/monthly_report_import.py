@@ -7,11 +7,11 @@ as context, and destinations remain suggestions until an operator confirms.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import hashlib
-from pathlib import Path
 import posixpath
 import re
+from dataclasses import dataclass, replace
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from zipfile import BadZipFile, ZipFile
 
@@ -21,10 +21,16 @@ from PIL import Image, UnidentifiedImageError
 
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_model import (
-    BlockSpec, ColumnSpec, ReportDraft, ReportPeriod, ReportProfile, ResolvedBlock,
-    default_sections, layout_blocks, profile_sections,
+    BlockSpec,
+    ColumnSpec,
+    ReportDraft,
+    ReportPeriod,
+    ReportProfile,
+    ResolvedBlock,
+    default_sections,
+    layout_blocks,
+    profile_sections,
 )
-
 
 MAX_DOCX_BYTES = 128 * 1024 * 1024
 MAX_EXPANDED_BYTES = 256 * 1024 * 1024
@@ -165,6 +171,28 @@ def _visible(element) -> None:
                 parent.remove(child)
 
 
+def _remove_page_field_results(element, fields):
+    """Strip cached page counters on the inspection copy only."""
+    page_fields = {"PAGE", "NUMPAGES", "SECTION", "SECTIONPAGES"}
+    def page(instruction):
+        words = instruction.strip().split()
+        return bool(words and words[0].upper() in page_fields)
+    for parent in element.iter():
+        for child in list(parent):
+            if child.tag == W + "fldSimple" and page(child.get(W + "instr", "")):
+                parent.remove(child)
+    for node in element.iter():
+        if node.tag == W + "fldChar":
+            kind = node.get(W + "fldCharType")
+            if kind == "begin": fields.append({"instruction": "", "result": False})
+            elif kind == "separate" and fields: fields[-1]["result"] = True
+            elif kind == "end" and fields: fields.pop()
+        elif node.tag == W + "instrText" and fields and not fields[-1]["result"]:
+            fields[-1]["instruction"] += node.text or ""
+        elif node.tag == W + "t" and any(f["result"] and page(f["instruction"]) for f in fields):
+            node.text = ""
+
+
 def _text(element) -> str:
     parts = []
     for node in element.iter():
@@ -195,14 +223,14 @@ def _heading(text: str) -> str | None:
     compact = re.sub(r"[^a-z]", "", text.casefold())
     if "tableofcontents" in compact or text.casefold().count("section") > 2 or len(text) > 250:
         return None
-    if re.fullmatch(r"(?:section\s*)?\d*[.\s:–-]*water\s+treatment(?:\s+reports?)?", text.strip(), re.I):
+    if re.fullmatch(r"(?:section\s*)?\d*[.\s:–-]*water\s+treatment(?:\s+reports?)?", text.strip(), re.IGNORECASE):
         return "water"
     hits = [key for key, terms in _SECTION_TERMS.items() if any(term in compact for term in terms)]
     if len(hits) == 1:
         return hits[0]
     # Unknown numbered headings and common extra sections must not inherit the
     # previous recognized destination (e.g. AR tables becoming capital costs).
-    if ((re.match(r"^(?:section\s+)?\d+[.:\s]+[A-Z]", text, re.I) and text.upper() == text)
+    if ((re.match(r"^(?:section\s+)?\d+[.:\s]+[A-Z]", text, re.IGNORECASE) and text.upper() == text)
             or any(term in compact for term in ("accountsreceivable", "accountreceivable", "plumbingandelectricalallowance"))):
         return "unmatched"
     return None
@@ -295,7 +323,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                             width, height = picture.size  # Header only; no raster decode.
                     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
                         pass
-                    image_metadata[target] = dict(image_width=width, image_height=height, image_digest=digest)
+                    image_metadata[target] = {"image_width": width, "image_height": height, "image_digest": digest}
                 return image_metadata[target]
             rels = _relations(archive, "word/document.xml")
             parts = ["word/document.xml"]
@@ -310,6 +338,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                     notices.append(f"{part}: {external} external or unsafe relationships were not fetched.")
                 stack, position, nodes = [], 0, 0
                 heading_fragments = []
+                page_fields = []
                 with archive.open(part) as source:
                     events = ET.iterparse(source, events=("start", "end"), forbid_dtd=True)
                     for event, element in events:
@@ -324,6 +353,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                         if is_unit:
                             position += 1
                             _visible(element)
+                            if part.startswith(("word/header", "word/footer")):
+                                _remove_page_field_results(element, page_fields)
                             text = _text(element)
                             source_note = ""
                             if part in ("word/footnotes.xml", "word/endnotes.xml"):
@@ -341,7 +372,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if (word_section == toc_section and style is not None
                                         and style.get(W + "val", "").casefold().startswith("heading")
                                         and candidate and (candidate in toc_headings or not toc_headings
-                                                           or not re.match(r"section\s+\d", text, re.I))):
+                                                           or not re.match(r"section\s+\d", text, re.IGNORECASE))):
                                     toc_section = 0
                                 detected = _heading(text) if word_section != toc_section else None
                                 if word_section == toc_section:
@@ -367,9 +398,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     content_slot = "improvements"
                             elif section == "capital" and "assetendofusefullifeschedule" in compact_text:
                                 content_slot = "end_of_life"
-                            if detected:
-                                if detected != "unmatched":
-                                    heading_fragments = []
+                            if detected and detected != "unmatched":
+                                heading_fragments = []
                             if part == "word/document.xml":
                                 for kind in ("footnote", "endnote"):
                                     for reference in element.iter(W + kind + "Reference"):
