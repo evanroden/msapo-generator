@@ -107,11 +107,12 @@ def test_profile_flags_are_finite_typed_and_versioned():
         with pytest.raises(ValueError):validate_profile(invalid)
 
 
-def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(tmp_path,monkeypatch):
+@pytest.mark.parametrize("profile", [{"version":1,"cover_zero_origin":True},
+                                     {"version":2,"cover_zero_origin":True,"divider_wrap_none":True}])
+def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(tmp_path,monkeypatch,profile):
     from app import monthly_report_docx as output, monthly_report_preview as preview
     from app.monthly_report_model import ReportPeriod, synthetic_draft
     draft=synthetic_draft(synthetic_profiles()[0],ReportPeriod(2026,9))
-    profile={'version':1,'cover_zero_origin':True}
     monkeypatch.setattr(designs,'render_profile_for',lambda p:dict(profile))
     monkeypatch.setattr(output,'assemble_docx',lambda *a,**kw:b'native-download')
     monkeypatch.setattr(preview,'section_preview_docx',lambda *a,**kw:b'native-preview')
@@ -130,7 +131,7 @@ def test_final_and_section_pdf_boundaries_resolve_profile_and_limit_cover_scope(
     assert package.docx==b'native-download' and package.pdf
     preview.preview_section(draft,'cover')
     preview.preview_section(draft,'training')
-    assert calls==[(b'native-download',profile),(b'native-preview',profile),(b'native-preview',DEFAULT)]
+    assert calls==[(b'native-download',profile),(b'native-preview',profile),(b'native-preview',{**profile,'cover_zero_origin':False})]
 
 
 def test_oversized_cover_images_are_checked_before_any_pixel_decoding(monkeypatch):
@@ -148,3 +149,90 @@ def test_oversized_cover_images_are_checked_before_any_pixel_decoding(monkeypatc
         def __getitem__(self,index):return Page()
     monkeypatch.setattr(fitz,'open',lambda path:Pdf())
     assert _pdf_evidence('synthetic.pdf')['images']==[]
+
+
+def divider_pair(tmp_path, *, full_pixels=False, duplicate=False, origin=49):
+    from docx.oxml.ns import qn
+    source, pdf = pair(tmp_path, origin=origin)
+    image = Image.new('RGB', (900, 650))
+    image.putdata([(x % 251, y % 239, (x + 2 * y) % 241) for y in range(650) for x in range(900)])
+    raw = BytesIO(); image.save(raw, format='PNG')
+    document = Document(source)
+    paragraph = document.add_paragraph('MONTHLY SCORECARDS')
+    anchor = paragraph.add_run().add_picture(BytesIO(raw.getvalue()), width=Pt(692.1), height=Pt(624.45))._inline
+    anchor.tag = qn('wp:anchor')
+    position = OxmlElement('wp:positionV'); position.set('relativeFrom', 'page')
+    offset = OxmlElement('wp:posOffset'); offset.text = '19050'; position.append(offset); anchor.insert(0, position)
+    anchor.append(OxmlElement('wp:wrapTopAndBottom'))
+    crop = OxmlElement('a:srcRect'); crop.set('l', '20000')
+    anchor.find('.//' + qn('pic:blipFill')).append(crop)
+    for color in ('D6EF4B', '547E7E'):
+        fill = OxmlElement('a:solidFill'); node = OxmlElement('a:srgbClr'); node.set('val', color); fill.append(node); anchor.append(fill)
+    document.save(source)
+    supplied = image if full_pixels else image.crop((180, 0, 900, 650))
+    buffer = BytesIO(); supplied.save(buffer, format='PNG')
+    with fitz.open(pdf) as document:
+        for _ in range(2 if duplicate else 1):
+            page = document.new_page(width=612, height=792)
+            box = fitz.Rect(-170.25, 1.5, 612, 553.65) if full_pixels else fitz.Rect(-81.4, 1.5, 610.7, 625.95)
+            page.insert_image(box, stream=buffer.getvalue(), keep_proportion=False)
+        target = tmp_path / 'with-divider.pdf'; document.save(target)
+    return source, target
+
+
+@pytest.mark.parametrize('full_pixels,duplicate,origin,expected', [
+    (False, False, 49, True), (True, False, 0, False), (False, True, 0, False)])
+def test_divider_crop_geometry_proof_is_independent_and_unambiguous(tmp_path, full_pixels, duplicate, origin, expected):
+    source, pdf = divider_pair(tmp_path, full_pixels=full_pixels, duplicate=duplicate, origin=origin)
+    result = calibrate(source, pdf)
+    assert result['render_profile']['divider_wrap_none'] is expected
+    assert result['render_profile']['cover_zero_origin'] is (origin == 0)
+    assert bool(result['divider_measurements']) is expected
+
+
+def test_version_one_profile_identity_is_not_silently_upgraded():
+    import hashlib
+    from app.monthly_report_render_profile import identity, LEGACY_DEFAULT
+    profile = {'version': 1, 'cover_zero_origin': True}
+    assert validate_profile(profile) == profile
+    assert validate_profile(LEGACY_DEFAULT) == LEGACY_DEFAULT
+    original_payload = {'source_sha256': 'a' * 64, 'companion_sha256': 'b' * 64, 'render_profile': profile}
+    expected = hashlib.sha256(json.dumps(original_payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    assert identity('a' * 64, 'b' * 64, profile) == expected
+    assert identity('a' * 64, 'b' * 64, {**profile, 'version': 2, 'divider_wrap_none': False}) != expected
+
+
+def test_divider_worker_rejects_large_metadata_before_any_pixel_decode():
+    from app.monthly_report_render_profile import _pdf_divider_images
+    class Page:
+        def get_images(self, full): return [(1, 0, 100_000, 100_000, 8, '', '', '', '', 0)]
+        def get_image_info(self, **kwargs): raise AssertionError('Unexpected pixel/placement request')
+    class Pdf:
+        def __len__(self): return 1
+        def __getitem__(self, index): return Page()
+        def extract_image(self, xref): raise AssertionError('Oversized image decoded')
+    assert _pdf_divider_images(Pdf(), [{'aspect': 1, 'width': 600, 'height': 600, 'y': 0}]) == []
+
+
+def test_existing_version_one_paired_metadata_resolves_without_repinning(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'data'))
+    source, companion = pair(tmp_path)
+    profile = synthetic_profiles()[0]
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    pdf_hash = hashlib.sha256(companion.read_bytes()).hexdigest()
+    legacy_flags = {'version': 1, 'cover_zero_origin': True}
+    metadata = {'source_sha256': source_hash, 'companion_sha256': pdf_hash, 'render_profile': legacy_flags}
+    original_digest = hashlib.sha256(json.dumps(metadata, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    directory = designs._directory(profile.contract)
+    (directory / 'metadata').mkdir(parents=True)
+    (directory / (source_hash + '.docx')).write_bytes(source.read_bytes())
+    (directory / (pdf_hash + '.pdf')).write_bytes(companion.read_bytes())
+    metadata_path = directory / 'metadata' / (original_digest + '.json')
+    metadata_path.write_text(json.dumps({'schema': 1, 'hash': original_digest, **metadata}))
+    before = metadata_path.read_bytes()
+    pinned = replace(profile, template=designs.PREFIX + original_digest)
+    assert designs.render_profile_for(pinned) == legacy_flags
+    assert designs.source_for(pinned).read_bytes() == source.read_bytes()
+    assert designs.pin(pinned) == pinned
+    assert metadata_path.read_bytes() == before

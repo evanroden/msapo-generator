@@ -13,8 +13,9 @@ from zipfile import ZipFile
 from lxml import etree
 from PIL import Image, ImageChops, ImageStat
 
-VERSION = 1
-DEFAULT = {"version": VERSION, "cover_zero_origin": False}
+VERSION = 2
+LEGACY_DEFAULT = {"version": 1, "cover_zero_origin": False}
+DEFAULT = {"version": VERSION, "cover_zero_origin": False, "divider_wrap_none": False}
 MAX_PDF_BYTES = 30 * 1024 * 1024
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
       "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
@@ -24,10 +25,13 @@ NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
 
 def validate_profile(value=None):
     value = dict(DEFAULT) if value is None else value
-    if (not isinstance(value, dict) or set(value) != set(DEFAULT)
-            or type(value["version"]) is not int or value["version"] != VERSION
-            or type(value["cover_zero_origin"]) is not bool):
+    if not isinstance(value, dict) or type(value.get("version")) is not int:
         raise ValueError("Unsupported saved PDF rendering profile.")
+    schema = LEGACY_DEFAULT if value["version"] == 1 else DEFAULT if value["version"] == VERSION else None
+    if schema is None or set(value) != set(schema) or any(type(value[key]) is not bool for key in schema if key != "version"):
+        raise ValueError("Unsupported saved PDF rendering profile.")
+    # Version-one profiles remain byte-for-byte equivalent in identity payloads.
+    # Do not add the new false flag to an already pinned paired design.
     return dict(value)
 
 
@@ -46,7 +50,136 @@ def _thumbnail(raw):
         return base64.b64encode(image.tobytes()).decode()
 
 
-def _pdf_evidence(path):
+def _pdf_divider_images(pdf, filters):
+    """Decode only small candidate rasters after metadata and geometry checks."""
+    if not filters:
+        return []
+    decoded, result = {}, []
+    pixels = 0
+    for page_number in range(len(pdf)):
+        page = pdf[page_number]
+        objects = page.get_images(full=True)
+        # Nested form image lookup can invoke pixel hashing for the entire page.
+        # Restrict this proof to directly referenced images and bounded metadata.
+        if len(objects) > 64:
+            return []
+        candidates = [item for item in objects if item[-1] == 0 and item[0] > 0
+                      and 0 < item[2] * item[3] <= 20_000_000
+                      and any(abs(item[2] / item[3] - query["aspect"]) <= .01 for query in filters)]
+        if not candidates:
+            continue
+        # hashes=False does not materialize image pixels. Its metadata lets us
+        # reject repeated/ambiguous placements before extracting one candidate.
+        metadata = page.get_image_info(hashes=False, xrefs=False)
+        if len(metadata) > 256:
+            return []
+        for item in candidates:
+            placements = [info for info in metadata if info["width"] == item[2] and info["height"] == item[3]]
+            if len(placements) != 1:
+                continue
+            bbox = tuple(page.get_image_bbox(item))
+            if bbox[2] <= bbox[0] or bbox[3] <= bbox[1] or any(abs(a - b) > .01 for a, b in zip(bbox, placements[0]["bbox"])):
+                continue
+            if not any(abs(bbox[2] - bbox[0] - query["width"]) <= 2
+                       and abs(bbox[3] - bbox[1] - query["height"]) <= 2
+                       and abs(bbox[1] - query["y"]) <= 2 for query in filters):
+                continue
+            xref = item[0]
+            if xref not in decoded:
+                pixels += item[2] * item[3]
+                if pixels > 20_000_000 or len(decoded) >= 32:
+                    return []
+                raw = pdf.extract_image(xref)["image"]
+                if len(raw) > MAX_PDF_BYTES:
+                    return []
+                decoded[xref] = _thumbnail(raw)
+            result.append({"page": page_number + 1, "bbox": bbox, "thumbnail": decoded[xref]})
+            if len(result) > 32:
+                return []
+    return result
+
+
+def _divider_evidence(source):
+    """Measure only recognized full-page wrapped divider photo frames."""
+    from app.monthly_report_import import _is_native_divider_background, _text
+    result, pixels = [], 0
+    with ZipFile(source) as archive:
+        root = etree.fromstring(archive.read("word/document.xml"), etree.XMLParser(resolve_entities=False, no_network=True))
+        relations = etree.fromstring(archive.read("word/_rels/document.xml.rels"))
+        targets = {node.get("Id"): posixpath.normpath(posixpath.join("word", node.get("Target", "")))
+                   for node in relations if node.get("TargetMode") != "External"}
+        for paragraph in root.findall(".//w:p", NS):
+            if not _is_native_divider_background(paragraph, _text(paragraph)):
+                continue
+            for anchor in paragraph.findall(".//wp:anchor", NS):
+                y = anchor.find("wp:positionV", NS)
+                extent = anchor.find("wp:extent", NS)
+                wrap = anchor.find("wp:wrapTopAndBottom", NS)
+                blips = anchor.findall(".//a:blip", NS)
+                if y is None or y.get("relativeFrom") != "page" or extent is None or wrap is None or not blips:
+                    continue
+                try:
+                    width, height = int(extent.get("cx", "0")), int(extent.get("cy", "0"))
+                    if width <= 6_000_000 or height <= 6_000_000:
+                        continue
+                    # An unmeasurable candidate must not let other positive
+                    # matches enable the global divider flag for this design.
+                    if len(blips) != 1 or len(result) >= 8:
+                        return []
+                    transforms = anchor.findall(".//a:xfrm", NS)
+                    if any(any(transform.get(k, "0") not in {"0", "false"} for k in ("rot", "flipH", "flipV")) for transform in transforms):
+                        return []
+                    offset = y.find("wp:posOffset", NS)
+                    if offset is None:
+                        return []
+                    target = targets.get(blips[0].get("{" + NS["r"] + "}embed"))
+                    if not target or target not in archive.namelist() or archive.getinfo(target).file_size > MAX_PDF_BYTES:
+                        return []
+                    crops = anchor.findall(".//a:srcRect", NS)
+                    if len(crops) > 1:
+                        return []
+                    crop = {side: int(crops[0].get(side, "0")) if crops else 0 for side in ("l", "t", "r", "b")}
+                    if any(value < 0 or value >= 100000 for value in crop.values()) or crop["l"] + crop["r"] >= 100000 or crop["t"] + crop["b"] >= 100000:
+                        return []
+                    with Image.open(BytesIO(archive.read(target))) as image:
+                        pixels += image.width * image.height
+                        if pixels > 20_000_000:
+                            return []
+                        bounds = (round(image.width * crop["l"] / 100000), round(image.height * crop["t"] / 100000),
+                                  round(image.width * (1 - crop["r"] / 100000)), round(image.height * (1 - crop["b"] / 100000)))
+                        cropped = image.crop(bounds).convert("RGB")
+                        if not cropped.width or not cropped.height:
+                            return []
+                        result.append({"width": width / 12700, "height": height / 12700, "y": int(offset.text) / 12700,
+                                       "aspect": cropped.width / cropped.height,
+                                       "thumbnail": base64.b64encode(cropped.resize((64, 64)).tobytes()).decode()})
+                except (ValueError, OSError, KeyError, TypeError, Image.DecompressionBombError):
+                    return []
+    return result
+
+
+def _match_dividers(source, observed):
+    matches, used = [], set()
+    for original in source:
+        expected = Image.frombytes("RGB", (64, 64), base64.b64decode(original["thumbnail"]))
+        candidates = []
+        for index, item in enumerate(observed):
+            x0, y0, x1, y1 = item["bbox"]
+            if max(abs(x1 - x0 - original["width"]), abs(y1 - y0 - original["height"]), abs(y0 - original["y"])) > 2:
+                continue
+            actual = Image.frombytes("RGB", (64, 64), base64.b64decode(item["thumbnail"]))
+            error = sum(ImageStat.Stat(ImageChops.difference(expected, actual)).mean) / 3
+            if error <= 3:
+                candidates.append((index, {"page": item["page"], "image_error": round(error, 4),
+                                          "frame_error_points": [round(x1 - x0 - original["width"], 4),
+                                                                 round(y1 - y0 - original["height"], 4), round(y0 - original["y"], 4)]}))
+        if len(candidates) != 1 or candidates[0][0] in used:
+            return []
+        used.add(candidates[0][0]); matches.append(candidates[0][1])
+    return matches
+
+
+def _pdf_evidence(path, dividers=()):
     """Runs only in the bounded subprocess, never executes document actions."""
     import pymupdf as fitz
     with fitz.open(path) as pdf:
@@ -68,16 +201,18 @@ def _pdf_evidence(path):
             data = pdf.extract_image(info["xref"])
             if len(data["image"]) <= MAX_PDF_BYTES:
                 images.append({"bbox": info["bbox"], "thumbnail": _thumbnail(data["image"])})
-        return {"text": text, "images": images, "producer": str((pdf.metadata or {}).get("producer", ""))[:500],
+        divider_images = _pdf_divider_images(pdf, dividers)
+        return {"text": text, "images": images, "divider_images": divider_images, "producer": str((pdf.metadata or {}).get("producer", ""))[:500],
                 "pages": len(pdf)}
 
 
-def inspect_companion(path):
+def inspect_companion(path, dividers=()):
     path = Path(path)
     if not 0 < path.stat().st_size <= MAX_PDF_BYTES:
         raise ValueError("The companion PDF must be nonempty and at most 30 MB.")
     try:
         result = subprocess.run([sys.executable, "-m", __name__, str(path.resolve())],
+                                input=json.dumps({"dividers": dividers}).encode(),
                                 capture_output=True, timeout=25, check=False)
     except subprocess.TimeoutExpired as exc:
         raise ValueError("Reference PDF inspection timed out. The existing design is unchanged.") from exc
@@ -132,7 +267,9 @@ def _cover_evidence(source):
 
 
 def calibrate(source, companion_pdf):
-    evidence = inspect_companion(companion_pdf)
+    dividers = _divider_evidence(source)
+    filters = [{key: item[key] for key in ("width", "height", "y", "aspect")} for item in dividers]
+    evidence = inspect_companion(companion_pdf, filters)
     texts, source_images = _cover_evidence(source)
     tokens = lambda text:set(re.findall(r'[a-z0-9]+',text.casefold()))
     cover_tokens = tokens(' '.join(texts))
@@ -155,9 +292,11 @@ def calibrate(source, companion_pdf):
     # Require independent identity, source-image pixels, frame size and origin.
     # Producer is audit information, never a rendering-behavior selector.
     zero = bool(measurements) and all(abs(m['origin_points'])<=2 for m in measurements)
-    profile = {"version": VERSION, "cover_zero_origin": zero}
-    return {"render_profile":profile, "producer":evidence['producer'], "cover_measurements":measurements,
-            "pair_status":"measured-zero-origin" if zero else "preserve-native", "pages":evidence['pages']}
+    divider_measurements = _match_dividers(dividers, evidence.get("divider_images", ()))
+    divider_none = bool(dividers) and len(divider_measurements) == len(dividers)
+    profile = {"version": VERSION, "cover_zero_origin": zero, "divider_wrap_none": divider_none}
+    return {"render_profile":profile, "divider_measurements":divider_measurements, "producer":evidence['producer'], "cover_measurements":measurements,
+            "pair_status":"measured-zero-origin" if zero else "measured-divider-wrap" if divider_none else "preserve-native", "pages":evidence['pages']}
 
 
 if __name__ == '__main__':
@@ -165,6 +304,12 @@ if __name__ == '__main__':
         import resource
         resource.setrlimit(resource.RLIMIT_AS,(512*1024*1024,512*1024*1024))
         resource.setrlimit(resource.RLIMIT_CPU,(20,20))
-        print(json.dumps(_pdf_evidence(sys.argv[1])))
+        request = sys.stdin.buffer.read(65537)
+        if len(request) > 65536:
+            raise ValueError("Calibration request exceeds its bound.")
+        filters = json.loads(request or b'{}').get("dividers", [])
+        if not isinstance(filters, list) or len(filters) > 8:
+            raise ValueError("Too many divider candidates.")
+        print(json.dumps(_pdf_evidence(sys.argv[1], filters)))
     except Exception:
         sys.exit(1)

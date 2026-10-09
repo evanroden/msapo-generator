@@ -56,8 +56,8 @@ Release is held pending authentic finished-PDF comparison and resolution of
 material converter defects. Same-converter parity below is necessary evidence,
 not sufficient PDF acceptance.
 
-PR #91 checkpoint `977af6001b202e76d9cc3453319b837c1fd5ad03` passed
-1556 tests with zero skips in Actions `37945290820`; container build/health
+PR #91 checkpoint `c7e63ca84841d773050e64e1de6556df609a602a` passed
+1600 tests with zero skips in Actions `37946971998`; container build/health
 also passed. Subsequent PDF corrections require fresh final-head CI before
 release. A green suite does not override the visual PDF acceptance gate.
 
@@ -138,10 +138,20 @@ Only the scoped invisible empty-frame correction is currently enabled globally;
 divider correction needs independent reference evidence. UMMC's official export
 retains 45 pages, every image position and all 18 bookmarks, with zero source
 render pixel changes outside the three removed Cost labels. Authentic residual
-raster differences are embedded-image compression. One original HTTPS link is
-still removed by the existing passive-package policy and is being corrected to
-meet functional PDF parity. Unity/Eastern pagination, typography and remaining
-layering differences still hold release.
+raster differences are embedded-image compression. The original HTTPS link now
+remains clickable: every reference link target and rectangle matches too.
+Passive HTTP/HTTPS links survive only in current-proven unchanged visible text;
+rewritten, omitted, empty, hidden or unproved content cannot retain source links.
+Active dependencies and unsafe link schemes remain excluded. The focused link
+tests and a real PDF click-target test pass.
+
+Version 2 independently calibrates the divider wrap flag from the reference's
+matching cropped source-image pixels, frame dimensions and position. Unity
+enables the correction while UMMC preserves its native layout. Ambiguous or
+unmatched evidence does not enable it, and version 1 profile identities remain
+unchanged. The 14 profile and 34 conversion/wrap tests pass separately.
+Unity/Eastern pagination, typography and remaining layering differences still
+hold release; restored inventory pages expose two previously masked extra blanks.
 
 Focused ordered save/resume/generation tests passed, as did extraction/pricing,
 manual-edit protection, selected-directory, training and asynchronous preview

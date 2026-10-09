@@ -7,7 +7,7 @@ from zipfile import ZipFile, is_zipfile
 
 from lxml import etree
 
-from app.monthly_report_render_wrap import normalize_invisible_wraps
+from app.monthly_report_render_wrap import normalize_divider_wraps, normalize_invisible_wraps
 from app.monthly_report_render_profile import validate_profile
 
 
@@ -116,6 +116,8 @@ def rendering_docx(raw, *, profile=None):
             root = etree.fromstring(data, parser)
             changed = part == "word/document.xml" and normalize_invisible_wraps(root)
             if part == "word/document.xml":
+                if profile.get("divider_wrap_none", False):
+                    changed = normalize_divider_wraps(root) or changed
                 if profile["cover_zero_origin"]:
                     changed = _floating_cover_header(root) or changed
             shapes = root.findall(".//{" + _V + "}shape")

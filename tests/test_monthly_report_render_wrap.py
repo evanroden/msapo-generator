@@ -78,6 +78,26 @@ def test_recognized_native_divider_stops_reserving_flow_space_only():
     assert not normalize_divider_wraps(root)
 
 
+def test_disposable_divider_fix_requires_independent_verified_profile():
+    from io import BytesIO
+    from zipfile import ZipFile
+    from app.monthly_report_render_compat import rendering_docx
+    stream = BytesIO()
+    with ZipFile(stream, "w") as archive:
+        archive.writestr("word/document.xml", etree.tostring(divider_shape()))
+    raw = stream.getvalue()
+    for profile in (None, {"version": 1, "cover_zero_origin": True},
+                    {"version": 2, "cover_zero_origin": True, "divider_wrap_none": False}):
+        assert rendering_docx(raw, profile=profile) == raw
+    profile = {"version": 2, "cover_zero_origin": False, "divider_wrap_none": True}
+    fixed = rendering_docx(raw, profile=profile)
+    with ZipFile(BytesIO(fixed)) as archive:
+        root = etree.fromstring(archive.read("word/document.xml"))
+    assert root.find(".//{" + _WP + "}wrapNone") is not None
+    assert root.find(".//{" + _WP + "}wrapTopAndBottom") is None
+    assert rendering_docx(fixed, profile=profile) == fixed
+
+
 @pytest.mark.parametrize("arguments", [
     {"title": "Vendor service report"}, {"title": "MONTHLY SCORECARDS actual site content"},
     {"relative": "paragraph"}, {"color": "FFFFFF"}, {"size": "4000000"},

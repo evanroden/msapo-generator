@@ -29,7 +29,7 @@ monthly wizard, and photo-decode/preview failure containment. A legacy imported
 report keeps its own native design ahead of the company master; explicit pins
 remain authoritative. Replacement cover photos retain their native frame.
 
-PR #91 checkpoint `977af60` passed 1556 tests with zero skips and the container
+PR #91 checkpoint `c7e63ca` passed 1600 tests with zero skips and the container
 build/health gate. Later fixes still require final-head CI. Both September
 continuations preserve 39 pages with zero pixel differences outside three Cost
 labels deliberately removed from each report, measured against source Word
@@ -47,8 +47,10 @@ while remaining title, pagination and metafile defects still require correction.
 Paired design references now pin measured PDF behavior independently of old
 drafts. Safe vector review/import recovers Eastern's two inventory tables; the
 current full export still needs comparison. UMMC's official output preserves
-all page/image geometry and bookmarks, with only intentional Cost-label changes
-against the source rendering; an original HTTPS link still needs preservation.
+all page/image geometry, bookmarks and link targets/rectangles, with only
+intentional Cost-label changes against the source rendering. Version 2 measures
+divider image crop and geometry independently, enabling the Unity wrap fix while
+preserving UMMC. Existing design pins remain immutable.
 See [ordered workflow notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md)
 and [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
 

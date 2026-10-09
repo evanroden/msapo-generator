@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 import posixpath
 import struct
+from urllib.parse import urlsplit
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from defusedxml import ElementTree as SafeET
@@ -25,6 +26,37 @@ NOTE_KINDS = {'footnotes', 'endnotes'}
 XML_KINDS = IMPLICIT | NOTE_KINDS | {'header', 'footer', 'diagramData', 'diagramLayout', 'diagramQuickStyle', 'diagramColors', 'diagramDrawing'}
 REMOVE = {'attachedTemplate', 'updateFields', 'mailMerge', 'dataBinding', 'printerSettings', 'docVars'}
 REJECT = {'object', 'OLEObject', 'altChunk', 'control', 'movie', 'audioFile', 'videoFile', 'contentPart'}
+
+
+def _passive_hyperlink(target):
+    """A clickable web URL is passive; never resolve or fetch its destination."""
+    if (not target or len(target) > 8192 or '\\' in target
+            or any(ord(char) <= 32 or ord(char) == 127 for char in target)):
+        return False
+    try:
+        parsed = urlsplit(target)
+        return (parsed.scheme.lower() in {'http', 'https'} and bool(parsed.hostname)
+                and parsed.username is None and parsed.password is None
+                and (parsed.port is None or 0 < parsed.port < 65536))
+    except ValueError:
+        return False
+
+
+def _visible_hyperlink_text(link):
+    for text in link.iter('{' + W + '}t'):
+        if not (text.text or '').strip():
+            continue
+        run = next((node for node in text.iterancestors() if node.tag == '{' + W + '}r'), None)
+        if run is None:
+            continue
+        properties = run.find('{' + W + '}rPr')
+        if properties is not None and any(
+                flag.tag in {'{' + W + '}vanish', '{' + W + '}webHidden'}
+                and flag.get('{' + W + '}val', 'true').casefold() not in {'0', 'false', 'off'}
+                for flag in properties):
+            continue
+        return True
+    return False
 
 
 def _static_emf(raw):
@@ -342,6 +374,22 @@ def passive_docx(path: Path) -> bytes:
                         continue
                     target = '' if rel.get('TargetMode', '').casefold() == 'external' else _resolve(name, rel.get('Target', ''))
                     if short == 'hyperlink':
+                        # Only ordinary visible Word text hyperlinks are supported.
+                        # Drawing actions, local files and other relationship kinds
+                        # never gain an exception to the closed package graph.
+                        links = [node for node in root.iter('{' + W + '}hyperlink')
+                                 if node.get('{' + R + '}id') == rid
+                                 and _visible_hyperlink_text(node)]
+                        if (rel.get('TargetMode', '').casefold() == 'external'
+                                and _passive_hyperlink(rel.get('Target', '')) and links):
+                            allowed = set(links)
+                            for node in root.iter():
+                                if node not in allowed:
+                                    for attr, value in list(node.attrib.items()):
+                                        if attr.startswith('{' + R + '}') and value == rid:
+                                            del node.attrib[attr]
+                            kept.append(rel)
+                            continue
                         for node in root.iter():
                             for attr, value in list(node.attrib.items()):
                                 if attr.startswith('{' + R + '}') and value == rid:

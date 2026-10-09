@@ -47,8 +47,24 @@ _DEFAULT_TEXT = {"organization": "contact_matrix", "activity": "activity_summary
 _MONTH = re.compile(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d\d\b", re.IGNORECASE)
 
 
+def _clear_hyperlinks(element):
+    """Source click destinations are facts, not reusable text formatting."""
+    for link in list(element.iter(qn("w:hyperlink"))):
+        parent = link.getparent()
+        if parent is not None:
+            index = parent.index(link)
+            for child in list(link):
+                parent.insert(index, child)
+                index += 1
+            parent.remove(link)
+    for tag in (qn("a:hlinkClick"), qn("a:hlinkHover")):
+        for link in list(element.iter(tag)):
+            link.getparent().remove(link)
+
+
 def _set_text(element, value):
     """Change run payloads while retaining paragraph/run/text-box properties."""
+    _clear_hyperlinks(element)
     if _text(element) == value:
         return
     texts = list(element.iter(qn("w:t")))
@@ -756,10 +772,15 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             body.remove(element)
             continue
         group = items[position]
+        current_payload = [item for item in group if item.kind in ("text", "table", "image")]
+        if not (current_payload and all(item.id in unchanged_items for item in current_payload)
+                and not any(item.note.startswith("Unmapped native SmartArt") for item in group)):
+            _clear_hyperlinks(element)
         if sec == "cover":
             # Cover/company marks have a separate asset binding. Unsupported
             # SmartArt there must not lend source client facts to a fresh report.
             _clear_diagrams(element)
+            _clear_hyperlinks(element)
             if position <= (first_word_end or len(original)):
                 _cover(element, draft, preserve_issue_date=preserve_issue_date)
             cover_images(element, group)
@@ -1035,6 +1056,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
             continue
         _clear_diagrams(part.element)
+        _clear_hyperlinks(part.element)
         for paragraph in part.element.iter(qn("w:p")):
             visible = deepcopy(paragraph)
             for fallback in list(visible.iter("{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback")):

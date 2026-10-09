@@ -72,7 +72,7 @@ def test_preserves_page_chrome_styles_geometry_and_original_raster(tmp_path):
     assert generated.tables[0].cell(1, 0).text == 'Steam'
 
 
-def test_external_hyperlink_retains_visible_text_without_network_relation(tmp_path):
+def test_external_web_hyperlink_retains_visible_text_and_passive_relation(tmp_path):
     path = sample(tmp_path)
     def mutate(parts):
         add_relation(parts, 'rLink', 'hyperlink', 'https://invalid.example/', True)
@@ -84,8 +84,8 @@ def test_external_hyperlink_retains_visible_text_without_network_relation(tmp_pa
     rewrite(path, mutate)
     with ZipFile(BytesIO(passive_docx(path))) as output:
         assert b'Visible hyperlink label' in output.read('word/document.xml')
-        assert b'https://invalid.example' not in output.read('word/_rels/document.xml.rels')
-        assert b'rLink' not in output.read('word/document.xml')
+        assert b'https://invalid.example' in output.read('word/_rels/document.xml.rels')
+        assert b'rLink' in output.read('word/document.xml')
 
 
 @pytest.mark.parametrize('name', ['object', 'altChunk', 'control'])
