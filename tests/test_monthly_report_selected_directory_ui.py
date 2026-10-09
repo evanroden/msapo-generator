@@ -162,3 +162,36 @@ def test_explicit_directory_save_updates_working_preview_and_saved_report_only(m
     next(w for w in reopened.checkbox if w.label == "Unity Specialty Hospital").check().run()
     assert not reopened.exception
     assert contact_block in current(reopened).blocks
+
+
+def test_other_editors_directory_change_refreshes_only_the_open_working_copy(monkeypatch, tmp_path):
+    from app import monthly_report_library as library, monthly_report_section_preview_ui as previews
+    from app.monthly_report_model import ReportDraft, ReportPeriod, synthetic_profiles
+    from app.monthly_report_start import design_seed
+    from test_monthly_report_ui import monthly, choose_report
+
+    initial, _ = seed(monkeypatch, tmp_path)
+    profile = replace(synthetic_profiles()[0], contract=initial.contract, key='linked-contacts',
+                      title='Linked contacts', facilities=(Facility('unity', 'Unity Hospital'),), scope_type='individual')
+    library.save_profile(profile, expected_revision=0, actor='Synthetic Seeder', confirmed=True)
+    draft, _ = design_seed(profile, ReportPeriod(2026, 9), 'Synthetic Seeder')
+    draft = directory.apply_defaults(draft)
+    saved = library.save_snapshot(draft, expected_revision=0, entered_editor='Synthetic Seeder')
+    app = monthly(monkeypatch, tmp_path, saved=False)
+    choose_report(app, 'Unity Hospital')
+    next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Editor').run()
+    assert not app.exception
+    latest = directory.save_directory(initial.contract, (
+        replace(initial.sites[0], contacts=(directory.DirectoryContact('Manager', 'New Shared Person', email='new@example.invalid'),)),
+        *initial.sites[1:]), expected_revision=1, actor='Other Editor', confirmed=True)
+    observed = []
+    monkeypatch.setattr(previews, 'render_section_preview', lambda shown, key, *a, **k: observed.append((key, shown)))
+    app.run()
+    assert not app.exception
+    working = next(value for value in app.session_state.filtered_state.values()
+                   if isinstance(value, ReportDraft) and value.profile.key == profile.key)
+    contacts = next(b for b in working.blocks if b.key == 'contact_matrix')
+    assert contacts.rows[0][2] == 'New Shared Person'
+    assert any(key == 'organization' and contacts in shown.blocks for key, shown in observed)
+    assert library.load_snapshot(profile.contract, profile.key, draft.period) == saved
+    assert directory.load_directory(initial.contract) == latest
