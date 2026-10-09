@@ -37,12 +37,12 @@ def test_automatic_standing_storage_is_scoped_versioned_and_conflict_safe(profil
     assert len(list((library._root() / "training").rglob("history/*.json"))) == 2
 
 
-def test_only_known_enfra_people_selected_sites_no_invented_completion(profile):
+def test_only_known_hospital_people_selected_sites_no_invented_completion(profile):
     directory = DirectoryState(profile.contract, 1, (
         DirectorySite("a", "Site A", contacts=(DirectoryContact("ENFRA Technician", "Sam"), DirectoryContact("Client contact", "Client"))),
         DirectorySite("other", "Other", contacts=(DirectoryContact("ENFRA operator", "Elsewhere"),))), "Editor", "today")
     result = seed_matrix(profile, ResolvedBlock("training_summary", "This month"), {"sites": {"a": {"columns": ["Safety"]}}}, directory)
-    assert result.rows == (("Sam", "Site A", "Not recorded"),)
+    assert result.rows == (("Client", "Site A", "Not recorded"),)
 
 
 def test_wizard_modes_hours_month_and_no_duplicate_event():
@@ -186,7 +186,7 @@ render_training(st.session_state['draft'], {}, 'anonymous', lambda k, v: k)
 
 def test_training_directory_alias_binding_ignores_ambiguous_and_inactive(profile):
     single = replace(profile, facilities=(Facility('legacy-a', 'Site A', ('North',)),), scope_type='individual')
-    contact = DirectoryContact('ENFRA Technician', 'Sam')
+    contact = DirectoryContact('Hospital Technician', 'Sam')
     directory = DirectoryState(profile.contract, 1, (DirectorySite('directory-a', 'North', contacts=(contact,)),), 'Editor', 'today')
     block = ResolvedBlock('training_summary', 'This month')
     assert seed_matrix(single, block, {}, directory).rows == (('Sam', 'Site A'),)
