@@ -216,7 +216,8 @@ _SECTION_TERMS = {
     "issues": ("equipmentperformanceissues",), "capital": ("prioritycapitalrenewallist",),
     "proposals": ("pendingdeclinedproposals", "pendinganddeclinedproposals"),
     "training": ("trainingsummary",), "rfi": ("rfimatrix",),
-    "accounts_receivable": ("accountsreceivable", "accountreceivable", "accountsreceivables", "accountreceivables"),
+    "accounts_receivable": ("accountsreceivable", "accountreceivable", "accountsreceivables", "accountreceivables",
+                            "accountreceivablesummary", "accountsreceivablesummary"),
 }
 
 
@@ -233,6 +234,8 @@ def heading_fragment(text: str) -> str:
             address = re.search(r"\d+\s*Galleria\s*Blvd", before, re.I)
             prefix = before[:address.start()] if address else ""
             line = prefix + " " + after
+        elif re.fullmatch(r"\s*\d+\s+[^|\n]{3,100}\|\s*(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}/?\s*", line, re.I):
+            continue  # A separate address/website line is page chrome, not a title.
         if line.strip() and not re.fullmatch(r"\s*\d+\s*", line):
             lines.append(line.strip())
     return " ".join(lines)
@@ -245,13 +248,17 @@ def _heading(text: str) -> str | None:
         return None
     if re.fullmatch(r"(?:section\s*)?\d*[.\s:–-]*water\s+treatment(?:\s+reports?)?", text.strip(), re.IGNORECASE):
         return "water"
-    hits = [key for key, terms in _SECTION_TERMS.items() if any(term in compact for term in terms)]
+    # A section name mentioned in prose is not a heading. Compatibility
+    # Choice/Fallback representations may repeat the same title in one anchor.
+    title = re.sub(r"^(?:section|appendix[a-z])", "", compact)
+    hits = [key for key, terms in _SECTION_TERMS.items()
+            if re.fullmatch("(?:" + "|".join(sorted(terms, key=len, reverse=True)) + ")+", title)]
     if len(hits) == 1:
         return hits[0]
     # Unknown numbered headings and common extra sections must not inherit the
     # previous recognized destination (e.g. AR tables becoming capital costs).
     if ((re.match(r"^(?:section\s+)?\d+[.:\s]+[A-Z]", text, re.IGNORECASE) and text.upper() == text)
-            or any(term in compact for term in ("accountsreceivable", "accountreceivable", "plumbingandelectricalallowance"))):
+            or compact == "plumbingandelectricalallowance"):
         return "unmatched"
     return None
 
@@ -446,19 +453,19 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 elif heading_fragment(text) and len(heading_fragment(text)) < 100:
                                     fragment = heading_fragment(text)
                                     if not detected or detected == "unmatched":
-                                        combined = _heading(" ".join([*heading_fragments, fragment]))
-                                        if combined not in (None, "unmatched"):
-                                            detected = combined
-                                            # Back-mark only the shortest adjoining heading prefix.
-                                            for count in range(1, len(heading_fragments) + 1):
-                                                if _heading(" ".join([*heading_fragments[-count:], fragment])) == combined:
-                                                    positions = set(heading_positions[-count:])
-                                                    for index, previous in enumerate(items):
-                                                        if previous.part == part and previous.position in positions:
-                                                            items[index] = replace(previous, section=combined,
-                                                                                   suggested_slot="divider_" + combined if previous.kind == "image" else "",
-                                                                                   note="Native section heading")
-                                                    break
+                                        # Test the shortest adjoining title first. Older body
+                                        # prose in the three-fragment window is not part of it.
+                                        for count in range(1, len(heading_fragments) + 1):
+                                            combined = _heading(" ".join([*heading_fragments[-count:], fragment]))
+                                            if combined not in (None, "unmatched"):
+                                                detected = combined
+                                                positions = set(heading_positions[-count:])
+                                                for index, previous in enumerate(items):
+                                                    if previous.part == part and previous.position in positions:
+                                                        items[index] = replace(previous, section=combined,
+                                                                               suggested_slot="divider_" + combined if previous.kind == "image" else "",
+                                                                               note="Native section heading")
+                                                break
                                     heading_positions = [*heading_positions, position][-3:]
                                     heading_fragments = [*heading_fragments, fragment][-3:]
                                 elif text:

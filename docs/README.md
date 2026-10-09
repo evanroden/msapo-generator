@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Replaced content pages and chart fit: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REWRITTEN_PAGES.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REWRITTEN_PAGES.md). Empty-scaffold removal is scoped to proved rewrites; unchanged source geometry remains protected.
+
 Current next-LLM handoff and owner-requested testing release:
 [HANDOFF_MONTHLY_REPORT_2026-10-09.md](HANDOFF_MONTHLY_REPORT_2026-10-09.md).
 Read this before resuming report work; it distinguishes completed fixes from
