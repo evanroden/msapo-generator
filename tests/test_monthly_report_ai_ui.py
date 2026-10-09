@@ -44,8 +44,7 @@ def test_read_draft_review_preserves_existing_work_and_invalidates(
     monkeypatch.setattr(ui, "start_receipt", start)
     app = monthly(monkeypatch, tmp_path)
     step(app, 2)
-    next(w for w in app.toggle if w.label == "Add work-order spreadsheets or other source files").set_value(True).run()
-    next(w for w in app.toggle if w.label == "Show writing help").set_value(True).run()
+    next(w for w in app.checkbox if w.label == "Add work-order spreadsheets").check().run()
     upload(
         monkeypatch,
         "synthetic.txt",
@@ -111,7 +110,6 @@ def test_copilot_originals_and_unmatched_lines_are_retained(tmp_path, monkeypatc
 
     app = monthly(monkeypatch, tmp_path)
     step(app, 2)
-    next(w for w in app.toggle if w.label == "Show writing help").set_value(True).run()
     notes = "Chatty introduction\n1. WORK COMPLETED\n09/03 Inspected a synthetic pump [email from vendor, 09/03]\n4. QUOTES\n09/04 Price $50 [email from vendor, 09/04]"
     next(w for w in app.text_area if w.label == "Paste Copilot's response").set_value(
         notes

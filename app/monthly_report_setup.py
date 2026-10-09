@@ -10,12 +10,12 @@ import re
 
 from app.monthly_report_checks import stale_period_mentions
 from app.monthly_report_import import DocxInspection, ImportMapping, _heading
-from app.monthly_report_model import BlockSpec, ReportDraft, ReportPeriod, ResolvedBlock, default_sections, layout_blocks
+from app.monthly_report_model import BlockSpec, ReportDraft, ReportPeriod, ResolvedBlock, default_sections, known_sections, layout_blocks
 from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews, preserve_asset_reviews
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
-                          "vendor_reports", "water_reports", "training_summary"})
+                          "vendor_reports", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
 PAGE_BLOCKS = frozenset({"vendor_reports", "water_reports", "mbcx_report"})
 PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status"})
 DECISIONS = ("Needs review", "Keep in report", "Save for reference", "Exclude from this draft")
@@ -61,7 +61,7 @@ def report_period_findings(inspection, period):
 
 def suggested_mappings(inspection: DocxInspection) -> tuple[ImportMapping, ...]:
     """Ambiguous single-image/table destinations stay unmatched, not last-one-wins."""
-    specs = {b.key: b for s in default_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
+    specs = {b.key: b for s in known_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
     counts = Counter(i.suggested_slot for i in inspection.items if i.kind in ("image", "table"))
     result = []
     for item in inspection.items:
@@ -104,7 +104,9 @@ def initial_decision(item, mapped: bool, period: ReportPeriod) -> str:
 def design_profile(profile, inspection, mappings, overrides=()):
     """Persist confirmed logical order without treating Word section counts as a design."""
     destinations = {m.item_id: m.slot for m in mappings}
-    skeleton = default_sections()
+    actual = {item.section for item in inspection.items}
+    skeleton = tuple(s for s in known_sections() if (s.key != "accounts_receivable" or s.key in actual)
+                     and (s.key != "rfi" or "accounts_receivable" not in actual or "rfi" in actual))
     owner = {b.key: s.key for s in skeleton for b in s.blocks}
     found, order, block_order, included = {}, [], {}, set()
     for item in inspection.items:
@@ -120,7 +122,7 @@ def design_profile(profile, inspection, mappings, overrides=()):
             order.append(section)
         if slot:
             included.add(section)
-        if item.kind == "text" and _heading(item.text) == section and section not in found:
+        if item.kind == "text" and (_heading(item.text) == section or item.note == "Native section heading") and section not in found:
             if section not in order:
                 order.append(section)
             # Floating text boxes can put an address footer, heading and large
@@ -128,7 +130,7 @@ def design_profile(profile, inspection, mappings, overrides=()):
             # a section does not make that whole paragraph a usable title.
             title = re.sub(r"^\s*(?:Section\s+)?\d+[.\s:–-]*", "", item.text, flags=re.I).strip()
             title = re.sub(r"[\s\n]+\d+[.\s]*$", "", title).strip()
-            if not title or len(title) > 90 or re.search(r"[\d@|\n]", title):
+            if _heading(item.text) != section or not title or len(title) > 90 or re.search(r"[\d@|\n]", title):
                 title = next(s.title for s in skeleton if s.key == section)
             found[section] = title
         if slot:

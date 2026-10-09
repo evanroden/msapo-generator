@@ -6,30 +6,69 @@ base_commit: 6ffaa1577f491694bd63950acd3a5838600368a2
 
 # Monthly report implementation checkpoint
 
-Latest work (2026-10-09): native ENFRA master layout, based on PR #89 merge
-`f0e7fa32a20d95a9ae7338060397d9de34fab42c`. PR #89's simplification is live;
-its exact-head and merged-main CI passed 1353 tests with zero skips. PR #88
-loaded the reviewed directory: 40 contracts, 108 sites, 555 contact assignments.
+**Owner's latest direction, October 9:** wrap up and deploy the completed work
+for owner testing now, with remaining fidelity defects documented for the next
+LLM. This supersedes the earlier PR #91 hold described below. Read
+[the current handoff](HANDOFF_MONTHLY_REPORT_2026-10-09.md) first. Final deployment
+and test evidence is recorded in PR #91; unfinished prototypes are kept separately.
 
-The owner requires completed-report replay as the acceptance test: start fresh,
-supply the known report's data through the builder, generate Word/PDF, and compare
-every page with the reference. The generic renderer is not an acceptable match.
-Native master storage/version pinning, advanced-only master replacement, fresh
-report selection and shared output/preview routing are implemented locally.
-Source documents and private runtime data remain outside Git.
+Latest work (2026-10-09): the native-layout release is live. PR #90 merged as
+`a26c691c0b427c2373a902a72c3f4b728b3c595c`. Final feature CI and merged-main CI
+both passed 1424 tests, zero skips, plus production Docker build/health checks.
+The public app confirmed **Current master: version 1** and successful master
+installation using the reviewed UMMC August reference. No monthly draft was saved
+under the maintenance actor. Private references/runtime data stay outside Git.
 
-Stable-renderer acceptance now passes: LibreOffice 24.2 with the correct fonts
-produces 45 pages, with repeat exports identical on every page. Generated output
-matches the source Word rendering on 43 pages; on the other two pages the only
-changed pixels are the three intentionally removed Cost labels. The supplied PDF
-has the same normalized text on all 45 pages, with small export-position offsets;
-the earlier claim that it was a different content version is withdrawn.
-Actual AppTest Generate produces both files and a snapshot without errors. New
-production/CI configuration fixes the renderer release line and font mappings;
-CI also builds and health-checks the production image. Full final-head CI,
-fresh/changed input and live-preview checks, then production deployment/master
-installation are the remaining release steps. PR #90 is not deployed yet.
-See [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
+UMMC acceptance: actual application Generate produced 45 pages, with zero pixel
+changes outside three intentionally removed Cost labels compared with the source
+Word rendering under LibreOffice 24.2 and verified fonts. Repeat renders match.
+The supplied PDF has the same normalized text on all 45 pages, with small export
+position offsets; the earlier different-content claim was withdrawn.
+
+The owner then specified an ordered single-page editing workflow and supplied ten
+reference reports, including current September UMMC and Unity/USH files. Work is
+on `feat/monthly-report-ordered-workflow`, based on PR #90. Implemented locally:
+selected-contract/multiple-site contacts inline, removal of AM logo controls,
+all report sections in order with queued live previews, upload-first activity/
+capital/proposals, visible Copilot, protected manual edits, training matrix and
+monthly wizard, and photo-decode/preview failure containment. A legacy imported
+report keeps its own native design ahead of the company master; explicit pins
+remain authoritative. Replacement cover photos retain their native frame.
+
+PR #91 checkpoint `c7e63ca` passed 1600 tests with zero skips and the container
+build/health gate. Later fixes still require final-head CI. Both September
+continuations preserve 39 pages with zero pixel differences outside three Cost
+labels deliberately removed from each report, measured against source Word
+renderings under the same stable converter. The broader source set also reveals
+conversion defects in unmodified Portland, RGH and Central CT files; authentic
+Word/PDF fidelity for every supplied variant is not established. Do not claim
+all ten references pass. The valid-photo crash was not
+reproduced; the confirmed malformed-photo crash and stale preview paths are fixed.
+The owner confirmed authentic PDF fidelity is a release requirement; PR #91
+remains held. Both SmartArt branches now survive Eastern/RGH import with exact
+diagram parts, and independent removal tests prevent stale chart leakage. The
+Carlito/Caladea-only font control matches all authentic UMMC text baselines; a
+broader Narrow replacement was rejected. Unity cover header handling is isolated,
+while remaining title, pagination and metafile defects still require correction.
+Paired design references now pin measured PDF behavior independently of old
+drafts. Safe vector review/import recovers Eastern's two inventory tables; the
+current full export still needs comparison. UMMC's official output preserves
+all page/image geometry, bookmarks and link targets/rectangles, with only
+intentional Cost-label changes against the source rendering. Version 2 measures
+divider image crop and geometry independently, enabling the Unity wrap fix while
+preserving UMMC. Version 3 independently measures divider title color, preserving
+UMMC's black titles and restoring proven white titles for Unity and Eastern.
+Existing design pins remain immutable. Cover typography, remaining Word-export
+pagination and divider layering still hold release.
+Version 4's actual install controls now align Unity/Eastern cover baselines to
+within 0.14 points while preserving UMMC's native baseline positions. The fresh
+master audit also found generic table schemas replacing native column grids;
+that initialization defect is being corrected. Shared conversion locking and
+automatic preview contention retry are implemented. Latest-head CI is pending;
+`381c863` passed container checks but timed out downloading test prerequisites,
+so the bounded test-job allowance is now 45 minutes.
+See [ordered workflow notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md)
+and [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
 
 Latest work: continuing simplification on `feat/monthly-report-focused-editing`,
 based on PR #86 merge `66f832f3f19f9ae4c67d4c7753a72b09e4b21790`.

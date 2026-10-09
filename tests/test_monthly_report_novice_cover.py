@@ -42,21 +42,20 @@ def test_cover_uploads_are_named_retained_and_make_replacement_choice_possible(m
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *a, **kw: incoming.get(label) or real_upload(label, *a, **kw))
     app = app_for("cover")
     next(w for w in app.radio if w.label == "What would you like to do?").set_value("Edit text or change pictures").run()
-    assert [w.label for w in app.get("file_uploader")] == ["New cover photograph", "New client logo", "New ENFRA logo"]
-    incoming["New client logo"] = picture()
+    assert [w.label for w in app.get("file_uploader")] == ["New cover photograph"]
     incoming["New cover photograph"] = picture("green")
     app.run()
     next(w for w in app.radio if w.label.startswith("Some content could not")).set_value("I uploaded clear replacements").run()
     assert not app.error and not app.exception
-    assert {slot for slot, _ in app.session_state["plans"]["cover"]["new_assets"]} == {"cover_photo", "client_logo"}
+    assert {slot for slot, _ in app.session_state["plans"]["cover"]["new_assets"]} == {"cover_photo"}
     incoming.clear()
     next(w for w in app.radio if w.label == "What would you like to do?").set_value("Keep and review").run()
-    assert len(app.session_state["plans"]["cover"]["new_assets"]) == 2
+    assert len(app.session_state["plans"]["cover"]["new_assets"]) == 1
     next(w for w in app.checkbox if w.label.startswith("This section is ready")).check().run()
     plan = app.session_state["plans"]["cover"]
     inspection = DocxInspection("synthetic", (ImportItem("unsupported", "unsupported", "word/document.xml", 1, 2, ""),), (), (), 2)
     mapped, _ = build_section_import("unused", inspection, (plan,))
-    assert {block.key for block in mapped.blocks} == {"cover_photo", "client_logo"}
+    assert {block.key for block in mapped.blocks} == {"cover_photo"}
 
 
 def test_kept_complete_chart_and_new_outage_picture_both_reach_saved_design(monkeypatch, tmp_path):
@@ -103,3 +102,24 @@ def test_new_cover_logo_changes_only_that_picture_and_preserves_footer(monkeypat
     logo = next(block for block in mapped.blocks if block.key == "client_logo")
     assert logo.asset_hashes == (hashlib.sha256(new_image.data).hexdigest() + "." + new_image.extension,)
     assert next(block for block in mapped.blocks if block.key == "footer_text").text == "Synthetic site address"
+
+
+def test_import_cover_retains_identified_logos_without_manager_logo_choices():
+    app = AppTest.from_string('''
+import streamlit as st
+from pathlib import Path
+from app.monthly_report_import import ImportItem
+from app.monthly_report_sections import ImportSection
+from app.monthly_report_section_ui import _section_card
+from app.monthly_report_ui import _field
+from app.monthly_report_model import ReportPeriod
+items=tuple(ImportItem(slot, "image", "word/document.xml", 1, 1, "cover", suggested_slot=slot, image_part=slot+".png") for slot in ("brand_logo", "client_logo"))
+plans=st.session_state.setdefault("plans", {})
+_section_card(ImportSection("cover", "Cover", items), Path("unused.docx"), None, ReportPeriod(2026,9), "test", _field, plans, True)
+''', default_timeout=20).run()
+    assert not app.exception
+    assert set(app.session_state["plans"]["cover"]["selected"]) == {"brand_logo", "client_logo"}
+    assert not any(w.label == "Use this picture" for w in app.radio)
+    next(w for w in app.radio if w.label == "What would you like to do?").set_value("Edit text or change pictures").run()
+    assert [w.label for w in app.get("file_uploader")] == ["New cover photograph"]
+    assert not any(w.label == "Use this picture" for w in app.radio)

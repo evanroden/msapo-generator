@@ -72,7 +72,7 @@ def test_preserves_page_chrome_styles_geometry_and_original_raster(tmp_path):
     assert generated.tables[0].cell(1, 0).text == 'Steam'
 
 
-def test_external_hyperlink_retains_visible_text_without_network_relation(tmp_path):
+def test_external_web_hyperlink_retains_visible_text_and_passive_relation(tmp_path):
     path = sample(tmp_path)
     def mutate(parts):
         add_relation(parts, 'rLink', 'hyperlink', 'https://invalid.example/', True)
@@ -84,8 +84,8 @@ def test_external_hyperlink_retains_visible_text_without_network_relation(tmp_pa
     rewrite(path, mutate)
     with ZipFile(BytesIO(passive_docx(path))) as output:
         assert b'Visible hyperlink label' in output.read('word/document.xml')
-        assert b'https://invalid.example' not in output.read('word/_rels/document.xml.rels')
-        assert b'rLink' not in output.read('word/document.xml')
+        assert b'https://invalid.example' in output.read('word/_rels/document.xml.rels')
+        assert b'rLink' in output.read('word/document.xml')
 
 
 @pytest.mark.parametrize('name', ['object', 'altChunk', 'control'])
@@ -227,7 +227,8 @@ def test_orphan_notes_are_not_hidden_in_output(tmp_path, keep_reference):
             assert b'Unreferenced old note' not in output.read('word/footnotes.xml')
 
 
-def test_native_raster_image_layers_are_visible_content_not_edit_history(tmp_path):
+@pytest.mark.parametrize("relationship_kind", ["image", "hdphoto"])
+def test_native_raster_image_layers_are_visible_content_not_edit_history(tmp_path, relationship_kind):
     path = sample(tmp_path)
     def mutate(parts):
         drawing = 'http://schemas.openxmlformats.org/drawingml/2006/main'
@@ -236,6 +237,12 @@ def test_native_raster_image_layers_are_visible_content_not_edit_history(tmp_pat
         blip = root.find('.//{' + drawing + '}blip')
         props = etree.SubElement(etree.SubElement(etree.SubElement(blip, '{' + drawing + '}extLst'), '{' + drawing + '}ext', uri='synthetic-layer'), '{' + editing + '}imgProps')
         etree.SubElement(props, '{' + editing + '}imgLayer', {'{' + R + '}embed': blip.get('{' + R + '}embed')})
+        if relationship_kind == 'hdphoto':
+            rels = etree.fromstring(parts['word/_rels/document.xml.rels'])
+            for rel in rels:
+                if rel.get('Id') == blip.get('{' + R + '}embed'):
+                    rel.set('Type', R + '/hdphoto')
+            parts['word/_rels/document.xml.rels'] = etree.tostring(rels)
         parts['word/document.xml'] = etree.tostring(root)
     rewrite(path, mutate)
     with ZipFile(BytesIO(passive_docx(path))) as output:
@@ -322,3 +329,42 @@ def test_extended_properties_keep_only_application_compatibility_identity(tmp_pa
         for name in ('Application', 'AppVersion'):
             assert root.findtext('{' + namespace + '}' + name) == before.findtext('{' + namespace + '}' + name)
         assert all(b'old-private-contact' not in output.read(name) for name in output.namelist() if name.endswith('.xml'))
+
+
+def test_default_image_content_type_matches_uppercase_extension(tmp_path):
+    path = sample(tmp_path)
+    def mutate(parts):
+        parts['word/media/image1.PNG'] = parts.pop('word/media/image1.png')
+        rels = parts['word/_rels/document.xml.rels'].replace(b'image1.png', b'image1.PNG')
+        parts['word/_rels/document.xml.rels'] = rels
+    rewrite(path, mutate)
+    with ZipFile(BytesIO(passive_docx(path))) as result:
+        assert result.read('word/media/image1.PNG').startswith(b'\x89PNG')
+        types = etree.fromstring(result.read('[Content_Types].xml'))
+        assert any(n.get('PartName') == '/word/media/image1.PNG' and n.get('ContentType') == 'image/png' for n in types)
+
+
+def test_static_wmf_rejects_driver_escapes_and_invalid_nested_metafile():
+    import struct
+    from app.monthly_report_native_package import _static_wmf
+    def record(kind, data=b''):
+        return struct.pack('<IH', 3 + len(data)//2, kind) + data
+    def wmf(records):
+        data = b''.join(records + [record(0)])
+        maximum = max(struct.unpack_from('<I', item)[0] for item in records + [record(0)])
+        return struct.pack('<HHHIHIH', 1, 9, 0x300, (18 + len(data))//2, 0, maximum, 0) + data
+    safe = wmf([record(0x103, b'\x01\x00')])
+    assert _static_wmf(safe)
+    assert not _static_wmf(safe[:-2])
+    assert not _static_wmf(wmf([record(0x626, struct.pack('<HH', 9, 0))]))
+    header = bytearray(88); struct.pack_into('<II', header, 0, 1, 88)
+    header[40:44] = b' EMF'; struct.pack_into('<II', header, 48, 108, 2)
+    emf = bytes(header) + struct.pack('<IIIII', 14, 20, 0, 0, 20)
+    def embedded(payload):
+        metadata = struct.pack('<HHIIIHIIIII', 15, 34 + len(payload), 0x43464d57, 1, 0x10000,
+                               0, 0, 1, len(payload), 0, len(payload))
+        return wmf([record(0x626, metadata + payload)])
+    assert _static_wmf(embedded(emf))
+    unsafe = bytearray(emf); struct.pack_into('<I', unsafe, 88, 105)
+    assert not _static_wmf(embedded(bytes(unsafe)))
+    assert not _static_wmf(embedded(emf) + b'\x00\x00')

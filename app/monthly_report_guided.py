@@ -34,23 +34,6 @@ def _standing_specs(section):
     return tuple(b for b in section.blocks if b.key not in monthly)
 
 
-def _section_choice(sections, prefix, field, *, monthly):
-    choices = [s for s in sections if s.included and (_monthly_specs(s) if monthly else _standing_specs(s))]
-    if not choices:
-        st.info("No sections need updates here.")
-        return None
-    key = field(prefix + ("_monthly_section" if monthly else "_standing_section"), choices[0].key)
-    by_key = {s.key: s for s in choices}
-    if st.session_state[key] not in by_key:
-        st.session_state[key] = choices[0].key
-    chosen = st.selectbox("Section to update" if monthly else "Site information to update", list(by_key),
-                          format_func=lambda value: by_key[value].title, key=key)
-    section = by_key[chosen]
-    st.subheader(section.title)
-    st.caption(section_help(section.key).guidance)
-    return section
-
-
 def _forget_block_widgets(prefix, keys):
     starts = tuple(prefix + "_edit_" + key + "_" for key in keys)
     for key in list(st.session_state):
@@ -71,7 +54,7 @@ def _apply_prepared(draft, blocks, additions, incoming_specs, prefix):
         for key, block in additions.items():
             incoming = incoming_specs.get(key, specs.get(key))
             if block.rows and blocks.get(key) and blocks[key].rows and specs.get(key) != incoming:
-                raise ValueError("The existing table has different columns. Review it in the advanced editor; nothing was replaced.")
+                raise ValueError("The existing table has different columns. Match the uploaded table headings to the current section and try again; nothing was replaced.")
             proposed[key] = merge_report_block(blocks.get(key), block, specs.get(key), incoming)
     except ValueError as exc:
         st.error(str(exc))
@@ -109,30 +92,27 @@ def review_message(check, draft):
     follow_up = next((item for item in draft.follow_ups if item.key == key), None)
     if follow_up:
         category = "proposals" if follow_up.category == "proposal" else "equipment issues"
-        return check.message.replace(key, category) + " Open " + ("Report to include the section." if review_destination(draft, key)[0] == STEPS[0] else f"This month’s work → {category.capitalize()} to check this item.")
+        return check.message.replace(key, category) + f" Check this item in {category.capitalize()} above."
     label = readable_label(key) if key else "this report"
     section = next((s.title for s in draft.sections if any(b.key == key for b in s.blocks)), "")
-    monthly = review_destination(draft, key)[0] == STEPS[1]
-    location = "This month’s work" if monthly else "Site information"
-    if section and monthly:
-        location += " → " + section
-    elif key:
-        location += " → " + label
+    location = section or "the report fields above"
+    if key and not section:
+        location = label
     if key in {"issues", "proposals"} and draft.follow_ups:
-        location = "This month’s work → " + ("Equipment Performance Issues" if key == "issues" else "Pending & Declined Proposals")
+        location = "Equipment Performance Issues" if key == "issues" else "Pending & Declined Proposals"
     if check.code == "required":
         return f"Add {label.lower()} in {location}."
     if check.code in {"review", "ai_evidence", "ai_number"}:
-        return f"Check the wording and linked evidence for {label.lower()} in This month’s work, then confirm its review." + (" Correct any unsupported numbers." if check.code == "ai_number" else "")
+        return f"Check the wording and linked evidence for {label.lower()} above, then confirm its review." + (" Correct any unsupported numbers." if check.code == "ai_number" else "")
     if check.code == "client_pages":
         return f"Review the new or changed pictures in {label} above and confirm they are relevant and have no prices. Unchanged reviewed pictures stay ready."
     if check.code == "library_save":
-        return f"Finish confirming the shared replacement for {label.lower()} in the advanced editor, or use it for this report only."
+        return f"The shared replacement for {label.lower()} needs confirmation before it can be saved. Keep the existing saved content to continue."
     message = check.message
     if key:
         message = message.replace(key, label).replace(key.replace("_", " "), label.lower())
     if check.code in {"placeholder", "pricing", "period"} and key:
-        message += " Open " + ("Report" if key == "cover" else location) + " to make the correction."
+        message += " Correct it in " + ("the cover details" if key == "cover" else location) + " above."
     return message
 
 
@@ -162,17 +142,30 @@ def complete_guided_sections(draft):
     Older partial designs gain the missing sections and standard block slots;
     this guided working copy never requires content just to retain a heading.
     """
-    full_profile = replace(draft.profile, section_order=(), section_block_order=(), excluded_sections=())
+    from app.monthly_report_model import default_sections, optional_sections
+    native_order = (draft.profile.section_order if draft.profile.template.startswith(
+        ("enfra_native:", "enfra_master:")) else ())
+    optional_keys = {"rfi", *(section.key for section in optional_sections())}
+    allowed = {section.key for section in default_sections() if section.key not in optional_keys}
+    allowed.update(key for key in native_order if key in optional_keys)
+    if not native_order:
+        allowed.add("rfi")
+        allowed.update(section.key for section in draft.sections if section.key in optional_keys)
+    # The design owns optional sections and their position. Missing core
+    # sections still remain available, including deliberately blank sections.
+    order = tuple(dict.fromkeys((*native_order, *(section.key for section in draft.sections),
+                                 *(section.key for section in default_sections()))))
+    order = tuple(key for key in order if key in allowed)
+    full_profile = replace(draft.profile, section_order=order, section_block_order=(), excluded_sections=())
     standard = {section.key: section for section in profile_sections(full_profile)}
+    existing = {section.key: section for section in draft.sections}
     sections = []
-    for section in draft.sections:
+    for key in order:
+        section = existing.get(key, standard[key])
         present = {block.key for block in section.blocks}
-        additions = tuple(block for block in standard[section.key].blocks if block.key not in present) if section.key in standard else ()
+        additions = tuple(block for block in standard[key].blocks if block.key not in present)
         sections.append(replace(section, included=True,
                                 blocks=tuple(replace(block, required=False) for block in (*section.blocks, *additions))))
-    present = {section.key for section in sections}
-    sections.extend(replace(section, included=True, blocks=tuple(replace(block, required=False) for block in section.blocks))
-                    for key, section in standard.items() if key not in present)
     return replace(draft, sections=tuple(sections))
 
 
@@ -301,29 +294,103 @@ def client_table_draft(draft):
     return replace(draft, sections=tuple(sections), blocks=tuple(blocks.values())), tuple(dict.fromkeys(removed))
 
 
+def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field):
+    """Edit one report section without splitting standing and monthly content."""
+    if section.key in {"organization", "subcontractors", "training"} and not draft.prepared_by.strip():
+        st.info("Enter Prepared by above to view or edit saved contact and team information.")
+        return draft, blocks
+    from app.monthly_report_sections import readable_label
+    draft = replace(draft, blocks=tuple(blocks.values()))
+    profile, period = draft.profile, draft.period
+    destination = {"activity": "activity_summary", "capital": "capital_renewal", "proposals": "proposals"}.get(section.key)
+    if destination:
+        from app.monthly_report_upload_ui import render_structured_uploads
+        sources, additions, incoming_specs = render_structured_uploads(
+            profile, period, prefix, field, destination, blocks=blocks, assets=assets)
+        draft = replace(draft, sources=sources)
+        if additions:
+            # Structured readers return the updated destination block; their
+            # attachment assets alone are incremental. Never append the prior
+            # text/table a second time when applying a later upload.
+            for key, block in additions.items():
+                blocks[key] = merge_blocks(blocks.get(key), block) if key == "improvements" else block
+            _forget_block_widgets(prefix, additions)
+    local_destination = {"maintenance": "vendor_reports", "water": "water_reports", "mbcx": "mbcx_report", "scorecards": "utility_analysis"}.get(section.key)
+    if local_destination:
+        from app.monthly_report_upload_ui import render_section_uploads
+        sources, additions, incoming_specs = render_section_uploads(
+            profile, period, prefix, field, local_destination, blocks=blocks, assets=assets)
+        draft = replace(draft, sources=sources)
+        if additions:
+            draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
+    if section.key == "activity":
+        if st.checkbox("Add work-order spreadsheets", key=field(prefix + "_batch_files_open", False)):
+            from app.monthly_report_upload_ui import render_uploads
+            sources, additions, incoming_specs = render_uploads(profile, period, prefix, field)
+            draft = replace(draft, sources=sources)
+            if additions and st.button("Add prepared pages and tables to this draft", key=prefix + "_apply_uploads"):
+                draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
+        from app.monthly_report_ai_ui import render_drafting
+        # One shared evidence workspace: rendering this once avoids duplicated
+        # source/job widget identities when every report section is visible.
+        draft, blocks = render_drafting(draft, blocks, prefix, field, allowed_keys={spec.key for spec in section.blocks})
+    if section.key != "activity":
+        from app.monthly_report_ai_ui import edit_linked_paragraphs
+        blocks = edit_linked_paragraphs(draft, blocks, prefix, field, {spec.key for spec in section.blocks})
+    specs.update({b.key: b for current in draft.sections for b in current.blocks})
+    if section.key in ("issues", "proposals"):
+        from app.monthly_report_followups import render_followups
+        draft = render_followups(draft, prefix, field, category="issue" if section.key == "issues" else "proposal")
+    handled = set()
+    if section.key == "training":
+        from app.monthly_report_training_ui import render_training
+        blocks = render_training(draft, blocks, prefix, field)
+        handled.add("training_summary")
+    if section.key == "organization":
+        from app.monthly_report_organization_ui import render_organization
+        blocks = render_organization(draft, blocks, specs, prefix, assets, field,
+            lambda spec, block: _edit_content(spec, block, state, prefix, assets, field, draft), show_preview=False)
+        handled.update(spec.key for spec in _standing_specs(section))
+    if section.key == "mbcx":
+        from app.monthly_report_mbcx_ui import render_mbcx
+        status = blocks.get("mbcx_status", ResolvedBlock("mbcx_status", "This month"))
+        pages = blocks.get("mbcx_report", ResolvedBlock("mbcx_report", "This month"))
+        blocks["mbcx_status"], blocks["mbcx_report"] = render_mbcx(
+            status, pages, prefix, field,
+            lambda block: _edit_content(specs["mbcx_report"], block, state, prefix, assets, field, draft))
+        blocks["mbcx_status"] = _review_carried_update(blocks["mbcx_status"], period, prefix)
+        handled.update(("mbcx_status", "mbcx_report"))
+    for original_spec in section.blocks:
+        if original_spec.key in handled:
+            continue
+        spec = specs[original_spec.key]
+        block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
+        st.markdown("**" + readable_label(spec.key) + "**")
+        if spec.key == "thermal_capacity":
+            from app.monthly_report_capacity_ui import render_capacity
+            before = block
+            draft, block = render_capacity(draft, block, prefix, field)
+            if block != before:
+                _forget_block_widgets(prefix, {spec.key})
+            spec = next((item for current in draft.sections for item in current.blocks if item.key == spec.key), spec)
+            specs[spec.key] = spec
+        if spec.key in ("contact_matrix", "subcontractor_matrix"):
+            from app.monthly_report_visual_ui import edit_contacts
+            block = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
+        else:
+            block = _edit_content(spec, block, state, prefix, assets, field, draft)
+        if spec.key in MONTHLY_EDIT_KEYS:
+            block = _review_carried_update(block, period, prefix)
+        blocks[spec.key] = block
+    return draft, blocks
+
+
 def render_guided_workflow(browser_token, browser_timezone, field, move):
-    if st.session_state.get("report_branding_manage", False):
-        from app.monthly_report_branding_ui import render_branding
-        render_branding(field)
-        return
-    from app.monthly_report_directory_ui import render_directory
-    if st.session_state.get("report_directory_manage", False):
-        render_directory(field)
-        return
-    # The legacy detailed editor remains available for layout/reordering; it is
-    # not a demo and is not the primary asset-manager experience.
-    if st.session_state.get("report_advanced", False):
-        if st.button("Return to guided report", key="report_exit_advanced"):
-            st.session_state["report_advanced"] = False
-            st.rerun()
-        from app.monthly_report_editor import render_profile_workflow
-        render_profile_workflow(browser_token, browser_timezone, field, move)
-        return
     last_contract, last_profile = remembered_report_preferences(browser_token)
     with st.expander("First time here? How to finish a monthly report"):
-        st.write("1. Choose your contract and the sites that belong in **one** report.\n2. Use a saved design, the general template, or a starting report.\n3. Choose a section and update it beside its live preview. Every section stays in the report, including sections you leave blank.\n4. Review the whole report, then download DOCX and PDF.")
+        st.write("1. Choose your contract and the sites that belong in **one** report.\n2. Use a saved design, the general template, or a starting report.\n3. Scroll through the sections in report order and update them beside their previews. Every section stays in the report, including sections you leave blank.\n4. Review the whole report, then download DOCX and PDF.")
         st.write("For vendor and chemical reports, check each page preview, then choose **Include page and continue** or **Leave page out and continue**. The next page needing review opens for you. Prices, legal-only pages and blank/signature-only pages do not belong in the client report.")
-        st.caption("You can move between steps in any order. Save progress before leaving; return to the same sites and month to continue. The current section updates beside its fields. Review & download shows the whole report.")
+        st.caption("You can edit the sections in any order. Save progress before leaving; return to the same sites and month to continue. Each section updates beside its fields. Review and download is at the bottom.")
     with st.expander("What will be remembered?"):
         st.write("**For these sites:** saved report designs, logos, org charts, contacts and monthly drafts are shared. Anyone choosing the same contract and exact sites can continue the saved report, even on a different device.")
         st.write("**On this browser:** after you save, we remember your last contract/site selection and the name you entered for that report. A different browser, private browsing or cleared browser data may require selecting them again. Your reports remain saved.")
@@ -356,16 +423,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.warning("Consolidation stopped. Original paths and report history remain available; completed files can safely be reused when you retry.")
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
     contract = choose_contract(last_contract, field)
-    with st.expander("Set up or update the contract’s site/contact list (optional)"):
-        st.caption("Use a contract directory workbook to suggest sites and contacts. Each report still confirms its own sites.")
-        if st.button("Manage contract and site directory", key="report_directory_open"):
-            st.session_state["report_directory_manage"] = True
-            st.rerun()
-    with st.expander("Shared contract logos (optional)"):
-        st.caption("Current shared logos are used on the contract cards and offered in reports. Change a report's logos in Report → Cover and report details.")
-        if st.button("Manage shared logos", key="report_branding_open"):
-            st.session_state["report_branding_manage"] = True
-            st.rerun()
     if not contract:
         return
     period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
@@ -452,151 +509,63 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         from app.monthly_report_directory import apply_defaults
         draft = apply_defaults(draft)
         st.session_state[prefix + "_directory_defaults_attempted"] = True
+    from app.monthly_report_directory_ui import render_selected_directory
+    updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix)
+    if updated_contacts is not None:
+        from app.monthly_report_directory import apply_contacts
+        from app.monthly_report_directory_ui import _resume_contacts
+        draft = apply_contacts(draft, updated_contacts)
+        _resume_contacts(draft, prefix)
     if candidate != profile:
         st.caption("The updated group name/scope will be remembered after you save it.")
         if st.button("Save group name", disabled=not prepared.strip(), key=prefix + "_rename_save"):
             library.save_profile(candidate, expected_revision=state.revision, actor=prepared, confirmed=True)
             st.session_state[draft_key] = replace(draft, profile=candidate)
             st.rerun()
-    step_key = field(prefix + "_step", STEPS[0])
-    if completed_setup == selected:
-        start_standing = st.session_state.pop("report_start_at_site_information", None) == selected
-        st.session_state[step_key] = STEPS[0] if start_standing else STEPS[1]
-    step = st.radio("Report steps", STEPS, horizontal=True, key=step_key)
-    def go_to_step(value):
-        st.session_state[step_key] = value
-
     save_status = st.empty()
     from app.monthly_report_asset_review import refresh_asset_source_context
+    from app.monthly_report_section_preview_ui import render_section_preview
     blocks = {b.key: refresh_asset_source_context(b, draft.sources) for b in draft.blocks}
     specs = {b.key: b for s in draft.sections for b in s.blocks} | {b.key: b for b in layout_blocks()}
-    preview_section = "cover" if step == STEPS[0] else None
-    if step in STEPS[:3]:
-        editor_column, preview_column = st.columns(2, gap="large")
-    else:
-        editor_column, preview_column = st.container(), None
+    from app.monthly_report_sources import ingest, source_bytes
+    if prefix + "_evidence" not in st.session_state and draft.sources:
+        st.session_state[prefix + "_evidence"] = tuple(
+            replace(ingest(profile, source.filename, source_bytes(profile, source))[0], source=source)
+            for source in draft.sources
+        )
+    st.caption("Work down the report in order. Existing information stays in place; update only what changed.")
+    editor_column, preview_column = st.columns(2, gap="large")
     with editor_column:
-        if step == STEPS[0]:
-            from app.monthly_report_cover_ui import render_cover
-            blocks = render_cover(draft, blocks, prefix, assets, field,
-                                  lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref))
-            st.button("Continue to this month’s work", key=prefix + "_next_work", type="primary", on_click=go_to_step, args=(STEPS[1],))
-            from app.monthly_report_section_ui import render_section_setup
-            render_section_setup(contract, period, prepared, field, state=state,
-                                 working_draft=replace(draft, blocks=tuple(blocks.values())),
-                                 working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
-            with st.expander("Advanced layout, shared assets and history", key=prefix + "_advanced_settings", on_change="rerun") as advanced:
-                if advanced.open:
-                    from app.monthly_report_designs_ui import render_design_settings
-                    render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
-                st.caption("Save your progress first. Detailed controls include section order, shared asset replacement, library history and restoration.")
-                if st.button("Open advanced editor", key=prefix + "_advanced"):
-                    st.session_state["report_advanced"] = True
-                    st.rerun()
-        elif step == STEPS[1]:
-            from app.monthly_report_sources import ingest, source_bytes
-            if prefix + "_evidence" not in st.session_state and draft.sources:
-                st.session_state[prefix + "_evidence"] = tuple(replace(ingest(profile, s.filename, source_bytes(profile, s))[0], source=s) for s in draft.sources)
-            section = _section_choice(draft.sections, prefix, field, monthly=True)
-            if section:
-                preview_section = section.key
-                relevant = _monthly_specs(section)
-                local_destination = {"maintenance": "vendor_reports", "water": "water_reports", "mbcx": "mbcx_report", "scorecards": "utility_analysis"}.get(section.key)
-                if local_destination:
-                    from app.monthly_report_upload_ui import render_section_uploads
-                    report_sources, additions, incoming_specs = render_section_uploads(
-                        profile, period, prefix, field, local_destination, blocks=blocks, assets=assets)
-                    draft = replace(draft, sources=report_sources)
-                    if additions:
-                        draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
-                elif section.key == "activity":
-                    if st.toggle("Add work-order spreadsheets or other source files", key=field(prefix + "_batch_files_open", False)):
-                        from app.monthly_report_upload_ui import render_uploads
-                        report_sources, additions, incoming_specs = render_uploads(profile, period, prefix, field)
-                        draft = replace(draft, sources=report_sources)
-                        if additions and st.button("Add prepared pages and tables to this draft", key=prefix + "_apply_uploads"):
-                            draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
-                report_sources = tuple(c.source for c in st.session_state.get(prefix + "_evidence", ()))
-                draft = replace(draft, sources=report_sources)
-                specs.update({b.key: b for s in draft.sections for b in s.blocks})
-                if section.key == "activity":
-                    from app.monthly_report_sources import action_evidence
-                    action_sources = [s for s in report_sources if s.classification in ("Vendor service", "Water treatment") and s.actions.strip()]
-                    if action_sources:
-                        if any(action_evidence(s)[1] for s in action_sources):
-                            st.info("Some suggested work could not be matched to an included source page. Check it in the source before entering it here.")
-                        if any(action_evidence(s)[0] for s in action_sources):
-                            with st.expander("Completed work suggested by your service files"):
-                                proposed = activity_from_sources(report_sources, ResolvedBlock("activity_summary", "This month"))
-                                st.text(proposed.text)
-                                reviewed_actions = st.checkbox("I checked the suggested completed work against the included source pages", key=prefix + "_actions_ok_" + _signature([s.fingerprint for s in report_sources]))
-                                if st.button("Add reviewed work to the activity summary", key=prefix + "_add_actions", disabled=not reviewed_actions):
-                                    activity = blocks.get("activity_summary", ResolvedBlock("activity_summary", "This month"))
-                                    blocks["activity_summary"] = activity_from_sources(report_sources, activity)
-                                    _forget_block_widgets(prefix, {"activity_summary"})
-                from app.monthly_report_ai_ui import render_drafting
-                draft, blocks = render_drafting(draft, blocks, prefix, field, allowed_keys={b.key for b in relevant})
-                if section.key in ("issues", "proposals"):
-                    from app.monthly_report_followups import render_followups
-                    draft = render_followups(draft, prefix, field, category="issue" if section.key == "issues" else "proposal")
-                if section.key == "mbcx":
-                    from app.monthly_report_mbcx_ui import render_mbcx
-                    status = blocks.get("mbcx_status", ResolvedBlock("mbcx_status", "This month"))
-                    pages = blocks.get("mbcx_report", ResolvedBlock("mbcx_report", "This month"))
-                    blocks["mbcx_status"], blocks["mbcx_report"] = render_mbcx(
-                        status, pages, prefix, field,
-                        lambda block: _edit_content(specs["mbcx_report"], block, state, prefix, assets, field, draft))
-                    blocks["mbcx_status"] = _review_carried_update(blocks["mbcx_status"], period, prefix)
-                else:
-                    from app.monthly_report_sections import readable_label
-                    for original_spec in relevant:
-                        spec = specs[original_spec.key]
-                        block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
-                        st.markdown("**" + readable_label(spec.key) + "**")
-                        if spec.key == "thermal_capacity":
-                            from app.monthly_report_capacity_ui import render_capacity
-                            before_capacity = block
-                            draft, block = render_capacity(draft, block, prefix, field)
-                            if block != before_capacity:
-                                _forget_block_widgets(prefix, {"thermal_capacity"})
-                            spec = next((item for current in draft.sections for item in current.blocks if item.key == spec.key), spec)
-                            specs[spec.key] = spec
-                        blocks[spec.key] = _edit_content(spec, block, state, prefix, assets, field, draft)
-                        blocks[spec.key] = _review_carried_update(blocks[spec.key], period, prefix)
-        elif step == STEPS[2]:
-            st.subheader("Update what changed at your sites")
-            st.caption("Unchanged content stays in the report. Open Change only when people, contacts or procedures need an update.")
-            section = _section_choice(draft.sections, prefix, field, monthly=False)
-            if section:
-                preview_section = section.key
-                if section.key == "organization":
-                    from app.monthly_report_organization_ui import render_organization
-                    blocks = render_organization(draft, blocks, specs, prefix, assets, field,
-                        lambda spec, block: _edit_content(spec, block, state, prefix, assets, field, draft), show_preview=False)
-                    if st.toggle("Compare contacts with the saved directory", key=field(prefix + "_directory_suggestions_open", False)):
-                        from app.monthly_report_directory_ui import review_contacts
-                        review_contacts(replace(draft, blocks=tuple(blocks.values())), prefix, field, assets)
-                else:
-                    from app.monthly_report_visual_ui import edit_contacts
-                    from app.monthly_report_sections import readable_label
-                    for spec in _standing_specs(section):
-                        block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
-                        st.markdown("**" + readable_label(spec.key) + "**")
-                        if spec.key in ("contact_matrix", "subcontractor_matrix"):
-                            blocks[spec.key] = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
-                        else:
-                            blocks[spec.key] = _edit_content(spec, block, state, prefix, assets, field, draft)
-            st.caption("Save progress to keep these changes. Next month reuses site information for these exact sites.")
+        from app.monthly_report_cover_ui import render_cover
+        blocks = render_cover(draft, blocks, prefix, assets, field,
+                              lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref))
+        from app.monthly_report_section_ui import render_section_setup
+        render_section_setup(contract, period, prepared, field, state=state,
+                             working_draft=replace(draft, blocks=tuple(blocks.values())),
+                             working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
+        with st.expander("Report design and version"):
+            from app.monthly_report_designs_ui import render_design_settings
+            render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
+    with preview_column:
+        render_section_preview(replace(draft, blocks=tuple(blocks.values())), "cover", assets, prefix, deferred=True)
+    for section in draft.sections:
+        st.divider()
+        st.subheader(section.title, anchor="report-section-" + section.key)
+        st.caption(section_help(section.key).guidance)
+        editor_column, preview_column = st.columns(2, gap="large")
+        with editor_column:
+            draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field)
+        with preview_column:
+            if section.key in {"organization", "subcontractors", "training"} and not prepared.strip():
+                st.caption("Enter Prepared by above to view saved contact and team pages.")
+            else:
+                render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
     draft = complete_guided_sections(replace(draft, blocks=tuple(blocks.values())))
     footer = blocks.get("footer_text")
     if footer:
         draft = replace(draft, address_line=footer.text if footer.source != "Omit" else "")
     st.session_state[draft_key] = draft
-    if preview_column is not None and preview_section:
-        from app.monthly_report_section_preview_ui import render_section_preview
-        with preview_column:
-            render_section_preview(draft, preview_section, assets, prefix)
     if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
         save_status.success(f"Saved · version {snapshot.revision} · {period.label} · {snapshot.entered_editor or snapshot.draft.prepared_by}")
     elif snapshot:
@@ -634,12 +603,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if package and package.fingerprint != draft.fingerprint:
         st.session_state.pop(prefix + "_package", None)
         package = None
-    if step == STEPS[3]:
+    st.divider()
+    with st.container():
         st.subheader("Review and download")
-        from app.monthly_report_preview import render_preview
-        render_preview(draft, assets, prefix, field)
         from app.monthly_report_editor import review_client_images
-        draft = review_client_images(draft, assets, prefix, field)
+        if prepared.strip():
+            draft = review_client_images(draft, assets, prefix, field)
         st.session_state[draft_key] = draft
         if package and package.fingerprint != draft.fingerprint:
             st.session_state.pop(prefix + "_package", None)
@@ -652,23 +621,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         checks = [check for check in preflight(draft, estimated) if check.code != "empty"]
         if any(c.blocking for c in checks):
             st.info("Complete the items below to unlock your downloads. Sections may remain blank.")
-            for n, (label, target) in enumerate((("Report details", STEPS[0]), ("Update this month’s work", STEPS[1]), ("Update site information", STEPS[2]))):
-                st.button(label, key=prefix + f"_fix_{n}", on_click=go_to_step, args=(target,))
-        destinations_shown = set()
-        def open_section(target, section_key):
-            st.session_state[step_key] = target
-            if section_key:
-                st.session_state[prefix + ("_monthly_section" if target == STEPS[1] else "_standing_section")] = section_key
         for check in checks:
             (st.error if check.blocking else st.warning)(review_message(check, draft))
-            target, section_key = review_destination(draft, check.block_key)
-            if target and (target, section_key) not in destinations_shown and check.code != "client_pages":
-                destinations_shown.add((target, section_key))
-                section = next((s for s in draft.sections if s.key == section_key), None)
-                if section is None or section.included:
-                    st.button("Open " + (section.title if section else "Report details"),
-                              key=prefix + "_open_check_" + (section_key or "report"),
-                              on_click=open_section, args=(target, section_key))
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)

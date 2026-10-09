@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 import posixpath
 import struct
+from urllib.parse import urlsplit
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from defusedxml import ElementTree as SafeET
@@ -25,6 +26,37 @@ NOTE_KINDS = {'footnotes', 'endnotes'}
 XML_KINDS = IMPLICIT | NOTE_KINDS | {'header', 'footer', 'diagramData', 'diagramLayout', 'diagramQuickStyle', 'diagramColors', 'diagramDrawing'}
 REMOVE = {'attachedTemplate', 'updateFields', 'mailMerge', 'dataBinding', 'printerSettings', 'docVars'}
 REJECT = {'object', 'OLEObject', 'altChunk', 'control', 'movie', 'audioFile', 'videoFile', 'contentPart'}
+
+
+def _passive_hyperlink(target):
+    """A clickable web URL is passive; never resolve or fetch its destination."""
+    if (not target or len(target) > 8192 or '\\' in target
+            or any(ord(char) <= 32 or ord(char) == 127 for char in target)):
+        return False
+    try:
+        parsed = urlsplit(target)
+        return (parsed.scheme.lower() in {'http', 'https'} and bool(parsed.hostname)
+                and parsed.username is None and parsed.password is None
+                and (parsed.port is None or 0 < parsed.port < 65536))
+    except ValueError:
+        return False
+
+
+def _visible_hyperlink_text(link):
+    for text in link.iter('{' + W + '}t'):
+        if not (text.text or '').strip():
+            continue
+        run = next((node for node in text.iterancestors() if node.tag == '{' + W + '}r'), None)
+        if run is None:
+            continue
+        properties = run.find('{' + W + '}rPr')
+        if properties is not None and any(
+                flag.tag in {'{' + W + '}vanish', '{' + W + '}webHidden'}
+                and flag.get('{' + W + '}val', 'true').casefold() not in {'0', 'false', 'off'}
+                for flag in properties):
+            continue
+        return True
+    return False
 
 
 def _static_emf(raw):
@@ -70,6 +102,65 @@ def _static_emf(raw):
         if count > declared or (kind == 14 and offset != len(raw)):
             return False
     return kind == 14 and count == declared
+
+
+def _static_wmf(raw):
+    """Accept bounded static WMF drawing records and validated nested EMF only.
+
+    Driver escapes are rejected. The sole supported escape is Microsoft's
+    META_ESCAPE_ENHANCED_METAFILE framing, whose complete embedded stream must
+    independently pass the same static EMF validator as a standalone image.
+    Framing: MS-WMF section 2.3.6.25 (META_ESCAPE_ENHANCED_METAFILE).
+    """
+    if not 24 <= len(raw) <= 32 * 1024 * 1024 or len(raw) % 2:
+        return False
+    start = 0
+    if raw[:4] == b'\xd7\xcd\xc6\x9a':
+        if len(raw) < 46:
+            return False
+        checksum = 0
+        for word in struct.unpack_from('<10H', raw):
+            checksum ^= word
+        if checksum != struct.unpack_from('<H', raw, 20)[0]:
+            return False
+        start = 22
+    kind, header, version, size, objects, maximum, reserved = struct.unpack_from('<HHHIHIH', raw, start)
+    if kind not in {1, 2} or header != 9 or version not in {0x100, 0x300} or size * 2 != len(raw) - start or reserved:
+        return False
+    # Static state, window/viewport, clipping and bitmap drawing records.
+    allowed = {0, 0x1e, 0x103, 0x107, 0x127, 0x12c, 0x20b, 0x20c, 0x416, 0xb41, 0x940}
+    offset, count, largest = start + 18, 0, 0
+    chunks, total, expected, received = [], None, None, 0
+    while offset + 6 <= len(raw):
+        words, function = struct.unpack_from('<IH', raw, offset)
+        length = words * 2
+        if words < 3 or offset + length > len(raw) or count >= 200_000:
+            return False
+        if function == 0x626:
+            if length < 44:
+                return False
+            escape, byte_count = struct.unpack_from('<HH', raw, offset + 6)
+            identifier, comment, emf_version = struct.unpack_from('<III', raw, offset + 10)
+            flags, records, current, remaining, declared = struct.unpack_from('<IIIII', raw, offset + 24)
+            if (escape != 15 or identifier != 0x43464d57 or comment != 1 or emf_version != 0x10000
+                    or flags or not 1 <= records <= 4096 or not 0 < current <= 8192
+                    or byte_count != 34 + current or length != 44 + current
+                    or declared > 32 * 1024 * 1024):
+                return False
+            if total is None:
+                total, expected = declared, records
+            if declared != total or records != expected or received + current + remaining != total:
+                return False
+            chunks.append(raw[offset + 44:offset + length]); received += current
+        elif function not in allowed or (chunks and received != total):
+            return False
+        offset += length; count += 1; largest = max(largest, words)
+        if function == 0:
+            if words != 3 or offset != len(raw):
+                return False
+            return (largest == maximum and (not chunks or
+                    (len(chunks) == expected and received == total and _static_emf(b''.join(chunks)))))
+    return False
 
 
 def _xml(raw):
@@ -172,7 +263,7 @@ def passive_docx(path: Path) -> bytes:
         names = set(archive.namelist())
         types = _xml(archive.read('[Content_Types].xml'))
         overrides = {e.get('PartName', '').lstrip('/'): e.get('ContentType', '') for e in types if _local(e) == 'Override'}
-        defaults = {e.get('Extension', ''): e.get('ContentType', '') for e in types if _local(e) == 'Default'}
+        defaults = {e.get('Extension', '').casefold(): e.get('ContentType', '') for e in types if _local(e) == 'Default'}
         output, visiting = {}, set()
         doc_rel_path = 'word/_rels/document.xml.rels'
         doc_relationships = _xml(archive.read(doc_rel_path)) if doc_rel_path in names else ()
@@ -191,6 +282,9 @@ def passive_docx(path: Path) -> bytes:
                 try:
                     if Path(name).suffix.lower() == '.emf':
                         if not _static_emf(raw):
+                            raise ValueError('unsupported metafile')
+                    elif Path(name).suffix.lower() == '.wmf':
+                        if not _static_wmf(raw):
                             raise ValueError('unsupported metafile')
                     else:
                         with Image.open(BytesIO(raw)) as picture:
@@ -233,6 +327,24 @@ def passive_docx(path: Path) -> bytes:
                     layer_rels = [by_id.get(layer.get('{' + R + '}embed')) for layer in layers]
                     if not layer_rels or not all(rel is not None and rel.get('Type', '').endswith('/hdphoto') for rel in layer_rels):
                         continue
+                    # Some Word authors label ordinary JPEG/PNG layers as HD
+                    # Photo relationships. These are visible, supported raster
+                    # components, not opaque WDP edit history; retain the effects.
+                    supported_layers = True
+                    for relation in layer_rels:
+                        if relation.get('TargetMode', '').casefold() == 'external':
+                            supported_layers = False
+                            break
+                        layer_target = _resolve(name, relation.get('Target', ''))
+                        try:
+                            with Image.open(BytesIO(archive.read(layer_target))) as layer_image:
+                                if layer_image.format not in {'PNG', 'JPEG'}:
+                                    supported_layers = False
+                                layer_image.verify()
+                        except (KeyError, UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+                            supported_layers = False
+                    if supported_layers:
+                        continue
                     blip = next((p for p in node.iterancestors() if p.tag == '{http://schemas.openxmlformats.org/drawingml/2006/main}blip'), None)
                     fallback = by_id.get(blip.get('{' + R + '}embed')) if blip is not None else None
                     if fallback is None or fallback.get('TargetMode', '').casefold() == 'external' or not fallback.get('Type', '').endswith('/image'):
@@ -262,6 +374,22 @@ def passive_docx(path: Path) -> bytes:
                         continue
                     target = '' if rel.get('TargetMode', '').casefold() == 'external' else _resolve(name, rel.get('Target', ''))
                     if short == 'hyperlink':
+                        # Only ordinary visible Word text hyperlinks are supported.
+                        # Drawing actions, local files and other relationship kinds
+                        # never gain an exception to the closed package graph.
+                        links = [node for node in root.iter('{' + W + '}hyperlink')
+                                 if node.get('{' + R + '}id') == rid
+                                 and _visible_hyperlink_text(node)]
+                        if (rel.get('TargetMode', '').casefold() == 'external'
+                                and _passive_hyperlink(rel.get('Target', '')) and links):
+                            allowed = set(links)
+                            for node in root.iter():
+                                if node not in allowed:
+                                    for attr, value in list(node.attrib.items()):
+                                        if attr.startswith('{' + R + '}') and value == rid:
+                                            del node.attrib[attr]
+                            kept.append(rel)
+                            continue
                         for node in root.iter():
                             for attr, value in list(node.attrib.items()):
                                 if attr.startswith('{' + R + '}') and value == rid:
@@ -320,12 +448,12 @@ def passive_docx(path: Path) -> bytes:
         content = XML.Element('{' + CT + '}Types', nsmap={None: CT})
         XML.SubElement(content, '{' + CT + '}Default', Extension='rels', ContentType='application/vnd.openxmlformats-package.relationships+xml')
         for extension, content_type in sorted(defaults.items()):
-            if extension != 'rels' and any(name.endswith('.' + extension) for name in output):
+            if extension != 'rels' and any(name.casefold().endswith('.' + extension) for name in output):
                 XML.SubElement(content, '{' + CT + '}Default', Extension=extension, ContentType=content_type)
         for name in sorted(output):
             if name.endswith('.rels'):
                 continue
-            content_type = overrides.get(name) or defaults.get(name.rsplit('.', 1)[-1])
+            content_type = overrides.get(name) or defaults.get(name.rsplit('.', 1)[-1].casefold())
             if not content_type or 'macroEnabled' in content_type:
                 raise ImportError('The native report has an unsupported content type.')
             XML.SubElement(content, '{' + CT + '}Override', PartName='/' + name, ContentType=content_type)

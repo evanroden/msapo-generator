@@ -20,7 +20,12 @@ def contains_price(text):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for n, line in enumerate(lines):
         if _PRICE_LABEL.search(line):
-            if re.search(r"\d", line):
+            # A date elsewhere in an operational sentence does not turn the
+            # word "cost" into a price. Require a value after the price label,
+            # or a bare amount immediately before it.
+            if any(re.search(r"\d", line[match.end():])
+                   or re.search(r"\d[\d,.]*\s*[:–-]?\s*$", line[:match.start()])
+                   for match in _PRICE_LABEL.finditer(line)):
                 return True
             # PDF text often puts a monetary table heading and its bare amount
             # on separate lines, without a repeated currency symbol.
@@ -30,7 +35,7 @@ def contains_price(text):
 
 
 def _price_heading(title):
-    return bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
+    return bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|amount due|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
 
 
 def _mixed_price_heading(title):
@@ -50,8 +55,34 @@ def price_column(title, kind=""):
     return not _mixed_price_heading(title) and (kind == "currency" or _price_heading(title))
 
 
+def logical_table_columns(columns):
+    """Recover the explicit four- and five-column ENFRA capital header variants.
+
+    Other mixed headers stay ambiguous. This recognizes the complete ordered
+    canonical label sequences and their exact grid widths, never data values.
+    """
+    values = tuple(columns)
+    if (len(values) == 4
+            and re.sub(r"[^a-z]", "", values[0].casefold()) ==
+            "equipmentdescriptionendofusefullifecostsummaryofdeficiency"
+            and all(not title.strip() or re.fullmatch(r"(?:Column|Detail)\s+[234]", title.strip(), re.I)
+                    for title in values[1:])):
+        return ("Equipment Description", "End of Useful Life", "Cost", "Summary of deficiency")
+    # This five-column Word header has two visual lines. The second line
+    # contains “Life” (column 2) and “Sub.” (column 5), but OOXML flattens
+    # both after the first line. Recover only this complete known sequence.
+    if (len(values) == 5
+            and re.sub(r"[^a-z]", "", values[0].casefold()) ==
+            "equipmentdescriptionendofusefulcostsummaryofdeficiencydatelifesub"
+            and all(not title.strip() or re.fullmatch(r"(?:Column|Detail)\s+[2345]", title.strip(), re.I)
+                    for title in values[1:])):
+        return ("Equipment Description", "End of Useful Life", "Cost", "Summary of deficiency", "Date Sub.")
+    return values
+
+
 def _table_headings(columns, rows):
     """Inspect adjacent header lines before the first numeric data row."""
+    columns = logical_table_columns(columns)
     header_rows = [columns]
     for row in rows[:3]:
         if any(re.search(r"\d", str(cell)) for cell in row):
@@ -65,8 +96,22 @@ def ambiguous_price_columns(columns, rows=()):
     return tuple(i for i, title in enumerate(_table_headings(columns, rows)) if _mixed_price_heading(title))
 
 
+def receivable_amount_columns(columns):
+    """Aged receivable buckets are monetary only in an explicit invoice context."""
+    headings = tuple(" ".join(str(c).casefold().split()) for c in logical_table_columns(columns))
+    invoice = any(re.search(r"\binvoice\b|accounts? receivable", c) for c in headings)
+    money = any(re.search(r"\bamount(?: due)?\b|\bbalance\b", c) for c in headings)
+    if not (invoice and money):
+        return ()
+    return tuple(i for i, title in enumerate(headings)
+                 if title in {"current", "total", "grand total", "balance", "balance due", "amount due", "invoice amount"}
+                 or re.fullmatch(r"[\dG]+\s*[-–]\s*(?:[\dG]+|over)(?:\s*days?)?", title, re.I))
+
+
 def table_price_columns(columns, rows):
-    return tuple(i for i, title in enumerate(_table_headings(columns, rows)) if price_column(title))
+    excluded = {i for i, title in enumerate(_table_headings(columns, rows)) if price_column(title)}
+    excluded.update(receivable_amount_columns(columns))
+    return tuple(sorted(excluded))
 
 
 def table_has_pricing(columns, rows, *, work_orders=False):
@@ -101,6 +146,7 @@ def price_free_table(spec: "BlockSpec", block: "ResolvedBlock") -> tuple["BlockS
         headings = tuple(columns) + tuple(
             f"Detail {n + 1}" for n in range(len(columns), width)
         )
+        headings = logical_table_columns(headings)
         excluded = (set(table_price_columns(headings, rows)) | set(currency)) - set(ambiguous_price_columns(headings, rows))
         removed.extend(headings[n] for n in sorted(excluded))
         indexes = tuple(n for n in range(len(headings)) if n not in excluded)
@@ -115,7 +161,7 @@ def price_free_table(spec: "BlockSpec", block: "ResolvedBlock") -> tuple["BlockS
             tuple(n for n, c in enumerate(spec.columns) if price_column(c.title, c.type)),
         )
         keys = {c.key for c in spec.columns}
-        columns = list(spec.columns)
+        columns = [replace(column, title=headings[n]) for n, column in enumerate(spec.columns)]
         for n in range(len(columns), len(headings)):
             key = f"unmapped_detail_{n + 1}"
             while key in keys:

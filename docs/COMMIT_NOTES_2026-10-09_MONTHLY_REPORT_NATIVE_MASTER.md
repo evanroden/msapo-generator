@@ -148,3 +148,13 @@ privacy and fidelity outputs are checked after this metadata-only change.
 The first production-image CI job on head
 `c283ac5c50bb3870c938738bd43ddd19131657c5` passed both Docker build and application
 health checks (run `37934261469`). A final run covers the metadata cleanup too.
+
+## Production release
+
+PR #90 merged as `a26c691c0b427c2373a902a72c3f4b728b3c595c`. Final feature run
+`37934641173` and merged-main run `37935219143` each passed 1424 tests, zero skips,
+and the production image build/health check. The public app's master upload was
+used to install the reviewed UMMC source; it confirmed version 1 and automatic
+use for future new reports. This did not save a September monthly draft.
+Follow-up ordered-workspace and additional report-variant checks are tracked
+separately; this acceptance result is specifically the verified UMMC replay.

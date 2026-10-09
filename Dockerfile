@@ -31,6 +31,8 @@ RUN apt-get update \
         fonts-dejavu-core \
         fonts-dejavu-extra \
         fonts-liberation \
+        fonts-crosextra-carlito \
+        fonts-crosextra-caladea \
         fonts-texgyre \
         fonts-opensymbol \
         fonts-urw-base35 \

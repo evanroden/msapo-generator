@@ -126,6 +126,42 @@ def test_master_requires_all_sections(tmp_path, monkeypatch):
     assert designs.master_state()["revision"] == 0
 
 
+def test_company_master_does_not_replace_a_legacy_imported_design(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    source = reference(tmp_path, "legacy")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    legacy = replace(synthetic_profiles()[0], template="enfra_word", imported_from=digest)
+    original = library._profile_path(legacy.contract, legacy.key) / "imports" / (digest + ".docx")
+    original.parent.mkdir(parents=True)
+    original.write_bytes(source.read_bytes())
+    master = designs.install_master(master_reference(tmp_path), actor="Editor", expected_revision=0)
+
+    assert designs.source_for(legacy) == original
+    assert not designs.is_master(legacy)
+    assert designs.pin(legacy, latest_master=True).template == designs.PREFIX + digest
+    fresh = replace(legacy, key="new-site", imported_from="")
+    assert designs.pin(fresh).template == designs.MASTER_PREFIX + master
+    explicit_master = replace(legacy, template=designs.MASTER_PREFIX + master)
+    assert designs.is_master(explicit_master)
+    assert designs.source_for(explicit_master).name == master + ".docx"
+
+    # An explicit site design still takes precedence over the legacy reference.
+    selected = designs.install(reference(tmp_path, "updated-site", "Training Summary"), legacy,
+                               actor="Editor", expected_revision=0)
+    assert designs.pin(legacy) == selected
+
+
+def test_missing_legacy_original_never_silently_uses_company_master(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    designs.install_master(master_reference(tmp_path), actor="Editor", expected_revision=0)
+    legacy = replace(synthetic_profiles()[0], template="enfra_word", imported_from="a" * 64)
+    assert not designs.is_master(legacy)
+    assert designs.pin(legacy).template == designs.PREFIX + "a" * 64
+    with pytest.raises(ValueError, match="unavailable"):
+        designs.source_for(legacy)
+
+
 def test_output_and_live_preview_use_same_pinned_master(tmp_path, monkeypatch):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
     from app.monthly_report_model import synthetic_draft, ReportPeriod
@@ -171,3 +207,82 @@ def test_fresh_report_ui_automatically_uses_master_and_keeps_it_when_saved(tmp_p
     saved = library.load_snapshot(RRH_CONTRACT, profile.key, ReportPeriod(2026, 9))
     assert saved.draft.profile.template == designs.MASTER_PREFIX + digest
     assert next(b.text for b in saved.draft.blocks if b.key == "activity_summary") == "Current site work."
+
+
+def test_ar_master_pins_its_actual_sections_without_inventing_rfi(tmp_path, monkeypatch):
+    from app.monthly_report_model import default_sections, profile_sections
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
+    document = Document()
+    for section in default_sections():
+        if not section.appendix:
+            document.add_heading(section.title, 1)
+            document.add_paragraph('Section content')
+    document.add_heading('Accounts Receivable', 1)
+    document.add_table(rows=2, cols=2).cell(0, 0).text = 'Invoice'
+    source = tmp_path / 'ar-master.docx'
+    document.save(source)
+    first = designs.install_master(source, actor='Editor', expected_revision=0)
+    pinned = designs.pin(synthetic_profiles()[0])
+    assert pinned.section_order[-1] == 'accounts_receivable'
+    assert 'rfi' not in pinned.section_order
+    assert 'accounts_receivable' in [s.key for s in profile_sections(pinned)]
+    library._validate_profile(pinned)
+    designs.install_master(master_reference(tmp_path, 'rfi-master'), actor='Editor', expected_revision=1)
+    assert designs.pin(pinned).template == designs.MASTER_PREFIX + first
+    assert designs.pin(pinned).section_order == pinned.section_order
+    updated = designs.pin(pinned, latest_master=True)
+    assert 'rfi' in updated.section_order and 'accounts_receivable' not in updated.section_order
+
+
+def test_legacy_master_section_metadata_is_inferred_once(tmp_path, monkeypatch):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
+    digest = designs.install_master(master_reference(tmp_path), actor='Editor', expected_revision=0)
+    metadata = library._root() / 'designs' / 'master' / 'metadata' / (digest + '.json')
+    metadata.unlink()
+    pinned = designs.pin(synthetic_profiles()[0])
+    assert metadata.exists() and 'rfi' in pinned.section_order
+    from app import monthly_report_import
+    monkeypatch.setattr(monthly_report_import, 'inspect_docx', lambda path: (_ for _ in ()).throw(AssertionError('metadata should be cached')))
+    assert designs.pin(synthetic_profiles()[0]).section_order == pinned.section_order
+
+
+def test_optional_ar_does_not_change_default_rrh_and_clears_only_on_new_month():
+    from app.monthly_report_model import default_sections, profile_sections, ReportDraft, ReportPeriod, ResolvedBlock
+    from app.monthly_report_setup import new_month_draft
+    profile = synthetic_profiles()[0]
+    assert [s.key for s in profile_sections(profile)] == [s.key for s in default_sections()]
+    order = tuple(s.key for s in default_sections() if not s.appendix) + ('accounts_receivable',)
+    profile = replace(profile, section_order=order)
+    block = ResolvedBlock('accounts_receivable', 'This month', rows=(('Unity', 'INV-001', 'Pending'),))
+    draft = ReportDraft(profile, ReportPeriod(2026, 9), 'Editor', profile_sections(profile), (block,))
+    assert new_month_draft(draft, ReportPeriod(2026, 9)).blocks[0].rows == block.rows
+    assert not new_month_draft(draft, ReportPeriod(2026, 10)).blocks[0].rows
+
+
+@pytest.mark.parametrize('first_ar', [False, True])
+def test_explicit_master_switch_replaces_saved_variant_order_but_preserves_content(tmp_path, monkeypatch, first_ar):
+    from app.monthly_report_designs_ui import apply_master_design
+    from app.monthly_report_model import default_sections, profile_sections, ReportDraft, ReportPeriod, ResolvedBlock
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
+    hashes = []
+    for revision, ar in enumerate((first_ar, not first_ar)):
+        document = Document()
+        for section in default_sections():
+            if not section.appendix:
+                document.add_heading(section.title, 1)
+        document.add_heading('Accounts Receivable' if ar else 'RFI Matrix', 1)
+        source = tmp_path / f'master-{revision}.docx'
+        document.save(source)
+        hashes.append(designs.install_master(source, actor='Editor', expected_revision=revision))
+        if revision == 0:
+            profile = designs.pin(synthetic_profiles()[0])
+    content = ResolvedBlock('activity_summary', 'This month', text='AM current-month edits')
+    original = ReportDraft(profile, ReportPeriod(2026, 9), 'Editor', profile_sections(profile), (content,))
+    updated = apply_master_design(original, hashes[1])
+    expected, excluded = ('rfi', 'accounts_receivable') if first_ar else ('accounts_receivable', 'rfi')
+    assert updated.profile.template == designs.MASTER_PREFIX + hashes[1]
+    assert expected in updated.profile.section_order and excluded not in updated.profile.section_order
+    assert expected in {section.key for section in updated.sections}
+    assert excluded not in {section.key for section in updated.sections}
+    assert updated.blocks == original.blocks
+    assert original.profile.template == designs.MASTER_PREFIX + hashes[0]

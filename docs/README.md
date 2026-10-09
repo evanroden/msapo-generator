@@ -6,6 +6,16 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Current next-LLM handoff and owner-requested testing release:
+[HANDOFF_MONTHLY_REPORT_2026-10-09.md](HANDOFF_MONTHLY_REPORT_2026-10-09.md).
+Read this before resuming report work; it distinguishes completed fixes from
+remaining PDF and fresh-master layout defects.
+
+Detailed Eastern PDF findings and unaccepted controls:
+[HANDOFF_EASTERN_PDF_FIDELITY_2026-10-09.md](HANDOFF_EASTERN_PDF_FIDELITY_2026-10-09.md).
+
+Ordered monthly report editing: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md). Inline contact editing, section previews, document ingestion and training matrix.
+
 Native ENFRA master design: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md). Source Word page design replaces generic layout reconstruction; new reports automatically use a versioned master.
 
 Current monthly defaults and live editing: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_AUTOMATIC_DEFAULTS.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_AUTOMATIC_DEFAULTS.md). This supersedes earlier section-inclusion, standing-confirmation and equipment-tag instructions.

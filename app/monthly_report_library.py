@@ -21,7 +21,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, ReportTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -307,9 +307,10 @@ def _validate_profile(profile: ReportProfile) -> None:
         raise LibraryError("Enter the report profile title.")
     if len(profile.asset_tags) > 500 or any(not isinstance(tag,str) or not tag.strip() or len(tag)>80 for tag in profile.asset_tags):
         raise LibraryError("Use at most 500 confirmed equipment tags, each up to 80 characters.")
-    skeleton = default_sections()
+    skeleton = known_sections()
+    core = {s.key for s in default_sections() if not s.appendix}
     if profile.section_order and (len(set(profile.section_order)) != len(profile.section_order)
-                                 or set(profile.section_order) != {s.key for s in skeleton}):
+                                 or not core <= set(profile.section_order) <= {s.key for s in skeleton}):
         raise LibraryError("Default section order must contain every section exactly once.")
     if not set(profile.excluded_sections) <= {s.key for s in skeleton}:
         raise LibraryError("Unknown omitted section.")
@@ -446,7 +447,7 @@ def imported_review_scope(contract: str, key: str, period: ReportPeriod) -> str:
 
 
 def _validate_overrides(overrides: tuple[BlockSpec, ...]) -> None:
-    specs = {b.key: b for s in default_sections() for b in s.blocks}
+    specs = {b.key: b for s in known_sections() for b in s.blocks}
     if len({b.key for b in overrides}) != len(overrides):
         raise LibraryError("Duplicate table override.")
     for b in overrides:
@@ -466,7 +467,7 @@ def save_import(contract: str, key: str, blocks: tuple[ResolvedBlock, ...], *,
     """
     actor = _confirmation(actor, confirmed)
     _validate_overrides(overrides)
-    known = {b.key for s in default_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
+    known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     if not blocks or len({b.key for b in blocks}) != len(blocks) or any(b.key not in known for b in blocks):
         raise LibraryError("Choose unique valid destinations for imported content.")
     path = _profile_path(contract, key)

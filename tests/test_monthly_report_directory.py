@@ -196,7 +196,6 @@ def test_contact_suggestions_require_unique_exact_identity_or_alias():
 
 
 def test_directory_upload_preview_confirmation_and_save_in_app(tmp_path,monkeypatch):
-    from pathlib import Path
     import streamlit as st
     from streamlit.testing.v1 import AppTest
     from app import contracts
@@ -207,9 +206,8 @@ def test_directory_upload_preview_confirmation_and_save_in_app(tmp_path,monkeypa
     upload=BytesIO(workbook()); upload.name='synthetic-directory.xlsx'
     original=st.file_uploader
     monkeypatch.setattr(st,'file_uploader',lambda label,*a,**kw: upload if label=='Contract / site directory workbook' else original(label,*a,**kw))
-    app=AppTest.from_file(Path(__file__).resolve().parents[1]/'run_web.py',default_timeout=20).run()
-    app.segmented_control[0].set_value('Monthly report').run()
-    next(b for b in app.button if b.label=='Manage contract and site directory').click().run()
+    # Workbook import remains an explicit administration component, not an AM navigation route.
+    app=AppTest.from_string("from app.monthly_report_directory_ui import render_directory\nfrom app.monthly_report_ui import _field\nrender_directory(_field)",default_timeout=20).run()
     next(t for t in app.text_input if t.label=='Directory editor name').set_value('Synthetic Editor').run()
     next(b for b in app.button if b.label=='Read workbook').click().run()
     assert not app.exception
@@ -222,9 +220,8 @@ def test_directory_upload_preview_confirmation_and_save_in_app(tmp_path,monkeypa
     assert state.revision==1 and len(state.sites)==2
     assert state.sites[0].key==_key('Synthetic North')  # First import links to the listed site.
     assert state.sites[0].contacts[0].email=='lead@example.invalid'
-    next(b for b in app.button if b.label=='Back to monthly reports').click().run()
-    assert not app.exception
-    assert any(b.label == 'Synthetic Contract' for b in app.button)
+    from app.monthly_report_directory_ui import contract_choices
+    assert 'Synthetic Contract' in contract_choices()
     assert not library.list_profiles('Synthetic Contract')  # Directory is not report membership.
 
 

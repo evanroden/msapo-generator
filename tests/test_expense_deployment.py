@@ -102,6 +102,7 @@ def test_ci_installs_the_same_document_renderers_as_the_image():
     renderers = {
         "libreoffice-writer", "libreoffice-calc", "fontconfig",
         "fonts-liberation", "fonts-texgyre", "fonts-opensymbol",
+        "fonts-crosextra-carlito", "fonts-crosextra-caladea",
     }
     for package in renderers:
         assert package in dockerfile, f"{package} missing from the image"

@@ -2,8 +2,22 @@ from io import BytesIO
 
 from app import monthly_report_upload_ui as ui
 from app.monthly_report_content_policy import page_allowed
-from test_monthly_report_editor import app_with_library
 from test_monthly_report_sources import pdf_bytes
+
+
+def app_with_library(monkeypatch, tmp_path):
+    from test_monthly_report_ui import monthly
+    app = monthly(monkeypatch, tmp_path)
+    next(w for w in app.checkbox if w.label == "Add work-order spreadsheets").check().run()
+    return app, None
+
+
+def prepared(app):
+    return any(key.endswith("_prepared_pages") and value for key, value in app.session_state.filtered_state.items())
+
+
+def cmms_ready(app):
+    return any("_cmms_" in key and key.endswith("_result") and value for key, value in app.session_state.filtered_state.items())
 
 
 def button(app, label):
@@ -40,17 +54,16 @@ def test_upload_selection_invalidation_and_workflow_retention(monkeypatch, tmp_p
         button(app, "Include page and continue").click().run()
     button(app, "Prepare selected pages").click().run()
     assert not app.exception
-    next(w for w in app.selectbox if w.key.endswith("_vendor_reports_source")).set_value("This month").run()
-    assert any(w.label == "This month's content" for w in app.radio)
+    assert prepared(app)
     next(w for w in app.multiselect if w.label == "Included pages / extracted items").set_value([1, 3]).run()
-    assert not any(w.label == "This month's content" for w in app.radio)
+    assert not prepared(app)
     button(app, "Prepare selected pages").click().run()
     assert not app.exception
     app.segmented_control[0].set_value("Expense reimbursement").run()
     app.segmented_control[0].set_value("Monthly report").run()
     assert not app.exception
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 3]
-    assert any(w.label == "This month's content" for w in app.radio)
+    assert prepared(app)
     button(app, "Remove source from this draft").click().run()
     assert not app.exception
     assert not any(w.label == "Review source" for w in app.selectbox)
@@ -70,15 +83,14 @@ def test_cmms_mapping_applies_real_schema_and_invalidates_on_change(monkeypatch,
     assert not any(w.label == "I confirm this CMMS mapping and coverage" for w in app.checkbox)
     button(app, "Apply CMMS mapping").click().run()
     assert not app.exception
-    next(w for w in app.selectbox if w.key.endswith("_service_calls_source")).set_value("This month").run()
-    assert any(w.label == "This month's content" for w in app.radio)
+    assert cmms_ready(app)
     select(app, "Finish date column").set_value("").run()
     assert not app.exception
-    assert not any(w.label == "This month's content" for w in app.radio)
+    assert not cmms_ready(app)
     button(app, "Apply CMMS mapping").click().run()
     assert not app.exception
     assert any("Map the finish date and work-order identity" in w.value for w in app.error)
-    assert not any(w.label == "This month's content" for w in app.radio)
+    assert not cmms_ready(app)
 
 
 def test_guided_page_review_keeps_omits_and_invalidates_caption(monkeypatch, tmp_path):

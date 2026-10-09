@@ -12,7 +12,9 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Renderer packages can exceed the old entire-job budget on a slow mirror.
+    # Keep the full rendering suite mandatory after installation completes.
+    timeout-minutes: 45
     env:
       FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
     steps:
@@ -34,6 +36,8 @@ jobs:
             fonts-dejavu-core \
             fonts-dejavu-extra \
             fonts-liberation \
+            fonts-crosextra-carlito \
+            fonts-crosextra-caladea \
             fonts-texgyre \
             fonts-opensymbol \
             fonts-urw-base35

@@ -26,8 +26,11 @@ def app_with_library(monkeypatch, tmp_path):
         return ReportPackage(assemble_docx(draft, **kwargs), b"%PDF-synthetic", "demo.docx", "demo.pdf", draft.fingerprint)
 
     monkeypatch.setattr(editor, "generate_report", generate)
+    # Exercise the retained detailed editor directly as a compatibility unit.
+    # The AM workspace intentionally has no route to shared-asset controls.
+    from app import monthly_report_guided
+    monkeypatch.setattr(monthly_report_guided, "render_guided_workflow", editor.render_profile_workflow)
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
-    app.session_state["report_advanced"] = True
     app.segmented_control[0].set_value("Monthly report").run()
     assert not app.exception
     return app, profile

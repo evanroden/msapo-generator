@@ -479,3 +479,125 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             st.error(str(exc))
             st.caption("Your existing report is unchanged. The selected files and reviews are retained for another attempt.")
     return tuple(c.source for c in contents), additions, {}
+
+
+@st.fragment(run_every=1)
+def _section_read_progress(local_key):
+    job = st.session_state.get(local_key + "_job")
+    if job and job["future"].done():
+        st.rerun()
+    if job:
+        st.info("Reading uploaded files and preparing this section…")
+
+
+def render_structured_uploads(profile, period, prefix, field, destination, *, blocks=None, assets=None):
+    """Automatically draft new evidence once; retain subsequent human edits on reruns."""
+    from app import monthly_report_structured_uploads as structured
+    from app import monthly_report_ai as ai
+    from app.receipt_jobs import start_receipt
+
+    if destination not in {"activity_summary", "capital_renewal", "proposals"}:
+        raise ValueError("Unknown upload-first section.")
+    blocks = blocks or {}
+    evidence_key = prefix + "_evidence"
+    local_key = evidence_key + "_structured_" + destination
+    contents = st.session_state.setdefault(evidence_key, ())
+    labels = {"activity_summary": "Upload activity reports and supporting files", "capital_renewal": "Upload capital renewal lists or contract documents", "proposals": "Upload pending and declined quotes"}
+    st.caption("Upload your files first. Useful information is drafted below for you to edit. Original quotes and prices are excluded from the report.")
+    uploaded = st.file_uploader(labels[destination], type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
+                                accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
+    additions = {}
+    job = st.session_state.get(local_key + "_job")
+    if job and job["future"].done():
+        st.session_state.pop(local_key + "_job", None)
+        try:
+            value = job["future"].result()
+            ai.save_cache(profile, "section_upload", job["digest"], value)
+            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ()))
+            current = blocks.get(destination)
+            if current is not None and current.fingerprint != job.get("baseline"):
+                st.session_state[local_key + "_pending"] = (job, value)
+                value = None
+            if value is None:
+                # Preserve edits made while the asynchronous reader was running.
+                raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
+            result, pages = structured.reader_update(job["contents"], destination, value, current)
+            additions[destination] = result
+            st.session_state[local_key + "_completed_ids"] = tuple(set(st.session_state.get(local_key + "_completed_ids", ())) | {c.source.id for c in job["contents"]})
+            # Only a visual reading can select original activity pages. Quotes
+            # always contribute sanitized table values, never page images.
+            if destination == "activity_summary" and pages:
+                selected = []
+                for content in job["contents"]:
+                    source = content.source
+                    from app.monthly_report_section_uploads import included_pages
+                    present = included_pages(blocks)
+                    numbers = tuple(n for n in sorted(set(pages.get(source.id, ())) & set(sources.image_numbers(content)))
+                                    if (source.id, n) not in present)
+                    source = replace(source, selected_pages=numbers)
+                    source = replace(source, client_page_reviews=tuple((n, page_fingerprint(source, n)) for n in numbers))
+                    selected.append(replace(content, source=source))
+                prepared = sources.prepare_pages(profile, tuple(selected), tuple((c.source.id, "improvements") for c in selected if c.source.selected_pages))
+                additions.update({block.key: block for block in prepared})
+                changed = {c.source.id: c for c in selected}
+                contents = tuple(changed.get(c.source.id, c) for c in contents)
+                st.session_state[evidence_key] = contents
+            st.session_state.pop(local_key + "_error", None)
+        except Exception as exc:
+            st.session_state[local_key + "_error"] = str(exc)
+    picked = tuple((u.name, u.getvalue()) for u in (uploaded or ()))
+    signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
+    if picked and st.session_state.get(local_key + "_read") != signature and local_key + "_job" not in st.session_state:
+        ids = {hashlib.sha256(raw).hexdigest() for _, raw in picked}
+        contents, messages = sources.ingest_batch(profile, picked, contents)
+        st.session_state[evidence_key] = contents
+        scoped = tuple(c for c in contents if c.source.id in ids)
+        st.session_state[local_key + "_messages"] = messages
+        if ids <= set(st.session_state.get(local_key + "_completed_ids", ())):
+            st.session_state[local_key + "_read"] = signature
+            return tuple(c.source for c in contents), additions, {}
+        processed = set(st.session_state.get(local_key + "_native_ids", ()))
+        fresh = tuple(c for c in scoped if c.source.id not in processed)
+        additions[destination] = structured.native_update(fresh, destination, additions.get(destination, blocks.get(destination)))
+        st.session_state[local_key + "_native_ids"] = tuple(processed | {c.source.id for c in fresh})
+        scoped = fresh or scoped
+        digest = ai.digest(("section-upload-v2", destination, sorted(c.source.id for c in scoped)))
+        try:
+            cached = ai.cached(profile, "section_upload", digest)
+            if cached is not None:
+                # Keep one completion path, including page handling and validation.
+                from concurrent.futures import Future
+                future = Future()
+                future.set_result(cached)
+            else:
+                def prepare():
+                    payloads = structured.reader_batches(profile, scoped, destination)
+                    for _ in payloads:
+                        ai.reserve_call(profile, period)
+                    return payloads
+                future = start_receipt(prepare, structured.read_batches)
+                if future is None:
+                    raise ValueError("Other document readings are running. Your extracted text is kept; retry this upload when they finish.")
+            st.session_state[local_key + "_job"] = {"future": future, "contents": scoped, "digest": digest, "baseline": additions[destination].fingerprint}
+        except (ValueError, OSError, RuntimeError) as exc:
+            st.session_state[local_key + "_error"] = str(exc)
+        st.session_state[local_key + "_read"] = signature
+    for message in st.session_state.get(local_key + "_messages", ()):
+        st.warning(message)
+    pending = st.session_state.get(local_key + "_pending")
+    if pending and st.button("Add new source suggestions to my edits", key=local_key + "_accept_suggestions"):
+        from concurrent.futures import Future
+        pending_job, value = st.session_state.pop(local_key + "_pending")
+        future = Future()
+        future.set_result(value)
+        current = blocks.get(destination)
+        st.session_state[local_key + "_job"] = dict(pending_job, future=future, baseline=current.fingerprint if current else None)
+        st.rerun()
+    if local_key + "_error" in st.session_state:
+        st.warning(st.session_state[local_key + "_error"])
+        if st.button("Retry reading uploaded files", key=local_key + "_retry"):
+            st.session_state.pop(local_key + "_read", None)
+            st.rerun()
+    if local_key + "_job" in st.session_state:
+        _section_read_progress(local_key)
+    return tuple(c.source for c in contents), additions, {}

@@ -70,15 +70,20 @@ def test_price_free_table_import_keeps_every_schema_and_zero(tmp_path, monkeypat
     mapped, mappings = build_section_import(path, inspection, plans)
     profile = design_profile(synthetic_profiles()[0], inspection, mappings)
     draft = imported_draft(profile, ReportPeriod(2026, 9), 'Synthetic Editor', mapped)
+    # Generation resolves the persisted native design just as the application does.
+    library.save_report_setup(profile, draft, path, {'sha256': inspection.sha256}, assets=mapped.assets,
+                              expected_revision=0, actor='Synthetic Editor', confirmed=True)
     raw = assemble_docx(draft)
-    assert assemble_docx(draft) == raw
+    # ZIP envelope timestamps can tick between exports; all document parts
+    # and assets must remain identical.
+    from zipfile import ZipFile
+    with ZipFile(BytesIO(raw)) as first, ZipFile(BytesIO(assemble_docx(draft))) as second:
+        assert {name: first.read(name) for name in first.namelist()} == {name: second.read(name) for name in second.namelist()}
     output = Document(BytesIO(raw))
     assert len(output.tables) == 2
     values = [[c.text for row in table.rows for c in row.cells] for table in output.tables]
     assert '500' not in str(values) and 'Unit Price' not in str(values)
     assert '0' in values[0] and 'No' in values[1]
-    library.save_report_setup(profile, draft, path, {'sha256': inspection.sha256}, assets=mapped.assets,
-                              expected_revision=0, actor='Synthetic Editor', confirmed=True)
     assert library.load_imported_draft(profile.contract, profile.key) == draft
     assert path.read_bytes() == original
     following = new_month_draft(draft, ReportPeriod(2026, 10))

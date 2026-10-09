@@ -15,7 +15,9 @@ from docx import Document
 from docx.oxml.ns import qn
 from PIL import Image
 
+from app.monthly_report_render_compat import rendering_docx
 from app import monthly_report_library as library, pdf_converter
+from app import monthly_report_render_jobs as monthly_render_jobs
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import _build_docx, _save, normalize_report_image
 from app.monthly_report_model import COVER_ASSET_KEYS, included_sections
@@ -75,8 +77,9 @@ def preview_report(draft, asset_loader=None):
     try:
         with tempfile.TemporaryDirectory(prefix="report-", dir=scratch) as directory:
             path = Path(directory) / (stem + ".docx")
-            path.write_bytes(raw)
-            actual = pdf_converter.convert_to_pdf(path)
+            from app.monthly_report_designs import render_profile_for
+            path.write_bytes(rendering_docx(raw, profile=render_profile_for(draft.profile)))
+            actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > 80 * 1024 * 1024:
                 raise ValueError(
                     "Preview exceeds the 80 MB conversion bound. Preview fewer sections or reduce image sizes."
@@ -192,7 +195,9 @@ def section_preview_fingerprint(draft, section_key):
              "extra_tables": [asdict(table) for table in block.extra_tables]})
     from app.monthly_report_followups import report_text
     value = {
-        "version": 2,
+        "version": 3,
+        "period": draft.period.key,
+        "title": draft.profile.title,
         "contract": draft.profile.contract,
         "profile": draft.profile.key,
         "section": asdict(section) if section else "cover",
@@ -278,8 +283,14 @@ def preview_section(draft, section_key, asset_loader=None):
     try:
         with tempfile.TemporaryDirectory(prefix="monthly-section-preview-") as directory:
             path = Path(directory) / (stem + ".docx")
-            path.write_bytes(raw)
-            actual = pdf_converter.convert_to_pdf(path)
+            from app.monthly_report_designs import render_profile_for
+            render_profile = render_profile_for(draft.profile)
+            if section_key != "cover":
+                render_profile = {**render_profile, "cover_zero_origin": False}
+                if "cover_metrics" in render_profile:
+                    render_profile["cover_metrics"] = []
+            path.write_bytes(rendering_docx(raw, profile=render_profile))
+            actual = monthly_render_jobs.convert_to_pdf(path, wait_seconds=0)
             if actual.stat().st_size > MAX_PREVIEW_BYTES:
                 raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
             with fitz.open(actual) as pdf:

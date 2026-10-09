@@ -148,13 +148,13 @@ def test_reviewed_directory_contacts_can_seed_chart_without_replacing_it_silentl
     choose_report(app, 'Synthetic North')
     next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Current Editor').run()
     step(app, 3)
-    next(w for w in app.toggle if w.label == 'Compare contacts with the saved directory').set_value(True).run()
-    match = next(w for w in app.selectbox if w.label == 'Directory site for Synthetic North')
-    assert match.value == 'directory-north'
-    assert next(b for b in app.button if b.label == 'Use reviewed contact table').disabled
-    next(c for c in app.checkbox if c.label == 'Replace this report’s contact matrix with this reviewed directory table').check().run()
-    next(b for b in app.button if b.label == 'Use reviewed contact table').click().run()
-    assert not app.exception
+    assert any(w.label == 'Contract and site directory' for w in app.expander)
+    assert not any(w.label.startswith('Directory site for ') for w in app.selectbox)
+    current = next(value for key, value in app.session_state.filtered_state.items()
+                   if key.startswith('report_guided_') and key.endswith('_draft') and hasattr(value, 'blocks'))
+    contacts = next(block for block in current.blocks if block.key == 'contact_matrix')
+    assert len(contacts.rows) == 2 and not any('Other Site' in str(row) for row in contacts.rows)
+    assert next(block for block in current.blocks if block.key == 'org_chart').asset_hashes == (ref,)
     next(b for b in app.button if b.label == 'Change team chart').click().run()
     choices = next(w for w in app.multiselect if w.label == 'People to include in the org chart')
     assert len(choices.options) == 2 and not any('Other Site' in str(v) for v in choices.options)

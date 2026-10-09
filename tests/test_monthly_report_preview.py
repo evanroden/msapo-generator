@@ -75,7 +75,11 @@ def test_live_preview_failure_keeps_current_edit_and_hides_stale_pages(monkeypat
     real_section_preview = monthly_report_section_preview_ui.render_section_preview
     fake_converter(monkeypatch, tmp_path)
     app = monthly(monkeypatch, tmp_path)
-    monkeypatch.setattr(monthly_report_section_preview_ui, "render_section_preview", real_section_preview)
+    # Failure/retry semantics are deterministic in the synchronous renderer;
+    # the deferred queue has its own AppTest coverage.
+    monkeypatch.setattr(monthly_report_section_preview_ui, "render_section_preview",
+                        lambda draft, section, assets, prefix, **kwargs:
+                        real_section_preview(draft, section, assets, prefix) if section == "activity" else None)
     step(app, 2)
     assert not app.exception
     assert any("data:image/png;base64," in frame.proto.srcdoc for frame in app.get("iframe"))
@@ -87,10 +91,11 @@ def test_live_preview_failure_keeps_current_edit_and_hides_stale_pages(monkeypat
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic updated maintenance.").run()
     assert not app.exception
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic updated maintenance."
-    assert not any("data:image/png;base64," in frame.proto.srcdoc for frame in app.get("iframe"))
+    assert not any("data:image/png;base64," in frame.proto.srcdoc and "Monthly Activity Summary" in frame.proto.srcdoc
+                   for frame in app.get("iframe"))
     assert any("Your edits are still here" in w.value for w in app.warning)
     fake_converter(monkeypatch, tmp_path)
-    next(button for button in app.button if button.label == "Retry preview").click().run()
+    next(button for button in app.button if button.label == "Retry preview" and button.key.endswith("_activity")).click().run()
     assert not app.exception
     assert any("data:image/png;base64," in frame.proto.srcdoc for frame in app.get("iframe"))
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic updated maintenance."

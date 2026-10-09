@@ -23,6 +23,39 @@ from app.monthly_report_model import (
 from app.monthly_report_native_layout import NativeLayoutError, build_native_docx
 
 
+@pytest.mark.parametrize("replacement,expected", [((400, 100), {"l": "25000", "r": "25000", "t": "0", "b": "0"}),
+                                                  ((100, 400), {"l": "0", "r": "0", "t": "43750", "b": "43750"})])
+def test_replacement_cover_photo_fits_native_frame_without_stretching(replacement, expected):
+    from app.monthly_report_native_layout import _fit_cover_photo
+    data = BytesIO()
+    Image.new("RGB", (200, 100), "navy").save(data, format="PNG")
+    document = Document()
+    picture = document.add_picture(BytesIO(data.getvalue()), width=Inches(4), height=Inches(2))
+    blip = next(picture._inline.iter(qn("a:blip")))
+    frame = picture._inline.xml
+    old_crop = OxmlElement("a:srcRect")
+    old_crop.set("t", "7000")
+    blip.addnext(old_crop)
+    _fit_cover_photo(blip, *replacement)
+    assert dict(old_crop.attrib) == expected
+    assert picture.width == Inches(4) and picture.height == Inches(2)
+    assert "srcRect" not in frame
+
+
+def test_replacement_cover_photo_updates_vml_fallback_crop():
+    from lxml import etree
+    from app.monthly_report_native_layout import _fit_cover_photo
+    vml = "{urn:schemas-microsoft-com:vml}"
+    group = etree.Element(vml + "group", style="width:4in;height:2in", coordsize="400,200")
+    shape = etree.SubElement(group, vml + "shape", style="width:400;height:200", id="native-mask")
+    image = etree.SubElement(shape, vml + "imagedata", croptop=".1", cropleft=".1")
+    _fit_cover_photo(image, 100, 400)
+    assert image.get("croptop") == image.get("cropbottom") == "0.43750000"
+    assert image.get("cropleft") == image.get("cropright") == "0.00000000"
+    assert shape.get("style") == "width:400;height:200"
+    assert shape.get("id") == "native-mask"
+
+
 def draft(*blocks):
     sections = (
         SectionSpec('activity', '2', 'Monthly Activity Summary', (
@@ -612,3 +645,104 @@ def test_master_clears_source_drawing_descriptions_in_body_and_header(tmp_path):
         assert b'safe-frame-id' in header_xml
         assert b'width:20pt;height:20pt' in header_xml
         assert b'Drawing ' in header_xml
+
+
+@pytest.mark.parametrize("master", [False, True])
+def test_explicit_cover_mapping_beats_logo_and_photo_aspect_ratio(tmp_path, master):
+    from app.monthly_report_import import inspect_docx
+    doc = Document()
+    for size, color in (((497, 80), 'green'), ((300, 68), 'blue'), ((1283, 639), 'gray')):
+        data = BytesIO(); Image.new('RGB', size, color).save(data, format='PNG')
+        doc.add_picture(BytesIO(data.getvalue()), width=Inches(3))
+    from lxml import etree
+    photo_blip = doc.inline_shapes[2]._inline.graphic.graphicData.pic.blipFill.blip
+    editing = 'http://schemas.microsoft.com/office/drawing/2010/main'
+    props = etree.SubElement(photo_blip, '{' + editing + '}imgProps')
+    layer = etree.SubElement(props, '{' + editing + '}imgLayer')
+    layer.set(qn('r:embed'), photo_blip.embed)
+    doc.add_section()
+    doc.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    path = tmp_path / 'explicit-cover.docx'; doc.save(path)
+    inspection = inspect_docx(path)
+    items = [i for i in inspection.items if i.kind == 'image' and i.part == 'word/document.xml']
+    payloads = {}
+    blocks = []
+    for role, item, color in zip(('brand_logo', 'client_logo', 'cover_photo'), items, ('red', 'yellow', 'purple')):
+        data = BytesIO(); Image.new('RGB', (100, 100), color).save(data, format='PNG')
+        payloads[role] = data.getvalue()
+        blocks.append(ResolvedBlock(role, 'This month', asset_hashes=(role,),
+                                    references=() if master else (f'docx:{inspection.sha256}:{item.id}',)))
+    output = Document(BytesIO(build_native_docx(draft(*blocks), path, asset_loader=payloads.__getitem__, master=master)))
+    actual = [output.part.related_parts[s._inline.graphic.graphicData.pic.blipFill.blip.embed].blob
+              for s in output.inline_shapes]
+    assert actual == list(payloads.values())
+    retained_layer = next(output.element.iter('{' + editing + '}imgLayer'))
+    assert output.part.related_parts[retained_layer.get(qn('r:embed'))].blob == payloads['cover_photo']
+    if master:
+        blank = Document(BytesIO(build_native_docx(draft(), path, master=True)))
+        remaining_blips = list(blank.element.iter(qn('a:blip')))
+        assert len(remaining_blips) == 1
+        remaining = remaining_blips[0].get(qn('r:embed'))
+        assert Image.open(BytesIO(blank.part.related_parts[remaining].blob)).getpixel((0, 0)) == (0, 128, 0)
+
+
+def test_whole_native_report_keeps_inherited_header_relationships_implicit(tmp_path):
+    doc = Document()
+    doc.sections[0].header.paragraphs[0].text = 'ENFRA'
+    doc.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    doc.add_paragraph('Old activity')
+    doc.add_section()
+    doc.add_heading('TRAINING SUMMARY', 1)
+    doc.add_paragraph('Old training')
+    path = tmp_path / 'inherited-header.docx'; doc.save(path)
+    original = Document(path)
+    assert original.sections[1].header.is_linked_to_previous
+    current = draft(ResolvedBlock('activity_summary', 'This month', text='New activity'),
+                    ResolvedBlock('training_summary', 'This month', text='New training'))
+    whole = Document(BytesIO(build_native_docx(current, path)))
+    assert whole.sections[1].header.is_linked_to_previous
+    preview = Document(BytesIO(build_native_docx(current, path, section_key='training')))
+    assert preview.sections[0].header.paragraphs[0].text == 'ENFRA'
+
+
+def test_canonical_merged_price_header_keeps_geometry_and_technical_labels(tmp_path):
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_sections import table_without_prices
+    document = Document(); document.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    table = document.add_table(rows=2, cols=4)
+    merged = table.cell(0, 0).merge(table.cell(0, 3))
+    merged.text = ''
+    for label in ('Equipment Description', 'End of Useful Life', 'Cost', 'Summary of deficiency'):
+        merged.paragraphs[0].add_run(label).bold = True
+    for cell, value in zip(table.rows[1].cells, ('Chiller', '2030', '$123.00', 'Current defect')):
+        cell.text = value
+    path = tmp_path / 'merged-price-header.docx'; document.save(path)
+    inspection = inspect_docx(path); item = next(i for i in inspection.items if i.kind == 'table')
+    supplied, removed = table_without_prices(item)
+    assert removed == (2,)
+    supplied = replace(supplied, reference=f'docx:{inspection.sha256}:{item.id}')
+    current = draft(ResolvedBlock('work_orders', 'This month', extra_tables=(supplied,)))
+    output = Document(BytesIO(build_native_docx(current, path)))
+    actual = output.tables[0]
+    assert len(actual.rows[0]._tr.findall(qn('w:tc'))) == 1
+    assert actual.rows[0]._tr.find('.//' + qn('w:gridSpan')).get(qn('w:val')) == '4'
+    assert len(actual.rows[1]._tr.findall(qn('w:tc'))) == 4
+    assert actual.cell(1, 2).text == ''
+    text = actual.cell(0, 0).text
+    assert 'Cost' not in text and 'Equipment Description' in text and 'Summary of deficiency' in text
+    assert actual.cell(1, 3).text == 'Current defect'
+
+
+def test_new_training_matrix_receives_status_styling_in_native_geometry(tmp_path):
+    from app.monthly_report_model import ReportTable
+    current = draft(ResolvedBlock('training_summary', 'This month', extra_tables=(
+        ReportTable(('Team member', 'Site', 'Safety', 'Boilers'),
+                    (('Alex Example', 'Current Site', 'Completed', 'Pending'),),
+                    reference='training:matrix:v1'),)))
+    output = Document(BytesIO(build_native_docx(current, source(tmp_path))))
+    table = next(t for t in output.tables if 'Alex Example' in ' '.join(c.text for row in t.rows for c in row.cells))
+    complete = table.cell(1, 2)._tc.find('./' + qn('w:tcPr') + '/' + qn('w:shd'))
+    pending = table.cell(1, 3)._tc.find('./' + qn('w:tcPr') + '/' + qn('w:shd'))
+    assert complete is not None and pending is not None
+    assert complete.get(qn('w:fill')) != pending.get(qn('w:fill'))
+    assert table.rows[0]._tr.find('./' + qn('w:trPr') + '/' + qn('w:tblHeader')) is not None

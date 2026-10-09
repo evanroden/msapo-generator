@@ -27,7 +27,7 @@ from app.monthly_report_model import (
     ReportPeriod,
     ReportProfile,
     ResolvedBlock,
-    default_sections,
+    known_sections,
     layout_blocks,
     profile_sections,
 )
@@ -216,10 +216,30 @@ _SECTION_TERMS = {
     "issues": ("equipmentperformanceissues",), "capital": ("prioritycapitalrenewallist",),
     "proposals": ("pendingdeclinedproposals", "pendinganddeclinedproposals"),
     "training": ("trainingsummary",), "rfi": ("rfimatrix",),
+    "accounts_receivable": ("accountsreceivable", "accountreceivable", "accountsreceivables", "accountreceivables"),
 }
 
 
+def heading_fragment(text: str) -> str:
+    """Remove ENFRA's adjacent footer from a heading, preserving its trailing title.
+
+    Source XML is never altered. Some floating divider titles share one body
+    paragraph with the address line and its current PAGE result.
+    """
+    lines = []
+    for line in text.splitlines():
+        if re.search(r"enfrasolutions\.com", line, re.I):
+            before, after = re.split(r"enfrasolutions\.com", line, maxsplit=1, flags=re.I)
+            address = re.search(r"\d+\s*Galleria\s*Blvd", before, re.I)
+            prefix = before[:address.start()] if address else ""
+            line = prefix + " " + after
+        if line.strip() and not re.fullmatch(r"\s*\d+\s*", line):
+            lines.append(line.strip())
+    return " ".join(lines)
+
+
 def _heading(text: str) -> str | None:
+    text = heading_fragment(text)
     compact = re.sub(r"[^a-z]", "", text.casefold())
     if "tableofcontents" in compact or text.casefold().count("section") > 2 or len(text) > 250:
         return None
@@ -247,19 +267,19 @@ def _suggest(kind: str, text: str, section: str, *, heading: bool = False, part:
             if term in compact:
                 return slot
         return {"organization": "org_chart", "activity": "improvements", "mbcx": "mbcx_report",
-                "maintenance": "vendor_reports", "water": "water_reports"}.get(section, "cover_photo" if not section else "")
+                "maintenance": "vendor_reports", "water": "water_reports", "issues": "equipment_issues_evidence"}.get(section, "cover_photo" if not section else "")
     if kind == "table":
         if section in ("", "unmatched"):
             return ""
         return {"organization": "contact_matrix", "activity": "work_orders", "scorecards": "thermal_capacity",
                 "maintenance": "service_calls", "subcontractors": "subcontractor_matrix", "capital": "capital_renewal",
-                "proposals": "proposals", "rfi": "rfi_matrix"}.get(section, "")
+                "proposals": "proposals", "rfi": "rfi_matrix", "accounts_receivable": "accounts_receivable"}.get(section, "")
     if heading:
         return ""
     if part.startswith("word/footer"):
         return "footer_text"
     return {"activity": "activity_summary", "scorecards": "utility_analysis", "issues": "equipment_issues",
-            "training": "training_summary"}.get(section, "")
+            "training": "training_summary", "accounts_receivable": "accounts_receivable_notes"}.get(section, "")
 
 
 def _is_native_divider_background(element, text=""):
@@ -268,6 +288,13 @@ def _is_native_divider_background(element, text=""):
     Geometry alone is insufficient: a vendor scan can also fill a page. Native
     dividers carry the lime/green shape palette and only a heading or numerals.
     """
+    text = text + " " + _text(element)
+    if any(char.isalpha() and not char.isascii() for char in text):
+        return False
+    if any(node.tag in (W + "object", W + "altChunk")
+           or node.tag.endswith("}relIds") or node.tag.endswith("}OLEObject")
+           for node in element.iter()):
+        return False
     remaining = re.sub(r"[^a-z]", "", text.casefold())
     for term in sorted({term for terms in _SECTION_TERMS.values() for term in terms}, key=len, reverse=True):
         remaining = remaining.replace(term, "")
@@ -277,14 +304,35 @@ def _is_native_divider_background(element, text=""):
     for node in element.iter():
         fill = node.get("fillcolor", "").lower()
         colors.update(re.findall(r"#([0-9a-f]{6})", fill))
-    if not colors.intersection({"d6ef4b", "d5ee4a"}) or not colors.intersection({"547e7e", "557f7f"}):
+    if not colors.intersection({"d6ef4b", "d5ee4a", "d4ed49", "d3ec48"}) or not colors.intersection({"547e7e", "557f7f", "527c7c", "537d7d"}):
         return False
     wp = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
-    return any(extent is not None and int(extent.get("cx", "0")) > 6_000_000
+    if any(extent is not None and int(extent.get("cx", "0")) > 6_000_000
                and int(extent.get("cy", "0")) > 6_000_000
                and any(node.tag == A + "blip" for node in anchor.iter())
                for anchor in element.iter(wp + "anchor")
-               for extent in (anchor.find(wp + "extent"),))
+               for extent in (anchor.find(wp + "extent"),)):
+        return True
+    # Older Word exports express the same page-backed divider as a VML group.
+    # Require physical page coordinates, the ENFRA two-colour palette and no
+    # uninspected text or embedded object inside the grouped artwork.
+    if any(node.tag == A + "t"
+           or (node.tag == V + "textpath" and node.get("string", "").strip())
+           for node in element.iter()):
+        return False
+    for group in element.iter(V + "group"):
+        style = dict(part.strip().lower().split(":", 1) for part in group.get("style", "").split(";") if ":" in part)
+        if (style.get("position") != "absolute"
+                or style.get("mso-position-horizontal-relative") != "page"
+                or style.get("mso-position-vertical-relative") != "page"
+                or not any(node.tag == V + "imagedata" and node.get(R + "id") for node in group.iter())):
+            continue
+        def points(value):
+            match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(pt|in)", value)
+            return float(match[1]) * (72 if match[2] == "in" else 1) if match else 0
+        if all(470 < points(style.get(axis, "")) < 1600 for axis in ("width", "height")):
+            return True
+    return False
 
 
 def inspect_docx(path: Path) -> DocxInspection:
@@ -313,6 +361,19 @@ def inspect_docx(path: Path) -> DocxInspection:
         with _package(path) as archive:
             names = set(archive.namelist())
             image_metadata = {}
+            vector_support = {}
+            def supported_image(target):
+                suffix = Path(target).suffix.lower()
+                if suffix in RASTER:
+                    return True
+                if suffix not in {".emf", ".wmf"}:
+                    return False
+                if target not in vector_support:
+                    from app.monthly_report_metafiles import supported_metafile
+                    vector_support[target] = (archive.getinfo(target).file_size <= 30 * 1024 * 1024
+                                              and supported_metafile(archive.read(target), suffix))
+                return vector_support[target]
+
             def metadata(target):
                 if target not in image_metadata:
                     with archive.open(target) as stream:
@@ -338,6 +399,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                     notices.append(f"{part}: {external} external or unsafe relationships were not fetched.")
                 stack, position, nodes = [], 0, 0
                 heading_fragments = []
+                heading_positions = []
                 page_fields = []
                 with archive.open(part) as source:
                     events = ET.iterparse(source, events=("start", "end"), forbid_dtd=True)
@@ -366,6 +428,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part == "word/document.xml" and element.tag != W + "tbl":
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
                                     toc_section, section, heading_fragments = word_section, "", []
+                                    heading_positions = []
                                     toc_headings = set()
                                 style = element.find(f"{W}pPr/{W}pStyle")
                                 candidate = _heading(text)
@@ -379,13 +442,31 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     compact = re.sub(r"[^a-z]", "", text.casefold())
                                     toc_headings.update(key for key, terms in _SECTION_TERMS.items() if any(term in compact for term in terms))
                                     heading_fragments = []
-                                elif text and len(text) < 100:
-                                    if not detected:
-                                        detected = _heading(" ".join([*heading_fragments, text]))
-                                    heading_fragments = [*heading_fragments, text][-3:]
+                                    heading_positions = []
+                                elif heading_fragment(text) and len(heading_fragment(text)) < 100:
+                                    fragment = heading_fragment(text)
+                                    if not detected or detected == "unmatched":
+                                        combined = _heading(" ".join([*heading_fragments, fragment]))
+                                        if combined not in (None, "unmatched"):
+                                            detected = combined
+                                            # Back-mark only the shortest adjoining heading prefix.
+                                            for count in range(1, len(heading_fragments) + 1):
+                                                if _heading(" ".join([*heading_fragments[-count:], fragment])) == combined:
+                                                    positions = set(heading_positions[-count:])
+                                                    for index, previous in enumerate(items):
+                                                        if previous.part == part and previous.position in positions:
+                                                            items[index] = replace(previous, section=combined,
+                                                                                   suggested_slot="divider_" + combined if previous.kind == "image" else "",
+                                                                                   note="Native section heading")
+                                                    break
+                                    heading_positions = [*heading_positions, position][-3:]
+                                    heading_fragments = [*heading_fragments, fragment][-3:]
                                 elif text:
                                     heading_fragments = []
+                                    heading_positions = []
                             if detected:
+                                if detected != "unmatched":
+                                    source_note = "Native section heading"
                                 section = detected
                                 content_slot = ""
                             compact_text = re.sub(r"[^a-z]", "", text.casefold())
@@ -400,6 +481,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 content_slot = "end_of_life"
                             if detected and detected != "unmatched":
                                 heading_fragments = []
+                                heading_positions = []
                             if part == "word/document.xml":
                                 for kind in ("footnote", "endnote"):
                                     for reference in element.iter(W + kind + "Reference"):
@@ -441,7 +523,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     continue
                                 seen.add(target)
                                 safe = target in names and kind.endswith("/image") and target.startswith("word/media/")
-                                supported = safe and Path(target).suffix.lower() in RASTER
+                                supported = safe and supported_image(target)
                                 caption = ""
                                 if picture_table:
                                     ancestor = parents.get(node)
@@ -457,9 +539,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                             legacy_groups = element.findall(".//" + V + "group")
                             legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
                             if graphics or legacy_groups or legacy_text:
-                                add("unsupported", part, position, text=text,
-                                    note=("Native divider artwork" if detected and detected != "unmatched" else
-                                          "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection."))
+                                from app.monthly_report_smartart import closed_smartart_text
+                                smartart = closed_smartart_text(archive, graphics, relations) if section == "organization" and not legacy_groups and not legacy_text else None
+                                if smartart is not None:
+                                    add("text", part, position, text=smartart, suggested_slot="org_chart",
+                                        note="Validated native SmartArt text")
+                                else:
+                                    diagram = any(e.get("uri", "").endswith("/diagram") for e in graphics)
+                                    add("unsupported", part, position, text=text,
+                                        note=("Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
+                                              "Native divider artwork" if detected and detected != "unmatched" else
+                                              "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection."))
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
                                 add("unsupported", part, position, note="Embedded document content was not executed. Review it in the original.")
                             if part == "word/document.xml" and element.find(".//" + W + "sectPr") is not None:
@@ -470,7 +560,7 @@ def inspect_docx(path: Path) -> DocxInspection:
             referenced = {i.image_part for i in items if i.image_part}
             for name in sorted(names):
                 if name.startswith("word/media/") and name not in referenced:
-                    add("image" if Path(name).suffix.lower() in RASTER else "unsupported", name, 0, image_part=name,
+                    add("image" if supported_image(name) else "unsupported", name, 0, image_part=name,
                         note="Unplaced package asset; confirm whether it belongs in this report.")
             if risky:
                 for name in sorted(risky):
@@ -482,15 +572,22 @@ def inspect_docx(path: Path) -> DocxInspection:
     for position, word_number in background_positions:
         heading = next((item for item in items if item.part == "word/document.xml"
                         and item.word_section == word_number and item.position >= position
-                        and item.kind == "text" and _heading(item.text) not in (None, "unmatched")), None)
+                        and item.kind == "text" and (item.note == "Native section heading"
+                            or _heading(item.text) not in (None, "unmatched"))), None)
         if heading is None:
             continue
-        target = _heading(heading.text)
+        between = [item for item in items if item.part == "word/document.xml"
+                   and position < item.position < heading.position]
+        if any(item.kind == "table" or (item.kind == "text"
+               and item.note != "Native section heading"
+               and not re.fullmatch(r"(?:\d{1,3}[.)]?\s*)*", heading_fragment(item.text))) for item in between):
+            continue  # A real narrative/table interrupts the decorative canvas.
+        target = heading.section if heading.note == "Native section heading" else _heading(heading.text)
         for index, item in enumerate(items):
             if item.part == "word/document.xml" and position <= item.position <= heading.position:
                 slot = "divider_" + target if item.kind == "image" else ""
                 items[index] = replace(item, section=target, suggested_slot=slot,
-                                       note="Native divider artwork" if item.position <= heading.position else item.note)
+                                       note=item.note if item.note == "Native section heading" else "Native divider artwork")
     return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section)
 
 
@@ -505,13 +602,17 @@ def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, pr
             raw = archive.read(item.image_part)
     except (BadZipFile, KeyError, OSError, RuntimeError) as exc:
         raise ImportError("This report picture could not be read. Upload the original DOCX again and choose Analyze report. Saved versions were not changed.") from exc
-    return normalize_report_image(raw, Path(item.image_part).suffix, line_art=line_art,
+    suffix = Path(item.image_part).suffix.lower()
+    if suffix in {".emf", ".wmf"}:
+        from app.monthly_report_metafiles import rasterize_metafile
+        raw, suffix = rasterize_metafile(raw, suffix), ".png"
+    return normalize_report_image(raw, suffix, line_art=line_art,
                                   frame=(4, 5) if preview else (7, 9), dpi=96 if preview else 200)
 
 
 def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapping, ...]) -> MappedImport:
     """Build only selected mappings, retaining every unmapped item in inspection."""
-    known = {b.key: b for s in default_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
+    known = {b.key: b for s in known_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
     items = {i.id: i for i in inspection.items}
     grouped, overrides, assets, mapped = {}, {}, {}, []
     total = 0
@@ -563,7 +664,7 @@ def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapp
             rows = item.rows[1:] if mapping.first_row_header else item.rows
             block = replace(block, rows=tuple(tuple(row[i] for i in indices) for row in rows))
         else:
-            if spec.type not in ("rich_text", "stock_text"):
+            if spec.type not in ("rich_text", "stock_text") and not (mapping.slot == "org_chart" and item.note == "Validated native SmartArt text"):
                 raise ImportError("Text needs a narrative or footer destination.")
             block = replace(block, text="\n\n".join(t for t in (block.text, item.text) if t))
         grouped[mapping.slot] = replace(block, references=block.references + (reference,))

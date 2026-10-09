@@ -48,18 +48,13 @@ def test_general_template_sections_have_one_editing_home(monkeypatch, tmp_path):
     next(w for w in app.text_input if w.label == 'Your name').set_value('Synthetic Editor').run()
     next(b for b in app.button if b.label == 'Start this report').click().run()
     step(app, 2)
-    chooser = next(w for w in app.selectbox if w.label == 'Section to update')
-    assert {'Equipment Performance Issues', 'Priority Capital Renewal List', 'Pending & Declined Proposals'} <= set(chooser.options)
-    chooser.set_value('issues').run()
-    assert any(w.label == 'Equipment issues' for w in app.text_area)
-    assert not any(w.label == 'Utility analysis' for w in app.text_area)
-    next(w for w in app.selectbox if w.label == 'Section to update').set_value('scorecards').run()
-    assert any(w.label == 'Utility analysis' for w in app.text_area)
-    step(app, 3)
-    chooser = next(w for w in app.selectbox if w.label == 'Site information to update')
-    assert {'Organizational Chart', 'Sub-Contractor Status'} <= set(chooser.options)
+    titles = [w.value for w in app.subheader]
+    assert {'Equipment Performance Issues', 'Priority Capital Renewal List', 'Pending & Declined Proposals',
+            'Organizational Chart', 'Sub-Contractor Status'} <= set(titles)
+    assert not any(w.label in ('Section to update', 'Site information to update') for w in app.selectbox)
+    for label in ('Equipment issues', 'Utility analysis'):
+        assert sum(w.label == label for w in app.text_area) == 1
     assert any(b.label == 'Change team chart' for b in app.button)
-    assert not any(w.label in ('Equipment issues', 'Utility analysis') for w in app.text_area)
     assert not any(w.label.startswith('Change the ') for w in app.checkbox)
     assert not any(w.label in ('Pictures/pages to keep', 'Picture/page to view') for w in (*app.selectbox, *app.multiselect))
 
@@ -70,7 +65,6 @@ def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_m
     app = monthly(monkeypatch, tmp_path)
     next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Editor').run()
     step(app, 2)
-    next(w for w in app.selectbox if w.label == 'Section to update').set_value('mbcx').run()
     update = next(w for w in app.text_area if w.label == 'Update to include in the report')
     assert update.value == ''
     next(b for b in app.button if b.label == 'Reporting has not started').click().run()
@@ -82,5 +76,4 @@ def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_m
     assert next(b for b in saved.draft.blocks if b.key == 'mbcx_status').text == 'Synthetic equipment monitoring is awaiting activation.'
     app.selectbox('report_month_number').set_value(10).run()
     step(app, 2)
-    next(w for w in app.selectbox if w.label == 'Section to update').set_value('mbcx').run()
     assert next(w for w in app.text_area if w.label == 'Update to include in the report').value == 'Synthetic equipment monitoring is awaiting activation.'

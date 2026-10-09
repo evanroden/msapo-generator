@@ -11,7 +11,7 @@ from app import monthly_report_library as library, monthly_report_sources as sou
 from app.monthly_report_content_policy import page_fingerprint
 from app.monthly_report_docx import assemble_docx
 from app.monthly_report_model import ReportDraft, ReportPeriod, ReportSource, default_sections, synthetic_profiles
-from test_monthly_report_editor import app_with_library
+from test_monthly_report_upload_ui import app_with_library
 from test_monthly_report_upload_ui import button, select, upload
 
 
