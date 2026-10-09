@@ -775,3 +775,52 @@ def apply_defaults(draft):
     if not block.rows:
         return draft
     return apply_contacts(draft, replace(block, source="Library"))
+
+
+def refresh_directory_contacts(draft):
+    """Refresh an unedited directory-backed working copy, never a saved snapshot.
+
+    Exact historical rows and site links are the evidence that a table is still
+    a shared default. Manual edits, missing history, ambiguous memberships and
+    retired links are retained rather than guessed or silently overwritten.
+    """
+    if not draft.prepared_by.strip():
+        return draft
+    current = next((b for b in draft.blocks if b.key == 'contact_matrix'), None)
+    spec = next((b for s in draft.sections if s.included for b in s.blocks
+                 if b.key == 'contact_matrix'), None)
+    if (current is None or spec is None or current.source == 'Omit'
+            or spec.columns != CONTACT_SPEC.columns or current.text.strip()
+            or current.extra_tables or current.asset_hashes or current.org_nodes
+            or current.ai_written or current.ai_paragraphs or current.pending_library_save):
+        return draft
+    refs = tuple(r for r in current.references
+                 if not r.startswith(('report-period:', 'report-origin:')))
+    versions = [re.fullmatch(r'directory:([^:]+):([1-9][0-9]*)', r) for r in refs]
+    versions = [m for m in versions if m]
+    if len(versions) != 1 or len(versions[0][2]) > 10:
+        return draft
+    bindings = {}
+    for reference in refs:
+        match = re.fullmatch(r'directory-site:([^:]+):([^:]+)', reference)
+        if match:
+            if match[1] in bindings:
+                return draft
+            bindings[match[1]] = match[2]
+        elif reference != versions[0][0]:
+            return draft
+    try:
+        latest = load_directory(draft.profile.contract)
+        if (latest is None or latest.revision == int(versions[0][2])
+                or library._contract_directory(latest.contract) != versions[0][1]):
+            return draft
+        previous = load_directory(draft.profile.contract, int(versions[0][2]))
+        original, old_missing = contact_block(previous, draft.profile.facilities, bindings)
+        if old_missing or original.rows != current.rows or original.references != refs:
+            return draft
+        replacement, missing = contact_block(latest, draft.profile.facilities, bindings)
+        if missing:
+            return draft
+    except (ValueError, OSError):
+        return draft
+    return apply_contacts(draft, replace(replacement, source='Library'))

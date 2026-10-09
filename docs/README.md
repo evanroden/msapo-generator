@@ -187,3 +187,6 @@ Worth matching when you add one.
 - [Monthly report native chart-page preservation — 2026-10-08](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_WORD_PAGES.md)
 
 Replaced content pages and chart fit: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REWRITTEN_PAGES.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REWRITTEN_PAGES.md). Empty-scaffold removal is scoped to proved rewrites; unchanged source geometry remains protected.
+
+Shared contacts in working reports:
+[COMMIT_NOTES_2026-10-09_SHARED_CONTACT_REFRESH.md](COMMIT_NOTES_2026-10-09_SHARED_CONTACT_REFRESH.md).

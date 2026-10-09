@@ -509,6 +509,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         from app.monthly_report_directory import apply_defaults
         draft = apply_defaults(draft)
         st.session_state[prefix + "_directory_defaults_attempted"] = True
+    from app.monthly_report_directory import refresh_directory_contacts
+    refreshed = refresh_directory_contacts(draft)
+    if refreshed != draft:
+        from app.monthly_report_directory_ui import _resume_contacts
+        # Discard only this editor's obsolete widget delta before the next draw.
+        _resume_contacts(refreshed, prefix)
     from app.monthly_report_directory_ui import render_selected_directory
     updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix)
     if updated_contacts is not None:
