@@ -97,16 +97,14 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     assert not app.exception
-    assert next(w for w in app.radio if w.label == "Report steps").value.endswith("Report")
+    assert not any(w.label == "Report steps" for w in app.radio)
     assert next(w for w in app.text_input if w.label == "Name for this group (optional)").value == "Synthetic Region"
     assert not any(w.label == "Site / report" for w in app.selectbox)
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"
     assert not any(w.label.startswith("Include ") for w in app.checkbox)
     assert any(w.label == "Report appearance" for w in app.expander)
     assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
-    next(w for w in app.button if w.label == "Change logos").click().run()
-    assert any(w.label == "New client logo" for w in app.get("file_uploader"))
-    next(w for w in app.button if w.label == "Done with cover changes").click().run()
+    assert not any(w.label in ("Change logos", "Manage shared logos") for w in app.button)
     step(app, 3)
     assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
     # Navigation is deliberately free: an unfinished standing section does not
@@ -148,7 +146,6 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     from streamlit.testing.v1 import AppTest
     from test_monthly_report_ui import ROOT, choose_report
     from app.contracts import RRH_CONTRACT
-    from app.monthly_report_guided import STEPS
     import fitz
     app = monthly(monkeypatch, tmp_path, saved=False)
     next(w for w in app.text_input if w.label == "Site name").set_value("Synthetic Cedar; Synthetic Harbor; Synthetic Meadow").run()
@@ -158,7 +155,7 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(w for w in app.text_input if w.label == "Your name").set_value("Synthetic Editor").run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     assert not any(w.label.startswith("Include ") for w in app.checkbox)
-    next(b for b in app.button if b.label == "Continue to this month’s work").click().run()
+    assert any(w.label == "Activity summary" for w in app.text_area)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic team completed the September inspection.").run()
     step(app, 3)
     assert not any(b.label == "Start an editable org chart" for b in app.button)
@@ -196,4 +193,5 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(b for b in next_app.button if b.label == "Change team chart").click().run()
     assert next(w for w in next_app.text_input if w.label == "Name").value == "Synthetic Manager"
     assert not any(w.label == "I checked the standing information for these sites" for w in next_app.checkbox)
-    assert next(r for r in next_app.radio if r.label == "Report steps").value == STEPS[2]
+    assert not any(r.label == "Report steps" for r in next_app.radio)
+    assert any(w.label == "Activity summary" for w in next_app.text_area)

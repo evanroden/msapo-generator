@@ -156,7 +156,7 @@ draft = replace(base, prepared_by="", sections=default_sections(), blocks=(
     ResolvedBlock("training_summary", "This month", text="Synthetic training"),
     ResolvedBlock("equipment_issues", "This month", text=unrelated)))
 st.session_state["preview"] = render_section_preview(draft, section, {}, "synthetic")
-''').run()
+''', default_timeout=15).run()
     assert not app.exception
     return app, calls
 
@@ -215,3 +215,103 @@ def test_real_section_render_excludes_cover_toc_and_other_sections_and_keeps_tex
         content = "\n".join(page.get_text() for page in pdf)
         assert "September 2026" in content
         assert "Training Summary" not in content
+
+
+def test_ordered_queue_runs_one_job_and_discards_a_result_after_edit(monkeypatch):
+    from concurrent.futures import Future
+    from threading import BoundedSemaphore
+    jobs = []
+    class Worker:
+        def submit(self, fn, *args):
+            future = Future()
+            jobs.append((future, args))
+            return future
+    monkeypatch.setattr(ui, '_PREVIEW_WORKER', Worker())
+    slot = BoundedSemaphore(1)
+    monkeypatch.setattr(ui, '_PREVIEW_SLOT', slot)
+    state = {'wanted': {'activity': 'new', 'training': 'train'},
+             'queue': {'activity': ('old', draft(), {}, 'Activity'),
+                       'training': ('train', draft(), {}, 'Training')},
+             'cache': {}, 'running': None}
+    ui._advance_preview_queue(state)
+    ui._advance_preview_queue(state)
+    assert len(jobs) == 1 and state['running'][0] == 'activity'
+    jobs[0][0].set_result({'html': 'OUTDATED PAGE'})
+    slot.release()
+    ui._advance_preview_queue(state)
+    assert 'activity' not in state['cache']
+    assert len(jobs) == 2 and state['running'][0] == 'training'
+    jobs[1][0].set_result({'html': 'Current training page', 'pages': 1})
+    slot.release()
+    ui._advance_preview_queue(state)
+    assert state['cache']['training']['html'] == 'Current training page'
+    assert state['running'] is None
+
+
+def test_ordered_preview_failure_releases_conversion_slot(monkeypatch):
+    from threading import BoundedSemaphore
+    slot = BoundedSemaphore(1)
+    assert slot.acquire(False)
+    monkeypatch.setattr(ui, '_PREVIEW_SLOT', slot)
+    def fail(*args):
+        raise RuntimeError('converter failed')
+    monkeypatch.setattr(ui, 'preview_section', fail)
+    result = ui._build_preview_entry(draft(), 'activity', {}, 'Activity')
+    assert 'error' in result and 'edits are still here' in result['error']
+    assert slot.acquire(False)
+
+
+def test_ordered_preview_pane_stays_visible_and_editor_is_usable_while_rendering(monkeypatch):
+    from concurrent.futures import Future
+    from threading import BoundedSemaphore
+    jobs = []
+    class Worker:
+        def submit(self, fn, *args):
+            future = Future()
+            jobs.append(future)
+            return future
+    monkeypatch.setattr(ui, '_PREVIEW_WORKER', Worker())
+    slot = BoundedSemaphore(1)
+    monkeypatch.setattr(ui, '_PREVIEW_SLOT', slot)
+    app = AppTest.from_string('''
+import streamlit as st
+from dataclasses import replace
+from app.monthly_report_model import synthetic_draft, synthetic_profiles, ReportPeriod, ResolvedBlock, default_sections
+from app.monthly_report_section_preview_ui import render_section_preview
+value = st.text_area("Activity", "Current activity")
+draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+draft = replace(draft, sections=default_sections(), blocks=(ResolvedBlock("activity_summary", "This month", text=value),))
+render_section_preview(draft, "activity", {}, "ordered", deferred=True)
+''', default_timeout=15).run()
+    assert not app.exception
+    assert app.info and not app.get('iframe') and len(jobs) == 1
+    app.text_area[0].set_value('A saved new edit').run()
+    assert not app.exception and app.text_area[0].value == 'A saved new edit'
+    assert len(jobs) == 1
+    jobs[0].set_result({'html': '<p>Old preview</p>', 'pages': 1})
+    slot.release()
+    app.run()
+    assert not app.get('iframe') and len(jobs) == 2
+    jobs[1].set_result({'html': '<p>Current preview</p>', 'pages': 1})
+    slot.release()
+    app.run()
+    assert not app.exception and app.get('iframe')
+    assert 'Current preview' in app.get('iframe')[0].proto.srcdoc
+
+
+def test_missing_preview_source_does_not_crash_the_editor(monkeypatch, tmp_path):
+    def unavailable(*args):
+        raise OSError('source unavailable')
+    monkeypatch.setattr(ui, 'section_preview_fingerprint', unavailable)
+    app, calls = preview_app(monkeypatch, tmp_path)
+    assert not app.exception and not calls
+    assert any('edits are still here' in value.value for value in app.warning)
+    app.text_area[0].set_value('Still editable').run()
+    assert not app.exception and app.text_area[0].value == 'Still editable'
+
+
+def test_section_preview_refreshes_when_report_month_changes():
+    from app.monthly_report_model import ReportPeriod
+    original = draft()
+    changed = replace(original, period=ReportPeriod(2026, 10))
+    assert engine.section_preview_fingerprint(original, 'activity') != engine.section_preview_fingerprint(changed, 'activity')

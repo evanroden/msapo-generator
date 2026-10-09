@@ -6,30 +6,37 @@ base_commit: 6ffaa1577f491694bd63950acd3a5838600368a2
 
 # Monthly report implementation checkpoint
 
-Latest work (2026-10-09): native ENFRA master layout, based on PR #89 merge
-`f0e7fa32a20d95a9ae7338060397d9de34fab42c`. PR #89's simplification is live;
-its exact-head and merged-main CI passed 1353 tests with zero skips. PR #88
-loaded the reviewed directory: 40 contracts, 108 sites, 555 contact assignments.
+Latest work (2026-10-09): the native-layout release is live. PR #90 merged as
+`a26c691c0b427c2373a902a72c3f4b728b3c595c`. Final feature CI and merged-main CI
+both passed 1424 tests, zero skips, plus production Docker build/health checks.
+The public app confirmed **Current master: version 1** and successful master
+installation using the reviewed UMMC August reference. No monthly draft was saved
+under the maintenance actor. Private references/runtime data stay outside Git.
 
-The owner requires completed-report replay as the acceptance test: start fresh,
-supply the known report's data through the builder, generate Word/PDF, and compare
-every page with the reference. The generic renderer is not an acceptable match.
-Native master storage/version pinning, advanced-only master replacement, fresh
-report selection and shared output/preview routing are implemented locally.
-Source documents and private runtime data remain outside Git.
+UMMC acceptance: actual application Generate produced 45 pages, with zero pixel
+changes outside three intentionally removed Cost labels compared with the source
+Word rendering under LibreOffice 24.2 and verified fonts. Repeat renders match.
+The supplied PDF has the same normalized text on all 45 pages, with small export
+position offsets; the earlier different-content claim was withdrawn.
 
-Stable-renderer acceptance now passes: LibreOffice 24.2 with the correct fonts
-produces 45 pages, with repeat exports identical on every page. Generated output
-matches the source Word rendering on 43 pages; on the other two pages the only
-changed pixels are the three intentionally removed Cost labels. The supplied PDF
-has the same normalized text on all 45 pages, with small export-position offsets;
-the earlier claim that it was a different content version is withdrawn.
-Actual AppTest Generate produces both files and a snapshot without errors. New
-production/CI configuration fixes the renderer release line and font mappings;
-CI also builds and health-checks the production image. Full final-head CI,
-fresh/changed input and live-preview checks, then production deployment/master
-installation are the remaining release steps. PR #90 is not deployed yet.
-See [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
+The owner then specified an ordered single-page editing workflow and supplied ten
+reference reports, including current September UMMC and Unity/USH files. Work is
+on `feat/monthly-report-ordered-workflow`, based on PR #90. Implemented locally:
+selected-contract/multiple-site contacts inline, removal of AM logo controls,
+all report sections in order with queued live previews, upload-first activity/
+capital/proposals, visible Copilot, protected manual edits, training matrix and
+monthly wizard, and photo-decode/preview failure containment. A legacy imported
+report keeps its own native design ahead of the company master; explicit pins
+remain authoritative. Replacement cover photos retain their native frame.
+
+Focused UI and pipeline tests pass. Obsolete navigation tests are being updated;
+a full local run and final CI remain release gates. Actual September continuation
+and fidelity checks are in progress, with the other supplied report variants
+assigned separately. Do not claim all ten references pass or merge this follow-up
+until their material layout findings are resolved. The valid-photo crash was not
+reproduced; the confirmed malformed-photo crash and stale preview paths are fixed.
+See [ordered workflow notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md)
+and [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
 
 Latest work: continuing simplification on `feat/monthly-report-focused-editing`,
 based on PR #86 merge `66f832f3f19f9ae4c67d4c7753a72b09e4b21790`.

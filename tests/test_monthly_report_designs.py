@@ -126,6 +126,42 @@ def test_master_requires_all_sections(tmp_path, monkeypatch):
     assert designs.master_state()["revision"] == 0
 
 
+def test_company_master_does_not_replace_a_legacy_imported_design(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    source = reference(tmp_path, "legacy")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    legacy = replace(synthetic_profiles()[0], template="enfra_word", imported_from=digest)
+    original = library._profile_path(legacy.contract, legacy.key) / "imports" / (digest + ".docx")
+    original.parent.mkdir(parents=True)
+    original.write_bytes(source.read_bytes())
+    master = designs.install_master(master_reference(tmp_path), actor="Editor", expected_revision=0)
+
+    assert designs.source_for(legacy) == original
+    assert not designs.is_master(legacy)
+    assert designs.pin(legacy, latest_master=True).template == designs.PREFIX + digest
+    fresh = replace(legacy, key="new-site", imported_from="")
+    assert designs.pin(fresh).template == designs.MASTER_PREFIX + master
+    explicit_master = replace(legacy, template=designs.MASTER_PREFIX + master)
+    assert designs.is_master(explicit_master)
+    assert designs.source_for(explicit_master).name == master + ".docx"
+
+    # An explicit site design still takes precedence over the legacy reference.
+    selected = designs.install(reference(tmp_path, "updated-site", "Training Summary"), legacy,
+                               actor="Editor", expected_revision=0)
+    assert designs.pin(legacy) == selected
+
+
+def test_missing_legacy_original_never_silently_uses_company_master(tmp_path, monkeypatch):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
+    designs.install_master(master_reference(tmp_path), actor="Editor", expected_revision=0)
+    legacy = replace(synthetic_profiles()[0], template="enfra_word", imported_from="a" * 64)
+    assert not designs.is_master(legacy)
+    assert designs.pin(legacy).template == designs.PREFIX + "a" * 64
+    with pytest.raises(ValueError, match="unavailable"):
+        designs.source_for(legacy)
+
+
 def test_output_and_live_preview_use_same_pinned_master(tmp_path, monkeypatch):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "data"))
     from app.monthly_report_model import synthetic_draft, ReportPeriod

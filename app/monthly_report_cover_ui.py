@@ -87,8 +87,8 @@ def render_cover(draft, blocks, prefix, assets, field, asset_loader):
     with st.expander("Report appearance", expanded=False):
         st.caption("Optional changes to this report’s artwork and footer.")
         preview = st.container()
-        actions = st.columns(3)
-        for column, label, action in zip(actions, ("Change cover photo", "Change logos", "Edit footer"), ("photo", "logos", "footer")):
+        actions = st.columns(2)
+        for column, label, action in zip(actions, ("Change cover photo", "Edit footer"), ("photo", "footer")):
             column.button(label, key=prefix + "_" + action,
                           on_click=_set_action, args=(action_key, action))
         action = st.session_state.get(action_key, "")
@@ -105,19 +105,6 @@ def render_cover(draft, blocks, prefix, assets, field, asset_loader):
                 st.success("Cover photo removed from this draft. Save progress to keep the change.")
             if block != original:
                 result["cover_photo"] = block
-        elif action == "logos":
-            st.caption("Existing logos stay as saved. A change here applies to this report; shared defaults are unchanged.")
-            from app.monthly_report_branding_ui import offer_logo
-            for key, title in PICTURES[:2]:
-                st.markdown("**" + title + "**")
-                original = block = result.get(key, ResolvedBlock(key, "Omit"))
-                try:
-                    block = offer_logo(block, draft.profile.contract, prefix, assets)
-                except (ValueError, OSError):
-                    st.warning("The shared logo could not be loaded. The current logo is retained; you can upload a replacement below.")
-                block = _upload_picture(block, title, prefix, assets)
-                if block != original:
-                    result[key] = block
         elif action == "footer":
             block = result.get("footer_text", ResolvedBlock("footer_text", "This month", text=draft.address_line))
             default = "" if block.source == "Omit" else block.text
@@ -135,10 +122,9 @@ def render_cover(draft, blocks, prefix, assets, field, asset_loader):
             st.button("Done with cover changes", key=prefix + "_done",
                       on_click=_set_action, args=(action_key, ""))
         with preview:
-            columns = st.columns([1, 1, 2])
-            for column, (key, title) in zip(columns, PICTURES):
-                with column:
-                    _preview_picture(result.get(key, ResolvedBlock(key, "Omit")), title, asset_loader)
+            if action == "photo":
+                st.caption("Selected source photo. The report preview shows its placement in the ENFRA cover.")
+                _preview_picture(result.get("cover_photo", ResolvedBlock("cover_photo", "Omit")), "Cover photo", asset_loader)
             footer = result.get("footer_text")
             text = (footer.text if footer.source != "Omit" else "") if footer else draft.address_line
             if text.strip():

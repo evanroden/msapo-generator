@@ -267,12 +267,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
     targets = [key for key in LABELS if allowed_keys is None or key in allowed_keys]
     if not targets:
         return draft, edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
-    if allowed_keys is not None and not st.toggle(
-        "Show writing help", key=field(prefix + "_writing_help_" + ai.digest(sorted(allowed_keys)), False),
-        help="Optional source reading and wording suggestions for this section.",
-    ):
-        return draft, edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
-    with st.expander("Writing help (optional)", expanded=False):
+    with st.container():
         st.write(
             "Read the useful facts from your files, then review suggested wording before adding it. Existing text and pages are preserved."
         )
@@ -411,7 +406,8 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
                         )
                         st.session_state.pop(prefix + "_ai_facts", None)
                         st.rerun()
-        with st.expander("Add optional Copilot notes"):
+        with st.container():
+            st.markdown("**Copilot analysis**")
             prompt = copilot_prompt(
                 draft.profile,
                 draft.period,

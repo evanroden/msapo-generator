@@ -154,6 +154,63 @@ def _replace_image(document, element, data):
         node.attrib.pop(qn("r:link"), None)
 
 
+def _fit_cover_photo(node, image_width, image_height):
+    """Center a replacement photo inside its existing native picture frame."""
+    if image_width <= 0 or image_height <= 0:
+        raise NativeLayoutError("The cover photograph has no usable dimensions.")
+    frame = None
+    if node.tag == qn("a:blip"):
+        for ancestor in node.iterancestors():
+            transforms = ancestor.findall(qn("a:xfrm"))
+            for child in ancestor:
+                if child.tag.rsplit("}", 1)[-1] == "spPr":
+                    transforms.extend(child.findall(qn("a:xfrm")))
+            ext = next((transform.find(qn("a:ext")) for transform in transforms
+                        if transform.find(qn("a:ext")) is not None), None)
+            if ext is not None:
+                frame = (float(ext.get("cx", "0")), float(ext.get("cy", "0")))
+                break
+    else:
+        def dimensions(element):
+            values = {}
+            for key, value, unit in re.findall(r"(?:^|;)\s*(width|height)\s*:\s*([\d.]+)([a-z]*)", element.get("style", "")):
+                values[key] = float(value) * {"in": 72, "cm": 72 / 2.54, "mm": 72 / 25.4,
+                                              "px": .75}.get(unit, 1)
+            return (values.get("width", 0), values.get("height", 0))
+
+        shape = next((ancestor for ancestor in node.iterancestors()
+                      if ancestor.tag == "{urn:schemas-microsoft-com:vml}shape"), None)
+        if shape is not None:
+            width, height = dimensions(shape)
+            for group in shape.iterancestors():
+                if group.tag != "{urn:schemas-microsoft-com:vml}group":
+                    continue
+                coordinates = group.get("coordsize", "").split(",")
+                group_width, group_height = dimensions(group)
+                if len(coordinates) == 2 and all(float(value) > 0 for value in coordinates) and group_width and group_height:
+                    width *= group_width / float(coordinates[0])
+                    height *= group_height / float(coordinates[1])
+            frame = width, height
+    if not frame or min(frame) <= 0:
+        raise NativeLayoutError("The cover photograph's native frame dimensions are unavailable.")
+    frame_ratio = frame[0] / frame[1]
+    image_ratio = image_width / image_height
+    horizontal = max(0, (1 - frame_ratio / image_ratio) / 2)
+    vertical = max(0, (1 - image_ratio / frame_ratio) / 2)
+    crop = {"l": horizontal, "r": horizontal, "t": vertical, "b": vertical}
+    if node.tag == qn("a:blip"):
+        fill = node.getparent()
+        rectangle = fill.find(qn("a:srcRect"))
+        if rectangle is None:
+            rectangle = OxmlElement("a:srcRect")
+            node.addnext(rectangle)
+        for key, value in crop.items():
+            rectangle.set(key, str(round(value * 100000)))
+    else:
+        for key, name in {"l": "cropleft", "r": "cropright", "t": "croptop", "b": "cropbottom"}.items():
+            node.set(name, format(crop[key], ".8f"))
+
+
 def _table(element, columns, rows):
     native_rows = element.findall(qn("w:tr"))
     if not native_rows:
@@ -495,8 +552,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     continue  # Explicit unchanged source art retains its native resolution/crop.
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
-                new_rid, _ = document.part.get_or_add_image(BytesIO(asset_loader(block.asset_hashes[0])))
+                new_rid, image = document.part.get_or_add_image(BytesIO(asset_loader(block.asset_hashes[0])))
                 node.set(attr, new_rid)
+                if role == "cover_photo":
+                    _fit_cover_photo(node, image.px_width, image.px_height)
             elif role != "brand_logo" and (master or block is not None):
                 # A global master must never lend another client's logo/photo.
                 node.getparent().remove(node)

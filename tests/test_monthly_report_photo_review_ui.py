@@ -116,3 +116,30 @@ st.session_state.chart_draft = replace(draft, blocks=(changed,))
     assert not app.exception
     nodes = app.session_state.chart_draft.blocks[0].org_nodes
     assert len(nodes) == 1 and nodes[0].key == "worker" and nodes[0].reports_to == ""
+
+
+def test_unreadable_photo_batch_keeps_saved_photos_and_allows_retry(monkeypatch):
+    from io import BytesIO
+    from PIL import Image
+    from app import monthly_report_visual_ui as ui
+    class Upload(BytesIO):
+        name = 'progress.png'
+        @property
+        def size(self):
+            return len(self.getvalue())
+    good = BytesIO()
+    Image.new('RGB', (24, 18), 'orange').save(good, 'PNG')
+    incoming = [Upload(good.getvalue()), Upload(b'not a decodable image')]
+    monkeypatch.setattr(ui.st, 'file_uploader', lambda *a, **k: incoming)
+    app = AppTest.from_string(SCRIPT).run()
+    original = app.session_state.photos_draft
+    button(app, 'Add these photos').click().run()
+    assert not app.exception
+    assert app.session_state.photos_draft == original
+    assert any('could not be read' in value.value for value in app.error)
+    incoming.pop()
+    button(app, 'Add these photos').click().run()
+    assert not app.exception
+    block = app.session_state.photos_draft.blocks[0]
+    assert len(block.asset_hashes) == 3
+    assert block.asset_captions[:2] == ('First photo', 'Second photo')

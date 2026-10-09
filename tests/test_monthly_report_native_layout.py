@@ -23,6 +23,39 @@ from app.monthly_report_model import (
 from app.monthly_report_native_layout import NativeLayoutError, build_native_docx
 
 
+@pytest.mark.parametrize("replacement,expected", [((400, 100), {"l": "25000", "r": "25000", "t": "0", "b": "0"}),
+                                                  ((100, 400), {"l": "0", "r": "0", "t": "43750", "b": "43750"})])
+def test_replacement_cover_photo_fits_native_frame_without_stretching(replacement, expected):
+    from app.monthly_report_native_layout import _fit_cover_photo
+    data = BytesIO()
+    Image.new("RGB", (200, 100), "navy").save(data, format="PNG")
+    document = Document()
+    picture = document.add_picture(BytesIO(data.getvalue()), width=Inches(4), height=Inches(2))
+    blip = next(picture._inline.iter(qn("a:blip")))
+    frame = picture._inline.xml
+    old_crop = OxmlElement("a:srcRect")
+    old_crop.set("t", "7000")
+    blip.addnext(old_crop)
+    _fit_cover_photo(blip, *replacement)
+    assert dict(old_crop.attrib) == expected
+    assert picture.width == Inches(4) and picture.height == Inches(2)
+    assert "srcRect" not in frame
+
+
+def test_replacement_cover_photo_updates_vml_fallback_crop():
+    from lxml import etree
+    from app.monthly_report_native_layout import _fit_cover_photo
+    vml = "{urn:schemas-microsoft-com:vml}"
+    group = etree.Element(vml + "group", style="width:4in;height:2in", coordsize="400,200")
+    shape = etree.SubElement(group, vml + "shape", style="width:400;height:200", id="native-mask")
+    image = etree.SubElement(shape, vml + "imagedata", croptop=".1", cropleft=".1")
+    _fit_cover_photo(image, 100, 400)
+    assert image.get("croptop") == image.get("cropbottom") == "0.43750000"
+    assert image.get("cropleft") == image.get("cropright") == "0.00000000"
+    assert shape.get("style") == "width:400;height:200"
+    assert shape.get("id") == "native-mask"
+
+
 def draft(*blocks):
     sections = (
         SectionSpec('activity', '2', 'Monthly Activity Summary', (

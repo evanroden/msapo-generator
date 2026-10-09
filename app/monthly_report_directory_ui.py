@@ -50,6 +50,66 @@ def _edit_contract_contacts(contacts, prefix):
                                         for key in ("Role", "Name", "Phone", "Email")))
 
 
+def selected_directory_sites(state, facilities):
+    """Resolve only the report's explicit sites; never fall back to another site."""
+    bindings = directory.suggest_contact_bindings(state, facilities) if state else {}
+    saved = {site.key: site for site in state.sites} if state else {}
+    result = []
+    for facility in facilities:
+        site = saved.get(bindings.get(facility.key))
+        if site is None:
+            # An unresolved existing identity must not silently replace or
+            # reactivate a retired/ambiguous directory record.
+            matches = [s for s in saved.values()
+                       if s.key == facility.key or directory.facility_names(s) & directory.facility_names(facility)]
+            if matches:
+                raise ValueError("The saved contact identity for " + facility.title + " needs to be resolved before editing it.")
+            site = directory.DirectorySite(facility.key, facility.title, facility.aliases)
+        result.append(site)
+    return tuple(result)
+
+
+def render_selected_directory(contract, facilities, actor, prefix):
+    """Inline, report-scoped shared contacts with explicit attributed saves."""
+    with st.expander("Contract and site directory"):
+        if not actor.strip():
+            st.info("Enter your name above before viewing or changing saved contacts.")
+            return
+        try:
+            state = directory.load_directory(contract, include_archived=True)
+            if state and state.archived:
+                st.info("This contract's saved contact directory is archived.")
+                return
+            sites = selected_directory_sites(state, facilities)
+            revision = state.revision if state else 0
+            key = prefix + "_selected_directory_" + _signature((contract, tuple(s.key for s in sites), revision))
+            st.write(contract)
+            message = st.session_state.pop(prefix + "_directory_saved_message", "")
+            if message:
+                st.success(message)
+            st.caption("Contacts for the sites selected above. Shared changes are recorded under your entered name.")
+            rows = _grid(key + "_sites", [{"Site": s.title, "Address": s.address} for s in sites],
+                         hide_index=True, disabled=["Site"])
+            addresses = {s.key: str(row.get("Address") or "").strip() for s, row in zip(sites, rows)}
+            edited = []
+            for site in sites:
+                st.write(site.title)
+                contacts = _edit_contacts(site, key)
+                edited.append(replace(site, address=addresses[site.key], contacts=contacts))
+            contract_contacts = _edit_contract_contacts(state.contract_contacts if state else (), key)
+            if st.button("Save these contacts", key=key + "_save", disabled=not sites):
+                directory.save_directory(
+                    contract, directory.merge_sites(state.sites if state else (), tuple(edited)),
+                    expected_revision=revision, actor=actor, confirmed=True,
+                    source_sha256=state.source_sha256 if state else "",
+                    source_sheet=state.source_sheet if state else "", contract_contacts=contract_contacts)
+                st.session_state[prefix + "_directory_saved_message"] = "Contacts saved for this contract and the selected sites."
+                st.rerun()
+        except (ValueError, OSError) as exc:
+            st.error(str(exc))
+            st.caption("No contacts were replaced. Reload the current directory before trying again.")
+
+
 def _site_editor(sites, existing, prefix, *, importing=False):
     by_id = {s.key: s for s in sites}
     existing_by_title = {s.title: s for s in existing}

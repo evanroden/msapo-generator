@@ -44,7 +44,8 @@ def choose_report(app, site=None):
 
 
 def step(app, number):
-    next(r for r in app.radio if r.label == "Report steps").set_value(guided.STEPS[number-1]).run()
+    # All report sections are now simultaneously available on one page.
+    app.run()
     assert not app.exception
 
 
@@ -121,7 +122,7 @@ def test_guided_placeholder_warning_download_and_review_gates(monkeypatch, tmp_p
     step(app, 4)
     assert next(b for b in app.button if b.label == "Generate DOCX and PDF").disabled
     assert any("template instructions" in e.value for e in app.error)
-    assert any("This month’s work → Monthly Activity Summary" in e.value for e in app.error)
+    assert any("Monthly Activity Summary" in e.value for e in app.error)
     assert not any("activity_summary" in e.value for e in app.error)
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("August 2026 activity.").run()
@@ -144,10 +145,10 @@ def test_completion_messages_name_the_action_and_destination():
     draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
     draft = replace(draft, sections=default_sections())
     text = guided.review_message(ReportCheck("required", "Resolve required block: org_chart.", True, "org_chart"), draft)
-    assert text == "Add organizational chart in Site information → Organizational chart."
+    assert text == "Add organizational chart in Organizational Chart."
     text = guided.review_message(ReportCheck("required", "Resolve required block: work_orders.", True, "work_orders"), draft)
     assert "work_orders" not in text
-    assert "work-order summary" in text and "This month’s work → Monthly Activity Summary" in text
+    assert "work-order summary" in text and "Monthly Activity Summary" in text
     text = guided.review_message(ReportCheck("client_pages", "internal", True, "water_reports"), draft)
     assert "Water treatment reports" in text and "no prices" in text
     text = guided.review_message(ReportCheck("ai_number", "internal", True, "activity_summary"), draft)
@@ -221,7 +222,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     assert draft.address_line == "100 Example Way | example.invalid"
     assert "September 2026 repair" in next(b.text for b in draft.blocks if b.key == "activity_summary")
     assert next(b for b in draft.blocks if b.key == "vendor_reports").asset_hashes
-    assert next(r for r in app.radio if r.label == "Report steps").value == guided.STEPS[1]
+    assert not any(r.label == "Report steps" for r in app.radio)
 
 
 def test_all_sections_preserve_content_and_saved_status_across_new_sessions(monkeypatch, tmp_path):
@@ -239,7 +240,7 @@ def test_all_sections_preserve_content_and_saved_status_across_new_sessions(monk
     choose_report(new, synthetic_profiles()[0].facilities[0].title)
     assert not any(w.label.startswith("Include ") for w in new.checkbox)
     assert any("Continue your saved September 2026 report" in w.value for w in new.info)
-    next(b for b in new.button if b.label == "Continue to this month’s work").click().run()
+    new.run()
     assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic initial activity."
 
 

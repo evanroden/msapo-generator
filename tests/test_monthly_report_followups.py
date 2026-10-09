@@ -166,11 +166,13 @@ def test_returning_user_reviews_carried_status_and_can_save_unfinished_work(
     assert not app.exception
     step(app, 3)
     step(app, 2)
+    from app.monthly_report_model import ReportDraft
     working = next(value for key, value in app.session_state.filtered_state.items()
-                   if key.startswith("report_guided_") and key.endswith("_draft"))
+                   if key.startswith("report_guided_") and key.endswith("_draft") and isinstance(value, ReportDraft))
     issue = next(item for item in working.follow_ups if item.category == "issue")
     assert issue.status == "resolved" and not issue.included
     assert not problems(issue, working)
-    next(w for w in app.selectbox if w.label == "Section to update").set_value("proposals").run()
+    assert not any(w.label == "Section to update" for w in app.selectbox)
     assert any(b.label == "Still correct" for b in app.button)
     assert not any(b.label == "Mark resolved" for b in app.button)
+    assert any(b.label == "Update issue" for b in app.button)

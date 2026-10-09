@@ -41,13 +41,14 @@ def _digest(profile):
     selected = saved.get("profiles", {}).get(profile.key)
     if selected:
         return selected
+    # Older saved drafts predate explicit design pins. Their imported original
+    # is still their design; installing the company master must not replace it.
+    # Keep the reference even if its file is missing so source_for fails clearly.
+    if profile.imported_from:
+        return profile.imported_from
     master = master_state().get("default", "")
     if master:
         return master
-    if profile.imported_from:
-        original = library._profile_path(profile.contract, profile.key) / "imports" / (profile.imported_from + ".docx")
-        if original.exists():
-            return profile.imported_from
     return saved.get("default", "")
 
 
@@ -55,6 +56,8 @@ def is_master(profile):
     if profile.template.startswith(MASTER_PREFIX):
         return True
     if profile.template.startswith(PREFIX):
+        return False
+    if profile.imported_from:
         return False
     return bool(master_state().get("default") and not state(profile.contract).get("profiles", {}).get(profile.key))
 

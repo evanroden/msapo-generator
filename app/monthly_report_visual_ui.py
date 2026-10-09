@@ -379,6 +379,7 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
             st.error("Add at most 60 photos per section and 120 MB in one batch.")
         else:
             refs, captions = list(block.asset_hashes), list(block.asset_captions)
+            pending_assets = {}
             provenance = dict(block.asset_provenance)
             captions.extend("" for _ in range(len(refs) - len(captions)))
             try:
@@ -391,7 +392,8 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                         refs.append(ref)
                         provenance[ref] = ()
                         captions.append("")
-                        assets[ref] = normalized.data
+                        pending_assets[ref] = normalized.data
+                assets.update(pending_assets)
                 _install(
                     draft,
                     prefix,
@@ -403,8 +405,9 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                         asset_captions=tuple(captions),
                     ),
                 )
-            except ValueError as exc:
-                st.error(str(exc))
+            except (ValueError, OSError) as exc:
+                st.error(str(exc) if isinstance(exc, ValueError) else
+                         "One of these photos could not be read. Choose another file; your existing photos and captions are unchanged.")
     if not block.asset_hashes:
         st.info("Add photos when you have them. You can work on another section first.")
         return block
@@ -485,6 +488,7 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                     )
                 else:
                     st.info("No photos are included.")
-            except ValueError as exc:
-                st.error(str(exc))
+            except (ValueError, OSError, KeyError) as exc:
+                st.error(str(exc) if isinstance(exc, ValueError) else
+                         "This photo preview could not load. Your photos and captions are still here.")
     return block

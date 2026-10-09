@@ -57,7 +57,7 @@ def test_cover_keeps_appearance_controls_collapsed_and_reuses_saved_artwork(monk
     appearance = app.expander[0]
     assert appearance.label == "Report appearance"
     assert appearance.proto.expanded is False
-    assert {b.label for b in appearance.button} == {"Change cover photo", "Change logos", "Edit footer"}
+    assert {b.label for b in appearance.button} == {"Change cover photo", "Edit footer"}
     assert len(appearance.button) == len(app.button)
     assert any("September 2026" in v.value for v in app.markdown)
     assert any("Saved artwork is used automatically" in v.value for v in app.caption)
@@ -70,7 +70,7 @@ def test_empty_cover_has_no_required_image_or_new_blocks_until_an_edit():
     assert not app.error and not app.warning and not app.exception
     assert not app.checkbox and not app.get("file_uploader")
     assert app.session_state.blocks == {}
-    assert any("optional" in v.value for v in app.caption)
+    assert any("optional" in v.value.lower() for v in app.caption)
     button(app, "Change cover photo").click().run()
     assert app.session_state.blocks == {}
 
@@ -133,19 +133,15 @@ def test_remove_photo_is_explicit_and_footer_edits_keep_logos_reviewed():
     assert app.session_state.blocks["brand_logo"] == original["brand_logo"]
 
 
-def test_shared_logo_choices_only_open_with_explicit_action(monkeypatch):
+def test_logo_change_options_are_absent_from_report_appearance(monkeypatch):
     calls = []
     monkeypatch.setattr("app.monthly_report_branding_ui.offer_logo", lambda block, *a: calls.append(block.key) or block)
     app = cover_app()
+    assert not any("logo" in button.label.lower() for button in app.button)
+    button(app, "Change cover photo").click().run()
     assert calls == []
-    assert app.expander[0].proto.expanded is False
-    assert not app.get("file_uploader")
-    button(app, "Change logos").click().run()
-    assert calls == ["client_logo", "brand_logo"]
-    assert [v.label for v in app.get("file_uploader")] == ["New client logo", "New ENFRA logo"]
-    assert len(app.expander[0].get("file_uploader")) == 2
-    button(app, "Done with cover changes").click().run()
-    assert not app.get("file_uploader")
+    assert [value.label for value in app.get("file_uploader")] == ["New cover photo"]
+    assert not app.exception
 
 
 def test_replacement_does_not_inherit_picture_approval_from_its_old_slot():

@@ -8,19 +8,20 @@ from streamlit.testing.v1 import AppTest
 from app import monthly_report_library as library
 from app.contracts import RRH_CONTRACT
 from app.monthly_report_guided import STEPS, complete_guided_sections, review_destination
-from app.monthly_report_model import (BlockSpec, ColumnSpec, ReportFollowUp, ReportPeriod, ReportSource,
+from app.monthly_report_model import (BlockSpec, ColumnSpec, ReportDraft, ReportFollowUp, ReportPeriod, ReportSource,
                                      ResolvedBlock, default_sections, synthetic_draft, synthetic_profiles)
 from app.monthly_report_sources import SourceContent
 from test_monthly_report_ui import monthly, step
 
 
 def choose_section(app, key):
-    next(value for value in app.selectbox if value.label == "Section to update").set_value(key).run()
+    assert any(section.key == key for section in working_state(app)[1].sections)
+    app.run()
     assert not app.exception
 
 
 def working_state(app):
-    key = next(key for key in app.session_state.filtered_state if key.startswith("report_guided_") and key.endswith("_draft"))
+    key = next(key for key in app.session_state.filtered_state if key.startswith("report_guided_") and key.endswith("_draft") and isinstance(app.session_state[key], ReportDraft))
     return key, app.session_state[key]
 
 
@@ -32,25 +33,20 @@ def include(app, *titles):
     assert not any(value.label.startswith("Include ") for value in app.checkbox)
 
 
-def test_first_template_has_one_active_section_and_every_section_remains_reachable(monkeypatch, tmp_path):
+def test_first_template_has_every_section_visible_with_one_editing_home(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path, saved=False)
     next(value for value in app.text_input if value.label == "Site name").set_value("Synthetic First Site").run()
     next(value for value in app.button if value.label == "Use ENFRA template").click().run()
     next(value for value in app.text_input if value.label == "Your name").set_value("Synthetic Editor").run()
     next(value for value in app.button if value.label == "Start this report").click().run()
     step(app, 2)
-    assert [value.label for value in app.text_area] == ["Activity summary"]
+    assert sum(value.label == "Activity summary" for value in app.text_area) == 1
     assert not any("logo" in value.label.lower() for value in app.get("file_uploader"))
-    for key in ("scorecards", "mbcx", "maintenance", "water", "issues", "capital", "proposals", "training", "activity"):
-        choose_section(app, key)
-        assert not any(value.label in ("Prompt to copy manually if needed", "Paste Copilot's response") for value in app.text_area)
-    step(app, 3)
-    chooser = next(value for value in app.selectbox if value.label == "Site information to update")
-    assert len(chooser.options) == 2
-    for key in ("subcontractors", "organization"):
-        next(value for value in app.selectbox if value.label == "Site information to update").set_value(key).run()
-        assert not app.exception
-    step(app, 1)
+    sections = working_state(app)[1].sections
+    headings = [value.value for value in app.subheader]
+    assert all(headings.count(section.title) == 1 for section in sections)
+    assert [title for title in headings if title in {section.title for section in sections}] == [section.title for section in sections]
+    assert not any(value.label in ("Section to update", "Site information to update") for value in app.selectbox)
     assert any(value.value == "Cover and report details" for value in app.subheader)
 
 
@@ -60,17 +56,17 @@ def test_unsaved_text_and_source_state_survive_section_switches_and_direct_save(
     next(value for value in app.text_input if value.label == "Prepared by").set_value("Synthetic Editor").run()
     step(app, 2)
     assert not any(value.label == "Save this draft for others on this report to continue" for value in app.checkbox)
-    assert not any(value.label in ("Prompt to copy manually if needed", "Paste Copilot's response") for value in app.text_area)
+    assert not any(value.label == "Show writing help" for value in app.toggle)
     next(value for value in app.text_area if value.label == "Activity summary").set_value("Unsaved pump repair.").run()
     draft_key, _ = working_state(app)
     source = ReportSource("a" * 64, "synthetic.txt", "a" * 64, ".txt", page_texts=("Checked the pump.",))
     app.session_state[draft_key.removesuffix("_draft") + "_evidence"] = (SourceContent(source),)
     choose_section(app, "training")
-    assert not any(value.label in ("Activity summary", "Utility analysis") for value in app.text_area)
-    next(value for value in app.text_area if value.label == "Training summary").set_value("Completed a controls workshop.").run()
+    assert all(any(value.label == label for value in app.text_area) for label in ("Activity summary", "Utility analysis"))
+    next(value for value in app.text_area if value.label == "Training notes").set_value("Completed a controls workshop.").run()
     choose_section(app, "scorecards")
     assert any(value.label == "Utility analysis" for value in app.text_area)
-    assert not any(value.label == "Training summary" for value in app.text_area)
+    assert sum(value.label == "Training notes" for value in app.text_area) == 1
     choose_section(app, "activity")
     assert next(value for value in app.text_area if value.label == "Activity summary").value == "Unsaved pump repair."
     assert working_state(app)[1].sources == (source,)
@@ -85,17 +81,18 @@ def test_unsaved_text_and_source_state_survive_section_switches_and_direct_save(
 def test_legacy_excluded_active_section_is_restored_without_losing_content(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     include(app, "Training Summary")
+    next(value for value in app.text_input if value.label == "Prepared by").set_value("Synthetic Editor").run()
     step(app, 2)
     choose_section(app, "training")
-    next(value for value in app.text_area if value.label == "Training summary").set_value("Completed safety training.").run()
+    next(value for value in app.text_area if value.label == "Training notes").set_value("Completed safety training.").run()
     draft_key, draft = working_state(app)
     app.session_state[draft_key] = replace(draft, sections=tuple(
         replace(section, included=False) if section.key == "training" else section for section in draft.sections
     ))
     app.run()
-    assert next(value for value in app.selectbox if value.label == "Section to update").value == "training"
+    assert not any(value.label == "Section to update" for value in app.selectbox)
     assert all(section.included for section in working_state(app)[1].sections)
-    assert next(value for value in app.text_area if value.label == "Training summary").value == "Completed safety training."
+    assert next(value for value in app.text_area if value.label == "Training notes").value == "Completed safety training."
 
 
 def test_capacity_lives_with_utility_results_without_standing_confirmation(monkeypatch, tmp_path):
@@ -117,10 +114,10 @@ def test_capacity_lives_with_utility_results_without_standing_confirmation(monke
     assert capacity.rows and "200" in capacity.rows[0][2]
     step(app, 3)
     assert not any(value.label == "I checked the standing information for these sites" for value in app.checkbox)
-    assert not any("_edit_thermal_capacity_table_" in (value.key or "") for value in app.dataframe)
+    assert any("_edit_thermal_capacity_table_" in (value.key or "") for value in app.dataframe)
 
 
-def test_hidden_followups_still_block_download_and_review_button_opens_their_section(monkeypatch, tmp_path):
+def test_visible_followups_still_block_download_and_each_updates_independently(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     include(app, "Equipment Performance Issues", "Pending & Declined Proposals")
     next(value for value in app.text_input if value.label == "Prepared by").set_value("Synthetic Editor").run()
@@ -129,14 +126,13 @@ def test_hidden_followups_still_block_download_and_review_button_opens_their_sec
     proposal = ReportFollowUp("follow-synthetic-controls", "proposal", "Controls renewal.", "2026-08", status="pending")
     app.session_state[draft_key] = replace(draft, follow_ups=(issue, proposal))
     step(app, 2)
-    assert not any(value.label in ("Still open", "Update proposal") for value in app.button)
+    assert all(any(value.label == label for value in app.button) for label in ("Still open", "Update proposal"))
     step(app, 4)
     assert next(value for value in app.button if value.label == "Generate DOCX and PDF").disabled
     assert review_destination(working_state(app)[1], issue.key) == (STEPS[1], "issues")
-    next(value for value in app.button if value.label == "Open Equipment Performance Issues").click().run()
-    assert next(value for value in app.selectbox if value.label == "Section to update").value == "issues"
+    assert any(value.value == "Equipment Performance Issues" for value in app.subheader)
     assert any(value.label == "Still open" for value in app.button)
-    assert not any(value.label == "Update proposal" for value in app.button)
+    assert any(value.label == "Update proposal" for value in app.button)
     next(value for value in app.button if value.label == "Still open").click().run()
     assert working_state(app)[1].follow_ups[1] == proposal
 
@@ -197,33 +193,30 @@ def test_partial_legacy_sections_restore_standard_headings_without_rewriting_con
     assert complete_guided_sections(normalized) == normalized
 
 
-def test_live_preview_receives_current_section_after_edits_and_whole_report_only_in_review(monkeypatch, tmp_path):
+def test_live_previews_receive_each_section_and_current_edits(monkeypatch, tmp_path):
     from app import monthly_report_preview as whole_preview, monthly_report_section_preview_ui as section_preview
     previews, full_previews = [], []
     app = monthly(monkeypatch, tmp_path)
-    monkeypatch.setattr(section_preview, "render_section_preview", lambda draft, key, assets, prefix:
-                        previews.append((draft, key)))
+    monkeypatch.setattr(section_preview, "render_section_preview", lambda draft, key, assets, prefix, **kwargs:
+                        previews.append((draft, key, kwargs)))
     monkeypatch.setattr(whole_preview, "render_preview", lambda draft, assets, prefix, field:
                         full_previews.append(draft))
     app.run()
-    assert previews[-1][1] == "cover"
+    keys = [key for _, key, _ in previews]
+    expected = ["cover", *(section.key for section in working_state(app)[1].sections)]
+    assert keys == expected
+    assert all(options.get("deferred") for _, _, options in previews)
     assert not full_previews
     assert not any("parts have content" in item.value or "sections selected" in item.value for item in app.caption)
     assert not any(item.label.startswith("Include ") for item in app.checkbox)
-    assert [item.label for item in app.get("file_uploader")] == ["Starting report"]
-    step(app, 2)
+    assert sum(item.label == "Starting report" for item in app.get("file_uploader")) == 1
+    previews.clear()
     next(item for item in app.text_area if item.label == "Activity summary").set_value("Synthetic current repair.").run()
-    assert previews[-1][1] == "activity"
-    assert next(block for block in previews[-1][0].blocks if block.key == "activity_summary").text == "Synthetic current repair."
-    choose_section(app, "training")
-    assert previews[-1][1] == "training"
-    step(app, 3)
-    assert previews[-1][1] == "organization"
+    assert [key for _, key, _ in previews] == expected
+    activity = next(draft for draft, key, _ in previews if key == "activity")
+    assert next(block for block in activity.blocks if block.key == "activity_summary").text == "Synthetic current repair."
     assert not full_previews
-    count = len(previews)
-    step(app, 4)
-    assert len(previews) == count
-    assert len(full_previews) == 1
+    assert next(block for block in working_state(app)[1].blocks if block.key == "activity_summary").text == "Synthetic current repair."
 
 
 def test_blank_sections_generate_without_empty_or_standing_confirmations_but_pricing_still_blocks(monkeypatch, tmp_path):
@@ -254,8 +247,9 @@ def test_blank_sections_generate_without_empty_or_standing_confirmations_but_pri
     assert len(generated_draft.sections) == len(default_sections())
     assert all(any(section.title in text for text in paragraphs) for section in generated_draft.sections)
     draft_key, draft = working_state(app)
-    app.session_state[draft_key] = replace(draft, blocks=(ResolvedBlock("activity_summary", "This month", text="Synthetic service cost $100."),))
-    app.run()
+    # The section editor is always mounted; exercise the actual edit rather than
+    # changing its underlying draft behind an existing widget value.
+    next(item for item in app.text_area if item.label == "Activity summary").set_value("Synthetic service cost $100.").run()
     assert next(item for item in app.button if item.label == "Generate DOCX and PDF").disabled
     assert any("pricing" in item.value.lower() for item in app.error)
 
@@ -332,6 +326,6 @@ def test_saved_cleared_contacts_and_capacity_stay_blank_after_reopen_and_rollove
     reopened.selectbox("report_month_number").set_value(10).run()
     assert not reopened.exception
     current = next(value for key, value in reopened.session_state.filtered_state.items()
-                   if key.startswith("report_guided_") and key.endswith("_draft") and value.period == ReportPeriod(2026, 10))
+                   if key.startswith("report_guided_") and key.endswith("_draft") and isinstance(value, ReportDraft) and value.period == ReportPeriod(2026, 10))
     assert all(not block.rows and not block.extra_tables for block in current.blocks if block.key in cleared)
     assert current.profile.facilities == profile.facilities
