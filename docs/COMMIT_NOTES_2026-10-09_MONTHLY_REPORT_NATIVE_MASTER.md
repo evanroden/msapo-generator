@@ -134,3 +134,17 @@ Different-contract blank and changed-input packages are separately checked for
 current identity and absence of source contacts, site names, client images and
 hidden drawing caches. Empty sections need no invented facts. Final deployment
 and production master installation must be recorded after CI passes.
+
+The stable different-contract blank and changed-input exports each render as 38
+pages with all twelve sections, current identity/date/address, and the supplied
+current narrative, work order, photograph and caption. The real activity-preview
+UI renders exactly four relevant pages in its iframe with zero exceptions.
+The stronger whole-package audit caught old client text in an image description;
+source DrawingML/VML descriptions, titles and nonvisual names are now cleared
+before reuse, preserving frame geometry and IDs. The regression covers body,
+header and VML metadata; the native suite passes 34 tests. Final regenerated
+privacy and fidelity outputs are checked after this metadata-only change.
+
+The first production-image CI job on head
+`c283ac5c50bb3870c938738bd43ddd19131657c5` passed both Docker build and application
+health checks (run `37934261469`). A final run covers the metadata cleanup too.

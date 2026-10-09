@@ -74,6 +74,33 @@ def _set_text(element, value):
             node.text = ""
 
 
+def _clear_source_drawing_metadata(document):
+    """Source frame descriptions are facts, not reusable master geometry."""
+    drawing_namespaces = {
+        "http://schemas.openxmlformats.org/drawingml/2006/picture",
+        "http://schemas.openxmlformats.org/drawingml/2006/main",
+        "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+    }
+    for part in document.part.package.parts:
+        if not hasattr(part, "element"):
+            continue
+        for node in part.element.iter():
+            namespace, _, local = node.tag[1:].partition("}") if node.tag.startswith("{") else ("", "", node.tag)
+            if namespace in drawing_namespaces and local in {"docPr", "cNvPr"}:
+                node.attrib.pop("descr", None)
+                node.attrib.pop("title", None)
+                # Keep the required nonvisual name without importing a client's
+                # name, file name or old caption. IDs/references stay unchanged.
+                if "name" in node.attrib:
+                    node.set("name", "Drawing " + node.get("id", ""))
+            elif namespace == "urn:schemas-microsoft-com:vml":
+                for attr in list(node.attrib):
+                    if attr.rsplit("}", 1)[-1] in {"alt", "title"}:
+                        del node.attrib[attr]
+
+
 def _clear_images(element, *, preserve_decoration=False):
     # Remove the drawing itself, not its paragraph or section break.
     for node in list(element.iter()):
@@ -352,6 +379,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             preserved_text[block.key] = True
             unchanged_items.update(item.id for item in selected)
     document = Document(BytesIO(passive_docx(source_path)))
+    _clear_source_drawing_metadata(document)
     body = document.element.body
     original = list(body)
     # A merged technical cell may cross a removed price column. Preserve its

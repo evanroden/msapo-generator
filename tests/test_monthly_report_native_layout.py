@@ -576,3 +576,39 @@ def test_filtered_table_preserves_safe_cross_column_merge_geometry(tmp_path, mer
     assert b'$123.00' not in xml and b'$456.00' not in xml and b'>Cost<' not in xml
     if merged_start == 1:
         assert b'Replace pump after inspection' in xml
+
+
+def test_master_clears_source_drawing_descriptions_in_body_and_header(tmp_path):
+    image = BytesIO()
+    Image.new('RGB', (300, 200), 'green').save(image, format='PNG')
+    document = Document()
+    document.add_paragraph('Old Site')
+    document.add_picture(BytesIO(image.getvalue()), width=Inches(2))
+    header = document.sections[0].header.paragraphs[0]
+    header.add_run().add_picture(BytesIO(image.getvalue()), width=Inches(1))
+    for element in (document.element, document.sections[0].header._element):
+        for node in element.iter():
+            if node.tag in (qn('wp:docPr'), qn('pic:cNvPr')):
+                node.set('descr', 'OLD CLIENT DESCRIPTION')
+                node.set('title', 'OLD CLIENT TITLE')
+                node.set('name', 'OLD CLIENT FILE NAME')
+    from lxml import etree
+    pict = OxmlElement('w:pict')
+    shape = etree.SubElement(pict, '{urn:schemas-microsoft-com:vml}rect',
+                             id='safe-frame-id', style='width:20pt;height:20pt', fillcolor='#557f7f')
+    shape.set('alt', 'OLD CLIENT ALT')
+    shape.set('title', 'OLD CLIENT VML TITLE')
+    shape.set('{urn:schemas-microsoft-com:office:office}title', 'OLD CLIENT OFFICE TITLE')
+    header.add_run()._r.append(pict)
+    document.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    document.add_paragraph('Old activity')
+    path = tmp_path / 'described-master.docx'
+    document.save(path)
+    output = build_native_docx(draft(), path, master=True)
+    with ZipFile(BytesIO(output)) as archive:
+        all_xml = b'\n'.join(archive.read(name) for name in archive.namelist() if name.endswith('.xml'))
+        assert b'OLD CLIENT' not in all_xml
+        header_xml = archive.read('word/header1.xml')
+        assert b'safe-frame-id' in header_xml
+        assert b'width:20pt;height:20pt' in header_xml
+        assert b'Drawing ' in header_xml
