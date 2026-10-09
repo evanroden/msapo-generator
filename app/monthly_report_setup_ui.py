@@ -8,7 +8,7 @@ from app import monthly_report_library as library
 from app.monthly_report_editor import _grid, _key, _signature
 from app.monthly_report_import import ImportMapping, imported_draft, map_items, read_import_image
 from app.monthly_report_import_ui import _stage
-from app.monthly_report_model import Facility, ReportProfile, default_sections, layout_blocks
+from app.monthly_report_model import Facility, ReportProfile, known_sections, layout_blocks
 from app.monthly_report_setup import (
     DECISIONS, design_profile, initial_decision, item_findings, merge_drafts, suggested_mappings,
 )
@@ -96,7 +96,7 @@ def render_legacy_setup(contract, period, prepared, field, *, state=None):
     decisions = st.session_state.setdefault(p + "_decisions", {
         item.id: initial_decision(item, item.id in suggestions, period) for item in inspection.items})
     notes = st.session_state.setdefault(p + "_notes", {})
-    titles = {s.key: s.title for s in default_sections()}
+    titles = {s.key: s.title for s in known_sections()}
     st.write(f"Found {len(inspection.items)} content items across {len({i.section for i in inspection.items if i.section})} logical sections.")
     with st.expander("Detected sections and suggested destinations"):
         st.dataframe([{"Section": titles.get(i.section, "Cover / unplaced"), "Item": i.label,
@@ -130,7 +130,7 @@ def render_legacy_setup(contract, period, prepared, field, *, state=None):
             st.warning(finding)
         if item.note:
             st.caption(item.note)
-        specs = {b.key: b for s in default_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
+        specs = {b.key: b for s in known_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
         allowed = [b.key for b in specs.values() if
                    item.kind == "image" and b.type in ("image_page", "image_grid", "pdf_pages") or
                    item.kind == "text" and b.type in ("rich_text", "stock_text") or

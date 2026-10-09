@@ -20,7 +20,12 @@ def contains_price(text):
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for n, line in enumerate(lines):
         if _PRICE_LABEL.search(line):
-            if re.search(r"\d", line):
+            # A date elsewhere in an operational sentence does not turn the
+            # word "cost" into a price. Require a value after the price label,
+            # or a bare amount immediately before it.
+            if any(re.search(r"\d", line[match.end():])
+                   or re.search(r"\d[\d,.]*\s*[:–-]?\s*$", line[:match.start()])
+                   for match in _PRICE_LABEL.finditer(line)):
                 return True
             # PDF text often puts a monetary table heading and its bare amount
             # on separate lines, without a repeated currency symbol.
@@ -30,7 +35,7 @@ def contains_price(text):
 
 
 def _price_heading(title):
-    return bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
+    return bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|amount due|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
 
 
 def _mixed_price_heading(title):
@@ -65,8 +70,22 @@ def ambiguous_price_columns(columns, rows=()):
     return tuple(i for i, title in enumerate(_table_headings(columns, rows)) if _mixed_price_heading(title))
 
 
+def receivable_amount_columns(columns):
+    """Aged receivable buckets are monetary only in an explicit invoice context."""
+    headings = tuple(" ".join(str(c).casefold().split()) for c in columns)
+    invoice = any(re.search(r"\binvoice\b|accounts? receivable", c) for c in headings)
+    money = any(re.search(r"\bamount(?: due)?\b|\bbalance\b", c) for c in headings)
+    if not (invoice and money):
+        return ()
+    return tuple(i for i, title in enumerate(headings)
+                 if title in {"current", "total", "grand total", "balance", "balance due", "amount due", "invoice amount"}
+                 or re.fullmatch(r"[\dG]+\s*[-–]\s*(?:[\dG]+|over)(?:\s*days?)?", title, re.I))
+
+
 def table_price_columns(columns, rows):
-    return tuple(i for i, title in enumerate(_table_headings(columns, rows)) if price_column(title))
+    excluded = {i for i, title in enumerate(_table_headings(columns, rows)) if price_column(title)}
+    excluded.update(receivable_amount_columns(columns))
+    return tuple(sorted(excluded))
 
 
 def table_has_pricing(columns, rows, *, work_orders=False):

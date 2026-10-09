@@ -233,6 +233,24 @@ def passive_docx(path: Path) -> bytes:
                     layer_rels = [by_id.get(layer.get('{' + R + '}embed')) for layer in layers]
                     if not layer_rels or not all(rel is not None and rel.get('Type', '').endswith('/hdphoto') for rel in layer_rels):
                         continue
+                    # Some Word authors label ordinary JPEG/PNG layers as HD
+                    # Photo relationships. These are visible, supported raster
+                    # components, not opaque WDP edit history; retain the effects.
+                    supported_layers = True
+                    for relation in layer_rels:
+                        if relation.get('TargetMode', '').casefold() == 'external':
+                            supported_layers = False
+                            break
+                        layer_target = _resolve(name, relation.get('Target', ''))
+                        try:
+                            with Image.open(BytesIO(archive.read(layer_target))) as layer_image:
+                                if layer_image.format not in {'PNG', 'JPEG'}:
+                                    supported_layers = False
+                                layer_image.verify()
+                        except (KeyError, UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+                            supported_layers = False
+                    if supported_layers:
+                        continue
                     blip = next((p for p in node.iterancestors() if p.tag == '{http://schemas.openxmlformats.org/drawingml/2006/main}blip'), None)
                     fallback = by_id.get(blip.get('{' + R + '}embed')) if blip is not None else None
                     if fallback is None or fallback.get('TargetMode', '').casefold() == 'external' or not fallback.get('Type', '').endswith('/image'):

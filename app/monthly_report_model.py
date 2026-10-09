@@ -351,6 +351,19 @@ def default_sections() -> tuple[SectionSpec, ...]:
     )
 
 
+def optional_sections() -> tuple[SectionSpec, ...]:
+    """Known ENFRA design variants, enabled only by the selected design."""
+    return (SectionSpec("accounts_receivable", "", "Accounts Receivable", (
+        BlockSpec("accounts_receivable", "table", columns=(ColumnSpec("facility", "Facility"),
+                  ColumnSpec("item", "Item"), ColumnSpec("status", "Status"))),
+        BlockSpec("accounts_receivable_notes", "rich_text"),
+    )),)
+
+
+def known_sections() -> tuple[SectionSpec, ...]:
+    return (*default_sections(), *optional_sections())
+
+
 def included_sections(sections: tuple[SectionSpec, ...]) -> tuple[SectionSpec, ...]:
     """Renumber ordinary sections in their actual order; preserve appendix IDs."""
     result = []
@@ -369,7 +382,9 @@ def profile_sections(profile: ReportProfile) -> tuple[SectionSpec, ...]:
     overrides, titles = {b.key: b for b in profile.block_overrides}, dict(profile.section_titles)
     block_orders = dict(profile.section_block_order)
     sections = {}
-    for section in default_sections():
+    for section in known_sections():
+        if section.key in {s.key for s in optional_sections()} and section.key not in profile.section_order:
+            continue
         blocks = {b.key: overrides.get(b.key, b) for b in section.blocks}
         order = block_orders.get(section.key, tuple(blocks))
         if section.key == "mbcx" and "mbcx_report" in order and "mbcx_status" not in order:
@@ -387,7 +402,7 @@ def layout_blocks() -> tuple[BlockSpec, ...]:
     """Layout assets use the same versioning and confirmation as section blocks."""
     return (tuple(BlockSpec(key, "image_page") for key in COVER_ASSET_KEYS)
             + (BlockSpec("footer_text", "rich_text"),)
-            + tuple(BlockSpec("divider_" + s.key, "image_page") for s in default_sections()))
+            + tuple(BlockSpec("divider_" + s.key, "image_page") for s in known_sections()))
 
 
 def used_block_keys(draft: ReportDraft) -> set[str]:

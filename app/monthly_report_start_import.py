@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_import import MappedImport
-from app.monthly_report_model import default_sections, layout_blocks
+from app.monthly_report_model import known_sections, layout_blocks
 from app.monthly_report_sections import (
     build_section_import,
     default_slot,
@@ -158,7 +158,7 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
     It does not mean the writer reviewed automatically routed pictures; that
     distinction is enforced by build_starting_import below.
     """
-    known = {b.key for s in default_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
+    known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     result = {}
     for section in section_reviews(inspection):
         plan = {"key": section.key, "action": "Keep and review", "target": section.key,

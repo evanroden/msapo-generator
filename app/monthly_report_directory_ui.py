@@ -70,7 +70,7 @@ def selected_directory_sites(state, facilities):
 
 
 def render_selected_directory(contract, facilities, actor, prefix):
-    """Inline, report-scoped shared contacts with explicit attributed saves."""
+    """Return a replacement report block only after an explicit shared save."""
     with st.expander("Contract and site directory"):
         if not actor.strip():
             st.info("Enter your name above before viewing or changing saved contacts.")
@@ -87,7 +87,7 @@ def render_selected_directory(contract, facilities, actor, prefix):
             message = st.session_state.pop(prefix + "_directory_saved_message", "")
             if message:
                 st.success(message)
-            st.caption("Contacts for the sites selected above. Shared changes are recorded under your entered name.")
+            st.caption("Contacts for the sites selected above. Saving updates this report’s contact table and the shared directory; other reports keep their saved contacts.")
             rows = _grid(key + "_sites", [{"Site": s.title, "Address": s.address} for s in sites],
                          hide_index=True, disabled=["Site"])
             addresses = {s.key: str(row.get("Address") or "").strip() for s, row in zip(sites, rows)}
@@ -97,14 +97,21 @@ def render_selected_directory(contract, facilities, actor, prefix):
                 contacts = _edit_contacts(site, key)
                 edited.append(replace(site, address=addresses[site.key], contacts=contacts))
             contract_contacts = _edit_contract_contacts(state.contract_contacts if state else (), key)
-            if st.button("Save these contacts", key=key + "_save", disabled=not sites):
+            if st.button("Save contacts to directory and report", key=key + "_save", disabled=not sites):
+                merged = directory.merge_sites(state.sites if state else (), tuple(edited))
+                proposed = replace(state, revision=revision + 1, sites=merged, contract_contacts=contract_contacts) if state else directory.DirectoryState(
+                    contract, 1, merged, actor, "", contract_contacts=contract_contacts)
+                bindings = {facility.key: site.key for facility, site in zip(facilities, edited)}
+                report_contacts, missing = directory.contact_block(proposed, facilities, bindings)
+                if missing:
+                    raise ValueError("Cannot save contacts for unmatched sites: " + "; ".join(missing))
                 directory.save_directory(
-                    contract, directory.merge_sites(state.sites if state else (), tuple(edited)),
+                    contract, merged,
                     expected_revision=revision, actor=actor, confirmed=True,
                     source_sha256=state.source_sha256 if state else "",
                     source_sheet=state.source_sheet if state else "", contract_contacts=contract_contacts)
-                st.session_state[prefix + "_directory_saved_message"] = "Contacts saved for this contract and the selected sites."
-                st.rerun()
+                st.session_state[prefix + "_directory_saved_message"] = "Directory contacts saved. This report’s contact table is updated; use Save progress to keep the report changes."
+                return report_contacts
         except (ValueError, OSError) as exc:
             st.error(str(exc))
             st.caption("No contacts were replaced. Reload the current directory before trying again.")

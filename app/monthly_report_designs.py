@@ -89,14 +89,45 @@ def fingerprint(profile):
     return _digest(profile)
 
 
+def _inspection_order(inspection):
+    from app.monthly_report_model import known_sections, default_sections
+    known = {section.key for section in known_sections()}
+    found = tuple(dict.fromkeys(item.section for item in inspection.items
+                               if item.part == "word/document.xml" and item.section in known))
+    # All core sections remain available even in partially populated references.
+    return (*found, *(section.key for section in default_sections() if not section.appendix and section.key not in found))
+
+
+def master_section_order(profile):
+    """Immutable per-hash design metadata; legacy masters are inspected once."""
+    digest = _digest(profile)
+    if not digest or not is_master(profile):
+        return ()
+    root = library._root() / "designs" / "master"
+    metadata = root / "metadata" / (digest + ".json")
+    if metadata.exists():
+        return tuple(library._read(metadata).get("section_order", ()))
+    from app.monthly_report_import import inspect_docx
+    source = source_for(profile)
+    if source is None:
+        return ()
+    order = _inspection_order(inspect_docx(source))
+    library._atomic_write(metadata, library._json({"schema": 1, "hash": digest, "section_order": order}))
+    return order
+
+
 def pin(profile, *, latest_master=False):
+    selected = profile
     if latest_master and is_master(profile):
         digest = master_state().get("default", "")
         if digest:
-            return replace(profile, template=MASTER_PREFIX + digest)
-    digest = _digest(profile)
-    prefix = MASTER_PREFIX if is_master(profile) else PREFIX
-    return replace(profile, template=prefix + digest) if digest else profile
+            selected = replace(profile, template=MASTER_PREFIX + digest)
+    digest = _digest(selected)
+    prefix = MASTER_PREFIX if is_master(selected) else PREFIX
+    selected = replace(selected, template=prefix + digest) if digest else selected
+    if digest and is_master(selected) and (not selected.section_order or latest_master):
+        selected = replace(selected, section_order=master_section_order(selected))
+    return selected
 
 
 def install_master(source: Path, *, actor, expected_revision):
@@ -107,7 +138,7 @@ def install_master(source: Path, *, actor, expected_revision):
     inspection = inspect_docx(source)
     found = {item.section for item in inspection.items if item.section}
     from app.monthly_report_model import default_sections
-    missing = {section.key for section in default_sections()} - found
+    missing = {section.key for section in default_sections() if not section.appendix} - found
     if missing:
         raise ValueError("The master needs every standard report section. Missing: " + ", ".join(sorted(missing)) + ".")
     passive_docx(source)
@@ -121,6 +152,8 @@ def install_master(source: Path, *, actor, expected_revision):
             return digest
         from app.monthly_report_objects import store_file
         store_file(directory / (digest + ".docx"), source)
+        library._atomic_write(directory / "metadata" / (digest + ".json"), library._json(
+            {"schema": 1, "hash": digest, "section_order": _inspection_order(inspection)}))
         value = {"schema": 1, "revision": current["revision"] + 1, "default": digest,
                  "history": [*current.get("history", []), {"hash": digest, "actor": actor, "at": library._now()}]}
         library._atomic_write(directory / "history" / f'{value["revision"]:08d}.json', library._json(value))

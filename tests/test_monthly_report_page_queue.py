@@ -9,7 +9,7 @@ from app import monthly_report_library as library, monthly_report_upload_ui as u
 from app.monthly_report_content_policy import page_fingerprint
 from app.monthly_report_model import ReportSource
 from app.monthly_report_sources import SourceContent
-from test_monthly_report_editor import app_with_library
+from test_monthly_report_upload_ui import app_with_library
 from test_monthly_report_upload_ui import upload, button, select
 
 

@@ -15,7 +15,7 @@ from app.config import operator_today
 from app.monthly_report_import import (
     MAX_DOCX_BYTES, ImportMapping, imported_draft, inspect_docx, map_items, read_import_image,
 )
-from app.monthly_report_model import default_sections, layout_blocks
+from app.monthly_report_model import known_sections, layout_blocks
 
 
 def _signature(value) -> str:
@@ -112,7 +112,7 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                 preview = st.session_state.get(prefix + "_preview")
                 if preview and preview[0] == item.id:
                     st.image(preview[1], width="stretch")
-            specs = {b.key: b for s in default_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
+            specs = {b.key: b for s in known_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
             allowed = [b.key for b in specs.values() if (
                 item.kind == "image" and b.type in ("image_page", "image_grid", "pdf_pages") or
                 item.kind == "text" and b.type in ("rich_text", "stock_text") or

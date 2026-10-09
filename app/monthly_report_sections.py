@@ -8,7 +8,7 @@ import re
 from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing
 from app.monthly_report_checks import placeholder_matches
 from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, MAX_NORMALIZED_BYTES
-from app.monthly_report_model import ReportTable, ResolvedBlock, default_sections, layout_blocks
+from app.monthly_report_model import ReportTable, ResolvedBlock, known_sections, layout_blocks
 from app.monthly_report_asset_review import approve_all_assets
 
 
@@ -20,7 +20,7 @@ class ImportSection:
 
 
 def is_formatting(item):
-    if item.note == "Native divider artwork" and item.kind in ("text", "unsupported"):
+    if item.note in ("Native divider artwork", "Native section heading") and item.kind in ("text", "unsupported"):
         return True
     if item.kind != "text":
         return False
@@ -33,7 +33,7 @@ def is_formatting(item):
 
 
 def section_reviews(inspection):
-    titles = {s.key: s.title for s in default_sections()}
+    titles = {s.key: s.title for s in known_sections()}
     groups, seen_shared = {}, set()
     appearances = defaultdict(set)
     for item in inspection.items:
@@ -75,7 +75,7 @@ def readable_label(key):
 
 
 def default_slot(section):
-    spec = next(s for s in default_sections() if s.key == section)
+    spec = next(s for s in known_sections() if s.key == section)
     return next((b.key for b in spec.blocks if b.type in ("rich_text", "stock_text")), spec.blocks[0].key)
 
 
@@ -101,7 +101,7 @@ def build_section_import(path, inspection, plans):
     record preserves exclusions and review decisions without exposing item IDs
     in the UI. Multiple tables retain their own schemas instead of being dropped.
     """
-    known = {b.key for s in default_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
+    known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     grouped, assets, mappings, total = {}, {}, [], 0
     items = {i.id: i for i in inspection.items}
     image_references = {f"docx:{inspection.sha256}:{i.id}" for i in inspection.items if i.kind == "image"}

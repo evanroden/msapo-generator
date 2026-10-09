@@ -27,7 +27,7 @@ from app.monthly_report_model import (
     ReportPeriod,
     ReportProfile,
     ResolvedBlock,
-    default_sections,
+    known_sections,
     layout_blocks,
     profile_sections,
 )
@@ -216,10 +216,30 @@ _SECTION_TERMS = {
     "issues": ("equipmentperformanceissues",), "capital": ("prioritycapitalrenewallist",),
     "proposals": ("pendingdeclinedproposals", "pendinganddeclinedproposals"),
     "training": ("trainingsummary",), "rfi": ("rfimatrix",),
+    "accounts_receivable": ("accountsreceivable", "accountreceivable"),
 }
 
 
+def heading_fragment(text: str) -> str:
+    """Remove ENFRA's adjacent footer from a heading, preserving its trailing title.
+
+    Source XML is never altered. Some floating divider titles share one body
+    paragraph with the address line and its current PAGE result.
+    """
+    lines = []
+    for line in text.splitlines():
+        if re.search(r"enfrasolutions\.com", line, re.I):
+            before, after = re.split(r"enfrasolutions\.com", line, maxsplit=1, flags=re.I)
+            address = re.search(r"\d+\s*Galleria\s*Blvd", before, re.I)
+            prefix = before[:address.start()] if address else ""
+            line = prefix + " " + after
+        if line.strip() and not re.fullmatch(r"\s*\d+\s*", line):
+            lines.append(line.strip())
+    return " ".join(lines)
+
+
 def _heading(text: str) -> str | None:
+    text = heading_fragment(text)
     compact = re.sub(r"[^a-z]", "", text.casefold())
     if "tableofcontents" in compact or text.casefold().count("section") > 2 or len(text) > 250:
         return None
@@ -253,13 +273,13 @@ def _suggest(kind: str, text: str, section: str, *, heading: bool = False, part:
             return ""
         return {"organization": "contact_matrix", "activity": "work_orders", "scorecards": "thermal_capacity",
                 "maintenance": "service_calls", "subcontractors": "subcontractor_matrix", "capital": "capital_renewal",
-                "proposals": "proposals", "rfi": "rfi_matrix"}.get(section, "")
+                "proposals": "proposals", "rfi": "rfi_matrix", "accounts_receivable": "accounts_receivable"}.get(section, "")
     if heading:
         return ""
     if part.startswith("word/footer"):
         return "footer_text"
     return {"activity": "activity_summary", "scorecards": "utility_analysis", "issues": "equipment_issues",
-            "training": "training_summary"}.get(section, "")
+            "training": "training_summary", "accounts_receivable": "accounts_receivable_notes"}.get(section, "")
 
 
 def _is_native_divider_background(element, text=""):
@@ -338,6 +358,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                     notices.append(f"{part}: {external} external or unsafe relationships were not fetched.")
                 stack, position, nodes = [], 0, 0
                 heading_fragments = []
+                heading_positions = []
                 page_fields = []
                 with archive.open(part) as source:
                     events = ET.iterparse(source, events=("start", "end"), forbid_dtd=True)
@@ -366,6 +387,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part == "word/document.xml" and element.tag != W + "tbl":
                                 if "tableofcontents" in re.sub(r"[^a-z]", "", text.casefold()):
                                     toc_section, section, heading_fragments = word_section, "", []
+                                    heading_positions = []
                                     toc_headings = set()
                                 style = element.find(f"{W}pPr/{W}pStyle")
                                 candidate = _heading(text)
@@ -379,13 +401,31 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     compact = re.sub(r"[^a-z]", "", text.casefold())
                                     toc_headings.update(key for key, terms in _SECTION_TERMS.items() if any(term in compact for term in terms))
                                     heading_fragments = []
-                                elif text and len(text) < 100:
-                                    if not detected:
-                                        detected = _heading(" ".join([*heading_fragments, text]))
-                                    heading_fragments = [*heading_fragments, text][-3:]
+                                    heading_positions = []
+                                elif heading_fragment(text) and len(heading_fragment(text)) < 100:
+                                    fragment = heading_fragment(text)
+                                    if not detected or detected == "unmatched":
+                                        combined = _heading(" ".join([*heading_fragments, fragment]))
+                                        if combined not in (None, "unmatched"):
+                                            detected = combined
+                                            # Back-mark only the shortest adjoining heading prefix.
+                                            for count in range(1, len(heading_fragments) + 1):
+                                                if _heading(" ".join([*heading_fragments[-count:], fragment])) == combined:
+                                                    positions = set(heading_positions[-count:])
+                                                    for index, previous in enumerate(items):
+                                                        if previous.part == part and previous.position in positions:
+                                                            items[index] = replace(previous, section=combined,
+                                                                                   suggested_slot="divider_" + combined if previous.kind == "image" else "",
+                                                                                   note="Native section heading")
+                                                    break
+                                    heading_positions = [*heading_positions, position][-3:]
+                                    heading_fragments = [*heading_fragments, fragment][-3:]
                                 elif text:
                                     heading_fragments = []
+                                    heading_positions = []
                             if detected:
+                                if detected != "unmatched":
+                                    source_note = "Native section heading"
                                 section = detected
                                 content_slot = ""
                             compact_text = re.sub(r"[^a-z]", "", text.casefold())
@@ -400,6 +440,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 content_slot = "end_of_life"
                             if detected and detected != "unmatched":
                                 heading_fragments = []
+                                heading_positions = []
                             if part == "word/document.xml":
                                 for kind in ("footnote", "endnote"):
                                     for reference in element.iter(W + kind + "Reference"):
@@ -511,7 +552,7 @@ def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, pr
 
 def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapping, ...]) -> MappedImport:
     """Build only selected mappings, retaining every unmapped item in inspection."""
-    known = {b.key: b for s in default_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
+    known = {b.key: b for s in known_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
     items = {i.id: i for i in inspection.items}
     grouped, overrides, assets, mapped = {}, {}, {}, []
     total = 0

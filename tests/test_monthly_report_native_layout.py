@@ -645,3 +645,54 @@ def test_master_clears_source_drawing_descriptions_in_body_and_header(tmp_path):
         assert b'safe-frame-id' in header_xml
         assert b'width:20pt;height:20pt' in header_xml
         assert b'Drawing ' in header_xml
+
+
+def test_explicit_cover_mapping_beats_logo_and_photo_aspect_ratio(tmp_path):
+    from app.monthly_report_import import inspect_docx
+    doc = Document()
+    for size, color in (((497, 80), 'green'), ((300, 68), 'blue'), ((1283, 639), 'gray')):
+        data = BytesIO(); Image.new('RGB', size, color).save(data, format='PNG')
+        doc.add_picture(BytesIO(data.getvalue()), width=Inches(3))
+    from lxml import etree
+    photo_blip = doc.inline_shapes[2]._inline.graphic.graphicData.pic.blipFill.blip
+    editing = 'http://schemas.microsoft.com/office/drawing/2010/main'
+    props = etree.SubElement(photo_blip, '{' + editing + '}imgProps')
+    layer = etree.SubElement(props, '{' + editing + '}imgLayer')
+    layer.set(qn('r:embed'), photo_blip.embed)
+    doc.add_section()
+    doc.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    path = tmp_path / 'explicit-cover.docx'; doc.save(path)
+    inspection = inspect_docx(path)
+    items = [i for i in inspection.items if i.kind == 'image' and i.part == 'word/document.xml']
+    payloads = {}
+    blocks = []
+    for role, item, color in zip(('brand_logo', 'client_logo', 'cover_photo'), items, ('red', 'yellow', 'purple')):
+        data = BytesIO(); Image.new('RGB', (100, 100), color).save(data, format='PNG')
+        payloads[role] = data.getvalue()
+        blocks.append(ResolvedBlock(role, 'This month', asset_hashes=(role,),
+                                    references=(f'docx:{inspection.sha256}:{item.id}',)))
+    output = Document(BytesIO(build_native_docx(draft(*blocks), path, asset_loader=payloads.__getitem__)))
+    actual = [output.part.related_parts[s._inline.graphic.graphicData.pic.blipFill.blip.embed].blob
+              for s in output.inline_shapes]
+    assert actual == list(payloads.values())
+    retained_layer = next(output.element.iter('{' + editing + '}imgLayer'))
+    assert output.part.related_parts[retained_layer.get(qn('r:embed'))].blob == payloads['cover_photo']
+
+
+def test_whole_native_report_keeps_inherited_header_relationships_implicit(tmp_path):
+    doc = Document()
+    doc.sections[0].header.paragraphs[0].text = 'ENFRA'
+    doc.add_heading('MONTHLY ACTIVITY SUMMARY', 1)
+    doc.add_paragraph('Old activity')
+    doc.add_section()
+    doc.add_heading('TRAINING SUMMARY', 1)
+    doc.add_paragraph('Old training')
+    path = tmp_path / 'inherited-header.docx'; doc.save(path)
+    original = Document(path)
+    assert original.sections[1].header.is_linked_to_previous
+    current = draft(ResolvedBlock('activity_summary', 'This month', text='New activity'),
+                    ResolvedBlock('training_summary', 'This month', text='New training'))
+    whole = Document(BytesIO(build_native_docx(current, path)))
+    assert whole.sections[1].header.is_linked_to_previous
+    preview = Document(BytesIO(build_native_docx(current, path, section_key='training')))
+    assert preview.sections[0].header.paragraphs[0].text == 'ENFRA'

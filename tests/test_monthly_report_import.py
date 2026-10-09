@@ -58,8 +58,8 @@ def test_floating_header_images_merged_cells_and_unknown_sections(tmp_path):
     assert any(i.kind == "image" and i.part.startswith("word/header") for i in result.items)
     table = next(i for i in result.items if i.kind == "table")
     assert table.rows[2][:2] == ("Merged synthetic cell", "")
-    unmatched = [i for i in result.items if i.kind == "table" and not i.suggested_slot]
-    assert len(unmatched) == 1 and unmatched[0].section == "unmatched"
+    receivables = [i for i in result.items if i.kind == "table" and i.suggested_slot == "accounts_receivable"]
+    assert len(receivables) == 1 and receivables[0].section == "accounts_receivable"
 
 
 def test_unreadable_staged_picture_has_recovery_message(tmp_path):
@@ -290,3 +290,64 @@ render_import(library.load_profile(RRH_CONTRACT, "synthetic"), _field)
     assert not app.exception
     assert not any(w.label == "Item to inspect" for w in app.selectbox)
     assert library.load_profile(profile.contract, profile.key).block("service_calls") is not None
+
+
+def test_split_proposal_heading_with_number_and_adjacent_footer(tmp_path):
+    doc = Document()
+    doc.add_heading("Priority Capital Renewal List", 1)
+    doc.add_paragraph("11PENDING & DECLINED")
+    doc.add_paragraph("30\n1 Galleria Blvd., Suite 825, Metairie, LA 70001 | P 504.833.8291 | enfrasolutions.comPROPOSALS")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "Scope"
+    table.cell(0, 1).text = "Status"
+    table.cell(1, 0).text = "Replace pump"
+    table.cell(1, 1).text = "Pending"
+    path = tmp_path / 'split-proposals.docx'
+    doc.save(path)
+    result = importer.inspect_docx(path)
+    mapped = next(i for i in result.items if i.kind == 'table')
+    assert mapped.section == 'proposals' and mapped.suggested_slot == 'proposals'
+    fragments = [i for i in result.items if 'DECLINED' in i.text or 'comPROPOSALS' in i.text]
+    assert len(fragments) == 2
+    assert all(i.section == 'proposals' and i.note == 'Native section heading' for i in fragments)
+    from app.monthly_report_setup import design_profile, suggested_mappings
+    profile = design_profile(synthetic_profiles()[0], result, suggested_mappings(result))
+    assert dict(profile.section_titles)['proposals'] == 'Pending & Declined Proposals'
+
+
+def test_unrecognized_numbered_section_does_not_inherit_financial_or_capital_slot(tmp_path):
+    doc = Document()
+    doc.add_heading('Accounts Receivable', 1)
+    doc.add_paragraph('14 SPECIAL CONTRACT MATTERS')
+    doc.add_table(rows=1, cols=1).cell(0, 0).text = 'Unknown content'
+    path = tmp_path / 'unknown-section.docx'
+    doc.save(path)
+    item = next(i for i in importer.inspect_docx(path).items if i.kind == 'table')
+    assert item.section == 'unmatched' and not item.suggested_slot
+
+
+def test_heading_before_embedded_footer_is_preserved():
+    assert importer._heading('TRAINING SUMMARY1 Galleria Blvd., Suite 825 | enfrasolutions.com') == 'training'
+    assert importer._heading('30\n1 Galleria Blvd., Suite 825 | enfrasolutions.comPROPOSALS') is None
+
+
+def test_accounts_receivable_import_redacts_aging_balances_not_invoice_dates(tmp_path):
+    from app.monthly_report_content_policy import price_free_table
+    doc = Document()
+    doc.add_heading('Accounts Receivable', 1)
+    columns = ('Invoice', 'Invoice Date', 'Amount Due', 'Current', '31-60', '61-G0', 'G1-120', '121-Over', 'Description')
+    table = doc.add_table(rows=2, cols=len(columns))
+    for cell, value in zip(table.rows[0].cells, columns):
+        cell.text = value
+    values = ('INV-001', '2026-09-01', '500', '100', '100', '100', '100', '100', 'Maintenance services')
+    for cell, value in zip(table.rows[1].cells, values):
+        cell.text = value
+    path = tmp_path / 'receivables.docx'
+    doc.save(path)
+    inspection = importer.inspect_docx(path)
+    item = next(i for i in inspection.items if i.kind == 'table')
+    mapped = importer.map_items(path, inspection, (importer.ImportMapping(item.id, item.suggested_slot),))
+    spec, block, removed = price_free_table(mapped.overrides[0], mapped.blocks[0])
+    assert tuple(c.title for c in spec.columns) == ('Invoice', 'Invoice Date', 'Description')
+    assert block.rows == (('INV-001', '2026-09-01', 'Maintenance services'),)
+    assert set(removed) == {'Amount Due', 'Current', '31-60', '61-G0', 'G1-120', '121-Over'}

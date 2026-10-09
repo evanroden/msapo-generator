@@ -227,7 +227,8 @@ def test_orphan_notes_are_not_hidden_in_output(tmp_path, keep_reference):
             assert b'Unreferenced old note' not in output.read('word/footnotes.xml')
 
 
-def test_native_raster_image_layers_are_visible_content_not_edit_history(tmp_path):
+@pytest.mark.parametrize("relationship_kind", ["image", "hdphoto"])
+def test_native_raster_image_layers_are_visible_content_not_edit_history(tmp_path, relationship_kind):
     path = sample(tmp_path)
     def mutate(parts):
         drawing = 'http://schemas.openxmlformats.org/drawingml/2006/main'
@@ -236,6 +237,12 @@ def test_native_raster_image_layers_are_visible_content_not_edit_history(tmp_pat
         blip = root.find('.//{' + drawing + '}blip')
         props = etree.SubElement(etree.SubElement(etree.SubElement(blip, '{' + drawing + '}extLst'), '{' + drawing + '}ext', uri='synthetic-layer'), '{' + editing + '}imgProps')
         etree.SubElement(props, '{' + editing + '}imgLayer', {'{' + R + '}embed': blip.get('{' + R + '}embed')})
+        if relationship_kind == 'hdphoto':
+            rels = etree.fromstring(parts['word/_rels/document.xml.rels'])
+            for rel in rels:
+                if rel.get('Id') == blip.get('{' + R + '}embed'):
+                    rel.set('Type', R + '/hdphoto')
+            parts['word/_rels/document.xml.rels'] = etree.tostring(rels)
         parts['word/document.xml'] = etree.tostring(root)
     rewrite(path, mutate)
     with ZipFile(BytesIO(passive_docx(path))) as output:

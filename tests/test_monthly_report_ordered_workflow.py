@@ -55,3 +55,28 @@ def test_inline_edits_save_resume_and_generate_without_navigation(monkeypatch, t
     assert not resumed.exception
     assert captured and next(block for block in captured[-1].blocks if block.key == "activity_summary").text == "Completed the September inspections."
     assert {item.label for item in resumed.get("download_button")} >= {"Download DOCX", "Download PDF"}
+
+
+def test_native_ar_design_keeps_source_order_without_inserting_rfi():
+    from dataclasses import replace
+    from app.monthly_report_model import ReportDraft, synthetic_profiles, optional_sections
+    core = [section.key for section in default_sections() if section.key != "rfi"]
+    order = tuple((*core[:9], "accounts_receivable", *core[9:]))
+    profile = replace(synthetic_profiles()[0], template="enfra_master:" + "a" * 64, section_order=order)
+    # A legacy draft can still contain its old RFI default; the pinned native
+    # master is authoritative about this variant's optional sections.
+    draft = ReportDraft(profile, ReportPeriod(2026, 9), "Editor", default_sections(), ())
+    result = guided.complete_guided_sections(draft)
+    assert tuple(section.key for section in result.sections) == order
+    assert all(section.included for section in result.sections)
+    ar = next(section for section in result.sections if section.key == "accounts_receivable")
+    assert ar.blocks == tuple(replace(block, required=False) for block in optional_sections()[0].blocks)
+
+
+def test_native_core_only_design_does_not_gain_optional_sections():
+    from dataclasses import replace
+    from app.monthly_report_model import ReportDraft, synthetic_profiles
+    order = tuple(section.key for section in default_sections() if section.key != "rfi")
+    profile = replace(synthetic_profiles()[0], template="enfra_native:" + "b" * 64, section_order=order)
+    draft = ReportDraft(profile, ReportPeriod(2026, 9), "Editor", default_sections(), ())
+    assert tuple(section.key for section in guided.complete_guided_sections(draft).sections) == order

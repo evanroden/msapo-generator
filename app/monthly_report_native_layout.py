@@ -42,7 +42,8 @@ _DEFAULT_TEXT = {"organization": "contact_matrix", "activity": "activity_summary
                  "maintenance": "service_calls", "subcontractors": "subcontractor_matrix",
                  "water": "water_reports", "issues": "equipment_issues",
                  "capital": "capital_renewal", "proposals": "proposals",
-                 "training": "training_summary", "rfi": "rfi_matrix"}
+                 "training": "training_summary", "rfi": "rfi_matrix",
+                 "accounts_receivable": "accounts_receivable_notes"}
 _MONTH = re.compile(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d\d\b", re.IGNORECASE)
 
 
@@ -260,7 +261,7 @@ def _table(element, columns, rows):
         element.append(row)
 
 
-def _cover(element, draft):
+def _cover(element, draft, *, preserve_issue_date=False):
     paragraphs = list(element.iter(qn("w:p")))
     for paragraph in paragraphs:
         # Nested paragraphs are handled separately; never flatten the outer shape.
@@ -270,7 +271,14 @@ def _cover(element, draft):
         if not text:
             continue
         if re.search(r"prepared\s+by", text, re.IGNORECASE):
-            _set_text(paragraph, "Prepared by: " + draft.prepared_by)
+            value = "Prepared by: " + draft.prepared_by
+            issued = re.search(r"\s+Date\s*:.*$", text, re.IGNORECASE)
+            if issued and preserve_issue_date and not re.search(r"\bDate\s*:", value, re.IGNORECASE):
+                value += issued.group()
+            _set_text(paragraph, value)
+        elif re.match(r"^\s*Date\s*:", text, re.IGNORECASE):
+            if not preserve_issue_date:
+                _set_text(paragraph, "")
         elif _MONTH.search(text):
             _set_text(paragraph, _MONTH.sub(draft.period.label, text))
         elif (text.strip().upper() not in {"ENFRA", "=", "INSERT IMAGE HERE"}
@@ -280,8 +288,9 @@ def _cover(element, draft):
               and "create." not in text.casefold()
               and "section" not in text.casefold()
               and "table of contents" not in text.casefold()):
+            changed_title = text != draft.profile.title
             _set_text(paragraph, draft.profile.title)
-            if len(draft.profile.title) > 22:
+            if changed_title and len(draft.profile.title) > 22:
                 for run in paragraph.findall(qn("w:r")):
                     props = run.find(qn("w:rPr"))
                     if props is not None:
@@ -399,6 +408,18 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     # tables (which may have different geometry and span several pages).
     from app.monthly_report_sections import table_without_prices
     reference_prefix = f"docx:{inspection.sha256}:"
+    cover_periods = {match.group().casefold() for title in inspection.title_candidates
+                     for match in _MONTH.finditer(title)}
+    cover_names = {re.sub(r"[^a-z0-9]+", " ", title.casefold()).strip()
+                   for title in inspection.title_candidates}
+    source_preparers = {re.split(r"\s+Date\s*:", re.sub(r"^\s*Prepared\s+by\s*:\s*", "", title,
+                        flags=re.IGNORECASE), flags=re.IGNORECASE)[0].strip()
+                        for title in inspection.title_candidates if re.match(r"^\s*Prepared\s+by\s*:", title, re.IGNORECASE)}
+    current_preparer = re.split(r"\s+Date\s*:", draft.prepared_by, flags=re.IGNORECASE)[0].strip()
+    preserve_issue_date = (not master and cover_periods == {draft.period.label.casefold()}
+        and re.sub(r"[^a-z0-9]+", " ", draft.profile.title.casefold()).strip() in cover_names
+        and current_preparer in source_preparers
+        and any(ref.startswith(reference_prefix) for block in draft.blocks for ref in block.references))
     native_tables = {reference_prefix + item.id: item for item in inspection.items
                      if item.kind == "table" and item.part == "word/document.xml"}
     preserved_table_refs = set()
@@ -487,7 +508,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             if node.tag in (qn("w:headerReference"), qn("w:footerReference")):
                 present[(node.tag, node.get(qn("w:type"), "default"))] = node
         for key, node in inherited.items():
-            if key not in present:
+            if section_key and key not in present:
                 properties.insert(0, deepcopy(node))
         inherited.update({key: deepcopy(node) for key, node in present.items()})
     items = defaultdict(list)
@@ -507,32 +528,43 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                        for section in draft.sections for spec in section.blocks}
 
     brand = blocks.get("brand_logo")
-    unchanged_master_brand = bool(brand and brand.source != "Omit" and brand.asset_hashes and any(
-        item.kind == "image" and item.part == "word/document.xml"
-        and item.position <= (first_word_end or len(original))
-        and item.image_height and item.image_width / item.image_height > 4
-        and _source_image_digest(str(source_path), inspection.sha256, item, True) in brand.asset_hashes
-        for item in inspection.items))
-    unchanged_client_brand = False
-    client_brand = blocks.get("client_logo")
-    if client_brand and client_brand.source != "Omit" and client_brand.asset_hashes:
-        unchanged_client_brand = any(
-            item.kind == "image" and item.part == "word/document.xml"
-            and item.position <= (first_word_end or len(original))
-            and item.image_height and 2 < item.image_width / item.image_height <= 4
-            and _source_image_digest(str(source_path), inspection.sha256, item, True) in client_brand.asset_hashes
-            for item in inspection.items)
+    cover_roles = {}
+    cover_items = [item for item in inspection.items if item.kind == "image"
+                   and item.part == "word/document.xml"
+                   and (not item.section or item.position <= (first_word_end or len(original)))]
+    # Explicit import destinations are authoritative. Aspect ratio cannot tell
+    # a wide hospital logo from ENFRA branding or a landscape hospital photo.
+    for item in cover_items:
+        for role in ("brand_logo", "client_logo", "cover_photo"):
+            block = blocks.get(role)
+            if block and reference_prefix + item.id in block.references:
+                cover_roles[item.image_part] = role
+                break
+    for item in cover_items:
+        if item.image_part in cover_roles:
+            continue
+        for role in ("brand_logo", "client_logo", "cover_photo"):
+            block = blocks.get(role)
+            if block and block.asset_hashes and _source_image_digest(
+                    str(source_path), inspection.sha256, item, role != "cover_photo") in block.asset_hashes:
+                cover_roles[item.image_part] = role
+                break
+        if item.image_part not in cover_roles and item.image_height:
+            ratio = item.image_width / item.image_height
+            cover_roles[item.image_part] = "brand_logo" if ratio > 4 else "client_logo" if ratio > 2 else "cover_photo"
+
+    def unchanged_cover(role):
+        block = blocks.get(role)
+        return bool(block and block.source != "Omit" and block.asset_hashes and any(
+            cover_roles.get(item.image_part) == role
+            and _source_image_digest(str(source_path), inspection.sha256, item, role != "cover_photo") in block.asset_hashes
+            for item in cover_items))
+
+    unchanged_master_brand = unchanged_cover("brand_logo")
+    unchanged_client_brand = unchanged_cover("client_logo")
 
     def cover_images(element, group):
-        roles = {}
-        for item in group:
-            if item.kind != "image" or not item.image_width or not item.image_height:
-                continue
-            ratio = item.image_width / item.image_height
-            # ENFRA master: long horizontal marks are page branding; the
-            # medium landscape frame is the client mark and the taller is art.
-            role = "brand_logo" if ratio > 4 else "client_logo" if ratio > 2 else "cover_photo"
-            roles[item.image_part] = role
+        roles = cover_roles
         for node in list(element.iter()):
             if node.tag not in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata"):
                 continue
@@ -554,6 +586,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
                 new_rid, image = document.part.get_or_add_image(BytesIO(asset_loader(block.asset_hashes[0])))
                 node.set(attr, new_rid)
+                for layer in node.iter():
+                    if layer.get(qn("r:embed")):
+                        layer.set(qn("r:embed"), new_rid)
+                    layer.attrib.pop(qn("r:link"), None)
                 if role == "cover_photo":
                     _fit_cover_photo(node, image.px_width, image.px_height)
             elif role != "brand_logo" and (master or block is not None):
@@ -566,7 +602,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         if detected:
             section = detected
         section_by_pos[position] = section
-        if any(i.kind == "text" and not i.suggested_slot and _heading(i.text) for i in group):
+        if any(i.note == "Native section heading" or
+               (i.kind == "text" and not i.suggested_slot and _heading(i.text)) for i in group):
             headings.add(position)
     # Divider artwork is sometimes anchored before its heading, in a separate
     # paragraph (even dozens of empty paragraphs earlier in the same Word section).
@@ -612,7 +649,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         group = items[position]
         if sec == "cover":
             if position <= (first_word_end or len(original)):
-                _cover(element, draft)
+                _cover(element, draft, preserve_issue_date=preserve_issue_date)
             cover_images(element, group)
             continue
         group = items[position]

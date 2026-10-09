@@ -142,17 +142,30 @@ def complete_guided_sections(draft):
     Older partial designs gain the missing sections and standard block slots;
     this guided working copy never requires content just to retain a heading.
     """
-    full_profile = replace(draft.profile, section_order=(), section_block_order=(), excluded_sections=())
+    from app.monthly_report_model import default_sections, optional_sections
+    native_order = (draft.profile.section_order if draft.profile.template.startswith(
+        ("enfra_native:", "enfra_master:")) else ())
+    optional_keys = {"rfi", *(section.key for section in optional_sections())}
+    allowed = {section.key for section in default_sections() if section.key not in optional_keys}
+    allowed.update(key for key in native_order if key in optional_keys)
+    if not native_order:
+        allowed.add("rfi")
+        allowed.update(section.key for section in draft.sections if section.key in optional_keys)
+    # The design owns optional sections and their position. Missing core
+    # sections still remain available, including deliberately blank sections.
+    order = tuple(dict.fromkeys((*native_order, *(section.key for section in draft.sections),
+                                 *(section.key for section in default_sections()))))
+    order = tuple(key for key in order if key in allowed)
+    full_profile = replace(draft.profile, section_order=order, section_block_order=(), excluded_sections=())
     standard = {section.key: section for section in profile_sections(full_profile)}
+    existing = {section.key: section for section in draft.sections}
     sections = []
-    for section in draft.sections:
+    for key in order:
+        section = existing.get(key, standard[key])
         present = {block.key for block in section.blocks}
-        additions = tuple(block for block in standard[section.key].blocks if block.key not in present) if section.key in standard else ()
+        additions = tuple(block for block in standard[key].blocks if block.key not in present)
         sections.append(replace(section, included=True,
                                 blocks=tuple(replace(block, required=False) for block in (*section.blocks, *additions))))
-    present = {section.key for section in sections}
-    sections.extend(replace(section, included=True, blocks=tuple(replace(block, required=False) for block in section.blocks))
-                    for key, section in standard.items() if key not in present)
     return replace(draft, sections=tuple(sections))
 
 
@@ -494,7 +507,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         draft = apply_defaults(draft)
         st.session_state[prefix + "_directory_defaults_attempted"] = True
     from app.monthly_report_directory_ui import render_selected_directory
-    render_selected_directory(contract, profile.facilities, prepared, prefix)
+    updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix)
+    if updated_contacts is not None:
+        from app.monthly_report_directory import apply_contacts
+        from app.monthly_report_directory_ui import _resume_contacts
+        draft = apply_contacts(draft, updated_contacts)
+        _resume_contacts(draft, prefix)
     if candidate != profile:
         st.caption("The updated group name/scope will be remembered after you save it.")
         if st.button("Save group name", disabled=not prepared.strip(), key=prefix + "_rename_save"):

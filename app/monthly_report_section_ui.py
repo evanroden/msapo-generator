@@ -18,7 +18,7 @@ from app.monthly_report_model import (
     Facility,
     ReportProfile,
     ReportTable,
-    default_sections,
+    known_sections,
 )
 from app.monthly_report_section_help import section_help
 from app.monthly_report_sections import (
@@ -169,8 +169,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 # as this month's activity. It remains in the retained original.
                 items = [i for i in items if i.kind == "image" or i.suggested_slot == "footer_text"]
             elif section.key == "other":
-                target = st.selectbox("Where should this content appear?", ["", *[s.key for s in default_sections()]],
-                                      format_func=lambda k: next((s.title for s in default_sections() if s.key == k), "Choose a report section"), key=field(p + "_target", old.get("target", "")))
+                target = st.selectbox("Where should this content appear?", ["", *[s.key for s in known_sections()]],
+                                      format_func=lambda k: next((s.title for s in known_sections() if s.key == k), "Choose a report section"), key=field(p + "_target", old.get("target", "")))
                 plan["target"] = target
                 if not target:
                     blocking.append("Choose a section above, or leave this additional content out of the draft.")
