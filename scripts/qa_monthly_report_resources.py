@@ -12,6 +12,7 @@ from pathlib import Path
 import gc
 import hashlib
 import json
+import logging
 import os
 import resource
 import sys
@@ -35,6 +36,22 @@ def _memory():
         except (OSError, ValueError):
             continue
     return None, None
+
+
+def _memory_events():
+    try:
+        return dict((key, int(value)) for key, value in
+                    (line.split() for line in Path('/sys/fs/cgroup/memory.events').read_text().splitlines()))
+    except (OSError, ValueError):
+        return {}
+
+
+def _current_rss():
+    try:
+        return next(int(line.split()[1]) * 1024 for line in
+                    Path('/proc/self/status').read_text().splitlines() if line.startswith('VmRSS:'))
+    except (OSError, ValueError, StopIteration):
+        return None
 
 
 def _fixture(directory):
@@ -92,10 +109,23 @@ def _fixture(directory):
 
 
 def main():
+    from app import pdf_converter
     from app.monthly_report_docx import generate_report
     from app.monthly_report_preview import preview_section
     from app.monthly_report_preview_store import PreviewStore
 
+    logging.basicConfig(level=logging.ERROR)
+    # This probe has only synthetic inputs. Keep the real converter in the
+    # acceptance path and expose the exception hidden by the DOCX fallback.
+    original_converter = pdf_converter._BACKENDS['libreoffice']
+    def observed_converter(path):
+        try:
+            return original_converter(path)
+        except Exception:
+            logging.exception('Synthetic resource probe converter failure')
+            raise
+    pdf_converter._BACKENDS['libreoffice'] = observed_converter
+    events_before = _memory_events()
     limit, _ = _memory()
     if os.environ.get('RESOURCE_REQUIRE_512_MB') == '1' and (limit is None or limit > 512 * 1024 * 1024):
         raise RuntimeError('This acceptance probe must run inside the 512 MB container limit.')
@@ -107,15 +137,22 @@ def main():
                 samples.append((monotonic(), used))
     sampler = Thread(target=sample, daemon=True)
     sampler.start()
-    result = {'limit_bytes': limit, 'stages': []}
+    result = {'limit_bytes': limit, 'stages': [], 'phase': 'fixture'}
+    def checkpoint(phase):
+        result['phase'] = phase
+        _, used = _memory()
+        result['stages'].append({'name': phase, 'cgroup_bytes': used, 'python_rss_bytes': _current_rss()})
     store = PreviewStore()
     try:
         with tempfile.TemporaryDirectory(prefix='synthetic-report-resource-') as directory:
             directory = Path(directory)
             os.environ['EPC_DATA_DIR'] = str(directory / 'runtime')
+            checkpoint('fixture-start')
             draft, assets, size = _fixture(directory)
+            checkpoint('fixture-ready')
             result['source_bytes'] = size
             for owner in ('synthetic-visitor-one', 'synthetic-visitor-two'):
+                checkpoint(owner + '-start')
                 tick = monotonic()
                 preview = preview_section(draft, 'activity', assets.__getitem__)
                 ticket = store.put(owner, preview)
@@ -126,6 +163,7 @@ def main():
                 result['stages'].append({'name': owner, 'seconds': round(monotonic()-tick, 3), 'pages': ticket.pages})
                 del visible
                 gc.collect()
+            checkpoint('foreground-export-start')
             tick = monotonic()
             package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=assets.__getitem__)
             if not package.pdf:
@@ -140,14 +178,21 @@ def main():
             result['cache'] = store.stats()
             assert result['cache']['pdf_bytes'] <= store.disk_limit
             assert result['cache']['raster_bytes'] <= store.raster_limit
+    except Exception as exc:
+        result['failure'] = str(exc)
+        raise
     finally:
+        checkpoint(result['phase'] + '-finished')
+        result['memory_events_delta'] = {key: value - events_before.get(key, 0) for key, value in _memory_events().items()}
         store.close()
         done.set(); sampler.join(2)
-    result['seconds'] = round(monotonic()-started, 3)
-    result['sampled_peak_bytes'] = max((used for _, used in samples), default=0)
-    result['python_peak_rss_bytes'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
-    result['max_sampler_gap_seconds'] = round(max((b[0]-a[0] for a, b in zip(samples, samples[1:])), default=0), 3)
-    print(json.dumps(result, indent=2), flush=True)
+        result['seconds'] = round(monotonic()-started, 3)
+        result['sampled_peak_bytes'] = max((used for _, used in samples), default=0)
+        result['python_peak_rss_bytes'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+        result['max_sampler_gap_seconds'] = round(max((b[0]-a[0] for a, b in zip(samples, samples[1:])), default=0), 3)
+        print(json.dumps(result, indent=2), flush=True)
+    assert result['memory_events_delta'].get('oom', 0) == 0
+    assert result['memory_events_delta'].get('oom_kill', 0) == 0
 
 
 if __name__ == '__main__':
