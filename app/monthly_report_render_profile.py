@@ -13,9 +13,10 @@ from zipfile import ZipFile
 from lxml import etree
 from PIL import Image, ImageChops, ImageStat
 
-VERSION = 2
+VERSION = 3
 LEGACY_DEFAULT = {"version": 1, "cover_zero_origin": False}
-DEFAULT = {"version": VERSION, "cover_zero_origin": False, "divider_wrap_none": False}
+VERSION_TWO_DEFAULT = {"version": 2, "cover_zero_origin": False, "divider_wrap_none": False}
+DEFAULT = {"version": VERSION, "cover_zero_origin": False, "divider_wrap_none": False, "divider_white_text": False}
 MAX_PDF_BYTES = 30 * 1024 * 1024
 NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
       "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
@@ -27,7 +28,7 @@ def validate_profile(value=None):
     value = dict(DEFAULT) if value is None else value
     if not isinstance(value, dict) or type(value.get("version")) is not int:
         raise ValueError("Unsupported saved PDF rendering profile.")
-    schema = LEGACY_DEFAULT if value["version"] == 1 else DEFAULT if value["version"] == VERSION else None
+    schema = {1: LEGACY_DEFAULT, 2: VERSION_TWO_DEFAULT, VERSION: DEFAULT}.get(value["version"])
     if schema is None or set(value) != set(schema) or any(type(value[key]) is not bool for key in schema if key != "version"):
         raise ValueError("Unsupported saved PDF rendering profile.")
     # Version-one profiles remain byte-for-byte equivalent in identity payloads.
@@ -179,7 +180,159 @@ def _match_dividers(source, observed):
     return matches
 
 
-def _pdf_evidence(path, dividers=()):
+def _title_key(text):
+    return re.sub(r"[^a-z0-9]", "", text.casefold())
+
+
+def _divider_title_evidence(source):
+    """Find every text use affected by the narrow opaque-white style bridge."""
+    from app.monthly_report_import import _heading
+    from app.monthly_report_render_compat import _divider_text_fill
+    word = "{" + NS["w"] + "}"
+    with ZipFile(source) as archive:
+        if "word/styles.xml" not in archive.namelist():
+            return []
+        parser = etree.XMLParser(resolve_entities=False, no_network=True)
+        styles = etree.fromstring(archive.read("word/styles.xml"), parser)
+        before = {style.get(word + "styleId"): etree.tostring(style) for style in styles.findall(word + "style")}
+        _divider_text_fill(styles)
+        eligible = {style.get(word + "styleId") for style in styles.findall(word + "style")
+                    if before[style.get(word + "styleId")] != etree.tostring(style)}
+        if not eligible:
+            return []
+        # Derived styles inherit the bridge too. Their use must satisfy the
+        # same title proof, rather than silently recoloring unrelated prose.
+        while True:
+            derived = {style.get(word + "styleId") for style in styles.findall(word + "style")
+                       if style.find(word + "basedOn") is not None
+                       and style.find(word + "basedOn").get(word + "val") in eligible}
+            if derived <= eligible:
+                break
+            eligible.update(derived)
+        def affected_text(paragraph):
+            style = paragraph.find("w:pPr/w:pStyle", NS)
+            paragraph_style = style.get(word + "val") if style is not None else ""
+            runs = [run for run in paragraph.iter(word + "r")
+                    if next(run.iterancestors(word + "p"), None) is paragraph]
+            text = "".join(node.text or "" for run in runs for node in run.findall("w:t", NS))
+            affected = paragraph_style in eligible or any(
+                run.find("w:rPr/w:rStyle", NS) is not None
+                and run.find("w:rPr/w:rStyle", NS).get(word + "val") in eligible for run in runs)
+            return text if affected else ""
+
+        # styles.xml is global. A body-title match cannot authorize recoloring
+        # header/footer, note, or other story text (including inherited styles).
+        # Scan XML metadata only, with an aggregate bound before decompression.
+        stories = [item for item in archive.infolist() if item.filename.startswith("word/")
+                   and item.filename.endswith(".xml")
+                   and item.filename not in {"word/document.xml", "word/styles.xml"}]
+        if len(stories) > 512 or sum(item.file_size for item in stories) > MAX_PDF_BYTES:
+            return []
+        for item in stories:
+            story = etree.fromstring(archive.read(item), parser)
+            if any(affected_text(paragraph).strip() for paragraph in story.findall(".//w:p", NS)):
+                return []
+        root = etree.fromstring(archive.read("word/document.xml"), parser)
+        groups = {}
+        for paragraph in root.findall(".//w:p", NS):
+            text = affected_text(paragraph)
+            if not text.strip():
+                continue
+            container = next(paragraph.iterancestors(word + "txbxContent"), None)
+            if container is None:
+                return []  # A global style bridge must not alter ordinary prose.
+            groups.setdefault(container, []).append(text)
+        titles, occurrences = [], {}
+        alternate_tag = "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"
+        for container, paragraphs in groups.items():
+            text = " ".join(paragraphs)
+            if not _heading(text) or len(text) > 400:
+                return []
+            title = _title_key(text)
+            alternate = next(container.iterancestors(alternate_tag), None)
+            branch = container
+            if alternate is not None:
+                while branch.getparent() is not alternate:
+                    branch = branch.getparent()
+            owner = alternate if alternate is not None else container
+            previous = occurrences.setdefault(owner, {})
+            # Choice/Fallback are alternative renderings of one title. Two
+            # live textboxes in a branch, differing alternative titles, or the
+            # same heading at another location need separate PDF proof.
+            if branch in previous or (previous and title not in previous.values()):
+                return []
+            if not previous:
+                if title in titles:
+                    return []
+                titles.append(title)
+            previous[branch] = title
+        return titles if len(titles) <= 32 else []
+
+
+def _pdf_title_colors(pdf, titles):
+    if not titles:
+        return []
+    results, characters = [], 0
+    for page_number in range(len(pdf)):
+        page = pdf[page_number]
+        spans = page.get_texttrace()  # Text operators only; no image decoding.
+        if len(spans) > 10000:
+            return []
+        selected = []
+        for span in spans:
+            chars = span["chars"]
+            characters += len(chars)
+            if characters > 2_000_000:
+                return []
+            bbox = span["bbox"]
+            if span["size"] < 20 or bbox[1] < page.rect.height * .45 or bbox[1] >= page.rect.height:
+                continue
+            text = "".join(chr(char[0]) for char in chars)
+            if re.search(r"[a-z]", text, re.IGNORECASE):
+                selected.append((text, span))
+        title = _title_key("".join(text for text, _ in selected))
+        if title not in titles:
+            continue
+        white = all(span["type"] == 0 and span["opacity"] >= .999
+                    and len(span["color"]) in (1, 3) and all(channel >= .999 for channel in span["color"])
+                    for _, span in selected)
+        # Prove a covering opaque rectangle before rejecting visibility.
+        # Bounding boxes of later transparent shadow bitmaps do not establish
+        # coverage and would reject the authentic ENFRA divider typography.
+        painting = page.get_drawings()
+        if len(painting) > 20000:
+            return []
+        for _, span in selected:
+            x0, y0, x1, y1 = span["bbox"]
+            area = max(0, x1 - x0) * max(0, y1 - y0)
+            for drawing in painting:
+                if (drawing.get("seqno", -1) <= span["seqno"] or drawing.get("fill") is None
+                        or drawing.get("fill_opacity", 0) < .999 or len(drawing.get("items", ())) != 1):
+                    continue
+                item = drawing["items"][0]
+                if item[0] != "re":
+                    continue
+                bbox = item[1]
+                overlap = max(0, min(x1, bbox[2]) - max(x0, bbox[0])) * max(0, min(y1, bbox[3]) - max(y0, bbox[1]))
+                if area <= 0 or overlap > area * .1:
+                    white = False
+        results.append({"title": title, "page": page_number + 1, "opaque_visible_white": white})
+        if len(results) > 64:
+            return []
+    return results
+
+
+def _match_title_colors(titles, observed):
+    matches = []
+    for title in titles:
+        candidates = [item for item in observed if item["title"] == title]
+        if len(candidates) != 1 or not candidates[0]["opaque_visible_white"]:
+            return []
+        matches.append(candidates[0])
+    return matches
+
+
+def _pdf_evidence(path, dividers=(), divider_titles=()):
     """Runs only in the bounded subprocess, never executes document actions."""
     import pymupdf as fitz
     with fitz.open(path) as pdf:
@@ -202,17 +355,18 @@ def _pdf_evidence(path, dividers=()):
             if len(data["image"]) <= MAX_PDF_BYTES:
                 images.append({"bbox": info["bbox"], "thumbnail": _thumbnail(data["image"])})
         divider_images = _pdf_divider_images(pdf, dividers)
-        return {"text": text, "images": images, "divider_images": divider_images, "producer": str((pdf.metadata or {}).get("producer", ""))[:500],
+        title_colors = _pdf_title_colors(pdf, divider_titles)
+        return {"text": text, "images": images, "divider_images": divider_images, "divider_title_colors": title_colors, "producer": str((pdf.metadata or {}).get("producer", ""))[:500],
                 "pages": len(pdf)}
 
 
-def inspect_companion(path, dividers=()):
+def inspect_companion(path, dividers=(), divider_titles=()):
     path = Path(path)
     if not 0 < path.stat().st_size <= MAX_PDF_BYTES:
         raise ValueError("The companion PDF must be nonempty and at most 30 MB.")
     try:
         result = subprocess.run([sys.executable, "-m", __name__, str(path.resolve())],
-                                input=json.dumps({"dividers": dividers}).encode(),
+                                input=json.dumps({"dividers": dividers, "divider_titles": divider_titles}).encode(),
                                 capture_output=True, timeout=25, check=False)
     except subprocess.TimeoutExpired as exc:
         raise ValueError("Reference PDF inspection timed out. The existing design is unchanged.") from exc
@@ -269,7 +423,8 @@ def _cover_evidence(source):
 def calibrate(source, companion_pdf):
     dividers = _divider_evidence(source)
     filters = [{key: item[key] for key in ("width", "height", "y", "aspect")} for item in dividers]
-    evidence = inspect_companion(companion_pdf, filters)
+    source_titles = _divider_title_evidence(source)
+    evidence = inspect_companion(companion_pdf, filters, source_titles)
     texts, source_images = _cover_evidence(source)
     tokens = lambda text:set(re.findall(r'[a-z0-9]+',text.casefold()))
     cover_tokens = tokens(' '.join(texts))
@@ -294,8 +449,12 @@ def calibrate(source, companion_pdf):
     zero = bool(measurements) and all(abs(m['origin_points'])<=2 for m in measurements)
     divider_measurements = _match_dividers(dividers, evidence.get("divider_images", ()))
     divider_none = bool(dividers) and len(divider_measurements) == len(dividers)
-    profile = {"version": VERSION, "cover_zero_origin": zero, "divider_wrap_none": divider_none}
-    return {"render_profile":profile, "divider_measurements":divider_measurements, "producer":evidence['producer'], "cover_measurements":measurements,
+    title_measurements = _match_title_colors(source_titles, evidence.get("divider_title_colors", ()))
+    white_titles = bool(source_titles) and len(title_measurements) == len(source_titles)
+    profile = {"version": VERSION, "cover_zero_origin": zero, "divider_wrap_none": divider_none,
+               "divider_white_text": white_titles}
+    return {"render_profile":profile, "divider_measurements":divider_measurements,
+            "divider_title_measurements":title_measurements, "producer":evidence['producer'], "cover_measurements":measurements,
             "pair_status":"measured-zero-origin" if zero else "measured-divider-wrap" if divider_none else "preserve-native", "pages":evidence['pages']}
 
 
@@ -307,9 +466,13 @@ if __name__ == '__main__':
         request = sys.stdin.buffer.read(65537)
         if len(request) > 65536:
             raise ValueError("Calibration request exceeds its bound.")
-        filters = json.loads(request or b'{}').get("dividers", [])
+        request = json.loads(request or b'{}')
+        filters = request.get("dividers", [])
+        titles = request.get("divider_titles", [])
+        if not isinstance(titles, list) or len(titles) > 32 or any(not isinstance(t, str) or len(t) > 400 for t in titles):
+            raise ValueError("Invalid divider title candidates.")
         if not isinstance(filters, list) or len(filters) > 8:
             raise ValueError("Too many divider candidates.")
-        print(json.dumps(_pdf_evidence(sys.argv[1], filters)))
+        print(json.dumps(_pdf_evidence(sys.argv[1], filters, titles)))
     except Exception:
         sys.exit(1)

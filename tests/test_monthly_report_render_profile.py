@@ -214,14 +214,15 @@ def test_divider_worker_rejects_large_metadata_before_any_pixel_decode():
     assert _pdf_divider_images(Pdf(), [{'aspect': 1, 'width': 600, 'height': 600, 'y': 0}]) == []
 
 
-def test_existing_version_one_paired_metadata_resolves_without_repinning(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legacy_flags", [{"version": 1, "cover_zero_origin": True},
+                                          {"version": 2, "cover_zero_origin": True, "divider_wrap_none": True}])
+def test_existing_version_one_paired_metadata_resolves_without_repinning(tmp_path, monkeypatch, legacy_flags):
     import hashlib
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'data'))
     source, companion = pair(tmp_path)
     profile = synthetic_profiles()[0]
     source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
     pdf_hash = hashlib.sha256(companion.read_bytes()).hexdigest()
-    legacy_flags = {'version': 1, 'cover_zero_origin': True}
     metadata = {'source_sha256': source_hash, 'companion_sha256': pdf_hash, 'render_profile': legacy_flags}
     original_digest = hashlib.sha256(json.dumps(metadata, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     directory = designs._directory(profile.contract)
@@ -236,3 +237,74 @@ def test_existing_version_one_paired_metadata_resolves_without_repinning(tmp_pat
     assert designs.source_for(pinned).read_bytes() == source.read_bytes()
     assert designs.pin(pinned) == pinned
     assert metadata_path.read_bytes() == before
+
+
+def color_pair(tmp_path, *, color_mode='white', source_mode='eligible'):
+    from docx.enum.style import WD_STYLE_TYPE
+    from docx.oxml.ns import qn
+    from lxml import etree
+    source, pdf = pair(tmp_path, origin=49)
+    document = Document(source)
+    style = document.styles.add_style('Divider', WD_STYLE_TYPE.PARAGRAPH)
+    properties = style.element.get_or_add_rPr()
+    fill = OxmlElement('w14:textFill'); solid = OxmlElement('w14:solidFill'); rgb = OxmlElement('w14:srgbClr')
+    rgb.set(qn('w14:val'), 'FFFFFF'); solid.append(rgb); fill.append(solid); properties.append(fill)
+    color = OxmlElement('w:color'); color.set(qn('w:val'), '000000' if source_mode == 'explicit' else 'auto'); properties.append(color)
+    if source_mode == 'transparent':
+        alpha = OxmlElement('w14:alpha'); alpha.set(qn('w14:val'), '50000'); rgb.append(alpha)
+    if source_mode in {'ordinary', 'inheritedordinary'}:
+        selected = 'Divider'
+        if source_mode == 'inheritedordinary':
+            derived = document.styles.add_style('InheritedDivider', WD_STYLE_TYPE.PARAGRAPH)
+            derived.base_style = style
+            selected = 'InheritedDivider'
+        document.add_paragraph('MONTHLY SCORECARDS', style=selected)
+    else:
+        drawing = OxmlElement('w:pict'); shape = etree.SubElement(drawing, '{urn:schemas-microsoft-com:vml}shape')
+        textbox = etree.SubElement(shape, qn('w:txbxContent')); paragraph = etree.SubElement(textbox, qn('w:p'))
+        props = etree.SubElement(paragraph, qn('w:pPr')); selected_style = etree.SubElement(props, qn('w:pStyle')); selected_style.set(qn('w:val'), 'Divider')
+        run = etree.SubElement(paragraph, qn('w:r')); etree.SubElement(run, qn('w:t')).text = 'MONTHLY SCORECARDS'
+        document.add_paragraph().add_run()._r.append(drawing)
+    document.save(source)
+    with fitz.open(pdf) as output:
+        for _ in range(2 if color_mode == 'duplicate' else 1):
+            page = output.new_page(width=612, height=792)
+            page.draw_rect(fitz.Rect(0, 580, 612, 760), color=None, fill=(.3, .5, .5))
+            color = (0, 0, 0) if color_mode == 'black' else (1, 1, 1)
+            if color_mode == 'mixed':
+                page.insert_text((50, 650), 'MONTHLY', fontsize=32, color=(1, 1, 1))
+                page.insert_text((240, 650), 'SCORECARDS', fontsize=32, color=(0, 0, 0))
+            elif color_mode != 'missing':
+                page.insert_text((50, 650), 'MONTHLY SCORECARDS', fontsize=32, color=color,
+                                 render_mode=3 if color_mode == 'invisible' else 0)
+            if color_mode == 'occluded':
+                page.draw_rect(fitz.Rect(0, 580, 612, 760), color=None, fill=(.3, .5, .5), overlay=True)
+        target = tmp_path / 'title-color.pdf'; output.save(target)
+    return source, target
+
+
+@pytest.mark.parametrize('color_mode,expected', [('white', True), ('black', False), ('mixed', False),
+                                                ('duplicate', False), ('missing', False), ('invisible', False), ('occluded', False)])
+def test_divider_white_title_requires_visible_unambiguous_companion_text(tmp_path, color_mode, expected):
+    source, pdf = color_pair(tmp_path, color_mode=color_mode)
+    result = calibrate(source, pdf)
+    assert result['render_profile']['divider_white_text'] is expected
+    assert result['render_profile']['cover_zero_origin'] is False
+    assert result['render_profile']['divider_wrap_none'] is False
+    assert bool(result['divider_title_measurements']) is expected
+
+
+@pytest.mark.parametrize('source_mode', ['explicit', 'transparent', 'ordinary', 'inheritedordinary'])
+def test_divider_color_calibration_never_overrides_explicit_or_unrecognized_source(tmp_path, source_mode):
+    source, pdf = color_pair(tmp_path, source_mode=source_mode)
+    assert not calibrate(source, pdf)['render_profile']['divider_white_text']
+
+
+def test_version_two_profile_identity_is_not_upgraded_by_color_feature():
+    import hashlib
+    from app.monthly_report_render_profile import identity
+    value = {'version': 2, 'cover_zero_origin': False, 'divider_wrap_none': True}
+    assert validate_profile(value) == value
+    payload = {'source_sha256': 'a' * 64, 'companion_sha256': 'b' * 64, 'render_profile': value}
+    expected = hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    assert identity('a' * 64, 'b' * 64, value) == expected

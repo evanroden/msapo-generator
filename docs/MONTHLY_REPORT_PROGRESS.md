@@ -50,7 +50,10 @@ current full export still needs comparison. UMMC's official output preserves
 all page/image geometry, bookmarks and link targets/rectangles, with only
 intentional Cost-label changes against the source rendering. Version 2 measures
 divider image crop and geometry independently, enabling the Unity wrap fix while
-preserving UMMC. Existing design pins remain immutable.
+preserving UMMC. Version 3 independently measures divider title color, preserving
+UMMC's black titles and restoring proven white titles for Unity and Eastern.
+Existing design pins remain immutable. Cover typography, remaining Word-export
+pagination and divider layering still hold release.
 See [ordered workflow notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ORDERED_WORKFLOW.md)
 and [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
 

@@ -158,3 +158,57 @@ def test_calibration_does_not_override_explicit_design_or_flowing_covers(argumen
 def test_render_profile_rejects_unvalidated_flags(profile):
     with pytest.raises(ValueError):
         rendering_docx(floating_cover(), profile=profile)
+
+
+@pytest.mark.parametrize("style_id,color,fill,extra,expected", [
+    ("Divider", "", "FFFFFF", "", True),
+    ("DividerChar", '<w:color w:val="auto"/>', "FFFFFF", "", True),
+    ("BodyText", "", "FFFFFF", "", False),
+    ("Divider", '<w:color w:val="000000"/>', "FFFFFF", "", False),
+    ("Divider", '<w:color w:val="auto" w:themeColor="accent1"/>', "FFFFFF", "", False),
+    ("Divider", "", "123456", "", False),
+    ("Divider", "", "FFFFFF", '<w14:alpha w14:val="50000"/>', False),
+])
+def test_divider_fill_bridge_preserves_explicit_color_transparency_and_other_styles(
+        style_id, color, fill, extra, expected):
+    from app.monthly_report_render_compat import _divider_text_fill, _W, _W14
+    root = etree.fromstring(f'''<w:styles xmlns:w="{_W[1:-1]}" xmlns:w14="{_W14[1:-1]}">
+      <w:style w:styleId="{style_id}"><w:rPr>{color}
+      <w14:textFill><w14:solidFill><w14:srgbClr w14:val="{fill}">{extra}</w14:srgbClr>
+      </w14:solidFill></w14:textFill><w14:shadow w14:dist="38100"/>
+      </w:rPr></w:style></w:styles>''')
+    before = etree.tostring(root)
+    assert _divider_text_fill(root) is expected
+    if expected:
+        assert root.find('.//' + _W + 'color').get(_W + 'val') == 'FFFFFF'
+        assert root.find('.//' + _W14 + 'shadow').get(_W14 + 'dist') == '38100'
+        assert not _divider_text_fill(root)
+    else:
+        assert etree.tostring(root) == before
+
+
+def test_disposable_white_text_requires_independent_measured_flag():
+    from app.monthly_report_render_compat import _W, _W14
+    styles = f'''<w:styles xmlns:w="{_W[1:-1]}" xmlns:w14="{_W14[1:-1]}">
+      <w:style w:styleId="Divider"><w:rPr><w14:textFill><w14:solidFill>
+      <w14:srgbClr w14:val="FFFFFF"/></w14:solidFill></w14:textFill>
+      </w:rPr></w:style></w:styles>'''.encode()
+    output = BytesIO()
+    with ZipFile(output, "w") as archive:
+        archive.writestr("word/styles.xml", styles)
+        archive.writestr("word/document.xml", f'<w:document xmlns:w="{_W[1:-1]}"><w:body/></w:document>')
+    raw = output.getvalue()
+    for profile in (None, {"version": 1, "cover_zero_origin": True},
+                    {"version": 2, "cover_zero_origin": True, "divider_wrap_none": True},
+                    {"version": 3, "cover_zero_origin": True, "divider_wrap_none": True,
+                     "divider_white_text": False}):
+        assert rendering_docx(raw, profile=profile) == raw
+    profile = {"version": 3, "cover_zero_origin": False, "divider_wrap_none": False,
+               "divider_white_text": True}
+    fixed = rendering_docx(raw, profile=profile)
+    with ZipFile(BytesIO(fixed)) as archive:
+        root = etree.fromstring(archive.read("word/styles.xml"))
+        assert root.find('.//' + _W + 'color').get(_W + 'val') == 'FFFFFF'
+    assert rendering_docx(fixed, profile=profile) == fixed
+    with ZipFile(BytesIO(raw)) as archive:
+        assert archive.read("word/styles.xml") == styles

@@ -15,6 +15,29 @@ _V = "urn:schemas-microsoft-com:vml"
 _R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
+_W14 = "{http://schemas.microsoft.com/office/word/2010/wordml}"
+
+
+def _divider_text_fill(root):
+    """Bridge verified white divider fills to Writer's ordinary text color."""
+    changed = False
+    for style in root.findall(_W + "style"):
+        if style.get(_W + "styleId") not in {"Divider", "DividerChar"}:
+            continue
+        properties = style.find(_W + "rPr")
+        if properties is None:
+            continue
+        fill = properties.find(_W14 + "textFill/" + _W14 + "solidFill/" + _W14 + "srgbClr")
+        color = properties.find(_W + "color")
+        if (fill is None or len(fill) or fill.get(_W14 + "val") != "FFFFFF"
+                or (color is not None and dict(color.attrib) != {_W + "val": "auto"})):
+            continue
+        if color is None:
+            color = etree.Element(_W + "color")
+            properties.insert(0, color)
+        color.set(_W + "val", "FFFFFF")
+        changed = True
+    return changed
 
 
 def _floating_cover_header(root):
@@ -111,10 +134,13 @@ def rendering_docx(raw, *, profile=None):
             if not part.startswith("word/") or not part.endswith(".xml"):
                 continue
             data = source.read(part)
-            if part != "word/document.xml" and _V.encode() not in data:
+            color_styles = part == "word/styles.xml" and profile.get("divider_white_text", False)
+            if part != "word/document.xml" and not color_styles and _V.encode() not in data:
                 continue
             root = etree.fromstring(data, parser)
             changed = part == "word/document.xml" and normalize_invisible_wraps(root)
+            if color_styles:
+                changed = _divider_text_fill(root) or changed
             if part == "word/document.xml":
                 if profile.get("divider_wrap_none", False):
                     changed = normalize_divider_wraps(root) or changed

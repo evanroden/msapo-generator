@@ -78,8 +78,9 @@ remain release blockers, not passing evidence of authentic Word/PDF fidelity.
 The authentic Eastern and Unity August PDFs were produced with Acrobat PDFMaker
 for Word, while the authentic UMMC PDF used LibreOffice 24.2. Their font and
 pagination differences need measured correction, not an assumption of different
-report versions. Unity's clipped capital dashboard is present in its source
-metafile. Eastern also exposed an actual importer defect: one SmartArt branch
+report versions. Unity's clipped capital dashboard came from an invisible
+floating frame's wrap; a scoped conversion correction restores the source art.
+Eastern also exposed an actual importer defect: one SmartArt branch
 was omitted, while another survived incidentally through neighboring logos.
 
 Verified corrective work: RGH uppercase image extensions now resolve their
@@ -152,6 +153,11 @@ unmatched evidence does not enable it, and version 1 profile identities remain
 unchanged. The 14 profile and 34 conversion/wrap tests pass separately.
 Unity/Eastern pagination, typography and remaining layering differences still
 hold release; restored inventory pages expose two previously masked extra blanks.
+
+Version 3 measures divider title color independently. Unity and Eastern prove
+opaque white title text, while UMMC preserves its black titles. Only matching
+source styles and unambiguous visible reference text can enable the correction;
+existing version 1 and 2 profile identities retain their exact schemas.
 
 Focused ordered save/resume/generation tests passed, as did extraction/pricing,
 manual-edit protection, selected-directory, training and asynchronous preview
