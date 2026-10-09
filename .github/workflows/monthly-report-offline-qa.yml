@@ -1,0 +1,63 @@
+name: Monthly report offline baseline
+
+on:
+  push:
+    branches: [fix/monthly-report-master-tables]
+    paths: [.github/workflows/monthly-report-offline-qa.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Archive the verified code baseline
+        run: |
+          mkdir -p "$RUNNER_TEMP/monthly-report-offline"
+          git archive --format=tar.gz 59293a785a198ac017f0025b88ce8c5280a1bee4 > "$RUNNER_TEMP/monthly-report-offline/source.tar.gz"
+          printf '%s\n' 59293a785a198ac017f0025b88ce8c5280a1bee4 > "$RUNNER_TEMP/monthly-report-offline/BASELINE_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monthly-report-baseline-source
+          path: |
+            ${{ runner.temp }}/monthly-report-offline/source.tar.gz
+            ${{ runner.temp }}/monthly-report-offline/BASELINE_SHA
+          retention-days: 1
+      - name: Build isolated QA runtime
+        run: docker build --tag monthly-report-offline .
+      - name: Export clean runtime without fonts or customer data
+        run: |
+          docker run --rm --entrypoint /bin/bash \
+            --volume "$RUNNER_TEMP/monthly-report-offline:/snapshot" \
+            monthly-report-offline -ec '
+              python -m pip install -r requirements-dev.lock
+              python -m pip check
+              find /usr/share/fonts -type f -exec sha256sum {} + > /snapshot/font-hashes.txt
+              python -m pip freeze > /snapshot/dependencies.txt
+              libreoffice --version > /snapshot/renderer.txt
+              tar -C / -czf /snapshot/runtime.tar.gz \
+                --exclude="*.ttf" --exclude="*.otf" --exclude="*.ttc" \
+                --exclude="*.woff" --exclude="*.woff2" --exclude="*.pfb" \
+                --exclude="*.pfa" --exclude="*.afm" --exclude="*.t1" \
+                --exclude="*.pcf" --exclude="*.pcf.gz" --exclude="*.bdf" \
+                --exclude="usr/share/fonts" --exclude="usr/local/share/fonts" \
+                --exclude="var/cache/fontconfig" --exclude="__pycache__" \
+                --exclude="*.pyc" --exclude="app/.git" \
+                usr opt lib lib64 bin sbin etc var/lib/dpkg app
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monthly-report-offline-runtime
+          path: |
+            ${{ runner.temp }}/monthly-report-offline/runtime.tar.gz
+            ${{ runner.temp }}/monthly-report-offline/font-hashes.txt
+            ${{ runner.temp }}/monthly-report-offline/dependencies.txt
+            ${{ runner.temp }}/monthly-report-offline/renderer.txt
+          compression-level: 0
+          retention-days: 1
