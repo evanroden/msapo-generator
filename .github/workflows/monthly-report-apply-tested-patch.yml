@@ -1,0 +1,45 @@
+name: Publish tested monthly resource patch
+on:
+  push:
+    branches: [fix/monthly-report-resource-budget]
+    paths: [.github/workflows/monthly-report-apply-tested-patch.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/monthly-report-resource-budget
+          fetch-depth: 2
+      - name: Apply the verified public-code patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = 59293a785a198ac017f0025b88ce8c5280a1bee4
+          python - <<'PY'
+          import base64, hashlib, json, os, pathlib, urllib.request, zlib
+          blobs = ('270bd0b315c2241edf4b90f25d2666aa27d2c778', '315512c5af9b70a0a3c101d0e6eb6d37cff2b67f')
+          parts = []
+          for sha in blobs:
+              request = urllib.request.Request('https://api.github.com/repos/evanroden/msapo-generator/git/blobs/' + sha,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  data = json.load(response)
+              parts.append(base64.b64decode(data['content']))
+          patch = zlib.decompress(base64.b85decode(b''.join(parts)))
+          assert hashlib.sha256(patch).hexdigest() == '232e16bf178edf6badcd06889ab0cdc8b0d3d50e853e10fe383286ee50969e04'
+          pathlib.Path('/tmp/monthly-resource.patch').write_bytes(patch)
+          PY
+          git apply --check /tmp/monthly-resource.patch
+          git apply /tmp/monthly-resource.patch
+          git rm .github/workflows/monthly-report-apply-tested-patch.yml
+          git add .github/workflows/tests.yml Dockerfile app docs scripts tests
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Bound monthly preview and shared office conversion resources'
+          git push origin HEAD:fix/monthly-report-resource-budget
