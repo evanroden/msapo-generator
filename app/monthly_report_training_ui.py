@@ -7,7 +7,7 @@ from app import monthly_report_library as library
 from app.monthly_report_editor import _grid, _signature
 from app.monthly_report_model import ReportTable
 from app.monthly_report_training import (FORMATS, MATRIX_REF, STATUSES,
-    add_event, apply_tables, events_for_period, load_training, save_training, seed_matrix, training_block)
+    add_event, apply_tables, events_for_period, load_training, save_training, seed_matrix, training_block, hospital_matrix)
 
 
 def render_training(draft, blocks, prefix, field):
@@ -26,12 +26,18 @@ def render_training(draft, blocks, prefix, field):
         if store_key not in st.session_state:
             st.session_state[store_key] = load_training(draft.profile.contract)
         stored = st.session_state[store_key]
-        matrix = seed_matrix(draft.profile, block, stored, load_directory(draft.profile.contract))
+        directory = load_directory(draft.profile.contract)
+        matrix = seed_matrix(draft.profile, block, stored, directory)
         matrix_key = key + "_matrix_draft"
         if matrix_key not in st.session_state:
             st.session_state[matrix_key] = matrix
-        matrix = st.session_state[matrix_key]
-        st.write("Team training")
+        previous = st.session_state[matrix_key]
+        matrix = hospital_matrix(draft.profile, previous, directory)
+        if matrix != previous:
+            st.session_state[matrix_key] = matrix
+            st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
+        st.write("Hospital staff training")
+        st.caption("This matrix is for hospital staff. ENFRA, asset-management and vendor contacts are not added automatically. Check manually entered names.")
         st.caption("Completed · Pending · Not required. Blank history is shown as Not recorded; no completion is assumed.")
         new_training = st.text_input("Add a training requirement", key=key + "_new_requirement")
         if st.button("Add training column", key=key + "_add_requirement", disabled=not new_training.strip()):
@@ -51,6 +57,8 @@ def render_training(draft, blocks, prefix, field):
                      num_rows="dynamic", hide_index=True, column_config=config)
         edited = ReportTable(matrix.columns, tuple(tuple(str(row.get(c) or ("Not recorded" if i > 1 else "")).strip()
                               for i, c in enumerate(matrix.columns)) for row in rows if row.get("Team member")), MATRIX_REF)
+        if hospital_matrix(draft.profile, edited, directory) != edited:
+            raise ValueError("This matrix is for hospital staff. Remove the identified ENFRA, asset-management or vendor person before saving.")
         if edited != matrix:
             stored = save_training(draft.profile, edited, expected_revision=stored["revision"], actor=draft.prepared_by)
             st.session_state[store_key] = stored

@@ -2,6 +2,7 @@
 from dataclasses import replace
 from datetime import date
 import math
+import re
 
 from app import monthly_report_library as library
 from app.monthly_report_model import ReportTable, ResolvedBlock
@@ -65,13 +66,60 @@ def save_training(profile, table, *, expected_revision, actor):
         return value
 
 
+def _person(value):
+    return " ".join(value.casefold().split())
+
+
+def _directory_people(profile, directory):
+    """Use explicit employer/role evidence within uniquely matched sites only."""
+    from app.monthly_report_directory import canonical_contract, suggest_contact_bindings
+    if (profile is None or directory is None or directory.archived
+            or canonical_contract(profile.contract).casefold() != canonical_contract(directory.contract).casefold()):
+        return {}, set()
+    bindings = suggest_contact_bindings(directory, profile.facilities)
+    sites = {site.key: site for site in directory.sites if site.active}
+    eligible, excluded = {}, set()
+    for facility in profile.facilities:
+        site = sites.get(bindings.get(facility.key))
+        if site is None:
+            continue
+        identities = {}
+        names = {}
+        for contact in site.contacts:
+            if not contact.name.strip():
+                continue
+            name = _person(contact.name)
+            role = _person(contact.role)
+            affiliation = None
+            if re.search(r"\b(enfra|bernhard|asset[ -]+manager|vendor|contractor|sub[ -]?contractor)\b", role):
+                affiliation = 'provider'
+            elif re.search(r"\b(hospital|client|medical[ -]+cent(?:er|re)|health[ -]+system)\b", role):
+                affiliation = 'hospital'
+            identities.setdefault(name, set())
+            if affiliation:
+                identities[name].add(affiliation)
+            names.setdefault(name, contact.name.strip())
+        # Conflicting same-name records are not enough evidence to classify or
+        # remove an existing person. They also must not create a new enrollment.
+        eligible[facility.key] = tuple(names[name] for name, values in identities.items() if values == {'hospital'})
+        excluded.update((name, _person(facility.title)) for name, values in identities.items() if values == {'provider'})
+    return eligible, excluded
+
+
+def hospital_matrix(profile, table, directory=None):
+    """Filter proved provider identities in a working copy, never rewrite history."""
+    validate_matrix(table)
+    _, excluded = _directory_people(profile, directory)
+    rows = tuple(row for row in table.rows if (_person(row[0]), _person(row[1])) not in excluded)
+    return replace(table, rows=rows) if rows != table.rows else table
+
+
 def seed_matrix(profile, block, stored, directory=None):
     existing = next((t for t in block.extra_tables if t.reference == MATRIX_REF), None)
     if existing:
-        return validate_matrix(existing)
+        return hospital_matrix(profile, existing, directory)
     columns, rows = [], []
-    from app.monthly_report_directory import suggest_contact_bindings
-    bindings = suggest_contact_bindings(directory, profile.facilities) if directory else {}
+    eligible, excluded = _directory_people(profile, directory)
     selected = {f.key: f for f in profile.facilities}
     for key in selected:
         columns.extend(stored.get("sites", {}).get(key, {}).get("columns", ()))
@@ -80,18 +128,15 @@ def seed_matrix(profile, block, stored, directory=None):
         site = stored.get("sites", {}).get(key, {})
         known = set()
         for row in site.get("rows", ()):
+            if (_person(row[0]), _person(facility.title)) in excluded:
+                continue
             values = dict(zip(site.get("columns", ()), row[1:]))
             rows.append((row[0], facility.title, *(values.get(c, "Not recorded") for c in columns)))
-            known.add(row[0].casefold())
-        if directory:
-            # Client representatives are not assumed to be ENFRA employees.
-            contacts = [contact for s in directory.sites if s.key == bindings.get(key) for contact in s.contacts]
-            for contact in contacts:
-                role = contact.role.casefold()
-                if contact.name.strip() and contact.name.casefold() not in known and any(
-                    term in role for term in ("enfra", "asset manager", "operator", "technician")):
-                    rows.append((contact.name, facility.title, *("Not recorded" for _ in columns)))
-                    known.add(contact.name.casefold())
+            known.add(_person(row[0]))
+        for name in eligible.get(key, ()):
+            if _person(name) not in known:
+                rows.append((name, facility.title, *("Not recorded" for _ in columns)))
+                known.add(_person(name))
     return ReportTable(("Team member", "Site", *columns), tuple(rows), MATRIX_REF)
 
 
