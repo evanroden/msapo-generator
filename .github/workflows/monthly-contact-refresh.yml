@@ -1,0 +1,31 @@
+name: Publish scoped contact refresh
+on:
+  push:
+    branches: [fix/monthly-report-standing-data]
+    paths: [.github/workflows/monthly-contact-refresh.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check unchanged application and exact reviewed patch
+        run: |
+          git diff --exit-code 7e2e4d0d1c4df8b415a27b6867283a3353ba5fc4 HEAD -- app tests docs
+          echo 'e4016acd893e74203b540d64602578bfa5d69439c50daea0ce67e91e3e7206b1  scripts/monthly-contact-refresh.patch' | sha256sum --check
+          git apply --check scripts/monthly-contact-refresh.patch
+          git apply --index scripts/monthly-contact-refresh.patch
+          git rm scripts/monthly-contact-refresh.patch .github/workflows/monthly-contact-refresh.yml .github/workflows/monthly-report-source-checkpoint.yml
+          python3 -m compileall -q app tests
+          git diff --cached --check
+      - name: Commit scoped changes for normal PR validation
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Refresh proved shared-contact copies without rewriting report history'
+          git push origin HEAD:fix/monthly-report-standing-data
+          git rev-parse HEAD

@@ -1,0 +1,295 @@
+diff --git a/app/monthly_report_directory.py b/app/monthly_report_directory.py
+index 8f00ca1..ad788ef 100644
+--- a/app/monthly_report_directory.py
++++ b/app/monthly_report_directory.py
+@@ -775,3 +775,52 @@ def apply_defaults(draft):
+     if not block.rows:
+         return draft
+     return apply_contacts(draft, replace(block, source="Library"))
++
++
++def refresh_directory_contacts(draft):
++    """Refresh an unedited directory-backed working copy, never a saved snapshot.
++
++    Exact historical rows and site links are the evidence that a table is still
++    a shared default. Manual edits, missing history, ambiguous memberships and
++    retired links are retained rather than guessed or silently overwritten.
++    """
++    if not draft.prepared_by.strip():
++        return draft
++    current = next((b for b in draft.blocks if b.key == 'contact_matrix'), None)
++    spec = next((b for s in draft.sections if s.included for b in s.blocks
++                 if b.key == 'contact_matrix'), None)
++    if (current is None or spec is None or current.source == 'Omit'
++            or spec.columns != CONTACT_SPEC.columns or current.text.strip()
++            or current.extra_tables or current.asset_hashes or current.org_nodes
++            or current.ai_written or current.ai_paragraphs or current.pending_library_save):
++        return draft
++    refs = tuple(r for r in current.references
++                 if not r.startswith(('report-period:', 'report-origin:')))
++    versions = [re.fullmatch(r'directory:([^:]+):([1-9][0-9]*)', r) for r in refs]
++    versions = [m for m in versions if m]
++    if len(versions) != 1 or len(versions[0][2]) > 10:
++        return draft
++    bindings = {}
++    for reference in refs:
++        match = re.fullmatch(r'directory-site:([^:]+):([^:]+)', reference)
++        if match:
++            if match[1] in bindings:
++                return draft
++            bindings[match[1]] = match[2]
++        elif reference != versions[0][0]:
++            return draft
++    try:
++        latest = load_directory(draft.profile.contract)
++        if (latest is None or latest.revision == int(versions[0][2])
++                or library._contract_directory(latest.contract) != versions[0][1]):
++            return draft
++        previous = load_directory(draft.profile.contract, int(versions[0][2]))
++        original, old_missing = contact_block(previous, draft.profile.facilities, bindings)
++        if old_missing or original.rows != current.rows or original.references != refs:
++            return draft
++        replacement, missing = contact_block(latest, draft.profile.facilities, bindings)
++        if missing:
++            return draft
++    except (ValueError, OSError):
++        return draft
++    return apply_contacts(draft, replace(replacement, source='Library'))
+diff --git a/app/monthly_report_guided.py b/app/monthly_report_guided.py
+index bc4f88d..d5e83ab 100644
+--- a/app/monthly_report_guided.py
++++ b/app/monthly_report_guided.py
+@@ -509,6 +509,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
+         from app.monthly_report_directory import apply_defaults
+         draft = apply_defaults(draft)
+         st.session_state[prefix + "_directory_defaults_attempted"] = True
++    from app.monthly_report_directory import refresh_directory_contacts
++    refreshed = refresh_directory_contacts(draft)
++    if refreshed != draft:
++        from app.monthly_report_directory_ui import _resume_contacts
++        # Discard only this editor's obsolete widget delta before the next draw.
++        _resume_contacts(refreshed, prefix)
+     from app.monthly_report_directory_ui import render_selected_directory
+     updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix)
+     if updated_contacts is not None:
+diff --git a/docs/COMMIT_NOTES_2026-10-09_SHARED_CONTACT_REFRESH.md b/docs/COMMIT_NOTES_2026-10-09_SHARED_CONTACT_REFRESH.md
+new file mode 100644
+index 0000000..d9b2d5b
+--- /dev/null
++++ b/docs/COMMIT_NOTES_2026-10-09_SHARED_CONTACT_REFRESH.md
+@@ -0,0 +1,51 @@
++---
++document_type: implementation_checkpoint
++date: 2026-10-09
++base_commit: 7e2e4d0d1c4df8b415a27b6867283a3353ba5fc4
++status: focused_tests_passed_pending_ci
++---
++
++# Shared contacts in reopened and rolled-forward reports
++
++A saved report could retain an obsolete copy of the shared directory even after
++another editor updated that same site's contacts. Empty first-use reports loaded
++shared contacts, but existing directory-backed copies did not refresh.
++
++The working report now refreshes an unedited directory copy. It verifies the
++original directory revision, exact rows, canonical columns, contract identity
++and explicit site links. It does not infer a replacement from names. Manual
++edits, unrelated source references, omitted sections, archived/retired sites,
++ambiguous links and missing historical proof stay unchanged. A deliberate
++contact deletion from a still-matched active site removes the old person from
++an otherwise unedited working copy.
++
++Refresh changes only the current working draft. It clears that contact editor's
++obsolete widget delta so it cannot write the old rows back over the refresh.
++Saved report files, directory history and unrelated sites are not rewritten.
++Save progress remains the action that stores the revised report version.
++The existing named shared-directory save still supplies the standing contacts;
++no second routine confirmation is introduced to read its latest revision.
++
++## Tests and release gate
++
++Three fresh pre-fix assertions failed for rollover, reopened working copies and
++explicit shared deletion. Nine negative controls passed. The corrected pure
++suite passed all twelve; the seven existing/new selected-directory UI tests also
++passed, including preview refresh after another editor's shared update and
++preservation of the saved snapshot. Exact-head full production CI, renderer/font
++checks, container health and the inherited 512 MB resource probe remain required.
++Record actual final run IDs and counts in the PR rather than extrapolating from
++focused or earlier tests.
++
++## Deliberate limits
++
++This does not promote edits made in the lower report-only contact table into the
++shared directory. The existing directory-save control remains the shared write
++path. Imported/unlinked contacts and unpublished manual edits are not silently
++reclassified as directory defaults. No native table-schema change, thermal
++portfolio population, subcontractor/capital/training reuse, cover or remaining
++PDF-fidelity remediation is included in this commit.
++
++There is no storage-schema migration, authentication/hosting change, deletion,
++source mutation, review bypass, PO-routing change or expense-policy change.
++Rollback is a code revert, not a rollback or deletion of business data.
+diff --git a/docs/README.md b/docs/README.md
+index 583aefc..f0c5f80 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -187,3 +187,6 @@ Worth matching when you add one.
+ - [Monthly report native chart-page preservation — 2026-10-08](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_WORD_PAGES.md)
+ 
+ Replaced content pages and chart fit: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REWRITTEN_PAGES.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REWRITTEN_PAGES.md). Empty-scaffold removal is scoped to proved rewrites; unchanged source geometry remains protected.
++
++Shared contacts in working reports:
++[COMMIT_NOTES_2026-10-09_SHARED_CONTACT_REFRESH.md](COMMIT_NOTES_2026-10-09_SHARED_CONTACT_REFRESH.md).
+diff --git a/tests/test_monthly_report_contact_refresh.py b/tests/test_monthly_report_contact_refresh.py
+new file mode 100644
+index 0000000..bb2402e
+--- /dev/null
++++ b/tests/test_monthly_report_contact_refresh.py
+@@ -0,0 +1,106 @@
++"""Refresh proved directory copies, not edits or historical snapshot bytes."""
++from dataclasses import replace
++
++import pytest
++
++from app import monthly_report_directory as directory, monthly_report_library as library
++from app.monthly_report_model import Facility, ReportDraft, ReportPeriod, ReportProfile, default_sections
++from app.monthly_report_setup import new_month_draft
++
++
++@pytest.fixture
++def state_and_draft(tmp_path, monkeypatch):
++    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
++    sites = tuple(directory.DirectorySite(key, title, contacts=(
++        directory.DirectoryContact('Facilities Director', 'Old ' + key, email=key + '@example.invalid'),))
++        for key, title in (('north', 'Synthetic North'), ('south', 'Synthetic South')))
++    first = directory.save_directory('Synthetic Contact Contract', sites,
++                                     expected_revision=0, actor='Synthetic Editor', confirmed=True)
++    profile = ReportProfile(first.contract, 'north-report', 'North report', (Facility('north', 'Synthetic North'),))
++    draft = ReportDraft(profile, ReportPeriod(2026, 9), 'Synthetic Editor', default_sections(), ())
++    draft = directory.apply_defaults(draft)
++    second = directory.save_directory(first.contract, (
++        replace(sites[0], contacts=(directory.DirectoryContact('Facilities Director', 'New north', email='new@example.invalid'),)),
++        sites[1]), expected_revision=1, actor='Synthetic Editor', confirmed=True)
++    return first, second, draft
++
++
++def refresh(draft):
++    return directory.refresh_directory_contacts(draft)
++
++
++def test_directory_update_is_reused_in_rolled_forward_working_copy(state_and_draft):
++    first, second, draft = state_and_draft
++    result = refresh(new_month_draft(draft, ReportPeriod(2026, 10)))
++    block = next(b for b in result.blocks if b.key == 'contact_matrix')
++    assert block.rows == directory.contact_block(second, draft.profile.facilities)[0].rows
++    assert block.source == 'Library'
++    assert block.references[0].endswith(':2')
++    assert not any(r.startswith('report-period:') for r in block.references)
++    assert 'south' not in str(block.rows)
++
++
++def test_refresh_never_rewrites_historical_snapshot_bytes(state_and_draft):
++    first, second, draft = state_and_draft
++    saved = library.save_snapshot(draft, expected_revision=0, entered_editor=draft.prepared_by)
++    snapshot_files = {p: p.read_bytes() for p in library._root().rglob('*.json')}
++    result = refresh(saved.draft)
++    assert result != saved.draft
++    assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period) == saved
++    assert all(p.read_bytes() == value for p, value in snapshot_files.items())
++    assert directory.load_directory(first.contract).sites[1] == first.sites[1]
++
++
++@pytest.mark.parametrize('kind', ['manual', 'omitted', 'unlinked', 'mixed', 'unnamed', 'schema'])
++def test_manual_or_unproved_contacts_are_not_replaced(state_and_draft, kind):
++    first, second, draft = state_and_draft
++    old = next(b for b in draft.blocks if b.key == 'contact_matrix')
++    if kind == 'manual':
++        old = replace(old, rows=(('Synthetic North', 'Director', 'Unpublished edit', '', ''),))
++    elif kind == 'omitted':
++        old = replace(old, source='Omit')
++    elif kind == 'unlinked':
++        old = replace(old, references=())
++    elif kind == 'mixed':
++        old = replace(old, references=(*old.references, 'docx:unrelated-source'))
++    elif kind == 'unnamed':
++        draft = replace(draft, prepared_by='')
++    elif kind == 'schema':
++        draft = replace(draft, sections=tuple(replace(s, blocks=tuple(
++            replace(b, columns=tuple(reversed(b.columns))) if b.key == 'contact_matrix' else b
++            for b in s.blocks)) for s in draft.sections))
++    draft = replace(draft, blocks=tuple(old if b.key == old.key else b for b in draft.blocks))
++    assert refresh(draft) == draft
++
++
++def test_missing_provenance_history_is_not_guessed(state_and_draft):
++    first, second, draft = state_and_draft
++    path = directory._path(first.contract) / 'history' / '00000001.json'
++    path.unlink()
++    assert refresh(draft) == draft
++
++
++def test_retired_site_binding_is_never_reassigned_by_name(state_and_draft):
++    first, second, draft = state_and_draft
++    directory.save_directory(first.contract, (
++        replace(second.sites[0], active=False), second.sites[1]),
++        expected_revision=2, actor='Synthetic Editor', confirmed=True)
++    assert refresh(draft) == draft
++
++
++def test_explicit_shared_contact_deletion_removes_stale_person(state_and_draft):
++    first, second, draft = state_and_draft
++    latest = directory.save_directory(first.contract, (
++        replace(second.sites[0], contacts=()), second.sites[1]),
++        expected_revision=2, actor='Synthetic Editor', confirmed=True)
++    block = next(b for b in refresh(draft).blocks if b.key == 'contact_matrix')
++    assert block.rows == ()
++    assert block.references[0].endswith(':3')
++
++
++def test_foreign_contract_directory_reference_cannot_refresh(state_and_draft):
++    _, second, draft = state_and_draft
++    old = next(b for b in draft.blocks if b.key == 'contact_matrix')
++    old = replace(old, references=(f'directory:{library._contract_directory("Foreign Contract")}:1', *old.references[1:]))
++    draft = replace(draft, blocks=tuple(old if b.key == old.key else b for b in draft.blocks))
++    assert refresh(draft) == draft
+diff --git a/tests/test_monthly_report_selected_directory_ui.py b/tests/test_monthly_report_selected_directory_ui.py
+index 24ccf9d..bccd64f 100644
+--- a/tests/test_monthly_report_selected_directory_ui.py
++++ b/tests/test_monthly_report_selected_directory_ui.py
+@@ -162,3 +162,36 @@ def test_explicit_directory_save_updates_working_preview_and_saved_report_only(m
+     next(w for w in reopened.checkbox if w.label == "Unity Specialty Hospital").check().run()
+     assert not reopened.exception
+     assert contact_block in current(reopened).blocks
++
++
++def test_other_editors_directory_change_refreshes_only_the_open_working_copy(monkeypatch, tmp_path):
++    from app import monthly_report_library as library, monthly_report_section_preview_ui as previews
++    from app.monthly_report_model import ReportDraft, ReportPeriod, synthetic_profiles
++    from app.monthly_report_start import design_seed
++    from test_monthly_report_ui import monthly, choose_report
++
++    initial, _ = seed(monkeypatch, tmp_path)
++    profile = replace(synthetic_profiles()[0], contract=initial.contract, key='linked-contacts',
++                      title='Linked contacts', facilities=(Facility('unity', 'Unity Hospital'),), scope_type='individual')
++    library.save_profile(profile, expected_revision=0, actor='Synthetic Seeder', confirmed=True)
++    draft, _ = design_seed(profile, ReportPeriod(2026, 9), 'Synthetic Seeder')
++    draft = directory.apply_defaults(draft)
++    saved = library.save_snapshot(draft, expected_revision=0, entered_editor='Synthetic Seeder')
++    app = monthly(monkeypatch, tmp_path, saved=False)
++    choose_report(app, 'Unity Hospital')
++    next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Editor').run()
++    assert not app.exception
++    latest = directory.save_directory(initial.contract, (
++        replace(initial.sites[0], contacts=(directory.DirectoryContact('Manager', 'New Shared Person', email='new@example.invalid'),)),
++        *initial.sites[1:]), expected_revision=1, actor='Other Editor', confirmed=True)
++    observed = []
++    monkeypatch.setattr(previews, 'render_section_preview', lambda shown, key, *a, **k: observed.append((key, shown)))
++    app.run()
++    assert not app.exception
++    working = next(value for value in app.session_state.filtered_state.values()
++                   if isinstance(value, ReportDraft) and value.profile.key == profile.key)
++    contacts = next(b for b in working.blocks if b.key == 'contact_matrix')
++    assert contacts.rows[0][2] == 'New Shared Person'
++    assert any(key == 'organization' and contacts in shown.blocks for key, shown in observed)
++    assert library.load_snapshot(profile.contract, profile.key, draft.period) == saved
++    assert directory.load_directory(initial.contract) == latest
