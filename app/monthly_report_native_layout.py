@@ -404,6 +404,37 @@ def _unchanged_blocks(draft, inspection, source_path, *, section_key=None):
     return candidates
 
 
+def _patch_current_table_cells(element, source_item, expected, current):
+    """Apply same-shape current cell edits without rebuilding mixed picture cells."""
+    old_values = (expected.columns, *expected.rows)
+    new_values = (current.columns, *current.rows)
+    native_rows = element.findall(qn("w:tr"))
+    if len(old_values) != len(new_values) or len(native_rows) != len(old_values):
+        return False
+    changes = []
+    for row_index, (row, old, new) in enumerate(zip(native_rows, old_values, new_values)):
+        if len(old) != len(new):
+            return False
+        before = row.find("./" + qn("w:trPr") + "/" + qn("w:gridBefore"))
+        column = int(before.get(qn("w:val"), "0")) if before is not None else 0
+        addressed = set()
+        for cell in row.findall(qn("w:tc")):
+            span = cell.find("./" + qn("w:tcPr") + "/" + qn("w:gridSpan"))
+            width = int(span.get(qn("w:val"), "1")) if span is not None else 1
+            if column >= len(old) or _text(cell) != source_item.rows[row_index][column]:
+                return False
+            addressed.add(column)
+            if old[column] != new[column]:
+                changes.append((cell, new[column]))
+            column += width
+        # A value cannot be written into a skipped/merged continuation column.
+        if any(a != b and index not in addressed for index, (a, b) in enumerate(zip(old, new))):
+            return False
+    for cell, value in changes:
+        _set_text(cell, value)
+    return True
+
+
 def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None, master=False) -> bytes:
     """Render current values into source geometry, or raise a visible mapping error.
 
@@ -469,6 +500,25 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         if selected and block.text.strip() == expected.strip():
             preserved_text[block.key] = True
             unchanged_items.update(item.id for item in selected)
+    # Current images can be unchanged even when another table in their block
+    # was edited. Prove the complete selected image sequence independently.
+    image_proofs = {}
+    for block in draft.blocks:
+        if block.source == "Omit" or block.org_nodes or block.key not in destinations:
+            continue
+        selected_images = [item for item in inspection.items if item.kind == "image"
+                           and item.part == "word/document.xml"
+                           and item.section == destinations[block.key]
+                           and reference_prefix + item.id in block.references]
+        image_values = [(item, _source_image_digest(str(source_path), inspection.sha256, item,
+                        block.key not in ("cover_photo", "improvements"))) for item in selected_images]
+        expected_assets = tuple(dict.fromkeys(value for _, value in image_values))
+        expected_captions = tuple(item.text for item in selected_images)
+        captions = tuple(block.asset_captions) + ("",) * max(0, len(expected_captions) - len(block.asset_captions))
+        if image_values and block.asset_hashes == expected_assets and captions == expected_captions:
+            image_proofs.update({item.id: (block.key, value) for item, value in image_values})
+            unchanged_items.update(item.id for item, _ in image_values)
+    retained_images = defaultdict(set)
     document = Document(BytesIO(passive_docx(source_path)))
     _clear_source_drawing_metadata(document)
     body = document.element.body
@@ -513,6 +563,32 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 if item.position == position:
                     preserved_table_refs.discard(reference)
                     unchanged_items.discard(item.id)
+    inplace_table_positions = set()
+    # Mixed technical tables retain their exact source anchor, grid, rows and
+    # cell artwork only when every neighboring payload is explicitly current.
+    # Bind by source reference, never by the ordinal of the remaining tables.
+    for block in draft.blocks:
+        if block.source == "Omit" or block.key not in destinations:
+            continue
+        for current in block.extra_tables:
+            source_item = native_tables.get(current.reference)
+            if source_item is None or source_item.section != destinations[block.key]:
+                continue
+            neighbors = [item for item in inspection.items
+                         if item.part == source_item.part and item.position == source_item.position]
+            if not any(item.kind == "image" for item in neighbors):
+                continue
+            if any(item.kind == "text" and item.id not in unchanged_items for item in neighbors):
+                continue
+            expected, removed = table_without_prices(source_item)
+            if expected is None or removed:
+                continue
+            element = original[source_item.position - 1]
+            if element.tag != qn("w:tbl") or not _patch_current_table_cells(element, source_item, expected, current):
+                continue
+            unchanged_items.add(source_item.id)
+            preserved_table_refs.add(current.reference)
+            inplace_table_positions.add(source_item.position)
     # Word inherits each header/footer kind independently. Materialize those
     # references before slicing so a section preview retains its page chrome.
     inherited = {}
@@ -702,6 +778,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         substantive = [item for item in group if item.kind in ("text", "table", "image")]
         if (substantive and all(item.id in unchanged_items for item in substantive)
                 and not any(item.note.startswith("Unmapped native SmartArt") for item in group)):
+            for item in substantive:
+                if item.id in image_proofs:
+                    owner, digest = image_proofs[item.id]
+                    retained_images[owner].add(digest)
             for row_index, row in enumerate(element.findall(qn("w:tr"))):
                 before = row.find("./" + qn("w:trPr") + "/" + qn("w:gridBefore"))
                 logical_column = int(before.get(qn("w:val"), "0")) if before is not None else 0
@@ -735,6 +815,12 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             for frame in frames:
                 image_prototypes[image_slot].append((frame, deepcopy(frame)))
                 section_images[sec].append(deepcopy(frame))
+        if position in inplace_table_positions:
+            # The values were updated at this exact source reference. When the
+            # neighboring images lack current proof, replace only those frames;
+            # never erase/reappend the already current technical table itself.
+            _clear_images(element)
+            continue
         if text and text.casefold().strip() not in _STATIC:
             if re.fullmatch(r"(?:Monthly Training Update [–—-] )?" + _MONTH.pattern + r"(?: Activity)?", text, re.IGNORECASE):
                 _set_text(element, _MONTH.sub(draft.period.label, text))
@@ -873,13 +959,16 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 style_training_table(anchor, table_reference)
                 last = anchor
         images = []
+        image_indexes = []
         if block.org_nodes:
             from app.monthly_report_visuals import org_groups, org_page
             images = [org_page(block.org_nodes, n) for n in range(len(org_groups(block.org_nodes)))]
         elif block.asset_hashes:
             if asset_loader is None:
                 raise NativeLayoutError("Native images require the saved asset resolver.")
-            images = [asset_loader(ref) for ref in block.asset_hashes]
+            image_indexes = [index for index, ref in enumerate(block.asset_hashes)
+                             if ref not in retained_images[block.key]]
+            images = [asset_loader(block.asset_hashes[index]) for index in image_indexes]
         if images:
             anchors = image_prototypes.get(block.key)
             if not anchors:
@@ -902,13 +991,14 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 else:
                     last.addnext(clone)
                 last = clone
-                if index < len(block.asset_captions) and block.asset_captions[index].strip():
+                caption_index = image_indexes[index] if image_indexes else index
+                if caption_index < len(block.asset_captions) and block.asset_captions[caption_index].strip():
                     choices = section_text.get(sec) or global_text
                     caption = deepcopy(choices[0]) if choices else OxmlElement("w:p")
                     for properties in list(caption.iter(qn("w:sectPr"))):
                         properties.getparent().remove(properties)
                     _clear_images(caption)
-                    _set_text(caption, block.asset_captions[index])
+                    _set_text(caption, block.asset_captions[caption_index])
                     clone.addnext(caption)
                     last = caption
     if section_key:

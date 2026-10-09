@@ -29,7 +29,7 @@ monthly wizard, and photo-decode/preview failure containment. A legacy imported
 report keeps its own native design ahead of the company master; explicit pins
 remain authoritative. Replacement cover photos retain their native frame.
 
-PR #91 checkpoint `fda7f74` passed 1548 tests with zero skips and the container
+PR #91 checkpoint `4ef198a` passed 1551 tests with zero skips and the container
 build/health gate. Later fixes still require final-head CI. Both September
 continuations preserve 39 pages with zero pixel differences outside three Cost
 labels deliberately removed from each report, measured against source Word

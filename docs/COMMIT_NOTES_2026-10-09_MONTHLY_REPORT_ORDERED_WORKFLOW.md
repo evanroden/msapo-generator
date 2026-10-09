@@ -56,8 +56,8 @@ Release is held pending authentic finished-PDF comparison and resolution of
 material converter defects. Same-converter parity below is necessary evidence,
 not sufficient PDF acceptance.
 
-PR #91 checkpoint `fda7f74ee61d22e0cdd8f5a833a8767d3f68f125` passed
-1548 tests with zero skips in Actions `37943022525`; container build/health
+PR #91 checkpoint `4ef198a3720057d15c4879bd56f96ca0c552344d` passed
+1551 tests with zero skips in Actions `37944099206`; container build/health
 also passed. Subsequent PDF corrections require fresh final-head CI before
 release. A green suite does not override the visual PDF acceptance gate.
 
@@ -102,6 +102,14 @@ Unity's cover image displacement is traced to first-page header interpretation:
 a disposable no-header control places the photo within 0.1pt of its authentic
 PDF. A safe conversion predicate and remaining title, pagination and metafile
 clipping differences are still under investigation. No new production release yet.
+
+Portland's six extra water-treatment tables were an assembly defect: mixed
+picture/table originals were emptied before replacements were appended. Current
+same-shape tables now update by source reference at their original anchors, with
+independent proof for retained pictures. The actual replay returns to 20 tables;
+all six affected grids, row counts and image counts are retained. Five unchanged
+tables retain their text exactly, and the sixth contains only the reviewed edit.
+The 56 targeted native/SmartArt/mixed-table tests pass; PDF verification follows.
 
 Focused ordered save/resume/generation tests passed, as did extraction/pricing,
 manual-edit protection, selected-directory, training and asynchronous preview
