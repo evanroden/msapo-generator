@@ -1,3 +1,10 @@
+---
+document_type: implementation_checkpoint
+date: 2026-10-09
+base_commit: 2131de2a295c97d3b98a0310e79263a464da1db6
+status: production_validation_in_progress
+---
+
 # Shared contact workbook import
 
 The monthly report directory now supports a reviewed import of all usable

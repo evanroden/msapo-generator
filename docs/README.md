@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+Shared contact workbook import: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIRECTORY_BATCH.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIRECTORY_BATCH.md).
+
 Review A fixes and thirteen section audits: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_REVIEW_A.md).
 
 Section design implementation: [COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_SECTION_EXPERIENCES.md](COMMIT_NOTES_2026-10-08_MONTHLY_REPORT_SECTION_EXPERIENCES.md).
