@@ -192,7 +192,7 @@ def section_preview_fingerprint(draft, section_key):
              "extra_tables": [asdict(table) for table in block.extra_tables]})
     from app.monthly_report_followups import report_text
     value = {
-        "version": 1,
+        "version": 2,
         "contract": draft.profile.contract,
         "profile": draft.profile.key,
         "section": asdict(section) if section else "cover",
@@ -200,6 +200,8 @@ def section_preview_fingerprint(draft, section_key):
         "address": draft.address_line if section else "",
         "follow_ups": [report_text(item) for item in scope.follow_ups if item.included],
     }
+    from app.monthly_report_designs import fingerprint
+    value["native_layout"] = fingerprint(draft.profile)
     if section is None:
         value["cover"] = {"title": draft.profile.title, "period": draft.period.key,
                           "prepared_by": draft.prepared_by, "synthetic": draft.synthetic,
@@ -249,6 +251,12 @@ def section_preview_docx(draft, section_key, asset_loader=None):
                 if check.blocking and check.code not in unfinished_codes]
     if blockers:
         raise ValueError(" ".join(blockers))
+
+    from app.monthly_report_designs import source_for, is_master
+    source = source_for(draft.profile)
+    if source is not None:
+        from app.monthly_report_native_layout import build_native_docx
+        return build_native_docx(draft, source, asset_loader=asset_loader, section_key=section_key, master=is_master(draft.profile))
 
     @lru_cache(maxsize=12)
     def image_asset(ref):

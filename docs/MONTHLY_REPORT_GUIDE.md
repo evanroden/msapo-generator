@@ -25,9 +25,32 @@ when the body has already been updated, even if its cover is stale. Historical
 tables remain available. Another site's report supplies layout, headings and
 branding; its people, photos and work do not become this site's content.
 
-Without a file, use a saved contract design or the ENFRA template. Enter your name
+Without a file, use the ENFRA master report design. Enter your name
 and start the report. The tool remembers the design without a separate permission
 checkbox. The name records the editor; it is not an authenticated login.
+
+## Master page design
+
+Every new report uses the saved ENFRA Word master, including reports started from
+scratch. Its original cover, dividers, page settings, typography, tables and page
+artwork supply the document design. Client logos and site photographs come from
+the selected report's saved assets; another client's artwork is not inherited.
+
+To update the master, open **Report → Advanced layout, shared assets and history**,
+upload the new Word file under **New ENFRA master design**, and choose
+**Update master report design**. This saves a new design version for future
+reports across contracts without importing that file's monthly facts. Existing
+saved reports retain their design version. **Apply current master to this report**
+updates an existing report explicitly, retaining its content.
+
+The live section preview and DOCX/PDF downloads use the same master renderer.
+Unsupported source elements produce a specific error rather than a generic page
+that silently loses the original design.
+
+Deployment uses the verified LibreOffice 24.2 renderer and fixed font mappings.
+The build checks both before allowing an image to ship, and CI renders reports
+with the same configuration. Updating the renderer requires repeating the
+completed-report visual comparison as well as the regression tests.
 
 ## Edit the report
 

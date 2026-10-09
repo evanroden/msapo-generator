@@ -98,6 +98,31 @@ def test_selected_image_known_to_contain_price_cannot_be_confirmed_away(tmp_path
         build_section_import(path, inspection, (plan,))
 
 
+def test_imported_picture_retains_its_source_caption(tmp_path):
+    path = make_docx(tmp_path)
+    inspection = inspect_docx(path)
+    item = next(i for i in inspection.items if i.kind == 'image')
+    item = replace(item, text="Completed pump maintenance.")
+    inspection = replace(inspection, items=tuple(item if i.id == item.id else i for i in inspection.items))
+    plan = {'key': item.section, 'target': item.section, 'approved': True, 'selected': [item.id],
+            'image_notes': {item.image_part: 'Maintenance photograph.'}}
+    mapped, _ = build_section_import(path, inspection, (plan,))
+    block = next(b for b in mapped.blocks if b.asset_hashes)
+    assert block.asset_captions == ("Completed pump maintenance.",)
+
+
+def test_imported_picture_caption_keeps_pricing_gate(tmp_path):
+    path = make_docx(tmp_path)
+    inspection = inspect_docx(path)
+    item = next(i for i in inspection.items if i.kind == 'image')
+    item = replace(item, text="Replacement price USD 400.")
+    inspection = replace(inspection, items=tuple(item if i.id == item.id else i for i in inspection.items))
+    plan = {'key': item.section, 'target': item.section, 'approved': True, 'selected': [item.id],
+            'image_notes': {item.image_part: 'Maintenance photograph.'}}
+    with pytest.raises(ValueError, match='picture caption'):
+        build_section_import(path, inspection, (plan,))
+
+
 def test_pricing_and_image_review_enforced_at_export_and_invalidated():
     draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
     block = replace(draft.blocks[0], text='Completed repair for $250.')

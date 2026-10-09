@@ -6,6 +6,31 @@ base_commit: 6ffaa1577f491694bd63950acd3a5838600368a2
 
 # Monthly report implementation checkpoint
 
+Latest work (2026-10-09): native ENFRA master layout, based on PR #89 merge
+`f0e7fa32a20d95a9ae7338060397d9de34fab42c`. PR #89's simplification is live;
+its exact-head and merged-main CI passed 1353 tests with zero skips. PR #88
+loaded the reviewed directory: 40 contracts, 108 sites, 555 contact assignments.
+
+The owner requires completed-report replay as the acceptance test: start fresh,
+supply the known report's data through the builder, generate Word/PDF, and compare
+every page with the reference. The generic renderer is not an acceptable match.
+Native master storage/version pinning, advanced-only master replacement, fresh
+report selection and shared output/preview routing are implemented locally.
+Source documents and private runtime data remain outside Git.
+
+Stable-renderer acceptance now passes: LibreOffice 24.2 with the correct fonts
+produces 45 pages, with repeat exports identical on every page. Generated output
+matches the source Word rendering on 43 pages; on the other two pages the only
+changed pixels are the three intentionally removed Cost labels. The supplied PDF
+has the same normalized text on all 45 pages, with small export-position offsets;
+the earlier claim that it was a different content version is withdrawn.
+Actual AppTest Generate produces both files and a snapshot without errors. New
+production/CI configuration fixes the renderer release line and font mappings;
+CI also builds and health-checks the production image. Full final-head CI,
+fresh/changed input and live-preview checks, then production deployment/master
+installation are the remaining release steps. PR #90 is not deployed yet.
+See [native master notes](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NATIVE_MASTER.md).
+
 Latest work: continuing simplification on `feat/monthly-report-focused-editing`,
 based on PR #86 merge `66f832f3f19f9ae4c67d4c7753a72b09e4b21790`.
 One active section, focused Cover/Organization controls, local page uploads,

@@ -1,8 +1,11 @@
-FROM python:3.12-slim
+# The ENFRA master is verified with Ubuntu 24.04's LibreOffice 24.2 renderer.
+# A floating Debian/LibreOffice major changes Word shape and table pagination.
+FROM ubuntu:24.04
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/opt/venv/bin:$PATH"
 
 # Calc renders the official reimbursement workbook plus receipt worksheet as a
 # single PDF. Writer retains the existing MSAPO conversion path. Fonts keep the
@@ -17,24 +20,34 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # is unavailable in this deployment" had it ever been dropped.
 # tests/test_expense_deployment.py enforces that this list stays in sync.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        python3.12 \
+        python3.12-venv \
+        ca-certificates \
+        fontconfig \
         libreoffice-calc \
         libreoffice-writer \
         curl \
         fonts-dejavu-core \
         fonts-dejavu-extra \
         fonts-liberation \
+        fonts-texgyre \
+        fonts-opensymbol \
         fonts-urw-base35 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.lock ./
-RUN python -m pip install --upgrade pip \
+RUN python3.12 -m venv /opt/venv \
     && python -m pip install -r requirements.lock \
     && python -m pip check
 
 COPY . .
+
+ENV FONTCONFIG_FILE=/app/runtime/fonts.conf
+
+RUN python runtime/check_renderer.py
 
 RUN python scripts/patch_streamlit_metadata.py
 

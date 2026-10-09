@@ -320,6 +320,11 @@ def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
 
 def _build_docx(draft, *, asset_loader=None):
     """Internal layout assembler. Final output always uses assemble_docx's gate."""
+    from app.monthly_report_designs import source_for, is_master
+    source = source_for(draft.profile)
+    if source is not None:
+        from app.monthly_report_native_layout import build_native_docx
+        return build_native_docx(draft, source, asset_loader=asset_loader, master=is_master(draft.profile))
     document = Document(SHELL_PATH)
     # Override the shell's stock blue theme without modifying the content-free
     # shell or importing any private branding into git.

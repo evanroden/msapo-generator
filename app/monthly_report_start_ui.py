@@ -152,15 +152,21 @@ def starting_choice(profile, profiles, period, prepared, field):
         return
     available = recommended_designs(profile, profiles, period)
     choices = (["Use another report from this contract"] if available else []) + ["Use the general ENFRA monthly report template"]
-    choice_key = field("report_start_choice_" + profile.key, "")
-    selected = st.session_state[choice_key]
-    st.caption("No report file? Start from a saved contract design or the standard template.")
-    for column, choice in zip(st.columns(len(choices)), choices):
-        label = "Use a contract report" if choice.startswith("Use another") else "Use ENFRA template"
-        if column.button(label, key="report_start_card_" + _key(choice) + "_" + profile.key,
-                         type="primary" if selected == choice else "secondary", width="stretch"):
-            st.session_state[choice_key] = choice
-            st.rerun()
+    from app.monthly_report_designs import master_state
+    master = master_state()
+    if master.get("default"):
+        selected = "Use the general ENFRA monthly report template"
+        st.caption("No starting report is needed. ENFRA master design version " + str(master["revision"]) + " is applied automatically.")
+    else:
+        choice_key = field("report_start_choice_" + profile.key, "")
+        selected = st.session_state[choice_key]
+        st.caption("No report file? Start from a saved contract design or the standard template.")
+        for column, choice in zip(st.columns(len(choices)), choices):
+            label = "Use a contract report" if choice.startswith("Use another") else "Use ENFRA template"
+            if column.button(label, key="report_start_card_" + _key(choice) + "_" + profile.key,
+                             type="primary" if selected == choice else "secondary", width="stretch"):
+                st.session_state[choice_key] = choice
+                st.rerun()
     if selected not in choices:
         return
     source = None

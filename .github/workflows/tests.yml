@@ -11,8 +11,10 @@ permissions:
 
 jobs:
   pytest:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
     steps:
       - uses: actions/checkout@v4
       # The runner image ships no LibreOffice, so every test that renders a
@@ -28,9 +30,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libreoffice-writer \
             libreoffice-calc \
+            fontconfig \
             fonts-dejavu-core \
             fonts-dejavu-extra \
             fonts-liberation \
+            fonts-texgyre \
+            fonts-opensymbol \
             fonts-urw-base35
       - uses: actions/setup-python@v5
         with:
@@ -44,6 +49,7 @@ jobs:
       - name: Validate environment and Python sources
         run: |
           python -m pip check
+          python runtime/check_renderer.py
           python -m compileall -q app pages scripts run_web.py
       - name: Run tests
         env:
@@ -57,3 +63,25 @@ jobs:
           path: test-results.xml
           if-no-files-found: error
           retention-days: 7
+
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build --tag msapo-render-check .
+      - name: Verify production app starts and becomes healthy
+        run: |
+          docker run --detach --name msapo-render-check --env ANTHROPIC_API_KEY=test-key-not-used msapo-render-check
+          for attempt in $(seq 1 36); do
+            state=$(docker inspect --format='{{.State.Health.Status}}' msapo-render-check)
+            if [ "$state" = healthy ]; then exit 0; fi
+            if [ "$state" = unhealthy ]; then break; fi
+            sleep 5
+          done
+          docker logs msapo-render-check
+          exit 1
+      - name: Remove smoke-test container
+        if: always()
+        run: docker rm --force msapo-render-check || true

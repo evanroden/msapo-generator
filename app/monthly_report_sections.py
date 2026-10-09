@@ -20,6 +20,8 @@ class ImportSection:
 
 
 def is_formatting(item):
+    if item.note == "Native divider artwork" and item.kind in ("text", "unsupported"):
+        return True
     if item.kind != "text":
         return False
     text = item.text.strip()
@@ -159,7 +161,12 @@ def build_section_import(path, inspection, plans):
                         raise ValueError("Selected images exceed the 60 MB preparation budget. Leave out unneeded pages and try again.")
                     assets[digest] = image.data
                 if digest not in block.asset_hashes:
-                    block = replace(block, asset_hashes=(*block.asset_hashes, digest))
+                    caption = item.text.strip()
+                    if contains_price(caption):
+                        raise ValueError("Remove pricing from the picture caption before continuing.")
+                    captions = block.asset_captions + ("",) * (len(block.asset_hashes) - len(block.asset_captions))
+                    block = replace(block, asset_hashes=(*block.asset_hashes, digest),
+                                    asset_captions=(*captions, caption))
                 contexts = dict(block.asset_provenance)
                 contexts[digest] = tuple(dict.fromkeys((*contexts.get(digest, ()), reference)))
                 block = replace(block, asset_provenance=tuple(contexts.items()))
