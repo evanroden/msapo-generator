@@ -1,0 +1,58 @@
+name: QA publish tested narrative tree
+on:
+  push:
+    branches: [qa/source-export-075fa63]
+    paths: [.github/workflows/qa-publish-narrative.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify patch transport
+        run: |
+          python - <<'PY'
+          import base64, gzip, hashlib, os
+          from pathlib import Path
+          lines = ''.join(Path(f'.qa/narrative-flow.{n:02d}.b64').read_text() for n in (1,2,3)).splitlines()
+          # Two identified transcription omissions in the transport, not code edits.
+          lines[3] = 'eCngQahWYllEcWiXh2nw5IVarvKRyNJCB2qxlfl6JI5HQmaZyhdxKkOlr96niYIlKsijNFncqx09'
+          lines[34] = 'SmcBhET5YdhZB00AATDc1D5yFKv2HIn1HPpGL3gx7GtL7jvsuhufY6G4GU6XsZtOH5sulTeUqXhe'
+          raw = ''.join(lines)
+          folder = Path(os.environ['RUNNER_TEMP'])
+          (folder / 'transport.b64').write_text(raw)
+          patch = gzip.decompress(base64.b64decode(raw, validate=True))
+          digest = hashlib.sha256(patch).hexdigest()
+          (folder / 'patch-sha.txt').write_text(digest)
+          assert digest == '0e673bce438e3732929f96c6010326e81453de7aa0163acab1e6a973455aa0d1', digest
+          (folder / 'narrative-flow.patch').write_bytes(patch)
+          PY
+      - name: Apply to exact baseline and publish a new repair branch
+        run: |
+          set -eu
+          test -z "$(git ls-remote origin refs/heads/fix/monthly-report-narrative-flow)"
+          git checkout --detach 075fa6310f42053d7fd770c51cb8e736fe2da605
+          git apply --index "$RUNNER_TEMP/narrative-flow.patch"
+          git diff --cached --check
+          tree=$(git write-tree)
+          printf '%s\n' "$tree" > "$RUNNER_TEMP/tree-sha.txt"
+          test "$tree" = 51c517da5bd8f4b0bb3f36d45ce6466ff148f413
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Keep current narratives below native titles and out of stale text-box canvases' -m 'Reproduce audit F16 on main 075fa63. Preserve explicit notes, independent tables, source-proved unchanged content and immutable originals. Exact tested tree 51c517da5bd8f4b0bb3f36d45ce6466ff148f413. Local full suite: 1876 passed, one existing CI-only skip. Production PR checks still required.'
+          git rev-parse HEAD > "$RUNNER_TEMP/commit-sha.txt"
+          git push origin HEAD:refs/heads/fix/monthly-report-narrative-flow
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: narrative-publication-proof
+          path: |
+            ${{ runner.temp }}/transport.b64
+            ${{ runner.temp }}/patch-sha.txt
+            ${{ runner.temp }}/tree-sha.txt
+            ${{ runner.temp }}/commit-sha.txt
+          retention-days: 1
