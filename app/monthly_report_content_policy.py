@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 _MONEY = re.compile(r"(?:[$€£]\s*\d|\b(?:USD|CAD|EUR|GBP)\s*\d|\d[\d,.]*\s*(?:USD|CAD|EUR|GBP|dollars?)\b)", re.I)
-_PRICE_LABEL = re.compile(r"\b(?:unit\s+price|pricing|prices?|costs?|(?:hourly|billing|labor|labour)\s+rates?|subtotal|total\s+(?:amount|charges?|due)|amount\s+(?:due|quoted)|labor\s+charges?|material\s+charges?|sales\s+tax|(?:quoted|quotation|invoice)\s+amount)\b", re.I)
+_PRICE_LABEL = re.compile(r"\b(?:unit\s+price|pricing|prices?|costs?|(?:hourly|billing|labor|labour)\s+rates?|subtotal|total\s+(?:amount|charges?|due)|amount\s+(?:due|quoted)|labor\s+charges?|material\s+charges?|sales\s+tax|(?:quoted|quotation|invoice|proposal|quote)\s+amount|(?:project|proposal|quote)\s+(?:budget|fee|total)|budget|fee)\b", re.I)
 _LEGAL_TERMS = ("terms and conditions", "limitation of liability", "indemnif", "governing law", "entire agreement", "waiver", "arbitration", "force majeure", "consequential damages", "jurisdiction", "severability", "warranty disclaimer")
 
 
@@ -35,7 +35,7 @@ def contains_price(text):
 
 
 def _price_heading(title):
-    return bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge) amount|amount due|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
+    return bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge|proposal|quote) amount|amount due|(?:project|proposal|quote) (?:budget|total|fee)|budget|fee|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
 
 
 def _mixed_price_heading(title):
