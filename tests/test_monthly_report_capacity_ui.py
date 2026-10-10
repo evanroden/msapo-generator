@@ -53,7 +53,7 @@ def test_upload_reviews_and_saves_all_sites_once(profile, monkeypatch):
     assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
     assert not any(b.label.startswith("Save capacity") for b in app.button)
-    assert next(w for w in app.toggle if w.label == "Update shared capacity").value is False
+    assert next(w for w in app.toggle if w.label == "Update existing capacity values").value is False
 
 
 def test_actor_missing_disables_contract_save(profile, monkeypatch):
