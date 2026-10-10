@@ -364,8 +364,13 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     destination = {"activity": "activity_summary", "capital": "capital_renewal", "proposals": "proposals"}.get(section.key)
     if destination:
         from app.monthly_report_upload_ui import render_structured_uploads
+        from app.monthly_report_structured_uploads import COLUMNS as STANDARD_COLUMNS
+        native_spec = next((b for s in draft.sections for b in s.blocks if b.key == destination), None)
+        selected_columns = tuple(c.title for c in native_spec.columns) if native_spec and native_spec.columns else ()
+        custom_columns = selected_columns if selected_columns and selected_columns != STANDARD_COLUMNS[destination] else None
         sources, additions, incoming_specs = render_structured_uploads(
-            profile, period, prefix, field, destination, blocks=blocks, assets=assets)
+            profile, period, prefix, field, destination, blocks=blocks, assets=assets,
+            table_columns=custom_columns)
         draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
         if additions:
             # Structured readers return the updated destination block; their

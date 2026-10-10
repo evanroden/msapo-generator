@@ -490,7 +490,7 @@ def _section_read_progress(local_key):
         st.info("Reading uploaded files and preparing this section…")
 
 
-def render_structured_uploads(profile, period, prefix, field, destination, *, blocks=None, assets=None):
+def render_structured_uploads(profile, period, prefix, field, destination, *, blocks=None, assets=None, table_columns=None):
     """Automatically draft new evidence once; retain subsequent human edits on reruns."""
     from app import monthly_report_structured_uploads as structured
     from app import monthly_report_ai as ai
@@ -532,7 +532,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             if current is not None and current.fingerprint != job.get("baseline"):
                 st.session_state[local_key + "_pending"] = (job, value)
                 raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
-            result, pages = structured.reader_update(job["contents"], destination, value, current)
+            result, pages = structured.reader_update(job["contents"], destination, value, current,
+                table_columns=job.get("table_columns"))
             additions[destination] = result
             remember(result, contents)
             # Only a validated, successfully applied result may enter the
@@ -646,11 +647,13 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         processed = set(st.session_state.get(local_key + "_native_ids", ()))
         fresh = tuple(c for c in scoped if c.source.id not in processed)
         additions[destination] = structured.native_update(
-            fresh, destination, additions.get(destination, blocks.get(destination)))
+            fresh, destination, additions.get(destination, blocks.get(destination)),
+            table_columns=table_columns)
         remember(additions[destination], contents)
         st.session_state[local_key + "_native_ids"] = tuple(processed | {c.source.id for c in fresh})
         scoped = fresh or scoped
-        digest = ai.digest(("section-upload-v3", destination, sorted(c.source.id for c in scoped)))
+        digest = ai.digest(("section-upload-v4", destination, tuple(table_columns or ()),
+                            sorted(c.source.id for c in scoped)))
         try:
             if not ai.ANTHROPIC_API_KEY:
                 # The built-in extractive pass requires no network, image
@@ -669,14 +672,17 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 future.set_result(cached)
             else:
                 def prepare():
-                    payloads = structured.reader_batches(profile, scoped, destination)
+                    payloads = structured.reader_batches(profile, scoped, destination,
+                            table_columns=table_columns)
                     for _ in payloads:
                         ai.reserve_call(profile, period)
                     return payloads
                 future = start_receipt(prepare, structured.read_batches)
                 if future is None:
                     raise ValueError("Other document readings are running. Your extracted text is kept; retry this upload when they finish.")
-            st.session_state[local_key + "_job"] = {"future": future, "contents": scoped, "digest": digest, "baseline": additions[destination].fingerprint}
+            st.session_state[local_key + "_job"] = {"future": future, "contents": scoped,
+                "digest": digest, "baseline": additions[destination].fingerprint,
+                "table_columns": table_columns}
         except (ValueError, OSError, RuntimeError) as exc:
             st.session_state[local_key + "_error"] = str(exc)
         st.session_state[local_key + "_read"] = signature
