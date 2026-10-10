@@ -507,44 +507,74 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     uploaded = st.file_uploader(labels[destination], type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
     additions = {}
-    job = st.session_state.get(local_key + "_job")
-    if job and job["future"].done():
+    def remember(block, current_sources):
+        # The async progress fragment may request a full rerun before this page
+        # reaches its normal final draft commit. Persist the native first pass
+        # *before* recording a processed-source flag or starting a reader.
+        draft_key = prefix + "_draft"
+        draft = st.session_state.get(draft_key)
+        if draft is not None:
+            current = {part.key: part for part in draft.blocks}
+            current[block.key] = block
+            st.session_state[draft_key] = replace(
+                draft, blocks=tuple(current.values()),
+                sources=tuple(content.source for content in current_sources))
+
+    def complete_finished_job():
+        nonlocal contents
+        job = st.session_state.get(local_key + "_job")
+        if not job or not job["future"].done():
+            return
         st.session_state.pop(local_key + "_job", None)
         try:
             value = job["future"].result()
-            ai.save_cache(profile, "section_upload", job["digest"], value)
-            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ()))
-            current = blocks.get(destination)
+            current = additions.get(destination, blocks.get(destination))
             if current is not None and current.fingerprint != job.get("baseline"):
                 st.session_state[local_key + "_pending"] = (job, value)
-                value = None
-            if value is None:
-                # Preserve edits made while the asynchronous reader was running.
                 raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
             result, pages = structured.reader_update(job["contents"], destination, value, current)
             additions[destination] = result
-            st.session_state[local_key + "_completed_ids"] = tuple(set(st.session_state.get(local_key + "_completed_ids", ())) | {c.source.id for c in job["contents"]})
-            # Only a visual reading can select original activity pages. Quotes
-            # always contribute sanitized table values, never page images.
+            remember(result, contents)
+            # Only a validated, successfully applied result may enter the
+            # reusable cache; a malformed reply must not poison Retry.
+            ai.save_cache(profile, "section_upload", job["digest"], value)
+            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ()))
+            st.session_state[local_key + "_completed_ids"] = tuple(
+                set(st.session_state.get(local_key + "_completed_ids", ()))
+                | {content.source.id for content in job["contents"]})
             if destination == "activity_summary" and pages:
                 selected = []
                 for content in job["contents"]:
                     source = content.source
                     from app.monthly_report_section_uploads import included_pages
                     present = included_pages(blocks)
-                    numbers = tuple(n for n in sorted(set(pages.get(source.id, ())) & set(sources.image_numbers(content)))
-                                    if (source.id, n) not in present)
+                    numbers = tuple(n for n in sorted(
+                        set(pages.get(source.id, ())) & set(sources.image_numbers(content)))
+                        if (source.id, n) not in present)
                     source = replace(source, selected_pages=numbers)
-                    source = replace(source, client_page_reviews=tuple((n, page_fingerprint(source, n)) for n in numbers))
+                    source = replace(source, client_page_reviews=tuple(
+                        (n, page_fingerprint(source, n)) for n in numbers))
                     selected.append(replace(content, source=source))
-                prepared = sources.prepare_pages(profile, tuple(selected), tuple((c.source.id, "improvements") for c in selected if c.source.selected_pages))
+                prepared = sources.prepare_pages(
+                    profile, tuple(selected),
+                    tuple((content.source.id, "improvements") for content in selected
+                          if content.source.selected_pages))
                 additions.update({block.key: block for block in prepared})
-                changed = {c.source.id: c for c in selected}
-                contents = tuple(changed.get(c.source.id, c) for c in contents)
+                changed = {content.source.id: content for content in selected}
+                contents = tuple(changed.get(content.source.id, content) for content in contents)
                 st.session_state[evidence_key] = contents
+                remember(result, contents)
             st.session_state.pop(local_key + "_error", None)
-        except Exception as exc:
+        except ValueError as exc:
             st.session_state[local_key + "_error"] = str(exc)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Monthly section reader failed")
+            st.session_state[local_key + "_error"] = (
+                "The document reader could not finish. Your uploaded text is kept; "
+                "retry reading or edit the section below.")
+
+    complete_finished_job()
     picked = tuple((u.name, u.getvalue()) for u in (uploaded or ()))
     signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
     if picked and st.session_state.get(local_key + "_read") != signature and local_key + "_job" not in st.session_state:
@@ -558,12 +588,22 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             return tuple(c.source for c in contents), additions, {}
         processed = set(st.session_state.get(local_key + "_native_ids", ()))
         fresh = tuple(c for c in scoped if c.source.id not in processed)
-        additions[destination] = structured.native_update(fresh, destination, additions.get(destination, blocks.get(destination)))
+        additions[destination] = structured.native_update(
+            fresh, destination, additions.get(destination, blocks.get(destination)))
+        remember(additions[destination], contents)
         st.session_state[local_key + "_native_ids"] = tuple(processed | {c.source.id for c in fresh})
         scoped = fresh or scoped
-        digest = ai.digest(("section-upload-v2", destination, sorted(c.source.id for c in scoped)))
+        digest = ai.digest(("section-upload-v3", destination, sorted(c.source.id for c in scoped)))
         try:
-            cached = ai.cached(profile, "section_upload", digest)
+            if not ai.ANTHROPIC_API_KEY:
+                # The built-in extractive pass requires no network, image
+                # rendering or allowance. Keep it and allow normal editing.
+                st.session_state.pop(local_key + "_error", None)
+                st.session_state[local_key + "_read"] = signature
+                st.caption("Automatic reading is off. Any readable text was added below for review; edit the summary directly or use Copilot.")
+                return tuple(content.source for content in contents), additions, {}
+            force = st.session_state.pop(local_key + "_force_network", False)
+            cached = None if force else ai.cached(profile, "section_upload", digest)
             if cached is not None:
                 # Keep one completion path, including page handling and validation.
                 from concurrent.futures import Future
@@ -593,10 +633,15 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         current = blocks.get(destination)
         st.session_state[local_key + "_job"] = dict(pending_job, future=future, baseline=current.fingerprint if current else None)
         st.rerun()
+    # Process immediately finished cached/failed jobs in this same full-page
+    # pass. Calling st.rerun in an inline progress fragment here would abort
+    # before guided.py commits the native extractive first pass.
+    complete_finished_job()
     if local_key + "_error" in st.session_state:
         st.warning(st.session_state[local_key + "_error"])
         if st.button("Retry reading uploaded files", key=local_key + "_retry"):
             st.session_state.pop(local_key + "_read", None)
+            st.session_state[local_key + "_force_network"] = True
             st.rerun()
     if local_key + "_job" in st.session_state:
         _section_read_progress(local_key)

@@ -1,7 +1,7 @@
 ---
 document_type: implementation_checkpoint
 date: 2026-10-09
-base_commit: 309eae5b0189d2aa6bb7f6ec873b4579efa6016e
+base_commit: 1493eee01b5eb052d1d154fd730661a61deec602
 workflow: monthly_report
 change_type: source_geometry_fidelity
 status: candidate_pending_exact_ci
