@@ -574,6 +574,62 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 "The document reader could not finish. Your uploaded text is kept; "
                 "retry reading or edit the section below.")
 
+    def show_workorder_metrics():
+        if destination != "activity_summary":
+            return
+        # An explicit work-order table can produce useful counts without a model,
+        # a twelve-month coverage assumption or the CMMS onsite-call mapping.
+        # It is offered as reviewable source evidence, never silently written over
+        # an edited Activity paragraph.
+        from app.monthly_report_work_order_csv import work_order_evidence
+        metrics_signature = _signature((period.key, profile.key,
+                                   tuple(c.source.id for c in contents)))
+        cache_key = local_key + "_workorder_metrics_cache"
+        cached_evidence = st.session_state.get(cache_key)
+        if cached_evidence is None or cached_evidence[0] != metrics_signature:
+            reports = tuple(item for content in contents
+                            for item in work_order_evidence(content, period, profile))
+            st.session_state[cache_key] = (metrics_signature, reports)
+        else:
+            reports = cached_evidence[1]
+        for report in reports:
+            original = additions.get(destination, blocks.get(destination))
+            if original is not None and report.text in original.text:
+                st.caption("Work-order totals from " + report.filename + " are already in the Activity summary.")
+                continue
+            st.info(report.text)
+            st.caption("Source: " + report.filename + " · " + report.reference.split(":")[1] +
+                       " (table). These are only the rows in the uploaded file, not a claim of complete monthly coverage.")
+            if report.needs_site_confirmation:
+                st.warning("The work-order file has no site column. Check that these records belong to the selected report before adding them.")
+            for notice in report.notices:
+                st.caption(notice)
+            with st.expander("Review counted work-order rows"):
+                st.dataframe([{"Work order": row[0], "Date": row[1], "Status": row[2]}
+                              for row in report.rows], hide_index=True)
+            # Streamlit buttons run an on_click callback before the full-page
+            # rerender, so the section editor consumes the update *before*
+            # drawing its text-area widget. Otherwise its stale widget value can
+            # replace the newly accepted source wording.
+            previous = blocks.get(destination)
+            from app.monthly_report_model import ResolvedBlock
+            previous = previous or ResolvedBlock(destination, "This month")
+            confirmed = True
+            if report.needs_site_confirmation:
+                confirmed = st.checkbox(
+                    "I verified that this work-order file covers the selected site(s)",
+                    key=local_key + "_site_confirm_" + report.source_id + "_" + period.key)
+            def accept_workorders(report=report, profile=profile, period=period, previous=previous, prefix=prefix):
+                st.session_state[prefix + "_pending_accepted_workorders"] = {
+                    "contract": profile.contract, "profile": profile.key,
+                    "month": period.key, "expected": previous.fingerprint,
+                    "source_id": report.source_id, "reference": report.reference,
+                    "text": report.text,
+                }
+            st.button("Add these work-order totals to Activity",
+                      key=local_key + "_accept_work_orders_" + report.source_id[:16],
+                      on_click=accept_workorders, disabled=not confirmed)
+
     complete_finished_job()
     picked = tuple((u.name, u.getvalue()) for u in (uploaded or ()))
     signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
@@ -585,6 +641,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         st.session_state[local_key + "_messages"] = messages
         if ids <= set(st.session_state.get(local_key + "_completed_ids", ())):
             st.session_state[local_key + "_read"] = signature
+            show_workorder_metrics()
             return tuple(c.source for c in contents), additions, {}
         processed = set(st.session_state.get(local_key + "_native_ids", ()))
         fresh = tuple(c for c in scoped if c.source.id not in processed)
@@ -601,6 +658,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 st.session_state.pop(local_key + "_error", None)
                 st.session_state[local_key + "_read"] = signature
                 st.caption("Automatic reading is off. Any readable text was added below for review; edit the summary directly or use Copilot.")
+                show_workorder_metrics()
                 return tuple(content.source for content in contents), additions, {}
             force = st.session_state.pop(local_key + "_force_network", False)
             cached = None if force else ai.cached(profile, "section_upload", digest)
@@ -624,6 +682,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         st.session_state[local_key + "_read"] = signature
     for message in st.session_state.get(local_key + "_messages", ()):
         st.warning(message)
+    show_workorder_metrics()
     pending = st.session_state.get(local_key + "_pending")
     if pending and st.button("Add new source suggestions to my edits", key=local_key + "_accept_suggestions"):
         from concurrent.futures import Future

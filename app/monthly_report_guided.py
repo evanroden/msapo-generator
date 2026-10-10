@@ -336,6 +336,28 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     if section.key in {"organization", "subcontractors", "training"} and not draft.prepared_by.strip():
         st.info("Enter Prepared by above to view or edit saved contact and team information.")
         return draft, blocks
+    # A source-acceptance callback is delivered before widgets redraw. Use
+    # this report's identity + the exact block revision the user reviewed;
+    # stale clicks from another month/site or changed manual edits cannot
+    # overwrite newer content.
+    if section.key == "activity":
+        request = st.session_state.pop(prefix + "_pending_accepted_workorders", None)
+        if request:
+            current = blocks.get("activity_summary", ResolvedBlock("activity_summary", "This month"))
+            matches = (request["contract"] == draft.profile.contract
+                       and request["profile"] == draft.profile.key
+                       and request["month"] == draft.period.key)
+            if matches and request["expected"] == current.fingerprint:
+                if request["text"] not in current.text:
+                    updated = replace(current, source="This month",
+                        text="\n\n".join(filter(None, (current.text.strip(), request["text"]))),
+                        references=tuple(dict.fromkeys((*current.references, request["reference"]))),
+                        reviewed_fingerprint="", client_reviewed_fingerprint="")
+                    blocks["activity_summary"] = updated
+                    _forget_block_widgets(prefix, {"activity_summary"})
+            else:
+                st.warning("The report changed after you reviewed the work-order totals. "
+                           "Your edits are unchanged. Review the file and select Add again.")
     from app.monthly_report_sections import readable_label
     draft = replace(draft, blocks=tuple(blocks.values()))
     profile, period = draft.profile, draft.period
