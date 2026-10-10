@@ -25,7 +25,7 @@ def load_training(contract):
 
 
 def validate_matrix(table):
-    if table.columns[:2] != ("Team member", "Site") or len({c.strip().casefold() for c in table.columns}) != len(table.columns):
+    if table.columns[:2] != ("Team member", "Site") or len({" ".join(c.casefold().split()) for c in table.columns}) != len(table.columns):
         raise ValueError("Training names must be unique and different from the team and site headings.")
     if len(table.columns) > 52 or len(table.rows) > 500:
         raise ValueError("Use at most 50 trainings and 500 team members.")
@@ -33,7 +33,7 @@ def validate_matrix(table):
     for row in table.rows:
         if len(row) != len(table.columns) or not all(row[:2]):
             raise ValueError("Each training row needs a team member and site.")
-        identity = tuple(value.strip().casefold() for value in row[:2])
+        identity = tuple(" ".join(value.casefold().split()) for value in row[:2])
         if identity in seen:
             raise ValueError("Keep one row per team member at each site.")
         seen.add(identity)
@@ -138,6 +138,22 @@ def seed_matrix(profile, block, stored, directory=None):
                 rows.append((name, facility.title, *("Not recorded" for _ in columns)))
                 known.add(_person(name))
     return ReportTable(("Team member", "Site", *columns), tuple(rows), MATRIX_REF)
+
+
+def matrix_differs_from_current_standing(profile, block, stored, directory=None):
+    """Flag an older report matrix before it can replace newer shared rows.
+
+    Reports retain their original saved matrix. A fresh editor must explicitly
+    load newer standing information when the report's matrix disagrees with
+    the current selected-site records; a new global revision is not proof the
+    older table can safely overwrite the shared roster.
+    """
+    previous = next((t for t in block.extra_tables if t.reference == MATRIX_REF), None)
+    if previous is None or not any(f.key in stored.get("sites", {}) for f in profile.facilities):
+        return False
+    without = replace(block, extra_tables=tuple(t for t in block.extra_tables if t.reference != MATRIX_REF))
+    current = seed_matrix(profile, without, stored, directory)
+    return seed_matrix(profile, block, stored, directory) != current
 
 
 def add_event(table, *, title, when, mode, participants, hours, period):
