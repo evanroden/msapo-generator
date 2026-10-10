@@ -37,11 +37,11 @@ def approved_synthetic_draft(monkeypatch, tmp_path):
     findings, = work_order_evidence(work, period, profile)
     assert (findings.total, findings.completed, findings.open) == (3, 2, 1)
     csv = ("Proposal Total,Project Number,Facility,Vendor,Work Description,Status,Technical Notes\n"
-           "$12,345.67,Q-TEST-731,Demo North,Synthetic Mechanical,Inspect supply valve,Pending,45 gpm\n"
-           "$987.65,Q-TEST-732,Demo North,Synthetic Mechanical,Check bearing,Open,1.20 psi\n"
-           "$13,333.32,Q-TEST-733,Demo North,Synthetic Electrical,Inspect switchboard,Pending,230 V\n"
-           "$456.78,Q-TEST-734,Demo North,Synthetic Electrical,Check controls,Open,240 V\n"
-           "$222.22,Q-TEST-735,Demo North,Synthetic Mechanical,Test flow,Pending,60 gpm\n").encode()
+           ""$12,345.67",Q-TEST-731,Demo North,Synthetic Mechanical,Inspect supply valve,Pending,45 gpm\n"
+           ""$987.65",Q-TEST-732,Demo North,Synthetic Mechanical,Check bearing,Open,1.20 psi\n"
+           ""$13,333.32",Q-TEST-733,Demo North,Synthetic Electrical,Inspect switchboard,Pending,230 V\n"
+           ""$456.78",Q-TEST-734,Demo North,Synthetic Electrical,Check controls,Open,240 V\n"
+           ""$222.22",Q-TEST-735,Demo North,Synthetic Mechanical,Test flow,Pending,60 gpm\n").encode()
     priced, _ = sources.ingest(profile, "synthetic-proposals.csv", csv)
     rows = mapped_rows(priced, "proposals", SCHEMA)
     assert len(rows) == 5
@@ -99,3 +99,18 @@ def test_unsafe_manual_proposal_price_cannot_be_generated_even_with_warning_ack(
                 "Inspect valve $12,345.67", "Pending", "45 gpm"),))))
     with pytest.raises(ValueError):
         assemble_docx(bad, acknowledged_fingerprint=bad.fingerprint)
+
+def test_malformed_csv_unquoted_thousands_separator_is_rejected_not_remapped(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    # This exact formerly accepted line shifted 345.67 into Project Number,
+    # turning a price fragment into apparent client-facing prose.
+    malformed = (b"Proposal Total,Project Number,Facility,Vendor,Work Description,Status,Technical Notes\n"
+                 b"$12,345.67,Q-TEST-731,Demo North,Synthetic Mechanical,Inspect supply valve,Pending,45 gpm\n")
+    with pytest.raises(ValueError, match="CSV rows have different column counts"):
+        sources.ingest(profile, "synthetic-malformed.csv", malformed)
+    accepted, notices = sources.ingest_batch(profile, (
+        ("bad-quote.csv", malformed), ("valid-workorders.csv", WO)))
+    assert len(accepted) == 1 and accepted[0].source.filename == "valid-workorders.csv"
+    assert any("Quote any values containing commas" in note for note in notices)
+    assert work_order_evidence(accepted[0], ReportPeriod(2026, 9), profile)[0].total == 3
