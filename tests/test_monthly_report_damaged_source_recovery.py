@@ -29,7 +29,8 @@ def test_only_output_linked_to_missing_file_must_block():
     assert used_missing_sources(report, missing) == ()
     block = ResolvedBlock("activity_summary", "This month", text="Approved pump observation",
                           references=("a" * 64 + ":1:source-fingerprint",))
-    report = replace(report, blocks=(block,))
+    from app.monthly_report_model import default_sections
+    report = replace(report, sections=default_sections(), blocks=(block,))
     assert used_missing_sources(report, missing) == missing
     report = replace(report, blocks=(replace(block, source="Omit"),))
     assert used_missing_sources(report, missing) == ()
