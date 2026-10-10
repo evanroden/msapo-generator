@@ -91,6 +91,23 @@ def _set_text(element, value):
             node.text = ""
 
 
+
+def _remove_unapproved_master_watermark_text(document):
+    """A global master cannot lend an old client's VML textpath watermark.
+
+    WordArt/v:textpath 'string' is not a w:t run, so normal paragraph text
+    replacement misses it. Clear the source-authored text value while keeping
+    the drawing's shape, fill, position and unrelated ENFRA art unchanged.
+    """
+    watermark_tag = "{urn:schemas-microsoft-com:vml}textpath"
+    for part in document.part.package.parts:
+        name = str(part.partname)
+        if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
+            continue
+        for node in part.element.iter(watermark_tag):
+            node.attrib.pop("string", None)
+
+
 def _clear_source_drawing_metadata(document):
     """Source frame descriptions are facts, not reusable master geometry."""
     drawing_namespaces = {
@@ -641,6 +658,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     retained_images = defaultdict(set)
     document = Document(BytesIO(passive_docx(source_path)))
     _clear_source_drawing_metadata(document)
+    if master:
+        _remove_unapproved_master_watermark_text(document)
     body = document.element.body
     original = list(body)
     # A merged technical cell may cross a removed price column. Preserve its
