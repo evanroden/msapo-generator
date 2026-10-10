@@ -43,6 +43,27 @@ _MONTH_RE = re.compile(
 _DATE_RE = re.compile(r"\b(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2})/(\d{2,4}))\b")
 
 
+def _clearly_future_follow_up(text: str, start: int, end: int, *, source_year: int,
+                              source_month: int, target_year: int, target_month: int) -> bool:
+    """Do not mislabel explicitly future tasks as work in the wrong month.
+
+    Only future month references in the same short clause with a clear planning
+    qualifier are exempt. Earlier completed work stays reviewable, even when
+    a later sentence mentions a follow-up.
+    """
+    if (source_year, source_month) <= (target_year, target_month):
+        return False
+    before = re.split(r"[.?!\n;]", text[max(0, start - 100):start])[-1]
+    after = re.split(r"[.?!\n;]", text[end:end + 100])[0]
+    context = before + " " + after
+    if re.search(r"\b(?:completed|performed|occurred|finished|was done)\b", context, re.I):
+        return False
+    return bool(re.search(
+        r"\b(?:future|follow[- ]?up|next\s+month|plan(?:ned)?|schedul\w*|"
+        r"expected|upcoming|to\s+be\s+done|will\s+(?:check|inspect|return))\b",
+        context, re.I))
+
+
 def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
     findings = []
     for match in _MONTH_RE.finditer(text):
@@ -52,7 +73,11 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
         # "Since July. June activity" must still warn about the second sentence.
         if re.search(r"\bsince\s+$", text[max(0, match.start() - 12):match.start()], re.IGNORECASE):
             continue
-        if _MONTHS[match[1].casefold()] != month or (match[2] and int(match[2]) != year):
+        observed_month = _MONTHS[match[1].casefold()]
+        observed_year = int(match[2]) if match[2] else year
+        if (observed_year, observed_month) != (year, month) and not _clearly_future_follow_up(
+                text, match.start(), match.end(), source_year=observed_year,
+                source_month=observed_month, target_year=year, target_month=month):
             findings.append(match[0])
     for match in _DATE_RE.finditer(text):
         parts = match.groups()
@@ -62,7 +87,9 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
         except ValueError:
             findings.append(match[0])
             continue
-        if (value.year, value.month) != (year, month):
+        if (value.year, value.month) != (year, month) and not _clearly_future_follow_up(
+                text, match.start(), match.end(), source_year=value.year,
+                source_month=value.month, target_year=year, target_month=month):
             findings.append(match[0])
     return tuple(dict.fromkeys(findings))
 
@@ -82,9 +109,12 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     if len(set(keys)) != len(keys):
         checks.append(ReportCheck("duplicate_blocks", "Block identities must be unique.", True))
     blocks = {b.key: b for b in draft.blocks}
-    texts = [("cover", draft.profile.title), ("cover", draft.prepared_by), ("footer", draft.address_line)]
-    texts.extend(("cover", f.title) for f in draft.profile.facilities)
-    texts.append(("cover", draft.profile.contract))
+    # Names and contract labels are identifiers, not evidence that work happened
+    # on a date. Keep price/placeholder checks but omit month review for these.
+    texts = [("report_identity", draft.profile.title), ("report_identity", draft.prepared_by),
+             ("footer", draft.address_line)]
+    texts.extend(("report_identity", f.title) for f in draft.profile.facilities)
+    texts.append(("report_identity", draft.profile.contract))
     from app.monthly_report_followups import problems, report_text
     for item in draft.follow_ups:
         for message in problems(item, draft):
@@ -202,11 +232,12 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         phrases = placeholder_matches(text)
         if phrases:
             checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key))
-        stale = stale_period_mentions(text, draft.period.year, draft.period.month)
-        if stale:
-            checks.append(ReportCheck("period", f"Check period references in {key}: {', '.join(stale)}.", False, key))
+        if key != "report_identity":
+            stale = stale_period_mentions(text, draft.period.year, draft.period.month)
+            if stale:
+                checks.append(ReportCheck("period", f"Check period references in {key}: {', '.join(stale)}.", False, key))
     if estimated_bytes > 15 * 1024 * 1024:
-        checks.append(ReportCheck("size", "Estimated output exceeds 15 MB.", False))
+        checks.append(ReportCheck("size", "Tracked report content and artwork may exceed 15 MB. Check the actual DOCX and PDF sizes after generating.", False))
     names = {name.strip().casefold() for facility in draft.profile.facilities for name in (facility.key, facility.title, *facility.aliases)}
     for source in draft.sources:
         if source.classification == "Reference only" or not source.selected_pages:
@@ -223,4 +254,6 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
         if not source.facility or source.facility.strip().casefold() not in names:
             checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id))
-    return tuple(checks)
+    # Same issue can be reached through the cover and a repeated section
+    # binding. Preserve distinct fields/messages but show each exact concern once.
+    return tuple(dict.fromkeys(checks))

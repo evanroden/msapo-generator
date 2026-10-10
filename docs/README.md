@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Stage-one Monthly Report closure ledger](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md) — statuses for F01–F16, #101 P1–P12, U01–U06 and explicit mapping of all 113 proposed acceptance checks. This tracks exact CI separately from deployed build, authentic exports and owner acceptance.
+
 [Monthly report resource budget](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RESOURCE_BUDGET.md) — viewport-driven previews, shared cache/converter limits and a capped-container acceptance probe.
 
 Current next-LLM handoff and owner-requested testing release:
