@@ -397,6 +397,30 @@ def schema_conflicts(current, tables):
     return tuple(dict.fromkeys(changed))
 
 
+def first_fill_tables(current, incoming):
+    """Only genuinely missing, explicitly identified thermal rows can auto-fill.
+
+    Compare the existing site/service/plant key, not only the site. Chilled
+    water may already be stored while steam is newly supplied for that same
+    facility; an existing service's numeric change is not an automatic update.
+    Provenance, units, NR and old snapshots remain unchanged.
+    """
+    occupied = {
+        _row_key(table, row, site)
+        for table in (current.tables if current else ())
+        for row, site in zip(table.rows, table.site_keys)
+    }
+    additions = []
+    for table in incoming:
+        pairs = tuple((row, site) for row, site in zip(table.rows, table.site_keys)
+                      if site and _row_key(table, row, site) not in occupied)
+        if pairs:
+            additions.append(replace(table,
+                rows=tuple(row for row, _ in pairs),
+                site_keys=tuple(site for _, site in pairs)))
+    return tuple(additions)
+
+
 def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerprint, mode="merge"):
     actor = library._confirmation(actor, True)
     tables = tuple(tables)
