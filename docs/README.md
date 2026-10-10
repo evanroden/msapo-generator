@@ -223,3 +223,5 @@ Source-proved proposals divider numeral: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT
 Contents-page corporate wordmark identity: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_COMPANY_SLOGAN.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_COMPANY_SLOGAN.md). Keep verified ENFRA artwork instead of flattening a client logo into its frame.
 
 Generate readiness and visible disabled state: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_GENERATE_FEEDBACK.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_GENERATE_FEEDBACK.md). Explain the existing warning/conflict blockers next to a muted action.
+
+Empty-report review guardrail: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_EMPTY_REVIEW.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_EMPTY_REVIEW.md). Show a non-quality content count and ask once before generating a wholly empty monthly skeleton.

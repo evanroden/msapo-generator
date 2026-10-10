@@ -129,6 +129,29 @@ def generation_block_reason(*, conflict, checks, warnings_ok):
     return ""
 
 
+def monthly_entries_by_section(draft):
+    """Count substantive monthly inputs, not corporate furniture or blank grids.
+
+    This is an advisory signal, not a content-approval or completion check.
+    Contract defaults and old library text do not establish work this month.
+    """
+    from app.monthly_report_model import included_sections
+    blocks = {block.key: block for block in draft.blocks}
+    present = []
+    for section in included_sections(draft.sections):
+        for spec in section.blocks:
+            if spec.key not in MONTHLY_EDIT_KEYS:
+                continue
+            block = blocks.get(spec.key)
+            if block is None or block.source in ("Omit", "Library", "Stock text"):
+                continue
+            if (block.text.strip() or block.rows or block.asset_hashes
+                    or block.org_nodes or any(table.rows for table in block.extra_tables)):
+                present.append(section.key)
+                break
+    return tuple(present)
+
+
 def _standing_signature(blocks, included):
     keys = included | {b.key for b in layout_blocks()}
     return _signature(sorted((b.key, b.fingerprint) for b in blocks
@@ -632,6 +655,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if package and package.fingerprint != draft.fingerprint:
             st.session_state.pop(prefix + "_package", None)
             package = None
+        from app.monthly_report_model import included_sections
+        monthly_entry_sections = monthly_entries_by_section(draft)
+        section_total = len(included_sections(draft.sections))
+        st.caption(f"Monthly information is entered in {len(monthly_entry_sections)} of {section_total} sections. "
+                   "This is not a completeness score; standing information may also appear.")
+        if len(monthly_entry_sections) == 1:
+            st.info("Only one section has information entered for this month. "
+                    "Check the other sections before sharing the report; blank sections can be intentional.")
         for title, _, pages in outline(draft):
             st.write(f"{title} · at least {pages} pages")
         loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref)
@@ -648,8 +679,24 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         blocked_reason = generation_block_reason(conflict=conflict, checks=checks, warnings_ok=warnings_ok)
         if blocked_reason:
             st.caption(blocked_reason)
-        if st.button("Generate DOCX and PDF", key=prefix + "_generate",
-                     type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason)):
+        # Re-confirm only a completely empty monthly input set. This is a
+        # soft editorial guard, never a way around mandatory preflight gates.
+        empty_confirmation_key = prefix + "_empty_generation_confirmation"
+        if st.session_state.get(empty_confirmation_key) not in (None, draft.fingerprint):
+            st.session_state.pop(empty_confirmation_key, None)
+        pressed = st.button("Generate DOCX and PDF", key=prefix + "_generate",
+                            type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason))
+        if pressed and not monthly_entry_sections:
+            st.session_state[empty_confirmation_key] = draft.fingerprint
+        generate_anyway = False
+        if not blocked_reason and not monthly_entry_sections and (
+                st.session_state.get(empty_confirmation_key) == draft.fingerprint):
+            st.warning("No new monthly information was entered in the section editors. "
+                       "This draft may contain mostly dividers and saved standing material. "
+                       "Check the report before sending it to a client.")
+            generate_anyway = st.button("Generate anyway", key=prefix + "_empty_generate_anyway")
+        if (pressed and bool(monthly_entry_sections)) or generate_anyway:
+            st.session_state.pop(empty_confirmation_key, None)
             try:
                 with st.spinner("Preparing the Word and PDF downloads…"):
                     package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
