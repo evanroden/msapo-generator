@@ -44,12 +44,9 @@ def app_for(monkeypatch, profile, initial=None):
 def test_upload_reviews_and_saves_all_sites_once(profile, monkeypatch):
     app = app_for(monkeypatch, profile)
     assert not app.exception
-    assert capacity.load_capacity(profile.contract) is None
-    assert not app.checkbox
-    save = next(b for b in app.button if b.label == "Save capacity for 2 sites")
-    save.click().run()
-    assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
+    assert not app.checkbox
+    assert not any(b.label.startswith("Save capacity") for b in app.button)
     assert {s for t in capacity.load_capacity(profile.contract).tables for s in t.site_keys} == {"north", "south"}
     assert len(app.session_state["test_block"].extra_tables[0].rows) == 2
     app.run()
@@ -62,29 +59,28 @@ def test_upload_reviews_and_saves_all_sites_once(profile, monkeypatch):
 def test_actor_missing_disables_contract_save(profile, monkeypatch):
     app = app_for(monkeypatch, profile, replace(draft(profile), prepared_by=""))
     assert not app.exception
-    assert next(b for b in app.button if b.label == "Save capacity for 2 sites").disabled
+    assert next(b for b in app.button if b.label == "Apply reviewed capacity for 2 sites").disabled
     assert capacity.load_capacity(profile.contract) is None
 
 
 def test_shared_save_keeps_existing_manual_report_content(profile, monkeypatch):
     manual = ResolvedBlock("thermal_capacity", "This month", text="Manual plant note", rows=(("NH", "Steam", "123", "lb/hr"),))
     app = app_for(monkeypatch, profile, draft(profile, manual))
-    next(b for b in app.button if b.label == "Save capacity for 2 sites").click().run()
     assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
     assert app.session_state["test_block"] == manual
 
 
-def test_external_update_conflict_keeps_draft_and_reviewed_values(profile, monkeypatch):
+def test_existing_capacity_does_not_get_overwritten_by_repeated_upload(profile, monkeypatch):
     app = app_for(monkeypatch, profile)
-    saved(profile, CSV.replace(b"1200", b"1400"))
-    next(b for b in app.button if b.label == "Save capacity for 2 sites").click().run()
-    # The existing shared data now hides the uploader until explicitly opened.
-    next(w for w in app.toggle if w.label == "Update shared capacity").set_value(True).run()
-    next(b for b in app.button if b.label == "Save capacity for 2 sites").click().run()
+    assert capacity.load_capacity(profile.contract).revision == 1
+    app.run()
     assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
-    assert any("Someone updated" in w.value for w in app.warning)
+    assert not any(b.label.startswith("Apply reviewed capacity") for b in app.button)
+    next(w for w in app.toggle if w.label == "Update existing capacity values").set_value(True).run()
+    assert not app.exception
+    assert capacity.load_capacity(profile.contract).revision == 1
 
 
 def test_image_upload_reads_automatically_then_reviews_all_sites(profile, monkeypatch):
@@ -108,6 +104,6 @@ def test_image_upload_reads_automatically_then_reviews_all_sites(profile, monkey
     assert len(requests) == 1 and any(part["type"] == "image" for part in requests[0])
     assert not any("Check reading" in b.label for b in app.button)
     assert capacity.load_capacity(profile.contract) is None
-    next(b for b in app.button if b.label == "Save capacity for 2 sites").click().run()
+    next(b for b in app.button if b.label == "Apply reviewed capacity for 2 sites").click().run()
     assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
