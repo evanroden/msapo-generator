@@ -45,6 +45,36 @@ def _discard(state, entry):
         STORE.discard(state.get('owner'), entry['ticket'])
 
 
+def _remember_previous_preview(state, section, entry):
+    """Keep at most one *same-report* last-good PDF for visible refreshes.
+
+    Tickets, not PDF/raster bytes, are held in session. A previous preview is
+    never passed off as a current ready render. Older stale tickets are dropped.
+    """
+    old = state.setdefault('last_good', {})
+    for key, previous in tuple(old.items()):
+        _discard(state, previous)
+        del old[key]
+    if isinstance(entry.get('ticket'), PreviewTicket) and STORE.available(state.get('owner'), entry['ticket']):
+        old[section] = entry
+
+
+def _reset_report_preview_identity(state, identity):
+    """A different report may never inherit another contract/month's image."""
+    if state.get('report_identity') == identity:
+        return
+    for entry in tuple(state.get('cache', {}).values()):
+        _discard(state, entry)
+    for entry in tuple(state.get('last_good', {}).values()):
+        _discard(state, entry)
+    for field in ('wanted', 'queue', 'cache', 'requests', 'last_good',
+                  'visible', 'page_requests', 'ready_after', 'timers'):
+        state[field] = {}
+    state['report_identity'] = identity
+    # A worker already running on the old report is discarded when complete,
+    # because its obsolete wanted fingerprint is no longer registered.
+
+
 def _bound_ordered_preview_cache(state):
     cache = state['cache']
     # Drop legacy raster/PDF copies, including oversized single entries. Cache
@@ -80,6 +110,9 @@ def _advance_preview_queue(state):
                 previous = state['cache'].pop(section, {})
                 _discard(state, previous)
                 state['cache'][section] = {'fingerprint': fingerprint, **entry}
+                if not entry.get('error'):
+                    past = state.setdefault('last_good', {}).pop(section, {})
+                    _discard(state, past)
         else:
             _discard(state, entry)
         state['running'] = None
@@ -109,9 +142,9 @@ def _advance_preview_queue(state):
 def _ordered_preview_state(prefix):
     st.session_state.pop(prefix + '_section_preview_cache', None)
     state = st.session_state.setdefault(prefix + '_ordered_previews', {
-        'wanted': {}, 'queue': {}, 'cache': {}, 'running': None,
+        'wanted': {}, 'queue': {}, 'cache': {}, 'last_good': {}, 'running': None,
     })
-    for name in ('visible', 'requests', 'page_requests', 'ready_after', 'timers'):
+    for name in ('visible', 'requests', 'page_requests', 'ready_after', 'timers', 'last_good'):
         state.setdefault(name, {})
     state.setdefault('owner', uuid4().hex)
     _bound_ordered_preview_cache(state)
@@ -153,6 +186,8 @@ def _viewport_changed(prefix, section, widget_key):
     state['page_requests'][section] = view
     if not view['visible']:
         state['queue'].pop(section, None)
+        prior = state.setdefault('last_good', {}).pop(section, {})
+        _discard(state, prior)
     else:
         _enqueue_visible(state, section)
 
@@ -171,6 +206,7 @@ def _render_ordered_preview(section_key, prefix, title):
     st.subheader('Section preview')
     st.caption(title + ' · Updates automatically while in view.')
     images, ticket = (), None
+    stale = False
     status = 'Preparing this section’s preview… You can keep editing.' if pending else ''
     if entry and entry.get('error'):
         st.warning(entry['error'])
@@ -179,18 +215,29 @@ def _render_ordered_preview(section_key, prefix, title):
             state['ready_after'][section_key] = 0
             _enqueue_visible(state, section_key)
             st.rerun(scope='app')
-    elif entry:
+    if entry and not entry.get('error'):
         ticket = entry['ticket']
+        status = f'Current preview ready · {ticket.pages} page' + ('s' if ticket.pages != 1 else '')
+    elif state['visible'].get(section_key):
+        older = state.setdefault('last_good', {}).get(section_key)
+        if older and STORE.available(state['owner'], older.get('ticket')):
+            ticket = older['ticket']
+            stale = True
+            status = ('Previous preview — changes are NOT shown yet. Updating…' if pending
+                      else 'Previous preview only — latest changes are NOT shown. Retry the preview.')
+        elif older:
+            _discard(state, state['last_good'].pop(section_key))
+    if ticket and state['visible'].get(section_key):
         view = state['page_requests'].get(section_key, {'pages': (0,), 'dpi': 120})
-        if state['visible'].get(section_key):
-            indexes = tuple(index for index in view['pages'] if index < ticket.pages) or (0,)
-            try:
-                images = STORE.pages(state['owner'], ticket, indexes, dpi=view['dpi']) or ()
-            except (ValueError, OSError):
-                status = 'This page preview is temporarily unavailable. Your edits are still here.'
+        indexes = tuple(index for index in view['pages'] if index < ticket.pages) or (0,)
+        try:
+            images = STORE.pages(state['owner'], ticket, indexes, dpi=view['dpi']) or ()
+        except (ValueError, OSError):
+            status = 'This page preview is temporarily unavailable. Your edits are still here.'
+            images = ()
     widget_key = prefix + '_preview_surface_' + section_key
     render_view(key=widget_key, generation=state['wanted'].get(section_key, ''), title=title,
-                ticket=ticket, images=images, status=status,
+                ticket=ticket, images=images, status=status, stale=stale,
                 on_change=lambda: _viewport_changed(prefix, section_key, widget_key))
 
 
@@ -216,6 +263,10 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
     title = 'Cover' if section_key == 'cover' else next(
         (section.title for section in draft.sections if section.key == section_key), 'Report section')
     state = _ordered_preview_state(prefix)
+    identity = (draft.profile.contract, draft.profile.key,
+                tuple(f.key for f in draft.profile.facilities),
+                draft.period.key, draft.profile.template)
+    _reset_report_preview_identity(state, identity)
     try:
         fingerprint = section_preview_fingerprint(draft, section_key)
     except Exception:
@@ -224,7 +275,8 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
     prior = state['wanted'].get(section_key)
     if prior != fingerprint:
         state['wanted'][section_key] = fingerprint
-        _discard(state, state['cache'].pop(section_key, {}))
+        previous = state['cache'].pop(section_key, {})
+        _remember_previous_preview(state, section_key, previous)
         state['queue'].pop(section_key, None)
         scope, needed_assets = _request_scope(draft, section_key, assets)
         state['requests'][section_key] = (fingerprint, scope, needed_assets, title)

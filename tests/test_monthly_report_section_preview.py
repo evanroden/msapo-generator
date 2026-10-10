@@ -186,7 +186,7 @@ def test_ui_updates_on_edits_is_scrollable_and_reuses_only_unchanged_section(mon
     assert not app.exception
 
 
-def test_failed_rerender_hides_stale_page_and_retry_preserves_the_edit(monkeypatch, tmp_path):
+def test_failed_rerender_labels_previous_page_not_ready_and_retry_preserves_edit(monkeypatch, tmp_path):
     app, _ = preview_app(monkeypatch, tmp_path)
 
     def fail(*args, **kwargs):
@@ -195,7 +195,9 @@ def test_failed_rerender_hides_stale_page_and_retry_preserves_the_edit(monkeypat
     monkeypatch.setattr(ui, "preview_section", fail)
     app.text_area[0].set_value("Still here after rendering failure").run()
     assert not app.exception
-    assert not payload(app)['pages']
+    assert payload(app)['pages'], 'Last good preview should remain visually inspectable'
+    assert not payload(app)['ready'], 'An earlier image cannot count as this revision ready'
+    assert 'Previous preview' in payload(app)['status']
     assert any("Your edits are still here" in value.value for value in app.warning)
     app.run()
     assert app.button[0].label == "Retry preview"
@@ -382,3 +384,40 @@ def test_section_preview_refreshes_when_report_month_changes():
     original = draft()
     changed = replace(original, period=ReportPeriod(2026, 10))
     assert engine.section_preview_fingerprint(original, 'activity') != engine.section_preview_fingerprint(changed, 'activity')
+
+
+def test_previous_preview_is_bounded_and_cleaned_after_success_or_report_switch():
+    original = ui.STORE.put('test-preview-owner', engine.ReportPreview(
+        b'%PDF-' + b'invalid', 1, 'bad', 'September 2026')) if False else None
+    from tests.test_monthly_report_preview_resources import pdf_preview
+    owner = 'test-preview-owner'
+    state = {'owner': owner, 'cache': {}, 'last_good': {}, 'wanted': {'activity': 'first'},
+             'queue': {}, 'running': None}
+    first = {'fingerprint': 'first', 'ticket': ui.STORE.put(owner, pdf_preview(1))}
+    ui._remember_previous_preview(state, 'activity', first)
+    assert state['last_good']['activity']['ticket'] == first['ticket']
+    second = {'fingerprint': 'second', 'ticket': ui.STORE.put(owner, pdf_preview(2))}
+    ui._remember_previous_preview(state, 'training', second)
+    assert set(state['last_good']) == {'training'}  # No 12-section stale-page hoard.
+    assert not ui.STORE.available(owner, first['ticket'])
+    ui._reset_report_preview_identity(state, ('contract-A', 'sites', '2026-09', 'pin'))
+    assert not ui.STORE.available(owner, second['ticket'])
+    assert not state['last_good'] and not state['cache']
+    assert state['report_identity'][0] == 'contract-A'
+
+
+def test_stale_result_must_not_repopulate_another_report_after_scope_change(monkeypatch):
+    from concurrent.futures import Future
+    from threading import BoundedSemaphore
+    from tests.test_monthly_report_preview_resources import pdf_preview
+    from types import SimpleNamespace
+    owner='synthetic-multi-report-owner'
+    ticket = ui.STORE.put(owner, pdf_preview(1))
+    finished=Future()
+    finished.set_result({'ticket': ticket, 'pages': 1})
+    state={'owner':owner,'wanted':{'activity':'old'},'queue':{},
+           'cache':{},'last_good':{},'running':('activity','old',finished)}
+    ui._reset_report_preview_identity(state, ('different-client','new-site','2026-10','other-pin'))
+    ui._advance_preview_queue(state)
+    assert 'activity' not in state['cache']
+    assert not ui.STORE.available(owner,ticket), 'The previous report PDF must be discarded'
