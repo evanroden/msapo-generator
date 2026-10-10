@@ -118,6 +118,37 @@ def _clear_source_drawing_metadata(document):
                         del node.attrib[attr]
 
 
+def _remove_unapproved_header_images(part, approved_digests):
+    """Drop only image-backed old-client header/footer art on a fresh master.
+
+    Pure native rules/rectangles and Word geometry are left intact; approved
+    current ENFRA logo bytes remain. All other image relationships are facts
+    about the imported source, even when PNG metadata is not visible on page.
+    The package sanitizer prunes dangling image parts after saving.
+    """
+    vml = "{urn:schemas-microsoft-com:vml}imagedata"
+    for picture in list(part.element.iter()):
+        if picture.tag not in (qn("w:drawing"), qn("w:pict")):
+            continue
+        ids = [node.get(qn("r:embed")) or node.get(qn("r:id"))
+               for node in picture.iter()
+               if node.tag in (qn("a:blip"), vml)]
+        ids = [identity for identity in ids if identity]
+        if not ids:
+            continue  # Pure vector decoration, without client media.
+        trusted = True
+        for identity in ids:
+            rel = part.rels.get(identity)
+            if rel is None or rel.is_external or not hasattr(rel.target_part, "blob"):
+                trusted = False
+                break
+            if hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests:
+                trusted = False
+                break
+        if not trusted and picture.getparent() is not None:
+            picture.getparent().remove(picture)
+
+
 def _clear_diagrams(element):
     # A diagram may share a drawing canvas with a retained text-box frame.
     # Its relationship payload must still disappear when that content is cleared.
@@ -1255,6 +1286,11 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                         continue
                     rid, _ = part.get_or_add_image(BytesIO(asset_loader(brand.asset_hashes[0])))
                     node.set(qn("r:embed"), rid)
+        if master:
+            approved = set()
+            if brand and brand.source != "Omit" and brand.asset_hashes and asset_loader:
+                approved.add(hashlib.sha256(asset_loader(brand.asset_hashes[0])).hexdigest())
+            _remove_unapproved_header_images(part, approved)
     page_plan.finish(document=document)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)

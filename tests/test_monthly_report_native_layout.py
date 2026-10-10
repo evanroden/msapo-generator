@@ -644,7 +644,11 @@ def test_master_clears_source_drawing_descriptions_in_body_and_header(tmp_path):
         header_xml = archive.read('word/header1.xml')
         assert b'safe-frame-id' in header_xml
         assert b'width:20pt;height:20pt' in header_xml
-        assert b'Drawing ' in header_xml
+        # A fresh master may not retain an unapproved source image solely
+        # to preserve its sanitized Word drawing name. Entirely remove
+        # the foreign image while keeping its separate safe vector rectangle.
+        assert b'<a:blip' not in header_xml
+        assert b'OLD CLIENT' not in header_xml
 
 
 @pytest.mark.parametrize("master", [False, True])
