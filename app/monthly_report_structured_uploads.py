@@ -3,7 +3,7 @@ from dataclasses import replace
 import re
 
 from app import monthly_report_sources as sources
-from app.monthly_report_content_policy import contains_price, page_status, price_column, ambiguous_price_columns
+from app.monthly_report_content_policy import contains_price, page_status, price_column, ambiguous_price_columns, table_price_columns
 from app.monthly_report_model import ResolvedBlock
 
 COLUMNS = {
@@ -18,6 +18,37 @@ ALIASES = {
     "Scope": ("scope", "description", "proposal", "work"),
     "Status": ("status", "decision"),
 }
+
+
+PREFERRED_HEADINGS = {
+    "Facility": ("facility", "site", "building", "location"),
+    "Priority": ("priority", "rank"),
+    "Recommendation": ("recommendation", "work description", "scope of work",
+                       "project description", "summary of deficiency", "description"),
+    "Vendor": ("vendor", "contractor", "supplier", "company"),
+    "Scope": ("scope of work", "work description", "proposal scope", "scope",
+              "description of work", "description"),
+    "Status": ("status", "decision"),
+}
+
+
+def _heading_score(destination_column, heading):
+    """Prefer explicit descriptions over weak project/proposal/work aliases."""
+    normalized = " ".join(re.findall(r"[a-z0-9]+", str(heading).casefold()))
+    preferred = PREFERRED_HEADINGS[destination_column]
+    if normalized in preferred:
+        return 100 - preferred.index(normalized)
+    # Subheaded source tables may contain additional words after a genuine
+    # descriptive column label. This is weaker than a complete label match.
+    if any(re.search(r"\b" + re.escape(label) + r"\b", normalized) for label in preferred):
+        return 20
+    return 1 if any(re.search(r"\b" + re.escape(alias) + r"\b", normalized)
+                    for alias in ALIASES[destination_column]) else 0
+
+
+def _amount_only_description(value):
+    """A thousands-grouped amount cannot itself describe a project scope."""
+    return bool(re.fullmatch(r"\s*\(?[-+]?\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?\)?\s*", value))
 
 
 def useful_activity(text):
@@ -58,18 +89,22 @@ def mapped_rows(content, destination):
     """Map explicit source columns only. Never infer a site's identity or a decision."""
     rows = []
     for table in native_tables(content):
-        ambiguous = set(ambiguous_price_columns(table.columns, table.rows))
+        excluded = (set(ambiguous_price_columns(table.columns, table.rows)) |
+                    set(table_price_columns(table.columns, table.rows)))
         indexes = []
         for column in COLUMNS[destination]:
-            indexes.append(next((n for n, heading in enumerate(table.columns)
-                                 if n not in ambiguous and not price_column(heading) and any(re.search(r"\b" + re.escape(alias) + r"\b", heading, re.I)
-                                                                     for alias in ALIASES[column])), None))
+            candidates = sorted(
+                ((-_heading_score(column, heading), n) for n, heading in enumerate(table.columns)
+                 if n not in excluded and not price_column(heading) and _heading_score(column, heading) > 0)
+            )
+            indexes.append(candidates[0][1] if candidates else None)
         required = "Recommendation" if destination == "capital_renewal" else "Scope"
         if indexes[COLUMNS[destination].index(required)] is None:
             continue
         for original in table.rows:
             row = tuple(str(original[n]).strip() if n is not None and n < len(original) else "" for n in indexes)
-            if row[COLUMNS[destination].index(required)] and not contains_price("\n".join(row)):
+            description = row[COLUMNS[destination].index(required)]
+            if description and not _amount_only_description(description) and not contains_price("\n".join(row)):
                 rows.append(row)
     return tuple(dict.fromkeys(rows))
 
@@ -165,6 +200,11 @@ def reader_update(contents, destination, value, existing=None):
             raise ValueError("The document reader returned an unexpected table shape.")
         if contains_price("\n".join(cells)):
             continue
+        if destination != "activity_summary":
+            description_position = COLUMNS[destination].index(
+                "Recommendation" if destination == "capital_renewal" else "Scope")
+            if _amount_only_description(row[description_position]):
+                continue
         if number not in source.needs_vision and any(normal(c) not in normal(source.page_texts[number - 1]) for c in cells if c.strip()):
             raise ValueError("Suggested wording was not present on the cited source page.")
         refs.append(sources.source_reference(source, number))
