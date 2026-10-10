@@ -352,7 +352,17 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             for key, block in additions.items():
                 blocks[key] = merge_blocks(blocks.get(key), block) if key == "improvements" else block
             _forget_block_widgets(prefix, additions)
-    local_destination = {"maintenance": "vendor_reports", "water": "water_reports", "mbcx": "mbcx_report", "scorecards": "utility_analysis"}.get(section.key)
+    if section.key == "activity" and st.checkbox(
+            "Add reviewed vendor service pages", key=field(prefix + "_vendor_pages_open", False)):
+        # Optional page-by-page inclusion after the primary upload-first text
+        # path. Avoid two simultaneous review widgets for the same source.
+        from app.monthly_report_upload_ui import render_section_uploads
+        sources, additions, incoming_specs = render_section_uploads(
+            profile, period, prefix, field, "improvements", blocks=blocks, assets=assets)
+        draft = replace(draft, sources=sources)
+        if additions:
+            draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
+    local_destination = {"water": "water_reports", "mbcx": "mbcx_report", "scorecards": "utility_analysis"}.get(section.key)
     if local_destination:
         from app.monthly_report_upload_ui import render_section_uploads
         sources, additions, incoming_specs = render_section_uploads(
@@ -402,6 +412,10 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             continue
         spec = specs[original_spec.key]
         block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
+        if spec.key == "vendor_reports" and not block.asset_hashes:
+            st.caption("Vendor service files belong in Monthly Activity Summary above. "
+                       "This part remains available for earlier report versions.")
+            continue
         st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
             from app.monthly_report_capacity_ui import render_capacity

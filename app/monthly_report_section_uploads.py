@@ -7,12 +7,13 @@ from app import monthly_report_sources as sources
 
 SECTION_UPLOADS = {
     "vendor_reports": ("Supporting service reports", "Service report files"),
+    "improvements": ("Activity service reports and photos", "Activity service report files"),
     "water_reports": ("Water-treatment reports", "Water-treatment files"),
     "mbcx_report": ("System performance reports", "MBCx report files"),
     "utility_analysis": ("Utility results and charts", "Utility result files"),
 }
 CLASSIFICATION_DESTINATIONS = {
-    "Vendor service": "vendor_reports", "Water treatment": "water_reports",
+    "Vendor service": "improvements", "Water treatment": "water_reports",
     "MBCx": "mbcx_report", "Utility results": "utility_analysis",
     "Improvement / training photo": "improvements",
 }
