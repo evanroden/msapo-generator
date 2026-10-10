@@ -398,15 +398,39 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
 
 def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], existing: tuple[SourceContent, ...] = ()) -> tuple[tuple[SourceContent, ...], tuple[str, ...]]:
     sources = {c.source.sha256: c for c in existing}
-    sizes = sum(_path(profile, c.source.sha256, c.source.suffix).stat().st_size for c in existing)
+    sizes, messages = 0, []
+    for item in existing:
+        # Missing originals remain in the draft inventory and its output
+        # dependency checks. They cannot prevent other files from being read.
+        try:
+            sizes += _path(profile, item.source.sha256, item.source.suffix).stat().st_size
+        except (ValueError, OSError):
+            label = Path(item.source.filename.replace("\\", "/")).name
+            messages.append(f"Saved source unavailable: {label}. Replace it before generating dependent content.")
     text_size = sum(len(t) for c in existing for t in c.source.page_texts)
     queue = [(name, raw, 0) for name, raw in files]
-    messages = []
     while queue:
         filename, raw, depth = queue.pop(0)
+        filename = Path(filename.replace("\\", "/")).name
         digest = hashlib.sha256(raw).hexdigest()
         if digest in sources:
-            messages.append(f"Duplicate skipped: {filename}")
+            # Re-uploading the identical accepted original can repair a missing
+            # or corrupted stored copy without changing the report's reviewed
+            # source identity, citations, or completed historical snapshots.
+            existing_source = sources[digest].source
+            try:
+                source_bytes(profile, existing_source)
+            except (ValueError, OSError):
+                try:
+                    library._atomic_write(_path(profile, digest, existing_source.suffix), raw)
+                    source_bytes(profile, existing_source)
+                except (ValueError, OSError):
+                    messages.append(f"Could not restore saved source: {filename}. The report still needs a valid copy.")
+                    continue
+                messages.append(f"Saved source restored: {filename}. Prior reviews and report history are unchanged.")
+                sizes += len(raw)
+            else:
+                messages.append(f"Duplicate skipped: {filename}")
             continue
         if len(sources) >= MAX_SOURCES or sizes + len(raw) > MAX_REPORT_BYTES:
             messages.append(f"Not read: {filename}. Report limit is 50 source files / 180 MB including attachments.")
@@ -415,13 +439,36 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
         if suffix not in SUPPORTED or depth > 1:
             messages.append(f"Not read: {filename}. Unsupported or nested attachment; retained in the original email.")
             continue
+        path = _path(profile, digest, suffix)
+        already_present = path.exists()
+        cache = _path(profile, digest, ".json")
+        existing_cache = cache.exists()
         try:
             content, attachments = ingest(profile, filename, raw)
             added = sum(map(len, content.source.page_texts))
             if text_size + added > MAX_REPORT_TEXT:
                 raise ValueError("Total extracted text exceeds 800,000 characters. Remove unused sources or split the report.")
-        except (ValueError, OSError, csv.Error, RuntimeError, BadZipFile, RecursionError) as exc:
-            messages.append(f"Not read: {filename}. {exc}")
+        except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile, RecursionError) as exc:
+            # Only newly rejected and content-addressed bytes may be cleaned.
+            # Never remove accepted originals or any pre-existing library file.
+            if not already_present:
+                try:
+                    if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == digest:
+                        path.unlink()
+                except OSError:
+                    pass
+            if not existing_cache:
+                try:
+                    cache.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if isinstance(exc, OSError):
+                reason = "Storage or file reader was unavailable; retry this file."
+            elif isinstance(exc, LookupError):
+                reason = "The file uses an unknown text encoding; provide a UTF-8 copy."
+            else:
+                reason = str(exc)[:300]
+            messages.append(f"Not read: {filename}. {reason}")
             continue
         sources[digest] = content
         sizes += len(raw)
