@@ -666,6 +666,26 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[draft_key] = draft
                 st.rerun()
     st.caption("Work down the report in order. Existing information stays in place; update only what changed.")
+    from app.monthly_report_model import included_sections
+    short_links = {
+        "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
+        "mbcx": "MBCx", "maintenance": "Onsite calls", "subcontractors": "Subcontractors",
+        "water": "Water", "issues": "Issues", "capital": "Capital",
+        "proposals": "Proposals", "training": "Training", "rfi": "RFI",
+        "accounts_receivable": "A/R",
+    }
+    with st.container(key="monthly_report_navigation"):
+        st.caption(f"{contract} · {period.label} · " +
+                   ", ".join(f.title for f in profile.facilities))
+        links = [f"[{short_links.get(section.key, section.title)}](#report-section-{section.key})"
+                 for section in included_sections(draft.sections)]
+        st.markdown("**Jump to:** " + " · ".join((*links, "[Review & download](#report-review)")))
+    st.markdown(
+        '<style>.st-key-monthly_report_navigation{position:sticky;top:3rem;z-index:15;'
+        'background:var(--background-color,#fff);border-bottom:1px solid rgba(128,128,128,.25);'
+        'padding:.25rem .5rem;max-height:6rem;overflow-y:auto;}</style>',
+        unsafe_allow_html=True,
+    )
     editor_column, preview_column = st.columns(2, gap="large")
     with editor_column:
         from app.monthly_report_cover_ui import render_cover
@@ -762,7 +782,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         package = None
     st.divider()
     with st.container():
-        st.subheader("Review and download")
+        st.subheader("Review and download", anchor="report-review")
         from app.monthly_report_editor import review_client_images
         if prepared.strip():
             draft = review_client_images(draft, assets, prefix, field)
@@ -813,11 +833,24 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if len(monthly_entry_sections) == 1:
             st.info("Only one section has information entered for this month. "
                     "Check the other sections before sharing the report; blank sections can be intentional.")
-        for title, _, pages in outline(draft):
-            st.write(f"{title} · at least {pages} pages")
+        included = included_sections(draft.sections)
+        without_new_monthly = [s for s in included if s.key not in monthly_entry_sections]
+        if without_new_monthly:
+            st.markdown("**Sections to consider before sharing**")
+            st.caption("No new monthly information was entered in the sections linked below. "
+                       "A blank section can be intentional, and valid standing information may already be present.")
+            st.markdown(" · ".join(
+                f"[{short_links.get(s.key, s.title)}](#report-section-{s.key})"
+                for s in without_new_monthly))
+        else:
+            st.caption("Every included section has some monthly input. This is not a factual review or approval.")
+        with st.expander("Expected pages (layout information only)"):
+            for title, _, pages in outline(draft):
+                st.write(f"{title} · at least {pages} pages")
         loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref)
         estimated = estimate_bytes(draft, loader)
-        st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Aim for under 15 MB; fewer attachment pages and more photos per page can help.")
+        st.caption("Actual DOCX and PDF sizes are displayed after generation and checked against the 15 MB target. "
+                   "Template artwork and PDF compression make pre-generation file-size guesses unreliable.")
         checks = [check for check in preflight(draft, estimated) if check.code != "empty"]
         from app.monthly_report_checks import ReportCheck
         dependent = used_missing_sources(draft, st.session_state.get(prefix + "_unavailable_sources", ()))
