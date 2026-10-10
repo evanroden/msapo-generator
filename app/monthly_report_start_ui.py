@@ -95,7 +95,8 @@ def select_sites(contract, profiles, remembered, field, completed=None):
         key = field(prefix + "_" + f.key, bool(seed and f.key in membership_key(seed.facilities)))
         if completed:
             st.session_state[key] = bool(seed and f.key in membership_key(seed.facilities))
-        if st.checkbox(f.title, key=key, help="Also known as: " + "; ".join(f.aliases) if f.aliases else None):
+        detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
+        if st.checkbox(f.title, key=key, help=detail):
             selected.append(f)
     with st.expander("Add a site that is not listed"):
         custom = st.text_input("Site name", key=field(prefix + "_new_site", ""), help="Use a semicolon between names when adding several actual sites.")
@@ -110,6 +111,7 @@ def select_sites(contract, profiles, remembered, field, completed=None):
     if not facilities:
         st.info("Check at least one site to continue.")
         return None, None
+    st.caption(f"Sites selected ({len(facilities)}): " + "; ".join(f.title for f in facilities))
     # Validate before creating per-site widgets. Duplicate keys previously
     # crashed on the alias text inputs before ReportProfile could reject them,
     # including on every rerun with the saved text still in the input.
@@ -183,13 +185,20 @@ def starting_choice(profile, profiles, period, prepared, field):
         st.caption("The available ENFRA and client logos are filled in. Check your org chart, contacts and site information; the tool remembers the design for next time.")
     st.caption("All report sections are included. Add the information available now and continue unfinished sections later.")
     actor = st.text_input("Your name", key=field("report_start_actor_" + profile.key, prepared))
-    if st.button("Start this report", key="report_start_save_" + profile.key, disabled=not actor.strip(), type="primary"):
+    pending_key = "report_start_pending_" + profile.key
+    if st.button("Start this report", key="report_start_save_" + profile.key,
+                 disabled=not actor.strip() or st.session_state.get(pending_key, False),
+                 type="primary"):
+        st.session_state[pending_key] = True
         try:
-            draft, assets = design_seed(profile, period, actor, source)
-            save_design_start(draft, assets, actor=actor, confirmed=True)
+            with st.spinner("Preparing this report for your selected sites…"):
+                draft, assets = design_seed(profile, period, actor, source)
+                save_design_start(draft, assets, actor=actor, confirmed=True)
             st.session_state["report_setup_done"] = profile.key
             st.session_state["report_start_at_site_information"] = profile.key
             st.session_state["report_resume_import"] = (profile.contract, profile.key, period.key)
             st.rerun()
         except (ValueError, OSError) as exc:
             st.error(str(exc))
+        finally:
+            st.session_state.pop(pending_key, None)
