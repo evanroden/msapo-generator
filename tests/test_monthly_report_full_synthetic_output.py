@@ -37,11 +37,12 @@ def approved_synthetic_draft(monkeypatch, tmp_path):
     findings, = work_order_evidence(work, period, profile)
     assert (findings.total, findings.completed, findings.open) == (3, 2, 1)
     csv = ("Proposal Total,Project Number,Facility,Vendor,Work Description,Status,Technical Notes\n"
-           ""$12,345.67",Q-TEST-731,Demo North,Synthetic Mechanical,Inspect supply valve,Pending,45 gpm\n"
-           ""$987.65",Q-TEST-732,Demo North,Synthetic Mechanical,Check bearing,Open,1.20 psi\n"
-           ""$13,333.32",Q-TEST-733,Demo North,Synthetic Electrical,Inspect switchboard,Pending,230 V\n"
-           ""$456.78",Q-TEST-734,Demo North,Synthetic Electrical,Check controls,Open,240 V\n"
-           ""$222.22",Q-TEST-735,Demo North,Synthetic Mechanical,Test flow,Pending,60 gpm\n").encode()
+           '"$12,345.67",Q-TEST-731,Demo North,Synthetic Mechanical,Inspect supply valve,Pending,45 gpm\n'
+           '"$987.65",Q-TEST-732,Demo North,Synthetic Mechanical,Check bearing,Open,1.20 psi\n'
+           '"$13,333.32",Q-TEST-733,Demo North,Synthetic Electrical,Inspect switchboard,Pending,230 V\n'
+           '"$456.78",Q-TEST-734,Demo North,Synthetic Electrical,Check controls,Open,240 V\n'
+           '"$222.22",Q-TEST-735,Demo North,Synthetic Mechanical,Test flow,Pending,60 gpm\n').encode()
+
     priced, _ = sources.ingest(profile, "synthetic-proposals.csv", csv)
     rows = mapped_rows(priced, "proposals", SCHEMA)
     assert len(rows) == 5
