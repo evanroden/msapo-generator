@@ -157,7 +157,7 @@ def mapped_rows(content, destination, table_columns=None):
     return tuple(dict.fromkeys(rows))
 
 
-_EVENT_START = re.compile(r"^\\s*\\d{4}-\\d{2}-\\d{2}\\s*\\|\\s*[^|]+\\|.*?\\|\\s*([^|\\n]+)\\s*$")
+_EVENT_START = re.compile(r"^\s*\d{4}-\d{2}-\d{2}\s*\|")
 
 
 def _activity_lines(text, suffix):
@@ -177,7 +177,7 @@ def _activity_lines(text, suffix):
     for line in text.splitlines():
         match = _EVENT_START.match(line)
         if match:
-            label = match.group(1).casefold().strip()
+            label = line.rsplit("|", 1)[-1].casefold().strip()
             current_is_activity = not any(term in label for term in excluded)
             # The event header is source context; never infer completion or
             # the employer solely from its classification label.
