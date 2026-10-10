@@ -1,0 +1,34 @@
+TEST ONLY - INVENTED DATA - Not an operational record
+Contract label: Rochester Regional Health (RRH)
+Site: RRH Tester – UX Review 2026-10-09
+Author label: RRH Tester
+Reporting period: September 1-30, 2026
+All people, work, dates, measurements and records below are invented for QA.
+
+2026-09-03 | WO-TEST-1001 | PUMP-TEST-02 | In-house preventive maintenance
+Completed strainer cleaning and leak inspection. Result: no leakage found.
+
+2026-09-12 | TRAIN-TEST-01 | Training Summary
+Completed a 45-minute lockout/tagout refresher for 4 fictional technicians.
+
+2026-09-16 | WT-TEST-0916 | LOOP-TEST-01 | Water Treatment Reports
+Synthetic water check recorded pH 8.2. This value is test data, not clinical data.
+
+2026-09-20 | WO-TEST-1002 | AHU-TEST-07 | Sub-Contractor Status
+Example Mechanical QA Services replaced two filter-bank inserts and retensioned
+the drive belt. Differential pressure: 1.20 before, 0.45 in. w.c. after.
+No recurring belt vibration during a 30-minute observation. Service complete.
+Progress illustration: progress.png, explicitly labeled TEST ONLY.
+
+2026-09-24 | WO-TEST-1003 | VAV-TEST-03 | Equipment Performance Issues
+Investigate intermittent actuator feedback. Open at month-end. Parts pending.
+
+2026-09-25 | RFI-TEST-004 | RFI Matrix
+Question: confirm the invented test plant shutdown window. Status: awaiting
+client response. Needed by 2026-10-07. No communication has actually been sent.
+
+2026-09-30 | Monthly Scorecards
+Three September work orders: two completed, one open; closure rate 66.7%.
+MBCx finding MBCX-TEST-01: verify AHU-TEST-07 start/stop schedule in October.
+Pending proposal Q-TEST-731 is a proposed drive replacement, not completed work.
+Distinctive quote prices are only in vendor.pdf page 2 and quote.pdf.
