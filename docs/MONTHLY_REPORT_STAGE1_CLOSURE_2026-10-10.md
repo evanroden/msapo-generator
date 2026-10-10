@@ -1,6 +1,6 @@
 # ENFRA Monthly Report Builder — Stage-one closure ledger
 
-**Status:** IN PROGRESS. This document tracks work and acceptance; it is not a release certificate. Updated 2026-10-10 after the main-branch merges through PR #117. Historic October 9 findings are baseline evidence, **not** established failures of the current live build.
+**Status:** IN PROGRESS. This document tracks work and acceptance; it is not a release certificate. Updated 2026-10-10 after the main-branch merges through PR #119. Historic October 9 findings are baseline evidence, **not** established failures of the current live build.
 
 **Source of truth for reproduction:** [`MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md`](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md), [`HANDOFF_MONTHLY_REPORT_2026-10-09.md`](HANDOFF_MONTHLY_REPORT_2026-10-09.md), [issue #101](https://github.com/evanroden/msapo-generator/issues/101), and the private original 66-page October 10 review and 10-page prompt. Distinct F, P and U identifiers are preserved; overlapping changes are credited only once.
 
@@ -10,9 +10,9 @@
 
 | Gate | Current evidence | State |
 | --- | --- | --- |
-| Code in main | #114 recovery, #115 price headers, #116 shared training + public build indicator, #117 Activity vendor routing | **merged** |
+| Code in main | #114 recovery, #115 price headers, #116 shared training + public build indicator, #117 Activity vendor routing, #118 damaged-source recovery, #119 thermal first-fill | **merged** |
 | Focused PR CI | [#114](https://github.com/evanroden/msapo-generator/actions/runs/38065158259), [#115](https://github.com/evanroden/msapo-generator/actions/runs/38065885072), [#116](https://github.com/evanroden/msapo-generator/actions/runs/38066745688), [#117](https://github.com/evanroden/msapo-generator/actions/runs/38067219591) | **passed per exact PR head** |
-| Remaining change PRs | #118 damaged-source recovery (draft), #119 thermal first fill (draft), #113 terminology (separate draft); warning/date work on a new branch | **open; do not mislabel merged** |
+| Remaining change PRs | #113 terminology (separate draft), #121 warning/navigation/ledger, and #122 independent work-order CSV (drafts) | **open; do not mislabel merged** |
 | Final aggregate CI | Must run after *last* reviewed integration commit; older per-PR green runs do not substitute | **not run** |
 | Served production commit | Footer from #116 reads validated `RENDER_GIT_COMMIT`; actual public footer identity has not been observed | **unverified** |
 | Isolated live browser | Click/touch, recovery, actor/month changes and interrupted uploads must be replayed against served build | **not verified** |
@@ -25,15 +25,15 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | F01 | Edits and Prepared by retained without routine Save | Oct 9 unsaved blurred Activity lost; reconnect loss reported | Merged #109/#111/#114; U01/U02 | Revisions and OS-write regressions passed PR CI; full browser replays pending | P1/P2 | **Needs browser and refresh/reconnect acceptance** |
 | F02 | Vendor/Trane file appears in Activity; onsite calls only ENFRA work | Vendor technical page printed under Maintenance | Merged #117 | Synthetic routing and price-page CI passed; real export pending | P10 | **Real DOCX/PDF page routing and blank Unity/USH calls** |
-| F03 | Review identifies actionable omissions and sizes safely | Sparse skeleton and misleading at-least-page counts/size estimate | Merged #107/#108; further UX open | Disabled action/empty alert CI; content-based review and sizing pending | P3/P4/P7/P8 | **Specific section-linked review, unique warnings and actual-size checks** |
+| F03 | Review identifies actionable omissions and sizes safely | Sparse skeleton and misleading at-least-page counts/size estimate | Merged #107/#108; #121 novice-review change drafted | Disabled action/empty alert CI; content-based review and sizing pending | P3/P4/P7/P8 | **Specific section-linked review, unique warnings and actual-size checks** |
 | F04 | Long scrolling report has easy section jumps and identity | 12 sections, no persistent navigator observed | Open | Browser navigation/a11y pending | P11/P12 | **Add jump links and responsive acceptance** |
-| F05 | Optional Copilot beside Activity editor, primary upload-first | Manual prompt handoff dominated page | Open; approved reader exists | No end-to-end Copilot round trip | P10 | **Reviewable suggestion and manual edit preservation** |
+| F05 | Optional Copilot beside Activity editor, primary upload-first | Manual prompt handoff dominated page | Open; approved reader exists; #122 CSV workflow draft | No end-to-end Copilot round trip | P10 | **Reviewable suggestion and manual edit preservation** |
 | F06 | Contacts show person, role and site; current/future scoped updates | Collapsed contact names repeated without site | Merged #94 partial | Shared refresh CI only | P5 | **Site/identity, future reuse and historical snapshot** |
 | F07 | Clear empty states and intact native table schemas | None placeholders; historical UMMC table mismatch | Open | Native-schema exact-master replay not yet demonstrated | P4 | **UMMC thermal/subcontractor/capital/proposals outputs** |
 | F08 | Global design installation separated from ordinary monthly work | Global update exposed in monthly editor | Open | Permission/pin tests outstanding | P11 | **No global mutation in routine path** |
 | F09 | Preview status and last-good preview, honest retention feedback | Blank draft page vs rendering confusion | Merged #114 partial | Failure containment CI; preview race browser pending | P1/P2 | **Contended render, stale result, loading and accessibility** |
 | F10 | Site picker works with pointer, label, touch and keyboard | Cloud click lost selection, Space worked | Merged #112 | AppTest checkbox success; real DOM/touch pending | P2/P12 | **Human device input replay** |
-| F11 | Valid Activity source creates cited editable draft; failures explain recovery | Original activity.txt twice returned raw JSON parser error | Merged #104; reader path acceptance open | Original exact fixture not replayed on current build | P10 | **TXT, malformed/model-unavailable, CSV work-order metrics** |
+| F11 | Valid Activity source creates cited editable draft; failures explain recovery | Original activity.txt twice returned raw JSON parser error | Merged #104; #122 independent CSV workflow draft | Original exact fixture not replayed on current build | P10 | **TXT, malformed/model-unavailable, CSV work-order metrics** |
 | F12 | Section 10 visibly shows both digits in Word and PDF | Export showed 1 though Word source contained 10 | Merged #105 | Geometry CI only; authentic/source output pending | P8 | **Rendered divider all multi-digit cases** |
 | F13 | Branding and photos correctly fitted without squashing | Contents logo flattened; image aspect ratio distorted | Merged #103/#106; #112 logo cards | Image-fit CI, actual exports pending | P5 | **Wide/tall/square/artwork Word/PDF ratio checks** |
 | F14 | Training notes survive invalid submit and add-column | Notes disappeared in combined validation/column sequence | Merged #99 | Targeted regression CI; original browser sequence pending | P9 | **Invalid/add-column and deliberate deletion replay** |
@@ -51,7 +51,7 @@
 | P5 | Full names, logo fallback and truthful site help | Six cards no logos; code BRATH unclear | #112 partial | Logo card CI, discovery not complete | F06/F10 | Full contract names + site record origin review |
 | P6 | MBCx/ENFRA Connect/RFI explained inline | Terms unexplained when onboarding collapsed | #113 OPEN DRAFT | Passing draft-head CI does not imply merged | F04 | Coordinate #113; no duplicate edit |
 | P7 | Defensible DOCX/PDF size estimate or none until measured | 1.9 MB estimate vs 6.0 DOCX/4.6 PDF | Open | Actual sizes shown post-export; pre-estimate misleading | F03 | Template art/compression and real 15MB check |
-| P8 | Unique warnings and authentic appendix numbering | Duplicate Cover warning; G. RFI ambiguity | Open; period-warning branch in progress | Focused test pending | F03/F12 | Context-aware wrong-month/future dates; real output |
+| P8 | Unique warnings and authentic appendix numbering | Duplicate Cover warning; G. RFI ambiguity | #121 draft, period warning and section anchors | Focused test pending | F03/F12 | Context-aware wrong-month/future dates; real output |
 | P9 | Training event date is single-date value and label | Picker asked for a second date | Open | Current date_input uses scalar date; browser DOM unverified | F14 | Rendered accessibility and period validation |
 | P10 | Activity first, optional Copilot, protected edits | External handoff friction | Reader #104; source routing #117 | Full suggestion accept/dismiss not tested | F05/F11 | Exact activity.txt and editing round trip |
 | P11 | Identity/jumps/title/footer, no false dirty indication | Generic title and purchase-order footer | Merged #116 title/footer, others open | Code/CI passed; live not verified | F04/F08 | Sticky jumps, false dirty state, browser title |
@@ -66,7 +66,7 @@
 | U03 | Price headers never map to description/scope | #115 merged; exact heading priority and amount-only rejection | PR CI passed; cross-representation final output pending |
 | U04 | Older report cannot erase newer shared training | #116 merged; stale-matrix comparison and explicit reload | PR CI passed; historical two-site owner test pending |
 | U05 | Another client's old PNG/EMF/footer/watermark never survives new master | Open; synthetic canary needed | No current reproduction or live clearance |
-| U06 | One missing/broken source does not disable rest of report | #118 draft, rebased on current main | PR-head CI in flight; replacement/live/export pending |
+| U06 | One missing/broken source does not disable rest of report | #118 merged; missing-source restoration guards | PR-head CI in flight; replacement/live/export pending |
 
 ## All 113 original proposed acceptance checks — coverage decision
 
@@ -193,7 +193,7 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 - `CR-inputs-2/-9/-21`, `K1`, `G1-data-2/-4/-6`: price-first Project Budget / Proposal Amount / Proposal Total and native Status/description mapping. Merged #115 fixes identified mapping; full visible/native/hidden/PDF/bitmap output needs acceptance.
 - `CR-inputs-5/-6/-7/-15/-16`: two synthetic site profiles, old report A versus newer shared training report B, duplicate course/person identities, month rollover, events and source images. Merged #116 guard; exact historic reload and follow-on edit remain to be demonstrated live.
 - `CR-render-2/-5/-13`: other-client PNG metadata, EMF, watermark, footer mixed with `enfrasolutions.com`, hidden package parts; **not reproduced on current main**, requires canary and source-safe cleanup.
-- `CR-inputs-4`, `G3-ingest-1/-2`, `K5/K6/K10/K11`: one corrupted stored source, mixed valid/invalid uploads, malformed ZIP, unknown charset, no false source success; #118 draft addresses isolated restoration; full acceptance pending.
+- `CR-inputs-4`, `G3-ingest-1/-2`, `K5/K6/K10/K11`: one corrupted stored source, mixed valid/invalid uploads, malformed ZIP, unknown charset, no false source success; #118 merged for isolated restoration; full acceptance pending.
 - U01/U02: discard/recreate generation and real `OSError` write injection from #114 CI; browser refresh and reconnect outstanding.
 - Work-order fixture: `WO-TEST-1001` September 3 completed, `WO-TEST-1002` September 20 completed, `WO-TEST-1003` September 24 open. Expected 3 total, 2 completed, 1 open, 66.7% closure from **CSV itself**, not imported DOCX prose.
 - Proposal safety tokens: `$12,345.67`, `$987.65`, `$13,333.32`, `$456.78`, `$222.22` must be absent; `Q-TEST-731` identifier must remain. Neither a passing native-text search nor a single excluded page is a full safety pass.
