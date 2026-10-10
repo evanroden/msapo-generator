@@ -1,0 +1,29 @@
+name: QA public-source export
+on:
+  push:
+    branches: [qa/source-export-075fa63]
+    paths: [.github/workflows/qa-source-export.yml]
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 075fa6310f42053d7fd770c51cb8e736fe2da605
+          persist-credentials: false
+      - name: Export tracked public source only
+        run: |
+          git archive --format=tar.gz HEAD --output="$RUNNER_TEMP/source.tar.gz"
+          git rev-parse HEAD > "$RUNNER_TEMP/source-sha.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/tree-sha.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-075fa63
+          path: |
+            ${{ runner.temp }}/source.tar.gz
+            ${{ runner.temp }}/source-sha.txt
+            ${{ runner.temp }}/tree-sha.txt
+          retention-days: 1
