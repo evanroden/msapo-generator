@@ -358,7 +358,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
                     width="stretch",
                 )
             st.caption(
-                "These same values appear in the report’s contact table. Use Save progress to keep them for the next report."
+                "These values appear in this report. Verified shared-contact corrections and fully identified new site contacts are kept automatically; unmatched report-only entries remain here for review."
             )
     changed = replace(
         block,

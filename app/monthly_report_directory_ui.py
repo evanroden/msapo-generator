@@ -110,7 +110,7 @@ def render_selected_directory(contract, facilities, actor, prefix):
                     expected_revision=revision, actor=actor, confirmed=True,
                     source_sha256=state.source_sha256 if state else "",
                     source_sheet=state.source_sheet if state else "", contract_contacts=contract_contacts)
-                st.session_state[prefix + "_directory_saved_message"] = "Directory contacts saved. This report’s contact table is updated; use Save progress to keep the report changes."
+                st.session_state[prefix + "_directory_saved_message"] = "Directory contacts and this report's contact table were updated. A completed report version is retained when generated."
                 return report_contacts
         except (ValueError, OSError) as exc:
             st.error(str(exc))

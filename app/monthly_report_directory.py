@@ -756,13 +756,13 @@ def apply_contacts(draft, block):
 def automatically_keep_directory_contact_edits(profile, before, after, actor):
     """Promote only exact site-scoped edits of a known shared contact copy.
 
-    Row position within the *verified old directory version* is the identity.
-    Never match people by display name, infer a different site, or promote
-    imported/report-only content to the shared directory.
+    Original row position within the verified directory version establishes
+    identities. New rows can be appended only to exact selected site matches,
+    with role and name completed; no person is matched by display name.
     """
     if (before.source != "Library" or after.source != "This month"
             or before.rows == after.rows or before.extra_tables or after.extra_tables
-            or len(before.rows) != len(after.rows)
+            or len(after.rows) < len(before.rows)
             or not actor.strip()):
         return None
     refs = before.references
@@ -814,7 +814,26 @@ def automatically_keep_directory_contact_edits(profile, before, after, actor):
                             for contact, row in zip(site.contacts, current))
             changes[site_key] = (site.contacts, changed)
         offset += count
-    if offset != len(before.rows) or not changes:
+    if offset != len(before.rows):
+        return None
+    by_title = {facility.title: bindings[facility.key] for facility in profile.facilities}
+    if len(by_title) != len(profile.facilities):
+        return None
+    for row in after.rows[len(before.rows):]:
+        if (len(row) != 5 or row[0] not in by_title
+                or not row[1].strip() or not row[2].strip()):
+            return None
+        site_key = by_title[row[0]]
+        site = old_sites.get(site_key)
+        if site is None:
+            return None
+        baseline, proposed = changes.get(site_key, (site.contacts, site.contacts))
+        added = DirectoryContact(role=row[1], name=row[2], phone=row[3],
+                                 email=row[4], source=f"report:{profile.key}")
+        if added in proposed:
+            return None
+        changes[site_key] = (baseline, (*proposed, added))
+    if not changes:
         return None
     newest = load_directory(profile.contract)
     if newest is None or newest.archived:
