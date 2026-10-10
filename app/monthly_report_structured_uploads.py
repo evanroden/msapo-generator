@@ -205,12 +205,18 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 # must not be reinserted when the same file is read again.
                 if reference in existing.references:
                     continue
-                if not useful_activity(text):
+                tagged_txt = (content.source.suffix == ".txt"
+                              and any(_EVENT_START.match(line) for line in text.splitlines()))
+                # A mixed TXT can mention prices in an explicitly excluded
+                # Scorecards/Proposal section. Do not reject its separate
+                # price-free vendor work solely because of that other section.
+                # Other source kinds still use the full-page safety classifier.
+                if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
                 for line in _activity_lines(text, content.source.suffix):
                     line = line.strip()
-                    if useful_activity(line):
+                    if useful_activity(line) and not contains_price(line):
                         paragraphs.append(line)
                         references.append(reference)
         text = "\n\n".join(dict.fromkeys(filter(None, (*existing.text.split("\n\n"), *paragraphs))))
