@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from zipfile import BadZipFile, ZipFile
 
 from PIL import Image, ImageOps, UnidentifiedImageError
+import streamlit as st
 
 from app import monthly_report_library as library
 from app.monthly_report_model import ResolvedBlock
@@ -174,8 +175,16 @@ def read_logo(logo):
     return raw
 
 
+@st.cache_data(max_entries=32, show_spinner=False)
 def card_image(raw):
-    """Uniform screen canvas only; the report keeps the logo's print proportions."""
+    """Bounded memoization of the *UI-only* logo canvas.
+
+    Contract selectors redraw on every checkbox change. Re-encoding dozens of
+    already verified branding assets on every rerun slows the click response,
+    particularly under Render's 0.5 CPU limit. The cache is content-keyed and
+    stores only small 480x192 UI images, never report originals or permissions.
+    """
+    # Uniform screen canvas only; printed logos retain their own proportions.
     with Image.open(BytesIO(raw)) as image:
         image = image.convert("RGBA")
         corners = [image.getpixel(point) for point in ((0, 0), (image.width-1, 0), (0, image.height-1), (image.width-1, image.height-1))]

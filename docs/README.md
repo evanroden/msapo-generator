@@ -230,4 +230,6 @@ Workflow URL recovery: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_WORKFLOW_ROUTE.md
 
 Browser-scoped active monthly work: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_ACTIVE_RECOVERY.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_ACTIVE_RECOVERY.md). Automatic working-copy retention through refresh, without changing completed report history or standing contract data.
 
+Site click and Start responsiveness: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SITE_FEEDBACK.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SITE_FEEDBACK.md). Selected-site confirmation, bounded UI logo-canvas caching, and Start progress without changing the native report design.
+
 Inline section terminology: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SECTION_TERMS.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SECTION_TERMS.md). Define MBCx, ENFRA Connect, RFI and the client-staff training boundary where edited.

@@ -2,6 +2,7 @@
 document_type: implementation_checkpoint
 date: 2026-10-10
 workflow: monthly_report
+base_commit: 5d396001097f12d15c5a92aec372014552d74c19
 change_type: copy_and_help_clarity
 status: candidate_pending_exact_ci
 ---
