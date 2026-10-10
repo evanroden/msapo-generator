@@ -165,14 +165,13 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
         from app.monthly_report_work_order_csv import is_work_order_source
         for content in contents:
             if is_work_order_source(content):
-                # CSV table headers and rows are source evidence, not Activity
-                # prose. Offer the independently calculated work-order facts
-                # alongside the editor for explicit review instead.
+                # Explicit work-order rows are reviewable metrics, not prose.
                 continue
             for number, text in enumerate(content.source.page_texts, 1):
-                if not useful_activity(text):
-                    continue
-                # Preserve qualifiers, dates and tense: this is grounded extractive writing.
+                # A multi-topic TXT/PDF page may contain one pricing line
+                # alongside valid technical actions. Evaluate each verbatim
+                # line independently; never insert an original priced page or
+                # copy a monetary sentence into the client-facing summary.
                 for line in text.splitlines():
                     line = line.strip()
                     if useful_activity(line):
