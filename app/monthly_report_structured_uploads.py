@@ -114,7 +114,13 @@ def native_update(contents, destination, existing=None):
     references = list(existing.references)
     if destination == "activity_summary":
         paragraphs = []
+        from app.monthly_report_work_order_csv import is_work_order_source
         for content in contents:
+            if is_work_order_source(content):
+                # CSV table headers and rows are source evidence, not Activity
+                # prose. Offer the independently calculated work-order facts
+                # alongside the editor for explicit review instead.
+                continue
             for number, text in enumerate(content.source.page_texts, 1):
                 if not useful_activity(text):
                     continue
