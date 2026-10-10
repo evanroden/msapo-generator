@@ -5,6 +5,14 @@ from app import monthly_report_directory as directory
 from app.monthly_report_model import synthetic_profiles
 from app.monthly_report_library import RevisionConflict
 
+def staged_add(profile, before, row):
+    intent = f"directory-add-intent:{profile.key}"
+    staged = replace(before, source="This month", references=(*before.references, intent),
+        rows=(*before.rows, ("", "", "", "", "")))
+    edited = replace(staged, rows=(*before.rows, row))
+    return staged, edited
+
+
 @pytest.fixture
 def scoped(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
@@ -22,8 +30,8 @@ def scoped(monkeypatch, tmp_path):
 def test_append_site_contact_fills_future_matrix_without_changing_other_site(scoped):
     profile, state, before = scoped
     new = (profile.facilities[0].title, "Plant Engineer", "Alex Example", "555-0123", "alex@example.invalid")
-    edited = replace(before, source="This month", rows=(*before.rows, new))
-    shared = directory.automatically_keep_directory_contact_edits(profile,before,edited,"Synthetic Editor")
+    staged, edited = staged_add(profile, before, new)
+    shared = directory.automatically_keep_directory_contact_edits(profile,staged,edited,"Synthetic Editor")
     assert shared and new in shared.rows
     latest = directory.load_directory(profile.contract)
     assert latest.revision == 2
@@ -40,16 +48,16 @@ def test_blank_and_unmatched_rows_not_promoted(scoped):
       (profile.facilities[0].title, "Engineer", "", "111", ""),
     )
     for row in bad:
+        staged, edited = staged_add(profile, before, row)
         assert directory.automatically_keep_directory_contact_edits(
-           profile,before,replace(before,source="This month",rows=(*before.rows,row)),
-           "Synthetic Editor") is None
+           profile, staged, edited, "Synthetic Editor") is None
     assert directory.load_directory(profile.contract).revision == 1
 
 def test_same_name_at_other_site_stays_distinct(scoped):
     profile, _, before = scoped
     new = (profile.facilities[1].title, "Engineer", "Jordan Example", "444", "other@example.invalid")
-    directory.automatically_keep_directory_contact_edits(profile,before,
-       replace(before,source="This month",rows=(*before.rows,new)),"Synthetic Editor")
+    staged, edited = staged_add(profile, before, new)
+    directory.automatically_keep_directory_contact_edits(profile, staged, edited, "Synthetic Editor")
     sites=directory.load_directory(profile.contract).sites
     assert len(sites[0].contacts)==1 and len(sites[1].contacts)==2
     assert sites[0].contacts[0].name==sites[1].contacts[-1].name
@@ -62,8 +70,16 @@ def test_stale_same_site_rejects_new_contact_without_mutating_directory(scoped):
     directory.save_directory(profile.contract,(changed,state.sites[1]),
         expected_revision=1,actor="Second Editor",confirmed=True)
     new=(profile.facilities[0].title,"Technician","New Person","777","")
+    staged, edited = staged_add(profile, before, new)
     with pytest.raises(RevisionConflict):
-        directory.automatically_keep_directory_contact_edits(profile,before,
-            replace(before,source="This month",rows=(*before.rows,new)),
-            "Synthetic Editor")
+        directory.automatically_keep_directory_contact_edits(profile, staged, edited, "Synthetic Editor")
     assert directory.load_directory(profile.contract).revision==2
+
+
+def test_report_only_valid_row_does_not_become_standing_without_add_intent(scoped):
+    profile, _, before = scoped
+    valid=(profile.facilities[0].title,"Technician","Report Only","222","")
+    manual=replace(before,source="This month",rows=(*before.rows,valid))
+    assert directory.automatically_keep_directory_contact_edits(
+        profile,before,manual,"Synthetic Editor") is None
+    assert directory.load_directory(profile.contract).revision == 1

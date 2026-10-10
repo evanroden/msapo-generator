@@ -760,12 +760,15 @@ def automatically_keep_directory_contact_edits(profile, before, after, actor):
     identities. New rows can be appended only to exact selected site matches,
     with role and name completed; no person is matched by display name.
     """
-    if (before.source != "Library" or after.source != "This month"
+    intent = f"directory-add-intent:{profile.key}"
+    intentional_add = intent in before.references or intent in after.references
+    if (before.source not in (("Library", "This month") if intentional_add else ("Library",))
+            or after.source != "This month"
             or before.rows == after.rows or before.extra_tables or after.extra_tables
             or len(after.rows) < len(before.rows)
             or not actor.strip()):
         return None
-    refs = before.references
+    refs = tuple(value for value in before.references if value != intent)
     versions = [re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", item) for item in refs]
     versions = [m for m in versions if m]
     if len(versions) != 1:
@@ -785,7 +788,9 @@ def automatically_keep_directory_contact_edits(profile, before, after, actor):
     if (not old or library._contract_directory(old.contract) != versions[0][1]):
         return None
     expected, missing = contact_block(old, profile.facilities, bindings)
-    if missing or expected.rows != before.rows or expected.references != refs:
+    if (missing or expected.references != refs
+            or (before.rows[:len(expected.rows)] != expected.rows if intentional_add
+                else before.rows != expected.rows)):
         return None
     # Do not edit or delete contract-wide contacts through a site row; do not
     # silently change a row's facility identity. Other sites' records are
@@ -814,12 +819,15 @@ def automatically_keep_directory_contact_edits(profile, before, after, actor):
                             for contact, row in zip(site.contacts, current))
             changes[site_key] = (site.contacts, changed)
         offset += count
-    if offset != len(before.rows):
+    if offset != len(expected.rows):
+        return None
+    if len(after.rows) > len(expected.rows) and not intentional_add:
+        # An ordinary report-only addition is not a directory instruction.
         return None
     by_title = {facility.title: bindings[facility.key] for facility in profile.facilities}
     if len(by_title) != len(profile.facilities):
         return None
-    for row in after.rows[len(before.rows):]:
+    for row in after.rows[len(expected.rows):]:
         if (len(row) != 5 or row[0] not in by_title
                 or not row[1].strip() or not row[2].strip()):
             return None
