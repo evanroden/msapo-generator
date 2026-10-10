@@ -227,3 +227,5 @@ Generate readiness and visible disabled state: [COMMIT_NOTES_2026-10-10_MONTHLY_
 Empty-report review guardrail: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_EMPTY_REVIEW.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_EMPTY_REVIEW.md). Show a non-quality content count and ask once before generating a wholly empty monthly skeleton.
 
 Workflow URL recovery: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_WORKFLOW_ROUTE.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_WORKFLOW_ROUTE.md). Preserve the selected workflow tab across ordinary browser reloads without storing report identity in the URL.
+
+Browser-scoped active monthly work: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_ACTIVE_RECOVERY.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_ACTIVE_RECOVERY.md). Automatic working-copy retention through refresh, without changing completed report history or standing contract data.
