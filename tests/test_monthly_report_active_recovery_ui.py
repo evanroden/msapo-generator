@@ -85,3 +85,28 @@ def test_no_browser_cookie_keeps_manual_save_as_explicit_fallback(monkeypatch, t
     assert not app.exception
     assert any('Automatic recovery is unavailable' in x.value for x in app.warning)
     assert any(b.label == 'Save progress' for b in app.button)
+
+
+def test_recovered_draft_does_not_silently_upgrade_to_a_later_master(monkeypatch, tmp_path):
+    _visit(monkeypatch)
+    from app import monthly_report_designs as designs
+    original_pin = designs.pin
+    calls = []
+
+    def tracked(profile, *, latest_master=False):
+        calls.append(latest_master)
+        return original_pin(profile, latest_master=latest_master)
+
+    monkeypatch.setattr(designs, 'pin', tracked)
+    app = monthly(monkeypatch, tmp_path)
+    _value(app, 'Prepared by', 'text_input').set_value('Synthetic Editor').run()
+    _value(app, 'Activity summary').set_value('Unfinished work retains its design.').run()
+    assert active.load(TOKEN, RRH_CONTRACT, 'synthetic-guided', PERIOD) is not None
+
+    calls.clear()
+    another = AppTest.from_file(ROOT / 'run_web.py', default_timeout=30).run()
+    another.segmented_control[0].set_value('Monthly report').run()
+    choose_report(another, synthetic_profiles()[0].facilities[0].title)
+    assert not another.exception
+    assert False in calls, "Recovered working copies must not auto-install the latest master."
+    assert _value(another, 'Activity summary').value == 'Unfinished work retains its design.'

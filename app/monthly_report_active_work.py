@@ -134,7 +134,14 @@ def discard(token: str, contract: str, key: str, period: ReportPeriod, *,
         path = folder / "working.json"
         if not path.exists():
             return
-        value = library._read(path)
+        try:
+            value = library._read(path)
+        except library.LibraryError:
+            # Explicitly confirmed restart can repair this browser's unreadable
+            # active copy. Never touch report snapshots or another browser.
+            if expected_revision not in (None, 0):
+                raise
+            value = {"revision": 0}
         if expected_revision is not None and value.get("revision") != expected_revision:
             raise ActiveWorkConflict("Another tab changed this browser's unfinished report. Nothing was cleared.")
         path.unlink()

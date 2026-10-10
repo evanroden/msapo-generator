@@ -553,7 +553,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                          prepared or (draft.prepared_by if completed_setup == selected or resume else ""))
         draft = complete_guided_sections(replace(draft, prepared_by=current_actor))
         from app.monthly_report_designs import pin
-        draft = replace(draft, profile=pin(draft.profile, latest_master=not bool(snapshot)))
+        draft = replace(draft, profile=pin(draft.profile, latest_master=not bool(snapshot) and not recovered_work))
         if not preserve_saved_defaults:
             from app.monthly_report_capacity import resolve_capacity
             from app.monthly_report_workflow_standards import apply_defaults as apply_workflow_defaults
@@ -578,7 +578,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     else:
         st.info("Your design for these sites is saved. Update this month’s work and any site information that changed, then review and download. Every section stays in the report.")
     prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by))
-    st.caption("Use your own name. It is remembered on this browser after saving; another person's saved report does not identify you.")
+    st.caption("Enter your own name. This browser can reuse it while you work; it records attribution, not verified identity.")
     draft = replace(draft, prepared_by=prepared)
     if prepared.strip() and not st.session_state.get(prefix + "_directory_defaults_attempted"):
         from app.monthly_report_directory import apply_defaults
@@ -733,7 +733,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             except library.LibraryError as exc:
                 save_status.error(f"Automatic recovery could not keep these edits: {exc} Your current page is intact. Save a version before leaving.")
         else:
-            save_status.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
+            if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
+                # A completed/saved version is still saved, even when cookies
+                # prevent separately retaining unfinished browser changes.
+                save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
+                st.caption("Automatic recovery for new edits is unavailable in this browser.")
+            else:
+                save_status.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
         if package and package.fingerprint != draft.fingerprint:
             st.session_state.pop(prefix + "_package", None)
             package = None

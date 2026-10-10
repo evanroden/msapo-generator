@@ -83,6 +83,7 @@ def test_current_unsaved_picture_is_restored_with_content_integrity(monkeypatch,
     restored = active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period)
     assert dict(restored.assets) == {reference: raw}
     path = active._directory(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period) / 'assets' / reference
+    path.unlink()  # The immutable content-addressed copy is read-only.
     path.write_bytes(b'tampered')
     with pytest.raises(library.LibraryError, match='integrity'):
         active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period)
@@ -100,3 +101,15 @@ def test_discard_only_active_work_not_saved_history(monkeypatch, tmp_path):
     active.discard(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period, expected_revision=one.revision)
     assert active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period) is None
     assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period) == saved
+
+
+def test_explicit_reset_recovers_a_corrupted_browser_journal(monkeypatch, tmp_path):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    draft = make_draft()
+    active.save(DEVICE_A, draft, expected_revision=0, base_snapshot_revision=0)
+    path = active._directory(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period) / 'working.json'
+    path.write_text('{broken')
+    with pytest.raises(library.LibraryError):
+        active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period)
+    active.discard(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period, expected_revision=0)
+    assert active.load(DEVICE_A, draft.profile.contract, draft.profile.key, draft.period) is None

@@ -31,7 +31,7 @@ logos, global masters or completed-report history.
 
 A new Streamlit session with the same valid browser cookie can recover its
 last successfully committed working text, Prepared by name, source references,
-caption, approved picture state and current monthly draft. Only current
+caption, approved picture state and current monthly draft. A recovered report keeps its existing pinned design, even if a newer company master was installed while the browser was away. Only current
 report widgets that sent their values to the server can be recovered;
 uncommitted keystrokes at the exact instant of a 502 cannot be guaranteed.
 If the cookie is missing or disabled, the editor says automatic recovery
@@ -67,7 +67,7 @@ discard without touching completed snapshots. Streamlit AppTest regressions
 cover a new session recovering typed Prepared by and Activity, a storage
 failure that never claims success, a newer shared saved-version conflict,
 and an explicit no-cookie fallback. No private report files are committed.
-The pure journal tests ran locally under restored pinned Python 3.12 and
+Seven pure journal tests ran locally under restored pinned Python 3.12 and
 Streamlit 1.61.1; exact current-head full CI must independently test the
 integrated UI, fonts, production container and 512 MiB / 0.5 CPU workload.
 
