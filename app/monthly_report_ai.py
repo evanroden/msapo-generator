@@ -10,7 +10,9 @@ import time
 import anthropic
 
 from app import monthly_report_library as library
+from app.analysis_schema import AnalysisResponseError, _extract_json_object
 from app.api_retry import (
+    IncompleteResponseError,
     OPERATION_BUDGET_SECONDS,
     complete_response_text,
     request_with_retry,
@@ -99,13 +101,24 @@ def request_json(content):
             ),
             until=until,
         )
-    raw = complete_response_text(message)
+    try:
+        raw = complete_response_text(message)
+    except IncompleteResponseError as exc:
+        raise ValueError(
+            "The document reader returned an incomplete response. "
+            "Your uploaded text remains available; retry reading or edit it below."
+        ) from exc
     if len(raw) > 100_000:
         raise ValueError("The reading exceeded its response budget; use fewer pages.")
-    value = json.loads(raw)
-    if not isinstance(value, dict):
-        raise ValueError("The reader did not return the required JSON object.")
-    return value
+    try:
+        return _extract_json_object(raw)
+    except AnalysisResponseError as exc:
+        # The model may send an empty answer, fence, or trailing prose. Do not
+        # expose a parser traceback or discard already extracted native text.
+        raise ValueError(
+            "The document reader returned an incomplete response. "
+            "Your uploaded text remains available; retry reading or edit it below."
+        ) from exc
 
 
 def cache_path(profile, kind, key):
