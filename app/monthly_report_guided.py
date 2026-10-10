@@ -6,6 +6,7 @@ import re
 import streamlit as st
 
 from app import monthly_report_library as library
+from app import monthly_report_active_work as active_work
 from app.config import operator_today
 from app.memory import (record_report_preferences, record_report_preparer,
                         remembered_report_preferences, remembered_report_preparer)
@@ -423,15 +424,16 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
     last_contract, last_profile = remembered_report_preferences(browser_token)
+    recovery_available = active_work.enabled(browser_token)
     with st.expander("First time here? How to finish a monthly report"):
         st.write("1. Choose your contract and the sites that belong in **one** report.\n2. Use a saved design, the general template, or a starting report.\n3. Scroll through the sections in report order and update them beside their previews. Every section stays in the report, including sections you leave blank.\n4. Review the whole report, then download DOCX and PDF.")
         st.write("For vendor and chemical reports, check each page preview, then choose **Include page and continue** or **Leave page out and continue**. The next page needing review opens for you. Prices, legal-only pages and blank/signature-only pages do not belong in the client report.")
-        st.caption("You can edit the sections in any order. Save progress before leaving; return to the same sites and month to continue. Each section updates beside its fields. Review and download is at the bottom.")
+        st.caption("Edit sections in any order. While this browser is recognized, changes are kept automatically after each edit and can recover from a refresh. Review and download is at the bottom.")
     with st.expander("What will be remembered?"):
-        st.write("**For these sites:** saved report designs, logos, org charts, contacts and monthly drafts are shared. Anyone choosing the same contract and exact sites can continue the saved report, even on a different device.")
-        st.write("**On this browser:** after you save, we remember your last contract/site selection and the name you entered for that report. A different browser, private browsing or cleared browser data may require selecting them again. Your reports remain saved.")
+        st.write("**For these sites:** saved designs, approved logos, charts, contacts and completed/saved report versions are shared. Unfinished browser work stays separate until a version is saved.")
+        st.write("**On this browser:** unfinished changes are kept separately from completed report versions when the browser cookie is available. Report history and contract-wide information are not updated by those working copies. On a shared computer, you can discard the browser's unfinished work.")
         st.write("**Next month:** we reuse the latest saved earlier report for these exact sites. Layout and site information carry forward; monthly activity, vendor/chemical attachments and photos start fresh. Open issues and proposals remain follow-ups to review.")
-        st.caption("Use Save progress before leaving. Changes are not automatically saved. Your entered name records your edits; it is not a login or verified identity. Check it on a shared device.")
+        st.caption("Your name provides attribution, not authentication. Completed report versions are saved when generated or through the optional saved-version controls. Automatic recovery may not work with cookies disabled or edits not yet sent to the app.")
         if st.button("Check available storage", key="report_storage_check"):
             from app.monthly_report_storage import storage_summary
             try:
@@ -494,11 +496,43 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     draft_key = prefix + "_draft"
     resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
     if draft_key not in st.session_state or resume:
+        active = None
+        if recovery_available:
+            try:
+                active = active_work.load(browser_token, contract, selected, period)
+            except library.LibraryError as exc:
+                st.warning(f"Unfinished browser work could not be restored: {exc} Your saved reports are unchanged.")
+        active_sequence = active.revision if active else 0
+        current_head_revision = snapshot.revision if snapshot else 0
+        if active and active.base_snapshot_revision != current_head_revision and not (resume or completed_setup == selected):
+            if snapshot and snapshot.draft.fingerprint == active.draft.fingerprint:
+                # Already published as a completed version; no stale recovery.
+                active_work.discard(browser_token, contract, selected, period, expected_revision=active.revision)
+                active = None
+                active_sequence = 0
+            elif st.session_state.get(prefix + "_recover_previous") is not True:
+                st.warning("This browser has unfinished changes based on an older saved version. Nothing has been overwritten.")
+                if st.button("Review my unfinished work", key=prefix + "_restore_active"):
+                    st.session_state[prefix + "_recover_previous"] = True
+                    st.rerun()
+                if st.button("Use the current saved version instead", key=prefix + "_discard_stale_active"):
+                    try:
+                        active_work.discard(browser_token, contract, selected, period, expected_revision=active.revision)
+                        st.rerun()
+                    except library.LibraryError as exc:
+                        st.error(str(exc))
+                return
         prepared = remembered_report_preparer(browser_token, contract, selected)
         using_import = False
         preserve_saved_defaults = False
+        recovered_work = False
         pending_import = imported and imported.period == period and (not snapshot or snapshot.revision == library.imported_snapshot_revision(contract, selected))
-        if imported and (resume or pending_import):
+        if active and not (resume or completed_setup == selected):
+            draft = active.draft
+            recovered_work = True
+            preserve_saved_defaults = True
+            assets.update(active.assets)
+        elif imported and (resume or pending_import):
             draft = imported
             using_import = True
             st.session_state.pop("report_resume_import", None)
@@ -515,10 +549,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             draft = _initial_draft(state, period, prepared)
         # A shared report's author is not the identity of a new visitor.
         # Only a setup/import just completed in this session can seed that name.
-        current_actor = prepared or (draft.prepared_by if completed_setup == selected or resume else "")
+        current_actor = (draft.prepared_by if recovered_work else
+                         prepared or (draft.prepared_by if completed_setup == selected or resume else ""))
         draft = complete_guided_sections(replace(draft, prepared_by=current_actor))
         from app.monthly_report_designs import pin
-        draft = replace(draft, profile=pin(draft.profile, latest_master=not bool(snapshot)))
+        draft = replace(draft, profile=pin(draft.profile, latest_master=not bool(snapshot) and not recovered_work))
         if not preserve_saved_defaults:
             from app.monthly_report_capacity import resolve_capacity
             from app.monthly_report_workflow_standards import apply_defaults as apply_workflow_defaults
@@ -527,7 +562,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         # A saved empty standing block is an intentional report choice, not a
         # first-use gap. Preserve it on reopen and next-month rollover alike.
         st.session_state[prefix + "_directory_defaults_attempted"] = preserve_saved_defaults
-        st.session_state[prefix + "_revision"] = library.imported_snapshot_revision(contract, selected) if using_import else snapshot.revision if snapshot else 0
+        st.session_state[prefix + "_revision"] = (active.base_snapshot_revision if recovered_work else
+            library.imported_snapshot_revision(contract, selected) if using_import else snapshot.revision if snapshot else 0)
+        st.session_state[prefix + "_active_sequence"] = active_sequence
+        if recovered_work:
+            st.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
     from app.monthly_report_setup import normalize_mbcx
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
@@ -539,7 +578,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     else:
         st.info("Your design for these sites is saved. Update this month’s work and any site information that changed, then review and download. Every section stays in the report.")
     prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by))
-    st.caption("Use your own name. It is remembered on this browser after saving; another person's saved report does not identify you.")
+    st.caption("Enter your own name. This browser can reuse it while you work; it records attribution, not verified identity.")
     draft = replace(draft, prepared_by=prepared)
     if prepared.strip() and not st.session_state.get(prefix + "_directory_defaults_attempted"):
         from app.monthly_report_directory import apply_defaults
@@ -609,13 +648,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         draft = replace(draft, address_line=footer.text if footer.source != "Omit" else "")
     st.session_state[draft_key] = draft
     if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
-        save_status.success(f"Saved · version {snapshot.revision} · {period.label} · {snapshot.entered_editor or snapshot.draft.prepared_by}")
-    elif snapshot:
-        save_status.info(f"You have changes to save. Version {snapshot.revision} is safely stored; use Save progress below before leaving.")
+        save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
     elif prior_draft:
-        save_status.info(f"Starting from your saved {prior_draft.period.label} report for these exact sites. Monthly work and attachments start fresh; site information carries forward.")
+        save_status.info(f"Starting from the saved {prior_draft.period.label} report. Monthly work and attachments start fresh; site information carries forward.")
     else:
-        save_status.info("Your starting design is saved. Use Save progress below to store the changes you make for this month.")
+        save_status.info("Your selected design is ready. Changes are kept for this browser when automatic recovery is available.")
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
     if conflict:
@@ -629,18 +666,42 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if st.button("Accept current revision", key=prefix + "_accept_revision", disabled=not accept):
             st.session_state[prefix + "_revision"] = current_revision
             st.rerun()
-    st.caption("Save progress stores this version so others working on this report can continue it.")
-    if not prepared.strip():
-        st.caption("Enter your name in Prepared by above to save your progress.")
-    if st.button("Save progress", key=prefix + "_save", disabled=conflict or not prepared.strip()):
-        saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
-                                      open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
-                                      pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
-        st.session_state[prefix + "_revision"] = saved.revision
-        record_report_preferences(browser_token, contract, selected)
-        record_report_preparer(browser_token, contract, selected, prepared)
-        st.success("Progress saved. Returning to this report and month resumes this version.")
-        st.rerun()
+    with st.expander("Save a report version (optional)"):
+        st.caption("Current edits are kept for this browser when recovery is available. Save a version only when you want it in the shared report history.")
+        if st.button("Save progress", key=prefix + "_save", disabled=conflict or not prepared.strip()):
+            saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
+                                          open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
+                                          pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
+            st.session_state[prefix + "_revision"] = saved.revision
+            if recovery_available:
+                try:
+                    active_work.discard(browser_token, contract, selected, period,
+                        expected_revision=st.session_state.get(prefix + "_active_sequence", 0))
+                    st.session_state[prefix + "_active_sequence"] = 0
+                except library.LibraryError:
+                    st.warning("The report version was saved, but its older browser copy still needs review.")
+            record_report_preferences(browser_token, contract, selected)
+            record_report_preparer(browser_token, contract, selected, prepared)
+            st.success("Report version saved in the shared history.")
+            st.rerun()
+    with st.expander("Start over on this browser"):
+        st.caption("Discard only this browser's unfinished changes for these sites and this month. Existing report versions, contract information and other browsers stay unchanged.")
+        forget = st.checkbox("Discard my unfinished changes for this report", key=prefix + "_discard_work_confirm")
+        if st.button("Start this report over", key=prefix + "_discard_work", disabled=not forget):
+            try:
+                if recovery_available:
+                    active_work.discard(browser_token, contract, selected, period,
+                        expected_revision=st.session_state.get(prefix + "_active_sequence", 0))
+                for key in list(st.session_state):
+                    if key.startswith(prefix):
+                        del st.session_state[key]
+                st.session_state["report_draft_mirror"] = {
+                    key: val for key, val in st.session_state.get("report_draft_mirror", {}).items()
+                    if not key.startswith(prefix)
+                }
+                st.rerun()
+            except library.LibraryError as exc:
+                st.error(f"Unfinished work could not be discarded: {exc}")
     package = st.session_state.get(prefix + "_package")
     if package and package.fingerprint != draft.fingerprint:
         st.session_state.pop(prefix + "_package", None)
@@ -652,6 +713,33 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if prepared.strip():
             draft = review_client_images(draft, assets, prefix, field)
         st.session_state[draft_key] = draft
+        if recovery_available and snapshot and snapshot.draft.fingerprint == draft.fingerprint:
+            # The complete current version already exists in immutable history;
+            # no new browser journal is necessary after Generate/Save.
+            save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
+        elif recovery_available:
+            try:
+                previous_sequence = st.session_state.get(prefix + "_active_sequence", 0)
+                recovered = active_work.save(browser_token, draft,
+                    expected_revision=previous_sequence,
+                    base_snapshot_revision=st.session_state[prefix + "_revision"],
+                    assets=assets)
+                st.session_state[prefix + "_active_sequence"] = recovered.revision
+                save_status.success("Current edits kept for this browser. Completed report versions remain unchanged.")
+                if recovered.revision != previous_sequence:
+                    record_report_preferences(browser_token, contract, selected)
+                    if prepared.strip():
+                        record_report_preparer(browser_token, contract, selected, prepared)
+            except library.LibraryError as exc:
+                save_status.error(f"Automatic recovery could not keep these edits: {exc} Your current page is intact. Save a version before leaving.")
+        else:
+            if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
+                # A completed/saved version is still saved, even when cookies
+                # prevent separately retaining unfinished browser changes.
+                save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
+                st.caption("Automatic recovery for new edits is unavailable in this browser.")
+            else:
+                save_status.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
         if package and package.fingerprint != draft.fingerprint:
             st.session_state.pop(prefix + "_package", None)
             package = None
@@ -710,6 +798,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                               open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
                                               pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
                 st.session_state[prefix + "_revision"] = saved.revision
+                if recovery_available:
+                    try:
+                        active_work.discard(browser_token, contract, selected, period,
+                            expected_revision=st.session_state.get(prefix + "_active_sequence", 0))
+                        st.session_state[prefix + "_active_sequence"] = 0
+                    except library.LibraryError:
+                        st.warning("Your finished report was saved, but a browser working copy could not be cleared.")
                 record_report_preferences(browser_token, contract, selected)
                 record_report_preparer(browser_token, contract, selected, prepared)
             except (ValueError, OSError) as exc:
@@ -726,4 +821,4 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.download_button("Download PDF", package.pdf, file_name=package.pdf_name, mime="application/pdf", key=prefix + "_pdf")
             if package.pdf_error:
                 st.warning(package.pdf_error)
-        st.caption("Generating also saves this report version with the entered editor name. Use Save progress earlier to preserve unfinished work.")
+        st.caption("Generating saves a shared report version. In-progress edits are kept separately for this browser when automatic recovery is available.")
