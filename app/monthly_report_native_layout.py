@@ -733,8 +733,15 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             if block and reference_prefix + item.id in block.references:
                 cover_roles[item.image_part] = role
                 break
+    from app.monthly_report_static_branding import is_approved_company_slogan
     for item in cover_items:
         if item.image_part in cover_roles:
+            continue
+        # This verified company-only wordmark on the contents page is *not*
+        # a second current client's logo. Source-asset identity, not aspect
+        # ratio or position, establishes this narrow static-design exception.
+        if is_approved_company_slogan(source_path, inspection.sha256, item):
+            cover_roles[item.image_part] = "company_slogan"
             continue
         for role in ("brand_logo", "client_logo", "cover_photo"):
             block = blocks.get(role)
@@ -771,6 +778,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             rel = document.part.rels.get(rid)
             target = str(rel.target_part.partname).lstrip("/") if rel and not rel.is_external else ""
             role = roles.get(target)
+            if role == "company_slogan":
+                continue  # Reviewed, immutable company furniture; never a client mark.
             block = blocks.get(role)
             if block and block.source != "Omit" and block.asset_hashes:
                 if ((role == "client_logo" and unchanged_client_brand)

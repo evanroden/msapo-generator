@@ -219,3 +219,5 @@ Improvement-photo contain fit: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_PHOTO_CON
 Activity reader recovery: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ACTIVITY_READER_RECOVERY.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ACTIVITY_READER_RECOVERY.md). Native first-pass uploads survive fast model failures, with safe parsing and retry.
 
 Source-proved proposals divider numeral: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIVIDER_NUMERALS.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIVIDER_NUMERALS.md). Two-digit Word text remains visible in converted PDF.
+
+Contents-page corporate wordmark identity: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_COMPANY_SLOGAN.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_COMPANY_SLOGAN.md). Keep verified ENFRA artwork instead of flattening a client logo into its frame.
