@@ -1581,22 +1581,21 @@ def _render_asset_control(
     return raw_asset
 
 
-def _render_footer() -> None:
-    """Render the page footer.
-
-    Called from every exit path in main(), including the early ones, so the page
-    never ends abruptly mid-render on a blocked or empty quote.
-    """
+def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
+    """Show workflow-appropriate footer and the actual public runtime build."""
+    from app.public_build import runtime_commit
+    detail = {
+        MONTHLY_REPORT_WORKFLOW: "monthly report preparation",
+        EXPENSE_WORKFLOW: "expense reimbursement preparation",
+        PURCHASE_WORKFLOW: "purchase-order prep without duplicate entry",
+    }.get(workflow, "Process Control")
     st.markdown(
-        """
-        <div class="app-footer">
-            <div class="footer-divider"></div>
-            Built by Evan Roden
-            &nbsp;•&nbsp; purchase-order prep without duplicate entry
-        </div>
-        """,
+        '<div class="app-footer"><div class="footer-divider"></div>'
+        'Built by Evan Roden &nbsp;•&nbsp; ' + html.escape(detail) + '</div>',
         unsafe_allow_html=True,
     )
+    commit = runtime_commit()
+    st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
 
 
 _WORKFLOW_QUERY_CHOICES = {
@@ -1646,7 +1645,7 @@ def main() -> None:
     docs/COMMIT_NOTES_2026-08-12_TOUCH_AND_RENDERER_RELIABILITY.md.
     """
     st.set_page_config(
-        page_title="Process Control",
+        page_title="ENFRA Process Control",
         page_icon=str(
             Path(__file__).resolve().parents[1]
             / "branding"
@@ -1725,11 +1724,11 @@ def main() -> None:
         pass
     if workflow_mode == MONTHLY_REPORT_WORKFLOW:
         render_monthly_report_workflow(browser_token, browser_timezone)
-        _render_footer()
+        _render_footer(workflow_mode)
         return
     if workflow_mode == EXPENSE_WORKFLOW:
         render_expense_workflow(browser_token, browser_timezone)
-        _render_footer()
+        _render_footer(workflow_mode)
         return
 
     restore_po_draft(st.session_state)
