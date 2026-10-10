@@ -3,7 +3,7 @@ from dataclasses import replace
 
 from app import monthly_report_guided as guided
 from app.monthly_report_docx import ReportPackage
-from app.monthly_report_model import ReportPeriod, ResolvedBlock, synthetic_draft, synthetic_profiles
+from app.monthly_report_model import ReportPeriod, ResolvedBlock, default_sections, synthetic_draft, synthetic_profiles
 from test_monthly_report_ui import monthly
 
 
@@ -18,7 +18,8 @@ def _generate(app):
 
 
 def test_advisory_count_ignores_logo_stock_text_and_empty_table_schemas():
-    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    draft = replace(synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9)),
+                    sections=default_sections())
     activity = ResolvedBlock("activity_summary", "This month")
     standing = ResolvedBlock("org_chart", "Library", text="Organization already known")
     draft = replace(draft, blocks=(activity, standing))
