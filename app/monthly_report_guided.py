@@ -620,10 +620,22 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             replace(ingest(profile, source.filename, source_bytes(profile, source))[0], source=source)
             for source in draft.sources
         )
+    from app.monthly_report_model import included_sections
+    import html
+    st.caption("Current report: " + draft.profile.contract + " · " + period.label +
+               " · " + ", ".join(f.title for f in profile.facilities) +
+               " · Prepared by " + (prepared.strip() or "not entered"))
+    jumps = " · ".join(f'<a href="#report-section-{html.escape(s.key, quote=True)}">{html.escape(s.title)}</a>'
+                       for s in included_sections(draft.sections))
+    st.markdown('<nav class="monthly-section-jumps" aria-label="Jump to report section">'
+                '<strong>Jump to section:</strong> ' + jumps +
+                ' · <a href="#review-download">Review and download</a></nav>',
+                unsafe_allow_html=True)
     st.caption("Work down the report in order. Existing information stays in place; update only what changed.")
     editor_column, preview_column = st.columns(2, gap="large")
     with editor_column:
         from app.monthly_report_cover_ui import render_cover
+        st.markdown('<span id="report-cover"></span>', unsafe_allow_html=True)
         blocks = render_cover(draft, blocks, prefix, assets, field,
                               lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref))
         from app.monthly_report_section_ui import render_section_setup
@@ -717,7 +729,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         package = None
     st.divider()
     with st.container():
-        st.subheader("Review and download")
+        st.subheader("Review and download", anchor="review-download")
         from app.monthly_report_editor import review_client_images
         if prepared.strip():
             draft = review_client_images(draft, assets, prefix, field)
@@ -768,16 +780,34 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if len(monthly_entry_sections) == 1:
             st.info("Only one section has information entered for this month. "
                     "Check the other sections before sharing the report; blank sections can be intentional.")
-        for title, _, pages in outline(draft):
-            st.write(f"{title} · at least {pages} pages")
+        from app.monthly_report_model import included_sections
+        without_monthly = [section for section in included_sections(draft.sections)
+                           if section.key not in monthly_entry_sections
+                           and any(spec.key in MONTHLY_EDIT_KEYS for spec in section.blocks)]
+        if without_monthly:
+            with st.expander(f"{len(without_monthly)} sections with no new monthly entries (optional check)"):
+                for section in without_monthly:
+                    st.markdown(f"[{section.title}](#report-section-{section.key}) — "
+                                "No new monthly information entered. This may be intentional.")
+        with st.expander("Report page layout (not a completeness checklist)"):
+            for title, _, pages in outline(draft):
+                st.write(f"{title} · estimated minimum {pages} pages")
         loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref)
         estimated = estimate_bytes(draft, loader)
-        st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Aim for under 15 MB; fewer attachment pages and more photos per page can help.")
+        st.caption("Word and PDF sizes are measured separately after generation. "
+                   "A preliminary resource gauge cannot predict installed artwork or PDF compression; "
+                   "actual file sizes are checked against the 15 MB target.")
         checks = [check for check in preflight(draft, estimated) if check.code != "empty"]
         if any(c.blocking for c in checks):
             st.info("Complete the items below to unlock your downloads. Sections may remain blank.")
         for check in checks:
-            (st.error if check.blocking else st.warning)(review_message(check, draft))
+            message = review_message(check, draft)
+            _, target = review_destination(draft, check.block_key)
+            if target:
+                message += f" [Go to section](#report-section-{target})"
+            elif check.block_key in {"cover", "prepared_by"}:
+                message += " [Go to cover](#report-cover)"
+            (st.error if check.blocking else st.warning)(message)
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)
