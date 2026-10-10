@@ -344,7 +344,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         from app.monthly_report_upload_ui import render_structured_uploads
         sources, additions, incoming_specs = render_structured_uploads(
             profile, period, prefix, field, destination, blocks=blocks, assets=assets)
-        draft = replace(draft, sources=sources)
+        draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
         if additions:
             # Structured readers return the updated destination block; their
             # attachment assets alone are incremental. Never append the prior
@@ -357,14 +357,14 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         from app.monthly_report_upload_ui import render_section_uploads
         sources, additions, incoming_specs = render_section_uploads(
             profile, period, prefix, field, local_destination, blocks=blocks, assets=assets)
-        draft = replace(draft, sources=sources)
+        draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
         if additions:
             draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
     if section.key == "activity":
         if st.checkbox("Add work-order spreadsheets", key=field(prefix + "_batch_files_open", False)):
             from app.monthly_report_upload_ui import render_uploads
             sources, additions, incoming_specs = render_uploads(profile, period, prefix, field)
-            draft = replace(draft, sources=sources)
+            draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
             if additions and st.button("Add prepared pages and tables to this draft", key=prefix + "_apply_uploads"):
                 draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
         from app.monthly_report_ai_ui import render_drafting
@@ -420,6 +420,11 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             block = _review_carried_update(block, period, prefix)
         blocks[spec.key] = block
     return draft, blocks
+
+
+def _keep_missing_sources(prefix, sources):
+    from app.monthly_report_source_recovery import retain_unavailable
+    return retain_unavailable(sources, st.session_state.get(prefix + "_unavailable_sources", ()))
 
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
@@ -614,12 +619,34 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_section_preview_ui import render_section_preview
     blocks = {b.key: refresh_asset_source_context(b, draft.sources) for b in draft.blocks}
     specs = {b.key: b for s in draft.sections for b in s.blocks} | {b.key: b for b in layout_blocks()}
-    from app.monthly_report_sources import ingest, source_bytes
+    from app.monthly_report_source_recovery import restore_sources, used_missing_sources, safe_source_name
     if prefix + "_evidence" not in st.session_state and draft.sources:
-        st.session_state[prefix + "_evidence"] = tuple(
-            replace(ingest(profile, source.filename, source_bytes(profile, source))[0], source=source)
-            for source in draft.sources
-        )
+        contents, failed = restore_sources(profile, draft.sources)
+        st.session_state[prefix + "_evidence"] = contents
+        st.session_state[prefix + "_unavailable_sources"] = failed
+    available_ids = {content.source.id for content in st.session_state.get(prefix + "_evidence", ())}
+    missing = tuple(source for source in st.session_state.get(prefix + "_unavailable_sources", ())
+                    if source.id not in available_ids)
+    st.session_state[prefix + "_unavailable_sources"] = missing
+    if missing:
+        names = ", ".join(safe_source_name(source) for source in missing)
+        st.warning(f"Could not read saved file: {names}. Other sections remain editable. "
+                   "Re-upload a good copy or remove linked content before downloading.")
+        if st.button("Retry reading saved files", key=prefix + "_retry_missing_source"):
+            st.session_state.pop(prefix + "_evidence", None)
+            st.session_state.pop(prefix + "_unavailable_sources", None)
+            st.rerun()
+        unused = tuple(source for source in missing if source not in used_missing_sources(draft, missing))
+        if unused:
+            selected_missing = st.selectbox("Unused file to remove from this working report",
+                unused, format_func=safe_source_name, key=prefix + "_unused_source")
+            if st.button("Remove this unused file", key=prefix + "_remove_unused_source"):
+                draft = replace(draft, sources=tuple(source for source in draft.sources
+                                                     if source.id != selected_missing.id))
+                st.session_state[prefix + "_unavailable_sources"] = tuple(
+                    source for source in missing if source.id != selected_missing.id)
+                st.session_state[draft_key] = draft
+                st.rerun()
     st.caption("Work down the report in order. Existing information stays in place; update only what changed.")
     editor_column, preview_column = st.columns(2, gap="large")
     with editor_column:
@@ -774,6 +801,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         estimated = estimate_bytes(draft, loader)
         st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Aim for under 15 MB; fewer attachment pages and more photos per page can help.")
         checks = [check for check in preflight(draft, estimated) if check.code != "empty"]
+        from app.monthly_report_checks import ReportCheck
+        dependent = used_missing_sources(draft, st.session_state.get(prefix + "_unavailable_sources", ()))
+        if dependent:
+            missing_names = ", ".join(safe_source_name(source) for source in dependent)
+            checks.append(ReportCheck("unavailable_source",
+                f"Cannot safely generate while {missing_names} is missing. "
+                "Replace the source or remove the content linked to it first.", True))
         if any(c.blocking for c in checks):
             st.info("Complete the items below to unlock your downloads. Sections may remain blank.")
         for check in checks:
