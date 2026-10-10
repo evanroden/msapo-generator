@@ -51,19 +51,19 @@ def _columns(columns):
 
 
 def render_capacity(draft, block, prefix, field):
-    """Return a current-report update only after the explicit shared save.
+    """Automatically persist safe first-fill rows, preserving historical pins.
 
-    Runtime tables are contract-wide, but the returned block contains only this
-    report's sites. Other existing reports keep their previous pinned contents.
+    Ambiguous site matches, existing authoritative values and unreadable
+    scanned-source cells still need specific review before being shared.
     """
     profile = draft.profile
     block = block or ResolvedBlock("thermal_capacity", "Library")
     state = capacity.load_capacity(profile.contract)
+    changing_existing = False
     if state:
         sites = {key for table in state.tables for key in table.site_keys}
         st.caption(f"Capacity data is saved for {len(sites)} site{'s' if len(sites) != 1 else ''} on this contract. New reports reuse their site's tables.")
-        if not st.toggle("Update shared capacity", key=field(prefix + "_capacity_change", False)):
-            return draft, block
+        changing_existing = st.toggle("Update existing capacity values", key=field(prefix + "_capacity_change", False))
     else:
         st.caption("Upload capacity information once for the contract. Tables for other sites will be ready when their reports are started.")
     uploaded = st.file_uploader(
@@ -124,7 +124,8 @@ def render_capacity(draft, block, prefix, field):
     names = {f.key: f.title for f in facilities}
     titles = {f.title: f.key for f in facilities}
     reviewed = []
-    st.write("Check the capacity tables and site matches, then save them for the contract.")
+    st.write("Capacity rows with clear site matches are kept for future reports automatically. "
+             "Only uncertain or conflicting information needs your decision.")
     if inspection.used_reader:
         st.caption("Check every value and unit against the file. Unreadable cells must be corrected before saving.")
     for notice in inspection.notices:
@@ -171,7 +172,44 @@ def render_capacity(draft, block, prefix, field):
     tables = tuple(reviewed)
     fingerprint = capacity.review_fingerprint(tables)
     if st.session_state.get(prefix + "_capacity_saved") == fingerprint:
-        st.success("Capacity saved for the contract. Each site's new reports will use its tables.")
+        st.success("Capacity is kept for the contract. New reports reuse the matched sites' values.")
+        return draft, block
+    unresolved = any(not key for table in tables for key in table.site_keys)
+    actor = draft.prepared_by.strip()
+    unverified_image = inspection.used_reader and any(
+        table.page in inspection.content.source.needs_vision for table in tables)
+    first_fill = capacity.first_fill_tables(state, tables)
+    if first_fill and not unresolved and actor and not unverified_image:
+        # The same reviewed values pass the existing atomic version/provenance
+        # validator, without a routine "Save to contract" decision.
+        try:
+            saved = capacity.save_capacity(profile, first_fill,
+                expected_revision=st.session_state[prefix + "_capacity_revision"],
+                actor=actor, reviewed_fingerprint=capacity.review_fingerprint(first_fill),
+                mode="merge")
+            st.session_state[prefix + "_capacity_revision"] = saved.revision
+            st.session_state[prefix + "_capacity_saved"] = fingerprint
+            updated = capacity.capacity_block(profile, saved)
+            if updated and capacity.can_refresh_capacity(profile, block):
+                content = tuple(updated if b.key == "thermal_capacity" else b for b in draft.blocks)
+                if not any(b.key == "thermal_capacity" for b in content):
+                    content += (updated,)
+                draft, block = replace(draft, blocks=content), updated
+            st.success("New site capacity is kept for the contract and will appear in future reports.")
+            if state and len(first_fill) < len(tables):
+                st.info("Existing site values were not replaced. Use Update existing capacity values "
+                        "only when a reviewed correction is needed.")
+            return draft, block
+        except library.RevisionConflict:
+            st.warning("Someone changed shared capacity data. Reload it and review the affected sites; "
+                       "the uploaded values are still on this page.")
+            st.session_state[prefix + "_capacity_conflict"] = True
+        except (ValueError, OSError):
+            st.warning("The capacity data could not be kept for future reports. "
+                       "Your uploaded values remain here. Correct any uncertain cells or try again.")
+    if state and not changing_existing and not first_fill:
+        st.caption("Those sites already have saved capacity. To change existing values, "
+                   "open Update existing capacity values above.")
         return draft, block
     mode = "merge"
     conflicts = capacity.schema_conflicts(state, tables)
@@ -182,12 +220,10 @@ def render_capacity(draft, block, prefix, field):
             key=field(prefix + "_capacity_schema_" + fingerprint, "Choose how to update"),
         )
         mode = {"Replace capacity tables for these sites": "replace_sites", "Keep both sets of tables": "keep_both"}.get(choice, "")
-    unresolved = any(not key for table in tables for key in table.site_keys)
-    actor = draft.prepared_by.strip()
     if not actor:
         st.info("Enter your name before saving capacity for the contract.")
     site_count = len({key for table in tables for key in table.site_keys if key})
-    if st.button(f"Save capacity for {site_count} site{'s' if site_count != 1 else ''}",
+    if st.button(f"Apply reviewed capacity for {site_count} site{'s' if site_count != 1 else ''}",
                  key=prefix + "_capacity_save", type="primary",
                  disabled=not tables or unresolved or not actor or not mode):
         try:

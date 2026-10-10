@@ -397,6 +397,25 @@ def schema_conflicts(current, tables):
     return tuple(dict.fromkeys(changed))
 
 
+def first_fill_tables(current, incoming):
+    """Only new, exactly mapped site rows are eligible for automatic first fill.
+
+    Do not silently replace or merge with authoritative records at a site
+    already represented in the shared contract store. Provenance, units and NR
+    are copied verbatim; saved reports remain immutable.
+    """
+    occupied = {site for table in current.tables for site in table.site_keys} if current else set()
+    additions = []
+    for table in incoming:
+        pairs = tuple((row, site) for row, site in zip(table.rows, table.site_keys)
+                      if site and site not in occupied)
+        if pairs:
+            additions.append(replace(table,
+                rows=tuple(row for row, _ in pairs),
+                site_keys=tuple(site for _, site in pairs)))
+    return tuple(additions)
+
+
 def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerprint, mode="merge"):
     actor = library._confirmation(actor, True)
     tables = tuple(tables)
