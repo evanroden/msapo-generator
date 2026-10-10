@@ -817,10 +817,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[prefix + "_revision"] = saved.revision
                 if recovery_available:
                     try:
-                        active_work.discard(browser_token, contract, selected, period,
-                            expected_revision=st.session_state.get(prefix + "_active_sequence", 0))
+                        st.session_state[prefix + "_active_generation"] = active_work.discard(
+                            browser_token, contract, selected, period,
+                            expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
+                            expected_generation=st.session_state.get(prefix + "_active_generation", ""))
                         st.session_state[prefix + "_active_sequence"] = 0
-                    except library.LibraryError:
+                    except (library.LibraryError, OSError):
                         st.warning("Your finished report was saved, but a browser working copy could not be cleared.")
                 record_report_preferences(browser_token, contract, selected)
                 record_report_preparer(browser_token, contract, selected, prepared)

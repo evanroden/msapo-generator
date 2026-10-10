@@ -7,7 +7,8 @@ from app import monthly_report_library as library
 from app.monthly_report_editor import _grid, _signature
 from app.monthly_report_model import ReportTable
 from app.monthly_report_training import (FORMATS, MATRIX_REF, STATUSES,
-    add_event, apply_tables, events_for_period, load_training, save_training, seed_matrix, training_block, hospital_matrix)
+    add_event, apply_tables, events_for_period, load_training, save_training, seed_matrix,
+    training_block, hospital_matrix, matrix_differs_from_current_standing)
 
 
 def render_training(draft, blocks, prefix, field):
@@ -33,6 +34,8 @@ def render_training(draft, blocks, prefix, field):
         matrix_key = key + "_matrix_draft"
         if matrix_key not in st.session_state:
             st.session_state[matrix_key] = matrix
+            st.session_state[key + "_stale_standing"] = matrix_differs_from_current_standing(
+                draft.profile, block, stored, directory)
         previous = st.session_state[matrix_key]
         matrix = hospital_matrix(draft.profile, previous, directory)
         if matrix != previous:
@@ -41,6 +44,9 @@ def render_training(draft, blocks, prefix, field):
         st.write("Hospital staff training")
         st.caption("This matrix is for hospital staff. ENFRA, asset-management and vendor contacts are not added automatically. Check manually entered names.")
         st.caption("Completed · Pending · Not required. Blank history is shown as Not recorded; no completion is assumed.")
+        if st.session_state.get(key + "_stale_standing"):
+            st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
+                       "Monthly notes and the saved report version are unchanged.")
         new_training = st.text_input("Add a training requirement", key=key + "_new_requirement")
         if st.button("Add training column", key=key + "_add_requirement", disabled=not new_training.strip()):
             title = new_training.strip()
@@ -48,6 +54,8 @@ def render_training(draft, blocks, prefix, field):
                 st.error("That training already has a column.")
             else:
                 proposed = replace(matrix, columns=(*matrix.columns, title), rows=tuple((*r, "Not recorded") for r in matrix.rows))
+                if st.session_state.get(key + "_stale_standing"):
+                    raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
                 stored = save_training(draft.profile, proposed, expected_revision=stored["revision"], actor=draft.prepared_by)
                 matrix = proposed
                 st.session_state[store_key] = stored
@@ -63,6 +71,8 @@ def render_training(draft, blocks, prefix, field):
         if hospital_matrix(draft.profile, edited, directory) != edited:
             raise ValueError("This matrix is for hospital staff. Remove the identified ENFRA, asset-management or vendor person before saving.")
         if edited != matrix:
+            if st.session_state.get(key + "_stale_standing"):
+                raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
             stored = save_training(draft.profile, edited, expected_revision=stored["revision"], actor=draft.prepared_by)
             st.session_state[store_key] = stored
             st.session_state[matrix_key] = edited
@@ -116,6 +126,7 @@ def _reload_matrix(draft, blocks, block, key):
             refreshed = seed_matrix(draft.profile, without_matrix, latest, load_directory(draft.profile.contract))
             st.session_state[key + "_saved"] = latest
             st.session_state[key + "_matrix_draft"] = refreshed
+            st.session_state[key + "_stale_standing"] = False
             st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
             st.session_state.pop(key + "_conflict", None)
             blocks = dict(blocks)
