@@ -224,4 +224,6 @@ Contents-page corporate wordmark identity: [COMMIT_NOTES_2026-10-09_MONTHLY_REPO
 
 Generate readiness and visible disabled state: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_GENERATE_FEEDBACK.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_GENERATE_FEEDBACK.md). Explain the existing warning/conflict blockers next to a muted action.
 
+Empty-report review guardrail: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_EMPTY_REVIEW.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_EMPTY_REVIEW.md). Show a non-quality content count and ask once before generating a wholly empty monthly skeleton.
+
 Workflow URL recovery: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_WORKFLOW_ROUTE.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_WORKFLOW_ROUTE.md). Preserve the selected workflow tab across ordinary browser reloads without storing report identity in the URL.
