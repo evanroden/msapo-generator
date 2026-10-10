@@ -11,7 +11,7 @@ from app import monthly_report_sources as sources, monthly_report_upload_ui as u
 from app.monthly_report_asset_review import pending_asset_indexes
 from app.monthly_report_content_policy import page_allowed, page_fingerprint
 from app.monthly_report_model import ResolvedBlock, synthetic_profiles
-from app.monthly_report_section_uploads import prepare_section_pages, section_contents, source_destinations
+from app.monthly_report_section_uploads import prepare_section_pages, section_contents, source_destinations, CLASSIFICATION_DESTINATIONS
 from test_monthly_report_sources import pdf_bytes
 
 
@@ -192,7 +192,7 @@ args = synthetic_profiles()[0], ReportPeriod(2026, 9), "synthetic", field
 if view == "Batch":
     render_uploads(*args)
 else:
-    render_section_uploads(*args, "vendor_reports")
+    render_section_uploads(*args, "improvements")
 ''', default_timeout=20).run()
     button(app, "Read monthly files").click().run()
     next(w for w in app.selectbox if w.label == "Classification").set_value("Vendor service").run()

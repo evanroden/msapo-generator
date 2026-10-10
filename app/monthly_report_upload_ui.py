@@ -249,14 +249,14 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     blocks, specs = {}, {}
     with st.expander("Embed selected report pages and photographs"):
         destinations = []
-        defaults = {"Vendor service": "vendor_reports", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Utility results": "utility_analysis", "Improvement / training photo": "improvements"}
+        defaults = {"Vendor service": "improvements", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Utility results": "utility_analysis", "Improvement / training photo": "improvements"}
         for item in contents:
             if not sources.image_numbers(item):
                 continue
             labels = {"Do not embed": "Keep as reference only", "vendor_reports": "Maintenance — vendor service pages",
                       "water_reports": "Water treatment — chemical/service pages", "mbcx_report": "MBCx — commissioning report pages",
                       "utility_analysis": "Monthly scorecards — utility results and charts",
-                      "improvements": "Monthly activity — improvement photos"}
+                      "improvements": "Monthly activity — reviewed service pages and photos"}
             slot = st.selectbox("Add " + item.source.filename + " to", ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
                                 key=field(key + "_destination_" + item.source.id + "_" + item.source.classification,
                                           defaults.get(item.source.classification, "Do not embed")))
