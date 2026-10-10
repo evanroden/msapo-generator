@@ -1240,6 +1240,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     rid, _ = part.get_or_add_image(BytesIO(asset_loader(brand.asset_hashes[0])))
                     node.set(qn("r:embed"), rid)
     page_plan.finish(document=document)
+    from app.monthly_report_divider_numerals import fit_proposals_numeral
+    fit_proposals_numeral(document, section_key=section_key)
     result = BytesIO()
     document.save(result)
     # Prune image relationships which became unused after old payload removal.

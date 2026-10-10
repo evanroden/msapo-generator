@@ -217,3 +217,5 @@ Scoped F16 repair; source-proved unchanged layouts and immutable pins stay intac
 Improvement-photo contain fit: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_PHOTO_CONTAIN.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_PHOTO_CONTAIN.md). Correct current improvement-photo proportions without changing cover crops or client branding.
 
 Activity reader recovery: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ACTIVITY_READER_RECOVERY.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ACTIVITY_READER_RECOVERY.md). Native first-pass uploads survive fast model failures, with safe parsing and retry.
+
+Source-proved proposals divider numeral: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIVIDER_NUMERALS.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIVIDER_NUMERALS.md). Two-digit Word text remains visible in converted PDF.
