@@ -1222,9 +1222,16 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             from app.monthly_report_import import _remove_page_field_results
             _remove_page_field_results(visible, [])
             text = _text(visible)
-            if "enfrasolutions.com" in text.casefold() and draft.address_line.strip():
-                if text != draft.address_line:
-                    _set_text(paragraph, draft.address_line)
+            if "enfrasolutions.com" in text.casefold():
+                # The presence of ENFRA's domain does not prove the rest of
+                # an old header/footer belongs to the current client. A fresh
+                # report without a reviewed corporate footer must not retain
+                # a prior client's appended name/address in that same run.
+                # Prefer the current report's explicit address; otherwise
+                # retain only positively identified company/domain wording.
+                safe_footer = draft.address_line.strip() or "ENFRA | enfrasolutions.com"
+                if text != safe_footer:
+                    _set_text(paragraph, safe_footer)
                 continue
             if (text and "enfrasolutions.com" not in text.casefold()
                     and not re.fullmatch(r"(?:enfra|author:|client utility rate analysis)(?:\s+(?:author:|client utility rate analysis))*", text.strip(), re.IGNORECASE)
