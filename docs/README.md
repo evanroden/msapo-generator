@@ -215,3 +215,5 @@ Current narrative body flow and header clearance:
 Scoped F16 repair; source-proved unchanged layouts and immutable pins stay intact.
 
 Improvement-photo contain fit: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_PHOTO_CONTAIN.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_PHOTO_CONTAIN.md). Correct current improvement-photo proportions without changing cover crops or client branding.
+
+Source-proved proposals divider numeral: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIVIDER_NUMERALS.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIVIDER_NUMERALS.md). Two-digit Word text remains visible in converted PDF.
