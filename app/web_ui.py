@@ -1599,6 +1599,23 @@ def _render_footer() -> None:
     )
 
 
+_WORKFLOW_QUERY_CHOICES = {
+    "purchase": PURCHASE_WORKFLOW,
+    "expense": EXPENSE_WORKFLOW,
+    "monthly": MONTHLY_REPORT_WORKFLOW,
+}
+
+
+def _workflow_from_query(value):
+    """Only a small public route hint, never user or report identity."""
+    return _WORKFLOW_QUERY_CHOICES.get(value) if isinstance(value, str) else None
+
+
+def _workflow_query_name(mode):
+    return next((name for name, workflow in _WORKFLOW_QUERY_CHOICES.items()
+                 if workflow == mode), "purchase")
+
+
 def main() -> None:
     """Render the whole page: workflow selector, then the three purchase steps.
 
@@ -1665,6 +1682,17 @@ def main() -> None:
     preserve_po_draft(st.session_state)
     preserve_report_draft_state()
 
+    # A refresh/reconnect starts a new Streamlit session. The URL carries only
+    # the chosen workflow, not a person, site or report, so a return to Monthly
+    # report does not silently fall back to the unrelated Purchase order tab.
+    if "workflow_mode" not in st.session_state:
+        try:
+            requested = _workflow_from_query(st.query_params.get("workflow"))
+        except (AttributeError, RuntimeError, ValueError):
+            requested = None
+        if requested:
+            st.session_state["workflow_mode"] = requested
+
     # required=True is load-bearing, not cosmetic. A single-select
     # segmented_control defaults to required=False, which lets the operator
     # DESELECT the active segment — easy to do by accident on a phone, where the
@@ -1686,6 +1714,15 @@ def main() -> None:
     # unrecognized mode fall through to the PO branch by accident.
     if workflow_mode not in (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW, MONTHLY_REPORT_WORKFLOW):
         workflow_mode = PURCHASE_WORKFLOW
+    # Keep the active workflow in the browser URL across an ordinary reload.
+    # Query state is a navigation hint only; it cannot grant access or recover
+    # unsaved report text. Existing session edits remain authoritative.
+    try:
+        route = _workflow_query_name(workflow_mode)
+        if st.query_params.get("workflow") != route:
+            st.query_params["workflow"] = route
+    except (AttributeError, RuntimeError, ValueError):
+        pass
     if workflow_mode == MONTHLY_REPORT_WORKFLOW:
         render_monthly_report_workflow(browser_token, browser_timezone)
         _render_footer()
