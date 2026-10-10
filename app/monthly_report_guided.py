@@ -497,17 +497,21 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
     if draft_key not in st.session_state or resume:
         active = None
+        active_generation = ""
         if recovery_available:
             try:
                 active = active_work.load(browser_token, contract, selected, period)
-            except library.LibraryError as exc:
-                st.warning(f"Unfinished browser work could not be restored: {exc} Your saved reports are unchanged.")
+                active_generation = (active.generation if active else
+                                     active_work.current_generation(browser_token, contract, selected, period))
+            except (library.LibraryError, OSError):
+                st.warning("Unfinished browser work could not be restored. Your saved reports are unchanged.")
         active_sequence = active.revision if active else 0
         current_head_revision = snapshot.revision if snapshot else 0
         if active and active.base_snapshot_revision != current_head_revision and not (resume or completed_setup == selected):
             if snapshot and snapshot.draft.fingerprint == active.draft.fingerprint:
                 # Already published as a completed version; no stale recovery.
-                active_work.discard(browser_token, contract, selected, period, expected_revision=active.revision)
+                active_generation = active_work.discard(browser_token, contract, selected, period,
+                    expected_revision=active.revision, expected_generation=active_generation)
                 active = None
                 active_sequence = 0
             elif st.session_state.get(prefix + "_recover_previous") is not True:
@@ -517,10 +521,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     st.rerun()
                 if st.button("Use the current saved version instead", key=prefix + "_discard_stale_active"):
                     try:
-                        active_work.discard(browser_token, contract, selected, period, expected_revision=active.revision)
+                        active_work.discard(browser_token, contract, selected, period,
+                            expected_revision=active.revision, expected_generation=active_generation)
                         st.rerun()
-                    except library.LibraryError as exc:
-                        st.error(str(exc))
+                    except (library.LibraryError, OSError):
+                        st.error("Unfinished work could not be discarded. Your saved reports remain available.")
                 return
         prepared = remembered_report_preparer(browser_token, contract, selected)
         using_import = False
@@ -565,6 +570,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.session_state[prefix + "_revision"] = (active.base_snapshot_revision if recovered_work else
             library.imported_snapshot_revision(contract, selected) if using_import else snapshot.revision if snapshot else 0)
         st.session_state[prefix + "_active_sequence"] = active_sequence
+        st.session_state[prefix + "_active_generation"] = active_generation
         if recovered_work:
             st.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
     from app.monthly_report_setup import normalize_mbcx
@@ -675,10 +681,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state[prefix + "_revision"] = saved.revision
             if recovery_available:
                 try:
-                    active_work.discard(browser_token, contract, selected, period,
-                        expected_revision=st.session_state.get(prefix + "_active_sequence", 0))
+                    st.session_state[prefix + "_active_generation"] = active_work.discard(
+                        browser_token, contract, selected, period,
+                        expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
+                        expected_generation=st.session_state.get(prefix + "_active_generation", ""))
                     st.session_state[prefix + "_active_sequence"] = 0
-                except library.LibraryError:
+                except (library.LibraryError, OSError):
                     st.warning("The report version was saved, but its older browser copy still needs review.")
             record_report_preferences(browser_token, contract, selected)
             record_report_preparer(browser_token, contract, selected, prepared)
@@ -691,7 +699,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             try:
                 if recovery_available:
                     active_work.discard(browser_token, contract, selected, period,
-                        expected_revision=st.session_state.get(prefix + "_active_sequence", 0))
+                        expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
+                        expected_generation=st.session_state.get(prefix + "_active_generation", ""))
                 for key in list(st.session_state):
                     if key.startswith(prefix):
                         del st.session_state[key]
@@ -700,8 +709,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     if not key.startswith(prefix)
                 }
                 st.rerun()
-            except library.LibraryError as exc:
-                st.error(f"Unfinished work could not be discarded: {exc}")
+            except (library.LibraryError, OSError):
+                st.error("Unfinished work could not be discarded. Your current edits remain on this page.")
     package = st.session_state.get(prefix + "_package")
     if package and package.fingerprint != draft.fingerprint:
         st.session_state.pop(prefix + "_package", None)
@@ -723,15 +732,23 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 recovered = active_work.save(browser_token, draft,
                     expected_revision=previous_sequence,
                     base_snapshot_revision=st.session_state[prefix + "_revision"],
+                    expected_generation=st.session_state.get(prefix + "_active_generation", ""),
                     assets=assets)
                 st.session_state[prefix + "_active_sequence"] = recovered.revision
+                st.session_state[prefix + "_active_generation"] = recovered.generation
                 save_status.success("Current edits kept for this browser. Completed report versions remain unchanged.")
                 if recovered.revision != previous_sequence:
                     record_report_preferences(browser_token, contract, selected)
                     if prepared.strip():
                         record_report_preparer(browser_token, contract, selected, prepared)
-            except library.LibraryError as exc:
-                save_status.error(f"Automatic recovery could not keep these edits: {exc} Your current page is intact. Save a version before leaving.")
+            except active_work.ActiveWorkConflict:
+                save_status.error("Another tab or a new working copy has newer changes. "
+                                  "These edits are still on this page but were not kept for recovery. "
+                                  "Reload and compare before trying again.")
+            except (library.LibraryError, OSError):
+                save_status.error("Automatic recovery could not keep these edits. "
+                                  "Your current text remains on this page, but is not saved for a refresh. "
+                                  "Try another edit to retry, or save a report version before leaving.")
         else:
             if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
                 # A completed/saved version is still saved, even when cookies
