@@ -7,6 +7,14 @@ status: focused_training_repair_pending_release_acceptance
 
 # October 9 usability audit: implementation ledger
 
+Follow-up: #99 merged the Training-note, revision/comment and Writer-cleanup
+repairs; #100 merged contact-table header pagination. Their release records,
+not the older status statements below, establish what was merged. Public
+build verification remains separate. The current [narrative-flow checkpoint](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NARRATIVE_FLOW.md)
+addresses the reproduced F16 body-placement and empty-list paths, not its
+unresolved original footer-change observation. Supplemental novice feedback
+P1-P12 is tracked in issue #101; no automatic-retention expiry is implied.
+
 The owner supplied a 54-page usability audit, including three real downloaded
 Word/PDF pairs and bounded comparisons with an authentic authored reference.
 Its observations are evidence about those runs, not universal feature passes.
