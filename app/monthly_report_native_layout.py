@@ -157,7 +157,74 @@ def _clear_images(element, *, preserve_decoration=False):
                 node.getparent().remove(node)
 
 
-def _replace_image(document, element, data):
+def _contain_replacement_picture(element, data):
+    """Keep a current improvement photograph inside its native physical frame.
+
+    The previous asset's crop and aspect are not evidence for the current one.
+    Unchanged source pictures never pass through this function.  Do not guess
+    geometry for unsupported picture containers or grouped VML art.
+    """
+    from PIL import Image
+    with Image.open(BytesIO(data)) as image:
+        width, height = image.size
+        # Reading orientation metadata avoids a second full image decode just to
+        # measure a current photograph on Render's memory-constrained instance.
+        if image.getexif().get(274, 1) in (5, 6, 7, 8):
+            width, height = height, width
+    if width <= 0 or height <= 0:
+        raise NativeLayoutError("This replacement picture has no usable dimensions.")
+    pictures = list(element.iter(qn("pic:pic")))
+    for picture in pictures:
+        extent = picture.find("./" + qn("pic:spPr") + "/" + qn("a:xfrm") + "/" + qn("a:ext"))
+        frame = next((parent for parent in picture.iterancestors()
+                      if parent.tag in (qn("wp:anchor"), qn("wp:inline"))), None)
+        outer = frame.find(qn("wp:extent")) if frame is not None else None
+        if extent is None or outer is None:
+            raise NativeLayoutError("The native photo frame cannot be fitted safely. Add this picture to a new photo page.")
+        try:
+            full_width, full_height = int(outer.get("cx", "0")), int(outer.get("cy", "0"))
+        except ValueError as exc:
+            raise NativeLayoutError("The native photo frame dimensions are invalid.") from exc
+        if min(full_width, full_height) <= 0:
+            raise NativeLayoutError("The native photo frame has no usable area.")
+        scale = min(full_width / width, full_height / height)
+        new_width, new_height = round(width * scale), round(height * scale)
+        for node in (outer, extent):
+            node.set("cx", str(new_width)); node.set("cy", str(new_height))
+        # The physical frame must contain every edge of the current photo.
+        # A prior photo's source-rectangle values would crop those edges.
+        for crop in list(picture.iter(qn("a:srcRect"))):
+            crop.getparent().remove(crop)
+    for shape in list(element.iter("{urn:schemas-microsoft-com:vml}shape")):
+        images = list(shape.iter("{urn:schemas-microsoft-com:vml}imagedata"))
+        if not images:
+            continue
+        if any(parent.tag == "{urn:schemas-microsoft-com:vml}group" for parent in shape.iterancestors()):
+            raise NativeLayoutError("Grouped native photo frames need a reviewed replacement page; their image proportions cannot be assumed.")
+        original = shape.get("style", "")
+        found = {}
+        for axis in ("width", "height"):
+            result = re.search(r"(?:(?<=;)|^)\s*" + axis + r"\s*:\s*(\d+(?:\.\d+)?)(in|pt)(?=;|$)", original)
+            if result:
+                found[axis] = (result, float(result[1]) * (72 if result[2] == "in" else 1))
+        if len(found) != 2:
+            raise NativeLayoutError("The native photo frame dimensions cannot be fitted safely.")
+        scale = min(found["width"][1] / width, found["height"][1] / height)
+        target = {"width": width * scale, "height": height * scale}
+        # Replace later spans first; VML permits height before width as well.
+        for axis, (result, _) in sorted(found.items(), key=lambda item: item[1][0].start(), reverse=True):
+            value = target[axis] / (72 if result[2] == "in" else 1)
+            replacement = f"{axis}:{value:.6f}{result[2]}"
+            original = original[:result.start()] + replacement + original[result.end():]
+        shape.set("style", original)
+        for image in images:
+            for key in ("cropleft", "cropright", "croptop", "cropbottom"):
+                image.attrib.pop(key, None)
+    if not pictures and not any(True for _ in element.iter("{urn:schemas-microsoft-com:vml}imagedata")):
+        raise NativeLayoutError("The native photo replacement lacks a supported image frame.")
+
+
+def _replace_image(document, element, data, *, contain=False):
     # Mixed picture/SmartArt paragraphs are cloned as image frames. Updating a
     # raster is not proof that the neighboring source diagram is current.
     _clear_diagrams(element)
@@ -180,6 +247,8 @@ def _replace_image(document, element, data):
         if node.get(qn("r:embed")):
             node.set(qn("r:embed"), rid)
         node.attrib.pop(qn("r:link"), None)
+    if contain:
+        _contain_replacement_picture(element, data)
 
 
 def _fit_cover_photo(node, image_width, image_height):
@@ -1069,7 +1138,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     for properties in list(clone.iter(qn("w:sectPr"))):
                         properties.getparent().remove(properties)
                     _set_text(clone, "")
-                    _replace_image(document, clone, data)
+                    _replace_image(document, clone, data, contain=block.key == "improvements")
                 if index < len(anchors):
                     anchor.addprevious(clone)
                     page_plan.emitted(clone, anchor, kind="picture")

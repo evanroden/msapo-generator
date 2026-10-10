@@ -213,3 +213,5 @@ Current table heading pagination:
 Current narrative body flow and header clearance:
 [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NARRATIVE_FLOW.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NARRATIVE_FLOW.md).
 Scoped F16 repair; source-proved unchanged layouts and immutable pins stay intact.
+
+Improvement-photo contain fit: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_PHOTO_CONTAIN.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_PHOTO_CONTAIN.md). Correct current improvement-photo proportions without changing cover crops or client branding.
