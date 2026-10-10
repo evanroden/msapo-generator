@@ -387,9 +387,11 @@ def test_section_preview_refreshes_when_report_month_changes():
 
 
 def test_previous_preview_is_bounded_and_cleaned_after_success_or_report_switch():
-    original = ui.STORE.put('test-preview-owner', engine.ReportPreview(
-        b'%PDF-' + b'invalid', 1, 'bad', 'September 2026')) if False else None
-    from tests.test_monthly_report_preview_resources import pdf_preview
+    def pdf_preview(pages):
+        with fitz.open() as document:
+            for index in range(pages):
+                document.new_page().insert_text((50, 50), 'Synthetic old preview ' + str(index))
+            return engine.ReportPreview(document.tobytes(), pages, 'test', 'September 2026')
     owner = 'test-preview-owner'
     state = {'owner': owner, 'cache': {}, 'last_good': {}, 'wanted': {'activity': 'first'},
              'queue': {}, 'running': None}
@@ -409,10 +411,11 @@ def test_previous_preview_is_bounded_and_cleaned_after_success_or_report_switch(
 def test_stale_result_must_not_repopulate_another_report_after_scope_change(monkeypatch):
     from concurrent.futures import Future
     from threading import BoundedSemaphore
-    from tests.test_monthly_report_preview_resources import pdf_preview
-    from types import SimpleNamespace
+
     owner='synthetic-multi-report-owner'
-    ticket = ui.STORE.put(owner, pdf_preview(1))
+    with fitz.open() as document:
+        document.new_page().insert_text((50, 50), 'Old protected preview')
+        ticket = ui.STORE.put(owner, engine.ReportPreview(document.tobytes(), 1, 'old', 'Sep'))
     finished=Future()
     finished.set_result({'ticket': ticket, 'pages': 1})
     state={'owner':owner,'wanted':{'activity':'old'},'queue':{},

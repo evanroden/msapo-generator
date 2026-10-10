@@ -51,6 +51,8 @@ def _remember_previous_preview(state, section, entry):
     Tickets, not PDF/raster bytes, are held in session. A previous preview is
     never passed off as a current ready render. Older stale tickets are dropped.
     """
+    if not isinstance(entry.get('ticket'), PreviewTicket):
+        return
     old = state.setdefault('last_good', {})
     for key, previous in tuple(old.items()):
         _discard(state, previous)
