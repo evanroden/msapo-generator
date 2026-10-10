@@ -1,6 +1,7 @@
 """Plain-language contract cards, site checkboxes and first-report choices."""
 
 from dataclasses import replace
+import re
 
 import streamlit as st
 
@@ -29,6 +30,29 @@ def _logo(contract, state, images):
     return None
 
 
+def _contract_label(code, branding):
+    """Use only the contract title from an approved, exact contract logo map."""
+    title = (branding.title.strip() if branding else "") or code
+    return title
+
+
+def _fallback_initials(title):
+    letters = [word[0].upper() for word in re.findall(r"[A-Za-z0-9]+", title)]
+    return "".join(letters[:3]) or "—"
+
+
+def _contract_tile(title):
+    # UI-only placeholder. It never substitutes a fabricated image in DOCX.
+    label = _fallback_initials(title)
+    st.markdown(
+        '<div aria-label="No logo configured" style="width:8.5rem;height:3.5rem;'
+        'background:#e9efed;border:1px solid #c3d1cc;border-radius:.35rem;'
+        'display:flex;align-items:center;justify-content:center;'
+        'font-weight:700;letter-spacing:.08em;color:#174237">' + label + '</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def choose_contract(last_contract, field):
     from app.monthly_report_branding import find_logo, load_branding
     state, images = load_branding(), {}
@@ -37,31 +61,41 @@ def choose_contract(last_contract, field):
     current = st.session_state[current_key]
     if current and not st.session_state.get("report_change_contract", False):
         with st.container(border=True):
-            st.subheader(current)
+            selected_logo = find_logo(current, state=state) if state else None
+            selected_title = _contract_label(current, selected_logo)
+            st.subheader(selected_title)
+            if selected_title.casefold() != current.casefold():
+                st.caption("Account code: " + current)
             logo = _logo(current, state, images)
             if logo:
                 st.image(logo, width=190)
+            else:
+                _contract_tile(selected_title)
             if st.button("Change contract", key="report_change_contract_button"):
                 st.session_state["report_change_contract"] = True
                 st.rerun()
         return current
     st.subheader("Choose your contract")
     query = st.text_input("Find a contract", key=field("report_contract_search", ""), placeholder="Type part of the contract name")
-    visible = [n for n in names if query.casefold() in n.casefold()]
+    cards = [(name, _contract_label(name, find_logo(name, state=state) if state else None))
+             for name in names]
+    visible = [(code, title) for code, title in cards
+               if query.casefold() in (code + " " + title).casefold()]
     if not visible:
         st.info("No matching contract. You can add a contract through the site/contact directory below.")
     for offset in range(0, len(visible), 3):
-        for column, name in zip(st.columns(3), visible[offset:offset+3]):
+        for column, (name, title) in zip(st.columns(3), visible[offset:offset+3]):
             with column, st.container(border=True):
                 logo = _logo(name, state, images)
                 if logo:
                     st.image(logo, width=160)
-                branding = find_logo(name, state=state) if state else None
-                if branding and branding.title.casefold() != name.casefold():
-                    st.caption(branding.title)
-                # A display slug is not a unique identity (case, punctuation
-                # and the 60-character limit can collapse different names).
-                if st.button(name, key="report_contract_card_" + _signature(name), width="stretch"):
+                else:
+                    _contract_tile(title)
+                if title.casefold() != name.casefold():
+                    st.caption("Account code: " + name)
+                # Exact source code is the selection identity. The approved
+                # full client title is the primary visual label and searchable.
+                if st.button(title, key="report_contract_card_" + _signature(name), width="stretch"):
                     st.session_state[current_key] = name
                     st.session_state["report_change_contract"] = False
                     st.rerun()
