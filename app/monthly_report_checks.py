@@ -43,6 +43,15 @@ _MONTH_RE = re.compile(
 _DATE_RE = re.compile(r"\b(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2})/(\d{2,4}))\b")
 
 
+def _explicit_future_follow_up(text: str, start: int, end: int) -> bool:
+    """A planned future date is not evidence of work performed this month."""
+    before = text[max(0, start - 60):start]
+    after = text[end:end + 55]
+    lead = r"\b(?:future|upcoming|next|planned|scheduled|follow[ -]?up|due)\b(?:[^.!?]{0,40})$"
+    tail = r"^(?:[^.!?]{0,25})\b(?:scheduled|planned|due|upcoming|follow[ -]?up)\b"
+    return bool(re.search(lead, before, re.I) or re.search(tail, after, re.I))
+
+
 def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
     findings = []
     for match in _MONTH_RE.finditer(text):
@@ -52,8 +61,9 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
         # "Since July. June activity" must still warn about the second sentence.
         if re.search(r"\bsince\s+$", text[max(0, match.start() - 12):match.start()], re.IGNORECASE):
             continue
-        if _MONTHS[match[1].casefold()] != month or (match[2] and int(match[2]) != year):
-            findings.append(match[0])
+        if (_MONTHS[match[1].casefold()] != month or (match[2] and int(match[2]) != year)):
+            if not _explicit_future_follow_up(text, match.start(), match.end()):
+                findings.append(match[0])
     for match in _DATE_RE.finditer(text):
         parts = match.groups()
         yyyy, mm, dd = (parts[:3] if parts[0] else (parts[5], parts[3], parts[4]))
@@ -63,7 +73,8 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
             findings.append(match[0])
             continue
         if (value.year, value.month) != (year, month):
-            findings.append(match[0])
+            if not _explicit_future_follow_up(text, match.start(), match.end()):
+                findings.append(match[0])
     return tuple(dict.fromkeys(findings))
 
 
@@ -202,7 +213,11 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         phrases = placeholder_matches(text)
         if phrases:
             checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key))
-        stale = stale_period_mentions(text, draft.period.year, draft.period.month)
+        # Facility and contract names can legitimately contain establishment
+        # years or synthetic QA dates; they are identity labels, not a claim of
+        # this month's completed work.
+        stale = () if key == "cover" else stale_period_mentions(
+            text, draft.period.year, draft.period.month)
         if stale:
             checks.append(ReportCheck("period", f"Check period references in {key}: {', '.join(stale)}.", False, key))
     if estimated_bytes > 15 * 1024 * 1024:
@@ -223,4 +238,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
         if not source.facility or source.facility.strip().casefold() not in names:
             checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id))
-    return tuple(checks)
+    # A cover period or pricing warning may be reached from several distinct
+    # input mirrors. Report one actual issue only once while preserving distinct
+    # block, field, severity and message identities.
+    return tuple(dict.fromkeys(checks))
