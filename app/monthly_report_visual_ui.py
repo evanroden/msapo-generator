@@ -196,19 +196,26 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
     return block
 
 
+def _contact_label(columns, row, index):
+    """Identify people by name, role and site before opening an editor."""
+    fields = tuple((str(heading).strip().casefold(), str(value).strip())
+                   for heading, value in zip(columns, row))
+    def pick(identifiers):
+        return next((value for name, value in fields
+                     if name in identifiers and value), "")
+    person = pick({"name", "contact name", "contact", "person", "employee"})
+    role = pick({"role", "title", "position", "job title", "discipline"})
+    site = pick({"site", "facility", "building", "location", "hospital"})
+    if not person:
+        person = pick({"vendor", "contractor", "company", "supplier"})
+    return " · ".join(dict.fromkeys(v for v in (person, role, site) if v)) or f"Contact {index + 1}"
+
+
 def _contact_rows(columns, rows, p, field):
     edited = []
     remove_index = None
     for index, row in enumerate(rows):
-        title = next(
-            (
-                v
-                for c, v in zip(columns, row)
-                if any(t in c.casefold() for t in ("name", "contact", "vendor"))
-                and v.strip()
-            ),
-            "Contact " + str(index + 1),
-        )
+        title = _contact_label(columns, row, index)
         with st.expander(title, expanded=len(rows) <= 2):
             values = []
             for col, heading in enumerate(columns):
