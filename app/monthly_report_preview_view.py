@@ -23,7 +23,7 @@ export default function(component) {
     const status = panel.querySelector('.report-preview-status');
     const state = panel._previewState || (panel._previewState = {visible:false, sent:'', timer:null});
     const sizes = data.sizes && data.sizes.length ? data.sizes : [[612,792]];
-    const layout = JSON.stringify([data.generation, sizes]);
+    const layout = JSON.stringify([data.generation, sizes, data.ready, data.stale]);
     status.textContent = data.status || '';
     if (state.layout !== layout) {
         const position = scroll.scrollTop;
