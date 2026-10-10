@@ -209,3 +209,7 @@ Combined reliability release:
 
 Current table heading pagination:
 [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_TABLE_PAGINATION.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_TABLE_PAGINATION.md).
+
+Current narrative body flow and header clearance:
+[COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NARRATIVE_FLOW.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_NARRATIVE_FLOW.md).
+Scoped F16 repair; source-proved unchanged layouts and immutable pins stay intact.

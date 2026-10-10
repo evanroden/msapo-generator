@@ -127,7 +127,7 @@ class NativePages:
         _fit_picture(paragraph.add_run(), raw, width / 1440, height / 1440)
         return element
 
-    def finish(self):
+    def finish(self, *, document=None):
         """Remove obsolete scaffolding only with positive replacement evidence."""
         from app.monthly_report_import import _text
         contents = [[] for _ in self.regions]
@@ -185,6 +185,9 @@ class NativePages:
                 if key not in present and inherited.get(key) != node.get(qn('r:id')):
                     properties.insert(0, deepcopy(node))
                 inherited[key] = node.get(qn('r:id'))
+            if document is not None and rewrite and any(self.kinds.get(node) == 'text' for node in nodes):
+                from app.monthly_report_native_text import reserve_running_header
+                reserve_running_header(document, properties)
             # At an artificial split, the retained divider still starts a page.
             if region.split:
                 kind = properties.find(qn('w:type'))

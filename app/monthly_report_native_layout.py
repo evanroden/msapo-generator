@@ -757,6 +757,9 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     unchanged_positions = {item.position for item in inspection.items
                            if item.part == "word/document.xml" and item.id in unchanged_items}
     page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master)
+    from app.monthly_report_native_text import (narrative_prototype, write_narrative,
+                                                 header_contains_label)
+    narrative_styles = {style.style_id: style.element for style in document.styles}
     text_prototypes = defaultdict(list)
     image_prototypes = defaultdict(list)
     table_prototypes = defaultdict(list)
@@ -770,10 +773,10 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                      for paragraph in e.iter(qn("w:p"))
                      if any(True for _ in paragraph.iter(qn("a:blip")))
                      and not any(ancestor.tag == qn("w:p") for ancestor in paragraph.iterancestors())]
-    global_text = [deepcopy(e) for position, e in enumerate(original, 1)
+    global_text = [prototype for position, e in enumerate(original, 1)
                    if section_by_pos[position] != "cover" and position not in headings
-                   and e.tag == qn("w:p") and _text(e)
-                   and not any(True for _ in e.iter(qn("w:drawing")))]
+                   and e.tag == qn("w:p")
+                   and (prototype := narrative_prototype(e, narrative_styles, _STATIC)) is not None]
     for position, element in enumerate(original, 1):
         sec = section_by_pos[position]
         if element.tag == qn('w:sectPr'):
@@ -873,10 +876,18 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 _set_text(element, _MONTH.sub(draft.period.label, text))
                 page_plan.support.add(element)
             else:
-                text_prototypes[slot].append((element, deepcopy(element)))
-                if element.tag == qn("w:p"):
-                    section_text[sec].append(deepcopy(element))
+                label = re.fullmatch(r"(Client Utility Rate Analysis)(?:\s+Author:.*)?", text, re.IGNORECASE)
+                prototype = None if label else narrative_prototype(element, narrative_styles, _STATIC)
+                if prototype is not None:
+                    text_prototypes[slot].append((element, prototype))
+                    section_text[sec].append(deepcopy(prototype))
                 _set_text(element, "")
+                if label:
+                    region = page_plan.owner.get(element)
+                    properties = page_plan.regions[region].properties if region is not None else document.sections[-1]._sectPr
+                    if not header_contains_label(document, properties, label[1]):
+                        _set_text(element, label[1])
+                        page_plan.support.add(element)
                 for paragraph in element.iter(qn("w:p")):
                     if not _text(paragraph):
                         properties = paragraph.find(qn("w:pPr"))
@@ -959,31 +970,44 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         if sec not in section_ends:
             raise NativeLayoutError(f"The source has no native layout for {sec}.")
         text_value = "" if block.key in preserved_text else block.text
+        relocated_notes = []
         for identity, item in supplied_notes.items():
             kind, note_id = identity.split(":", 1)
             if (reference_prefix + item.id in block.references
                     and any(node.get(qn("w:id")) == note_id for node in body.iter(qn("w:" + kind + "Reference")))):
                 text_value = text_value.replace(item.text.strip(), "", 1).strip()
-        if text_value:
+                if block.key not in preserved_text:
+                    references = [node for anchor, _ in text_prototypes.get(block.key, ())
+                                  for node in anchor.iter(qn("w:" + kind + "Reference"))
+                                  if node.get(qn("w:id")) == note_id]
+                    if references:
+                        relocated_notes.append(deepcopy(references[0]))
+                        for node in references:
+                            node.getparent().remove(node)
+        if text_value or relocated_notes:
             anchors = text_prototypes.get(block.key)
             if not anchors:
                 anchors = [text_anchor(sec)]
             anchor, prototype = anchors[0]
-            values = text_value.splitlines()
-            for index, value in enumerate(values):
-                if index < len(anchors):
-                    _set_text(anchors[index][0], value)
-                    page_plan.emitted(anchors[index][0])
-                    anchor = anchors[index][0]
-                else:
+            # Current prose is one flow, not one old canvas/page per new line.
+            # Unchanged, source-proved text has already bypassed this writer.
+            for index, value in enumerate(text_value.splitlines() or [""]):
+                if index:
                     clone = deepcopy(prototype)
-                    for properties in list(clone.iter(qn("w:sectPr"))):
-                        properties.getparent().remove(properties)
-                    _clear_images(clone)
-                    _set_text(clone, value)
                     anchor.addnext(clone)
-                    page_plan.emitted(clone, anchor)
+                    page_plan.assigned(clone, anchor)
                     anchor = clone
+                write_narrative(anchor, prototype, value)
+                if index == 0:
+                    # Explicitly retained foot/endnotes move with rewritten
+                    # prose; source-only references and reviewer history do not.
+                    for note in relocated_notes:
+                        run = OxmlElement("w:r")
+                        properties = OxmlElement("w:rPr")
+                        align = OxmlElement("w:vertAlign"); align.set(qn("w:val"), "superscript")
+                        properties.append(align); run.append(properties); run.append(note)
+                        anchor.append(run)
+                page_plan.emitted(anchor)
         tables = []
         if block.rows:
             tables.append((tuple(c.title for c in spec.columns), block.rows, ""))
@@ -1100,8 +1124,6 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     and anchor.find(".//" + qn("w:sectPr")) is None):
                 anchor.getparent().remove(anchor)
 
-    page_plan.finish()
-
     # Source notes and comments are source facts, not current report content.
     explicit_notes = set(supplied_notes)
     for node in list(body.iter()):
@@ -1148,6 +1170,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                         continue
                     rid, _ = part.get_or_add_image(BytesIO(asset_loader(brand.asset_hashes[0])))
                     node.set(qn("r:embed"), rid)
+    page_plan.finish(document=document)
     result = BytesIO()
     document.save(result)
     # Prune image relationships which became unused after old payload removal.
