@@ -753,6 +753,96 @@ def apply_contacts(draft, block):
     return replace(draft, sections=sections, blocks=tuple(blocks.values()))
 
 
+def automatically_keep_directory_contact_edits(profile, before, after, actor):
+    """Promote only exact site-scoped edits of a known shared contact copy.
+
+    Row position within the *verified old directory version* is the identity.
+    Never match people by display name, infer a different site, or promote
+    imported/report-only content to the shared directory.
+    """
+    if (before.source != "Library" or after.source != "This month"
+            or before.rows == after.rows or before.extra_tables or after.extra_tables
+            or len(before.rows) != len(after.rows)
+            or not actor.strip()):
+        return None
+    refs = before.references
+    versions = [re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", item) for item in refs]
+    versions = [m for m in versions if m]
+    if len(versions) != 1:
+        return None
+    bindings = {}
+    for reference in refs:
+        link = re.fullmatch(r"directory-site:([^:]+):([^:]+)", reference)
+        if link:
+            if link[1] in bindings:
+                return None
+            bindings[link[1]] = link[2]
+        elif reference != versions[0][0]:
+            return None
+    if len(bindings) != len(profile.facilities):
+        return None
+    old = load_directory(profile.contract, int(versions[0][2]))
+    if (not old or library._contract_directory(old.contract) != versions[0][1]):
+        return None
+    expected, missing = contact_block(old, profile.facilities, bindings)
+    if missing or expected.rows != before.rows or expected.references != refs:
+        return None
+    # Do not edit or delete contract-wide contacts through a site row; do not
+    # silently change a row's facility identity. Other sites' records are
+    # left untouched even if the shared directory changed since this report.
+    changes = {}
+    if len(old.contract_contacts) > len(before.rows):
+        return None
+    if any(after.rows[i] != before.rows[i] for i in range(len(old.contract_contacts))):
+        return None
+    offset = len(old.contract_contacts)
+    old_sites = {site.key: site for site in old.sites}
+    for facility in profile.facilities:
+        site_key = bindings[facility.key]
+        site = old_sites.get(site_key)
+        if not site:
+            return None
+        count = len(site.contacts)
+        previous, current = before.rows[offset:offset+count], after.rows[offset:offset+count]
+        if len(current) != count or any(len(row) != 5 for row in current):
+            return None
+        if any(row[0] != facility.title or not row[1].strip() for row in current):
+            return None
+        if current != previous:
+            changed = tuple(replace(contact, role=row[1], name=row[2],
+                                    phone=row[3], email=row[4])
+                            for contact, row in zip(site.contacts, current))
+            changes[site_key] = (site.contacts, changed)
+        offset += count
+    if offset != len(before.rows) or not changes:
+        return None
+    newest = load_directory(profile.contract)
+    if newest is None or newest.archived:
+        return None
+    current_sites = {site.key: site for site in newest.sites}
+    for site_key, (old_contacts, _) in changes.items():
+        site = current_sites.get(site_key)
+        if site is None or site.contacts != old_contacts or not site.active:
+            raise library.RevisionConflict(
+                "The saved contacts for this site changed. Reload and compare before applying this edit.")
+    proposed_sites = tuple(
+        replace(site, contacts=changes[site.key][1]) if site.key in changes else site
+        for site in newest.sites)
+    updated = save_directory(
+        profile.contract, proposed_sites, expected_revision=newest.revision,
+        actor=actor, confirmed=True,
+        source_sha256=newest.source_sha256, source_sheet=newest.source_sheet,
+        contract_contacts=newest.contract_contacts)
+    shared, missing = contact_block(updated, profile.facilities, bindings)
+    if missing:
+        raise library.LibraryError("Updated contacts no longer match this report's sites.")
+    # Preserve report-only notes, approved contact-page artwork and selected
+    # design. The generated reference points to this new shared version.
+    return replace(after, source="Library", rows=shared.rows,
+                   references=shared.references, reviewed_fingerprint="",
+                   client_reviewed_fingerprint="")
+
+
 def apply_defaults(draft):
     """Fill an empty report from saved contacts without overwriting report work.
 
