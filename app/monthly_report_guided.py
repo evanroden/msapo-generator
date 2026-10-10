@@ -116,6 +116,19 @@ def review_message(check, draft):
     return message
 
 
+def generation_block_reason(*, conflict, checks, warnings_ok):
+    """Explain the existing export gate without weakening it."""
+    if conflict:
+        return "Another version was saved. Compare the saved changes above and accept the current revision before generating."
+    count = sum(bool(check.blocking) for check in checks)
+    if count:
+        noun = "item" if count == 1 else "items"
+        return f"Resolve the {count} required {noun} listed above to enable Generate."
+    if not warnings_ok:
+        return "Read the specific warnings above, then check ‘I checked these specific warnings’ to enable Generate."
+    return ""
+
+
 def _standing_signature(blocks, included):
     keys = included | {b.key for b in layout_blocks()}
     return _signature(sorted((b.key, b.fingerprint) for b in blocks
@@ -632,10 +645,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)
-        if st.button("Generate DOCX and PDF", key=prefix + "_generate", type="primary",
-                     disabled=conflict or any(c.blocking for c in checks) or not warnings_ok):
+        blocked_reason = generation_block_reason(conflict=conflict, checks=checks, warnings_ok=warnings_ok)
+        if blocked_reason:
+            st.caption(blocked_reason)
+        if st.button("Generate DOCX and PDF", key=prefix + "_generate",
+                     type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason)):
             try:
-                package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
+                with st.spinner("Preparing the Word and PDF downloads…"):
+                    package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
             except ValueError as exc:
                 st.error(str(exc))
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")

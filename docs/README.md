@@ -221,3 +221,5 @@ Activity reader recovery: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_ACTIVITY_READE
 Source-proved proposals divider numeral: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIVIDER_NUMERALS.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_DIVIDER_NUMERALS.md). Two-digit Word text remains visible in converted PDF.
 
 Contents-page corporate wordmark identity: [COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_COMPANY_SLOGAN.md](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_COMPANY_SLOGAN.md). Keep verified ENFRA artwork instead of flattening a client logo into its frame.
+
+Generate readiness and visible disabled state: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_GENERATE_FEEDBACK.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_GENERATE_FEEDBACK.md). Explain the existing warning/conflict blockers next to a muted action.
