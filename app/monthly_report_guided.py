@@ -676,6 +676,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                              working_draft=replace(draft, blocks=tuple(blocks.values())),
                              working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
         with st.expander("Report design and version"):
+            from app.monthly_report_designs_ui import render_design_status
+            render_design_status(draft)
+        # Global design installation changes *future reports across all
+        # contracts*. It is not a monthly report field or routine approval.
+        with st.sidebar.expander("Master design administration — all contracts", expanded=False):
             from app.monthly_report_designs_ui import render_design_settings
             render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
     with preview_column:

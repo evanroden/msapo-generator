@@ -17,6 +17,27 @@ def apply_master_design(draft, digest):
     return complete_guided_sections(replace(draft, profile=profile))
 
 
+def design_summary(draft):
+    """Read-only version detail; the current report stays on its own pin."""
+    current = designs.master_state()
+    pin = draft.profile.template
+    if pin.startswith(designs.MASTER_PREFIX):
+        identity = "ENFRA master · " + pin[len(designs.MASTER_PREFIX):][:12]
+    elif pin.startswith(designs.PREFIX):
+        identity = "Report-specific design · " + pin[len(designs.PREFIX):][:12]
+    else:
+        identity = "Legacy report design · " + pin[:40]
+    return identity, current["revision"]
+
+
+def render_design_status(draft):
+    identity, latest = design_summary(draft)
+    st.caption("This report uses: " + identity)
+    st.caption("Available company master: version " + str(latest) +
+               ". Other designs cannot silently change this report.")
+    st.caption("Master installation is in the separate administrative sidebar, not in monthly content editing.")
+
+
 def render_design_settings(draft, prefix):
     st.markdown("**Master report design**")
     st.caption("Every new report starts with the ENFRA master, including reports started without an upload. Replace it here with a newer Word report to update future reports across contracts. Existing saved reports keep their design version.")
