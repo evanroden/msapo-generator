@@ -120,9 +120,13 @@ def prepare(mode: str) -> ReportDraft:
         blocks = (
             ResolvedBlock("activity_summary", "This month",
                           text=finding.text + "\n\n" + activity.text,
-                          references=activity.references),
-            ResolvedBlock("training_summary", "This month", text=EXPECTED["training"]),
-            ResolvedBlock("equipment_issues", "This month", text="Open issue must remain open; parts pending."),
+                          references=(finding.reference, *activity.references)),
+            ResolvedBlock("training_summary", "This month",
+                          text="Hospital staff completed a synthetic lockout refresher.",
+                          references=(sources.source_reference(txt.source, 1),)),
+            ResolvedBlock("equipment_issues", "This month",
+                          text="Open actuator issue: parts pending.",
+                          references=(sources.source_reference(txt.source, 1),)),
         )
         evidence = (csv.source, txt.source)
     draft = ReportDraft(chosen, PERIOD, ACTOR, profile_sections(chosen), blocks,
@@ -138,19 +142,38 @@ def compare(draft: ReportDraft) -> dict:
     actual = {block.key: block for block in draft.blocks}
     activity = actual.get("activity_summary", ResolvedBlock("activity_summary", "This month")).text
     replay = bool(draft.sources)
+    training = actual.get("training_summary", ResolvedBlock("training_summary", "This month"))
+    issues = actual.get("equipment_issues", ResolvedBlock("equipment_issues", "This month"))
+    expected_sources = {item["name"]: item["sha256"] for item in manifest()["sources"]}
+    observed_sources = {source.filename: source.sha256 for source in draft.sources}
     checks = {
         "synthetic identity": draft.profile.contract == CONTRACT and draft.synthetic,
         "correct period": draft.period == PERIOD,
-        "source replay is separate": bool(draft.sources) == replay,
-        "known work-order totals": ("3 total, 2 completed, 1 open" in activity),
-        "closure rate": "66.7%" in activity,
-        "source-specific Activity": (EXPECTED["replay_activity"] in activity) if replay
-                                    else (EXPECTED["prefill_activity"] in activity),
-        "source identity and hashes": all(
-            any(source.filename == item["name"] and source.sha256 == item["sha256"]
-                for source in draft.sources)
-            for item in manifest()["sources"]) if replay else not draft.sources,
-        "all report sections present": len(draft.sections) >= 11,
+        "correct selected site identities": tuple(f.key for f in draft.profile.facilities)
+                                              == ("qa-north", "qa-south"),
+        "work-order totals": "3 total, 2 completed, 1 open" in activity,
+        "work-order closure rate": "66.7%" in activity,
+        "prefill/replay differ in Activity": (EXPECTED["replay_activity"] in activity) if replay
+                                           else EXPECTED["prefill_activity"] in activity,
+        "source manifests exact": observed_sources == expected_sources if replay
+                                  else not observed_sources,
+        "CSV provenance linked in Activity": (
+            any(source.sha256 in ref for source in draft.sources
+                if source.filename.endswith(".csv") for ref in
+                actual["activity_summary"].references)
+        ) if replay else not actual["activity_summary"].references,
+        "Training routed outside Activity": (
+            "synthetic lockout refresher" in training.text and
+            "synthetic lockout refresher" not in activity and bool(training.references)
+        ) if replay else EXPECTED["training"] == training.text,
+        "open equipment issue routed outside Activity": (
+            "Open actuator issue: parts pending." in issues.text and
+            "Open actuator issue: parts pending." not in activity
+        ) if replay else "Synthetic actuator feedback" in issues.text,
+        "intentionally empty design slots": not any(
+            key in actual for key in EXPECTED["intentionally_empty"]
+        ),
+        "all report section definitions present": len(draft.sections) >= 11,
     }
     return {"mode": "source replay" if replay else "known-value prefill", "checks": checks,
             "source_count": len(draft.sources),
