@@ -131,6 +131,11 @@ def design_seed(profile, period, actor, source=None):
     if source is None:
         from app.monthly_report_master_tables import initialize_master_tables
         draft = initialize_master_tables(draft)
+    else:
+        from app.monthly_report_master_tables import rebind_carried_master_tables
+        prior = {b.key: prior_blocks.get(b.key) or source.block(b.key)
+                 for b in blocks}
+        draft = rebind_carried_master_tables(draft, prior, source.profile.template)
     return draft, assets
 
 
