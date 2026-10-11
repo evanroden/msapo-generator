@@ -132,3 +132,24 @@ def test_unknown_client_named_source_header_never_enters_new_table(tmp_path):
     doc.save(path)
     shapes = from_inspection(inspect_docx(path))
     assert shapes[0].columns == ("Detail 1", "Status")
+
+
+def test_fresh_design_seed_uses_blank_native_regions_without_copying_source_rows(monkeypatch, tmp_path):
+    from app import monthly_report_master_tables as module
+    from app import monthly_report_designs as designs
+    from app.monthly_report_start import design_seed
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "empty-test-library"))
+    source = master_source(tmp_path)
+    shapes = from_inspection(inspect_docx(source))
+    monkeypatch.setattr(module, "for_profile", lambda _: shapes)
+    monkeypatch.setattr(designs, "pin", lambda profile, **kwargs: profile)
+    profile = ReportProfile("Synthetic Independent Client", "new-design",
+                            "QA North", (Facility("qa-n", "QA North"),), "individual")
+    seed, assets = design_seed(profile, ReportPeriod(2026, 10), "Synthetic Editor")
+    proposals = next((b for b in seed.blocks if b.key == "proposals"), None)
+    assert proposals is not None
+    assert len(proposals.extra_tables) == 2
+    assert all(not t.rows for t in proposals.extra_tables)
+    assert [t.columns for t in proposals.extra_tables] == [t.columns for t in shapes]
+    assert not any("OLD PRIVATE" in str(block) for block in seed.blocks)
+    assert assets == {}
