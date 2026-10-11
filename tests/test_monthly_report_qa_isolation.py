@@ -107,6 +107,28 @@ def test_qa_preview_pdf_and_memory_are_separate_from_live(monkeypatch, tmp_path)
         STORE.discard("same-owner", ticket_qa)
 
 
+def test_reset_qa_cache_removes_only_current_tester_not_live_or_another_test(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with fitz.open() as document:
+        document.new_page().insert_text((40, 50), "Invented QA preview")
+        page = ReportPreview(document.tobytes(), 1, "synthetic", "September 2026")
+    live = STORE.put("reused-owner", page)
+    with qa.isolated(COOKIE_A):
+        tester_a = STORE.put("reused-owner", page)
+    with qa.isolated(COOKIE_B):
+        tester_b = STORE.put("reused-owner", page)
+        assert not STORE.available("reused-owner", tester_a)
+    with qa.isolated(COOKIE_A):
+        assert not STORE.available("reused-owner", tester_b)
+        STORE.reset_scope()
+        assert not STORE.available("reused-owner", tester_a)
+    with qa.isolated(COOKIE_B):
+        assert STORE.available("reused-owner", tester_b)
+        STORE.discard("reused-owner", tester_b)
+    assert STORE.available("reused-owner", live)
+    STORE.discard("reused-owner", live)
+
+
 def test_copied_background_context_stays_isolated(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     live_root = library._root()
