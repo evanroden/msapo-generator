@@ -27,6 +27,7 @@ class MasterTable:
     columns: tuple[str, ...]
     indices: tuple[int, ...]  # retained physical columns after price exclusions
     physical_width: int
+    continuation: bool = False  # No repeated heading in the source frame.
 
 
 # New clients may rename these labels, but no label from an original's data
@@ -120,7 +121,7 @@ def from_inspection(inspection) -> tuple[MasterTable, ...]:
                            for n, label in enumerate(labels))
         shape = MasterTable(item.suggested_slot, item.position,
                             f"master-table:{inspection.sha256}:{item.id}",
-                            tuple(unique), keep, physical_width)
+                            tuple(unique), keep, physical_width, continuation=continuation)
         tables.append(shape)
         last_by_slot[item.suggested_slot] = (item, shape)
     return tuple(tables)
