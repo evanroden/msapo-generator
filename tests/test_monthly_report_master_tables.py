@@ -205,7 +205,7 @@ def test_split_numbered_rfi_native_tables_share_sanitized_headers_not_old_data(t
     document.add_heading("RFI MATRIX", 1)
     first = document.add_table(rows=3, cols=3)
     for row, values in enumerate((
-        ("#", "Requested item", "Status"),
+        ("#", "Requested Items", "Status"),
         ("14", "OTHER PRIOR SITE obsolete scope", "X"),
         ("15", "OTHER PRIOR SITE old handoff", "X"),
     )):
@@ -227,7 +227,7 @@ def test_split_numbered_rfi_native_tables_share_sanitized_headers_not_old_data(t
     assert all(shape.slot == "rfi_matrix" for shape in shapes)
     assert [shape.physical_width for shape in shapes] == [3, 3]
     assert shapes[0].reference != shapes[1].reference
-    assert shapes[0].columns == ("#", "Requested item", "Status")
+    assert shapes[0].columns == ("#", "Requested Items", "Status")
     assert shapes[1].columns == shapes[0].columns
     assert not shapes[0].continuation and shapes[1].continuation
     assert not any("OTHER PRIOR SITE" in c or "$" in c
@@ -248,7 +248,7 @@ def test_split_numbered_rfi_native_tables_share_sanitized_headers_not_old_data(t
     output = Document(BytesIO(rendered))
     assert len(output.tables) == 2
     assert [cell.text for cell in output.tables[0].rows[0].cells] == [
-        "#", "Requested item", "Status"]
+        "#", "Requested Items", "Status"]
     # Unlike an independent grid, the original continuation frame never had
     # a repeated header: its first displayed row is the first current datum.
     assert len(output.tables[1].rows) == 1
@@ -269,7 +269,7 @@ def test_numbered_new_table_without_consecutive_prior_row_cannot_borrow_header(t
     document = Document()
     document.add_heading("RFI MATRIX", 1)
     first = document.add_table(rows=2, cols=3)
-    for cell, label in zip(first.rows[0].cells, ("#", "Requested item", "Status")):
+    for cell, label in zip(first.rows[0].cells, ("#", "Requested Items", "Status")):
         cell.text = label
     for cell, label in zip(first.rows[1].cells, ("15", "Prior item", "Done")):
         cell.text = label
@@ -281,7 +281,7 @@ def test_numbered_new_table_without_consecutive_prior_row_cannot_borrow_header(t
     document.save(path)
     shapes = from_inspection(inspect_docx(path))
     assert len(shapes) == 2
-    assert shapes[0].columns == ("#", "Requested item", "Status")
+    assert shapes[0].columns == ("#", "Requested Items", "Status")
     assert shapes[1].columns != shapes[0].columns
     assert not shapes[1].continuation
     assert "Other site's data" not in shapes[1].columns
