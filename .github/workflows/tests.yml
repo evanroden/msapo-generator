@@ -112,6 +112,19 @@ jobs:
             --env RESOURCE_REQUIRE_512_MB=1 --env ANTHROPIC_API_KEY=test-key-not-used \
             --entrypoint python msapo-resource-check scripts/qa_monthly_report_resources.py
           test "$(docker inspect --format='{{.State.OOMKilled}}' msapo-resource-check)" = false
+      - name: Copy verified synthetic native Word/PDF evidence from capped container
+        if: success()
+        run: |
+          mkdir -p test-artifacts/monthly-native-master
+          docker cp msapo-resource-check:/tmp/monthly-synthetic-native-evidence/. test-artifacts/monthly-native-master/
+      - name: Upload synthetic ten-table Word/PDF evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-native-ten-table-docx-pdf
+          path: test-artifacts/monthly-native-master/
+          if-no-files-found: error
+          retention-days: 7
       - name: Remove synthetic resource container
         if: always()
         run: docker rm --force msapo-resource-check || true
