@@ -60,6 +60,15 @@ def test_read_draft_review_preserves_existing_work_and_invalidates(
         if w.label == "Use these facts as evidence for suggestions"
     ).check().run()
     button(app, "Keep these facts").click().run()
+    assert any("Optional Copilot help" in x.label for x in app.expander)
+    button(app, "Suggest wording / redraft").click().run()
+    assert not app.exception
+    assert button(app, "Use checked wording in this report").disabled
+    initial = next(w.value for w in app.text_area if w.label == "Activity summary")
+    button(app, "Dismiss suggestion — keep my current wording").click().run()
+    assert not app.exception
+    assert next(w.value for w in app.text_area if w.label == "Activity summary") == initial
+    assert not any(b.label == "Use checked wording in this report" for b in app.button)
     button(app, "Suggest wording / redraft").click().run()
     assert not app.exception
     assert button(app, "Use checked wording in this report").disabled
