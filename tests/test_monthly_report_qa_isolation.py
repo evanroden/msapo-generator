@@ -312,3 +312,23 @@ def test_active_journals_master_design_and_branding_are_separate(monkeypatch, tm
     assert branding.read_logo(logo) == raw
     recovered = active.load(COOKIE_A, chosen.contract, chosen.key, fixtures.PERIOD)
     assert recovered.draft.fingerprint == live_draft.fingerprint
+
+
+def test_completed_old_preview_worker_cannot_repopulate_cache_after_qa_reset(monkeypatch, tmp_path):
+    """The old PDF ticket and a late post-reset page must both stay unavailable."""
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with fitz.open() as document:
+        document.new_page().insert_text((40, 50), "Old synthetic QA page")
+        page = ReportPreview(document.tobytes(), 1, "old", "September 2026")
+    with qa.isolated(COOKIE_A):
+        stale = STORE.put("same-browser", page)
+        old_task = copy_context()
+        qa.reset(tmp_path)
+        STORE.reset_scope()
+        with pytest.raises(OSError, match="reset|changed"):
+            old_task.run(STORE.put, "same-browser", page)
+    with qa.isolated(COOKIE_A):
+        assert not STORE.available("same-browser", stale)
+        fresh = STORE.put("same-browser", page)
+        assert STORE.available("same-browser", fresh)
+        STORE.discard("same-browser", fresh)
