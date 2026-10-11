@@ -139,10 +139,12 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         if retained and retained[0] == working.fingerprint:
             package = retained[1]
             st.download_button("Download isolated QA DOCX", package.docx,
-                               file_name="SYNTHETIC-QA-only.docx", key="monthly_qa_docx")
+                               file_name="SYNTHETIC-QA-only.docx", key="monthly_qa_docx",
+                               on_click="ignore")
             if package.pdf:
                 st.download_button("Download isolated QA PDF", package.pdf,
-                                   file_name="SYNTHETIC-QA-only.pdf", key="monthly_qa_pdf")
+                                   file_name="SYNTHETIC-QA-only.pdf", key="monthly_qa_pdf",
+                                   on_click="ignore")
             if package.pdf_error:
                 st.warning(package.pdf_error)
         st.divider()
