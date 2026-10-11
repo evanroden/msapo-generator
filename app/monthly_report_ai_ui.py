@@ -267,9 +267,13 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
     targets = [key for key in LABELS if allowed_keys is None or key in allowed_keys]
     if not targets:
         return draft, edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
-    with st.container():
-        st.write(
-            "Read the useful facts from your files, then review suggested wording before adding it. Existing text and pages are preserved."
+    # Keep optional writing mechanics out of the primary Activity editor.
+    # Everything still renders in the same section so a reviewed suggestion
+    # can be accepted without navigating away or overwriting manual work.
+    with st.expander("Optional Copilot help — improve this section", expanded=False):
+        st.caption(
+            "Optional. Write directly in Activity summary below, or use uploaded files "
+            "to suggest wording. Nothing replaces your text until you approve it."
         )
         with st.expander("Reading limits"):
             st.caption("No prices in suggestions. Maximum 80 reading/drafting requests per report/month; cached results are reused. Each source read is limited to 60,000 characters. Image reading shares the report's 20-image allowance.")
@@ -407,7 +411,8 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
                         st.session_state.pop(prefix + "_ai_facts", None)
                         st.rerun()
         with st.container():
-            st.markdown("**Copilot analysis**")
+            st.markdown("**Use Copilot with a copied prompt (optional)**")
+            st.caption("1. Copy the prompt. 2. Ask Copilot. 3. Paste its answer below.")
             prompt = copilot_prompt(
                 draft.profile,
                 draft.period,
@@ -415,12 +420,13 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
                 draft.profile.asset_tags,
             )
             copy_prompt(prompt)
-            st.text_area(
-                "Prompt to copy manually if needed",
-                prompt,
-                height=100,
-                key=prefix + "_copilot_prompt_" + ai.digest(prompt),
-            )
+            with st.expander("View prompt text (if copying does not work)"):
+                st.text_area(
+                    "Prompt to copy manually if needed",
+                    prompt,
+                    height=100,
+                    key=prefix + "_copilot_prompt_" + ai.digest(prompt),
+                )
             pasted = st.text_area(
                 "Paste Copilot's response",
                 key=field(prefix + "_copilot_paste", ""),
@@ -590,6 +596,13 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
                 ["Add below existing wording", "Replace existing wording"],
                 key=prefix + "_ai_apply_mode",
             )
+            if st.button(
+                "Dismiss suggestion — keep my current wording",
+                key=prefix + "_ai_dismiss",
+            ):
+                st.session_state.pop(prefix + "_ai_suggestion", None)
+                st.info("Suggestion dismissed. Your report content and sources are unchanged.")
+                st.rerun()
             if st.button(
                 "Use checked wording in this report",
                 disabled=not ready,
