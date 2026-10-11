@@ -41,7 +41,7 @@ def test_exact_pinned_photo_only_and_editable_word_unmodified(tmp_path):
     with ZipFile(BytesIO(pdf_copy)) as z:
         with Image.open(BytesIO(z.read("word/media/old.jpg"))) as photo:
             assert max(photo.size) == 1400
-            assert photo.width / photo.height == 1.5
+            assert abs((photo.width / photo.height) - 1.5) < 0.002  # integer pixel rounding
         assert z.read("word/media/new-upload.jpg") == new_upload
         assert z.read("word/document.xml") == b"Q-TEST-731 | Pending | 45 gpm"
 
@@ -76,7 +76,7 @@ def test_generated_docx_stays_native_while_pdf_copy_is_compacted(monkeypatch, tm
     draft = ReportDraft(profile, ReportPeriod(2026, 9), "Synthetic Editor", (), ())
     monkeypatch.setattr(engine, "assemble_docx", lambda *args, **kwargs: word)
     monkeypatch.setattr(engine, "rendering_docx", lambda raw, **kwargs: raw)
-    monkeypatch.setattr(engine, "render_profile_for", lambda *_: None)
+    monkeypatch.setattr(designs, "render_profile_for", lambda *_: None)
     monkeypatch.setattr(designs, "source_for", lambda *_: master)
     monkeypatch.setattr(engine.pdf_converter, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(engine, "report_filename", lambda draft, ext: "synthetic." + ext)
