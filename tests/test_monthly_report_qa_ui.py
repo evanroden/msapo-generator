@@ -114,7 +114,7 @@ def test_known_value_qa_editor_prefills_synthetic_author_and_generates_both_form
     assert not app.exception
     assert {b.label for b in app.get("download_button")} >= {
         "Download isolated QA DOCX", "Download isolated QA PDF"}
-    assert not any("previous QA export is outdated" in x.value.lower()
+    assert not any("previous qa export is outdated" in x.value.lower()
                    for x in app.info)
     assert app.session_state["monthly_qa_package"][0] == app.session_state[
         "monthly_qa_package"][1].fingerprint
