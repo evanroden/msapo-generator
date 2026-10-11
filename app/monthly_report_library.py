@@ -112,7 +112,18 @@ def _profile_path(contract: str, key: str, *, snapshots: bool = False) -> Path:
     return _root() / ("snapshots" if snapshots else "library") / _contract_directory(contract) / _valid_key(key)
 
 
+def _qa_path_guard(path: Path) -> None:
+    """Fail closed on stale/foreign paths, even if a job cached a Path before reset."""
+    from app.monthly_report_testing import scope
+    if scope() is None:
+        return
+    root = _root()  # Revalidates the current generation on every operation.
+    if not Path(path).resolve().is_relative_to(root.resolve()):
+        raise LibraryError("Test report path is outside its isolated storage; no data was read or changed.")
+
+
 def _read(path: Path) -> dict:
+    _qa_path_guard(path)
     try:
         if path.stat().st_size > MAX_JSON_BYTES:
             raise LibraryError("Saved report metadata exceeds the storage limit.")
@@ -125,6 +136,7 @@ def _read(path: Path) -> dict:
 
 
 def _atomic_write(path: Path, raw: bytes) -> None:
+    _qa_path_guard(path)
     from app.monthly_report_objects import object_path, store_bytes
     if object_path(path) is not None:
         store_bytes(path, raw)
@@ -152,6 +164,7 @@ def _atomic_write(path: Path, raw: bytes) -> None:
 
 @contextmanager
 def _locked(path: Path):
+    _qa_path_guard(path)
     path.mkdir(parents=True, exist_ok=True)
     with (path / ".write-lock").open("a+b") as lock:
         if os.name == "nt":
