@@ -1,0 +1,70 @@
+"""Streamlit-facing proof that known-value and original-source QA are separate routes."""
+from pathlib import Path
+
+import pytest
+from streamlit.testing.v1 import AppTest
+
+from app import monthly_report_guided as guided, monthly_report_library as library
+from app import monthly_report_testing as qa
+from app import monthly_report_qa_fixture as fixture
+
+ACTOR_COOKIE = "a" * 32
+SOURCE = """from pathlib import Path
+import streamlit as st
+from app.monthly_report_testing import isolated
+from app.monthly_report_testing_ui import render
+from app.monthly_report_ui import _field, _move
+with isolated("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"):
+    render("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "", _field, _move, Path(st.session_state["_qa_base"]))
+"""
+
+
+def visit(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    from app import monthly_report_section_preview_ui as section_ui
+    monkeypatch.setattr(section_ui, "render_section_preview", lambda *args, **kwargs: None)
+    app = AppTest.from_string(SOURCE, default_timeout=30)
+    app.session_state["_qa_base"] = str(tmp_path)
+    app.run()
+    assert not app.exception
+    assert any("ISOLATED SYNTHETIC TESTING" in x.message or "ISOLATED SYNTHETIC TESTING" in getattr(x, "value", "")
+               for x in app.warning)
+    return app
+
+
+def test_prefill_and_original_replay_appear_as_distinct_editable_ui_actions(monkeypatch, tmp_path):
+    app = visit(monkeypatch, tmp_path)
+    assert any(x.label == "Load known-value report" for x in app.button)
+    assert any(x.label == "Replay synthetic source files" for x in app.button)
+    next(x for x in app.button if x.label == "Load known-value report").click().run()
+    assert not app.exception
+    with qa.isolated(ACTOR_COOKIE):
+        first = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
+        assert first is not None and not first.draft.sources
+    assert any("Current fixture: known-value prefill" in x.value for x in app.caption)
+    next(x for x in app.button if x.label == "Compare fixture facts").click().run()
+    assert not app.exception
+    assert any("known-value prefill" in x.value for x in app.markdown)
+    next(x for x in app.button if x.label == "Replay synthetic source files").click().run()
+    assert not app.exception
+    with qa.isolated(ACTOR_COOKIE):
+        second = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
+        assert second is not None and len(second.draft.sources) == 2
+    assert any("Current fixture: original-source replay" in x.value for x in app.caption)
+    next(x for x in app.button if x.label == "Compare fixture facts").click().run()
+    assert not app.exception
+    assert any("source replay" in x.value for x in app.markdown)
+
+
+def test_ui_reset_does_not_erase_any_live_report(monkeypatch, tmp_path):
+    live = fixture.profile()
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    library.save_profile(live, expected_revision=0, actor="Synthetic Live", confirmed=True)
+    app = visit(monkeypatch, tmp_path)
+    next(x for x in app.button if x.label == "Load known-value report").click().run()
+    assert not app.exception
+    next(x for x in app.button if x.label == "Reset this test only").click().run()
+    assert not app.exception
+    with qa.isolated(ACTOR_COOKIE):
+        assert library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD) is None
+    assert library.load_profile(live.contract, live.key).revision == 1
