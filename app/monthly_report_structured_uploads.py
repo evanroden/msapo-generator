@@ -157,6 +157,36 @@ def mapped_rows(content, destination, table_columns=None):
     return tuple(dict.fromkeys(rows))
 
 
+_EVENT_START = re.compile(r"^\s*\d{4}-\d{2}-\d{2}\s*\|")
+
+
+def _activity_lines(text, suffix):
+    """Extract only activity-labelled passages from a multi-section TXT export.
+
+    Never classify Training, RFI, water or scorecard statements as completed
+    onsite work merely because the same text file includes them. Historical
+    vendor service labels still belong in Activity. Non-sectioned texts retain
+    their existing conservative extraction.
+    """
+    if suffix != ".txt" or not any(_EVENT_START.match(line) for line in text.splitlines()):
+        return tuple(text.splitlines())
+    current_is_activity = False
+    result = []
+    excluded = ("training summary", "water treatment", "rfi matrix",
+                "monthly scorecards", "equipment performance issues")
+    for line in text.splitlines():
+        match = _EVENT_START.match(line)
+        if match:
+            label = line.rsplit("|", 1)[-1].casefold().strip()
+            current_is_activity = not any(term in label for term in excluded)
+            # The event header is source context; never infer completion or
+            # the employer solely from its classification label.
+            continue
+        if current_is_activity:
+            result.append(line)
+    return tuple(result)
+
+
 def native_update(contents, destination, existing=None, *, table_columns=None):
     existing = existing or ResolvedBlock(destination, "This month")
     references = list(existing.references)
@@ -170,14 +200,25 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 # alongside the editor for explicit review instead.
                 continue
             for number, text in enumerate(content.source.page_texts, 1):
-                if not useful_activity(text):
+                reference = sources.source_reference(content.source, number)
+                # Source-referenced manual corrections and deliberate deletions
+                # must not be reinserted when the same file is read again.
+                if reference in existing.references:
+                    continue
+                tagged_txt = (content.source.suffix == ".txt"
+                              and any(_EVENT_START.match(line) for line in text.splitlines()))
+                # A mixed TXT can mention prices in an explicitly excluded
+                # Scorecards/Proposal section. Do not reject its separate
+                # price-free vendor work solely because of that other section.
+                # Other source kinds still use the full-page safety classifier.
+                if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                for line in text.splitlines():
+                for line in _activity_lines(text, content.source.suffix):
                     line = line.strip()
-                    if useful_activity(line):
+                    if useful_activity(line) and not contains_price(line):
                         paragraphs.append(line)
-                        references.append(sources.source_reference(content.source, number))
+                        references.append(reference)
         text = "\n\n".join(dict.fromkeys(filter(None, (*existing.text.split("\n\n"), *paragraphs))))
         return replace(existing, text=text, references=tuple(dict.fromkeys(references)), reviewed_fingerprint="")
     rows = list(existing.rows)
