@@ -14,9 +14,10 @@ from app import monthly_report_directory as directory
 from app import monthly_report_sources as sources
 from app import monthly_report_structured_uploads as structured
 from app.monthly_report_model import (
-    Facility, ReportDraft, ReportPeriod, ReportProfile, ResolvedBlock,
-    profile_sections,
+    BlockSpec, ColumnSpec, Facility, OrgChartNode, ReportDraft, ReportPeriod,
+    ReportProfile, ReportTable, ResolvedBlock, profile_sections,
 )
+from app.monthly_report_training import MATRIX_REF, EVENT_REF
 from app.monthly_report_work_order_csv import work_order_evidence
 from app.monthly_report_testing import scope
 
@@ -48,11 +49,72 @@ EXPECTED = {
 
 
 def profile() -> ReportProfile:
+    # A six-column selected design exercises Project Number, Status and
+    # engineering values without reproducing private company artwork.
+    proposals = BlockSpec("proposals", "table", columns=tuple(
+        ColumnSpec("qa-" + str(i), heading) for i, heading in enumerate((
+            "Project Number", "Facility", "Vendor", "Work Description",
+            "Status", "Technical Notes"))))
     return ReportProfile(
         CONTRACT, "qa-two-sites", "QA North and South - Synthetic",
         (Facility("qa-north", "Demo North", ("Demonstration North Facility",)),
          Facility("qa-south", "Demo South", ("Demonstration South Facility",))),
-        "multi_site",
+        "multi_site", block_overrides=(proposals,),
+    )
+
+
+def _training_tables():
+    return (
+        ReportTable(("Team member", "Site", "Lockout safety"), (
+            ("Synthetic Person North", "Demo North", "Pending"),
+            ("Synthetic Person South", "Demo South", "Not recorded"),
+        ), MATRIX_REF),
+        ReportTable(("Training", "Date", "Format", "Participants", "Hours"), (
+            ("Synthetic safety refresher", "2026-09-25", "In person", "4", "0.75"),
+        ), EVENT_REF),
+    )
+
+
+def _standing_blocks(chosen):
+    selected = directory.load_directory(CONTRACT)
+    contacts, missing = directory.contact_block(selected, chosen.facilities)
+    if missing or contacts is None:
+        raise ValueError("Synthetic QA contact fixture did not resolve its exact sites.")
+    return (
+        ResolvedBlock("org_chart", "This month", org_nodes=(
+            OrgChartNode("qa-lead", "Synthetic Site Lead", "Site Lead", team="Demo North"),
+            OrgChartNode("qa-operator", "Synthetic Technician", "Technician",
+                         reports_to="qa-lead", team="Demo South"),
+        )),
+        contacts,
+        ResolvedBlock("work_orders", "This month", extra_tables=(
+            ReportTable(("Work order", "Date", "Status"), (
+                ("WO-TEST-1001", "2026-09-03", "Completed"),
+                ("WO-TEST-1002", "2026-09-20", "Completed"),
+                ("WO-TEST-1003", "2026-09-24", "Open"),
+            ), "synthetic:workorders"),)),
+        ResolvedBlock("thermal_capacity", "This month", extra_tables=(
+            ReportTable(("Facility", "Service", "Required", "Available", "Units"), (
+                ("Demo North", "Chilled water", "NR", "200", "tons"),
+                ("Demo South", "Steam", "150", "NR", "klb/h"),
+            ), "synthetic:thermal"),)),
+        ResolvedBlock("service_calls", "This month", extra_tables=(
+            ReportTable(("WO #", "Date", "Area", "Task", "Asset"), (
+                ("WO-TEST-1005", "2026-09-18", "Demo South",
+                 "Synthetic ENFRA onsite inspection", "AHU-TEST-04"),
+            ), "synthetic:onsite"),)),
+        ResolvedBlock("subcontractor_matrix", "This month", extra_tables=(
+            ReportTable(("Facility", "Discipline", "Vendor", "Contact", "Phone", "MSA"), (
+                ("Demo North", "Mechanical", "Synthetic Mechanical Vendor",
+                 "Invented Vendor Contact", "555-0300", "Pending"),
+            ), "synthetic:subcontractors"),)),
+        ResolvedBlock("capital_renewal", "This month",
+                      rows=(("Demo South", "2", "Review synthetic aging pump"),)),
+        ResolvedBlock("proposals", "This month", rows=(
+            ("Q-TEST-731", "Demo North", "Synthetic Mechanical Vendor",
+             "Inspect supply valve", "Pending", "45 gpm"),
+        )),
+        ResolvedBlock("footer_text", "This month", text="SYNTHETIC QA ONLY"),
     )
 
 
@@ -104,8 +166,10 @@ def prepare(mode: str) -> ReportDraft:
     if mode == "prefill":
         blocks = (
             ResolvedBlock("activity_summary", "This month", text=EXPECTED["prefill_activity"]),
-            ResolvedBlock("training_summary", "This month", text=EXPECTED["training"]),
+            ResolvedBlock("training_summary", "This month", text=EXPECTED["training"],
+                          extra_tables=_training_tables()),
             ResolvedBlock("equipment_issues", "This month", text="Synthetic actuator feedback follow-up."),
+            *_standing_blocks(chosen),
         )
         evidence = ()
     else:
@@ -123,10 +187,12 @@ def prepare(mode: str) -> ReportDraft:
                           references=(finding.reference, *activity.references)),
             ResolvedBlock("training_summary", "This month",
                           text="Hospital staff completed a synthetic lockout refresher.",
-                          references=(sources.source_reference(txt.source, 1),)),
+                          references=(sources.source_reference(txt.source, 1),),
+                          extra_tables=_training_tables()),
             ResolvedBlock("equipment_issues", "This month",
                           text="Open actuator issue: parts pending.",
                           references=(sources.source_reference(txt.source, 1),)),
+            *_standing_blocks(chosen),
         )
         evidence = (csv.source, txt.source)
     draft = ReportDraft(chosen, PERIOD, ACTOR, profile_sections(chosen), blocks,
@@ -173,6 +239,28 @@ def compare(draft: ReportDraft) -> dict:
         "intentionally empty design slots": not any(
             key in actual for key in EXPECTED["intentionally_empty"]
         ),
+        "verified two-position organization chart": len(
+            actual["org_chart"].org_nodes) == 2,
+        "site-mapped standing contacts": (
+            len(actual["contact_matrix"].rows) == 2 and
+            {r[0] for r in actual["contact_matrix"].rows} ==
+            {"Demo North", "Demo South"}),
+        "thermal NR stays literal": (
+            len(actual["thermal_capacity"].extra_tables) == 1 and
+            sum(cell == "NR" for row in actual["thermal_capacity"].extra_tables[0].rows
+                for cell in row) == 2),
+        "proposal identifier and Status retained without prices": (
+            any(row[0] == "Q-TEST-731" and row[4] == "Pending"
+                for row in actual["proposals"].rows) and
+            not any("$" in cell for row in actual["proposals"].rows for cell in row)),
+        "vendor and onsite calls use different blocks": (
+            "Synthetic Mechanical Vendor" in activity if replay else True) and
+            any("ENFRA onsite inspection" in cell for table in
+                actual["service_calls"].extra_tables for row in table.rows for cell in row),
+        "monthly training events are explicit": (
+            len(training.extra_tables) == 2 and
+            training.extra_tables[1].rows[0][1] == "2026-09-25" and
+            training.extra_tables[0].rows[0][2] == "Pending"),
         "all report section definitions present": len(draft.sections) >= 11,
     }
     return {"mode": "source replay" if replay else "known-value prefill", "checks": checks,
