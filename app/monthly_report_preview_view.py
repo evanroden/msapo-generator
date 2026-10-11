@@ -23,7 +23,7 @@ export default function(component) {
     const status = panel.querySelector('.report-preview-status');
     const state = panel._previewState || (panel._previewState = {visible:false, sent:'', timer:null});
     const sizes = data.sizes && data.sizes.length ? data.sizes : [[612,792]];
-    const layout = JSON.stringify([data.generation, sizes]);
+    const layout = JSON.stringify([data.generation, sizes, data.ready, data.stale]);
     status.textContent = data.status || '';
     if (state.layout !== layout) {
         const position = scroll.scrollTop;
@@ -36,10 +36,10 @@ export default function(component) {
             page.style.aspectRatio = String(size[0]) + ' / ' + String(size[1]);
             const placeholder = document.createElement('div');
             placeholder.className = 'report-preview-placeholder';
-            placeholder.textContent = data.ready ? 'Page ' + (index + 1) + ' · loads as you scroll' : 'Preview updates when this section is in view.';
+            placeholder.textContent = data.ready ? 'Page ' + (index + 1) + ' · loads as you scroll' : (data.stale ? 'Previous preview, not current content' : 'Preview updates when this section is in view.');
             page.append(placeholder);
             const caption = document.createElement('figcaption');
-            caption.textContent = data.ready ? 'Page ' + (index + 1) + ' of ' + sizes.length : 'Draft layout';
+            caption.textContent = data.ready ? 'Page ' + (index + 1) + ' of ' + sizes.length : (data.stale ? 'Previous preview · page ' + (index + 1) + ' of ' + sizes.length : 'Draft layout');
             figure.append(page, caption);
             scroll.append(figure);
         });
@@ -120,10 +120,10 @@ def viewport(value, generation, pages=150):
     return {'visible': value['visible'], 'pages': tuple(dict.fromkeys(indexes)), 'dpi': value['dpi']}
 
 
-def render_view(*, key, generation, title, ticket=None, images=(), status='', on_change):
+def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change):
     view = st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
     return view(key=key, data={
-        'generation': generation, 'title': title, 'ready': ticket is not None,
+        'generation': generation, 'title': title, 'ready': ticket is not None and not stale, 'stale': bool(stale),
         'sizes': ticket.sizes if ticket else (), 'status': status,
         'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
     }, default={'viewport': None}, on_viewport_change=on_change, height=760)

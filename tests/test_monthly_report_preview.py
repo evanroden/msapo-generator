@@ -71,7 +71,7 @@ def test_preview_preserves_price_gates_bounds_and_cleans_up(monkeypatch, tmp_pat
     assert not outputs[-1].exists()
 
 
-def test_live_preview_failure_keeps_current_edit_and_hides_stale_pages(monkeypatch, tmp_path):
+def test_live_preview_failure_keeps_current_edit_and_labels_previous_pages_outdated(monkeypatch, tmp_path):
     from app import monthly_report_section_preview_ui
     real_section_preview = monthly_report_section_preview_ui.render_section_preview
     fake_converter(monkeypatch, tmp_path)
@@ -96,12 +96,24 @@ def test_live_preview_failure_keeps_current_edit_and_hides_stale_pages(monkeypat
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic updated maintenance.").run()
     assert not app.exception
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic updated maintenance."
-    assert not payload(app)['pages']
+    assert payload(app)['pages'], "Last-good same-report pages must remain inspectable"
+    assert payload(app)['ready'] is False
+    assert payload(app)['stale'] is True
+    assert "Previous preview" in payload(app)['status']
+    assert "NOT shown" in payload(app)['status']
     assert any("Your edits are still here" in w.value for w in app.warning)
+    # A second rerun must not relabel an outdated page as current.
+    app.run()
+    assert payload(app)['pages'] and not payload(app)['ready']
+    assert payload(app)['stale']
+    assert not any(w.label == "Download draft preview PDF" for w in app.get("download_button"))
     fake_converter(monkeypatch, tmp_path)
     next(button for button in app.button if button.label == "Retry preview" and button.key.endswith("_activity")).click().run()
     assert not app.exception
     assert payload(app)['pages']
+    assert payload(app)['ready'] is True
+    assert payload(app)['stale'] is False
+    assert "Current preview ready" in payload(app)['status']
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic updated maintenance."
 
 
