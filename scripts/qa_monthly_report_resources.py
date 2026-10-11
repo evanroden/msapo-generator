@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from io import BytesIO
+from zipfile import ZipFile
 from pathlib import Path
 import gc
 import hashlib
@@ -213,10 +214,25 @@ def main():
                        for table in output_tables for row in table.rows for cell in row.cells)
             assert all("$77,777.77" not in cell.text
                        for table in output_tables for row in table.rows for cell in row.cells)
+            with ZipFile(BytesIO(package.docx)) as archive:
+                all_native_xml = "\n".join(
+                    archive.read(name).decode("utf8", "ignore")
+                    for name in archive.namelist()
+                    if name.endswith((".xml", ".rels", ".vml"))
+                ).casefold()
+                assert "synthetic previous report row" not in all_native_xml
+                assert "$77,777.77" not in all_native_xml
             result['native_word_tables'] = len(output_tables)
             with pymupdf.open(stream=package.pdf, filetype='pdf') as pdf:
-                assert 'Synthetic current inspection completed.' in '\n'.join(page.get_text() for page in pdf)
+                pdf_text = "\n".join(page.get_text() for page in pdf)
+                assert 'Synthetic current inspection completed.' in pdf_text
                 assert sum(len(page.get_images()) for page in pdf) >= 8
+                for number in range(731, 741):
+                    assert f"Q-TEST-{number}" in pdf_text, (
+                        f"Native proposal Q-TEST-{number} was lost in PDF conversion")
+                assert "SYNTHETIC PREVIOUS REPORT ROW" not in pdf_text
+                assert "$77,777.77" not in pdf_text
+                result['final_native_pdf_rows'] = 10
                 result['final_pages'] = len(pdf)
             result['final_docx_bytes'] = len(package.docx)
             result['final_pdf_bytes'] = len(package.pdf)
