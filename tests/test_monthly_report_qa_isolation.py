@@ -197,3 +197,41 @@ def test_training_and_capacity_nr_are_per_test_storage_and_old_snapshot_stays_pi
         assert training.load_training(profile.contract)["revision"] == 0
     assert capacity.load_capacity(profile.contract) is None
     assert training.load_training(profile.contract)["revision"] == 0
+
+
+
+def test_reset_generation_rejects_late_worker_and_old_tab(monkeypatch, tmp_path):
+    """A test reset must not allow old fragment/receipt jobs to resurrect files."""
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with qa.isolated(COOKIE_A):
+        before = memory._data_dir()
+        old_generation = qa.generation()
+        snapshot = copy_context()
+        assert old_generation
+        qa.reset(tmp_path)
+        with pytest.raises(OSError, match="reset|changed"):
+            snapshot.run(memory._data_dir)
+        with pytest.raises(OSError, match="reset|changed"):
+            memory._data_dir()
+    with qa.isolated(COOKIE_A):
+        restarted = memory._data_dir()
+        assert restarted == before
+        assert qa.generation() and qa.generation() != old_generation
+        assert not library.list_profiles(fixtures.CONTRACT)
+        with pytest.raises(OSError, match="another generation|older"):
+            snapshot.run(qa.reset, tmp_path)
+
+
+def test_test_generation_rejects_changed_marker_without_live_fallback(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with qa.isolated(COOKIE_A):
+        isolated_root = memory._data_dir()
+        marker = isolated_root / ".enfra-qa-namespace"
+        original = marker.read_text()
+        marker.write_text(original.split("|")[0] + "|" + "f" * 32)
+        try:
+            with pytest.raises(OSError, match="stale|changed"):
+                memory._data_dir()
+        finally:
+            marker.write_text(original)
+        assert library._root().is_relative_to(isolated_root)
