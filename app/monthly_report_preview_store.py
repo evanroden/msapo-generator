@@ -192,9 +192,19 @@ _QA_STORE = PreviewStore()
 class _ScopedPreviewStore:
     @staticmethod
     def _scoped_owner(owner):
-        from app.monthly_report_testing import scope
+        from app.monthly_report_testing import scope, generation
         selected = scope()
-        return "qa:" + selected + ":" + owner if selected is not None else owner
+        if selected is None:
+            return owner
+        # A PDF worker may finish after another tab has reset QA storage.
+        # Recheck the namespace generation before every cache operation; a
+        # pre-reset worker cannot repopulate an erased test preview cache.
+        from app.memory import _data_dir
+        _data_dir()
+        lease = generation()
+        if not lease:
+            raise OSError("Isolated preview generation is unavailable; no stale page was cached.")
+        return "qa:" + selected + ":" + lease + ":" + owner
 
     def _active(self):
         from app.monthly_report_testing import scope
