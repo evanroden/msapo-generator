@@ -242,7 +242,20 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
     _advance_preview_queue(state)
     pending = _pending(state, section_key)
     state['timers'][section_key] = pending
-    st.fragment(run_every='2s' if pending else None)(_render_ordered_preview)(section_key, prefix, title)
+    # Periodic Streamlit fragment reruns may execute independently of the
+    # enclosing full-script context. Carry the server-selected namespace into
+    # that callback as well as into its asynchronous worker.
+    from app.monthly_report_testing import scope
+    if scope() is not None:
+        from contextvars import copy_context
+        captured = copy_context()
+
+        def scoped_fragment(section_key, prefix, title):
+            return captured.run(_render_ordered_preview, section_key, prefix, title)
+
+        st.fragment(run_every='2s' if pending else None)(scoped_fragment)(section_key, prefix, title)
+    else:
+        st.fragment(run_every='2s' if pending else None)(_render_ordered_preview)(section_key, prefix, title)
     return None
 
 
