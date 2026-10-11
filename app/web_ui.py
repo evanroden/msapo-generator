@@ -1692,6 +1692,13 @@ def main() -> None:
         if requested:
             st.session_state["workflow_mode"] = requested
 
+    # An intentionally hidden synthetic-QA link opens the monthly workflow
+    # directly, even when another workflow was last active in this browser.
+    # It is a navigation hint only; the server-side QA namespace is selected
+    # independently inside render_monthly_report_workflow.
+    if st.query_params.get("monthly_qa") == "isolated":
+        st.session_state["workflow_mode"] = MONTHLY_REPORT_WORKFLOW
+
     # required=True is load-bearing, not cosmetic. A single-select
     # segmented_control defaults to required=False, which lets the operator
     # DESELECT the active segment — easy to do by accident on a phone, where the
@@ -1722,6 +1729,9 @@ def main() -> None:
             st.query_params["workflow"] = route
     except (AttributeError, RuntimeError, ValueError):
         pass
+    if workflow_mode != MONTHLY_REPORT_WORKFLOW and st.query_params.get("monthly_qa") == "isolated":
+        # Switching away from synthetic testing also exits the hidden route.
+        del st.query_params["monthly_qa"]
     if workflow_mode == MONTHLY_REPORT_WORKFLOW:
         render_monthly_report_workflow(browser_token, browser_timezone)
         _render_footer(workflow_mode)
