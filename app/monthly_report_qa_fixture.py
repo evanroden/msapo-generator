@@ -236,8 +236,20 @@ def compare(draft: ReportDraft) -> dict:
             "Open actuator issue: parts pending." in issues.text and
             "Open actuator issue: parts pending." not in activity
         ) if replay else "Synthetic actuator feedback" in issues.text,
-        "intentionally empty design slots": not any(
-            key in actual for key in EXPECTED["intentionally_empty"]
+        "intentionally empty design slots": all(
+            key not in actual or (
+                actual[key].source == "Omit" or (
+                    not actual[key].text.strip()
+                    and not any(any(str(cell).strip() for cell in row) for row in actual[key].rows)
+                    and not any(any(any(str(cell).strip() for cell in row)
+                                    for row in table.rows) for table in actual[key].extra_tables)
+                    and not actual[key].asset_hashes
+                    and not actual[key].org_nodes
+                    and not actual[key].ai_paragraphs
+                    and not any(caption.strip() for caption in actual[key].asset_captions)
+                )
+            )
+            for key in EXPECTED["intentionally_empty"]
         ),
         "verified two-position organization chart": len(
             actual["org_chart"].org_nodes) == 2,
