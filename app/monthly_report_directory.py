@@ -885,7 +885,9 @@ def apply_defaults(draft):
     if not draft.prepared_by.strip():
         return draft
     current = next((b for b in draft.blocks if b.key == "contact_matrix"), None)
-    if current and (current.source in ("Omit", "Replace once")
+    if current and ((current.source in ("Omit", "Replace once") and bool(
+                        current.references or current.reviewed_fingerprint
+                        or current.client_reviewed_fingerprint))
                     or (current.source == "This month" and any(
                         ref.startswith("directory:") for ref in current.references))
                     or current.text.strip() or current.rows
