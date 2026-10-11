@@ -229,6 +229,7 @@ def test_split_numbered_rfi_native_tables_share_sanitized_headers_not_old_data(t
     assert shapes[0].reference != shapes[1].reference
     assert shapes[0].columns == ("#", "Requested item", "Status")
     assert shapes[1].columns == shapes[0].columns
+    assert not shapes[0].continuation and shapes[1].continuation
     assert not any("OTHER PRIOR SITE" in c or "$" in c
                    for shape in shapes for c in shape.columns)
 
@@ -248,9 +249,10 @@ def test_split_numbered_rfi_native_tables_share_sanitized_headers_not_old_data(t
     assert len(output.tables) == 2
     assert [cell.text for cell in output.tables[0].rows[0].cells] == [
         "#", "Requested item", "Status"]
+    # Unlike an independent grid, the original continuation frame never had
+    # a repeated header: its first displayed row is the first current datum.
+    assert len(output.tables[1].rows) == 1
     assert [cell.text for cell in output.tables[1].rows[0].cells] == [
-        "#", "Requested item", "Status"]
-    assert [cell.text for cell in output.tables[1].rows[1].cells] == [
         "2", "Current closeout", "Pending"]
     with ZipFile(BytesIO(rendered)) as archive:
         xml = "\n".join(archive.read(name).decode("utf8", "ignore")
@@ -281,4 +283,5 @@ def test_numbered_new_table_without_consecutive_prior_row_cannot_borrow_header(t
     assert len(shapes) == 2
     assert shapes[0].columns == ("#", "Requested item", "Status")
     assert shapes[1].columns != shapes[0].columns
+    assert not shapes[1].continuation
     assert "Other site's data" not in shapes[1].columns
