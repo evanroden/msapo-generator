@@ -68,6 +68,23 @@ jobs:
           path: test-artifacts/monthly-synthetic/
           if-no-files-found: error
           retention-days: 7
+      # Temporary public-code snapshot for private offline reference comparison.
+      # The bundle contains only the already-public tracked source and public
+      # dependency wheels, never customer reports, runtime disks or secrets.
+      - name: Assemble reproducible public-code snapshot for offline acceptance
+        run: |
+          mkdir -p test-artifacts/offline-source/wheels
+          git archive --format=zip --output=test-artifacts/offline-source/public-msapo-source.zip HEAD
+          python -m pip download --quiet --only-binary=:all: \
+            --dest test-artifacts/offline-source/wheels \
+            'streamlit==1.61.1' 'anthropic==0.122.0' 'pillow_heif==1.5.0'
+      - name: Upload public-code offline acceptance bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-code-offline-acceptance
+          path: test-artifacts/offline-source/
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@v4
