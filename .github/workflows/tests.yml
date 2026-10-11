@@ -78,6 +78,13 @@ jobs:
           python -m pip download --quiet --only-binary=:all: \
             --dest test-artifacts/offline-source/wheels \
             'streamlit==1.61.1' 'anthropic==0.122.0' 'pillow_heif==1.5.0'
+          # Matching wheels for the private offline comparison environment's
+          # Python 3.13 ABI; only public package bytes leave the CI runner.
+          python -m pip download --quiet --no-deps --only-binary=:all: \
+            --python-version 3.13 --implementation cp --abi cp313 \
+            --platform manylinux_2_28_x86_64 --platform manylinux2014_x86_64 \
+            --dest test-artifacts/offline-source/wheels \
+            'jiter==0.17.0' 'pillow_heif==1.5.0' 'pyarrow==24.0.0'
       - name: Upload public-code offline acceptance bundle
         uses: actions/upload-artifact@v4
         with:
