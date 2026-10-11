@@ -62,6 +62,11 @@ def test_test_reset_is_scoped_and_recovers_cleanly(monkeypatch, tmp_path):
         fixtures.prepare("prefill")
         assert library.load_snapshot(same.contract, same.key, fixtures.PERIOD)
         qa.reset(tmp_path)
+        # An old context is invalidated rather than immediately reusing the
+        # removed directory. Restart as a new isolated session.
+        with pytest.raises(OSError, match="reset"):
+            library.load_snapshot(same.contract, same.key, fixtures.PERIOD)
+    with qa.isolated(COOKIE_A):
         assert library.load_snapshot(same.contract, same.key, fixtures.PERIOD) is None
         assert directory.load_directory(same.contract) is None
         assert fixtures.prepare("replay").sources
