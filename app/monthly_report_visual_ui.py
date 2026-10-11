@@ -347,6 +347,16 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
                     reviewed_fingerprint="",
                     client_reviewed_fingerprint="",
                 )
+                # Add contact is an explicit directory-intent action only
+                # when the current table is linked to a saved site directory.
+                # Ordinary manually appended report-only rows have no marker.
+                if (add and block.key == "contact_matrix" and has_primary
+                        and (block.source == "Library" or
+                             f"directory-add-intent:{draft.profile.key}" in block.references)
+                        and any(ref.startswith("directory:") for ref in block.references)
+                        and any(ref.startswith("directory-site:") for ref in block.references)):
+                    marker = f"directory-add-intent:{draft.profile.key}"
+                    new = replace(new, references=tuple(dict.fromkeys((*block.references, marker))))
                 _install(draft, prefix, new, clear=p + "_table_")
     if show_preview:
         with right:
@@ -358,7 +368,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
                     width="stretch",
                 )
             st.caption(
-                "These same values appear in the report’s contact table. Use Save progress to keep them for the next report."
+                "These values appear in this report. Verified shared-contact corrections and fully identified new site contacts are kept automatically; unmatched report-only entries remain here for review."
             )
     changed = replace(
         block,
