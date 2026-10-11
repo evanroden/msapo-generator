@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from io import BytesIO
+from zipfile import ZipFile
 from pathlib import Path
 import gc
 import hashlib
@@ -80,6 +81,21 @@ def _fixture(directory):
         if index < 7:
             document.add_page_break()
         photo.close(); texture.close()
+    # Representative native-master load: ten independent physical data grids
+    # coexist with inherited high-resolution source photographs. No actual
+    # client artwork, source row, facility or price is used as current data.
+    document.add_page_break()
+    document.add_heading("PENDING & DECLINED PROPOSALS", 1)
+    for index in range(10):
+        labels = (("Project Number", "Status", "Technical Notes", "Price")
+                  if index % 2 == 0 else
+                  ("Facility", "Vendor", "Scope of Work", "Status", "Total Cost"))
+        table = document.add_table(rows=2, cols=len(labels))
+        for column, label in enumerate(labels):
+            table.cell(0, column).text = label
+            table.cell(1, column).text = (
+                "$77,777.77" if ("Price" in label or "Cost" in label)
+                else "SYNTHETIC PREVIOUS REPORT ROW")
     document.save(source)
     del document, raw
     gc.collect()
@@ -87,6 +103,23 @@ def _fixture(directory):
                             (Facility('synthetic', 'Synthetic Resource Site'),))
     profile = designs.install(source, profile, actor='Synthetic Editor', expected_revision=0)
     inspection = inspect_docx(source)
+    from app.monthly_report_master_tables import from_inspection
+    from app.monthly_report_model import ReportTable
+    layouts = [table for table in from_inspection(inspection) if table.slot == "proposals"]
+    assert len(layouts) == 10, "Ten distinct native master table positions must be recognized"
+    current_tables = []
+    for index, table in enumerate(layouts):
+        values = {
+            "Project Number": f"Q-TEST-{731 + index}",
+            "Status": "Pending",
+            "Technical Notes": "45 gpm",
+            "Facility": "Synthetic Resource Site",
+            "Vendor": f"QA-V{index + 1:02d}",
+            "Scope of Work": "Inspect invented equipment",
+        }
+        row = tuple(values.get(label, f"Synthetic detail {index + 1}")
+                    for label in table.columns)
+        current_tables.append(ReportTable(table.columns, (row,), table.reference))
     assets, refs, images = {}, [], []
     text_refs = []
     for item in inspection.items:
@@ -101,9 +134,12 @@ def _fixture(directory):
         refs.append(f'docx:{inspection.sha256}:{item.id}')
     assert len(images) == 8
     blocks = (ResolvedBlock('activity_summary', 'This month', text='Synthetic current inspection completed.', references=tuple(text_refs)),
-              approve_all_assets(ResolvedBlock('improvements', 'This month', asset_hashes=tuple(images), references=tuple(refs))))
+              approve_all_assets(ResolvedBlock('improvements', 'This month', asset_hashes=tuple(images), references=tuple(refs))),
+              ResolvedBlock('proposals', 'This month', extra_tables=tuple(current_tables)))
     sections = (SectionSpec('activity', '1', 'Monthly Activity Summary',
-                            (BlockSpec('activity_summary', 'rich_text'), BlockSpec('improvements', 'image_grid'))),)
+                            (BlockSpec('activity_summary', 'rich_text'), BlockSpec('improvements', 'image_grid'))),
+                SectionSpec('proposals', '10', 'Pending and Declined Proposals',
+                            (BlockSpec('proposals', 'table'),)))
     draft = ReportDraft(profile, ReportPeriod(2026, 9), 'Synthetic Editor', sections, blocks)
     return draft, assets, source.stat().st_size
 
@@ -168,12 +204,55 @@ def main():
             package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=assets.__getitem__)
             if not package.pdf:
                 raise RuntimeError(package.pdf_error)
+            # Prove the *unchanged native DOCX* still contains all ten
+            # separate proposal tables while the PDF-only compactor operates.
+            from docx import Document
+            output_tables = Document(BytesIO(package.docx)).tables
+            assert len(output_tables) == 10, f"Expected ten physical tables, got {len(output_tables)}"
+            assert [len(table.columns) for table in output_tables] == [3 if i % 2 == 0 else 4 for i in range(10)]
+            assert all("SYNTHETIC PREVIOUS REPORT ROW" not in cell.text
+                       for table in output_tables for row in table.rows for cell in row.cells)
+            assert all("$77,777.77" not in cell.text
+                       for table in output_tables for row in table.rows for cell in row.cells)
+            with ZipFile(BytesIO(package.docx)) as archive:
+                all_native_xml = "\n".join(
+                    archive.read(name).decode("utf8", "ignore")
+                    for name in archive.namelist()
+                    if name.endswith((".xml", ".rels", ".vml"))
+                ).casefold()
+                assert "synthetic previous report row" not in all_native_xml
+                assert "$77,777.77" not in all_native_xml
+            result['native_word_tables'] = len(output_tables)
             with pymupdf.open(stream=package.pdf, filetype='pdf') as pdf:
-                assert 'Synthetic current inspection completed.' in '\n'.join(page.get_text() for page in pdf)
+                pdf_text = "\n".join(page.get_text() for page in pdf)
+                assert 'Synthetic current inspection completed.' in pdf_text
                 assert sum(len(page.get_images()) for page in pdf) >= 8
+                for index in range(10):
+                    marker = (f"Q-TEST-{731 + index}" if index % 2 == 0
+                              else f"QA-V{index + 1:02d}")
+                    assert marker in pdf_text, (
+                        f"Native table {index + 1} marker {marker} was lost in PDF conversion")
+                assert "SYNTHETIC PREVIOUS REPORT ROW" not in pdf_text
+                assert "$77,777.77" not in pdf_text
+                result['final_native_pdf_rows'] = 10
                 result['final_pages'] = len(pdf)
             result['final_docx_bytes'] = len(package.docx)
             result['final_pdf_bytes'] = len(package.pdf)
+            # Only the explicitly invented, source-row-sanitized fixture is
+            # retained as CI evidence. Copy the output from the stopped Docker
+            # container after memory-capped execution; never publish client files.
+            evidence = Path('/tmp/monthly-synthetic-native-evidence')
+            evidence.mkdir(parents=True, exist_ok=True)
+            (evidence / 'SYNTHETIC-native-master.docx').write_bytes(package.docx)
+            (evidence / 'SYNTHETIC-native-master.pdf').write_bytes(package.pdf)
+            (evidence / 'manifest.json').write_text(json.dumps({
+                'synthetic_only': True, 'distinct_native_word_tables': 10,
+                'distinct_native_pdf_markers': result['final_native_pdf_rows'],
+                'pdf_pages': result['final_pages'],
+                'word_sha256': hashlib.sha256(package.docx).hexdigest(),
+                'pdf_sha256': hashlib.sha256(package.pdf).hexdigest(),
+                'source_report_bytes': size,
+            }, indent=2) + '\n')
             result['stages'].append({'name': 'foreground-export', 'seconds': round(monotonic()-tick, 3)})
             result['cache'] = store.stats()
             assert result['cache']['pdf_bytes'] <= store.disk_limit

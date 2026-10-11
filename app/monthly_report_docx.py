@@ -475,7 +475,21 @@ def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
         with tempfile.TemporaryDirectory(prefix="monthly-report-") as directory:
             input_path = Path(directory) / (stem + ".docx")
             from app.monthly_report_designs import render_profile_for
-            input_path.write_bytes(rendering_docx(docx, profile=render_profile_for(draft.profile)))
+            # Keep the downloadable native Word file untouched. For the
+            # disposable PDF-conversion copy only, bound verified photographic
+            # JPEGs inherited from the pinned design. New uploaded photos,
+            # diagrams, charts and non-JPEG art are not altered.
+            from app.monthly_report_designs import source_for
+            from app.monthly_report_pdf_image_budget import (
+                compact_native_photos_for_pdf, release_transient_word_memory)
+            converted_copy = rendering_docx(docx, profile=render_profile_for(draft.profile))
+            pinned_source = source_for(draft.profile)
+            if pinned_source is not None:
+                converted_copy = compact_native_photos_for_pdf(
+                    converted_copy, pinned_source=pinned_source)
+            input_path.write_bytes(converted_copy)
+            del converted_copy
+            release_transient_word_memory()
             actual_pdf = monthly_render_jobs.convert_to_pdf(input_path, wait_seconds=130)
             pdf = actual_pdf.read_bytes()
             if not pdf.startswith(b"%PDF-"):
