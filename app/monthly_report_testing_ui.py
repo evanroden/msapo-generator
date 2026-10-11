@@ -105,52 +105,57 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         site_prefix = "report_sites_" + _key(fixture.CONTRACT)
         for site in fixture.profile().facilities:
             st.session_state.setdefault(site_prefix + "_" + site.key, True)
-        working = _working_report(saved)
         st.caption("Current fixture: " + ("original-source replay" if saved.draft.sources else "known-value prefill") +
                    " · September 2026 · two invented sites · synthetic only")
         x, y = st.columns(2)
-        if x.button("Compare fixture facts", key="monthly_qa_compare"):
-            result = fixture.compare(working)
-            checks = result["checks"]
-            st.session_state["monthly_qa_comparison"] = {
-                "mode": result["mode"], "checks": checks,
-                "fingerprint": working.fingerprint,
-                "matched": sum(bool(v) for v in checks.values()),
-            }
-        if y.button("Generate QA Word and PDF", key="monthly_qa_generate"):
-            from app.monthly_report_docx import generate_report
-            try:
-                package = generate_report(working,
-                                          acknowledged_fingerprint=working.fingerprint)
-            except (ValueError, OSError) as exc:
-                st.error("QA export was blocked: " + str(exc))
-            else:
-                st.session_state["monthly_qa_package"] = (working.fingerprint, package)
-        if state := st.session_state.get("monthly_qa_comparison"):
-            if state.get("fingerprint") != working.fingerprint:
-                st.info("Previous comparison is outdated. Run Compare fixture facts again after editing.")
-            else:
-                st.write(f"{state['mode']}: {state['matched']}/{len(state['checks'])} independent content/provenance checks.")
-                for name, passed in state["checks"].items():
-                    st.write(("PASS — " if passed else "CHECK — ") + name)
-        retained = st.session_state.get("monthly_qa_package")
-        if retained and retained[0] != working.fingerprint:
-            st.info("The previous QA export is outdated. Generate again to include your latest edits.")
-        if retained and retained[0] == working.fingerprint:
-            package = retained[1]
-            st.download_button("Download isolated QA DOCX", package.docx,
-                               file_name="SYNTHETIC-QA-only.docx", key="monthly_qa_docx",
-                               on_click="ignore")
-            if package.pdf:
-                st.download_button("Download isolated QA PDF", package.pdf,
-                                   file_name="SYNTHETIC-QA-only.pdf", key="monthly_qa_pdf",
-                                   on_click="ignore")
-            if package.pdf_error:
-                st.warning(package.pdf_error)
+        compare_pressed = x.button("Compare fixture facts", key="monthly_qa_compare")
+        generate_pressed = y.button("Generate QA Word and PDF", key="monthly_qa_generate")
+        # Allocate this near the toolbar; resolve content after the editor finalizes.
+        result_surface = st.container()
         st.divider()
         st.caption("Edit the loaded synthetic report below; its journals and history remain in this test namespace.")
         from app.monthly_report_guided import render_guided_workflow
         render_guided_workflow(browser_token, browser_timezone, field, move)
+        working = _working_report(saved)
+        with result_surface:
+            if compare_pressed:
+                result = fixture.compare(working)
+                checks = result["checks"]
+                st.session_state["monthly_qa_comparison"] = {
+                    "mode": result["mode"], "checks": checks,
+                    "fingerprint": working.fingerprint,
+                    "matched": sum(bool(v) for v in checks.values()),
+                }
+            if generate_pressed:
+                from app.monthly_report_docx import generate_report
+                try:
+                    package = generate_report(working,
+                                              acknowledged_fingerprint=working.fingerprint)
+                except (ValueError, OSError) as exc:
+                    st.error("QA export was blocked: " + str(exc))
+                else:
+                    st.session_state["monthly_qa_package"] = (working.fingerprint, package)
+            if state := st.session_state.get("monthly_qa_comparison"):
+                if state.get("fingerprint") != working.fingerprint:
+                    st.info("Previous comparison is outdated. Run Compare fixture facts again after editing.")
+                else:
+                    st.write(f"{state['mode']}: {state['matched']}/{len(state['checks'])} independent content/provenance checks.")
+                    for name, passed in state["checks"].items():
+                        st.write(("PASS — " if passed else "CHECK — ") + name)
+            retained = st.session_state.get("monthly_qa_package")
+            if retained and retained[0] != working.fingerprint:
+                st.info("The previous QA export is outdated. Generate again to include your latest edits.")
+            if retained and retained[0] == working.fingerprint:
+                package = retained[1]
+                st.download_button("Download isolated QA DOCX", package.docx,
+                                   file_name="SYNTHETIC-QA-only.docx", key="monthly_qa_docx",
+                                   on_click="ignore")
+                if package.pdf:
+                    st.download_button("Download isolated QA PDF", package.pdf,
+                                       file_name="SYNTHETIC-QA-only.pdf", key="monthly_qa_pdf",
+                                       on_click="ignore")
+                if package.pdf_error:
+                    st.warning(package.pdf_error)
         # The real browser must not reload a just-edited report until its
         # specific Activity contents have reached the durable recovery journal.
         # Expose only a one-way digest of INVENTED test text inside this
