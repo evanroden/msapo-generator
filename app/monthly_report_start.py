@@ -124,7 +124,14 @@ def design_seed(profile, period, actor, source=None):
     from app.monthly_report_designs import pin
     profile = pin(profile, latest_master=True)
     draft = ReportDraft(profile, period, actor, profile_sections(profile), tuple(blocks))
-    return apply_defaults(draft, assets), assets
+    draft = apply_defaults(draft, assets)
+    # A fresh master is a physical design, not an authorization to reuse any
+    # old client's facts. Install independently editable, empty native tables
+    # only on the initial design seed; existing monthly work stays untouched.
+    if source is None:
+        from app.monthly_report_master_tables import initialize_master_tables
+        draft = initialize_master_tables(draft)
+    return draft, assets
 
 
 def save_design_start(draft, assets, *, actor, confirmed):
