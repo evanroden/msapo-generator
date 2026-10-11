@@ -256,3 +256,54 @@ def test_old_task_cannot_write_cached_path_after_test_reset(monkeypatch, tmp_pat
             library._atomic_write(tmp_path / "monthly_reports" / "live.json",
                                   b'{"schema":1,"fake":"outside"}')
         assert not (tmp_path / "monthly_reports" / "live.json").exists()
+
+
+
+def test_active_journals_master_design_and_branding_are_separate(monkeypatch, tmp_path):
+    """Same named report and cookie must not share design, journal or approved logo."""
+    from io import BytesIO
+    from PIL import Image
+    from app import monthly_report_active_work as active
+    from app import monthly_report_designs as designs
+    from app import monthly_report_branding as branding
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    chosen = fixtures.profile()
+    live_draft = fixtures.prepare if False else None  # No QA fixture in live scope.
+    from app.monthly_report_model import ReportDraft, profile_sections
+    live_draft = ReportDraft(chosen, fixtures.PERIOD, fixtures.ACTOR,
+                             profile_sections(chosen),
+                             (ResolvedBlock("activity_summary", "This month",
+                                            text="Synthetic LIVE boundary marker."),),
+                             synthetic=True)
+    library.save_profile(chosen, expected_revision=0, actor=fixtures.ACTOR, confirmed=True)
+    live_journal = active.save(COOKIE_A, live_draft, expected_revision=0,
+                               base_snapshot_revision=0)
+    assert live_journal.revision == 1
+    manifest = library._root() / "designs" / "master" / "manifest.json"
+    library._atomic_write(manifest, library._json({
+        "schema": 1, "revision": 1, "default": "a" * 64, "history": []}))
+    assert designs.master_state()["default"] == "a" * 64
+    image = BytesIO()
+    Image.new("RGB", (80, 40), "white").save(image, "PNG")
+    raw = image.getvalue()
+    ref = library.asset_reference(raw, "png")
+    logo = branding.BrandLogo("qa-logo", "Synthetic ENFRA", (fixtures.CONTRACT,),
+                             ref, "https://example.invalid/logo", "https://example.invalid/asset",
+                             "2026-10-01")
+    branding.save_branding((logo,), {ref: raw}, expected_revision=0,
+                           actor=fixtures.ACTOR, confirmed=True)
+    assert branding.read_logo(logo) == raw
+    with qa.isolated(COOKIE_A):
+        assert active.load(COOKIE_A, chosen.contract, chosen.key, fixtures.PERIOD) is None
+        assert designs.master_state()["revision"] == 0
+        assert branding.load_branding() is None
+        independent = fixtures.prepare("prefill")
+        result = active.save(COOKIE_A, independent, expected_revision=0,
+                             base_snapshot_revision=1)
+        assert result.revision == 1
+        assert "Synthetic LIVE boundary marker" not in next(b.text for b in result.draft.blocks if b.key == "activity_summary")
+    assert designs.master_state()["default"] == "a" * 64
+    assert branding.load_branding().revision == 1
+    assert branding.read_logo(logo) == raw
+    recovered = active.load(COOKIE_A, chosen.contract, chosen.key, fixtures.PERIOD)
+    assert recovered.draft.fingerprint == live_draft.fingerprint
