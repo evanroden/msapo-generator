@@ -1696,7 +1696,8 @@ def main() -> None:
     # directly, even when another workflow was last active in this browser.
     # It is a navigation hint only; the server-side QA namespace is selected
     # independently inside render_monthly_report_workflow.
-    if st.query_params.get("monthly_qa") == "isolated":
+    if (st.query_params.get("monthly_qa") == "isolated"
+            and st.query_params.get("workflow") != _workflow_query_name(MONTHLY_REPORT_WORKFLOW)):
         st.session_state["workflow_mode"] = MONTHLY_REPORT_WORKFLOW
 
     # required=True is load-bearing, not cosmetic. A single-select
