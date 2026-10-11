@@ -159,3 +159,41 @@ def test_prefill_and_replay_are_not_interchangeable(monkeypatch, tmp_path):
         assert all(results["checks"].values()), results
         again = fixtures.prepare("replay")
         assert again.fingerprint == second.fingerprint
+
+
+def test_training_and_capacity_nr_are_per_test_storage_and_old_snapshot_stays_pinned(monkeypatch, tmp_path):
+    from app import monthly_report_capacity as capacity
+    from app import monthly_report_training as training
+    from app.monthly_report_model import ReportDraft, ReportTable, ReportPeriod
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = fixtures.profile()
+    with qa.isolated(COOKIE_A):
+        old = fixtures.prepare("prefill")
+        unchanged = library.load_snapshot(profile.contract, profile.key, fixtures.PERIOD)
+        contents, _ = sources.ingest(
+            profile, "synthetic-capacity.txt",
+            b"Site,Service,Capacity\\nDemo North,Chilled water,NR\\n",
+        )
+        table = capacity.CapacityTable(
+            "synthetic-nr", "Chilled water", ("Site", "Service", "Capacity"),
+            (("Demo North", "Chilled water", "NR"),), ("qa-north",),
+            contents.source.sha256, contents.source.filename, ".txt", 1, site_column=0,
+        )
+        revision = capacity.save_capacity(profile, (table,), expected_revision=0,
+                                          actor=fixtures.ACTOR,
+                                          reviewed_fingerprint=capacity.review_fingerprint((table,)))
+        assert revision.revision == 1
+        matrix = ReportTable(("Team member", "Site", "Lockout"),
+                             (("Synthetic Person North", "Demo North", "Pending"),))
+        training.save_training(profile, matrix, expected_revision=0, actor=fixtures.ACTOR)
+        fresh = ReportDraft(profile, ReportPeriod(2026, 10), fixtures.ACTOR,
+                            old.sections, old.blocks, synthetic=True)
+        filled = capacity.resolve_capacity(fresh)
+        assert any("NR" in row for block in filled.blocks
+                   for tab in block.extra_tables for row in tab.rows)
+        assert library.load_snapshot(profile.contract, profile.key, fixtures.PERIOD) == unchanged
+    with qa.isolated(COOKIE_B):
+        assert capacity.load_capacity(profile.contract) is None
+        assert training.load_training(profile.contract)["revision"] == 0
+    assert capacity.load_capacity(profile.contract) is None
+    assert training.load_training(profile.contract)["revision"] == 0
