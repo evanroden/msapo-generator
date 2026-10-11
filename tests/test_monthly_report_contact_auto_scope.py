@@ -111,7 +111,7 @@ def test_remove_all_report_contacts_keeps_intent_and_does_not_delete_directory(s
 def test_explicit_report_contact_omit_cannot_be_repopulated_automatically(setup):
     from app.monthly_report_model import ReportDraft, default_sections
     profile, _, before = setup
-    excluded = replace(before, source="Omit", rows=(), references=())
+    excluded = replace(before, source="Omit", rows=())
     draft = ReportDraft(profile, ReportPeriod(2026, 9), "Synthetic Editor",
                         default_sections(), (excluded,), synthetic=True)
     assert directory.apply_defaults(draft) == draft
