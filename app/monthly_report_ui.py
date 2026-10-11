@@ -47,13 +47,13 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
     requested = st.query_params.get("monthly_qa") == "isolated"
     mode = "isolated" if requested else "live"
     last = st.session_state.get("_monthly_report_storage_mode")
-    if last != mode:
+    if last != mode and (last is not None or requested):
         # A Streamlit session that switches modes must not reuse a report
         # editor widget, PDF, source queue or image from its prior namespace.
         for key in tuple(st.session_state):
             if key.startswith(("report_", "report_guided_")) or key.startswith("monthly_qa_"):
                 del st.session_state[key]
-        st.session_state["_monthly_report_storage_mode"] = mode
+    st.session_state["_monthly_report_storage_mode"] = mode
     restore_report_draft_state()
     st.title("Monthly report")
     try:
