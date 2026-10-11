@@ -149,5 +149,23 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         st.caption("Edit the loaded synthetic report below; its journals and history remain in this test namespace.")
         from app.monthly_report_guided import render_guided_workflow
         render_guided_workflow(browser_token, browser_timezone, field, move)
+        # The real browser must not reload a just-edited report until its
+        # specific Activity contents have reached the durable recovery journal.
+        # Expose only a one-way digest of INVENTED test text inside this
+        # already isolated QA namespace, never any real report data. An absent
+        # journal provides no acknowledgment and must not pass the browser test.
+        from hashlib import sha256
+        from app.monthly_report_active_work import load as load_active
+        try:
+            active = load_active(browser_token, fixture.CONTRACT,
+                                 fixture.profile().key, fixture.PERIOD)
+        except (library.LibraryError, OSError):
+            st.warning("The isolated QA recovery journal could not be verified.")
+        else:
+            if active:
+                activity = next((b.text for b in active.draft.blocks
+                                 if b.key == "activity_summary"), "")
+                st.caption("QA durable Activity SHA256: " +
+                           sha256(activity.encode("utf-8")).hexdigest())
     else:
         st.info("Choose known-value prefill or source replay to populate this isolated test.")

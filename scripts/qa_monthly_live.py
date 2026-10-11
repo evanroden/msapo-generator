@@ -141,11 +141,36 @@ def main():
             edited = original + "\nSynthetic owner edit retained through a browser refresh."
             editor.fill(edited)
             editor.press("Tab")
-            page.wait_for_timeout(1500)
+            # A blind 1.5-second sleep raced a real Streamlit rerun and its
+            # durable journal write. Require a server-computed digest of the
+            # EXACT synthetic edit before reloading. This does not weaken the
+            # refresh check: it distinguishes a failed write from failed restore.
+            expected_digest = sha(edited.encode("utf-8"))
+            receipt = "QA durable Activity SHA256: " + expected_digest
+            try:
+                page.get_by_text(receipt, exact=True).wait_for(timeout=90000)
+            except BrowserTimeout:
+                latest = page.get_by_text(re.compile(r"QA durable Activity SHA256:")).all_text_contents()
+                warnings = page.locator('[data-testid="stAlert"]').all_text_contents()
+                editor.scroll_into_view_if_needed()
+                screenshot(page, "activity-not-durably-saved")
+                checkpoint("exact Activity edit reached durable server journal", False,
+                           "expected " + expected_digest[:12] + "; observed " +
+                           repr(latest[-2:])[:150] + "; notices " + repr(warnings[-3:])[:150])
+            checkpoint("exact Activity edit reached durable server journal", True)
             page.reload(wait_until="domcontentloaded", timeout=60000)
             page.get_by_text("ISOLATED SYNTHETIC TESTING", exact=False).first.wait_for(timeout=30000)
+            page.get_by_text("Current fixture: known-value prefill", exact=False).first.wait_for(timeout=35000)
             editor = page.get_by_role("textbox", name="Activity summary", exact=True).first
-            checkpoint("Activity editing survives refresh", "Synthetic owner edit retained" in editor.input_value())
+            observed = editor.input_value()
+            survived = "Synthetic owner edit retained" in observed
+            if not survived:
+                editor.scroll_into_view_if_needed()
+                screenshot(page, "activity-lost-after-refresh")
+            checkpoint("Activity editing survives refresh", survived,
+                       "expected " + expected_digest[:12] + "; observed " +
+                       sha(observed.encode("utf-8"))[:12] + "; saved receipts " +
+                       repr(page.get_by_text(re.compile(r"QA durable Activity SHA256:")).all_text_contents())[:160])
             page.get_by_role("button", name="Reset this test only", exact=True).click()
             page.get_by_role("button", name="Replay synthetic source files", exact=True).wait_for(timeout=40000)
             page.get_by_role("button", name="Replay synthetic source files", exact=True).click()
