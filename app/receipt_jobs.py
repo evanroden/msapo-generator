@@ -26,7 +26,15 @@ def start_receipt(
         return None
     try:
         content = prepare()
-        future = _POOL.submit(read, content)
+        # Retain the selected server-side report QA namespace through any
+        # optional asynchronous reader work. Never allow a worker thread to
+        # revert to production disk merely because contextvars did not flow.
+        from app.monthly_report_testing import scope
+        if scope() is not None:
+            from contextvars import copy_context
+            future = _POOL.submit(copy_context().run, read, content)
+        else:
+            future = _POOL.submit(read, content)
     except BaseException:
         _SLOTS.release()
         raise
