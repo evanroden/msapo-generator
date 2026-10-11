@@ -92,3 +92,28 @@ def test_known_value_qa_editor_prefills_synthetic_author_and_generates_both_form
     assert {b.label for b in app.get("download_button")} >= {
         "Download isolated QA DOCX", "Download isolated QA PDF"}
     assert fingerprint == package.fingerprint
+
+
+
+def test_browser_reconnect_returns_to_same_qa_period_and_recovers_activity(monkeypatch, tmp_path):
+    from app import monthly_report_active_work as active
+    first = visit(monkeypatch, tmp_path)
+    next(b for b in first.button if b.label == "Load known-value report").click().run()
+    expected = "Synthetic reviewed September pump work, edited before refresh."
+    next(w for w in first.text_area if w.label == "Activity summary").set_value(expected).run()
+    assert not first.exception
+    with qa.isolated(ACTOR_COOKIE):
+        journal = active.load(ACTOR_COOKIE, fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
+        assert journal is not None
+        assert expected in next(b.text for b in journal.draft.blocks if b.key == "activity_summary")
+
+    # A new Streamlit session does not inherit any widget keys, unlike an
+    # ordinary app rerun. The real recovery journal still owns the latest edit.
+    reopened = visit(monkeypatch, tmp_path)
+    assert not reopened.exception
+    assert reopened.selectbox("report_month_number").value == fixture.PERIOD.month
+    assert reopened.selectbox("report_year").value == fixture.PERIOD.year
+    assert next(w for w in reopened.text_area if w.label == "Activity summary").value == expected
+    assert next(w for w in reopened.text_input if w.label == "Prepared by").value == fixture.ACTOR
+    assert any("Recovered your unfinished changes" in s.value for s in reopened.success)
+    assert not reopened.error
