@@ -43,6 +43,7 @@ _GENERIC_LABELS = frozenset({
     "system", "unit", "quantity", "hours", "location", "task", "task code",
     "task code-description", "frequency", "next due", "responsible party",
     "plan", "completed", "remarks", "resolution", "type", "activity",
+    "requested items",
 })
 
 
