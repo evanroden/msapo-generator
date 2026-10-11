@@ -26,6 +26,11 @@ def scope() -> str | None:
     return _SCOPE.get()
 
 
+def generation() -> str | None:
+    """The current test-session lease; changes after a verified QA reset."""
+    return _LEASE.get()
+
+
 @contextmanager
 def isolated(browser_token: str):
     """Bind one server request and its copied async contexts to a QA identity."""
