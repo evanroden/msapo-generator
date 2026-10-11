@@ -97,7 +97,9 @@ def test_qa_preview_pdf_and_memory_are_separate_from_live(monkeypatch, tmp_path)
         db_qa = memory._db_path()
         ticket_qa = STORE.put("same-owner", sample)
         assert STORE.available("same-owner", ticket_qa)
-        assert not db_qa.is_relative_to(db_live.parent)
+        assert db_qa != db_live
+        assert not db_live.is_relative_to(db_qa.parent)
+        assert db_qa.parent != db_live.parent
     assert STORE.available("same-owner", ticket_live)
     assert not STORE.available("same-owner", ticket_qa)
     STORE.discard("same-owner", ticket_live)
