@@ -137,9 +137,11 @@ def test_copied_background_context_stays_isolated(monkeypatch, tmp_path):
         with ThreadPoolExecutor(max_workers=1) as executor:
             worker = executor.submit(copy_context().run, library._root)
             assert worker.result() == isolated_root
-        # The central bounded receipt worker automatically propagates QA mode.
-        job = start_receipt(lambda: "invented", lambda _: str(library._root()))
-        assert job is not None and job.result() == str(isolated_root)
+        # Test mode may not initiate external reader work or consume allowance.
+        ran = []
+        with pytest.raises(ValueError, match="disabled in isolated testing"):
+            start_receipt(lambda: ran.append("prepared"), lambda _: ran.append("sent"))
+        assert ran == []
     assert library._root() == live_root
 
 
