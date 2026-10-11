@@ -332,3 +332,37 @@ def test_completed_old_preview_worker_cannot_repopulate_cache_after_qa_reset(mon
         fresh = STORE.put("same-browser", page)
         assert STORE.available("same-browser", fresh)
         STORE.discard("same-browser", fresh)
+
+
+
+@pytest.mark.parametrize("route", ("prefill", "replay"))
+def test_complete_synthetic_qa_fixture_generates_native_word_and_application_pdf(route, monkeypatch, tmp_path):
+    """X03/X05/X06: both routes generate full-page actual outputs, not a form stub."""
+    from io import BytesIO
+    from docx import Document
+    from app.monthly_report_docx import generate_report
+    from tests.conftest import requires_libreoffice
+    import os
+    if not __import__("shutil").which("libreoffice") and not __import__("shutil").which("soffice"):
+        pytest.skip("The required document renderer is unavailable here.")
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with qa.isolated(COOKIE_A):
+        draft = fixtures.prepare(route)
+        checked = fixtures.compare(draft)
+        assert all(checked["checks"].values()), checked
+        result = generate_report(draft, acknowledged_fingerprint=draft.fingerprint)
+        assert result.docx and result.pdf, result.pdf_error
+        doc = Document(BytesIO(result.docx))
+        cells = "\\n".join(cell.text for table in doc.tables for row in table.rows
+                             for cell in row.cells)
+        assert "Q-TEST-731" in cells and "Pending" in cells
+        assert cells.count("NR") >= 2
+        assert len(doc.inline_shapes) >= 1, "Rendered org chart must be retained in the real Word file"
+        with fitz.open(stream=result.pdf, filetype="pdf") as pdf:
+            text = "\\n".join(page.get_text() for page in pdf)
+            assert len(pdf) >= 10
+            assert "Q-TEST-731" in text and "SYNTHETIC" in text
+            assert "3 total, 2 completed, 1 open" in text
+            assert "66.7%" in text
+            for price in ("$12,345.67", "$987.65", "$13,333.32", "$456.78", "$222.22"):
+                assert price not in text
