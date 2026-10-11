@@ -16,7 +16,7 @@ import time
 from zipfile import ZipFile
 
 import pymupdf
-from playwright.sync_api import sync_playwright, TimeoutError as BrowserTimeout
+from playwright.sync_api import sync_playwright, expect, TimeoutError as BrowserTimeout
 
 
 URL = os.environ.get("MONTHLY_QA_PUBLIC_URL", "https://msapo-generator.onrender.com").rstrip("/")
@@ -162,12 +162,24 @@ def main():
             page.get_by_text("ISOLATED SYNTHETIC TESTING", exact=False).first.wait_for(timeout=30000)
             page.get_by_text("Current fixture: known-value prefill", exact=False).first.wait_for(timeout=35000)
             editor = page.get_by_role("textbox", name="Activity summary", exact=True).first
-            observed = editor.input_value()
-            survived = "Synthetic owner edit retained" in observed
-            if not survived:
+            # The Streamlit QA caption and editor can mount before hydration
+            # fills the textarea from the recovered draft. On e765 the failure
+            # screenshot plainly showed the exact edited text restored AFTER
+            # input_value() was sampled as empty. Await the exact value and a
+            # freshly computed server-journal acknowledgment after reload.
+            restored = False
+            observed = ""
+            try:
+                expect(editor).to_have_value(edited, timeout=60000)
+                page.get_by_text(receipt, exact=True).wait_for(timeout=60000)
+                observed = editor.input_value()
+                restored = observed == edited
+            except (AssertionError, BrowserTimeout):
+                observed = editor.input_value()
+            if not restored:
                 editor.scroll_into_view_if_needed()
                 screenshot(page, "activity-lost-after-refresh")
-            checkpoint("Activity editing survives refresh", survived,
+            checkpoint("Activity editing survives refresh", restored,
                        "expected " + expected_digest[:12] + "; observed " +
                        sha(observed.encode("utf-8"))[:12] + "; saved receipts " +
                        repr(page.get_by_text(re.compile(r"QA durable Activity SHA256:")).all_text_contents())[:160])
