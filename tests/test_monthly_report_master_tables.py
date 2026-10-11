@@ -153,3 +153,36 @@ def test_fresh_design_seed_uses_blank_native_regions_without_copying_source_rows
     assert [t.columns for t in proposals.extra_tables] == [t.columns for t in shapes]
     assert not any("OLD PRIVATE" in str(block) for block in seed.blocks)
     assert assets == {}
+
+
+def test_next_month_same_pinned_master_retains_table_regions_but_never_old_rows(monkeypatch, tmp_path):
+    from app import monthly_report_master_tables as module
+    from app import monthly_report_designs as designs
+    from app import monthly_report_start as start
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "empty-qa"))
+    shapes = from_inspection(inspect_docx(master_source(tmp_path)))
+    monkeypatch.setattr(module, "for_profile", lambda _: shapes)
+    monkeypatch.setattr(designs, "pin", lambda profile, **kwargs: profile)
+    monkeypatch.setattr(start, "latest_saved_draft", lambda *args, **kwargs: None)
+    previous = current(shapes)
+    pinned = replace(previous.profile, template="enfra_master:" + "a" * 64)
+    previous = replace(previous, profile=pinned)
+
+    class PreviousDesign:
+        profile = pinned
+
+        def block(self, key):
+            return next((b for b in previous.blocks if b.key == key), None)
+
+    reused, _ = start.design_seed(pinned, ReportPeriod(2026, 11),
+                                  "New Synthetic Editor", source=PreviousDesign())
+    retained = next(b for b in reused.blocks if b.key == "proposals")
+    assert [t.reference for t in retained.extra_tables] == [t.reference for t in shapes]
+    assert all(not t.rows for t in retained.extra_tables)
+    assert "Q-TEST-731" not in str(reused.blocks)
+
+    changed = replace(reused, profile=replace(reused.profile, template="enfra_master:" + "b" * 64),
+                      blocks=(replace(retained, extra_tables=tuple(
+                          replace(t, reference="") for t in retained.extra_tables)),))
+    assert module.rebind_carried_master_tables(
+        changed, {"proposals": previous.blocks[0]}, pinned.template) == changed
