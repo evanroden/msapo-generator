@@ -10,6 +10,11 @@ from app.monthly_report_editor import _grid, _preview, _signature
 
 
 def contract_choices():
+    # The synthetic test workspace cannot select a live catalog contract.
+    # Only explicitly installed QA directory identities are offered.
+    from app.monthly_report_testing import scope
+    if scope() is not None:
+        return list(directory.directory_contracts())
     # The catalog's display spelling wins; case/spacing variants are one choice.
     # A legacy saved name must not create duplicate landing-page button IDs.
     choices = {}
