@@ -35,7 +35,7 @@ def checkpoint(name: str, passed: bool, detail: str = "") -> None:
 
 def screenshot(page, name):
     p = ROOT / (name + ".png")
-    page.screenshot(path=str(p), full_page=True, timeout=30000)
+    page.screenshot(path=str(p), full_page=False, timeout=30000)
     EVIDENCE["artifacts"][name + ".png"] = {"bytes": p.stat().st_size}
     return p
 
