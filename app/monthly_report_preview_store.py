@@ -177,4 +177,33 @@ class PreviewStore:
                 self._directory = None
 
 
-STORE = PreviewStore()
+# Live and QA previews must never share a PDF/raster store or entry budget.
+_LIVE_STORE = PreviewStore()
+_QA_STORE = PreviewStore()
+
+
+class _ScopedPreviewStore:
+    def _active(self):
+        from app.monthly_report_testing import scope
+        return _QA_STORE if scope() is not None else _LIVE_STORE
+
+    def put(self, owner, preview):
+        return self._active().put(owner, preview)
+
+    def available(self, owner, ticket):
+        return self._active().available(owner, ticket)
+
+    def discard(self, owner, ticket):
+        return self._active().discard(owner, ticket)
+
+    def pages(self, owner, ticket, indexes, *, dpi=120):
+        return self._active().pages(owner, ticket, indexes, dpi=dpi)
+
+    def stats(self):
+        return self._active().stats()
+
+    def close(self):
+        self._active().close()
+
+
+STORE = _ScopedPreviewStore()
