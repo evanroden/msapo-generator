@@ -238,6 +238,21 @@ def main():
                 result['final_pages'] = len(pdf)
             result['final_docx_bytes'] = len(package.docx)
             result['final_pdf_bytes'] = len(package.pdf)
+            # Only the explicitly invented, source-row-sanitized fixture is
+            # retained as CI evidence. Copy the output from the stopped Docker
+            # container after memory-capped execution; never publish client files.
+            evidence = Path('/tmp/monthly-synthetic-native-evidence')
+            evidence.mkdir(parents=True, exist_ok=True)
+            (evidence / 'SYNTHETIC-native-master.docx').write_bytes(package.docx)
+            (evidence / 'SYNTHETIC-native-master.pdf').write_bytes(package.pdf)
+            (evidence / 'manifest.json').write_text(json.dumps({
+                'synthetic_only': True, 'distinct_native_word_tables': 10,
+                'distinct_native_pdf_markers': result['final_native_pdf_rows'],
+                'pdf_pages': result['final_pages'],
+                'word_sha256': hashlib.sha256(package.docx).hexdigest(),
+                'pdf_sha256': hashlib.sha256(package.pdf).hexdigest(),
+                'source_report_bytes': size,
+            }, indent=2) + '\n')
             result['stages'].append({'name': 'foreground-export', 'seconds': round(monotonic()-tick, 3)})
             result['cache'] = store.stats()
             assert result['cache']['pdf_bytes'] <= store.disk_limit
