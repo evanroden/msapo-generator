@@ -186,3 +186,11 @@ def test_next_month_same_pinned_master_retains_table_regions_but_never_old_rows(
                           replace(t, reference="") for t in retained.extra_tables)),))
     assert module.rebind_carried_master_tables(
         changed, {"proposals": previous.blocks[0]}, pinned.template) == changed
+
+
+def test_narrow_numbered_physical_index_gets_single_character_header(tmp_path):
+    from app.monthly_report_master_tables import _heading
+    assert _heading("1", 0, set()) == "#"
+    assert _heading("#", 0, set()) == "#"
+    assert _heading("9", 2, set()) == "Detail 3"  # other fields are not guessed
+    assert _heading("R", 0, set()) == "Detail 1"  # old site initials not copied
