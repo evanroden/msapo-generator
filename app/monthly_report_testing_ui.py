@@ -94,6 +94,17 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
             st.rerun()
     saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
     if saved:
+        # A fresh browser session has no widget state. Keep the same QA
+        # fixture's contract, site set and month across refresh/reconnect;
+        # otherwise the real editor silently opens this calendar month while
+        # the testing header still describes the September fixture.
+        # setdefault honors any deliberate selection already in this session.
+        st.session_state.setdefault("report_contract", fixture.CONTRACT)
+        st.session_state.setdefault("report_month_number", fixture.PERIOD.month)
+        st.session_state.setdefault("report_year", fixture.PERIOD.year)
+        site_prefix = "report_sites_" + _key(fixture.CONTRACT)
+        for site in fixture.profile().facilities:
+            st.session_state.setdefault(site_prefix + "_" + site.key, True)
         working = _working_report(saved)
         st.caption("Current fixture: " + ("original-source replay" if saved.draft.sources else "known-value prefill") +
                    " · September 2026 · two invented sites · synthetic only")
