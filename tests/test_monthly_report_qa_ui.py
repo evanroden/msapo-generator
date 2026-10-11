@@ -27,8 +27,7 @@ def visit(monkeypatch, tmp_path):
     app.session_state["_qa_base"] = str(tmp_path)
     app.run()
     assert not app.exception
-    assert any("ISOLATED SYNTHETIC TESTING" in x.message or "ISOLATED SYNTHETIC TESTING" in getattr(x, "value", "")
-               for x in app.warning)
+    assert any("ISOLATED SYNTHETIC TESTING" in x.value for x in app.warning)
     return app
 
 
