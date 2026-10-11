@@ -46,12 +46,18 @@ def _image_review(path, item, prefix, field, scope, *, compact=False):
                 digest, cached, content = prepare_review(scope, path, item)
                 prepared.append(digest)
                 return cached, content
-            future = start_receipt(prepare, lambda value: value[0] or read_image(value[1]))
-            if future is None:
-                st.warning("The document reader is busy. Try again shortly; no image was processed.")
+            try:
+                future = start_receipt(prepare, lambda value: value[0] or read_image(value[1]))
+            except ValueError as exc:
+                # In isolated QA there is deliberately no paid or external
+                # image reader. The manual page-review controls remain usable.
+                st.warning(str(exc))
             else:
-                st.session_state[job_key] = (item.image_part, future, prepared[0])
-                st.rerun()
+                if future is None:
+                    st.warning("The document reader is busy. Try again shortly; no image was processed.")
+                else:
+                    st.session_state[job_key] = (item.image_part, future, prepared[0])
+                    st.rerun()
     read_text = readings.get(item.image_part, "")
     if read_text:
         st.text(read_text)
