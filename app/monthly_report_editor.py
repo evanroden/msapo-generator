@@ -578,9 +578,11 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
         except (ValueError, OSError) as exc:
             st.error(f"Report or snapshot could not be saved: {exc}")
     if package:
-        st.download_button("Download DOCX", package.docx, file_name=package.docx_name, key=prefix + "_docx")
+        st.download_button("Download DOCX", package.docx, file_name=package.docx_name,
+                           key=prefix + "_docx", on_click="ignore")
         if package.pdf:
-            st.download_button("Download PDF", package.pdf, file_name=package.pdf_name, mime="application/pdf", key=prefix + "_pdf")
+            st.download_button("Download PDF", package.pdf, file_name=package.pdf_name,
+                               mime="application/pdf", key=prefix + "_pdf", on_click="ignore")
         if package.pdf_error:
             st.warning(package.pdf_error)
     _profile_manager(contract, state, field)
