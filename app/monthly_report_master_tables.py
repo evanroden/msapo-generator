@@ -42,6 +42,11 @@ def _heading(value: str, n: int, old_titles: set[str]) -> str:
     """Strict allowlist; do not infer a current client's name from the master."""
     normalized = " ".join(str(value).strip().split())
     key = normalized.casefold()
+    # Native continuation/index columns may be only a few points wide. A
+    # one-character source ordinal is a *shape clue*, not an old client's
+    # current row or a license to print a long "Detail 1" heading vertically.
+    if n == 0 and len(normalized) == 1 and (normalized.isdigit() or normalized == "#"):
+        return "#"
     if key == "" or key in old_titles or key not in _GENERIC_LABELS:
         return f"Detail {n + 1}"
     return normalized
