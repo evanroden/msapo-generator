@@ -80,6 +80,21 @@ def _fixture(directory):
         if index < 7:
             document.add_page_break()
         photo.close(); texture.close()
+    # Representative native-master load: ten independent physical data grids
+    # coexist with inherited high-resolution source photographs. No actual
+    # client artwork, source row, facility or price is used as current data.
+    document.add_page_break()
+    document.add_heading("PENDING & DECLINED PROPOSALS", 1)
+    for index in range(10):
+        labels = (("Project Number", "Status", "Technical Notes", "Price")
+                  if index % 2 == 0 else
+                  ("Facility", "Vendor", "Scope of Work", "Status", "Total Cost"))
+        table = document.add_table(rows=2, cols=len(labels))
+        for column, label in enumerate(labels):
+            table.cell(0, column).text = label
+            table.cell(1, column).text = (
+                "$77,777.77" if ("Price" in label or "Cost" in label)
+                else "SYNTHETIC PREVIOUS REPORT ROW")
     document.save(source)
     del document, raw
     gc.collect()
@@ -87,6 +102,23 @@ def _fixture(directory):
                             (Facility('synthetic', 'Synthetic Resource Site'),))
     profile = designs.install(source, profile, actor='Synthetic Editor', expected_revision=0)
     inspection = inspect_docx(source)
+    from app.monthly_report_master_tables import from_inspection
+    from app.monthly_report_model import ReportTable
+    layouts = [table for table in from_inspection(inspection) if table.slot == "proposals"]
+    assert len(layouts) == 10, "Ten distinct native master table positions must be recognized"
+    current_tables = []
+    for index, table in enumerate(layouts):
+        values = {
+            "Project Number": f"Q-TEST-{731 + index}",
+            "Status": "Pending",
+            "Technical Notes": "45 gpm",
+            "Facility": "Synthetic Resource Site",
+            "Vendor": "Synthetic Mechanical Vendor",
+            "Scope of Work": "Inspect invented equipment",
+        }
+        row = tuple(values.get(label, f"Synthetic detail {index + 1}")
+                    for label in table.columns)
+        current_tables.append(ReportTable(table.columns, (row,), table.reference))
     assets, refs, images = {}, [], []
     text_refs = []
     for item in inspection.items:
@@ -101,9 +133,12 @@ def _fixture(directory):
         refs.append(f'docx:{inspection.sha256}:{item.id}')
     assert len(images) == 8
     blocks = (ResolvedBlock('activity_summary', 'This month', text='Synthetic current inspection completed.', references=tuple(text_refs)),
-              approve_all_assets(ResolvedBlock('improvements', 'This month', asset_hashes=tuple(images), references=tuple(refs))))
+              approve_all_assets(ResolvedBlock('improvements', 'This month', asset_hashes=tuple(images), references=tuple(refs))),
+              ResolvedBlock('proposals', 'This month', extra_tables=tuple(current_tables)))
     sections = (SectionSpec('activity', '1', 'Monthly Activity Summary',
-                            (BlockSpec('activity_summary', 'rich_text'), BlockSpec('improvements', 'image_grid'))),)
+                            (BlockSpec('activity_summary', 'rich_text'), BlockSpec('improvements', 'image_grid'))),
+                SectionSpec('proposals', '10', 'Pending and Declined Proposals',
+                            (BlockSpec('proposals', 'table'),)))
     draft = ReportDraft(profile, ReportPeriod(2026, 9), 'Synthetic Editor', sections, blocks)
     return draft, assets, source.stat().st_size
 
@@ -168,6 +203,17 @@ def main():
             package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=assets.__getitem__)
             if not package.pdf:
                 raise RuntimeError(package.pdf_error)
+            # Prove the *unchanged native DOCX* still contains all ten
+            # separate proposal tables while the PDF-only compactor operates.
+            from docx import Document
+            output_tables = Document(BytesIO(package.docx)).tables
+            assert len(output_tables) == 10, f"Expected ten physical tables, got {len(output_tables)}"
+            assert [len(table.columns) for table in output_tables] == [3 if i % 2 == 0 else 4 for i in range(10)]
+            assert all("SYNTHETIC PREVIOUS REPORT ROW" not in cell.text
+                       for table in output_tables for row in table.rows for cell in row.cells)
+            assert all("$77,777.77" not in cell.text
+                       for table in output_tables for row in table.rows for cell in row.cells)
+            result['native_word_tables'] = len(output_tables)
             with pymupdf.open(stream=package.pdf, filetype='pdf') as pdf:
                 assert 'Synthetic current inspection completed.' in '\n'.join(page.get_text() for page in pdf)
                 assert sum(len(page.get_images()) for page in pdf) >= 8
