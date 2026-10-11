@@ -57,6 +57,8 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         else:
             try:
                 testing.reset(live_storage_root)
+                from app.monthly_report_preview_store import STORE
+                STORE.reset_scope()
             except (ValueError, OSError) as exc:
                 st.error("Test reset was stopped: " + str(exc))
             else:
