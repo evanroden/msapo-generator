@@ -6,7 +6,7 @@ import streamlit as st
 from app import monthly_report_library as library
 from app import monthly_report_qa_fixture as fixture
 from app import monthly_report_testing as testing
-from app.monthly_report_editor import _key
+from app.monthly_report_editor import _key, _signature
 
 
 def _select_fixture():
@@ -17,6 +17,16 @@ def _select_fixture():
     prefix = "report_sites_" + _key(fixture.CONTRACT)
     for facility in fixture.profile().facilities:
         st.session_state[prefix + "_" + facility.key] = True
+
+
+def _working_report(saved):
+    profile = fixture.profile()
+    prefix = "report_guided_" + _signature((fixture.CONTRACT, profile.key, fixture.PERIOD.key))
+    draft = st.session_state.get(prefix + "_draft", saved.draft)
+    if ((draft.profile.contract, draft.profile.key, draft.period) !=
+            (fixture.CONTRACT, profile.key, fixture.PERIOD)):
+        raise ValueError("The current QA editor does not match this isolated fixture.")
+    return draft
 
 
 def _active_jobs() -> bool:
@@ -81,7 +91,7 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                    " · September 2026 · two invented sites · synthetic only")
         x, y = st.columns(2)
         if x.button("Compare fixture facts", key="monthly_qa_compare"):
-            result = fixture.compare(saved.draft)
+            result = fixture.compare(working)
             checks = result["checks"]
             st.session_state["monthly_qa_comparison"] = {
                 "mode": result["mode"], "checks": checks,
@@ -90,17 +100,21 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         if y.button("Generate QA Word and PDF", key="monthly_qa_generate"):
             from app.monthly_report_docx import generate_report
             try:
-                package = generate_report(saved.draft,
-                                          acknowledged_fingerprint=saved.draft.fingerprint)
+                package = generate_report(working,
+                                          acknowledged_fingerprint=working.fingerprint)
             except (ValueError, OSError) as exc:
                 st.error("QA export was blocked: " + str(exc))
             else:
-                st.session_state["monthly_qa_package"] = package
+                st.session_state["monthly_qa_package"] = (working.fingerprint, package)
         if state := st.session_state.get("monthly_qa_comparison"):
             st.write(f"{state['mode']}: {state['matched']}/{len(state['checks'])} independent content/provenance checks.")
             for name, passed in state["checks"].items():
                 st.write(("PASS — " if passed else "CHECK — ") + name)
-        if package := st.session_state.get("monthly_qa_package"):
+        retained = st.session_state.get("monthly_qa_package")
+        if retained and retained[0] != working.fingerprint:
+            st.info("The previous QA export is outdated. Generate again to include your latest edits.")
+        if retained and retained[0] == working.fingerprint:
+            package = retained[1]
             st.download_button("Download isolated QA DOCX", package.docx,
                                file_name="SYNTHETIC-QA-only.docx", key="monthly_qa_docx")
             if package.pdf:
