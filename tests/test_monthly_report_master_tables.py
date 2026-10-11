@@ -194,3 +194,91 @@ def test_narrow_numbered_physical_index_gets_single_character_header(tmp_path):
     assert _heading("#", 0, set()) == "#"
     assert _heading("9", 2, set()) == "Detail 3"  # other fields are not guessed
     assert _heading("R", 0, set()) == "Detail 1"  # old site initials not copied
+
+
+
+def test_split_numbered_rfi_native_tables_share_sanitized_headers_not_old_data(tmp_path):
+    """A numbered source continuation starts with item 16, not a new header."""
+    from app.monthly_report_model import default_sections
+    path = tmp_path / "synthetic-split-rfi.docx"
+    document = Document()
+    document.add_heading("RFI MATRIX", 1)
+    first = document.add_table(rows=3, cols=3)
+    for row, values in enumerate((
+        ("#", "Requested item", "Status"),
+        ("14", "OTHER PRIOR SITE obsolete scope", "X"),
+        ("15", "OTHER PRIOR SITE old handoff", "X"),
+    )):
+        for cell, label in zip(first.rows[row].cells, values):
+            cell.text = label
+    document.add_paragraph("Continuation of prior numbered questions")
+    second = document.add_table(rows=3, cols=3)
+    for row, values in enumerate((
+        ("16", "OTHER PRIOR SITE old staff policy", "X"),
+        ("17", "OTHER PRIOR SITE old followup", "X"),
+        ("18", "OTHER PRIOR SITE old cost $77,777.77", "X"),
+    )):
+        for cell, label in zip(second.rows[row].cells, values):
+            cell.text = label
+    document.save(path)
+
+    shapes = from_inspection(inspect_docx(path))
+    assert len(shapes) == 2
+    assert all(shape.slot == "rfi_matrix" for shape in shapes)
+    assert [shape.physical_width for shape in shapes] == [3, 3]
+    assert shapes[0].reference != shapes[1].reference
+    assert shapes[0].columns == ("#", "Requested item", "Status")
+    assert shapes[1].columns == shapes[0].columns
+    assert not any("OTHER PRIOR SITE" in c or "$" in c
+                   for shape in shapes for c in shape.columns)
+
+    section = next(s for s in default_sections() if s.key == "rfi")
+    profile = ReportProfile("Synthetic New Site", "synthetic-rfi", "New RFI",
+                            (Facility("qa-new", "Synthetic New Site"),))
+    tables = (
+        ReportTable(shapes[0].columns, (("1", "Current inspection", "Open"),), shapes[0].reference),
+        ReportTable(shapes[1].columns, (("2", "Current closeout", "Pending"),), shapes[1].reference),
+    )
+    current = ReportDraft(profile, ReportPeriod(2026, 10), "Synthetic Editor",
+                          (replace(section, included=True),),
+                          (ResolvedBlock("rfi_matrix", "This month", extra_tables=tables),),
+                          synthetic=True)
+    rendered = build_native_docx(current, path, master=True)
+    output = Document(BytesIO(rendered))
+    assert len(output.tables) == 2
+    assert [cell.text for cell in output.tables[0].rows[0].cells] == [
+        "#", "Requested item", "Status"]
+    assert [cell.text for cell in output.tables[1].rows[0].cells] == [
+        "#", "Requested item", "Status"]
+    assert [cell.text for cell in output.tables[1].rows[1].cells] == [
+        "2", "Current closeout", "Pending"]
+    with ZipFile(BytesIO(rendered)) as archive:
+        xml = "\n".join(archive.read(name).decode("utf8", "ignore")
+                        for name in archive.namelist()
+                        if name.endswith((".xml", ".rels", ".vml"))).casefold()
+    assert "other prior site" not in xml
+    assert "$77,777.77" not in xml
+    assert "current closeout" in xml
+
+
+def test_numbered_new_table_without_consecutive_prior_row_cannot_borrow_header(tmp_path):
+    """A gap in item numbering is not proof that two grids are continuations."""
+    path = tmp_path / "synthetic-independent-rfi.docx"
+    document = Document()
+    document.add_heading("RFI MATRIX", 1)
+    first = document.add_table(rows=2, cols=3)
+    for cell, label in zip(first.rows[0].cells, ("#", "Requested item", "Status")):
+        cell.text = label
+    for cell, label in zip(first.rows[1].cells, ("15", "Prior item", "Done")):
+        cell.text = label
+    second = document.add_table(rows=2, cols=3)
+    for cell, label in zip(second.rows[0].cells, ("25", "Other site's data", "Open")):
+        cell.text = label
+    for cell, label in zip(second.rows[1].cells, ("26", "Second other-site row", "Open")):
+        cell.text = label
+    document.save(path)
+    shapes = from_inspection(inspect_docx(path))
+    assert len(shapes) == 2
+    assert shapes[0].columns == ("#", "Requested item", "Status")
+    assert shapes[1].columns != shapes[0].columns
+    assert "Other site's data" not in shapes[1].columns
