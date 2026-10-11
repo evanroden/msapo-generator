@@ -106,6 +106,10 @@ def test_browser_reconnect_returns_to_same_qa_period_and_recovers_activity(monke
         journal = active.load(ACTOR_COOKIE, fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
         assert journal is not None
         assert expected in next(b.text for b in journal.draft.blocks if b.key == "activity_summary")
+    from hashlib import sha256
+    receipt = "QA durable Activity SHA256: " + sha256(expected.encode("utf-8")).hexdigest()
+    assert any(x.value == receipt for x in first.caption), (
+        "QA must confirm exact durable content after the editor reruns")
 
     # A new Streamlit session does not inherit any widget keys, unlike an
     # ordinary app rerun. The real recovery journal still owns the latest edit.
