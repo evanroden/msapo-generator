@@ -60,7 +60,7 @@ jobs:
           ANTHROPIC_API_KEY: test-key-not-used
         run: python -m pytest -q --junitxml=test-results.xml
       - name: Export real synthetic Word/PDF for acceptance
-        run: python scripts/qa_monthly_report_outputs.py
+        run: python -m scripts.qa_monthly_report_outputs
       - name: Upload synthetic Word/PDF with page and hash manifest
         uses: actions/upload-artifact@v4
         with:
