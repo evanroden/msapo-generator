@@ -114,7 +114,7 @@ def _fixture(directory):
             "Status": "Pending",
             "Technical Notes": "45 gpm",
             "Facility": "Synthetic Resource Site",
-            "Vendor": "Synthetic Mechanical Vendor",
+            "Vendor": f"QA-V{index + 1:02d}",
             "Scope of Work": "Inspect invented equipment",
         }
         row = tuple(values.get(label, f"Synthetic detail {index + 1}")
@@ -227,9 +227,11 @@ def main():
                 pdf_text = "\n".join(page.get_text() for page in pdf)
                 assert 'Synthetic current inspection completed.' in pdf_text
                 assert sum(len(page.get_images()) for page in pdf) >= 8
-                for number in range(731, 741):
-                    assert f"Q-TEST-{number}" in pdf_text, (
-                        f"Native proposal Q-TEST-{number} was lost in PDF conversion")
+                for index in range(10):
+                    marker = (f"Q-TEST-{731 + index}" if index % 2 == 0
+                              else f"QA-V{index + 1:02d}")
+                    assert marker in pdf_text, (
+                        f"Native table {index + 1} marker {marker} was lost in PDF conversion")
                 assert "SYNTHETIC PREVIOUS REPORT ROW" not in pdf_text
                 assert "$77,777.77" not in pdf_text
                 result['final_native_pdf_rows'] = 10
