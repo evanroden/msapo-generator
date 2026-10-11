@@ -17,6 +17,13 @@ def _select_fixture():
     prefix = "report_sites_" + _key(fixture.CONTRACT)
     for facility in fixture.profile().facilities:
         st.session_state[prefix + "_" + facility.key] = True
+    # New real-report visitors enter their own name. QA, unlike a real report,
+    # has a verified invented author baked into its known-value fixture. Seed
+    # this editor widget only on explicit fixture load; never reinstate a name
+    # that the tester deliberately edits or clears on a later rerun.
+    editor_prefix = "report_guided_" + _signature((
+        fixture.CONTRACT, fixture.profile().key, fixture.PERIOD.key))
+    st.session_state[editor_prefix + "_prepared"] = fixture.ACTOR
 
 
 def _working_report(saved):

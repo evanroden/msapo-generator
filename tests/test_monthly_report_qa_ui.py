@@ -71,3 +71,24 @@ def test_ui_reset_does_not_erase_any_live_report(monkeypatch, tmp_path):
     with qa.isolated(ACTOR_COOKIE):
         assert library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD) is None
     assert library.load_profile(live.contract, live.key).revision == 1
+
+
+
+def test_known_value_qa_editor_prefills_synthetic_author_and_generates_both_formats(monkeypatch, tmp_path):
+    # A real visitor supplies their own name. An isolated known-value fixture
+    # already includes an invented author: verify the actual editor and export,
+    # not merely the snapshot or the Compare button.
+    app = visit(monkeypatch, tmp_path)
+    next(x for x in app.button if x.label == "Load known-value report").click().run()
+    assert not app.exception
+    prepared = next(w for w in app.text_input if w.label == "Prepared by")
+    assert prepared.value == fixture.ACTOR
+    next(x for x in app.button if x.label == "Generate QA Word and PDF").click().run()
+    assert not app.exception
+    assert not any("QA export was blocked" in x.value for x in app.error)
+    fingerprint, package = app.session_state["monthly_qa_package"]
+    assert package.docx.startswith(b"PK"), package.pdf_error
+    assert package.pdf and package.pdf.startswith(b"%PDF-"), package.pdf_error
+    assert {b.label for b in app.get("download_button")} >= {
+        "Download isolated QA DOCX", "Download isolated QA PDF"}
+    assert fingerprint == package.fingerprint
