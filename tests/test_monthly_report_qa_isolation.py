@@ -42,7 +42,7 @@ def test_two_testers_and_live_root_have_no_shared_directory_history_or_source(mo
         assert not sources._path(same, live_source.source.sha256, ".csv").exists()
         replay = fixtures.prepare("replay")
         assert replay.sources and replay.sources[0].filename == "synthetic-workorders.csv"
-        assert fixtures.compare(replay)["checks"]["source identity and hashes"]
+        assert fixtures.compare(replay)["checks"]["source manifests exact"]
     assert library._root() == live_root
     assert library.load_snapshot(same.contract, same.key, fixtures.PERIOD) is None
     assert directory.load_directory(same.contract) is None
@@ -172,7 +172,7 @@ def test_training_and_capacity_nr_are_per_test_storage_and_old_snapshot_stays_pi
         unchanged = library.load_snapshot(profile.contract, profile.key, fixtures.PERIOD)
         contents, _ = sources.ingest(
             profile, "synthetic-capacity.txt",
-            b"Site,Service,Capacity\\nDemo North,Chilled water,NR\\n",
+            b"Site,Service,Capacity\nDemo North,Chilled water,NR\n",
         )
         table = capacity.CapacityTable(
             "synthetic-nr", "Chilled water", ("Site", "Service", "Capacity"),
