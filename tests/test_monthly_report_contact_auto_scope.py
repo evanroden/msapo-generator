@@ -84,3 +84,58 @@ def test_report_only_or_unmatched_contact_is_not_promoted(setup):
     assert directory.automatically_keep_directory_contact_edits(
         profile, replace(before, references=(), source="This month"), edited, "Synthetic Editor") is None
     assert directory.load_directory(profile.contract).revision == 1
+
+
+def test_remove_all_report_contacts_keeps_intent_and_does_not_delete_directory(setup):
+    from app.monthly_report_model import ReportDraft, default_sections
+    profile, state, before = setup
+    historical = ReportDraft(profile, ReportPeriod(2026, 9), "Synthetic Editor",
+                             default_sections(), (before,), synthetic=True)
+    saved = library.save_snapshot(historical, expected_revision=0,
+                                  entered_editor="Synthetic Editor")
+    removed = replace(before, source="This month", rows=())
+    this_month = replace(historical, blocks=(removed,))
+    assert directory.automatically_keep_directory_contact_edits(
+        profile, before, removed, "Synthetic Editor") is None
+    assert directory.apply_defaults(this_month) == this_month
+    assert directory.load_directory(profile.contract).revision == state.revision
+    assert library.load_snapshot(profile.contract, profile.key, historical.period) == saved
+    # First use next month, with no reviewed contact block, still gets the
+    # correct two site-scoped people rather than a permanently empty directory.
+    fresh = replace(historical, period=ReportPeriod(2026, 10), blocks=())
+    loaded = directory.apply_defaults(fresh)
+    rows = next(b.rows for b in loaded.blocks if b.key == "contact_matrix")
+    assert rows == before.rows
+
+
+def test_explicit_report_contact_omit_cannot_be_repopulated_automatically(setup):
+    from app.monthly_report_model import ReportDraft, default_sections
+    profile, _, before = setup
+    excluded = replace(before, source="Omit", rows=(), references=())
+    draft = ReportDraft(profile, ReportPeriod(2026, 9), "Synthetic Editor",
+                        default_sections(), (excluded,), synthetic=True)
+    assert directory.apply_defaults(draft) == draft
+
+
+def test_pure_site_contact_reorder_is_report_only_not_a_standing_identity_edit(setup):
+    profile, original, _ = setup
+    north = replace(original.sites[0], contacts=(
+        *original.sites[0].contacts,
+        directory.DirectoryContact("Supervisor", "Casey Example", "333", "casey@example.invalid"),
+    ))
+    revised = directory.save_directory(
+        profile.contract, (north, original.sites[1]), expected_revision=1,
+        actor="Synthetic Editor", confirmed=True)
+    block, missing = directory.contact_block(revised, profile.facilities)
+    assert not missing
+    before = replace(block, source="Library")
+    rows = list(before.rows)
+    assert rows[0][0] == rows[1][0] == profile.facilities[0].title
+    rows[0], rows[1] = rows[1], rows[0]
+    reordered = replace(before, source="This month", rows=tuple(rows))
+    assert directory.automatically_keep_directory_contact_edits(
+        profile, before, reordered, "Synthetic Editor") is None
+    assert reordered.rows != before.rows  # The monthly layout may stay reordered.
+    final = directory.load_directory(profile.contract)
+    assert final.revision == revised.revision
+    assert final.sites[0].contacts == north.contacts
