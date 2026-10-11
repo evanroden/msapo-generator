@@ -356,8 +356,8 @@ def _fit_cover_photo(node, image_width, image_height):
             node.set(name, format(crop[key], ".8f"))
 
 
-def _table(element, columns, rows, *, physical_indices=()):
-    explicit_header = bool(columns)
+def _table(element, columns, rows, *, physical_indices=(), continuation=False):
+    explicit_header = bool(columns) and not continuation
     native_rows = element.findall(qn("w:tr"))
     if not native_rows:
         raise NativeLayoutError("The source table has no row geometry.")
@@ -392,8 +392,12 @@ def _table(element, columns, rows, *, physical_indices=()):
             grid.append(col)
     for row in native_rows:
         element.remove(row)
-    for index, values in enumerate((columns, *rows)):
-        row = deepcopy(header if index == 0 else prototype)
+    # A numbered source continuation has no header in this physical frame.
+    # Its first source row was DATA, not a schema to repeat into the new
+    # report. An empty continuation keeps a blank shape, never an old row.
+    output_rows = (rows or (("",) * width,)) if continuation else (columns, *rows)
+    for index, values in enumerate(output_rows):
+        row = deepcopy(header if index == 0 and not continuation else prototype)
         cells = row.findall(qn("w:tc"))
         for cell in cells:
             row.remove(cell)
@@ -1067,7 +1071,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                                 and not price_column(selected[n]) else value
                                 for n, value in enumerate(columns))
             if master and columns:
-                _table(element, columns, (), physical_indices=shape.indices if shape else ())
+                _table(element, columns, (), physical_indices=shape.indices if shape else (),
+                       continuation=bool(shape and shape.continuation))
                 continue
             native_rows = element.findall(qn("w:tr"))
             header_rows = 1
@@ -1206,7 +1211,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                         anchor = deepcopy(prototype)
                         last.addnext(anchor)
                         page_plan.assigned(anchor, last)
-                _table(anchor, columns, rows, physical_indices=shape.indices if shape else ())
+                _table(anchor, columns, rows, physical_indices=shape.indices if shape else (),
+                       continuation=bool(shape and shape.continuation))
                 page_plan.emitted(anchor, kind="table")
                 from app.monthly_report_training_style import style_training_table
                 style_training_table(anchor, table_reference)
