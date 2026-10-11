@@ -2,30 +2,21 @@ name: Monthly Isolated Live Acceptance
 
 on:
   workflow_run:
-    workflows:
-      - Tests
-    types:
-      - completed
-  workflow_dispatch:
+    workflows: [Tests]
+    types: [completed]
 
 permissions:
   contents: read
 
-concurrency:
-  group: monthly-isolated-live-production
-  cancel-in-progress: false
-
 jobs:
   synthetic-live:
-    # A green exact-main test run is required. The random QA cookie and
-    # server-isolated mode prevent access to live customer records.
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success') }}
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
     timeout-minutes: 32
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -33,9 +24,9 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check playwright==1.58.0 pymupdf==1.28.2
           python -m playwright install --with-deps chromium
-      - name: Wait for served build, use and reset isolated synthetic report
+      - name: Wait for served build; use and reset isolated synthetic report
         env:
-          MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+          MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha }}
           MONTHLY_QA_PUBLIC_URL: https://msapo-generator.onrender.com
         run: |
           python -m scripts.qa_monthly_live

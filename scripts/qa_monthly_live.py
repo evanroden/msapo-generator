@@ -82,8 +82,12 @@ def complete_report(page, mode):
                                 + r": \d+/\d+ independent")).first.wait_for(timeout=25000)
     result = page.get_by_text(re.compile(r"\d+/\d+ independent")).first.text_content() or ""
     match = re.search(r"(\d+)/(\d+)", result)
-    checkpoint("fixture " + mode + " content/provenance", bool(match and match[1] == match[2]), result)
+    failed = page.get_by_text(re.compile(r"^CHECK\s*[—-]")).all_text_contents()
+    failure_detail = "; ".join(value.strip() for value in failed)
     screenshot(page, mode.replace(" ", "-") + "-comparison")
+    checkpoint("fixture " + mode + " content/provenance",
+               bool(match and match[1] == match[2] and not failed),
+               result + ("; unmet checks: " + failure_detail if failed else ""))
     page.get_by_role("button", name="Generate QA Word and PDF", exact=True).click()
     docx_button = page.get_by_role("button", name="Download isolated QA DOCX", exact=True)
     docx_button.wait_for(timeout=175000)
