@@ -59,10 +59,20 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
     try:
         if requested:
             from app.memory import _data_dir
-            from app.monthly_report_testing import isolated
+            from app.monthly_report_testing import isolated, generation
             from app.monthly_report_testing_ui import render
             live_root = _data_dir()  # Resolve only the base; do not read live records.
             with isolated(browser_token):
+                _data_dir()  # Bind this run to one immutable QA generation.
+                current = generation()
+                previous = st.session_state.get("_monthly_qa_generation")
+                if previous is not None and current != previous:
+                    # Another tab reset this browser's test. Its former
+                    # editor/PDF must not populate the new empty namespace.
+                    for key in tuple(st.session_state):
+                        if key.startswith(("report_", "report_guided_")) or key.startswith("monthly_qa_"):
+                            del st.session_state[key]
+                st.session_state["_monthly_qa_generation"] = current
                 render(browser_token, browser_timezone, _field, _move, live_root)
         else:
             from app.monthly_report_guided import render_guided_workflow
