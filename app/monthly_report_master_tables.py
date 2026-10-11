@@ -10,6 +10,13 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 import hashlib
+import re
+
+
+def _row_number(value: str) -> int | None:
+    """Read explicit source row ordinals; never use their other client data."""
+    match = re.fullmatch(r"\s*(\d{1,4})[.)]?\s*", str(value))
+    return int(match.group(1)) if match else None
 
 
 @dataclass(frozen=True)
@@ -65,6 +72,7 @@ def from_inspection(inspection) -> tuple[MasterTable, ...]:
             if block.type in ("table", "work_order_grid"):
                 available.add(block.key)
     tables = []
+    last_by_slot = {}
     for item in inspection.items:
         if (item.kind != "table" or item.part != "word/document.xml"
                 or item.suggested_slot not in available or not item.rows
@@ -81,19 +89,40 @@ def from_inspection(inspection) -> tuple[MasterTable, ...]:
         if len(logical) != physical_width:
             # No blind padding, inferred columns or old row values.
             continue
-        # An entire row of source data is never promoted into another site's
-        # grid. Row values are inspected solely for *excluding* price columns.
-        blocked = set(table_price_columns(logical, item.rows[1:4]))
-        keep = tuple(i for i in range(physical_width) if i not in blocked)
-        if not keep:
-            continue
-        labels = tuple(_heading(logical[i], i, old_titles) for i in keep)
-        unique = []
-        for n, label in enumerate(labels):
-            unique.append(label + (f" ({n + 1})" if label in labels[:n] else ""))
-        tables.append(MasterTable(item.suggested_slot, item.position,
-                                  f"master-table:{inspection.sha256}:{item.id}",
-                                  tuple(unique), keep, physical_width))
+        # A long RFI/checklist can continue in a second *physical* Word table
+        # without repeating its header. The first row of that second table is
+        # real prior-client DATA (for example item 16), not another site's
+        # future column headings. Only an explicit consecutive row ordinal,
+        # same section, and identical physical grid can borrow the *already
+        # sanitized* column geometry from the preceding table.
+        previous = last_by_slot.get(item.suggested_slot)
+        former_item, former_shape = previous if previous else (None, None)
+        first_number = _row_number(item.rows[0][0])
+        former_number = _row_number(former_item.rows[-1][0]) if former_item else None
+        continuation = bool(
+            former_item and former_shape
+            and former_item.section == item.section
+            and former_shape.physical_width == physical_width
+            and first_number is not None and former_number is not None
+            and first_number == former_number + 1
+        )
+        if continuation:
+            keep, unique = former_shape.indices, former_shape.columns
+        else:
+            # No old data row is promoted into a current report grid. Source
+            # values are inspected only to exclude monetary columns.
+            blocked = set(table_price_columns(logical, item.rows[1:4]))
+            keep = tuple(i for i in range(physical_width) if i not in blocked)
+            if not keep:
+                continue
+            labels = tuple(_heading(logical[i], i, old_titles) for i in keep)
+            unique = tuple(label + (f" ({n + 1})" if label in labels[:n] else "")
+                           for n, label in enumerate(labels))
+        shape = MasterTable(item.suggested_slot, item.position,
+                            f"master-table:{inspection.sha256}:{item.id}",
+                            tuple(unique), keep, physical_width)
+        tables.append(shape)
+        last_by_slot[item.suggested_slot] = (item, shape)
     return tuple(tables)
 
 
