@@ -46,7 +46,7 @@ def _clear_report_widgets():
     # Never let a QA widget, in-memory PDF, or old viewport flow into a real
     # report when the browser switches workflow modes.
     for key in tuple(st.session_state):
-        if key.startswith(("report_", "report_guided_")) or key == "monthly_qa_package":
+        if key.startswith(("report_", "report_guided_", "monthly_qa_")):
             del st.session_state[key]
 
 
@@ -96,6 +96,7 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
             checks = result["checks"]
             st.session_state["monthly_qa_comparison"] = {
                 "mode": result["mode"], "checks": checks,
+                "fingerprint": working.fingerprint,
                 "matched": sum(bool(v) for v in checks.values()),
             }
         if y.button("Generate QA Word and PDF", key="monthly_qa_generate"):
@@ -108,9 +109,12 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
             else:
                 st.session_state["monthly_qa_package"] = (working.fingerprint, package)
         if state := st.session_state.get("monthly_qa_comparison"):
-            st.write(f"{state['mode']}: {state['matched']}/{len(state['checks'])} independent content/provenance checks.")
-            for name, passed in state["checks"].items():
-                st.write(("PASS — " if passed else "CHECK — ") + name)
+            if state.get("fingerprint") != working.fingerprint:
+                st.info("Previous comparison is outdated. Run Compare fixture facts again after editing.")
+            else:
+                st.write(f"{state['mode']}: {state['matched']}/{len(state['checks'])} independent content/provenance checks.")
+                for name, passed in state["checks"].items():
+                    st.write(("PASS — " if passed else "CHECK — ") + name)
         retained = st.session_state.get("monthly_qa_package")
         if retained and retained[0] != working.fingerprint:
             st.info("The previous QA export is outdated. Generate again to include your latest edits.")
