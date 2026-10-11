@@ -952,9 +952,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.caption(sizes)
             if max(len(package.docx), len(package.pdf or b"")) > 15 * 1024 * 1024:
                 st.warning("The finished report exceeds the 15 MB target. You can reduce selected attachment pages or use denser photo layouts, then generate it again.")
-            st.download_button("Download DOCX", package.docx, file_name=package.docx_name, key=prefix + "_docx")
+            st.download_button("Download DOCX", package.docx, file_name=package.docx_name,
+                               key=prefix + "_docx", on_click="ignore")
             if package.pdf:
-                st.download_button("Download PDF", package.pdf, file_name=package.pdf_name, mime="application/pdf", key=prefix + "_pdf")
+                st.download_button("Download PDF", package.pdf, file_name=package.pdf_name,
+                                   mime="application/pdf", key=prefix + "_pdf", on_click="ignore")
             if package.pdf_error:
                 st.warning(package.pdf_error)
         st.caption("Generating saves a shared report version. In-progress edits are kept separately for this browser when automatic recovery is available.")
