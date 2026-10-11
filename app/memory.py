@@ -356,12 +356,14 @@ def _data_dir() -> Path:
     # data_store keeps local development working. A Render dashboard value can
     # shadow render.yaml for this variable -- confirm both during deployment.
     env = os.getenv("EPC_DATA_DIR")
-    if env:
-        return Path(env)
     mounted = Path("/test1")  # the Render persistent disk's mount path
-    if mounted.is_dir():
-        return mounted
-    return Path(__file__).resolve().parent.parent / "data_store"
+    base = (Path(env) if env else mounted if mounted.is_dir()
+            else Path(__file__).resolve().parent.parent / "data_store")
+    # The QA context is server-side and never modifies the production root.
+    # Memory preferences, unfinished journals and report storage all inherit
+    # this isolated base, including async tasks with copied context.
+    from app.monthly_report_testing import data_dir as report_data_dir
+    return report_data_dir(base)
 
 
 def _db_path() -> Path:

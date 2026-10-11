@@ -1,6 +1,6 @@
 # ENFRA Monthly Report Builder — Stage-one closure ledger
 
-**Status:** IN PROGRESS. This document tracks work and acceptance; it is not a release certificate. Updated 2026-10-10 after the main-branch merges through PR #119. Historic October 9 findings are baseline evidence, **not** established failures of the current live build.
+**Status:** IN PROGRESS — **NOT RELEASE-ACCEPTED**. Engineering reconciliation updated October 11, 2026 UTC after PRs #131–#134 merged. Current main: `2dcb8560a4f6653bbeb05bd1a90324b3ca391a45`; PR #136 is a separate unmerged draft. Historical audits are test leads, not newly reproduced production defects.
 
 **Source of truth for reproduction:** [`MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md`](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md), [`HANDOFF_MONTHLY_REPORT_2026-10-09.md`](HANDOFF_MONTHLY_REPORT_2026-10-09.md), [issue #101](https://github.com/evanroden/msapo-generator/issues/101), and the private original 66-page October 10 review and 10-page prompt. Distinct F, P and U identifiers are preserved; overlapping changes are credited only once.
 
@@ -10,13 +10,13 @@
 
 | Gate | Current evidence | State |
 | --- | --- | --- |
-| Code in main | #114 recovery, #115 price headers, #116 shared training + public build indicator, #117 Activity vendor routing, #118 damaged-source recovery, #119 thermal first-fill | **merged** |
-| Focused PR CI | [#114](https://github.com/evanroden/msapo-generator/actions/runs/38065158259), [#115](https://github.com/evanroden/msapo-generator/actions/runs/38065885072), [#116](https://github.com/evanroden/msapo-generator/actions/runs/38066745688), [#117](https://github.com/evanroden/msapo-generator/actions/runs/38067219591) | **passed per exact PR head** |
-| Remaining change PRs | #113 terminology (separate draft), #121 warning/navigation/ledger, and #122 independent work-order CSV (drafts) | **open; do not mislabel merged** |
-| Final aggregate CI | Must run after *last* reviewed integration commit; older per-PR green runs do not substitute | **not run** |
-| Served production commit | Footer from #116 reads validated `RENDER_GIT_COMMIT`; actual public footer identity has not been observed | **unverified** |
-| Isolated live browser | Click/touch, recovery, actor/month changes and interrupted uploads must be replayed against served build | **not verified** |
-| Real release exports | New DOCX+PDF pair; inspect pages and package; compare authored reference and independent Word rendering | **not generated/verified for this release** |
+| Code in main | #113, #114–#119, #121–#122 and #123–#134 (except closed/unmerged #120 and #135); exact integration through `2dcb8560a4f6653bbeb05bd1a90324b3ca391a45` | **merged; release not accepted** |
+| Focused PR CI | [#131](https://github.com/evanroden/msapo-generator/actions/runs/38094931418), [#132](https://github.com/evanroden/msapo-generator/actions/runs/38095379225), [#133](https://github.com/evanroden/msapo-generator/actions/runs/38095379139), [#134](https://github.com/evanroden/msapo-generator/actions/runs/38097581938) | **Three required jobs passed on each exact reviewed PR head** |
+| Remaining change PRs | [#136](https://github.com/evanroden/msapo-generator/pull/136) synthetic QA namespace, known-value prefill and original-source replay; draft implementation, not deployed; further coverage remains | **draft; CI and integration pending** |
+| Final aggregate CI | [Main after #131–#133](https://github.com/evanroden/msapo-generator/actions/runs/38097568396) green at `103c3c4`; [main after #134](https://github.com/evanroden/msapo-generator/actions/runs/38098010057) in progress when updated; new full CI still required after any #136 merge | **Final-head CI pending** |
+| Served production commit | Footer from #116 can identify validated `RENDER_GIT_COMMIT`; no public-browser served hash or matched native design pin confirmed | **unverified; merge ≠ deployment** |
+| Isolated live browser | PR #136 supplies a proposed isolated entry, per-browser physical namespace and two distinct fixtures; no live browser acceptance has been performed | **not verified** |
+| Real release exports | #132 generated and examined synthetic DOCX and LibreOffice PDF in CI; full-package/image/privacy/authentic Microsoft Word/PDF geometry acceptance remains open | **synthetic content verified on PR head only; release outputs not accepted** |
 | Owner acceptance | Source paths, actual build/pin and generated files needed | **pending** |
 
 ## Original F01–F16
@@ -25,15 +25,15 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | F01 | Edits and Prepared by retained without routine Save | Oct 9 unsaved blurred Activity lost; reconnect loss reported | Merged #109/#111/#114; U01/U02 | Revisions and OS-write regressions passed PR CI; full browser replays pending | P1/P2 | **Needs browser and refresh/reconnect acceptance** |
 | F02 | Vendor/Trane file appears in Activity; onsite calls only ENFRA work | Vendor technical page printed under Maintenance | Merged #117 | Synthetic routing and price-page CI passed; real export pending | P10 | **Real DOCX/PDF page routing and blank Unity/USH calls** |
-| F03 | Review identifies actionable omissions and sizes safely | Sparse skeleton and misleading at-least-page counts/size estimate | Merged #107/#108; #121 novice-review change drafted | Disabled action/empty alert CI; content-based review and sizing pending | P3/P4/P7/P8 | **Specific section-linked review, unique warnings and actual-size checks** |
-| F04 | Long scrolling report has easy section jumps and identity | 12 sections, no persistent navigator observed | Open | Browser navigation/a11y pending | P11/P12 | **Add jump links and responsive acceptance** |
-| F05 | Optional Copilot beside Activity editor, primary upload-first | Manual prompt handoff dominated page | Open; approved reader exists; #122 CSV workflow draft | No end-to-end Copilot round trip | P10 | **Reviewable suggestion and manual edit preservation** |
-| F06 | Contacts show person, role and site; current/future scoped updates | Collapsed contact names repeated without site | Merged #94 partial | Shared refresh CI only | P5 | **Site/identity, future reuse and historical snapshot** |
-| F07 | Clear empty states and intact native table schemas | None placeholders; historical UMMC table mismatch | Open | Native-schema exact-master replay not yet demonstrated | P4 | **UMMC thermal/subcontractor/capital/proposals outputs** |
-| F08 | Global design installation separated from ordinary monthly work | Global update exposed in monthly editor | Open | Permission/pin tests outstanding | P11 | **No global mutation in routine path** |
-| F09 | Preview status and last-good preview, honest retention feedback | Blank draft page vs rendering confusion | Merged #114 partial | Failure containment CI; preview race browser pending | P1/P2 | **Contended render, stale result, loading and accessibility** |
+| F03 | Review identifies actionable omissions and sizes safely | Sparse skeleton and misleading at-least-page counts/size estimate | Merged #107/#108/#121; actionable navigation, unique warning and size improvements | Focused CI exists; generated real-file sizes and live guidance not accepted | P3/P4/P7/P8 | **Needs live readiness/output checks** |
+| F04 | Long scrolling report has easy section jumps and identity | 12 sections, no persistent navigator observed | Merged #121; section-jump navigation | Synthetic tests only; focus/keyboard/touch/browser unverified | P11/P12 | **Live navigation/accessibility acceptance pending** |
+| F05 | Optional Copilot beside Activity editor, primary upload-first | Manual prompt handoff dominated page | Merged #104/#122; optional AI is only partially covered | CSV metrics accepted into Activity in CI; Copilot proposal acceptance browser path unverified | P10 | **Copilot source/edit/review acceptance pending** |
+| F06 | Contacts show person, role and site; current/future scoped updates | Collapsed contact names repeated without site | Merged #94/#127/#131 verified updates and safe site-mapped additions | Test CI green; deletes/reorder, same-site concurrency and future reuse still need coverage | P5 | **Durability and deletion semantics remain** |
+| F07 | Clear empty states and intact native table schemas | None placeholders; historical UMMC table mismatch | Merged #128 selected native capital/proposal columns and Status | Synthetic acceptance #132; fresh-master/other grids/Word renderer not accepted | P4 | **Native all-design tables and PDF pages pending** |
+| F08 | Global design installation separated from ordinary monthly work | Global update exposed in monthly editor | Merged #123 master admin separation and design pin protections | Synthetic code coverage; real operator path not exercised | P11 | **Live routine/administrator separation pending** |
+| F09 | Preview status and last-good preview, honest retention feedback | Blank draft page vs rendering confusion | Merged #114/#134 preview retention, revised semantics and regression | Full #134 head CI passed; stale/identity/late-job owner browser still pending | P1/P2 | **Visible stale/scroll/zoom/live race pending** |
 | F10 | Site picker works with pointer, label, touch and keyboard | Cloud click lost selection, Space worked | Merged #112 | AppTest checkbox success; real DOM/touch pending | P2/P12 | **Human device input replay** |
-| F11 | Valid Activity source creates cited editable draft; failures explain recovery | Original activity.txt twice returned raw JSON parser error | Merged #104; #122 independent CSV workflow draft | Original exact fixture not replayed on current build | P10 | **TXT, malformed/model-unavailable, CSV work-order metrics** |
+| F11 | Valid Activity source creates cited editable draft; failures explain recovery | Original activity.txt twice returned raw JSON parser error | Merged #104/#118/#122/#125/#132/#133 | Exact original invented TXT and synthetic work-order CSV verified in PR CI; reader/service/live paths open | P10 | **Live ingestion and failure/retry/output placement pending** |
 | F12 | Section 10 visibly shows both digits in Word and PDF | Export showed 1 though Word source contained 10 | Merged #105 | Geometry CI only; authentic/source output pending | P8 | **Rendered divider all multi-digit cases** |
 | F13 | Branding and photos correctly fitted without squashing | Contents logo flattened; image aspect ratio distorted | Merged #103/#106; #112 logo cards | Image-fit CI, actual exports pending | P5 | **Wide/tall/square/artwork Word/PDF ratio checks** |
 | F14 | Training notes survive invalid submit and add-column | Notes disappeared in combined validation/column sequence | Merged #99 | Targeted regression CI; original browser sequence pending | P9 | **Invalid/add-column and deliberate deletion replay** |
@@ -48,13 +48,13 @@
 | P2 | Clicks give feedback, workflow retained | Repeated site/Start clicks and switch to PO | #109/#112/#114 merged | Widget tests; pointer/touch not confirmed | F01/F10 | DOM, latency, exact identity after Start |
 | P3 | Disabled Generate looks disabled and names reason | Bright enabled appearance despite warning gate | #107 merged | UI tests; live visual not checked | F03 | Assistive announcement and stale acknowledgment |
 | P4 | Thin report gets actionable soft completeness review | 12 empty sections still generated a skeleton | #108 partial | Soft zero-content test only | F03/F07 | Section links and optional Generate anyway; safety gates |
-| P5 | Full names, logo fallback and truthful site help | Six cards no logos; code BRATH unclear | #112 partial | Logo card CI, discovery not complete | F06/F10 | Full contract names + site record origin review |
-| P6 | MBCx/ENFRA Connect/RFI explained inline | Terms unexplained when onboarding collapsed | #113 OPEN DRAFT | Passing draft-head CI does not imply merged | F04 | Coordinate #113; no duplicate edit |
-| P7 | Defensible DOCX/PDF size estimate or none until measured | 1.9 MB estimate vs 6.0 DOCX/4.6 PDF | Open | Actual sizes shown post-export; pre-estimate misleading | F03 | Template art/compression and real 15MB check |
-| P8 | Unique warnings and authentic appendix numbering | Duplicate Cover warning; G. RFI ambiguity | #121 draft, period warning and section anchors | Focused test pending | F03/F12 | Context-aware wrong-month/future dates; real output |
+| P5 | Full names, logo fallback and truthful site help | Six cards no logos; code BRATH unclear | Merged #112/#124; full approved labels and neutral fallback | PR CI; live discovery/navigation not verified | F06/F10 | Actual correct contract/site card check |
+| P6 | MBCx/ENFRA Connect/RFI explained inline | Terms unexplained when onboarding collapsed | Merged #113 terminology in section help | PR-head CI; with help collapsed, operator browser unverified | F04 | Live inline explanation |
+| P7 | Defensible DOCX/PDF size estimate or none until measured | 1.9 MB estimate vs 6.0 DOCX/4.6 PDF | Merged #121 actual post-generation file sizes | Synthetic tests; live real export unverified | F03 | 15 MB target and actual download sizes |
+| P8 | Unique warnings and authentic appendix numbering | Duplicate Cover warning; G. RFI ambiguity | Merged #121 warning dedup / period semantics | Focused CI; actual wrong-month and appendix PDF still open | F03/F12 | Real exports and soft warning revision check |
 | P9 | Training event date is single-date value and label | Picker asked for a second date | Open | Current date_input uses scalar date; browser DOM unverified | F14 | Rendered accessibility and period validation |
-| P10 | Activity first, optional Copilot, protected edits | External handoff friction | Reader #104; source routing #117 | Full suggestion accept/dismiss not tested | F05/F11 | Exact activity.txt and editing round trip |
-| P11 | Identity/jumps/title/footer, no false dirty indication | Generic title and purchase-order footer | Merged #116 title/footer, others open | Code/CI passed; live not verified | F04/F08 | Sticky jumps, false dirty state, browser title |
+| P10 | Activity first, optional Copilot, protected edits | External handoff friction | Merged #104/#117/#122/#133 activity and source routing | Synthetic TXT/CSV parser/output; Copilot and live unavailable-reader not accepted | F05/F11 | Actual multi-source/editor/output placement |
+| P11 | Identity/jumps/title/footer, no false dirty indication | Generic title and purchase-order footer | Merged #116/#121/#123 report navigation and identity | Code and CI verified; live keyboard/browser state not yet checked | F04/F08 | Sticky focus, false dirty and title |
 | P12 | Named controls, focus, pointer/touch and status announcements | Reviewer indicated labels/expander semantics ineffective | #112 partial | No current accessibility-tree proof | F09/F10 | Real DOM, screen reader, touch, zoom |
 
 ## October 10 regression targets U01–U06 (do not count as extra original findings)
@@ -63,10 +63,10 @@
 | --- | --- | --- | --- |
 | U01 | Old tab cannot overwrite discarded/recreated journal | #114 merged; generation tombstone and revision guards | PR CI passed; live two-tab not checked |
 | U02 | OSError cannot terminate remaining editor or claim saved | #114 merged; boundary catches storage errors | PR CI passed; force-failure live not checked |
-| U03 | Price headers never map to description/scope | #115 merged; exact heading priority and amount-only rejection | PR CI passed; cross-representation final output pending |
+| U03 | Price headers never map to description/scope | Merged #115/#128/#132 | Synthetic Word/PDF text-path acceptance only; pictures/embedded parts and authentic output remain |
 | U04 | Older report cannot erase newer shared training | #116 merged; stale-matrix comparison and explicit reload | PR CI passed; historical two-site owner test pending |
-| U05 | Another client's old PNG/EMF/footer/watermark never survives new master | Open; synthetic canary needed | No current reproduction or live clearance |
-| U06 | One missing/broken source does not disable rest of report | #118 merged; missing-source restoration guards | PR-head CI in flight; replacement/live/export pending |
+| U05 | Another client's old PNG/EMF/footer/watermark never survives new master | Merged #126/#129/#130 canary slices | Other-client text/image/watermark regressions passed focused CI; full EMF/hidden artifacts and live output not cleared |
+| U06 | One missing/broken source does not disable rest of report | Merged #118/#125/#133 | Damaged mixed batch and original Activity TXT passed focused CI; live reader/cache/recovery and final export pending |
 
 ## All 113 original proposed acceptance checks — coverage decision
 
@@ -177,16 +177,16 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | T03 | Unsupported structural edit rejected locally | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
 | T04 | Corrected-copy import retry | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
 | T05 | Prior import remap after fix | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
-| X01 | Isolated testing mode enabled | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X02 | Contact/thermal/logo/report data separation | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X03 | Prefill completed fixture | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X04 | Reset only test data | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X05 | Render known-value prefill | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X06 | Replay original sources separately | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X07 | Compare authentic Word/PDF elements | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X08 | Failed test write never falls back to live | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X09 | Repeat fixture deterministic | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
-| X10 | Test access/side effects prove isolation | Hidden isolated testing and authentic prefill | Server-side isolated sandbox and authentic private fixture | **Not run** |
+| X01 | Isolated testing mode enabled | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X02 | Contact/thermal/logo/report data separation | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X03 | Prefill completed fixture | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X04 | Reset only test data | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X05 | Render known-value prefill | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X06 | Replay original sources separately | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X07 | Compare authentic Word/PDF elements | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X08 | Failed test write never falls back to live | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X09 | Repeat fixture deterministic | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
+| X10 | Test access/side effects prove isolation | Proposed QA controls in draft #136 (not yet release accepted) | Must pass exact merged CI, isolated live and independence/side-effect checks | **Not run for final release** |
 
 ## Additional selected regression cases (not extra audit check passes)
 
@@ -198,6 +198,14 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 - Work-order fixture: `WO-TEST-1001` September 3 completed, `WO-TEST-1002` September 20 completed, `WO-TEST-1003` September 24 open. Expected 3 total, 2 completed, 1 open, 66.7% closure from **CSV itself**, not imported DOCX prose.
 - Proposal safety tokens: `$12,345.67`, `$987.65`, `$13,333.32`, `$456.78`, `$222.22` must be absent; `Q-TEST-731` identifier must remain. Neither a passing native-text search nor a single excluded page is a full safety pass.
 - Source output cases: synthetic 12-section starting DOCX, first/second/third app outputs `rrh_synthetic_v1/v2/v3_imported` with associated input receipts, and unchanged private authentic Unity/USH August DOCX+PDF. Source hashes and renderer names from the full audit are required before comparison.
+
+## October 11 integration evidence (distinguish implementation from acceptance)
+
+- Merged [#131](https://github.com/evanroden/msapo-generator/pull/131) at `6c04d37c`, [#132](https://github.com/evanroden/msapo-generator/pull/132) at `1a94a238`, [#133](https://github.com/evanroden/msapo-generator/pull/133) at `103c3c4c`, and [#134](https://github.com/evanroden/msapo-generator/pull/134) at `2dcb8560`. These are **implemented** slices. The integrated main after #131–#133 passed all three required jobs in [run 38097568396](https://github.com/evanroden/msapo-generator/actions/runs/38097568396). #134 also passed all three jobs on its corrected head in [run 38097581938](https://github.com/evanroden/msapo-generator/actions/runs/38097581938); main integration still requires exact-merge CI.
+- [#136 isolated QA draft](https://github.com/evanroden/msapo-generator/pull/136) contains a proposed server-side separated namespace, known-value prefill and independently ingested synthetic CSV/TXT replay. As a **draft**, it is not evidence of production separation, live compatibility, cross-tab reset or complete X01–X10 acceptance. Do not use it with customer records.
+- **Authentic reference recovered privately by SHA-256:** The exact Unity/USH August authored PDF (`2b204491f9bd9b21452f2300b9844e8993b97e9cf69d1deb4b94c3a1a09c789b`) is a 40-page Adobe PDFMaker reference. An earlier-uploaded DOCX under a different filename has the **exact audited original `(4).docx` bytes** (`d8705610e4da6f335c95159b42966deffb6e8369861a2c5a6e873c3267cea1ea`); it has 115 package entries including 47 Word media entries. Both remain private and were not placed in GitHub. Authentic source identification is **verified**. Comparable new application DOCX/PDF export, all 40-page geometry comparison and independently supported Microsoft Word rendering remain **not verified**; synthetic #132 outputs are not substitutes.
+- Public served SHA and native design pin remain **unverified**. No owner browser acceptance or complete page-by-page exported-artifact inspection is recorded here. The existing 113 original proposed final-release checks below intentionally remain not run, even where focused synthetic regression tests have passed. They are not 113 proven defects.
+- The old competing draft #110, superseded #120 and closed unmerged #135 were not used for publication. Later iPhone Duo/foldable responsive redesign is out of stage-one scope.
 
 ## Next evidence gates and owner check (minimal)
 

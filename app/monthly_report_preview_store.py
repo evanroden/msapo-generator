@@ -162,6 +162,13 @@ class PreviewStore:
                     result.append((index, raw))
             return tuple(result)
 
+    def discard_owner_prefix(self, prefix):
+        """Expire only a named isolated tester's own cached pages."""
+        with self._lock:
+            for key, item in tuple(self._files.items()):
+                if item.owner.startswith(prefix):
+                    self._remove(key)
+
     def stats(self):
         with self._lock:
             self._expire()
@@ -177,4 +184,46 @@ class PreviewStore:
                 self._directory = None
 
 
-STORE = PreviewStore()
+# Live and QA previews must never share a PDF/raster store or entry budget.
+_LIVE_STORE = PreviewStore()
+_QA_STORE = PreviewStore()
+
+
+class _ScopedPreviewStore:
+    @staticmethod
+    def _scoped_owner(owner):
+        from app.monthly_report_testing import scope
+        selected = scope()
+        return "qa:" + selected + ":" + owner if selected is not None else owner
+
+    def _active(self):
+        from app.monthly_report_testing import scope
+        return _QA_STORE if scope() is not None else _LIVE_STORE
+
+    def put(self, owner, preview):
+        return self._active().put(self._scoped_owner(owner), preview)
+
+    def available(self, owner, ticket):
+        return self._active().available(self._scoped_owner(owner), ticket)
+
+    def discard(self, owner, ticket):
+        return self._active().discard(self._scoped_owner(owner), ticket)
+
+    def pages(self, owner, ticket, indexes, *, dpi=120):
+        return self._active().pages(self._scoped_owner(owner), ticket, indexes, dpi=dpi)
+
+    def reset_scope(self):
+        from app.monthly_report_testing import scope
+        selected = scope()
+        if selected is None:
+            raise ValueError("QA preview reset requires a verified isolated context.")
+        _QA_STORE.discard_owner_prefix("qa:" + selected + ":")
+
+    def stats(self):
+        return self._active().stats()
+
+    def close(self):
+        self._active().close()
+
+
+STORE = _ScopedPreviewStore()

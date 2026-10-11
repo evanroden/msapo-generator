@@ -22,6 +22,12 @@ def start_receipt(
     There is no unbounded executor queue. Capacity is released even when a
     report is cleared, a queued future is cancelled, or a request fails.
     """
+    # This module launches paid/external reader requests. A synthetic QA
+    # context may exercise native ingestion, but must not send QA uploads or
+    # consume the live reader's allowance. Fail before preparing any content.
+    from app.monthly_report_testing import scope
+    if scope() is not None:
+        raise ValueError("Automatic document reading is disabled in isolated testing. Use native source review or edit the synthetic report directly.")
     if not _SLOTS.acquire(blocking=False):
         return None
     try:
