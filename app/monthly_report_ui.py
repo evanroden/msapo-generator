@@ -42,11 +42,31 @@ def _move(order_key: str, section_key: str, offset: int) -> None:
 
 
 def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "") -> None:
+    # This hidden selector is a navigation choice only. The actual separation
+    # is the server-side physical namespace in monthly_report_testing.
+    requested = st.query_params.get("monthly_qa") == "isolated"
+    mode = "isolated" if requested else "live"
+    last = st.session_state.get("_monthly_report_storage_mode")
+    if last != mode:
+        # A Streamlit session that switches modes must not reuse a report
+        # editor widget, PDF, source queue or image from its prior namespace.
+        for key in tuple(st.session_state):
+            if key.startswith(("report_", "report_guided_")) or key.startswith("monthly_qa_"):
+                del st.session_state[key]
+        st.session_state["_monthly_report_storage_mode"] = mode
     restore_report_draft_state()
     st.title("Monthly report")
-    from app.monthly_report_guided import render_guided_workflow
     try:
-        render_guided_workflow(browser_token, browser_timezone, _field, _move)
+        if requested:
+            from app.memory import _data_dir
+            from app.monthly_report_testing import isolated
+            from app.monthly_report_testing_ui import render
+            live_root = _data_dir()  # Resolve only the base; do not read live records.
+            with isolated(browser_token):
+                render(browser_token, browser_timezone, _field, _move, live_root)
+        else:
+            from app.monthly_report_guided import render_guided_workflow
+            render_guided_workflow(browser_token, browser_timezone, _field, _move)
     except (ValueError, OSError) as exc:
         st.error(f"The report could not be loaded: {exc}. Your saved versions were not changed.")
     preserve_report_draft_state()
