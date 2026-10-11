@@ -137,3 +137,36 @@ def initialize_master_tables(draft):
     return replace(draft, blocks=tuple(blocks.get(b.key, b) for b in draft.blocks)
                    + tuple(block for key, block in blocks.items()
                            if key not in {prior.key for prior in draft.blocks}))
+
+
+def rebind_carried_master_tables(draft, previous_blocks, previous_template: str):
+    """Retain same-master physical table IDs on new-month rollover only.
+
+    The ordinary design-seed operation deliberately drops source data and
+    provenance. Native *design frame identities*, unlike source facts, can be
+    carried when both reports have the identical immutable master pin. Fail
+    closed for changed master, mismatched columns or unrecognized old refs.
+    """
+    if draft.profile.template != previous_template:
+        return draft
+    accepted = {table.reference: table for table in for_profile(draft.profile)}
+    if not accepted:
+        return draft
+    updated = []
+    for block in draft.blocks:
+        prior = previous_blocks.get(block.key)
+        if (prior is None or not block.extra_tables
+                or len(prior.extra_tables) != len(block.extra_tables)):
+            updated.append(block)
+            continue
+        tables = []
+        for current, former in zip(block.extra_tables, prior.extra_tables):
+            master = accepted.get(former.reference)
+            if (master is not None and master.slot == block.key
+                    and len(current.columns) == len(master.columns)
+                    and not current.rows):
+                tables.append(replace(current, reference=former.reference))
+            else:
+                tables.append(current)
+        updated.append(replace(block, extra_tables=tuple(tables)))
+    return replace(draft, blocks=tuple(updated))
