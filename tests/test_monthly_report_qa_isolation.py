@@ -235,3 +235,22 @@ def test_test_generation_rejects_changed_marker_without_live_fallback(monkeypatc
         finally:
             marker.write_text(original)
         assert library._root().is_relative_to(isolated_root)
+
+
+def test_old_task_cannot_write_cached_path_after_test_reset(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with qa.isolated(COOKIE_A):
+        qa_root = library._root()
+        destination = qa_root / "library" / "synthetic.json"
+        snapshot = copy_context()
+        qa.reset(tmp_path)
+        with pytest.raises(OSError, match="reset"):
+            snapshot.run(library._atomic_write, destination,
+                         b'{"schema":1,"fake":"old"}')
+    assert not destination.exists()
+    with qa.isolated(COOKIE_A):
+        library._root()
+        with pytest.raises(library.LibraryError, match="outside its isolated storage"):
+            library._atomic_write(tmp_path / "monthly_reports" / "live.json",
+                                  b'{"schema":1,"fake":"outside"}')
+        assert not (tmp_path / "monthly_reports" / "live.json").exists()
