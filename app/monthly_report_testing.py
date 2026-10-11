@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from uuid import uuid4
 from hashlib import sha256
 from pathlib import Path
 import os
@@ -15,6 +16,7 @@ import re
 import shutil
 
 _SCOPE: ContextVar[str | None] = ContextVar("enfra_monthly_qa_scope", default=None)
+_LEASE: ContextVar[str | None] = ContextVar("enfra_monthly_qa_generation", default=None)
 _COOKIE = re.compile(r"[0-9a-f]{32}\Z")
 _BUCKET = "_enfra_monthly_report_qa_v1"
 _SENTINEL = ".enfra-qa-namespace"
@@ -30,11 +32,13 @@ def isolated(browser_token: str):
     if not isinstance(browser_token, str) or not _COOKIE.fullmatch(browser_token):
         raise ValueError("Isolated testing requires this browser's valid device identity.")
     identity = sha256(("monthly-qa-v1:" + browser_token).encode("ascii")).hexdigest()[:32]
-    lease = _SCOPE.set(identity)
+    chosen = _SCOPE.set(identity)
+    previous_generation = _LEASE.set(None)
     try:
         yield identity
     finally:
-        _SCOPE.reset(lease)
+        _LEASE.reset(previous_generation)
+        _SCOPE.reset(chosen)
 
 
 def _location(base: Path, identity: str) -> Path:
@@ -56,26 +60,45 @@ def _location(base: Path, identity: str) -> Path:
     return target
 
 
+def _marker(sentinel: Path, identity: str) -> str:
+    """Validate both test owner and a non-reusable namespace generation."""
+    if sentinel.is_symlink() or not sentinel.is_file():
+        raise OSError("Unrecognized test storage marker; live records were untouched.")
+    values = sentinel.read_text(encoding="ascii").split("|")
+    if (len(values) != 2 or values[0] != identity
+            or not _COOKIE.fullmatch(values[1])):
+        raise OSError("Isolated report ownership/generation does not match.")
+    return values[1]
+
+
 def data_dir(base: Path) -> Path:
-    """Called by memory._data_dir, which is the shared persistence boundary."""
+    """Shared persistence boundary; old preview jobs cannot recreate a reset."""
     identity = scope()
     if identity is None:
         return Path(base)
     target = _location(base, identity)
-    target.mkdir(mode=0o700, parents=True, exist_ok=True)
+    expected = _LEASE.get()
+    if not target.exists():
+        if expected is not None:
+            raise OSError("This isolated test was reset during a running task; retry on a new test session.")
+        target.mkdir(mode=0o700, parents=True, exist_ok=True)
     sentinel = target / _SENTINEL
-    if sentinel.is_symlink():
-        raise OSError("Isolated report ownership marker is not safe.")
     if not sentinel.exists():
-        # A pre-existing directory that has no marker must never be adopted.
-        if any(target.iterdir()):
+        # Existing unmarked content is never adopted, including after a crash.
+        if expected is not None or any(target.iterdir()):
             raise OSError("Unrecognized test files found; existing files were preserved.")
-        with sentinel.open("x", encoding="ascii") as stream:
-            stream.write(identity)
-            stream.flush()
-            os.fsync(stream.fileno())
-    if sentinel.read_text(encoding="ascii") != identity:
-        raise OSError("Isolated report ownership marker does not match.")
+        generation = uuid4().hex
+        try:
+            with sentinel.open("x", encoding="ascii") as stream:
+                stream.write(identity + "|" + generation)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileExistsError:
+            pass  # Another first-use tab installed its own valid marker.
+    generation = _marker(sentinel, identity)
+    if expected is not None and expected != generation:
+        raise OSError("The isolated test changed while this task was running; stale work was blocked.")
+    _LEASE.set(generation)
     return target
 
 
@@ -86,10 +109,12 @@ def reset(base: Path) -> None:
         raise ValueError("Test reset requires an active isolated test context.")
     target = _location(base, identity)
     if not target.exists():
+        if _LEASE.get() is not None:
+            raise OSError("The current QA run was already reset.")
         return
-    sentinel = target / _SENTINEL
-    if sentinel.is_symlink() or not sentinel.is_file() or sentinel.read_text(encoding="ascii") != identity:
-        raise OSError("Test reset refused an unrecognized storage namespace.")
+    _marker(target / _SENTINEL, identity)
+    if _LEASE.get() is not None and _LEASE.get() != _marker(target / _SENTINEL, identity):
+        raise OSError("An older test session may not reset another generation.")
     # Reject symlinks inside the test namespace rather than following or
     # deleting anything that may point to another directory.
     for directory, directories, files in os.walk(target, followlinks=False):
