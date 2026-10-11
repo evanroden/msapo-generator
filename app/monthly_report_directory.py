@@ -814,6 +814,12 @@ def automatically_keep_directory_contact_edits(profile, before, after, actor):
         if any(row[0] != facility.title or not row[1].strip() for row in current):
             return None
         if current != previous:
+            if Counter(current) == Counter(previous):
+                # A visible row reorder changes report presentation, not the
+                # persistent identity of individual shared contacts. Treat
+                # the whole action as report-only rather than rewriting
+                # stored people by their old row position.
+                return None
             changed = tuple(replace(contact, role=row[1], name=row[2],
                                     phone=row[3], email=row[4])
                             for contact, row in zip(site.contacts, current))
@@ -879,8 +885,18 @@ def apply_defaults(draft):
     if not draft.prepared_by.strip():
         return draft
     current = next((b for b in draft.blocks if b.key == "contact_matrix"), None)
-    if current and (current.text.strip() or current.rows or any(t.rows for t in current.extra_tables)
+    if current and ((current.source in ("Omit", "Replace once") and bool(
+                        current.references or current.reviewed_fingerprint
+                        or current.client_reviewed_fingerprint))
+                    or (current.source == "This month" and any(
+                        ref.startswith("directory:") for ref in current.references))
+                    or current.text.strip() or current.rows
+                    or any(t.rows for t in current.extra_tables)
                     or current.asset_hashes or current.org_nodes):
+        # Removing all rows is a deliberate report-only edit when the block
+        # retains its exact directory provenance. Do not resurrect people
+        # from standing defaults, and never treat an empty report as authority
+        # to delete them from the shared directory.
         return draft
     if not any(b.key == "contact_matrix" for s in draft.sections for b in s.blocks):
         return draft
