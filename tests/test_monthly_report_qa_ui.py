@@ -44,6 +44,8 @@ def test_prefill_and_original_replay_appear_as_distinct_editable_ui_actions(monk
     next(x for x in app.button if x.label == "Compare fixture facts").click().run()
     assert not app.exception
     assert any("known-value prefill" in x.value for x in app.markdown)
+    first_checks = app.session_state["monthly_qa_comparison"]["checks"]
+    assert all(first_checks.values()), {name: passed for name, passed in first_checks.items() if not passed}
     next(x for x in app.button if x.label == "Replay synthetic source files").click().run()
     assert not app.exception
     with qa.isolated(ACTOR_COOKIE):
@@ -53,6 +55,8 @@ def test_prefill_and_original_replay_appear_as_distinct_editable_ui_actions(monk
     next(x for x in app.button if x.label == "Compare fixture facts").click().run()
     assert not app.exception
     assert any("source replay" in x.value for x in app.markdown)
+    replay_checks = app.session_state["monthly_qa_comparison"]["checks"]
+    assert all(replay_checks.values()), {name: passed for name, passed in replay_checks.items() if not passed}
 
 
 def test_ui_reset_does_not_erase_any_live_report(monkeypatch, tmp_path):
