@@ -87,6 +87,7 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
             st.rerun()
     saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
     if saved:
+        working = _working_report(saved)
         st.caption("Current fixture: " + ("original-source replay" if saved.draft.sources else "known-value prefill") +
                    " · September 2026 · two invented sites · synthetic only")
         x, y = st.columns(2)
