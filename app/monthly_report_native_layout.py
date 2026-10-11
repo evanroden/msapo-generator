@@ -356,7 +356,7 @@ def _fit_cover_photo(node, image_width, image_height):
             node.set(name, format(crop[key], ".8f"))
 
 
-def _table(element, columns, rows):
+def _table(element, columns, rows, *, physical_indices=()):
     explicit_header = bool(columns)
     native_rows = element.findall(qn("w:tr"))
     if not native_rows:
@@ -374,11 +374,21 @@ def _table(element, columns, rows):
     total = sum(int(col.get(qn("w:w"), "0")) for col in grid) if grid is not None else 0
     total = total or 9000
     cell_width = max(1, total // width)
+    # A fresh master can exclude source pricing columns, but all other native
+    # column proportions should survive rather than become equal-width cells.
+    widths = ()
+    if (physical_indices and grid is not None and len(physical_indices) == width
+            and len(grid) > max(physical_indices)):
+        original_widths = [max(1, int(col.get(qn("w:w"), "1"))) for col in grid]
+        selected = [original_widths[index] for index in physical_indices]
+        retained_total = sum(selected)
+        widths = tuple(max(1, round(value * total / retained_total)) for value in selected)
     if grid is not None and resized:
         for col in list(grid):
             grid.remove(col)
         for index in range(width):
-            col = OxmlElement("w:gridCol"); col.set(qn("w:w"), str(cell_width))
+            col = OxmlElement("w:gridCol")
+            col.set(qn("w:w"), str(widths[index] if widths else cell_width))
             grid.append(col)
     for row in native_rows:
         element.remove(row)
@@ -396,7 +406,8 @@ def _table(element, columns, rows):
                         props.remove(merged)
                 size = props.find(qn("w:tcW"))
                 if size is not None and (resized or len(cells) != width):
-                    size.set(qn("w:w"), str(cell_width)); size.set(qn("w:type"), "dxa")
+                    size.set(qn("w:w"), str(widths[column] if widths else cell_width))
+                    size.set(qn("w:type"), "dxa")
             _clear_images(cell)
             _set_text(cell, str(value))
             row.append(cell)
@@ -582,6 +593,12 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
 
     source_path = Path(source_path)
     inspection = inspect_docx(source_path)
+    if master:
+        from app.monthly_report_master_tables import from_inspection
+        master_shapes = from_inspection(inspection)
+        master_by_position = {shape.position: shape for shape in master_shapes}
+    else:
+        master_by_position = {}
     unchanged = _unchanged_blocks(draft, inspection, source_path, section_key=section_key)
     unchanged_items = set().union(*unchanged.values()) if unchanged else set()
     # Editing one imported table must not rebuild its unchanged neighboring
@@ -891,6 +908,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     text_prototypes = defaultdict(list)
     image_prototypes = defaultdict(list)
     table_prototypes = defaultdict(list)
+    table_by_reference = {}  # pinned physical source table, never an ordinal guess
     section_ends = {}
     section_text = defaultdict(list)
     section_images = defaultdict(list)
@@ -982,7 +1000,11 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         picture_table = element.tag == qn("w:tbl") and any(item.kind == "image" for item in group)
         if element.tag == qn("w:tbl") and not picture_table:
             table_slot = next((i.suggested_slot for i in group if i.kind == "table" and i.suggested_slot), slot)
-            table_prototypes[table_slot].append((element, deepcopy(element)))
+            native_shape = master_by_position.get(position)
+            prototype = deepcopy(element)
+            table_prototypes[table_slot].append((element, prototype))
+            if native_shape is not None and native_shape.slot == table_slot:
+                table_by_reference[native_shape.reference] = (element, prototype, native_shape)
 
         if any(i.kind == "image" for i in group):
             image_slot = next((i.suggested_slot for i in group if i.kind == "image" and i.suggested_slot), slot)
@@ -1033,9 +1055,19 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 for cell in element.iter(qn("w:tc")):
                     _set_text(cell, "")
                 continue
-            columns = current_columns.get(table_slot)
+            shape = master_by_position.get(position)
+            columns = shape.columns if shape and shape.slot == table_slot else current_columns.get(table_slot)
+            # For a same-width custom report design, a neutralized unsafe
+            # source header can use the already-selected *current* schema's
+            # non-monetary label. Otherwise retain the neutral Detail label.
+            selected = current_columns.get(table_slot, ())
+            if shape and len(selected) == len(columns):
+                from app.monthly_report_content_policy import price_column
+                columns = tuple(selected[n] if value.startswith("Detail ")
+                                and not price_column(selected[n]) else value
+                                for n, value in enumerate(columns))
             if master and columns:
-                _table(element, columns, ())
+                _table(element, columns, (), physical_indices=shape.indices if shape else ())
                 continue
             native_rows = element.findall(qn("w:tr"))
             header_rows = 1
@@ -1153,13 +1185,28 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     raise NativeLayoutError(f"The source has no native table geometry for {block.key}.")
                 anchors = [(append_native(sec, prototype), prototype)]
             last = None
+            emitted = set()
             for index, (columns, rows, table_reference) in enumerate(tables):
-                anchor, prototype = anchors[min(index, len(anchors) - 1)]
-                if index >= len(anchors):
-                    anchor = deepcopy(prototype)
-                    last.addnext(anchor)
-                    page_plan.assigned(anchor, last)
-                _table(anchor, columns, rows)
+                shape = None
+                if master and table_reference.startswith("master-table:"):
+                    if table_reference not in table_by_reference:
+                        raise NativeLayoutError("The pinned master table reference no longer identifies this source's native grid.")
+                    anchor, prototype, shape = table_by_reference[table_reference]
+                    if table_reference in emitted:
+                        raise NativeLayoutError("The same native master table cannot receive two independent edits.")
+                    emitted.add(table_reference)
+                    if columns != shape.columns:
+                        # A user may edit column labels, but not silently change
+                        # a physical schema's width in a separate native frame.
+                        if len(columns) != len(shape.columns):
+                            raise NativeLayoutError("The edited master table has a different physical column count.")
+                else:
+                    anchor, prototype = anchors[min(index, len(anchors) - 1)]
+                    if index >= len(anchors):
+                        anchor = deepcopy(prototype)
+                        last.addnext(anchor)
+                        page_plan.assigned(anchor, last)
+                _table(anchor, columns, rows, physical_indices=shape.indices if shape else ())
                 page_plan.emitted(anchor, kind="table")
                 from app.monthly_report_training_style import style_training_table
                 style_training_table(anchor, table_reference)
