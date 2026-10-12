@@ -258,6 +258,14 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 questions.append("Choose where the additional content belongs.")
                 continue
             if item.kind == "image":
+                if not slot and section.key not in ("cover", "other", "proposals", "accounts_receivable"):
+                    # A source image inside a recognized Word report section
+                    # belongs with that section's visual evidence even when
+                    # its individual paragraph lacks a filename or caption.
+                    # Quote/receivable images are excluded from this fallback:
+                    # they can contain amounts only in pixels.
+                    from app.monthly_report_visual_preservation import VISUAL_SLOTS
+                    slot = VISUAL_SLOTS.get(section.key, "")
                 if section.key == "cover" and slot not in ("brand_logo", "client_logo"):
                     # Optional cover photo is one chosen image; even when
                     # several pictures exist the gallery does not need one
