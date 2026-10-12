@@ -58,6 +58,7 @@ def render_capacity(draft, block, prefix, field):
     """
     profile = draft.profile
     block = block or ResolvedBlock("thermal_capacity", "Library")
+    st.caption("Leave unknown capacity values blank or Not recorded (NR), never zero.")
     state = capacity.load_capacity(profile.contract)
     changing_existing = False
     if state:
