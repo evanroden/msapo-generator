@@ -14,7 +14,7 @@ def _prepared(app):
 
 
 def _generate(app):
-    return next(w for w in app.button if w.label == "Generate DOCX and PDF")
+    return next(w for w in app.button if w.label == "Create Word and PDF")
 
 
 def test_advisory_count_ignores_logo_stock_text_and_empty_table_schemas():
@@ -38,14 +38,14 @@ def test_empty_monthly_draft_asks_generate_anyway_before_creating_download(monke
     monkeypatch.setattr(guided, "generate_report", fake)
     app = _prepared(monthly(monkeypatch, tmp_path))
     assert not _generate(app).disabled
-    assert not any(w.label == "Generate anyway" for w in app.button)
+    assert not any(w.label == "Create anyway" for w in app.button)
     assert not any("0 of" in c.value or "not a completeness score" in c.value for c in app.caption)
     _generate(app).click().run()
     assert not app.exception
     assert counts == []
     assert not app.get("download_button")
     assert any("No new monthly information" in w.value for w in app.warning)
-    next(w for w in app.button if w.label == "Generate anyway").click().run()
+    next(w for w in app.button if w.label == "Create anyway").click().run()
     assert not app.exception
     assert len(counts) == 1
     assert [w.label for w in app.get("download_button")] == ["Download DOCX", "Download PDF"]
@@ -68,7 +68,7 @@ def test_one_substantive_monthly_section_remains_one_click_with_soft_advice(monk
     _generate(app).click().run()
     assert not app.exception
     assert len(calls) == 1
-    assert not any(w.label == "Generate anyway" for w in app.button)
+    assert not any(w.label == "Create anyway" for w in app.button)
 
 
 def test_pending_empty_confirmation_expires_when_monthly_content_changes(monkeypatch, tmp_path):
@@ -76,11 +76,11 @@ def test_pending_empty_confirmation_expires_when_monthly_content_changes(monkeyp
     monkeypatch.setattr(guided, "generate_report", lambda draft, **kwargs: calls.append(draft.fingerprint))
     app = _prepared(monthly(monkeypatch, tmp_path))
     _generate(app).click().run()
-    assert any(w.label == "Generate anyway" for w in app.button)
+    assert any(w.label == "Create anyway" for w in app.button)
     next(w for w in app.text_area if w.label == "Activity summary").set_value(
         "Synthetic newly added monthly work.").run()
     assert not app.exception
-    assert not any(w.label == "Generate anyway" for w in app.button)
+    assert not any(w.label == "Create anyway" for w in app.button)
     assert not calls
 
 
@@ -89,4 +89,4 @@ def test_required_preflight_blocker_still_prevents_empty_override(monkeypatch, t
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Insert image here").run()
     assert not app.exception
     assert _generate(app).disabled
-    assert not any(w.label == "Generate anyway" for w in app.button)
+    assert not any(w.label == "Create anyway" for w in app.button)
