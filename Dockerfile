@@ -52,6 +52,10 @@ RUN python3.12 -m venv /opt/venv \
 
 COPY . .
 
+# .dockerignore excludes tests/, so keep the synthetic QA archive in runtime/.
+# Fail the image build instead of deploying a fixture-picker that cannot load.
+RUN test -f runtime/qa_fixtures/ENFRA_Synthetic_Imperfect_Vendor_Chemical_QA_Pack.zip
+
 ENV FONTCONFIG_FILE=/app/runtime/fonts.conf
 
 RUN python runtime/check_renderer.py

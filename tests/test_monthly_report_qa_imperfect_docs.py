@@ -5,6 +5,7 @@ synthetic source QA, not final client-output or authentic Word/Adobe parity.
 """
 from hashlib import sha256
 from io import BytesIO
+from pathlib import Path
 from zipfile import ZipFile
 import json
 
@@ -128,3 +129,14 @@ def test_original_bytes_ingest_in_isolated_namespace_without_report_mutation(
                            if c.source.filename == "QA_Chemical_DifferentSite.pdf")
             assert "Demo South" in "\n".join(foreign.page_texts)
     assert library.load_snapshot(fixtures.CONTRACT, fixtures.profile().key, fixtures.PERIOD) is None
+
+
+def test_original_pack_is_included_in_the_render_image():
+    root = Path(__file__).resolve().parents[1]
+    package = (root / "runtime" / "qa_fixtures" /
+               "ENFRA_Synthetic_Imperfect_Vendor_Chemical_QA_Pack.zip")
+    assert package.is_file(), "Required runtime archive is missing"
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+    assert "RUN test -f runtime/qa_fixtures/ENFRA_Synthetic_Imperfect_Vendor_Chemical_QA_Pack.zip" in dockerfile
+    ignores = (root / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert "runtime" not in ignores and "runtime/qa_fixtures" not in ignores

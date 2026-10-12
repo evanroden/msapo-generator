@@ -16,7 +16,7 @@ from app.monthly_report_testing import scope
 
 _PACK = (
     Path(__file__).resolve().parents[1]
-    / "tests" / "fixtures" / "monthly_report" / "imperfect_vendor_chemical"
+    / "runtime" / "qa_fixtures"
     / "ENFRA_Synthetic_Imperfect_Vendor_Chemical_QA_Pack.zip"
 )
 _PACK_SHA256 = "c767124fb922445ced29c07de7755567f3adf6945b2218021584aa8f325c627f"
