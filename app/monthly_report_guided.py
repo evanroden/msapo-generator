@@ -227,14 +227,12 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
     key = prefix + "_edit_" + spec.key
-    if spec.type not in ("rich_text", "stock_text") and block.text.strip():
-        if block.ai_paragraphs:
-            st.caption("Edit these source-linked notes in the wording and sources editor above.")
-            st.text(block.text)
-        else:
-            notes = st.text_area("Notes included in this section", key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
-            if notes != block.text:
-                block = replace(block, source="This month", text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
+    # Source-linked text has its own evidence-aware editor above. Do not echo a
+    # competing read-only copy below that editor or add a second text control.
+    if spec.type not in ("rich_text", "stock_text") and block.text.strip() and not block.ai_paragraphs:
+        notes = st.text_area("Notes included in this section", key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
+        if notes != block.text:
+            block = replace(block, source="This month", text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
     if block.extra_tables:
         from app.monthly_report_editor import _cell_text
         tables = []
@@ -246,8 +244,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
             tables.append(replace(table, rows=tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows if any(v is not None and v != "" for v in r.values()))))
         block = replace(block, extra_tables=tuple(tables))
     if spec.type in ("rich_text", "stock_text") and block.ai_paragraphs:
-        st.caption("Edit this source-linked wording in the wording and sources box above.")
-        st.text(block.text)
+        # The authoritative source-linked text editor is rendered earlier.
+        pass
     elif spec.type in ("rich_text", "stock_text"):
         editor_key = key + "_text_" + _signature(block.references)
         changed_marker = editor_key + "_explicitly_edited"
