@@ -31,7 +31,7 @@ RECORDS = (
             "Inspected Chiller CH-QA-02 while operating normally.",
             "Recorded oil pressure differential 25.1 PSID.",
             "Collected an oil sample; laboratory results remain pending.",
-            "No repair or replacement was completed.")),
+            "Repair and replacement were not completed.")),
         ("blank", "", ()),
         ("legal", "GENERAL TERMS AND CONDITIONS", (
             "Governing law: fictional demonstration jurisdiction.",
