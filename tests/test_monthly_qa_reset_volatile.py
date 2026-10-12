@@ -90,3 +90,47 @@ def test_ui_does_not_delete_storage_before_cache_or_claim_retention_on_error():
     # only the obsolete AFTER-deletion failure claim is disallowed.
     assert "Test reset was stopped; the current fixture was kept:" not in source
     assert "Isolated reset could not be confirmed" in source
+
+
+def test_verified_reset_accepts_only_a_fully_disappeared_root(monkeypatch, tmp_path):
+    """A late root-vanished callback cannot falsely strand an empty namespace."""
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = fixture.profile()
+    live = library.save_profile(profile, expected_revision=0,
+                                actor="Independent live marker", confirmed=True)
+    with qa.isolated(COOKIE):
+        fixture.prepare("prefill")
+        target = qa._location(tmp_path, qa.scope())
+        before = qa.generation()
+        actual_rmtree = shutil.rmtree
+        called = []
+
+        def disappeared_after_delete(path, *, onexc):
+            actual_rmtree(path, onexc=onexc)
+            called.append(True)
+            onexc(os.rmdir, str(path),
+                  FileNotFoundError(errno.ENOENT, "Verified QA root already removed", str(path)))
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(shutil, "rmtree", disappeared_after_delete)
+            qa.reset(tmp_path)
+        assert called and not target.exists()
+        with pytest.raises(OSError, match="reset"):
+            library.load_snapshot(profile.contract, profile.key, fixture.PERIOD)
+
+    # Only a new isolated execution context may establish a new generation.
+    with qa.isolated(COOKIE):
+        assert library.load_snapshot(profile.contract, profile.key, fixture.PERIOD) is None
+        assert qa.generation() and qa.generation() != before
+    assert library.load_profile(profile.contract, profile.key) == live
+
+
+def test_unverified_missing_root_or_marker_is_not_a_success(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with qa.isolated(COOKIE):
+        fixture.prepare("prefill")
+        target = qa._location(tmp_path, qa.scope())
+        (target / qa._SENTINEL).unlink()
+        with pytest.raises(OSError, match="Unrecognized test storage marker"):
+            qa.reset(tmp_path)
+        assert target.exists(), "Do not erase a folder without its owner marker."
