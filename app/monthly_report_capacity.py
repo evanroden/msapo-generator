@@ -204,8 +204,8 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
         source = ReportSource(workbook.sha256, Path(filename).name, workbook.sha256, ".xlsx",
                               page_texts=tuple("\n".join("\t".join(row) for row in _table_records(t)) for t in native_tables),
                               notices=(*workbook.notices,
-                                       *("Hidden thermal worksheets were excluded from automatic first-fill; "
-                                         "unhide and re-upload only those you intend to review.",) if hidden_count else (),
+                                       *(("Hidden thermal worksheets were excluded from automatic first-fill; "
+                                          "unhide and re-upload only those you intend to review.",) if hidden_count else ()),
                                        "Workbook values use stored results; formulas are not executed."))
         content = SourceContent(source, tuple(native_tables))
         from app.monthly_report_sources import _path
