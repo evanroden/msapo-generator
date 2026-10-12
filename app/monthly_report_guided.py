@@ -131,7 +131,7 @@ def generation_block_reason(*, conflict, checks, warnings_ok):
         noun = "item" if count == 1 else "items"
         return f"Resolve the {count} required {noun} listed above to enable Create Word and PDF."
     if not warnings_ok:
-        return "Read the specific warnings above, then check ‘I checked these specific warnings’ to enable Generate."
+        return "Read the specific warnings above, then check ‘I checked these specific warnings’ to enable Create Word and PDF."
     return ""
 
 
