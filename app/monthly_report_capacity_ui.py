@@ -62,16 +62,29 @@ def render_capacity(draft, block, prefix, field):
     changing_existing = False
     if state:
         sites = {key for table in state.tables for key in table.site_keys}
-        st.caption(f"Capacity data is saved for {len(sites)} site{'s' if len(sites) != 1 else ''} on this contract. New reports reuse their site's tables.")
-        changing_existing = st.toggle("Update existing capacity values", key=field(prefix + "_capacity_change", False))
+        st.caption(f"Saved capacity for {len(sites)} contract site{'s' if len(sites) != 1 else ''}. New reports reuse their site's tables.")
+        # Most months the accepted standing table needs no upload or new
+        # decision. Keep replacement available, but outside ordinary editing.
+        with st.expander("Edit or replace shared capacity", expanded=False):
+            st.caption("Updates can change capacity for matched sites across future reports. Previously saved report versions stay unchanged.")
+            changing_existing = st.toggle(
+                "Update existing capacity values",
+                key=field(prefix + "_capacity_change", False),
+            )
+            uploaded = st.file_uploader(
+                "Thermal capacity file",
+                type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
+                key=prefix + "_capacity_upload",
+                help="PDF, Word, spreadsheet or image with chilled-water and steam values for the relevant sites.",
+            )
     else:
-        st.caption("Upload capacity information once for the contract. Tables for other sites will be ready when their reports are started.")
-    uploaded = st.file_uploader(
-        "Thermal capacity file",
-        type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
-        key=prefix + "_capacity_upload",
-        help="Use a PDF, Word document, spreadsheet or image. Include every site's chilled water and steam information in the same file if available.",
-    )
+        st.caption("Add capacity data once for these sites; future reports reuse it.")
+        uploaded = st.file_uploader(
+            "Thermal capacity file",
+            type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
+            key=prefix + "_capacity_upload",
+            help="PDF, Word, spreadsheet or image with chilled-water and steam values for the relevant sites.",
+        )
     _finish(prefix, profile)
     if uploaded is None:
         return draft, block
@@ -126,6 +139,7 @@ def render_capacity(draft, block, prefix, field):
     reviewed = []
     st.write("Capacity rows with clear site matches are kept for future reports automatically. "
              "Only uncertain or conflicting information needs your decision.")
+    st.caption("Leave unknown capacity values blank or NR; never treat them as zero.")
     if inspection.used_reader:
         st.caption("Check every value and unit against the file. Unreadable cells must be corrected before saving.")
     for notice in inspection.notices:
