@@ -122,7 +122,6 @@ def test_word_section_shared_with_another_report_section_does_not_cross_route():
 @pytest.mark.parametrize("text,blank", [
     ("Vendor quote: Price $12,345.67", False),
     ("Terms and Conditions Indemnification and Limitation of Liability", False),
-    ("", False),
     ("Current technical work", True),
 ])
 def test_unsafe_or_unreadable_diagram_is_recoverable_not_omitted(monkeypatch, text, blank):
@@ -133,6 +132,27 @@ def test_unsafe_or_unreadable_diagram_is_recoverable_not_omitted(monkeypatch, te
                             text, blank),))
     with pytest.raises(DiagramPreservationError, match="not dropped or"):
         preserve_section_diagrams(Path("not-opened.docx"), inspection, section)
+
+
+def test_image_only_native_diagram_is_carried_without_inventing_visual_approval(monkeypatch):
+    import app.monthly_report_visual_preservation as visuals
+    inspection, section = scene()
+    raw = raster()
+    monkeypatch.setattr(visuals, "preserve_word_pages",
+                        lambda _path, numbers: (WordPage(1, raw, 640, 480, "", False),))
+    record = preserve_section_diagrams(Path("not-opened.docx"), inspection, section)
+    assert record["word_page_records"][0]["visual_review_required"] is True
+    assert record["word_page_records"][0]["source_verified"]
+    assert record["word_page_records"][0]["reviewed"] is False
+    plan = plan_for(inspection)["organization"]
+    plan.update(record)
+    plan.update(approved=True, unsupported_reviewed=True, questions=())
+    mapped, _ = build_starting_import(Path("not-opened.docx"), inspection, (plan,))
+    chart = next(block for block in mapped.blocks if block.key == "org_chart")
+    assert chart.asset_hashes
+    assert chart.client_asset_reviews == ()
+    assert chart.client_reviewed_fingerprint == ""
+    assert mapped.assets[0][1] == raw
 
 
 def test_renderer_failure_is_explicit_and_original_is_not_changed(monkeypatch, tmp_path):
