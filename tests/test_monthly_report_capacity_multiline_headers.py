@@ -19,7 +19,7 @@ def profile(tmp_path, monkeypatch):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     sites = (Facility("north", "Synthetic North", ("SN",)),
              Facility("south", "Synthetic South", ("SS",)))
-    report = ReportProfile("Synthetic Two-row Thermal", "north", "Synthetic North", sites)
+    report = ReportProfile("Synthetic Two-row Thermal", "north", "Synthetic North", sites, "multi_site")
     directory.save_directory(
         report.contract,
         tuple(directory.DirectorySite(f.key, f.title, f.aliases) for f in sites),
