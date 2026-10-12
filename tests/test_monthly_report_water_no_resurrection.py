@@ -51,6 +51,11 @@ def test_new_water_review_does_not_resurrect_prior_removed_page(
     included = app.session_state["test_blocks"]["water_reports"]
     assert tuple(page_identity(ref)[1] for ref in included.references) == (1,)
     assert app.session_state["test_apply_count"] == 1
+    # Unlike the deployed guided editor, this minimal AppTest wrapper waits
+    # until its next rerun to consume the successful auto-include receipt.
+    # Ack the preceding merge before simulating a later operator removal.
+    app.run()
+    assert "synthetic_evidence_section_water_reports_auto_include" not in app.session_state.filtered_state
 
     # The source is preserved; only its report page is deliberately removed.
     app.session_state["test_blocks"]["water_reports"] = remove_saved_picture(included, 0)
