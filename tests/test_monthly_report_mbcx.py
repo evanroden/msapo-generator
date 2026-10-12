@@ -142,7 +142,8 @@ def test_source_linked_update_has_one_editor_and_retains_its_review_and_evidence
     app = app_for(pages=2, status=status)
     assert not app.exception and not app.text_area and not app.checkbox and not app.button
     assert app.session_state["status"] == status
-    assert any(t.value == status.text for t in app.text)
+    assert not any(t.value == status.text for t in app.text)
+    assert any("wording and sources" in c.value for c in app.caption)
     # A change from the source editor must appear without an old local text
     # widget replacing it or returning the original paragraph on rerun.
     updated_paragraph = replace(paragraph, text="Synthetic sensor inspection is complete.")
@@ -151,7 +152,7 @@ def test_source_linked_update_has_one_editor_and_retains_its_review_and_evidence
     app.session_state["status"] = updated
     app.run()
     assert not app.exception and app.session_state["status"] == updated
-    assert any(t.value == updated.text for t in app.text)
+    assert not any(t.value == updated.text for t in app.text)
     assert app.session_state["pages"].asset_hashes == ("page0", "page1")
 
 
@@ -212,3 +213,28 @@ def test_user_entered_update_does_not_need_a_remember_or_review_choice():
     app.run()
     assert app.session_state["status"].text == "Synthetic operator updated the result."
     assert not app.checkbox and not app.button
+
+
+def test_compact_mbcx_has_one_editable_status_and_no_repeat_page_instructions():
+    app = app_for()
+    assert not app.exception
+    assert len(app.text_area) == 1
+    assert app.text_area[0].label == "Status or findings"
+    captions = [c.value for c in app.caption]
+    assert "Add monitoring results or a brief status update." in captions
+    assert not any("No report pages added" in c or
+                   "Add a PDF or Word report using the files area" in c
+                   for c in captions)
+    assert not any("Report pages for this month" in t.value for t in app.text)
+    assert app.session_state["pages"].asset_hashes == ()
+
+
+def test_mbcx_status_only_needs_no_upload_or_second_review():
+    app = app_for("Synthetic verified commissioning status.")
+    before = app.session_state["status"]
+    assert not app.exception
+    assert app.text_area[0].value == before.text
+    assert not app.button
+    app.run()
+    assert app.session_state["status"] == before
+    assert not app.exception
