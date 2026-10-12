@@ -74,3 +74,25 @@ def test_month_headings_allowed_only_in_work_order_slot_and_other_client_headers
     assert _heading("Finance Total Cost", 4, set(), slot="proposals") == "Detail 5"
     assert _heading("MSA", 3, set(), slot="subcontractor_matrix") == "MSA"
     assert _heading("Discipline", 0, set(), slot="subcontractor_matrix") == "Discipline"
+
+
+
+def test_old_site_header_named_like_one_month_cannot_escape_unverified_grid(tmp_path):
+    # The monthly word alone is ambiguous. A broken Jan-Jun sequence must
+    # fail closed even though several remaining headings look familiar.
+    source = Document()
+    source.add_heading("MONTHLY ACTIVITY SUMMARY", 1)
+    columns = ("WO Received", "Jan", "Feb", "Prior Client Campus", "Apr", "May", "June")
+    grid = source.add_table(rows=2, cols=7)
+    for cell, value in zip(grid.rows[0].cells, columns):
+        cell.text = value
+    for cell in grid.rows[1].cells:
+        cell.text = "PRIVATE SITE OLD DATA"
+    path = tmp_path / "unverified-months.docx"
+    source.save(path)
+    work, = (shape for shape in from_inspection(inspect_docx(path))
+             if shape.slot == "work_orders")
+    assert work.columns == (
+        "WO Received", "Detail 2", "Detail 3", "Detail 4",
+        "Detail 5", "Detail 6", "Detail 7")
+    assert "Prior Client Campus" not in str(work)
