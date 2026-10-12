@@ -239,7 +239,7 @@ def test_all_sections_preserve_content_and_saved_status_across_new_sessions(monk
     new.segmented_control[0].set_value("Monthly report").run()
     choose_report(new, synthetic_profiles()[0].facilities[0].title)
     assert not any(w.label.startswith("Include ") for w in new.checkbox)
-    assert any("Continue your saved September 2026 report" in w.value for w in new.info)
+    assert any("September 2026 saved report loaded." in w.value for w in new.info)
     new.run()
     assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic initial activity."
 
