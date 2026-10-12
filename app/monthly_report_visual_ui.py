@@ -123,7 +123,10 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
             key = p + "_person_" + node.key
             with st.expander(
                 node.name or node.role or "New position",
-                expanded=len(block.org_nodes) < 3,
+                # Existing people start as summaries, even in a small chart.
+                # A newly added blank position opens so its required fields
+                # remain immediately discoverable and keyboard accessible.
+                expanded=not (node.name or node.role),
             ):
                 name = st.text_input(
                     "Name", key=field(key + "_name", node.name), max_chars=100

@@ -66,8 +66,8 @@ def small_artwork(item):
 
 
 def readable_label(key):
-    return {"org_chart": "Organizational chart", "business_hours_workflow": "Business-hours outage process",
-            "after_hours_workflow": "After-hours outage process", "contact_matrix": "Facility contacts",
+    return {"org_chart": "Organizational chart", "business_hours_workflow": "Business-hours outage procedure",
+            "after_hours_workflow": "After-hours outage procedure", "contact_matrix": "Facility contacts",
             "activity_summary": "Work completed this month", "work_orders": "Work-order summary",
             "service_calls": "Service calls", "vendor_reports": "Vendor service reports", "water_reports": "Water treatment reports",
             "improvements": "Improvement photos", "mbcx_report": "MBCx report", "subcontractor_matrix": "Vendor contacts",

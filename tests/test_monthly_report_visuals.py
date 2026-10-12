@@ -155,7 +155,7 @@ def test_reviewed_directory_contacts_can_seed_chart_without_replacing_it_silentl
     contacts = next(block for block in current.blocks if block.key == 'contact_matrix')
     assert len(contacts.rows) == 2 and not any('Other Site' in str(row) for row in contacts.rows)
     assert next(block for block in current.blocks if block.key == 'org_chart').asset_hashes == (ref,)
-    next(b for b in app.button if b.label == 'Change team chart').click().run()
+    next(b for b in app.button if b.label == 'Edit chart').click().run()
     choices = next(w for w in app.multiselect if w.label == 'People to include in the org chart')
     assert len(choices.options) == 2 and not any('Other Site' in str(v) for v in choices.options)
     assert next(b for b in app.button if b.label == 'Start an editable org chart').disabled
@@ -223,7 +223,7 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     ).run()
     next(b for b in app.button if b.label == "Start this report").click().run()
     step(app, 3)
-    next(b for b in app.button if b.label == "Change team chart").click().run()
+    next(b for b in app.button if b.label == "Edit chart").click().run()
     next(
         b for b in app.button if b.label == "Start an editable org chart"
     ).click().run()
@@ -238,7 +238,7 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     [w for w in app.selectbox if w.label == "Reports to"][1].set_value(
         "position-1"
     ).run()
-    next(b for b in app.button if b.label == "Change facility contacts").click().run()
+    next(b for b in app.button if b.label == "Edit contacts").click().run()
     next(b for b in app.button if b.label == "Create editable contacts").click().run()
     next(w for w in app.text_input if w.label == "Email").set_value(
         "operations@example.invalid"
@@ -257,11 +257,11 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     assert not app.exception
     step(app, 2)
     step(app, 3)
-    next(b for b in app.button if b.label == "Change team chart").click().run()
+    next(b for b in app.button if b.label == "Edit chart").click().run()
     assert [
         w.value for w in app.text_input if w.label == "Name" and "_org_person_" in w.key
     ] == ["Synthetic Lead", "Synthetic Technician"]
-    next(b for b in app.button if b.label == "Change facility contacts").click().run()
+    next(b for b in app.button if b.label == "Edit contacts").click().run()
     assert (
         next(w for w in app.text_input if w.label == "Email").value
         == "retained@example.invalid"
