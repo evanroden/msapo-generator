@@ -237,11 +237,15 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
             if section.key == "cover" and item.kind == "text" and slot != "footer_text":
                 continue  # The target report already supplies its cover title/date.
             if item.kind == "unsupported":
-                # Unreadable Word art is not permission to copy an opaque
-                # previous-client part. Omit it from the NEW report by default,
-                # preserve the original, and let explicitly supplied replacement
-                # imagery use the normal verified upload path.
-                plan["unsupported_reviewed"] = True
+                # Never treat an unrendered source drawing as absent or as a
+                # harmless omission. The section requires safe preservation or
+                # a named replacement. Native artwork the inspector recognizes
+                # as reusable design is filtered separately by section_reviews.
+                questions.append(
+                    "A Word diagram or image in this section needs preservation. "
+                    "Its original section is retained; prepare its complete "
+                    "pages or provide a clear replacement before continuing."
+                )
                 continue
             if section.key == "other":
                 questions.append("Choose where the additional content belongs.")
