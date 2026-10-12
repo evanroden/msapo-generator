@@ -54,7 +54,7 @@ def test_audit_activity_upload_has_manual_offline_reader_path(monkeypatch, tmp_p
     previous = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader",
         lambda label,*args,**kwargs:
-        [stream] if label == "Upload activity reports and supporting files"
+        [stream] if label == "Add activity files (optional)"
         else previous(label,*args,**kwargs))
     monkeypatch.setattr(ai, "ANTHROPIC_API_KEY", "")
     app.run()
