@@ -35,6 +35,11 @@ def _standing_specs(section):
     return tuple(b for b in section.blocks if b.key not in monthly)
 
 
+def _mark_explicit_rich_text_edit(marker):
+    """Differentiate an operator's real clear from a stale blank widget mount."""
+    st.session_state[marker] = True
+
+
 def _forget_block_widgets(prefix, keys):
     starts = tuple(prefix + "_edit_" + key + "_" for key in keys)
     for key in list(st.session_state):
@@ -244,7 +249,21 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
         st.caption("Edit this source-linked wording in the wording and sources box above.")
         st.text(block.text)
     elif spec.type in ("rich_text", "stock_text"):
-        text = st.text_area(spec.key.replace("_", " ").capitalize(), key=field(key + "_text_" + _signature(block.references), block.text), height=140)
+        editor_key = key + "_text_" + _signature(block.references)
+        changed_marker = editor_key + "_explicitly_edited"
+        if (block.text and st.session_state.get(editor_key) == ""
+                and not st.session_state.get(changed_marker)):
+            # The committed draft can be hydrated while Streamlit still has
+            # an empty textarea value from its earlier initial mount/rerun.
+            # Setting the seed BEFORE instantiating the widget prevents that
+            # unacknowledged empty value from clearing saved report text.
+            # on_change below records deliberate operator edits, including an
+            # intentional clear; such edits are never forcibly restored.
+            st.session_state[editor_key] = block.text
+        text = st.text_area(
+            spec.key.replace("_", " ").capitalize(),
+            key=field(editor_key, block.text), height=140,
+            on_change=_mark_explicit_rich_text_edit, args=(changed_marker,))
         if text != block.text:
             block = replace(block, source="This month", text=text, reviewed_fingerprint="", client_reviewed_fingerprint="")
     elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
