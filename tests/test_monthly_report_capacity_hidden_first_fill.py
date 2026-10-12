@@ -97,8 +97,8 @@ def test_visible_new_service_is_added_without_reviving_hidden_prior_values(profi
                                    reviewed_fingerprint=capacity.review_fingerprint(initial.tables))
     assert len(saved.tables) == 1
     later = capacity.inspect_capacity(profile, "new-steam.csv",
-        b"Facility,Service,Required capacity,Available capacity,Units\\n"
-        b"SN,Steam,40000,NR,lb/hr\\n")
+        b"Facility,Service,Required capacity,Available capacity,Units\n"
+        b"SN,Steam,40000,NR,lb/hr\n")
     first = capacity.first_fill_tables(saved, later.tables)
     assert len(first) == 1
     assert first[0].rows == (("SN", "Steam", "40000", "NR", "lb/hr"),)
@@ -115,8 +115,8 @@ def test_visible_new_service_is_added_without_reviving_hidden_prior_values(profi
 def test_two_sources_at_same_revision_cannot_silently_overwrite(profile):
     def inspect(value):
         return capacity.inspect_capacity(profile, f"thermal-{value}.csv",
-            ("Facility,Service,Required capacity,Available capacity,Units\\n"
-             f"SN,Steam,{value},NR,lb/hr\\n").encode())
+            ("Facility,Service,Required capacity,Available capacity,Units\n"
+             f"SN,Steam,{value},NR,lb/hr\n").encode())
     first = inspect(40000)
     second = inspect(50000)
     winner = capacity.save_capacity(profile, first.tables, expected_revision=0,
