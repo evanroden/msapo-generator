@@ -60,7 +60,7 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
     # Never write a full page dump or internal exception paths. Only already
     # synthetic QA status captions and alert *kinds* may reach CI artifacts.
     captions = page.get_by_text(re.compile(
-        r"^(QA fixture state:|QA fixture action|QA reset acknowledged:|Current fixture:)"
+        r"^(QA fixture state:|QA fixture action|QA reset acknowledged:|QA comparison completed:|Current fixture:)"
     )).all_text_contents()
     alerts = page.locator('[data-testid="stAlert"]').all_text_contents()
     safe_alerts = [
@@ -191,9 +191,22 @@ def open_until_matching(page):
 def complete_report(page, mode):
     checkpoint("fixture " + mode + " loaded", page.get_by_text(
         "Current fixture: " + mode, exact=False).first.is_visible())
+    event("comparison_requested", mode=mode)
     page.get_by_role("button", name="Compare fixture facts", exact=True).click()
-    page.get_by_text(re.compile(("source replay" if "replay" in mode else "known-value prefill")
-                                + r": \d+/\d+ independent")).first.wait_for(timeout=25000)
+    expected = "source replay" if "replay" in mode else "known-value prefill"
+    receipt = page.get_by_text(re.compile(
+        r"^QA comparison completed: " + expected + r" · 18/18 · action [0-9a-f]{12} · at "
+    )).first
+    try:
+        receipt.wait_for(timeout=25000)
+    except BrowserTimeout as exc:
+        state_diagnostics(page, "comparison-" + mode.replace(" ", "-"), exc)
+        raise
+    comparison_receipt = receipt.text_content() or ""
+    action = re.search(r"action ([0-9a-f]{12})", comparison_receipt)
+    checkpoint("fixture " + mode + " accepted comparison",
+               bool(action), comparison_receipt[:180])
+    event("comparison_completed", mode=mode, action=action[1])
     result = page.get_by_text(re.compile(r"\d+/\d+ independent")).first.text_content() or ""
     match = re.search(r"(\d+)/(\d+)", result)
     failed = page.get_by_text(re.compile(r"^CHECK\s*[—-]")).all_text_contents()
