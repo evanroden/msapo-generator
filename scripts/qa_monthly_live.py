@@ -30,7 +30,7 @@ ROOT.mkdir(parents=True, exist_ok=True)
 EVIDENCE = {"expected_commit": EXPECTED, "public_url": URL, "run_label": RUN_LABEL,
             "checks": {}, "events": [], "artifacts": {}, "synthetic_only": True}
 STATE = re.compile(r"^QA fixture state: (empty|known-value prefill|original-source replay) · "
-                   r"generation ([0-9a-f]{12}) · revision (\\d+)$")
+                   r"generation ([0-9a-f]{12}) · revision (\d+)$")
 
 
 def checkpoint(name: str, passed: bool, detail: str = "") -> None:
@@ -82,9 +82,9 @@ def await_fixture_state(page, mode: str, *, previous_generation: str | None = No
     if mode not in ("empty", "known-value prefill", "original-source replay"):
         raise ValueError("Invalid fixture state.")
     locator = page.get_by_text(re.compile(r"^QA fixture state: ")).first
-    different = ("(?!" + re.escape(previous_generation) + r"\\b)"
+    different = ("(?!" + re.escape(previous_generation) + r"\b)"
                  if previous_generation else "")
-    revision = "0" if mode == "empty" else r"[1-9]\\d*"
+    revision = "0" if mode == "empty" else r"[1-9]\d*"
     pattern = re.compile(r"^QA fixture state: " + re.escape(mode) +
                          r" · generation " + different +
                          r"[0-9a-f]{12} · revision " + revision + r"$")
@@ -112,7 +112,7 @@ def load_fixture(page, mode: str, *, previous_generation: str | None = None) -> 
     try:
         receipt.wait_for(timeout=15000)
         text = receipt.text_content() or ""
-        match = re.search(r"action ([0-9a-f]{12}) · revision (\\d+)", text)
+        match = re.search(r"action ([0-9a-f]{12}) · revision (\d+)", text)
         if (not match or int(match[2]) != state["revision"]
                 or (previous_generation and state["generation"] != previous_generation)):
             raise AssertionError("Fixture action was not committed in the expected QA generation.")
