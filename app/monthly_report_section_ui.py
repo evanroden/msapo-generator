@@ -457,6 +457,57 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     intent = "Automatic starting report"
     sections = section_reviews(inspection)
     plans = st.session_state.setdefault(p + "_section_plans", {})
+    # Preserve native diagrams at their evidenced Word/ENFRA section before
+    # asking the operator about anything. Ordinary image parts already follow
+    # suggested_slot; this path is only for complex native Word drawings.
+    # Rendering uses the existing bounded, passive Word-page converter and is
+    # cached per content hash/section. Failure does not equate to Leave out:
+    # the section remains blocked, with its source retained for exact repair.
+    from app.monthly_report_visual_preservation import (
+        DiagramPreservationError, diagram_source_sections, preserve_section_diagrams,
+    )
+    diagram_failures = {}
+    if analysis.site_relation == "same":
+        from app.monthly_report_content_policy import contains_price
+        for section in sections:
+            if section.key in ("cover", "other", "proposals", "accounts_receivable"):
+                # Cover art can contain another site's logo and proposals can
+                # show money only in image pixels; neither is auto-certified.
+                continue
+            if not any(i.kind == "unsupported" for i in section.items):
+                continue
+            plan = plans.get(section.key, {})
+            if plan.get("auto_native_diagrams") or plan.get("new_assets"):
+                continue
+            if any(i.id in analysis.older_items for i in section.items
+                   if i.kind == "unsupported"):
+                diagram_failures[section.key] = (
+                    "This drawing appears to belong to an earlier reporting "
+                    "period. Its destination is retained, but it must be checked "
+                    "before being carried into the current month."
+                )
+                continue
+            cache_key = p + "_diagram_render_" + section.key
+            result = st.session_state.get(cache_key)
+            if result is None:
+                try:
+                    diagram_source_sections(inspection, section)
+                    with st.spinner("Keeping the original diagrams in " + section.title + "…"):
+                        result = preserve_section_diagrams(path, inspection, section)
+                except DiagramPreservationError as exc:
+                    result = str(exc)
+                st.session_state[cache_key] = result
+            if isinstance(result, str):
+                diagram_failures[section.key] = result
+                continue
+            if result:
+                plan.update(result)
+                plan["unsupported_reviewed"] = True
+                plan["questions"] = tuple(q for q in plan.get("questions", ())
+                                         if not q.startswith("A Word diagram or image"))
+                plan["approved"] = not plan["questions"]
+                plans[section.key] = plan
+
     # A single optional cover photo belongs in a small thumbnail gallery, not
     # a repeated radio under every large photo/logo. The automatic suggestion
     # is already in the plan; clicking a replacement changes only this unsaved
@@ -480,7 +531,48 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     # still flows through the image/package safety checks.
                     updated["approved"] = True
                     plans["cover"] = updated
-    questions = [section for section in sections if seed[section.key].get("questions")]
+    questions = [section for section in sections if plans.get(section.key, {}).get("questions")]
+    if diagram_failures:
+        st.subheader("Diagrams needing a specific recovery")
+        for section in sections:
+            if section.key not in diagram_failures:
+                continue
+            with st.container(border=True):
+                st.markdown("**" + section.title + "**")
+                st.warning(diagram_failures[section.key])
+                key = p + "_diagram_render_" + section.key
+                if st.button("Retry safe diagram preservation for " + section.title,
+                             key=key + "_retry"):
+                    st.session_state.pop(key, None)
+                    st.rerun()
+                from app.monthly_report_visual_preservation import VISUAL_SLOTS
+                slot = VISUAL_SLOTS.get(section.key)
+                if slot:
+                    upload = st.file_uploader(
+                        "Clear replacement diagram for " + section.title,
+                        type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
+                        key=p + "_diagram_replacement_" + section.key,
+                        max_upload_size=30,
+                    )
+                    if upload:
+                        try:
+                            picture = normalize_report_image(
+                                upload.getvalue(), Path(upload.name).suffix,
+                                line_art=section.key in ("organization", "subcontractors", "capital", "rfi"),
+                            )
+                        except (ValueError, OSError):
+                            st.error("The replacement image could not be safely read. The original is unchanged.")
+                        else:
+                            plan = plans[section.key]
+                            plan["new_assets"] = [(slot, picture)]
+                            plan["unsupported_reviewed"] = True
+                            plan["questions"] = tuple(q for q in plan.get("questions", ())
+                                                      if not q.startswith("A Word diagram or image"))
+                            plan["approved"] = not plan["questions"]
+                            plans[section.key] = plan
+                            st.caption("The replacement is selected for this section and "
+                                       "will be saved only when you continue.")
+    questions = [section for section in sections if plans.get(section.key, {}).get("questions")]
     if questions:
         st.subheader("A few details need a check")
         for index, section in enumerate(questions):
