@@ -27,3 +27,15 @@ def test_live_chromium_runs_serially_only_for_just_tested_main_commit():
     assert "MONTHLY_QA_RUN_LABEL=first python -m scripts.qa_monthly_live" in text
     assert "MONTHLY_QA_RUN_LABEL=second python -m scripts.qa_monthly_live" in text
     assert text.index("MONTHLY_QA_RUN_LABEL=first") < text.index("MONTHLY_QA_RUN_LABEL=second")
+
+
+def test_live_gate_includes_a_distinct_same_browser_two_tab_reset_rejection():
+    """Not a source substitute for the real scheduled Chromium live pass."""
+    script = (Path(__file__).resolve().parents[1] / "scripts/qa_monthly_live.py").read_text()
+    assert 'verify_stale_second_tab_after_reset(ctx, page, final_state)' in script
+    assert 'if RUN_LABEL == "second":' in script
+    assert 'stale second-tab edit cannot repopulate reset namespace' in script
+    assert 'await_fixture_state(other, "known-value prefill"' in script
+    assert 'other.reload(wait_until="domcontentloaded"' in script
+    assert 'reset_fixture(primary, loaded, "other-tab-still-mounted")' in script
+    assert 'observed_primary["revision"] == 0' in script
