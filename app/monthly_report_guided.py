@@ -11,7 +11,7 @@ from app.config import operator_today
 from app.memory import (record_report_preferences, record_report_preparer,
                         remembered_report_preferences, remembered_report_preparer)
 from app.monthly_report_checks import preflight
-from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image, outline
+from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image
 from app.monthly_report_editor import _grid, _signature, _typed_table
 from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
                                      layout_blocks, profile_sections)
@@ -902,30 +902,24 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             package = None
         from app.monthly_report_model import included_sections
         monthly_entry_sections = monthly_entries_by_section(draft)
-        section_total = len(included_sections(draft.sections))
-        st.caption(f"Monthly information is entered in {len(monthly_entry_sections)} of {section_total} sections. "
-                   "This is not a completeness score; standing information may also appear.")
-        if len(monthly_entry_sections) == 1:
-            st.info("Only one section has information entered for this month. "
-                    "Check the other sections before sharing the report; blank sections can be intentional.")
+        # Lack of a new update is not an error or a completion score. Only
+        # monthly-editable sections belong in this quiet optional disclosure.
         included = included_sections(draft.sections)
-        without_new_monthly = [s for s in included if s.key not in monthly_entry_sections]
+        without_new_monthly = [
+            section for section in included
+            if section.key not in monthly_entry_sections
+            and any(spec.key in MONTHLY_EDIT_KEYS for spec in section.blocks)
+        ]
         if without_new_monthly:
-            st.markdown("**Sections to consider before sharing**")
-            st.caption("No new monthly information was entered in the sections linked below. "
-                       "A blank section can be intentional, and valid standing information may already be present.")
-            st.markdown(" · ".join(
-                f"[{short_links.get(s.key, s.title)}](#report-section-{s.key})"
-                for s in without_new_monthly))
-        else:
-            st.caption("Every included section has some monthly input. This is not a factual review or approval.")
-        with st.expander("Expected pages (layout information only)"):
-            for title, _, pages in outline(draft):
-                st.write(f"{title} · at least {pages} pages")
+            with st.expander("Sections without new updates (optional)", expanded=False):
+                st.caption("Blank or unchanged sections are allowed; saved standing details remain.")
+                st.markdown(" · ".join(
+                    f"[{short_links.get(section.key, section.title)}](#report-section-{section.key})"
+                    for section in without_new_monthly))
+        # Pre-generation page/size estimates are not client deliverables.
+        # Actual sizes and the >15 MB warning are shown after generation.
         loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref)
         estimated = estimate_bytes(draft, loader)
-        st.caption("Actual DOCX and PDF sizes are displayed after generation and checked against the 15 MB target. "
-                   "Template artwork and PDF compression make pre-generation file-size guesses unreliable.")
         checks = [check for check in preflight(draft, estimated) if check.code != "empty"]
         from app.monthly_report_checks import ReportCheck
         dependent = used_missing_sources(draft, st.session_state.get(prefix + "_unavailable_sources", ()))
@@ -934,8 +928,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             checks.append(ReportCheck("unavailable_source",
                 f"Cannot safely generate while {missing_names} is missing. "
                 "Replace the source or remove the content linked to it first.", True))
-        if any(c.blocking for c in checks):
-            st.info("Complete the items below to unlock your downloads. Sections may remain blank.")
+        if checks:
+            count = len(checks)
+            st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
         for check in checks:
             (st.error if check.blocking else st.warning)(review_message(check, draft))
         warnings_ok = not any(not c.blocking for c in checks)

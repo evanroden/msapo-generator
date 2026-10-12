@@ -39,7 +39,7 @@ def test_empty_monthly_draft_asks_generate_anyway_before_creating_download(monke
     app = _prepared(monthly(monkeypatch, tmp_path))
     assert not _generate(app).disabled
     assert not any(w.label == "Generate anyway" for w in app.button)
-    assert any("0 of" in c.value and "not a completeness score" in c.value for c in app.caption)
+    assert not any("0 of" in c.value or "not a completeness score" in c.value for c in app.caption)
     _generate(app).click().run()
     assert not app.exception
     assert counts == []
@@ -63,7 +63,8 @@ def test_one_substantive_monthly_section_remains_one_click_with_soft_advice(monk
         "Synthetic repair completed during September.").run()
     assert not app.exception
     assert not _generate(app).disabled
-    assert any("Only one section" in m.value for m in app.info)
+    assert not any("Only one section" in m.value for m in app.info)
+    assert any(e.label == "Sections without new updates (optional)" for e in app.expander)
     _generate(app).click().run()
     assert not app.exception
     assert len(calls) == 1
