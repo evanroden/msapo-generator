@@ -11,6 +11,9 @@ import pytest
 from docx import Document
 
 from app import ocr
+from app import monthly_report_library as library
+from app import monthly_report_sources as sources
+from app import monthly_report_qa_fixture as fixtures
 from app.monthly_report_content_policy import page_status
 from app.monthly_report_qa_imperfect_docs import build_pack, RECORDS
 from app.monthly_report_testing import isolated
@@ -22,7 +25,7 @@ def test_qa_documents_cannot_be_built_in_live_context():
 
 
 @pytest.mark.skipif(which("libreoffice") is None, reason="PDF converter not installed in this runtime")
-def test_synthetic_docs_pdf_pages_are_real_and_policy_review_is_required():
+def test_synthetic_docs_pdf_pages_are_real_and_policy_review_is_required(tmp_path, monkeypatch):
     with isolated("b" * 32):
         packed = build_pack()
     with ZipFile(BytesIO(packed)) as archive:
@@ -71,3 +74,30 @@ def test_synthetic_docs_pdf_pages_are_real_and_policy_review_is_required():
         with fitz.open(stream=invalid_pdf, filetype="pdf") as pdf:
             assert "Invalid date" in pdf[0].get_text()
             assert "not completed" in pdf[0].get_text().lower()
+        candidate_pdf_files = tuple(
+            (name, archive.read(name)) for name in sorted(names)
+            if name.startswith("QA_") and name.endswith(".pdf")
+        )
+
+    # Reuse the application's real importer in a disposable server namespace.
+    # Reading a source is not an approval to include its content in a report.
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    live_root = library._root()
+    with isolated("c" * 32):
+        fixtures.prepare("prefill")
+        before = library.load_snapshot(fixtures.CONTRACT, fixtures.profile().key, fixtures.PERIOD)
+        contents, notices = sources.ingest_batch(
+            fixtures.profile(), candidate_pdf_files)
+        assert len(contents) == 5
+        assert {c.source.filename for c in contents} == {
+            name for name, _payload in candidate_pdf_files
+        }
+        scans = [c for c in contents if "ImageOnlyScan" in c.source.filename]
+        assert len(scans) == 1 and scans[0].source.needs_vision == (1,)
+        main_vendor = next(c.source for c in contents if c.source.filename == "QA_Vendor_MixedPages.pdf")
+        assert main_vendor.selected_pages == (1,)
+        main_water = next(c.source for c in contents if c.source.filename == "QA_WaterTreatment_MixedPages.pdf")
+        assert main_water.selected_pages == (1, 2)
+        assert library.load_snapshot(fixtures.CONTRACT, fixtures.profile().key, fixtures.PERIOD) == before
+    assert library._root() == live_root
+    assert library.load_snapshot(fixtures.CONTRACT, fixtures.profile().key, fixtures.PERIOD) is None
