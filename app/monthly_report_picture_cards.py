@@ -115,7 +115,7 @@ def review_cover_gallery(images, path, prefix, old, plan):
 def review_pictures(images, section, path, prefix, scope, field, old, plan, blocking, *, allow_branding=True):
     if not images:
         return
-    if section == "cover" and not allow_branding:
+    if section == "cover":
         review_cover_gallery(images, path, prefix, old, plan)
         return
     options = picture_options(section, allow_branding=allow_branding)
