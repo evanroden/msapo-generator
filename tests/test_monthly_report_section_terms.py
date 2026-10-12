@@ -36,8 +36,16 @@ def test_plain_help_is_defined_for_all_standard_report_sections():
 
 
 def test_onsite_calls_do_not_instruct_vendor_upload_to_maintenance():
+    from app.monthly_report_section_uploads import CLASSIFICATION_DESTINATIONS
+
     help_text = section_help("maintenance").guidance
     assert "ENFRA technicians onsite" in help_text
-    assert "including Trane" in help_text
-    assert "Monthly Activity Summary" in help_text
-    assert "not applicable" in help_text
+    assert "[Monthly Activity Summary](#report-section-activity)" in help_text
+    # The visible empty state must not describe a facility with no verified
+    # technician calls as "not applicable"; absence is not such a claim.
+    assert "not applicable" not in help_text.casefold()
+    # Check the actual destination, not the presence of a particular vendor
+    # name in help text. Trane and all other vendor service reports belong in
+    # Activity; onsite service-call rows remain reserved for ENFRA technicians.
+    assert CLASSIFICATION_DESTINATIONS["Vendor service"] == "improvements"
+    assert CLASSIFICATION_DESTINATIONS["Vendor service"] != "service_calls"
