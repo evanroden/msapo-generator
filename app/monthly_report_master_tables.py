@@ -6,6 +6,7 @@ A table reference identifies one physical Word region, not an ordinal guess.
 """
 from __future__ import annotations
 
+from calendar import month_abbr, month_name
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
@@ -44,10 +45,22 @@ _GENERIC_LABELS = frozenset({
     "task code-description", "frequency", "next due", "responsible party",
     "plan", "completed", "remarks", "resolution", "type", "activity",
     "requested items",
+    # These are stable engineering *field names*, not historic client values.
+    # Preserve the functional columns of real 5/7/9-column native tables.
+    "wo received", "discipline", "msa", "campus", "building",
+    "designation", "capacity", "units", "estimated end of useful life",
+    "o&m option",
 })
 
+# A work-order month grid can legitimately label a column "May"; allow
+# month-name headings only in that exact report slot. In unrelated tables
+# short person/site names remain untrusted source strings.
+_WORK_ORDER_MONTHS = frozenset(
+    value.casefold() for value in (*month_abbr[1:], *month_name[1:]) if value
+)
 
-def _heading(value: str, n: int, old_titles: set[str]) -> str:
+
+def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str:
     """Strict allowlist; do not infer a current client's name from the master."""
     normalized = " ".join(str(value).strip().split())
     key = normalized.casefold()
@@ -56,9 +69,28 @@ def _heading(value: str, n: int, old_titles: set[str]) -> str:
     # current row or a license to print a long "Detail 1" heading vertically.
     if n == 0 and len(normalized) == 1 and (normalized.isdigit() or normalized == "#"):
         return "#"
-    if key == "" or key in old_titles or key not in _GENERIC_LABELS:
+    safe_generic = key in _GENERIC_LABELS or (
+        slot == "work_orders" and key in _WORK_ORDER_MONTHS
+    )
+    if key == "" or key in old_titles or not safe_generic:
         return f"Detail {n + 1}"
     return normalized
+
+
+def _verified_work_order_month_frame(headers: tuple[str, ...]) -> bool:
+    """Recognize six consecutive month labels, never a lone client name.
+
+    The native seven-column WO frame has one label column followed by either
+    Jan–Jun or Jul–Dec. A short previous-client heading such as "May" alone
+    does not authorize itself as a safe new report field.
+    """
+    labels = tuple(" ".join(str(value).strip().split()).casefold()
+                   for value in headers)
+    if len(labels) != 7 or labels[0] not in ("wo received", "work order", "work order #"):
+        return False
+    return any(all(labels[index + 1] in (
+        month_abbr[start + index].casefold(), month_name[start + index].casefold())
+        for index in range(6)) for start in (1, 7))
 
 
 def from_inspection(inspection) -> tuple[MasterTable, ...]:
@@ -117,7 +149,14 @@ def from_inspection(inspection) -> tuple[MasterTable, ...]:
             keep = tuple(i for i in range(physical_width) if i not in blocked)
             if not keep:
                 continue
-            labels = tuple(_heading(logical[i], i, old_titles) for i in keep)
+            # Month words are approved only for a verified Jan–Jun or
+            # Jul–Dec work-order frame, not arbitrary old client headings.
+            heading_slot = (item.suggested_slot if (
+                item.suggested_slot != "work_orders"
+                or _verified_work_order_month_frame(tuple(logical))
+            ) else "")
+            labels = tuple(_heading(logical[i], i, old_titles,
+                                    slot=heading_slot) for i in keep)
             unique = tuple(label + (f" ({n + 1})" if label in labels[:n] else "")
                            for n, label in enumerate(labels))
         shape = MasterTable(item.suggested_slot, item.position,
