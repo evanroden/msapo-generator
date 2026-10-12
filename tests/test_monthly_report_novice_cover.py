@@ -45,14 +45,15 @@ def test_cover_uploads_are_named_retained_and_make_replacement_choice_possible(m
     assert [w.label for w in app.get("file_uploader")] == ["New cover photograph"]
     incoming["New cover photograph"] = picture("green")
     app.run()
-    next(w for w in app.radio if w.label.startswith("Some content could not")).set_value("I uploaded clear replacements").run()
+    assert not any(w.label.startswith("Some content could not") for w in app.radio)
     assert not app.error and not app.exception
     assert {slot for slot, _ in app.session_state["plans"]["cover"]["new_assets"]} == {"cover_photo"}
     incoming.clear()
     next(w for w in app.radio if w.label == "What would you like to do?").set_value("Keep and review").run()
     assert len(app.session_state["plans"]["cover"]["new_assets"]) == 1
-    next(w for w in app.checkbox if w.label.startswith("This section is ready")).check().run()
+    assert not any(w.label.startswith("This section is ready") for w in app.checkbox)
     plan = app.session_state["plans"]["cover"]
+    assert plan["approved"]
     inspection = DocxInspection("synthetic", (ImportItem("unsupported", "unsupported", "word/document.xml", 1, 2, ""),), (), (), 2)
     mapped, _ = build_section_import("unused", inspection, (plan,))
     assert {block.key for block in mapped.blocks} == {"cover_photo"}
@@ -76,7 +77,7 @@ def test_kept_complete_chart_and_new_outage_picture_both_reach_saved_design(monk
     app.run()
     incoming.clear()
     app.run()
-    next(w for w in app.checkbox if w.label.startswith("This section is ready")).check().run()
+    assert not any(w.label.startswith("This section is ready") for w in app.checkbox)
     assert not app.exception and not app.error
     plan = app.session_state["plans"]["organization"]
     inspection = DocxInspection("synthetic", (ImportItem("unsupported", "unsupported", "word/document.xml", 1, 2, "organization"),), (), (), 2)
