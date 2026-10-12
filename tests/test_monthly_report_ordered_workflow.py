@@ -38,7 +38,7 @@ def test_inline_edits_save_resume_and_generate_without_navigation(monkeypatch, t
     app = monthly(monkeypatch, tmp_path)
     next(item for item in app.text_input if item.label == "Prepared by").set_value("Report Author").run()
     next(item for item in app.text_area if item.label == "Activity summary").set_value("Completed the September inspections.").run()
-    next(item for item in app.button if item.label == "Save progress").click().run()
+    next(item for item in app.button if item.label == "Save shared version").click().run()
     assert not app.exception
     from app.contracts import RRH_CONTRACT
     saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
