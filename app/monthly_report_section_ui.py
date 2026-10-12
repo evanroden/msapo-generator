@@ -292,6 +292,46 @@ def _approve_plan(plan, p, field, old, plans, blocking, *, quote_price_risk=Fals
         st.caption("Resolve the message above before including this content.")
 
 
+def render_pending_cover_selection(draft, assets, contract, period, state):
+    """Preview the selected imported cover photograph before committing it.
+
+    Images are read from this session's original staging file and carried
+    only in the transient preview payload. Neither current report history nor
+    approved standing artwork changes until Continue is explicitly saved.
+    """
+    from app.monthly_report_import import read_import_image
+    from app.monthly_report_model import ResolvedBlock
+    prefix = "report_setup_" + _signature((contract, state.profile.key if state else draft.profile.key,
+                                          period.key))
+    staged = st.session_state.get(prefix + "_stage")
+    if not staged:
+        return draft, assets
+    _, path, inspection = staged
+    plans = st.session_state.get(prefix + "_" + inspection.sha256[:16] + "_section_plans", {})
+    plan = plans.get("cover", {})
+    identity = next((item_id for item_id, slot in plan.get("destinations", {}).items()
+                     if slot == "cover_photo" and item_id in plan.get("selected", ())), "")
+    if not identity:
+        return draft, assets
+    item = next((candidate for candidate in inspection.items if candidate.id == identity
+                 and candidate.kind == "image" and candidate.section in ("", "cover")), None)
+    if item is None:
+        return draft, assets
+    try:
+        photo = read_import_image(path, item, line_art=False)
+        reference = library.asset_reference(photo.data, photo.extension)
+    except (ValueError, OSError):
+        st.caption("The selected cover photo is unavailable; the original report remains unchanged.")
+        return draft, assets
+    updated = dict(assets)
+    updated[reference] = photo.data
+    blocks = tuple(block for block in draft.blocks if block.key != "cover_photo") + (
+        ResolvedBlock("cover_photo", "Replace once", asset_hashes=(reference,)),
+    )
+    st.caption("Cover preview includes the selected photo. It is not saved until you continue.")
+    return replace(draft, blocks=blocks), updated
+
+
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
                          working_draft=None, working_assets=(), working_revision=None):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else identity.key if identity else "new", period.key))
@@ -343,8 +383,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     p = prefix + "_" + inspection.sha256[:16]
     if identity:
         candidate = identity
-        st.write("Report sites: " + "; ".join(f.title for f in identity.facilities))
-        actor = st.text_input("Your name", key=field(p + "_actor", prepared))
+        actor = prepared.strip() or st.text_input(
+            "Your name", key=field(p + "_actor", ""))
         missing = [] if actor.strip() else ["Enter your name."]
     else:
         candidate, actor, missing = _identity(contract, prepared, p, field, state, inspection)
@@ -407,7 +447,30 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     intent = "Automatic starting report"
     sections = section_reviews(inspection)
     plans = st.session_state.setdefault(p + "_section_plans", {})
-    questions = [section for section in sections if seed[section.key].get("questions")]
+    # A single optional cover photo belongs in a small thumbnail gallery, not
+    # a repeated radio under every large photo/logo. The automatic suggestion
+    # is already in the plan; clicking a replacement changes only this unsaved
+    # draft and leaves the retained original/approved logos untouched.
+    cover_section = next((section for section in sections if section.key == "cover"), None)
+    if cover_section and analysis.site_relation == "same":
+        from app.monthly_report_start_import import cover_photo_candidates
+        from app.monthly_report_picture_cards import review_cover_gallery
+        candidates = cover_photo_candidates(cover_section.items)
+        if candidates:
+            with st.expander("Cover photograph", expanded=len(candidates) > 1,
+                             key=p + "_cover_gallery_expander", on_change="rerun") as gallery:
+                if gallery.open:
+                    existing = plans["cover"]
+                    updated = dict(existing)
+                    updated["selected"] = list(existing.get("selected", ()))
+                    updated["destinations"] = dict(existing.get("destinations", {}))
+                    review_cover_gallery(candidates, path, p + "_cover_gallery",
+                                         existing, updated)
+                    # No blanket approval button: the selected source photo
+                    # still flows through the image/package safety checks.
+                    updated["approved"] = True
+                    plans["cover"] = updated
+        questions = [section for section in sections if seed[section.key].get("questions")]
     if questions:
         st.subheader("A few details need a check")
         for index, section in enumerate(questions):
