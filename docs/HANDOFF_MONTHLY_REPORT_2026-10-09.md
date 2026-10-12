@@ -1,5 +1,62 @@
 # Monthly report builder: next-LLM handoff
 
+## October 12, 2026 — latest authentic reference testing, superseding earlier SHA notes
+
+**Read the newer genuine UMMC source/Phase 1 acceptance section** in [the canonical closure ledger](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md) before relying on any dated “current” statements below. The owner's private September UMMC DOCX has byte identity SHA-256 `6ad96da79d8a11f336b0f316c38db20ca9f1fdd98a06d6248d09f2caa811f4ca` (22.1 MB); its 14 native Word tables, **38 actual picture files plus an empty media ZIP directory entry**, 11 VML groups, 28 Word sections and unchanged **40-page** local LibreOffice PDF have been inspected privately. **The actual private DOCX/PDF and images must not be placed in GitHub or public QA**; these structural facts are not proof of app-generated authentic output.
+
+- Merged [#167](https://github.com/evanroden/msapo-generator/pull/167), head `822326f3`: first-section simplification, uploaded DOCX automatic inspection, checked source-site recognition, optional one-cover-photo gallery, sticky scoped preview, and fail-closed diagram preservation, **not** silent discard. [CI 38277675532](https://github.com/evanroden/msapo-generator/actions/runs/38277675532) passed **2,139 tests** and resource/container checks; [served live 38278559918](https://github.com/evanroden/msapo-generator/actions/runs/38278559918) passed **two first-attempt full browser runs**, real synthetic Word/PDF exports, 18/18 both prefill and source replay, durable Activity, multiple acknowledged resets and the same-cookie stale second-tab rejection.
+- Merged [#166](https://github.com/evanroden/msapo-generator/pull/166), new integrated main `80d57de97f48449b9c23ecb601c30691759c4340`: bounded two-row/merged thermal XLSX headings and literal NR, with passing PR [CI 38278323155](https://github.com/evanroden/msapo-generator/actions/runs/38278323155) (**2,142 tests**) and [integrated CI 38280489328](https://github.com/evanroden/msapo-generator/actions/runs/38280489328). Latest served-head live must be reconfirmed after final code/doc merges.
+- [#168](https://github.com/evanroden/msapo-generator/pull/168) **merged** at `2299c60fdfdc8647fe0d4c8f103a274244cce6c1`; the authentic structure exposed a raster explicitly named `contact_matrix_rev6.png` being mapped to generic organization charts. The fix routes it to facility **contacts** after site/section checks; other-site art remains excluded and client-image pricing review remains pending. [Exact PR-head Tests 38281121214](https://github.com/evanroden/msapo-generator/actions/runs/38281121214) passed **2,143 tests** plus container/resource. Combined main+served-head acceptance must be checked after the canonical ledger merges.
+- **Blocking Phase 1 release acceptance:** app-generated authentic Word/PDF from the 22.1 MB private source has not yet been run in a private secure actual report workflow, independently compared page-by-page or accepted by the owner. The original's **40-page** direct LO PDF is not application output. Synthetic 26-page PDF testing and all 113 audit rows do not substitute. Keep owner's acceptance to a small upload/site/cover/sticky/organization/contact/water-treatment/tables/download check, then explicitly record signoff.
+
+## October 12, 2026 — current Phase 1 completion update
+
+The **single authoritative detailed completion/evidence ledger** is
+[MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md),
+including an October 12 C01–C08 reconciliation and per-build 113-scenario
+coverage notes. This October 9 handoff is historical and should no longer be
+used to infer that #137 is a draft, native tables/Copilot are absent, or no
+isolated live acceptance run has completed.
+
+- **Latest merged code (PR #162):**
+  `24a5f4a6e09f2307a6ec499e7c143a9c13643518`.
+  Exact integrated-main [Tests 38256753186](https://github.com/evanroden/msapo-generator/actions/runs/38256753186)
+  passed pytest, container and 512 MiB resource checks. The public app served
+  that exact SHA and [live gate 38257533497](https://github.com/evanroden/msapo-generator/actions/runs/38257533497)
+  passed **two independent first-attempt runs** with 18/18 known prefill,
+  18/18 normal synthetic source CSV/TXT replay, durable Activity reload,
+  all four Word/PDF downloads per run, and generation-bound before-replay
+  and final empty resets. Synthetic artifact
+  [11750538796](https://github.com/evanroden/msapo-generator/actions/runs/38257533497/artifacts/11750538796).
+  This closes the exact current single-browser C01 live acceptance gate.
+- Earlier `bae08f31` also passed independently twice
+  ([live 38249005588](https://github.com/evanroden/msapo-generator/actions/runs/38249005588));
+  `bad7cbcd` [failed at reset](https://github.com/evanroden/msapo-generator/actions/runs/38254617731)
+  due to a disappearing volatile `render-jobs` child. Merged #162 repaired
+  that isolated reset/cleanup race without touching production report storage;
+  the old failure remains dated evidence. #157/#158/#160/#161 are also merged.
+  None of these successes substitute for authentic Word/Adobe and owner checks.
+- Exact unchanged **private** authentic Unity/USH August original hashes:
+  Word `d8705610e4da6f335c95159b42966deffb6e8369861a2c5a6e873c3267cea1ea`;
+  Adobe PDF `2b204491f9bd9b21452f2300b9844e8993b97e9cf69d1deb4b94c3a1a09c789b`.
+  Authored Adobe 24 PDF **40 pages**, untouched Word rendered by
+  LibreOffice 25.2.3.2 **43 pages**. LO shows a visibly clipped zero in
+  divider 10 and introduces an extra mostly blank Activity page. This is an
+  observed renderer difference, **not** an acceptance of app-generated
+  authentic native Word or PDF. The live 26-page synthetic PDFs use
+  LibreOffice 24.2 and different content.
+- Pending Phase 1 closure is authentic application-generated Word/PDF parity
+  with the original pinned master, wider image/metafile/metadata/privacy and
+  concurrency/source/training/contact edges and a concise owner check.
+  Do not publish the real sources in GitHub or use real client records for QA.
+  Phase 2 adaptive work is independently authorized and is not held by this
+  pending Phase 1 acceptance; do not redesign it in this fix stream.
+- The next owner functional batch when the **tested exact served SHA** is
+  available is: (1) isolated prefill 18/18, (2) edit Activity and verify
+  durable reload plus DOCX/PDF download, (3) acknowledge reset and load
+  source replay 18/18 and finally reset to empty. Keep authentic page-level
+  review a separate, small task with exact pages chosen from generated output.
+
 Read the newer [October 9 usability audit ledger](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md)
 alongside this handoff. Its automatic active-work and standing-data direction
 supersedes the routine manual Save instructions below; it does not imply those
