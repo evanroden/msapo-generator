@@ -188,20 +188,43 @@ def open_until_matching(page):
     raise AssertionError("Served build not verified within deployment window: " + last)
 
 
-def complete_report(page, mode):
+def complete_report(page, mode, fixture_state):
     checkpoint("fixture " + mode + " loaded", page.get_by_text(
         "Current fixture: " + mode, exact=False).first.is_visible())
+    result_mode = "source replay" if "replay" in mode else "known-value prefill"
+    event("comparison_requested", mode=mode, generation=fixture_state["generation"],
+          revision=fixture_state["revision"])
     page.get_by_role("button", name="Compare fixture facts", exact=True).click()
-    page.get_by_text(re.compile(("source replay" if "replay" in mode else "known-value prefill")
-                                + r": \d+/\d+ independent")).first.wait_for(timeout=25000)
-    result = page.get_by_text(re.compile(r"\d+/\d+ independent")).first.text_content() or ""
+    # Unlike a transient button=True, this post-editor receipt is emitted only
+    # after the actual comparison is evaluated for the current report revision.
+    receipt = page.get_by_text(re.compile(
+        r"^QA comparison evaluated: " + result_mode +
+        r" · \d+/\d+ · action [0-9a-f]{12} · generation " +
+        fixture_state["generation"] + r" · revision " +
+        str(fixture_state["revision"]) + r" ·"
+    )).first
+    try:
+        receipt.wait_for(timeout=25000)
+        status = receipt.text_content() or ""
+        counted = re.search(r" · (\d+)/(\d+) · action ([0-9a-f]{12}) ", status)
+        if not counted:
+            raise AssertionError("Comparison receipt had no independently checked counts.")
+    except (AssertionError, BrowserTimeout) as exc:
+        state_diagnostics(page, "comparison-" + mode.replace(" ", "-"), exc)
+        raise
+    result = page.get_by_text(re.compile(
+        re.escape(result_mode) + r": \d+/\d+ independent")).first.text_content() or ""
     match = re.search(r"(\d+)/(\d+)", result)
     failed = page.get_by_text(re.compile(r"^CHECK\s*[—-]")).all_text_contents()
     failure_detail = "; ".join(value.strip() for value in failed)
     screenshot(page, mode.replace(" ", "-") + "-comparison")
     checkpoint("fixture " + mode + " content/provenance",
-               bool(match and match[1] == match[2] == "18" and not failed),
+               bool(match and match[1] == match[2] == "18" and
+                    counted[1] == counted[2] == "18" and not failed),
                result + ("; unmet checks: " + failure_detail if failed else ""))
+    event("comparison_evaluated", mode=mode, action=counted[3],
+          generation=fixture_state["generation"], revision=fixture_state["revision"],
+          matched=int(counted[1]), total=int(counted[2]))
     page.get_by_role("button", name="Generate QA Word and PDF", exact=True).click()
     docx_button = page.get_by_role("button", name="Download isolated QA DOCX", exact=True)
     try:
@@ -264,7 +287,7 @@ def main():
             start_state = await_fixture_state(page, "empty")
             prefill_state = load_fixture(page, "prefill",
                                          previous_generation=start_state["generation"])
-            complete_report(page, "known-value prefill")
+            complete_report(page, "known-value prefill", prefill_state)
             # The visible Activity editor is a real Streamlit control.
             editor = page.get_by_role("textbox", name="Activity summary", exact=True).first
             original = editor.input_value()
@@ -316,7 +339,7 @@ def main():
             empty_state = reset_fixture(page, prefill_state, "before-replay")
             replay_state = load_fixture(page, "replay",
                                         previous_generation=empty_state["generation"])
-            complete_report(page, "original-source replay")
+            complete_report(page, "original-source replay", replay_state)
             final_state = reset_fixture(page, replay_state, "final")
             checkpoint("isolated reset returns empty QA fixture",
                        final_state["generation"] != replay_state["generation"] and
