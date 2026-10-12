@@ -113,10 +113,12 @@ def _cmms(content, profile, period, prefix, field):
 
 
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field):
-    st.subheader("Add this month’s report files and photos")
-    st.write("Only relevant, price-free pages belong in the client report. Check the suggested pages below; originals are kept for reference.")
-    st.caption("PDF, images including HEIC, DOCX, XLSX, CSV, EML and MSG. Files are stored with this profile on the persistent disk; emails are read only. No email drafts or sending.")
-    st.caption("Limits: 50 sources / 180 MB per report including attachments; 30 MB per file (DOCX 128 MB); 800,000 extracted characters. Up to 150 image/PDF pages can be embedded. OCR/vision is limited separately to 20 pages per report.")
+    st.subheader("File and work-order tools")
+    st.caption("Add supporting files, then review the pages or work-order rows you intend to use.")
+    st.caption("PDF, Word, Excel, photos and email files. Uploaded emails are read, not sent.")
+    with st.expander("File formats and limits"):
+        st.caption("Supported: PDF, DOCX, XLSX, CSV, EML, MSG, TXT, and image files including HEIC.")
+        st.caption("Limits: 50 sources / 180 MB per report, 30 MB per file (DOCX 128 MB), 800,000 extracted characters, 150 embedded PDF/image pages and 20 OCR/vision pages. The file chooser and review process still enforce these limits.")
     key = prefix + "_evidence"
     contents = st.session_state.setdefault(key, ())
     upload = st.file_uploader("Monthly source files", type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
@@ -625,8 +627,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     evidence_key = prefix + "_evidence"
     local_key = evidence_key + "_structured_" + destination
     contents = st.session_state.setdefault(evidence_key, ())
-    labels = {"activity_summary": "Upload activity reports and supporting files", "capital_renewal": "Upload capital renewal lists or contract documents", "proposals": "Upload pending and declined quotes"}
-    st.caption("Upload your files first. Useful information is drafted below for you to edit. Original quotes and prices are excluded from the report.")
+    labels = {"activity_summary": "Add activity files (optional)", "capital_renewal": "Add capital renewal file", "proposals": "Add proposal file"}
+    st.caption("Add files to help draft this section, or edit directly below. Detected pricing blocks page inclusion; review every client-facing page.")
     uploaded = st.file_uploader(labels[destination], type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
     additions = {}

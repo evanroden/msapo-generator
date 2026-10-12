@@ -11,7 +11,7 @@ def activity_upload(monkeypatch, raw):
     stream.name = 'activity.txt'
     original = ui.st.file_uploader
     monkeypatch.setattr(ui.st, 'file_uploader', lambda label, *args, **kwargs:
-                        [stream] if label == 'Upload activity reports and supporting files' else original(label, *args, **kwargs))
+                        [stream] if label == 'Add activity files (optional)' else original(label, *args, **kwargs))
 
 
 def test_first_pass_is_automatic_and_manual_edits_survive_reader(monkeypatch, tmp_path):

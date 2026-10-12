@@ -49,7 +49,7 @@ def app_for_text(monkeypatch, tmp_path, *, ai_key, cache=None):
             b'Completed strainer cleaning and leak inspection. Result: no leakage found.\n')
     uploaded = SimpleNamespace(name='activity.txt', getvalue=lambda: text)
     monkeypatch.setattr(ui.st, 'file_uploader', lambda label, *args, **kwargs:
-                        [uploaded] if label=='Upload activity reports and supporting files'
+                        [uploaded] if label=='Add activity files (optional)'
                         else original_uploader(label, *args, **kwargs))
     monkeypatch.setattr(ai, 'ANTHROPIC_API_KEY', ai_key)
     if cache is not None:
