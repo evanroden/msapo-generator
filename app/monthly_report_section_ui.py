@@ -53,48 +53,57 @@ def _site_options(contract):
     return available_sites(result, directory)
 
 
-def _identity(contract, prepared, prefix, field, state):
-    st.subheader("1. Who is this report for?")
+def _identity(contract, prepared, prefix, field, state, inspection=None):
     if state:
-        profile = state.profile
-        st.write(profile.title + " · " + "; ".join(f.title for f in profile.facilities))
-        return profile, prepared, [] if prepared.strip() else ["Enter Prepared by above."]
+        # The current report header already states these sites. Repeating
+        # "Hospital · Hospital" above an import adds no useful decision.
+        return state.profile, prepared, [] if prepared.strip() else ["Enter Prepared by above."]
+    from app.monthly_report_start_import import source_sites
     options = {f.key: f for f in _site_options(contract)}
-    selected = st.multiselect("Which sites does this report cover?", list(options),
-                              format_func=lambda k: options[k].title + (" (also " + ", ".join(options[k].aliases) + ")" if options[k].aliases else ""),
-                              key=field(prefix + "_sites", []), help="Select only the sites in this report. You can make separate reports for other sites on the same contract.")
-    custom = st.text_input("Site not listed? Add its name here", key=field(prefix + "_custom_site", ""),
-                           help="For more than one missing site, separate their names with a semicolon.")
+    inferred = {f.key for f in source_sites(inspection, options.values())} if inspection else set()
+    st.subheader("Report sites")
+    st.caption("The sites identified on the uploaded cover are selected. Change only incorrect sites.")
+    selected = []
+    for site in options.values():
+        label = site.title
+        if st.checkbox(label, key=field(prefix + "_site_" + site.key, site.key in inferred),
+                       help="Include this site in the current report."):
+            selected.append(site)
+    custom = st.text_input("Add a site not listed (optional)",
+                           key=field(prefix + "_custom_site", ""),
+                           help="Separate multiple names with semicolons.")
     try:
-        facilities = tuple(options[k] for k in selected) + tuple(Facility(_key(v.strip()), v.strip()) for v in custom.split(";") if v.strip())
-        # Validate before rendering widgets keyed by facility identity, so a
-        # repeated custom site remains editable instead of crashing every run.
+        facilities = tuple(selected) + tuple(Facility(_key(v.strip()), v.strip())
+                                             for v in custom.split(";") if v.strip())
         if facilities:
             ReportProfile(contract, "selection", "Selected sites", facilities,
                           "individual" if len(facilities) == 1 else "multi_site")
     except ValueError:
-        message = "A site was selected twice, shares an alternate name, or has no letters/numbers. Keep one entry per actual site and correct the added site name above."
+        message = "A site was entered more than once or overlaps another site's name. Correct the selected sites."
         st.warning(message)
         return None, prepared, [message]
-    scope_label = st.radio("This report covers", ["One site", "A group of sites", "A region"], key=field(prefix + "_scope", "One site"), horizontal=True)
-    scope = {"One site": "individual", "A group of sites": "multi_site", "A region": "regional"}[scope_label]
-    actor = st.text_input("Your name", key=field(prefix + "_actor", prepared), help="Shown as the report preparer and recorded when you save.")
+    actor = prepared.strip() or st.text_input("Your name", key=field(prefix + "_actor", ""),
+                                              help="Used only when a name has not already been provided.")
     seed_title = facilities[0].title if len(facilities) == 1 else " / ".join(f.title for f in facilities)[:160]
-    with st.expander("Report name and other names for these sites (optional)"):
-        title = st.text_input("Report name", key=field(prefix + "_title_" + _signature(seed_title), seed_title),
-                              help="A name you will recognize next month. The month and year are added automatically.")
+    scope = "individual" if len(facilities) == 1 else "multi_site"
+    with st.expander("Report name and alternate site names (optional)"):
+        title = st.text_input("Report name",
+                              key=field(prefix + "_title_" + _signature(seed_title), seed_title),
+                              help="The month and year are added automatically.")
+        if len(facilities) > 1 and st.checkbox(
+                "This group is a regional report", key=field(prefix + "_regional", False)):
+            scope = "regional"
         amended = []
         for facility in facilities:
-            aliases = st.text_input("Other names for " + facility.title, key=field(prefix + "_aliases_" + facility.key, "; ".join(facility.aliases)))
+            aliases = st.text_input("Other names for " + facility.title,
+                                    key=field(prefix + "_aliases_" + facility.key, "; ".join(facility.aliases)))
             amended.append(replace(facility, aliases=tuple(v.strip() for v in aliases.split(";") if v.strip())))
         facilities = tuple(amended)
     missing = []
     if not facilities:
-        missing.append("Select a site, or type its name in ‘Site not listed?’.")
-    if scope == "individual" and len(facilities) > 1:
-        missing.append("For several sites, choose ‘A group of sites’ or ‘A region’.")
+        missing.append("Choose the site or sites identified in the starting report.")
     if not title.strip():
-        missing.append("Give the report a name in the optional report-name box.")
+        missing.append("Give the report a name.")
     if not actor.strip():
         missing.append("Enter your name.")
     candidate = None
@@ -102,7 +111,7 @@ def _identity(contract, prepared, prefix, field, state):
         try:
             candidate = ReportProfile(contract, _key(title), title.strip(), facilities, scope)
         except ValueError:
-            missing.append("A site was selected twice or an alternate name belongs to two sites. Keep one entry for each actual site.")
+            missing.append("A site or alternate name belongs to multiple sites. Correct that overlap.")
     return candidate, actor, missing
 
 
