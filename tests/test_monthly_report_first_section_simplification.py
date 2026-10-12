@@ -128,3 +128,50 @@ def test_no_redundant_cover_panel_and_cover_preview_stays_with_import():
     assert "hashlib.sha256(upload.getvalue()).hexdigest()" in setup
     assert 'with st.expander("Cover photograph"' in setup
     assert '"This section is ready' not in inspect.getsource(section_ui._approve_plan)
+
+
+def test_ummc_legacy_cover_abbreviation_prechecks_exact_site_once(monkeypatch, tmp_path):
+    """Private September UMMC cover has 'UMMC', not a spelled-out legal name."""
+    from app.contracts import RRH_CONTRACT
+    from app.monthly_report_section_ui import _site_options
+    from app.monthly_report_import import DocxInspection, ImportItem
+    from app.monthly_report_start_import import source_sites
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    options = _site_options(RRH_CONTRACT)
+    intended = next(f for f in options if f.key == "united_memorial")
+    assert "UMMC" in intended.aliases
+    assert len([f for f in options if f.key == intended.key]) == 1
+    inspection = DocxInspection(
+        "a" * 64,
+        (ImportItem("cover", "text", "word/document.xml", 3, 1,
+                    "cover", text="UMMC Operations and Maintenance Monthly Review"),
+         ImportItem("body", "text", "word/document.xml", 125, 7,
+                    "activity", text="Service coordination at Unity Hospital")),
+        ("UMMC", "September 2026", "Operations and Maintenance Monthly Review"),
+        (), 7,
+    )
+    assert source_sites(inspection, options) == (intended,)
+    assert source_sites(DocxInspection(
+        "a" * 64, (), ("Batavia",), (), 1), options) == ()
+
+
+def test_saved_directory_override_still_recognizes_ummc_without_rewriting_directory(monkeypatch, tmp_path):
+    from app.contracts import RRH_CONTRACT
+    from app import monthly_report_directory as directory
+    from app.monthly_report_section_ui import _site_options
+    from app.monthly_report_start_import import source_sites
+    from app.monthly_report_import import DocxInspection
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    saved = directory.save_directory(
+        RRH_CONTRACT,
+        (directory.DirectorySite("saved-ummc-id", "United Memorial Medical Center"),),
+        expected_revision=0, actor="Synthetic QA", confirmed=True)
+    facility = next(f for f in _site_options(RRH_CONTRACT)
+                    if f.title == "United Memorial Medical Center")
+    assert facility.key == "saved-ummc-id"
+    assert "UMMC" in facility.aliases
+    assert source_sites(DocxInspection("a" * 64, (), ("UMMC",), (), 1),
+                        _site_options(RRH_CONTRACT)) == (facility,)
+    persisted = directory.load_directory(RRH_CONTRACT)
+    assert persisted == saved
+    assert persisted.sites[0].facility.aliases == ()
