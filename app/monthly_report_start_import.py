@@ -64,7 +64,15 @@ def _named_group(profile):
 
 def source_sites(inspection, known_sites):
     """Match complete names/aliases on the cover, never incidental body names."""
-    cover = " " + _words("\n".join(inspection.title_candidates)) + " "
+    # The inspector records some native cover text in the "cover"
+    # section rather than title_candidates. Only the first page's own
+    # document text may establish identity; body/service content is never
+    # permission to import another site's contacts or activity.
+    cover_lines = list(inspection.title_candidates)
+    cover_lines.extend(item.text for item in inspection.items
+                       if item.kind == "text" and item.part == "word/document.xml"
+                       and item.section in ("", "cover") and 0 <= item.position <= 80)
+    cover = " " + _words("\n".join(dict.fromkeys(cover_lines))) + " "
     matches = []
     for site in known_sites:
         for name in (site.title, *site.aliases):
@@ -151,6 +159,49 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period)
 
 
+def cover_photo_candidates(items):
+    """Only cover-page photographs, not logos, dividers or package leftovers."""
+    from app.monthly_report_sections import small_artwork
+    possible = tuple(item for item in items
+                     if item.kind == "image" and item.part == "word/document.xml"
+                     and item.section in ("", "cover")
+                     and item.suggested_slot not in ("brand_logo", "client_logo")
+                     and not item.suggested_slot.startswith("divider_")
+                     and not small_artwork(item))
+    if not possible:
+        return ()
+    # A Word cover can be followed by a long Contents page whose pictures
+    # still get classified as 'cover' by the text inspector. The first actual
+    # cover Word section is authoritative for choosing a photograph; later
+    # Contents/other section artwork is not another cover-photo option.
+    earliest = min(item.word_section for item in possible)
+    return tuple(item for item in possible if item.word_section == earliest)
+
+
+def suggested_cover_photo(items):
+    """Default to a uniquely plausible large cover picture, never a logo.
+
+    The user can replace the suggestion in the thumbnail gallery. A tie or
+    missing size proof leaves the optional cover photo unset instead of
+    guessing from arbitrary client artwork.
+    """
+    candidates = tuple(item for item in cover_photo_candidates(items)
+                       if not item.image_width or not item.image_height
+                       or 0.42 <= item.image_width / item.image_height <= 2.9)
+    if not candidates:
+        return None
+    tagged = tuple(item for item in candidates if item.suggested_slot == "cover_photo")
+    if len(tagged) == 1:
+        return tagged[0]
+    ranked = sorted(candidates, key=lambda item: item.image_width * item.image_height,
+                    reverse=True)
+    if len(ranked) == 1:
+        return ranked[0]
+    first, second = ranked[:2]
+    area, runner_up = first.image_width * first.image_height, second.image_width * second.image_height
+    return first if area > 40000 and area >= 1.6 * max(1, runner_up) else None
+
+
 def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False):
     """Pre-fill recognizable content; ask only about unresolved source content.
 
@@ -161,6 +212,7 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
     known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     result = {}
     for section in section_reviews(inspection):
+        cover_default = suggested_cover_photo(section.items) if section.key == "cover" else None
         plan = {"key": section.key, "action": "Keep and review", "target": section.key,
                 "omit": False, "selected": [], "texts": {}, "tables": {}, "destinations": {},
                 "new_assets": [], "image_notes": {}, "automatic": True, "approved": True}
@@ -180,21 +232,51 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                         plan["selected"].append(item.id)
                         plan["tables"][item.id] = replace(table, rows=())
                 continue
-            if item.id in analysis.older_items or slot in preferred_logos:
+            if slot in preferred_logos:
+                continue
+            if item.id in analysis.older_items and item.kind != "image":
+                # Old prose is not current-month work. Its photos are still
+                # source artwork belonging to this exact section, however:
+                # retain them with immutable source/month provenance so they
+                # can be updated, rather than making every image disappear
+                # merely because the uploaded report is from August.
                 continue
             if section.key == "cover" and item.kind == "text" and slot != "footer_text":
                 continue  # The target report already supplies its cover title/date.
             if item.kind == "unsupported":
-                questions.append("Some Word artwork needs its complete page preserved.")
+                # Never treat an unrendered source drawing as absent or as a
+                # harmless omission. The section requires safe preservation or
+                # a named replacement. Native artwork the inspector recognizes
+                # as reusable design is filtered separately by section_reviews.
+                questions.append(
+                    "A Word diagram or image in this section needs preservation. "
+                    "Its original section is retained; prepare its complete "
+                    "pages or provide a clear replacement before continuing."
+                )
                 continue
             if section.key == "other":
                 questions.append("Choose where the additional content belongs.")
                 continue
             if item.kind == "image":
-                if small_artwork(item):
+                if not slot and section.key not in ("cover", "other", "proposals", "accounts_receivable"):
+                    # A source image inside a recognized Word report section
+                    # belongs with that section's visual evidence even when
+                    # its individual paragraph lacks a filename or caption.
+                    # Quote/receivable images are excluded from this fallback:
+                    # they can contain amounts only in pixels.
+                    from app.monthly_report_visual_preservation import VISUAL_SLOTS
+                    slot = VISUAL_SLOTS.get(section.key, "")
+                if section.key == "cover" and slot not in ("brand_logo", "client_logo"):
+                    # Optional cover photo is one chosen image; even when
+                    # several pictures exist the gallery does not need one
+                    # approval radio for each unrelated logo/photo.
+                    if cover_default is None or item.id != cover_default.id:
+                        continue
+                    slot = "cover_photo"
+                elif small_artwork(item):
                     continue
-                if not slot or (slot in ("cover_photo", "brand_logo", "client_logo")
-                                and sum(i.kind == "image" and i.suggested_slot == slot for i in section.items) > 1):
+                if section.key != "cover" and (not slot or (slot in ("cover_photo", "brand_logo", "client_logo")
+                                and sum(i.kind == "image" and i.suggested_slot == slot for i in section.items) > 1)):
                     questions.append("A picture's purpose is not clear.")
                     continue
             if item.kind == "text" and contains_price(item.text):
@@ -233,6 +315,14 @@ def build_starting_import(path, inspection, plans):
     mapped, mappings = build_section_import(path, inspection, active)
     automatic_refs = {f"docx:{inspection.sha256}:{identity}" for p in active if p.get("automatic")
                       for identity in p.get("selected", ())}
+    # A source-bound Word diagram screenshot was rendered, not human-certified
+    # for pricing hidden inside image pixels. Treat its asset provenance like
+    # every other automatic imported image, not as blanket visual approval.
+    automatic_refs.update(
+        f"docx:{inspection.sha256}:word-sections:{','.join(map(str, record['sections']))}:page:{record['page']}"
+        for plan in active if plan.get("auto_native_diagrams")
+        for record in plan.get("word_page_records", ())
+    )
     from app.monthly_report_asset_review import (
         asset_fingerprint,
         normalize_asset_reviews,

@@ -53,48 +53,57 @@ def _site_options(contract):
     return available_sites(result, directory)
 
 
-def _identity(contract, prepared, prefix, field, state):
-    st.subheader("1. Who is this report for?")
+def _identity(contract, prepared, prefix, field, state, inspection=None):
     if state:
-        profile = state.profile
-        st.write(profile.title + " · " + "; ".join(f.title for f in profile.facilities))
-        return profile, prepared, [] if prepared.strip() else ["Enter Prepared by above."]
+        # The current report header already states these sites. Repeating
+        # "Hospital · Hospital" above an import adds no useful decision.
+        return state.profile, prepared, [] if prepared.strip() else ["Enter Prepared by above."]
+    from app.monthly_report_start_import import source_sites
     options = {f.key: f for f in _site_options(contract)}
-    selected = st.multiselect("Which sites does this report cover?", list(options),
-                              format_func=lambda k: options[k].title + (" (also " + ", ".join(options[k].aliases) + ")" if options[k].aliases else ""),
-                              key=field(prefix + "_sites", []), help="Select only the sites in this report. You can make separate reports for other sites on the same contract.")
-    custom = st.text_input("Site not listed? Add its name here", key=field(prefix + "_custom_site", ""),
-                           help="For more than one missing site, separate their names with a semicolon.")
+    inferred = {f.key for f in source_sites(inspection, options.values())} if inspection else set()
+    st.subheader("Report sites")
+    st.caption("The sites identified on the uploaded cover are selected. Change only incorrect sites.")
+    selected = []
+    for site in options.values():
+        label = site.title
+        if st.checkbox(label, key=field(prefix + "_site_" + site.key, site.key in inferred),
+                       help="Include this site in the current report."):
+            selected.append(site)
+    custom = st.text_input("Add a site not listed (optional)",
+                           key=field(prefix + "_custom_site", ""),
+                           help="Separate multiple names with semicolons.")
     try:
-        facilities = tuple(options[k] for k in selected) + tuple(Facility(_key(v.strip()), v.strip()) for v in custom.split(";") if v.strip())
-        # Validate before rendering widgets keyed by facility identity, so a
-        # repeated custom site remains editable instead of crashing every run.
+        facilities = tuple(selected) + tuple(Facility(_key(v.strip()), v.strip())
+                                             for v in custom.split(";") if v.strip())
         if facilities:
             ReportProfile(contract, "selection", "Selected sites", facilities,
                           "individual" if len(facilities) == 1 else "multi_site")
     except ValueError:
-        message = "A site was selected twice, shares an alternate name, or has no letters/numbers. Keep one entry per actual site and correct the added site name above."
+        message = "A site was entered more than once or overlaps another site's name. Correct the selected sites."
         st.warning(message)
         return None, prepared, [message]
-    scope_label = st.radio("This report covers", ["One site", "A group of sites", "A region"], key=field(prefix + "_scope", "One site"), horizontal=True)
-    scope = {"One site": "individual", "A group of sites": "multi_site", "A region": "regional"}[scope_label]
-    actor = st.text_input("Your name", key=field(prefix + "_actor", prepared), help="Shown as the report preparer and recorded when you save.")
+    actor = prepared.strip() or st.text_input("Your name", key=field(prefix + "_actor", ""),
+                                              help="Used only when a name has not already been provided.")
     seed_title = facilities[0].title if len(facilities) == 1 else " / ".join(f.title for f in facilities)[:160]
-    with st.expander("Report name and other names for these sites (optional)"):
-        title = st.text_input("Report name", key=field(prefix + "_title_" + _signature(seed_title), seed_title),
-                              help="A name you will recognize next month. The month and year are added automatically.")
+    scope = "individual" if len(facilities) == 1 else "multi_site"
+    with st.expander("Report name and alternate site names (optional)"):
+        title = st.text_input("Report name",
+                              key=field(prefix + "_title_" + _signature(seed_title), seed_title),
+                              help="The month and year are added automatically.")
+        if len(facilities) > 1 and st.checkbox(
+                "This group is a regional report", key=field(prefix + "_regional", False)):
+            scope = "regional"
         amended = []
         for facility in facilities:
-            aliases = st.text_input("Other names for " + facility.title, key=field(prefix + "_aliases_" + facility.key, "; ".join(facility.aliases)))
+            aliases = st.text_input("Other names for " + facility.title,
+                                    key=field(prefix + "_aliases_" + facility.key, "; ".join(facility.aliases)))
             amended.append(replace(facility, aliases=tuple(v.strip() for v in aliases.split(";") if v.strip())))
         facilities = tuple(amended)
     missing = []
     if not facilities:
-        missing.append("Select a site, or type its name in ‘Site not listed?’.")
-    if scope == "individual" and len(facilities) > 1:
-        missing.append("For several sites, choose ‘A group of sites’ or ‘A region’.")
+        missing.append("Choose the site or sites identified in the starting report.")
     if not title.strip():
-        missing.append("Give the report a name in the optional report-name box.")
+        missing.append("Give the report a name.")
     if not actor.strip():
         missing.append("Enter your name.")
     candidate = None
@@ -102,7 +111,7 @@ def _identity(contract, prepared, prefix, field, state):
         try:
             candidate = ReportProfile(contract, _key(title), title.strip(), facilities, scope)
         except ValueError:
-            missing.append("A site was selected twice or an alternate name belongs to two sites. Keep one entry for each actual site.")
+            missing.append("A site or alternate name belongs to multiple sites. Correct that overlap.")
     return candidate, actor, missing
 
 
@@ -131,6 +140,21 @@ def _replacement_pictures(section, p, plan):
     plan["new_assets"] = list(replacements.items())
 
 
+def _explicit_quote_price_risk(section, inspection):
+    """Only a named uploaded vendor quote may need a price acknowledgment."""
+    import re
+    if inspection is None or section.key != "proposals":
+        return False
+    labels = " ".join(inspection.title_candidates)
+    if not re.search(r"\b(?:vendor|supplier)\b.{0,60}\b(?:quote|quotation|estimate)\b"
+                     r"|\b(?:quote|quotation|estimate)\b.{0,60}\b(?:vendor|supplier)\b",
+                     labels, re.I):
+        return False
+    return any(contains_price(item.text + "\n" +
+                              "\n".join(" ".join(row) for row in item.rows))
+               for item in section.items)
+
+
 def _section_card(section, path, inspection, period, prefix, field, plans, first):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
@@ -147,20 +171,36 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
-        plan = {"key": section.key, "action": action, "target": section.key, "omit": action == actions[2], "selected": [], "texts": {}, "tables": {}, "destinations": {}, "new_assets": [(slot, image) for slot, image in old.get("new_assets", []) if slot not in {"brand_logo", "client_logo"}], "image_notes": dict(old.get("image_notes", {})), "automatic": False}
+        plan = {"key": section.key, "action": action, "target": section.key,
+                "omit": action == actions[2], "selected": [], "texts": {},
+                "tables": {}, "destinations": {},
+                "new_assets": [(slot, image) for slot, image in old.get("new_assets", [])
+                               if slot not in {"brand_logo", "client_logo"}],
+                "image_notes": dict(old.get("image_notes", {})), "automatic": old.get("automatic", False),
+                # A separate price/text question cannot erase an already
+                # preserved native source diagram when this card reopens.
+                "auto_native_diagrams": old.get("auto_native_diagrams", False),
+                "captured_word_sections": old.get("captured_word_sections", ()),
+                "preserved_assets": list(old.get("preserved_assets", ())),
+                "word_page_records": list(old.get("word_page_records", ()))}
         blocking = []
         if plan["omit"]:
             st.caption("This section stays in the report. The uploaded content remains in the saved original for reference.")
         else:
             from app.monthly_report_word_pages_ui import chart_page_review
             if chart_page_review(section, path, period, p, field, old, plan, blocking):
+                # A deliberate complete-page selection replaces automatic
+                # diagram capture; never combine two full-page copies.
+                plan["auto_native_diagrams"] = False
+                plan["captured_word_sections"] = ()
                 if action == actions[1]:
                     _replacement_pictures(section, p, plan)
                 elif plan["new_assets"]:
                     from app.monthly_report_sections import readable_label
                     for slot, image in plan["new_assets"]:
                         st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
-                _approve_plan(plan, p, field, old, plans, blocking)
+                _approve_plan(plan, p, field, old, plans, blocking,
+                              quote_price_risk=_explicit_quote_price_risk(section, inspection))
                 return
             items = list(section.items)
             if section.key == "cover":
@@ -233,34 +273,88 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 for slot, image in plan["new_assets"]:
                     st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
             if any(i.kind == "unsupported" for i in section.items):
-                preserve_hint = "Open ‘Preview the original charts and contact lists’ above to preview complete pages. " if section.key == "organization" else ""
-                st.warning("Some charts or artwork in the original Word file could not be displayed. " + preserve_hint + "If they cannot be kept clearly, add replacement pictures or explicitly leave them out. The original is retained.")
-                options = ["Choose an option", "Continue without the content that could not be shown"]
-                if section.key != "other":
-                    options.insert(1, "I uploaded clear replacements")
-                previous = old.get("unsupported_choice", "Choose an option")
-                choice = st.radio("Some content could not be shown. How would you like to continue?", options,
-                                  key=field(p + "_unsupported", previous if previous in options else options[0]))
-                plan["unsupported_choice"] = choice
-                plan["unsupported_reviewed"] = choice == "Continue without the content that could not be shown" or (choice == "I uploaded clear replacements" and bool(plan["new_assets"]))
-                if not plan["unsupported_reviewed"]:
-                    if section.key == "other":
-                        blocking.append("Choose ‘Continue without the content that could not be shown’ to retain them only in the original. You can add clear replacement pictures to the appropriate report section after setup.")
-                    else:
-                        blocking.append(preserve_hint + f"To upload a replacement, choose ‘{guide.edit}’ above. Otherwise choose ‘Continue without the content that could not be shown’.")
-        _approve_plan(plan, p, field, old, plans, blocking)
+                # Do not silently exclude a difficult SmartArt/VML/OLE frame
+                # after removing the old generic "continue without" radio.
+                # It must be rendered into the original section or have an
+                # explicit clear replacement before this section is accepted.
+                preserved = bool(plan.get("page_layout") and plan.get("preserved_assets")
+                                 or plan.get("auto_native_diagrams") and plan.get("preserved_assets")
+                                 or plan.get("new_assets"))
+                plan["unsupported_reviewed"] = preserved
+                if not preserved:
+                    blocking.append(
+                        "A Word diagram in " + section.title +
+                        " could not be preserved. Use its original-page preview "
+                        "or the clear replacement upload; it will not be silently left out."
+                    )
+                else:
+                    st.caption("Source drawings are retained in this section, "
+                               "either as safe original-page images or named replacements.")
+        _approve_plan(plan, p, field, old, plans, blocking,
+                      quote_price_risk=_explicit_quote_price_risk(section, inspection))
 
 
-def _approve_plan(plan, p, field, old, plans, blocking):
+def _approve_plan(plan, p, field, old, plans, blocking, *, quote_price_risk=False):
     for message in blocking:
         st.error(message)
     stamp = plan_signature(plan)
-    reviewed = st.checkbox("This section is ready — the selected content is relevant and contains no prices, legal-only pages or blank/signature-only pages", key=field(p + "_ready_" + stamp, old.get("approval_stamp") == stamp))
-    plan["approved"] = reviewed and not blocking
+    # The ordinary starting-report importer already strips known prices,
+    # excludes unsafe text/pages and rejects a remaining price in its final
+    # package gate. A blanket "this section is ready" checkbox adds no
+    # protection. Reserve a specific acknowledgment for an explicitly named
+    # vendor quotation whose content signals financial amounts; that checkbox
+    # NEVER overrides an actual blocking content-safety error.
+    reviewed = True
+    if quote_price_risk:
+        reviewed = st.checkbox(
+            "I reviewed this vendor quotation and excluded all pricing",
+            key=field(p + "_price_quote_review_" + stamp,
+                      old.get("approval_stamp") == stamp))
+    plan["approved"] = bool(reviewed and not blocking)
     plan["approval_stamp"] = stamp if plan["approved"] else ""
     plans[plan["key"]] = plan
     if blocking:
-        st.caption("Resolve the message above to finish this section.")
+        st.caption("Resolve the message above before including this content.")
+
+
+def render_pending_cover_selection(draft, assets, contract, period, state):
+    """Preview the selected imported cover photograph before committing it.
+
+    Images are read from this session's original staging file and carried
+    only in the transient preview payload. Neither current report history nor
+    approved standing artwork changes until Continue is explicitly saved.
+    """
+    from app.monthly_report_import import read_import_image
+    from app.monthly_report_model import ResolvedBlock
+    prefix = "report_setup_" + _signature((contract, state.profile.key if state else draft.profile.key,
+                                          period.key))
+    staged = st.session_state.get(prefix + "_stage")
+    if not staged:
+        return draft, assets
+    _, path, inspection = staged
+    plans = st.session_state.get(prefix + "_" + inspection.sha256[:16] + "_section_plans", {})
+    plan = plans.get("cover", {})
+    identity = next((item_id for item_id, slot in plan.get("destinations", {}).items()
+                     if slot == "cover_photo" and item_id in plan.get("selected", ())), "")
+    if not identity:
+        return draft, assets
+    item = next((candidate for candidate in inspection.items if candidate.id == identity
+                 and candidate.kind == "image" and candidate.section in ("", "cover")), None)
+    if item is None:
+        return draft, assets
+    try:
+        photo = read_import_image(path, item, line_art=False)
+        reference = library.asset_reference(photo.data, photo.extension)
+    except (ValueError, OSError):
+        st.caption("The selected cover photo is unavailable; the original report remains unchanged.")
+        return draft, assets
+    updated = dict(assets)
+    updated[reference] = photo.data
+    blocks = tuple(block for block in draft.blocks if block.key != "cover_photo") + (
+        ResolvedBlock("cover_photo", "Replace once", asset_hashes=(reference,)),
+    )
+    st.caption("Cover preview includes the selected photo. It is not saved until you continue.")
+    return replace(draft, blocks=blocks), updated
 
 
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
@@ -269,17 +363,44 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     st.subheader("Start with any report from this contract")
     st.caption("Use an earlier month, another site, or a report already underway. We’ll identify its sites and dates and bring across the relevant content.")
     upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128, key=prefix + "_upload")
-    if st.button("Analyze report", key=prefix + "_analyze", disabled=upload is None, type="primary"):
-        try:
-            with st.spinner("Finding report sections and pictures…"):
-                staged = _stage(upload)
-            old = st.session_state.get(prefix + "_stage")
-            st.session_state[prefix + "_stage"] = staged
-            if old and old[0]:
-                old[0].cleanup()
-            st.rerun()
-        except (ValueError, OSError) as exc:
-            st.error(str(exc))
+    # File selection is the Analyze action. The exact content hash, never
+    # its reusable filename or a widget rerun, determines whether a new
+    # source must be inspected. An error leaves the existing staged draft
+    # intact and presents one explicit Retry, not repeated heavy parsing.
+    if upload is not None:
+        digest = hashlib.sha256(upload.getvalue()).hexdigest()
+        staged = st.session_state.get(prefix + "_stage")
+        loaded_hash = staged[2].sha256 if staged else ""
+        failed_hash = st.session_state.get(prefix + "_failed_digest")
+        retry = False
+        if failed_hash == digest:
+            st.warning("This starting report could not be analyzed. The previous draft remains unchanged.")
+            retry = st.button("Retry report analysis", key=prefix + "_retry_analysis")
+        if digest != loaded_hash and (digest != failed_hash or retry):
+            try:
+                with st.spinner("Reading sections and cover pictures…"):
+                    incoming = _stage(upload)
+                previous = st.session_state.get(prefix + "_stage")
+                st.session_state[prefix + "_stage"] = incoming
+                st.session_state.pop(prefix + "_failed_digest", None)
+                if previous and previous[0]:
+                    previous[0].cleanup()
+                st.rerun()
+            except (ValueError, OSError) as exc:
+                st.session_state[prefix + "_failed_digest"] = digest
+                st.warning("This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved.")
+    else:
+        st.session_state.pop(prefix + "_failed_digest", None)
+        previous = st.session_state.get(prefix + "_stage")
+        if previous and previous[0]:
+            # Removing the uploader's file cancels its unsaved review too.
+            # An explicitly opened saved original has no temporary handle and
+            # remains available through its independent action below.
+            previous[0].cleanup()
+            st.session_state.pop(prefix + "_stage", None)
+    if upload is not None and st.session_state.get(prefix + "_failed_digest") == digest:
+        st.info("The newly selected file has not been analyzed. Retry or choose another file before continuing.")
+        return True
     if state:
         original = library.imported_original(contract, state.profile.key)
         if original and st.button("Open the saved original for section review", key=prefix + "_original", disabled=not prepared.strip()):
@@ -297,11 +418,11 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     p = prefix + "_" + inspection.sha256[:16]
     if identity:
         candidate = identity
-        st.write("Report sites: " + "; ".join(f.title for f in identity.facilities))
-        actor = st.text_input("Your name", key=field(p + "_actor", prepared))
+        actor = prepared.strip() or st.text_input(
+            "Your name", key=field(p + "_actor", ""))
         missing = [] if actor.strip() else ["Enter your name."]
     else:
-        candidate, actor, missing = _identity(contract, prepared, p, field, state)
+        candidate, actor, missing = _identity(contract, prepared, p, field, state, inspection)
     if not candidate:
         for message in missing:
             st.info(message)
@@ -316,9 +437,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(), known_profiles=profiles)
     if analysis.site_relation == "unknown":
         st.info("The starting report does not clearly name its sites. Confirm them once so another site's contacts and work are not copied into this report.")
-        source_keys = st.multiselect("Sites shown in the starting report", list(known_sites),
-                                    format_func=lambda key: known_sites[key].title,
-                                    key=field(p + "_source_sites", []))
+        from app.monthly_report_start_import import source_sites
+        inferred_source = {site.key for site in source_sites(inspection, known_sites.values())}
+        source_keys = [
+            site.key for site in known_sites.values()
+            if st.checkbox(site.title, key=field(p + "_source_site_" + site.key,
+                                                site.key in inferred_source))
+        ]
         with st.expander("A source site is not listed"):
             source_names = st.text_input("Source site name", key=field(p + "_source_site_name", ""),
                                          help="For several source sites, separate the names with semicolons.")
@@ -357,7 +482,129 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     intent = "Automatic starting report"
     sections = section_reviews(inspection)
     plans = st.session_state.setdefault(p + "_section_plans", {})
-    questions = [section for section in sections if seed[section.key].get("questions")]
+    # Preserve native diagrams at their evidenced Word/ENFRA section before
+    # asking the operator about anything. Ordinary image parts already follow
+    # suggested_slot; this path is only for complex native Word drawings.
+    # Rendering uses the existing bounded, passive Word-page converter and is
+    # cached per content hash/section. Failure does not equate to Leave out:
+    # the section remains blocked, with its source retained for exact repair.
+    from app.monthly_report_visual_preservation import (
+        DiagramPreservationError, diagram_source_sections, preserve_section_diagrams,
+    )
+    diagram_failures = {}
+    if analysis.site_relation == "same":
+        from app.monthly_report_content_policy import contains_price
+        for section in sections:
+            if section.key in ("cover", "other", "proposals", "accounts_receivable"):
+                # Cover art can contain another site's logo and proposals can
+                # show money only in image pixels; neither is auto-certified.
+                continue
+            if not any(i.kind == "unsupported" for i in section.items):
+                continue
+            plan = plans.get(section.key, {})
+            if plan.get("auto_native_diagrams") or plan.get("new_assets"):
+                continue
+            if any(i.id in analysis.older_items for i in section.items
+                   if i.kind == "unsupported"):
+                diagram_failures[section.key] = (
+                    "This drawing appears to belong to an earlier reporting "
+                    "period. Its destination is retained, but it must be checked "
+                    "before being carried into the current month."
+                )
+                continue
+            cache_key = p + "_diagram_render_" + section.key
+            result = st.session_state.get(cache_key)
+            if result is None:
+                try:
+                    diagram_source_sections(inspection, section)
+                    with st.spinner("Keeping the original diagrams in " + section.title + "…"):
+                        result = preserve_section_diagrams(path, inspection, section)
+                except DiagramPreservationError as exc:
+                    result = str(exc)
+                st.session_state[cache_key] = result
+            if isinstance(result, str):
+                diagram_failures[section.key] = result
+                continue
+            if result:
+                plan.update(result)
+                plan["unsupported_reviewed"] = True
+                plan["questions"] = tuple(q for q in plan.get("questions", ())
+                                         if not q.startswith("A Word diagram or image"))
+                plan["approved"] = not plan["questions"]
+                plans[section.key] = plan
+
+    # A single optional cover photo belongs in a small thumbnail gallery, not
+    # a repeated radio under every large photo/logo. The automatic suggestion
+    # is already in the plan; clicking a replacement changes only this unsaved
+    # draft and leaves the retained original/approved logos untouched.
+    cover_section = next((section for section in sections if section.key == "cover"), None)
+    if cover_section and analysis.site_relation == "same":
+        from app.monthly_report_start_import import cover_photo_candidates
+        from app.monthly_report_picture_cards import review_cover_gallery
+        candidates = cover_photo_candidates(cover_section.items)
+        if candidates:
+            with st.expander("Cover photograph", expanded=True,
+                             key=p + "_cover_gallery_expander", on_change="rerun") as gallery:
+                if gallery.open:
+                    existing = plans["cover"]
+                    updated = dict(existing)
+                    updated["selected"] = list(existing.get("selected", ()))
+                    updated["destinations"] = dict(existing.get("destinations", {}))
+                    review_cover_gallery(candidates, path, p + "_cover_gallery",
+                                         existing, updated)
+                    # No blanket approval button: the selected source photo
+                    # still flows through the image/package safety checks.
+                    updated["approved"] = True
+                    plans["cover"] = updated
+    questions = [section for section in sections if plans.get(section.key, {}).get("questions")]
+    if diagram_failures:
+        st.subheader("Diagrams needing a specific recovery")
+        for section in sections:
+            if section.key not in diagram_failures:
+                continue
+            with st.container(border=True):
+                st.markdown("**" + section.title + "**")
+                st.warning(diagram_failures[section.key])
+                key = p + "_diagram_render_" + section.key
+                if st.button("Retry safe diagram preservation for " + section.title,
+                             key=key + "_retry"):
+                    st.session_state.pop(key, None)
+                    st.rerun()
+                from app.monthly_report_visual_preservation import VISUAL_SLOTS
+                slot = VISUAL_SLOTS.get(section.key)
+                if slot:
+                    upload = st.file_uploader(
+                        "Clear replacement diagram for " + section.title,
+                        type=["png", "jpg", "jpeg", "heic", "heif", "webp"],
+                        key=p + "_diagram_replacement_" + section.key,
+                        max_upload_size=30,
+                    )
+                    if upload:
+                        try:
+                            picture = normalize_report_image(
+                                upload.getvalue(), Path(upload.name).suffix,
+                                line_art=section.key in ("organization", "subcontractors", "capital", "rfi"),
+                            )
+                        except (ValueError, OSError):
+                            st.error("The replacement image could not be safely read. The original is unchanged.")
+                        else:
+                            plan = plans[section.key]
+                            plan["new_assets"] = [(slot, picture)]
+                            plan["unsupported_reviewed"] = True
+                            plan["questions"] = tuple(q for q in plan.get("questions", ())
+                                                      if not q.startswith("A Word diagram or image"))
+                            plan["approved"] = not plan["questions"]
+                            plans[section.key] = plan
+                            st.caption("The replacement is selected for this section and "
+                                       "will be saved only when you continue.")
+    # A recoverable diagram has its own exact-section retry/upload directly
+    # above. Do not show a second generic Keep/Edit/Leave-out radio for that
+    # same unresolved object.
+    questions = [
+        section for section in sections
+        if any(not message.startswith("A Word diagram or image")
+               for message in plans.get(section.key, {}).get("questions", ()))
+    ]
     if questions:
         st.subheader("A few details need a check")
         for index, section in enumerate(questions):

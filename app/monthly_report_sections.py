@@ -113,19 +113,36 @@ def build_section_import(path, inspection, plans):
             raise ValueError("Review each included section before continuing.")
         if plan.get("omit"):
             continue
-        if plan.get("page_layout"):
+        if plan.get("page_layout") or plan.get("auto_native_diagrams"):
             preserved = plan.get("preserved_assets", ())
             records = plan.get("word_page_records", ())
-            allowed = {"org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix"}
-            if plan["key"] != "organization" or not preserved or len(preserved) != len(records):
-                raise ValueError("Review the complete chart pages before continuing.")
+            from app.monthly_report_visual_preservation import VISUAL_SLOTS
+            auto = bool(plan.get("auto_native_diagrams"))
+            allowed = ({VISUAL_SLOTS[plan["key"]]} if auto and plan["key"] in VISUAL_SLOTS
+                       else {"org_chart", "business_hours_workflow", "after_hours_workflow", "contact_matrix"})
+            if (not preserved or len(preserved) != len(records)
+                    or (auto and (not plan.get("automatic") or plan.get("page_layout")
+                                  or plan["key"] not in VISUAL_SLOTS))
+                    or (not auto and plan["key"] != "organization")):
+                raise ValueError("The original diagram pages need their section and source proof.")
             for (slot, image), record in zip(preserved, records):
                 digest = hashlib.sha256(image.data).hexdigest()
                 text = record.get("text", "")
+                kind, _ = page_status(text, unreadable=not text.strip())
+                source_proved = (
+                    auto and record.get("source_verified") is True
+                    and record.get("source_sha256") == inspection.sha256
+                    and tuple(record.get("sections", ())) == tuple(plan.get("captured_word_sections", ()))
+                    and all(number > 0 for number in record.get("sections", ()))
+                )
                 if (slot not in allowed or record.get("slot") != slot or record.get("sha256") != digest
-                        or not record.get("reviewed") or record.get("blank") or placeholder_matches(text)
-                        or page_status(text, unreadable=not text.strip())[0] in ("pricing", "legal", "signature")):
-                    raise ValueError("A complete chart page changed or contains excluded content. Review it again.")
+                        or not (record.get("reviewed") or source_proved)
+                        or record.get("blank") or placeholder_matches(text)
+                        or kind in ("pricing", "legal", "signature", "blank")
+                        or (auto and record.get("visual_review_required") is not (kind == "review"))
+                        or (kind == "review" and not (
+                            auto and source_proved and record.get("visual_review_required") is True))):
+                    raise ValueError("A diagram page was not safely preserved. Review it again in its original report section.")
                 ref = digest + ".png"
                 if ref not in assets:
                     total += len(image.data)
@@ -138,8 +155,12 @@ def build_section_import(path, inspection, plans):
                 contexts[ref] = tuple(dict.fromkeys((*contexts.get(ref, ()), source)))
                 grouped[slot] = replace(block, asset_hashes=(*block.asset_hashes, ref), references=(*block.references, source),
                                         asset_provenance=tuple(contexts.items()))
-        if not plan.get("page_layout") and any(i.kind == "unsupported" for i in sections[plan["key"]].items) and not plan.get("unsupported_reviewed"):
-            raise ValueError("Choose whether to replace or leave out unread drawings before continuing.")
+        if (not plan.get("page_layout") and not plan.get("auto_native_diagrams")
+                and any(i.kind == "unsupported" for i in sections[plan["key"]].items)
+                and not plan.get("unsupported_reviewed")):
+            # No generic Continue-without-art choice. A diagram stays unresolved
+            # until source-bound pages or clear replacements are retained.
+            raise ValueError("A Word diagram contains unread drawings that were not preserved. Prepare its source page or add a replacement in this section.")
         selected = () if plan.get("page_layout") else plan.get("selected", ())
         for identity in selected:
             item = items[identity]

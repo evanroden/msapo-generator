@@ -47,7 +47,7 @@ def test_first_template_has_every_section_visible_with_one_editing_home(monkeypa
     assert all(headings.count(section.title) == 1 for section in sections)
     assert [title for title in headings if title in {section.title for section in sections}] == [section.title for section in sections]
     assert not any(value.label in ("Section to update", "Site information to update") for value in app.selectbox)
-    assert any(value.value == "Cover and report details" for value in app.subheader)
+    assert not any(value.value == "Cover and report details" for value in app.subheader)
 
 
 def test_unsaved_text_and_source_state_survive_section_switches_and_direct_save(monkeypatch, tmp_path):

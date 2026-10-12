@@ -715,9 +715,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     )
     editor_column, preview_column = st.columns(2, gap="large")
     with editor_column:
-        from app.monthly_report_cover_ui import render_cover
-        blocks = render_cover(draft, blocks, prefix, assets, field,
-                              lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref))
+        # Contract, period, sites and preparer were already chosen at Start.
+        # Do not repeat a "Cover and report details" step or a hidden
+        # appearance/settings form. The starting-report photo gallery below
+        # handles an imported cover image when its identity is uncertain.
         from app.monthly_report_section_ui import render_section_setup
         render_section_setup(contract, period, prepared, field, state=state,
                              working_draft=replace(draft, blocks=tuple(blocks.values())),
@@ -731,7 +732,21 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             from app.monthly_report_designs_ui import render_design_settings
             render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
     with preview_column:
-        render_section_preview(replace(draft, blocks=tuple(blocks.values())), "cover", assets, prefix, deferred=True)
+        with st.container(key="monthly_cover_preview_sticky"):
+            from app.monthly_report_section_ui import render_pending_cover_selection
+            proposed_draft, proposed_assets = render_pending_cover_selection(
+                replace(draft, blocks=tuple(blocks.values())), assets, contract, period, state)
+            render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
+    # The sticky viewport belongs to the cover/import row only. Once the
+    # editor reaches a new report section, its own preview replaces it.
+    st.markdown(
+        '<style>.st-key-monthly_cover_preview_sticky{position:sticky;'
+        'top:8.25rem;align-self:flex-start;z-index:3;max-height:calc(100vh - 9rem);'
+        'overflow-y:auto;overscroll-behavior:contain;}'
+        '@media(max-width:800px){.st-key-monthly_cover_preview_sticky{'
+        'position:relative;top:auto;max-height:none;overflow:visible;}}</style>',
+        unsafe_allow_html=True,
+    )
     for section in draft.sections:
         st.divider()
         st.subheader(section.title, anchor="report-section-" + section.key)

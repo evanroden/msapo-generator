@@ -178,7 +178,7 @@ def test_failed_render_releases_preparation_slot(tmp_path, monkeypatch):
 
 
 @requires_libreoffice
-def test_guided_native_page_selection_save_reopen_and_review_invalidation(tmp_path, monkeypatch):
+def test_guided_native_page_auto_preserved_in_section_and_saved_for_next_month(tmp_path, monkeypatch):
     from streamlit.testing.v1 import AppTest
     from streamlit.testing.v1.element_tree import ElementTree
     from app import monthly_report_section_ui as ui
@@ -205,29 +205,28 @@ from app.monthly_report_ui import _field
 p = synthetic_profiles()[0]
 render_section_setup(p.contract, ReportPeriod(2026,9), "Synthetic Editor", _field, identity=p)
 ''', default_timeout=30).run()
-    next(b for b in app.button if b.label == "Analyze report").click().run()
-    next(w for w in app.multiselect if w.label == "Sites shown in the starting report").set_value(["north"]).run()
+    assert not any(b.label == "Analyze report" for b in app.button)
+    if any(w.label == synthetic_profiles()[0].facilities[0].title for w in app.checkbox):
+        site = next(w for w in app.checkbox if w.label == synthetic_profiles()[0].facilities[0].title)
+        if not site.value:
+            site.check().run()
     inspection = inspect_docx(path)
     stage_key = next(k for k in app.session_state.filtered_state if k.endswith("_stage"))
     prefix = stage_key.removesuffix("_stage") + "_" + inspection.sha256[:16]
-    app.session_state[prefix + "_section_organization_open"] = True
     app.run()
-    next(b for b in app.button if b.label == "Show original chart pages").click().run()
     assert not app.exception
-    next(w for w in app.checkbox if w.label == "Use complete pages for this section").check().run()
-    assert any("at least one complete page" in e.value for e in app.error)
-    next(w for w in app.checkbox if w.label == "Include page 1").check().run()
-    assert any("Check page 1 against" in e.value for e in app.error)
-    next(w for w in app.checkbox if w.label.startswith("Page 1 matches")).check().run()
-    org_ready = lambda: next(w for w in app.checkbox if w.key.startswith(prefix + "_section_organization_ready_"))
-    org_ready().check().run()
-    assert app.session_state[prefix + "_section_plans"]["organization"]["approved"]
-    # A different purpose invalidates the specific page confirmation.
-    next(w for w in app.radio if w.label == "Use this page as").set_value("contact_matrix").run()
-    assert not app.session_state[prefix + "_section_plans"]["organization"]["approved"]
-    next(w for w in app.radio if w.label == "Use this page as").set_value("org_chart").run()
-    next(w for w in app.checkbox if w.label.startswith("Page 1 matches")).check().run()
-    org_ready().check().run()
+    plan = app.session_state[prefix + "_section_plans"]["organization"]
+    # The real native/VML chart must be rendered and routed automatically into
+    # Organizational Chart. It may not disappear when generic radios/ready
+    # checkboxes are removed, nor require the old manual page-gallery path.
+    assert plan.get("auto_native_diagrams"), plan
+    assert plan["approved"] and plan["unsupported_reviewed"]
+    assert len(plan["preserved_assets"]) == 1
+    assert plan["preserved_assets"][0][0] == "org_chart"
+    assert plan["word_page_records"][0]["sections"] == (2,)
+    assert not plan["word_page_records"][0]["reviewed"]
+    assert not any(w.key.startswith(prefix + "_section_organization_ready_") for w in app.checkbox)
+    assert not any(w.label.startswith("Some content could not") for w in app.radio)
     # Readable sections no longer require a second, manual approval pass.
     assert all(app.session_state[prefix + "_section_plans"][key]["approved"]
                for key in ("cover", "activity"))

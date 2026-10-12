@@ -73,7 +73,15 @@ def test_earlier_report_rolls_monthly_content_forward_but_keeps_standing_contact
     path = report_file(tmp_path, month="July 2026", activity=("Repaired the pump.",), photo=True, table=True)
     analysis, draft, _ = build(path)
     assert analysis.source_period == (2026, 7) and analysis.older_items
-    assert not any(b.key in ("activity_summary", "improvements") for b in draft.blocks)
+    assert not any(b.key == "activity_summary" for b in draft.blocks)
+    # Previous-month prose cannot become a claim of work done this month,
+    # but its correctly located picture remains source-linked and unapproved
+    # so that updating an old report does not silently lose a visual.
+    artwork = next(b for b in draft.blocks if b.key == "improvements")
+    assert len(artwork.asset_hashes) == 1
+    assert pending_asset_indexes(artwork) == (0,)
+    assert any(value.startswith(f"docx:{inspect_docx(path).sha256}:")
+               for value in artwork.references)
     assert next(b for b in draft.blocks if b.key == "contact_matrix").extra_tables[0].rows
     ledger = next(b for b in draft.blocks if b.key == "work_orders").extra_tables[0]
     assert ledger.rows == (("July 2026", "4"), ("August 2026", "8"))
@@ -186,7 +194,7 @@ from app.monthly_report_ui import _field
 p = synthetic_profiles()[0]
 render_section_setup(p.contract, ReportPeriod(2026, 9), "Synthetic Editor", _field, identity=p)
 ''', default_timeout=30).run()
-    next(b for b in app.button if b.label == "Analyze report").click().run()
+    assert not any(button.label == "Analyze report" for button in app.button)
     assert not app.exception
     return app
 
@@ -223,8 +231,9 @@ def test_unknown_source_site_blocks_start_until_membership_is_confirmed(monkeypa
     path = report_file(tmp_path, title="Report without site name", activity=("September 2026 current work",))
     app = start_app(monkeypatch, tmp_path, path)
     assert not any(b.label == "Continue to this month’s updates" for b in app.button)
-    selector = next(w for w in app.multiselect if w.label == "Sites shown in the starting report")
-    selector.set_value([synthetic_profiles()[0].facilities[0].key]).run()
+    selected_site = synthetic_profiles()[0].facilities[0].title
+    selector = next(w for w in app.checkbox if w.label == selected_site)
+    selector.check().run()
     assert "current work" in next(b.text for b in save_start(app).blocks if b.key == "activity_summary")
 
 
@@ -234,3 +243,53 @@ def test_older_report_with_no_standing_content_can_start_blank_and_keep_original
     draft = save_start(app)
     assert all(s.included for s in draft.sections)
     assert not any(b.text for b in draft.blocks)
+
+
+def test_new_bytes_under_the_same_filename_are_auto_analyzed_only_once(monkeypatch, tmp_path):
+    from app import monthly_report_section_ui as ui
+    from app.monthly_report_editor import _signature
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "runtime"))
+    path = report_file(tmp_path, activity=("September 2026 first version.",))
+    original_bytes = path.read_bytes()
+    path = report_file(tmp_path, activity=("September 2026 revised version.",))
+    revised_bytes = path.read_bytes()
+    assert original_bytes != revised_bytes
+    current = {"raw": original_bytes}
+    real_upload = ui.st.file_uploader
+
+    def uploader(label, *args, **kwargs):
+        if label != "Starting report":
+            return real_upload(label, *args, **kwargs)
+        value = BytesIO(current["raw"])
+        value.name = "same-report.docx"
+        value.size = len(value.getvalue())
+        return value
+
+    original_stage = ui._stage
+    called = []
+
+    def stage(upload):
+        called.append(upload.getvalue())
+        return original_stage(upload)
+
+    monkeypatch.setattr(ui.st, "file_uploader", uploader)
+    monkeypatch.setattr(ui, "_stage", stage)
+    app = AppTest.from_string('''
+from app.monthly_report_section_ui import render_section_setup
+from app.monthly_report_model import synthetic_profiles, ReportPeriod
+from app.monthly_report_ui import _field
+p=synthetic_profiles()[0]
+render_section_setup(p.contract, ReportPeriod(2026, 9), "Synthetic Editor", _field, identity=p)
+''', default_timeout=30).run()
+    profile = synthetic_profiles()[0]
+    key = "report_setup_" + _signature((profile.contract, profile.key, PERIOD.key)) + "_stage"
+    assert len(called) == 1
+    first_hash = app.session_state[key][2].sha256
+    current["raw"] = revised_bytes
+    app.run()
+    assert app.session_state[key][2].sha256 != first_hash
+    assert len(called) == 2
+    app.run()
+    assert len(called) == 2
+    assert not any(button.label == "Analyze report" for button in app.button)
+    assert not app.exception
