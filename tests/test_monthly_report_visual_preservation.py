@@ -221,3 +221,30 @@ def test_uncaptioned_vendor_quote_picture_is_not_claimed_price_free():
     assert not plan["approved"]
     assert plan["questions"]
     assert not plan["selected"]
+
+
+def test_unnamed_ummc_style_contact_matrix_routes_to_contacts_not_org_chart():
+    """Structural analogue of a real ENFRA source; no client bytes included."""
+    import app.monthly_report_start_import as source
+    contact = ImportItem(
+        "invented-contact-matrix", "image", "word/document.xml",
+        24, 4, "organization", suggested_slot="org_chart",
+        image_part="word/media/contact_matrix_revision6.png",
+        image_width=3325, image_height=1875)
+    workflow = ImportItem(
+        "invented-workflow", "image", "word/document.xml",
+        23, 4, "organization", suggested_slot="org_chart",
+        image_part="word/media/image9.jpeg",
+        image_width=1280, image_height=720)
+    inspection = DocxInspection(SOURCE, (workflow, contact), (), (), 4)
+    matching = source.automatic_section_plans(
+        inspection, StartingReportAnalysis((), "same", (), (), ())
+    )["organization"]
+    assert matching["destinations"][contact.id] == "contact_matrix"
+    assert matching["destinations"][workflow.id] == "org_chart"
+    assert matching["selected"] == [workflow.id, contact.id]
+    assert matching["approved"]
+    foreign = source.automatic_section_plans(
+        inspection, StartingReportAnalysis((), "other", (), (), ())
+    )["organization"]
+    assert not foreign["selected"], "Do not import another site's image assets."
