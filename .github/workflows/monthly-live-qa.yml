@@ -51,8 +51,14 @@ jobs:
         env:
           MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha }}
           MONTHLY_QA_PUBLIC_URL: https://msapo-generator.onrender.com
+        # Two independent first-attempt passes on the same served SHA, each
+        # with a fresh Chromium process, browser cookie and isolated namespace.
+        # They run one at a time; a failure fails this gate rather than being
+        # hidden by retries. Each run warms its session during Activity reload.
         run: |
-          python -m scripts.qa_monthly_live
+          set -e
+          MONTHLY_QA_RUN_LABEL=first python -m scripts.qa_monthly_live
+          MONTHLY_QA_RUN_LABEL=second python -m scripts.qa_monthly_live
       - name: Preserve only synthetic browser/output evidence
         if: always() && steps.still-current.outputs.run == 'true'
         uses: actions/upload-artifact@v4

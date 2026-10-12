@@ -24,4 +24,6 @@ def test_live_chromium_runs_serially_only_for_just_tested_main_commit():
     assert text.count("if: steps.still-current.outputs.run == 'true'") >= 3
     assert "MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha }}" in text
     assert "if: always() && steps.still-current.outputs.run == 'true'" in text
-    assert "python -m scripts.qa_monthly_live" in text
+    assert "MONTHLY_QA_RUN_LABEL=first python -m scripts.qa_monthly_live" in text
+    assert "MONTHLY_QA_RUN_LABEL=second python -m scripts.qa_monthly_live" in text
+    assert text.index("MONTHLY_QA_RUN_LABEL=first") < text.index("MONTHLY_QA_RUN_LABEL=second")

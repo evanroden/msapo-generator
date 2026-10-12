@@ -53,6 +53,7 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
         for key in tuple(st.session_state):
             if key.startswith(("report_", "report_guided_")) or key.startswith("monthly_qa_"):
                 del st.session_state[key]
+        st.session_state.pop("_monthly_qa_reset_receipt", None)
     st.session_state["_monthly_report_storage_mode"] = mode
     restore_report_draft_state()
     st.title("Monthly report")
