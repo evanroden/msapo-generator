@@ -925,7 +925,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 "Replace the source or remove the content linked to it first.", True))
         if checks:
             count = len(checks)
-            st.markdown(f"**{count} {'item' if count == 1 else 'items'} need attention**")
+            st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
         for check in checks:
             (st.error if check.blocking else st.warning)(review_message(check, draft))
         warnings_ok = not any(not c.blocking for c in checks)
