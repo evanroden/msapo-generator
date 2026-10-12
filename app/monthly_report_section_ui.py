@@ -146,8 +146,8 @@ def _explicit_quote_price_risk(section, inspection):
     if inspection is None or section.key != "proposals":
         return False
     labels = " ".join(inspection.title_candidates)
-    if not re.search(r"\\b(?:vendor|supplier)\\b.{0,60}\\b(?:quote|quotation|estimate)\\b"
-                     r"|\\b(?:quote|quotation|estimate)\\b.{0,60}\\b(?:vendor|supplier)\\b",
+    if not re.search(r"\b(?:vendor|supplier)\b.{0,60}\b(?:quote|quotation|estimate)\b"
+                     r"|\b(?:quote|quotation|estimate)\b.{0,60}\b(?:vendor|supplier)\b",
                      labels, re.I):
         return False
     return any(contains_price(item.text + "\n" +
@@ -470,7 +470,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     # still flows through the image/package safety checks.
                     updated["approved"] = True
                     plans["cover"] = updated
-        questions = [section for section in sections if seed[section.key].get("questions")]
+    questions = [section for section in sections if seed[section.key].get("questions")]
     if questions:
         st.subheader("A few details need a check")
         for index, section in enumerate(questions):
