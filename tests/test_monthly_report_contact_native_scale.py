@@ -80,6 +80,11 @@ def test_contact_native_word_retains_only_current_rows_and_physical_schema(tmp_p
         header_props = grid.rows[0]._tr.find(qn("w:trPr"))
         assert header_props is not None
         assert header_props.find(qn("w:tblHeader")) is not None
+        # Each person has multiple fields. The header and *every* current
+        # contact row must stay on the same printed page, even for 40 people.
+        # Unrelated narrative/native grids are intentionally not changed.
+        assert all(row._tr.find(qn("w:trPr") + "/" + qn("w:cantSplit")) is not None
+                   for row in grid.rows)
 
 
 @requires_libreoffice
