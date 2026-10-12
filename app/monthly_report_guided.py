@@ -256,14 +256,18 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
         changed_marker = editor_key + "_explicitly_edited"
         displayed = st.session_state.get(editor_key, block.text)
         receipt = st.session_state.get(changed_marker)
+        if changed_marker in st.session_state and receipt == block.text:
+            # The authoritative draft now contains the exact submitted text:
+            # acknowledge the edit. A later stale widget cannot reuse it.
+            st.session_state.pop(changed_marker, None)
+            receipt = None
         submitted = (changed_marker in st.session_state
                      and isinstance(receipt, str) and receipt == displayed)
         if displayed != block.text and not submitted:
             # A rerun after generation, preview or browser hydration can mount
-            # an obsolete text widget (including an empty value). Only a
-            # one-use exact on_change receipt permits changing canonical text.
-            # Synchronize BEFORE rendering; an intentional clear has its
-            # own receipt and therefore remains a valid edit.
+            # obsolete text. Only an unacknowledged exact on_change receipt
+            # permits changing canonical text. A genuine clear has a receipt
+            # and therefore remains a valid edit.
             st.session_state[editor_key] = block.text
         text = st.text_area(
             spec.key.replace("_", " ").capitalize(),
@@ -272,9 +276,13 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
         if submitted and text != block.text:
             block = replace(block, source="This month", text=text,
                             reviewed_fingerprint="", client_reviewed_fingerprint="")
-        # A past edit never licenses future stale widget changes. This ticket
-        # is consumed even if the value is unchanged or was already applied.
-        st.session_state.pop(changed_marker, None)
+            # Do not consume yet. Preview/fragment work can interrupt a full
+            # rerun before the edited block reaches the authoritative draft.
+            # Replay only this exact submitted value until that draft agrees.
+        else:
+            # A mismatched/old receipt is never a license to overwrite a
+            # newer draft on the next rerun.
+            st.session_state.pop(changed_marker, None)
     elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
