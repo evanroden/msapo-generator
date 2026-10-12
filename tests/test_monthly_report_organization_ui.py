@@ -156,3 +156,44 @@ st.session_state.setdefault("original", original)''',
     click(at, "Edit chart")
     assert not at.exception
     assert at.session_state["blocks"] == at.session_state["original"]
+
+
+def test_saved_people_start_collapsed_and_new_blank_position_is_discoverable():
+    native = SCRIPT.replace(
+        'st.session_state.setdefault("original", original)',
+        '''from app.monthly_report_model import OrgChartNode
+original["org_chart"] = replace(
+    original["org_chart"], asset_hashes=(), extra_tables=(),
+    org_nodes=(
+        OrgChartNode("manager", "Synthetic Manager", "Manager"),
+        OrgChartNode("worker", "Synthetic Operator", "Operator", reports_to="manager"),
+    ),
+)
+st.session_state.setdefault("original", original)''',
+    )
+    at = AppTest.from_string(native).run()
+    click(at, "Edit chart")
+    assert not at.exception
+    assert {
+        expander.label: expander.proto.expanded
+        for expander in at.expander
+        if expander.label in ("Synthetic Manager", "Synthetic Operator")
+    } == {"Synthetic Manager": False, "Synthetic Operator": False}
+    assert next(w for w in at.selectbox if w.label == "Reports to")
+    before = tuple(at.session_state["blocks"]["org_chart"].org_nodes)
+    click(at, "Add a person or position")
+    assert not at.exception
+    assert tuple(at.session_state["blocks"]["org_chart"].org_nodes[:2]) == before
+    assert any(e.label == "New position" and e.proto.expanded for e in at.expander)
+
+
+def test_outage_editor_and_upload_titles_use_same_procedure_term():
+    from app.monthly_report_sections import readable_label
+
+    assert readable_label("business_hours_workflow") == "Business-hours outage procedure"
+    assert readable_label("after_hours_workflow") == "After-hours outage procedure"
+    at = app()
+    assert "#### Business-hours outage procedure" in [x.value for x in at.markdown]
+    assert {button.label for button in at.button} >= {
+        "Edit business-hours outage procedure", "Edit after-hours outage procedure"
+    }
