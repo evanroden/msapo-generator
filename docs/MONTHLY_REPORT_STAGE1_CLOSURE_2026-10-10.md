@@ -102,6 +102,10 @@ Isolated testing uses a separate per-browser server namespace and reset; synthet
 
 ## All 113 original proposed acceptance checks — coverage decision
 
+**Per-scenario dated evidence update (October 12, pre-final release):** [#158 exact PR-head Tests 38245139705](https://github.com/evanroden/msapo-generator/actions/runs/38245139705) passed a JUnit-confirmed **2,088 collected tests, 0 failures, 0 errors and 0 skips** (one suite, not additional counts). The individual CI classes identified in selected rows below executed successfully on #158's head `a688361c248331deede559cc0a396ed32693f9bc`. These results are **focused invented-fixture tests**, not the complete real-browser journey, authentic Word/Adobe parity or owner approval. Bounded public live successes below remain pinned to [run 38181859322](https://github.com/evanroden/msapo-generator/actions/runs/38181859322) on its **older** served commit, and the more recent failures remain above. Preserve all 113 original proposed IDs; a remaining `Not run` is an unexecuted **release-specific scenario**, not an identified defect.
+
+
+
 Each row corresponds to a proposed test in original audit section 7. **Not run for final release** means it is **not a proven defect or a pass**. The related implementation may have focused synthetic CI, but that is tracked separately above. The exact contract, site set, month, pinned design, source hashes and output links are required to change one row to *verified live*. Owner/Word-specific items remain pending until that renderer/browser is available. These 113 rows are not to be summed with targeted synthetic CI tests.
 
 | Audit test | Scenario / expected behavior | Related closure work | Release-coverage decision | Actual final-release result |
@@ -121,12 +125,12 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | P01 | Read start/retention copy | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | P02 | Edit and change sections | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | P03 | Auto-retain then refresh | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Synthetic live `38160972703` passed its bounded equivalent; broader owner/edge acceptance pending** |
-| P04 | Force recovery disk failure | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
+| P04 | Force recovery disk failure | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Focused CI passed** (`generation_safety`: injected journal OSError preserves input/retry); actual outage not run |
 | P05 | Brief reconnect while editing | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | P06 | Close/reopen in active period | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
-| P07 | Delayed write then later edit | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
+| P07 | Delayed write then later edit | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Focused CI passed** (journal generation/revision guard and delayed writes); browser race not run |
 | P08 | Edit two sections around failed retry | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
-| P09 | Standing contact correction | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
+| P09 | Standing contact correction | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Focused CI passed** (`contact_refresh` corrections/new-month reuse); owner edit not run |
 | P10 | Start fresh after abandonment | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | N01 | Find Activity, Training and downloads | F04/F07/F08/F09/F10 · P11/P12 | Browser DOM/keyboard/touch with help closed | **Not run** |
 | N02 | Use section jump navigation | F04/F07/F08/F09/F10 · P11/P12 | Browser DOM/keyboard/touch with help closed | **Not run** |
@@ -139,9 +143,9 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | N09 | Validation announcement | F04/F07/F08/F09/F10 · P11/P12 | Browser DOM/keyboard/touch with help closed | **Not run** |
 | N10 | No None/null in empty tables | F04/F07/F08/F09/F10 · P11/P12 | Browser DOM/keyboard/touch with help closed | **Not run** |
 | A01 | Valid activity source becomes grounded draft | F05/F11 · P10 | Source upload/editor/export fixture | **Synthetic live `38160972703` passed its bounded equivalent; broader owner/edge acceptance pending** |
-| A02 | Multiple sources combine once | F05/F11 · P10 | Source upload/editor/export fixture | **Not run** |
-| A03 | Manual correction then new file | F05/F11 · P10 | Source upload/editor/export fixture | **Not run** |
-| A04 | Deliberate deletion not restored | F05/F11 · P10 | Source upload/editor/export fixture | **Not run** |
+| A02 | Multiple sources combine once | F05/F11 · P10 | Source upload/editor/export fixture | **Bounded source replay passed** (invented CSV+TXT 18/18, 38181859322); external reader and owner not run |
+| A03 | Manual correction then new file | F05/F11 · P10 | Source upload/editor/export fixture | **Focused CI passed** (`audit_activity_txt` deliberate manual corrections); live follow-on upload not run |
+| A04 | Deliberate deletion not restored | F05/F11 · P10 | Source upload/editor/export fixture | **Focused CI passed** (`audit_activity_txt` deliberate deletions); user browser sequence not run |
 | A05 | Copilot shorten with review | F05/F11 · P10 | Source upload/editor/export fixture | **Not run** |
 | A06 | Work-order option effect | F05/F11 · P10 | Source upload/editor/export fixture | **Not run** |
 | A07 | Several photos and captions | F05/F11 · P10 | Source upload/editor/export fixture | **Not run** |
@@ -150,48 +154,48 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | A10 | Remove source with derived edit | F05/F11 · P10 | Source upload/editor/export fixture | **Not run** |
 | A11 | Active-work return for Activity | F05/F11 · P10 | Source upload/editor/export fixture | **Synthetic live `38160972703` passed its bounded equivalent; broader owner/edge acceptance pending** |
 | A12 | Export Activity once correctly | F05/F11 · P10 | Source upload/editor/export fixture | **Synthetic live `38160972703` passed its bounded equivalent; broader owner/edge acceptance pending** |
-| V01 | Find Trane upload in Activity | F02 | Separate vendor/onsite input plus DOCX/PDF | **Not run** |
-| V02 | Find ENFRA onsite calls | F02 | Separate vendor/onsite input plus DOCX/PDF | **Not run** |
+| V01 | Find Trane upload in Activity | F02 | Separate vendor/onsite input plus DOCX/PDF | **Focused CI passed** (`audit_activity_txt` vendor routing); actual Trane upload not run |
+| V02 | Find ENFRA onsite calls | F02 | Separate vendor/onsite input plus DOCX/PDF | **Focused CI passed** (QA fixture ENFRA onsite calls distinct); owner check not run |
 | V03 | Redirect vendor uploaded in call area | F02 | Separate vendor/onsite input plus DOCX/PDF | **Not run** |
 | V04 | Unity/USH empty call neutrality | F02 | Separate vendor/onsite input plus DOCX/PDF | **Not run** |
 | V05 | Separate vendor and onsite rows | F02 | Separate vendor/onsite input plus DOCX/PDF | **Synthetic live `38160972703` passed its bounded equivalent; broader owner/edge acceptance pending** |
 | V06 | Compare section preview and exports | F02 | Separate vendor/onsite input plus DOCX/PDF | **Not run** |
 | C01 | Capital source document/table maps native columns | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
 | C02 | Scanned proposal image | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
-| C03 | Mixed price in body/native table | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
+| C03 | Mixed price in body/native table | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Focused CI passed** (price-column/content-policy canaries); authentic mixed visible images not run |
 | C04 | Price in pictures/alternate metadata | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
 | C05 | Blank retained price column safe | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
 | C06 | Manual proposal edit survives source rerun | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
-| C07 | DOCX/PDF package/image scan | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
-| C08 | Ambiguous source table prompts focused choice | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
-| D01 | Hospital staff Training framing | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
+| C07 | DOCX/PDF package/image scan | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Bounded DOCX/PDF text-only checks passed** (38181859322); images/alt/hidden parts not cleared |
+| C08 | Ambiguous source table prompts focused choice | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Focused CI passed** (`capacity`/table-price ambiguity handling); genuine UI authority decision not run |
+| D01 | Hospital staff Training framing | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`hospital_training` client-staff provenance); owner printed semantics not run |
 | D02 | Add monthly training event | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
 | D03 | Reject vendor staff enrollment | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D04 | Thermal first-fill contract storage | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D05 | Explicit NR unchanged | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
+| D04 | Thermal first-fill contract storage | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`capacity_first_fill`: site/service and NR); imported merged/hidden sheet not run |
+| D05 | Explicit NR unchanged | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Bounded CI + historical live passed** (NR literal in synthetic fixture); future-month human reuse not run |
 | D06 | Ambiguous similar site labels | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
 | D07 | Show capacity provenance | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D08 | Changed thermal source/historical snapshots | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D09 | Collapsed contact name/role/site | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D10 | Contact current and future update | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D11 | Old completed report unchanged | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
+| D08 | Changed thermal source/historical snapshots | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`capacity`: immutable old snapshot and manual overrides); original historical file not run |
+| D09 | Collapsed contact name/role/site | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`contact_labels` and `contact_refresh`); real layout parity not run |
+| D10 | Contact current and future update | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`contact_refresh` current-to-future reuse); owner corrections not run |
+| D11 | Old completed report unchanged | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`contact_refresh` snapshot immutability); authentic Word history not run |
 | D12 | Reuse outage diagram | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D13 | Failed thermal write/retry | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D14 | Ambiguous thermal site prompt | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D15 | Future month thermal reuse | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D16 | Empty event preserves notes | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D17 | Add first/subsequent requirement | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D18 | Missing-site correction | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D19 | Combined invalid/add-column preserves note | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
+| D13 | Failed thermal write/retry | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`capacity`: manifest write failure/retry); owner two-file collision not run |
+| D14 | Ambiguous thermal site prompt | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`capacity`: ambiguous sites rejected); owner prompt not run |
+| D15 | Future month thermal reuse | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`capacity_first_fill` + `contact_refresh` rollover); historical owner check not run |
+| D16 | Empty event preserves notes | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`training_retention` empty event keeps notes); native final output not run |
+| D17 | Add first/subsequent requirement | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`training_retention` first/subsequent requirement); owner add-column not run |
+| D18 | Missing-site correction | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`training_retention` missing-site retains input); owner correction not run |
+| D19 | Combined invalid/add-column preserves note | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Focused CI passed** (`training_retention` invalid/add-column); owner original sequence not run |
 | R01 | Preview updates after edit | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
 | R02 | Rapid edit rejects older preview | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
 | R03 | Preview/export contention | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
 | R04 | Multi-page preview legibility | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
 | R05 | Preview failure retains prior image | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
-| R06 | Export fresh pinned master | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
+| R06 | Export fresh pinned master | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Capped synthetic DOCX/PDF passed** (native ten-table output 38172610338); real master parity not run |
 | R07 | Continue saved report | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
-| R08 | Every included section | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
-| R09 | Download real DOCX/PDF | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
+| R08 | Every included section | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Historical live synthetic multisection PDF passed** (26-page 38181859322); all authentic pages not run |
+| R09 | Download real DOCX/PDF | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Historical live 4 DOCX/PDF downloads passed** (38181859322); current final head still pending |
 | R10 | File identity in names | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
 | R11 | Authentic authored PDF comparison | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
 | R12 | Production design pin verified | F03/F09/F12/F13/F15/F16 | Native DOCX, app PDF, independent Word render | **Not run** |
@@ -201,24 +205,24 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | Q01 | Display name is attribution only | Privacy/output safety | Code/package/privacy review | **Not run** |
 | Q02 | Private evidence minimized | Privacy/output safety | Code/package/privacy review | **Not run** |
 | Q03 | No private artifacts in public repo | Privacy/output safety | Code/package/privacy review | **Not run** |
-| Q04 | Malformed/unsafe inputs bounded | Privacy/output safety | Code/package/privacy review | **Not run** |
-| Q05 | Only current passive links remain | Privacy/output safety | Code/package/privacy review | **Not run** |
-| Q06 | Removed hidden assets do not survive | Privacy/output safety | Code/package/privacy review | **Not run** |
-| T01 | Tracked deletion/reviewer removed | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
-| T02 | Supported tracked text/comments | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
+| Q04 | Malformed/unsafe inputs bounded | Privacy/output safety | Code/package/privacy review | **Focused CI passed** (`native_package` rejects unsupported objects/DTD/unsafe deps); full adversarial matrix not run |
+| Q05 | Only current passive links remain | Privacy/output safety | Code/package/privacy review | **Focused CI passed** (`native_package` retains passive links and drops unsafe); owner links not run |
+| Q06 | Removed hidden assets do not survive | Privacy/output safety | Code/package/privacy review | **Focused CI passed** (`native_package` orphan notes/cache/metadata, header PNG/EMF canaries); raster exhaustiveness pending |
+| T01 | Tracked deletion/reviewer removed | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Focused CI passed** (revision-view tracked deletion slice); owner supplied example not run |
+| T02 | Supported tracked text/comments | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Focused CI passed** (supported comments/tracked text import slice); owner supplied copy not run |
 | T03 | Unsupported structural edit rejected locally | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
 | T04 | Corrected-copy import retry | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
 | T05 | Prior import remap after fix | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
 | X01 | Isolated testing mode enabled | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Isolated public browser entered synthetic-only QA ([live 38163049274](https://github.com/evanroden/msapo-generator/actions/runs/38163049274)); broader owner testing pending** |
-| X02 | Contact/thermal/logo/report data separation | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Not run for final release** |
+| X02 | Contact/thermal/logo/report data separation | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Focused CI passed** (`qa_isolation`: unrelated browser/contract/thermal/logo data separate); live multi-tab not run |
 | X03 | Prefill completed fixture | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Real browser prefill 18/18 facts ([live 38163049274](https://github.com/evanroden/msapo-generator/actions/runs/38163049274)); broader owner testing pending** |
 | X04 | Reset only test data | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Real browser reset returned empty isolated namespace ([live 38163049274](https://github.com/evanroden/msapo-generator/actions/runs/38163049274)); broader owner testing pending** |
 | X05 | Render known-value prefill | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Real prefill DOCX/PDF files downloaded ([live 38163049274](https://github.com/evanroden/msapo-generator/actions/runs/38163049274)); broader owner testing pending** |
 | X06 | Replay original sources separately | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Native CSV/TXT replay 18/18 and real DOCX/PDF downloaded ([live 38163049274](https://github.com/evanroden/msapo-generator/actions/runs/38163049274)); broader owner testing pending** |
 | X07 | Compare authentic Word/PDF elements | Native comparison controls only; authored-app Word/PDF geometry still pending | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Not run for final release** |
-| X08 | Failed test write never falls back to live | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Not run for final release** |
+| X08 | Failed test write never falls back to live | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Focused CI passed** (`qa_isolation`: invalid context/failed or stale writes fail closed); browser injected error not run |
 | X09 | Repeat fixture deterministic | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Fixture values/provenance deterministic in passing real browser ([live 38163049274](https://github.com/evanroden/msapo-generator/actions/runs/38163049274)); broader owner testing pending** |
-| X10 | Test access/side effects prove isolation | Merged #136 fail-closed QA, external-reader block; #137 merged late-preview lease | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Not run for final release** |
+| X10 | Test access/side effects prove isolation | Merged #136 fail-closed QA, external-reader block; #137 merged late-preview lease | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Focused CI passed** (`qa_isolation`: stale worker/reset, active journal/branding isolation); live two-tab pending |
 
 ## Additional selected regression cases (not extra audit check passes)
 
