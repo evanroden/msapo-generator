@@ -140,6 +140,21 @@ def _replacement_pictures(section, p, plan):
     plan["new_assets"] = list(replacements.items())
 
 
+def _explicit_quote_price_risk(section, inspection):
+    """Only a named uploaded vendor quote may need a price acknowledgment."""
+    import re
+    if inspection is None or section.key != "proposals":
+        return False
+    labels = " ".join(inspection.title_candidates)
+    if not re.search(r"\\b(?:vendor|supplier)\\b.{0,60}\\b(?:quote|quotation|estimate)\\b"
+                     r"|\\b(?:quote|quotation|estimate)\\b.{0,60}\\b(?:vendor|supplier)\\b",
+                     labels, re.I):
+        return False
+    return any(contains_price(item.text + "\n" +
+                              "\n".join(" ".join(row) for row in item.rows))
+               for item in section.items)
+
+
 def _section_card(section, path, inspection, period, prefix, field, plans, first):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
@@ -169,7 +184,8 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     from app.monthly_report_sections import readable_label
                     for slot, image in plan["new_assets"]:
                         st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
-                _approve_plan(plan, p, field, old, plans, blocking)
+                _approve_plan(plan, p, field, old, plans, blocking,
+                              quote_price_risk=_explicit_quote_price_risk(section, inspection))
                 return
             items = list(section.items)
             if section.key == "cover":
@@ -242,34 +258,38 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 for slot, image in plan["new_assets"]:
                     st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
             if any(i.kind == "unsupported" for i in section.items):
-                preserve_hint = "Open ‘Preview the original charts and contact lists’ above to preview complete pages. " if section.key == "organization" else ""
-                st.warning("Some charts or artwork in the original Word file could not be displayed. " + preserve_hint + "If they cannot be kept clearly, add replacement pictures or explicitly leave them out. The original is retained.")
-                options = ["Choose an option", "Continue without the content that could not be shown"]
-                if section.key != "other":
-                    options.insert(1, "I uploaded clear replacements")
-                previous = old.get("unsupported_choice", "Choose an option")
-                choice = st.radio("Some content could not be shown. How would you like to continue?", options,
-                                  key=field(p + "_unsupported", previous if previous in options else options[0]))
-                plan["unsupported_choice"] = choice
-                plan["unsupported_reviewed"] = choice == "Continue without the content that could not be shown" or (choice == "I uploaded clear replacements" and bool(plan["new_assets"]))
-                if not plan["unsupported_reviewed"]:
-                    if section.key == "other":
-                        blocking.append("Choose ‘Continue without the content that could not be shown’ to retain them only in the original. You can add clear replacement pictures to the appropriate report section after setup.")
-                    else:
-                        blocking.append(preserve_hint + f"To upload a replacement, choose ‘{guide.edit}’ above. Otherwise choose ‘Continue without the content that could not be shown’.")
-        _approve_plan(plan, p, field, old, plans, blocking)
+                # This is a one-way safety default: unreadable source objects
+                # are not copied to the client output. A selected replacement
+                # is a separate safe image and is still subject to export gates.
+                plan["unsupported_reviewed"] = True
+                plan["unsupported_choice"] = "Continue without the content that could not be shown"
+                st.caption("Artwork that could not be displayed is left out of the new report. "
+                           "It remains in the original Word file; any clear replacement you added is kept.")
+        _approve_plan(plan, p, field, old, plans, blocking,
+                      quote_price_risk=_explicit_quote_price_risk(section, inspection))
 
 
-def _approve_plan(plan, p, field, old, plans, blocking):
+def _approve_plan(plan, p, field, old, plans, blocking, *, quote_price_risk=False):
     for message in blocking:
         st.error(message)
     stamp = plan_signature(plan)
-    reviewed = st.checkbox("This section is ready — the selected content is relevant and contains no prices, legal-only pages or blank/signature-only pages", key=field(p + "_ready_" + stamp, old.get("approval_stamp") == stamp))
-    plan["approved"] = reviewed and not blocking
+    # The ordinary starting-report importer already strips known prices,
+    # excludes unsafe text/pages and rejects a remaining price in its final
+    # package gate. A blanket "this section is ready" checkbox adds no
+    # protection. Reserve a specific acknowledgment for an explicitly named
+    # vendor quotation whose content signals financial amounts; that checkbox
+    # NEVER overrides an actual blocking content-safety error.
+    reviewed = True
+    if quote_price_risk:
+        reviewed = st.checkbox(
+            "I reviewed this vendor quotation and excluded all pricing",
+            key=field(p + "_price_quote_review_" + stamp,
+                      old.get("approval_stamp") == stamp))
+    plan["approved"] = bool(reviewed and not blocking)
     plan["approval_stamp"] = stamp if plan["approved"] else ""
     plans[plan["key"]] = plan
     if blocking:
-        st.caption("Resolve the message above to finish this section.")
+        st.caption("Resolve the message above before including this content.")
 
 
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
