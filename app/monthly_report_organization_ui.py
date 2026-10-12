@@ -11,7 +11,7 @@ from app.monthly_report_workflow_standards import WORKFLOW_KEYS
 
 ORGANIZATION_PARTS = (
     ("org_chart", "Team chart"),
-    ("business_hours_workflow", "Daytime outage procedure"),
+    ("business_hours_workflow", "Business-hours outage procedure"),
     ("after_hours_workflow", "After-hours outage procedure"),
     ("contact_matrix", "Facility contacts"),
 )
@@ -43,7 +43,23 @@ def _preview_part(draft, spec, block, prefix, assets, title, *, show_preview=Tru
     if block.source == "Omit":
         st.caption("Not included in this report." + (" Saved content is shown below." if has_content else ""))
     elif has_content:
-        st.caption("Current report content")
+        # Report count summaries are derived from actual saved objects, not
+        # a claim of substantive review or completion.
+        details = []
+        if block.org_nodes:
+            count = len(block.org_nodes)
+            details.append(f"{count} {'person' if count == 1 else 'people'}")
+        if block.rows:
+            count = len(block.rows)
+            details.append(f"{count} {'row' if count == 1 else 'rows'}")
+        if block.extra_tables:
+            count = sum(len(table.rows) for table in block.extra_tables)
+            if count:
+                details.append(f"{count} table {'row' if count == 1 else 'rows'}")
+        if block.asset_hashes:
+            count = len(block.asset_hashes)
+            details.append(f"{count} {'page' if count == 1 else 'pages'}")
+        st.caption(" · ".join(details) if details else "Notes included")
     else:
         st.caption("Not added yet")
     if not show_preview:
@@ -70,7 +86,7 @@ def _preview_part(draft, spec, block, prefix, assets, title, *, show_preview=Tru
             caption = block.asset_captions[page] if page < len(block.asset_captions) else ""
             st.image(raw, caption=caption or None, width="stretch")
         except (ValueError, OSError):
-            st.warning("This saved page is unavailable. Choose Change to replace or remove it.")
+            st.warning("This saved page is unavailable. Choose Edit to replace or remove it.")
 
 
 def _preview_page(prefix, key, count, title):
@@ -102,7 +118,7 @@ def _edit_notes(block, prefix, field):
 
 
 def render_organization(draft, blocks, specs, prefix, assets, field, edit_content, *, show_preview=True):
-    """Return updated blocks; only an explicit Change opens a part's editor.
+    """Return updated blocks; only an explicit Edit opens a part's editor.
 
     ``edit_content(spec, block)`` supplies the existing procedure/image editor.
     Original tables, pages, notes and provenance are passed through unchanged
@@ -115,7 +131,7 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         return blocks
     updated = dict(blocks)
     active_key = prefix + "_organization_change"
-    st.caption("People and contacts carry forward. Open Change only when details need updating.")
+    st.caption("Saved people and contacts are shown below. Edit only what changed.")
 
     def render_part(key, title):
         if key not in specs:
@@ -126,10 +142,16 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         current_draft = replace(draft, blocks=tuple(updated.values()))
         _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=show_preview)
         if st.session_state.get(active_key) != key:
-            st.button("Change " + title.lower(), key=prefix + "_organization_open_" + key,
+            action = {
+                "org_chart": "Edit chart",
+                "contact_matrix": "Edit contacts",
+                "business_hours_workflow": "Edit business-hours outage procedure",
+                "after_hours_workflow": "Edit after-hours outage procedure",
+            }[key]
+            st.button(action, key=prefix + "_organization_open_" + key,
                       on_click=st.session_state.__setitem__, args=(active_key, key))
             return
-        st.button("Done changing " + title.lower(), key=prefix + "_organization_close_" + key,
+        st.button("Done", key=prefix + "_organization_close_" + key,
                   on_click=st.session_state.__setitem__, args=(active_key, ""))
         if key == "contact_matrix":
             changed = edit_contacts(current_draft, spec, block, prefix, assets, field, show_preview=show_preview)
@@ -165,7 +187,7 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         if key not in WORKFLOW_KEYS:
             render_part(key, title)
     with st.expander("ENFRA outage procedures", expanded=False):
-        st.caption("The daytime and after-hours procedures are reused across contracts. Saved report procedures stay in place; changes here apply to this report.")
+        st.caption("Saved procedures are included when selected. Changes here affect this report.")
         for key, title in ORGANIZATION_PARTS:
             if key in WORKFLOW_KEYS:
                 render_part(key, title)
