@@ -77,6 +77,22 @@ def _heading(value: str, n: int, old_titles: set[str], *, slot: str = "") -> str
     return normalized
 
 
+def _verified_work_order_month_frame(headers: tuple[str, ...]) -> bool:
+    """Recognize six consecutive month labels, never a lone client name.
+
+    The native seven-column WO frame has one label column followed by either
+    Jan–Jun or Jul–Dec. A short previous-client heading such as "May" alone
+    does not authorize itself as a safe new report field.
+    """
+    labels = tuple(" ".join(str(value).strip().split()).casefold()
+                   for value in headers)
+    if len(labels) != 7 or labels[0] not in ("wo received", "work order", "work order #"):
+        return False
+    return any(all(labels[index + 1] in (
+        month_abbr[start + index].casefold(), month_name[start + index].casefold())
+        for index in range(6)) for start in (1, 7))
+
+
 def from_inspection(inspection) -> tuple[MasterTable, ...]:
     """One independent safe schema per real data table; no source values."""
     from app.monthly_report_content_policy import logical_table_columns, table_price_columns
@@ -133,8 +149,14 @@ def from_inspection(inspection) -> tuple[MasterTable, ...]:
             keep = tuple(i for i in range(physical_width) if i not in blocked)
             if not keep:
                 continue
+            # Month words are approved only for a verified Jan–Jun or
+            # Jul–Dec work-order frame, not arbitrary old client headings.
+            heading_slot = (item.suggested_slot if (
+                item.suggested_slot != "work_orders"
+                or _verified_work_order_month_frame(tuple(logical))
+            ) else "")
             labels = tuple(_heading(logical[i], i, old_titles,
-                                    slot=item.suggested_slot) for i in keep)
+                                    slot=heading_slot) for i in keep)
             unique = tuple(label + (f" ({n + 1})" if label in labels[:n] else "")
                            for n, label in enumerate(labels))
         shape = MasterTable(item.suggested_slot, item.position,
