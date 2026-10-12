@@ -64,6 +64,14 @@ def _working_report(saved):
     return draft
 
 
+def _queue_comparison_request() -> None:
+    """Retain a Compare click across background fragment and editor reruns."""
+    if not st.session_state.get("monthly_qa_compare_queued"):
+        st.session_state["monthly_qa_compare_queued"] = {
+            "id": uuid4().hex, "accepted_at": _now(),
+        }
+
+
 def _queue_generation_request():
     """Keep a received QA click through unrelated preview/editor reruns."""
     st.session_state["monthly_qa_generate_queued"] = True
@@ -193,9 +201,12 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         st.caption("Current fixture: " + ("original-source replay" if saved.draft.sources else "known-value prefill") +
                    " · September 2026 · two invented sites · synthetic only")
         x, y = st.columns(2)
-        compare_pressed = x.button("Compare fixture facts", key="monthly_qa_compare")
+        x.button("Compare fixture facts", key="monthly_qa_compare",
+                 on_click=_queue_comparison_request)
         y.button("Generate QA Word and PDF", key="monthly_qa_generate",
                  on_click=_queue_generation_request)
+        if st.session_state.get("monthly_qa_compare_queued"):
+            st.caption("QA comparison request received; checking this finalized test report.")
         if st.session_state.get("monthly_qa_generate_queued"):
             st.caption("QA generation request received; preparing this exact test report.")
         # Allocate this near the toolbar; resolve content after the editor finalizes.
@@ -206,14 +217,27 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         render_guided_workflow(browser_token, browser_timezone, field, move)
         working = _working_report(saved)
         with result_surface:
-            if compare_pressed:
-                result = fixture.compare(working)
-                checks = result["checks"]
-                st.session_state["monthly_qa_comparison"] = {
-                    "mode": result["mode"], "checks": checks,
-                    "fingerprint": working.fingerprint,
-                    "matched": sum(bool(v) for v in checks.values()),
-                }
+            if request := st.session_state.get("monthly_qa_compare_queued"):
+                # A transient st.button(True) can disappear during editor or
+                # periodic-preview reruns. Only consume the queued callback
+                # after comparing the exact fully finalized editor draft.
+                try:
+                    result = fixture.compare(working)
+                except (ValueError, OSError) as exc:
+                    st.session_state.pop("monthly_qa_compare_queued", None)
+                    st.error("QA comparison could not finish; retry Compare fixture facts: " + str(exc))
+                else:
+                    checks = result["checks"]
+                    st.session_state["monthly_qa_comparison"] = {
+                        "mode": result["mode"], "checks": checks,
+                        "fingerprint": working.fingerprint,
+                        "matched": sum(bool(v) for v in checks.values()),
+                        "generation": testing.generation(),
+                        "revision": saved.revision, "id": request["id"],
+                        "accepted_at": request["accepted_at"],
+                        "evaluated_at": _now(),
+                    }
+                    st.session_state.pop("monthly_qa_compare_queued", None)
             if st.session_state.get("monthly_qa_generate_queued"):
                 # A callback receipt persists the user's request even when a
                 # section preview/editor rerun happens between the click and
@@ -235,6 +259,15 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                     st.info("Previous comparison is outdated. Run Compare fixture facts again after editing.")
                 else:
                     st.write(f"{state['mode']}: {state['matched']}/{len(state['checks'])} independent content/provenance checks.")
+                    if (state.get("generation") == testing.generation()
+                            and state.get("revision") == saved.revision):
+                        st.caption(f"QA comparison evaluated: {state['mode']} · "
+                                   f"{state['matched']}/{len(state['checks'])} · "
+                                   f"action {state['id'][:12]} · "
+                                   f"generation {state['generation'][:12]} · "
+                                   f"revision {state['revision']} · "
+                                   f"received {state['accepted_at']} · "
+                                   f"evaluated {state['evaluated_at']}")
                     for name, passed in state["checks"].items():
                         st.write(("PASS — " if passed else "CHECK — ") + name)
             retained = st.session_state.get("monthly_qa_package")
