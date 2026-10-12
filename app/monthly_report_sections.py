@@ -128,7 +128,6 @@ def build_section_import(path, inspection, plans):
             for (slot, image), record in zip(preserved, records):
                 digest = hashlib.sha256(image.data).hexdigest()
                 text = record.get("text", "")
-                from app.monthly_report_content_policy import page_status
                 kind, _ = page_status(text, unreadable=not text.strip())
                 source_proved = (
                     auto and record.get("source_verified") is True
@@ -143,7 +142,7 @@ def build_section_import(path, inspection, plans):
                         or (auto and record.get("visual_review_required") is not (kind == "review"))
                         or (kind == "review" and not (
                             auto and source_proved and record.get("visual_review_required") is True))):
-                    raise ValueError("A diagram page was not safely preserved; check its section-specific recovery.")
+                    raise ValueError("A diagram page was not safely preserved. Review it again in its original report section.")
                 ref = digest + ".png"
                 if ref not in assets:
                     total += len(image.data)
@@ -161,7 +160,7 @@ def build_section_import(path, inspection, plans):
                 and not plan.get("unsupported_reviewed")):
             # No generic Continue-without-art choice. A diagram stays unresolved
             # until source-bound pages or clear replacements are retained.
-            raise ValueError("A Word diagram in this section was not preserved. Prepare its source page or add a replacement.")
+            raise ValueError("A Word diagram contains unread drawings that were not preserved. Prepare its source page or add a replacement in this section.")
         selected = () if plan.get("page_layout") else plan.get("selected", ())
         for identity in selected:
             item = items[identity]
