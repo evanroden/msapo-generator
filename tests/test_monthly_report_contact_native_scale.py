@@ -4,6 +4,7 @@ The fixture is entirely invented; no authentic customer master or contact data
 is published. It tests a real physical Word table and actual LibreOffice PDF.
 """
 from io import BytesIO
+import re
 
 import fitz
 import pytest
@@ -95,16 +96,19 @@ def test_contact_native_pdf_has_no_old_rows_and_preserves_every_current_person(
     with fitz.open(pdf_path) as doc:
         assert len(doc) >= 1
         pages = [page.get_text() for page in doc]
-        joined = "\n".join(pages)
+        # Cell text can wrap between a person's name and two-digit index.
+        # Collapse only layout whitespace; still require each exact contact once.
+        normalized_pages = [re.sub(r"\s+", " ", value) for value in pages]
+        joined = " ".join(normalized_pages)
         assert "OTHER CLIENT" not in joined
         assert "ORGANIZATIONAL CHART" in joined
         assert "Synthetic Person 41" not in joined
         for row in rows:
             assert joined.count(row[2]) == 1
         if rows:
-            heading_page = next(i for i, text in enumerate(pages)
+            heading_page = next(i for i, text in enumerate(normalized_pages)
                                 if "ORGANIZATIONAL CHART" in text)
-            first_person_page = next(i for i, text in enumerate(pages)
+            first_person_page = next(i for i, text in enumerate(normalized_pages)
                                      if "Synthetic Person 01" in text)
             assert first_person_page == heading_page, (
                 "The native contact header must not be orphaned below the chart heading.")
