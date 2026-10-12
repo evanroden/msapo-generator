@@ -259,6 +259,75 @@ def complete_report(page, mode):
     return tag
 
 
+def verify_stale_second_tab_after_reset(ctx, primary, empty_state: dict) -> None:
+    """Real same-cookie browser tabs may not revive a reset QA generation.
+
+    This only uses invented QA fixtures. It is a separate browser-recovery
+    proof in the second first-attempt run, not another expensive render pass.
+    """
+    event("two_tab_begin", generation=empty_state["generation"])
+    loaded = load_fixture(primary, "prefill",
+                          previous_generation=empty_state["generation"])
+    other = ctx.new_page()
+    other.set_default_timeout(35000)
+    try:
+        address = URL + "/?workflow=monthly&monthly_qa=isolated"
+        other.goto(address, wait_until="domcontentloaded", timeout=60000)
+        other.get_by_text("ISOLATED SYNTHETIC TESTING", exact=False).first.wait_for(timeout=30000)
+        stale_state = await_fixture_state(other, "known-value prefill", timeout=45000)
+        checkpoint("second tab opens same verified QA fixture generation",
+                   stale_state["generation"] == loaded["generation"] and
+                   stale_state["revision"] == loaded["revision"])
+        second_editor = other.get_by_role("textbox", name="Activity summary", exact=True).first
+        expect(second_editor).to_have_value(
+            "Three September work orders: 3 total, 2 completed, 1 open (66.7%).",
+            timeout=45000)
+        # Tab A resets only the shared synthetic browser's generation, while
+        # Tab B still holds a fully mounted older editor in its own session.
+        reset_state = reset_fixture(primary, loaded, "other-tab-still-mounted")
+        event("second_tab_stale_action_attempt", old=loaded["generation"],
+              new=reset_state["generation"])
+        # A stale widget interaction after reset must never be committed to the
+        # new namespace. If the old control was already unmounted, that is an
+        # acceptable fail-closed rebind, not a reason to click again.
+        try:
+            if second_editor.is_visible():
+                second_editor.fill(
+                    "INVENTED OLD-TAB EDIT AFTER ISOLATED RESET; MUST NOT SURVIVE.",
+                    timeout=10000)
+                second_editor.press("Tab", timeout=10000)
+        except BrowserTimeout as exc:
+            # A control detached by a correct generation swap can reject the
+            # old tab interaction. A subsequent fresh read is the authority.
+            event("second_tab_action_control_replaced", error=type(exc).__name__)
+        other.reload(wait_until="domcontentloaded", timeout=60000)
+        other.get_by_text("ISOLATED SYNTHETIC TESTING", exact=False).first.wait_for(timeout=30000)
+        observed_other = await_fixture_state(
+            other, "empty", previous_generation=loaded["generation"], timeout=35000)
+        primary.reload(wait_until="domcontentloaded", timeout=60000)
+        primary.get_by_text("ISOLATED SYNTHETIC TESTING", exact=False).first.wait_for(timeout=30000)
+        observed_primary = await_fixture_state(
+            primary, "empty", previous_generation=loaded["generation"], timeout=35000)
+        no_exports = not other.get_by_role(
+            "button", name="Download isolated QA DOCX", exact=True).count()
+        no_editor = not other.get_by_role(
+            "textbox", name="Activity summary", exact=True).count()
+        checkpoint("stale second-tab edit cannot repopulate reset namespace",
+                   observed_other["generation"] == observed_primary["generation"] ==
+                   reset_state["generation"] and
+                   observed_other["revision"] == observed_primary["revision"] == 0
+                   and no_exports and no_editor)
+        event("two_tab_reset_still_empty", generation=reset_state["generation"])
+    except Exception:
+        try:
+            screenshot(other, "second-tab-reset-not-ready")
+        except Exception:
+            pass
+        raise
+    finally:
+        other.close()
+
+
 def main():
     checkpoint("expected full Git commit provided", bool(re.fullmatch(r"[0-9a-f]{40}", EXPECTED)))
     with sync_playwright() as playwright:
@@ -351,6 +420,10 @@ def main():
             checkpoint("isolated reset returns empty QA fixture",
                        final_state["generation"] != replay_state["generation"] and
                        final_state["revision"] == 0)
+            # One extra non-rendering two-tab reset proof, after the second
+            # independent first-attempt full report flow has already passed.
+            if RUN_LABEL == "second":
+                verify_stale_second_tab_after_reset(ctx, page, final_state)
         finally:
             try:
                 screenshot(page, "end-state")
