@@ -371,7 +371,7 @@ def _fit_cover_photo(node, image_width, image_height):
             node.set(name, format(crop[key], ".8f"))
 
 
-def _table(element, columns, rows, *, physical_indices=(), continuation=False):
+def _table(element, columns, rows, *, physical_indices=(), continuation=False, keep_all_rows_intact=False):
     explicit_header = bool(columns) and not continuation
     native_rows = element.findall(qn("w:tr"))
     if not native_rows:
@@ -436,7 +436,7 @@ def _table(element, columns, rows, *, physical_indices=(), continuation=False):
         element.append(row)
     if explicit_header and rows:
         from app.monthly_report_table_pagination import keep_current_header_with_rows
-        keep_current_header_with_rows(element)
+        keep_current_header_with_rows(element, keep_all_rows_intact=keep_all_rows_intact)
 
 
 def _cover(element, draft, *, preserve_issue_date=False):
@@ -1227,7 +1227,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                         last.addnext(anchor)
                         page_plan.assigned(anchor, last)
                 _table(anchor, columns, rows, physical_indices=shape.indices if shape else (),
-                       continuation=bool(shape and shape.continuation))
+                       continuation=bool(shape and shape.continuation),
+                       keep_all_rows_intact=(block.key == "contact_matrix"))
                 page_plan.emitted(anchor, kind="table")
                 from app.monthly_report_training_style import style_training_table
                 style_training_table(anchor, table_reference)
