@@ -4,7 +4,7 @@ from dataclasses import replace
 
 from app.monthly_report_checks import preflight
 from app.monthly_report_model import (
-    ReportPeriod, ResolvedBlock, synthetic_draft, synthetic_profiles,
+    ReportPeriod, ResolvedBlock, default_sections, synthetic_draft, synthetic_profiles,
 )
 from app.monthly_report_section_help import section_help
 
@@ -38,9 +38,13 @@ def test_shorter_capital_guidance_does_not_downgrade_client_pricing_gate():
         "capital_renewal", "This month",
         rows=(("Demo North", "Priority 1", "Pump replacement $1,200.00"),),
     )
+    # synthetic_draft uses demonstration-only block keys. Resolve the real
+    # contract section skeleton so the capital table is actually included
+    # and its pricing gate is exercised, rather than testing an unused block.
     revised = replace(
         draft,
-        blocks=tuple(b for b in draft.blocks if b.key != priced.key) + (priced,),
+        sections=default_sections(),
+        blocks=(priced,),
     )
     assert any(
         check.code == "pricing" and check.blocking
