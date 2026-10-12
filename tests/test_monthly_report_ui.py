@@ -80,7 +80,7 @@ def test_guided_progress_is_persistent_and_resumes_same_month(monkeypatch, tmp_p
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic colleague's partial work.").run()
-    next(b for b in app.button if b.label == "Save progress").click().run()
+    next(b for b in app.button if b.label == "Save shared version").click().run()
     assert not app.exception
     saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
     assert saved.entered_editor == "Synthetic Editor"
@@ -229,7 +229,7 @@ def test_all_sections_preserve_content_and_saved_status_across_new_sessions(monk
     app = monthly(monkeypatch, tmp_path)
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
     assert not any(w.label.startswith("Include ") for w in app.checkbox)
-    next(b for b in app.button if b.label == "Save progress").click().run()
+    next(b for b in app.button if b.label == "Save shared version").click().run()
     assert any("Saved · version 1" in w.value for w in app.success)
     saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
     assert {s.key for s in saved.draft.sections} == {s.key for s in default_sections()}
@@ -293,7 +293,7 @@ def test_shared_report_never_identifies_a_new_browser_as_its_previous_editor(mon
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic First Editor").run()
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Saved work stays available to colleagues.").run()
-    next(b for b in app.button if b.label == "Save progress").click().run()
+    next(b for b in app.button if b.label == "Save shared version").click().run()
     returning = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     returning.segmented_control[0].set_value("Monthly report").run()
     assert not returning.exception
@@ -305,7 +305,7 @@ def test_shared_report_never_identifies_a_new_browser_as_its_previous_editor(mon
     assert next(w for w in newcomer.text_input if w.label == "Prepared by").value == ""
     step(newcomer, 2)
     assert next(w for w in newcomer.text_area if w.label == "Activity summary").value == "Saved work stays available to colleagues."
-    assert next(b for b in newcomer.button if b.label == "Save progress").disabled
+    assert next(b for b in newcomer.button if b.label == "Save shared version").disabled
     device[0] = "synthetic-browser-first"
     returning.selectbox("report_month_number").set_value(10).run()
     assert next(w for w in returning.text_input if w.label == "Prepared by").value == "Synthetic First Editor"
