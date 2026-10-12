@@ -9,18 +9,24 @@ coverage notes. This October 9 handoff is historical and should no longer be
 used to infer that #137 is a draft, native tables/Copilot are absent, or no
 isolated live acceptance run has completed.
 
-- Current merged code after #161: `bad7cbcd34fe210ae41b731e9668516a68eb7b21`.
-  #157 reset/replay acknowledgments, #158 Compare-action receipt, #160
-  Activity hydration, #161 source-native hidden table metadata privacy fix.
-- Last exact **two independent first-attempt complete** live passes are on
-  `bae08f31bf59f51ea8c8094b3295d3fa21229aad`, [Tests 38248301457](https://github.com/evanroden/msapo-generator/actions/runs/38248301457) and
-  [live 38249005588](https://github.com/evanroden/msapo-generator/actions/runs/38249005588), artifact
-  [11747786107](https://github.com/evanroden/msapo-generator/actions/runs/38249005588/artifacts/11747786107):
-  18/18 known prefill + 18/18 real synthetic CSV/TXT replay on each pass,
-  durable Activity reload, new-generation resets with receipts, four
-  actual Word/PDF transfers per pass and final empty reset. #161 had a
-  separate passing PR-head test run [38253320380](https://github.com/evanroden/msapo-generator/actions/runs/38253320380);
-  do **not** transfer `bae08f31` live proof to `bad7cbcd` without retesting.
+- **Latest merged code (PR #162):**
+  `24a5f4a6e09f2307a6ec499e7c143a9c13643518`.
+  Exact integrated-main [Tests 38256753186](https://github.com/evanroden/msapo-generator/actions/runs/38256753186)
+  passed pytest, container and 512 MiB resource checks. The public app served
+  that exact SHA and [live gate 38257533497](https://github.com/evanroden/msapo-generator/actions/runs/38257533497)
+  passed **two independent first-attempt runs** with 18/18 known prefill,
+  18/18 normal synthetic source CSV/TXT replay, durable Activity reload,
+  all four Word/PDF downloads per run, and generation-bound before-replay
+  and final empty resets. Synthetic artifact
+  [11750538796](https://github.com/evanroden/msapo-generator/actions/runs/38257533497/artifacts/11750538796).
+  This closes the exact current single-browser C01 live acceptance gate.
+- Earlier `bae08f31` also passed independently twice
+  ([live 38249005588](https://github.com/evanroden/msapo-generator/actions/runs/38249005588));
+  `bad7cbcd` [failed at reset](https://github.com/evanroden/msapo-generator/actions/runs/38254617731)
+  due to a disappearing volatile `render-jobs` child. Merged #162 repaired
+  that isolated reset/cleanup race without touching production report storage;
+  the old failure remains dated evidence. #157/#158/#160/#161 are also merged.
+  None of these successes substitute for authentic Word/Adobe and owner checks.
 - Exact unchanged **private** authentic Unity/USH August original hashes:
   Word `d8705610e4da6f335c95159b42966deffb6e8369861a2c5a6e873c3267cea1ea`;
   Adobe PDF `2b204491f9bd9b21452f2300b9844e8993b97e9cf69d1deb4b94c3a1a09c789b`.
