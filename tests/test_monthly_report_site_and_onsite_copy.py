@@ -9,6 +9,8 @@ def test_site_selection_copy_keeps_one_and_two_site_identities(monkeypatch, tmp_
     assert not app.exception
     assert any(node.value == "Sites in this report" for node in app.get("subheader"))
     assert any(node.value == "Select one or more sites." for node in app.get("caption"))
+    assert any("Selecting several sites combines them in one report." in node.value
+               for node in app.get("caption"))
     site_boxes = [item for item in app.checkbox if item.key.startswith("report_sites_")]
     assert len(site_boxes) >= 2
     first, second = (site_boxes[0].label, site_boxes[1].label)
