@@ -103,7 +103,7 @@ def test_rejected_price_page_never_auto_enters_water(monkeypatch, tmp_path):
     button(app, "Leave page out and continue").click().run()
     assert not app.exception
     assert "water_reports" not in app.session_state["test_blocks"]
-    assert app.session_state.get("test_apply_count", 0) == 0
+    assert app.session_state.filtered_state.get("test_apply_count", 0) == 0
 
 
 def test_preparation_failure_keeps_review_and_requires_explicit_retry(monkeypatch, tmp_path):
