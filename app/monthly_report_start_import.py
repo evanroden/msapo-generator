@@ -167,9 +167,7 @@ def cover_photo_candidates(items):
                  and item.section in ("", "cover")
                  and item.suggested_slot not in ("brand_logo", "client_logo")
                  and not item.suggested_slot.startswith("divider_")
-                 and not small_artwork(item)
-                 and (not item.image_width or not item.image_height
-                      or 0.42 <= item.image_width / item.image_height <= 2.9))
+                 and not small_artwork(item))
 
 
 def suggested_cover_photo(items):
@@ -179,7 +177,9 @@ def suggested_cover_photo(items):
     missing size proof leaves the optional cover photo unset instead of
     guessing from arbitrary client artwork.
     """
-    candidates = cover_photo_candidates(items)
+    candidates = tuple(item for item in cover_photo_candidates(items)
+                       if not item.image_width or not item.image_height
+                       or 0.42 <= item.image_width / item.image_height <= 2.9)
     if not candidates:
         return None
     tagged = tuple(item for item in candidates if item.suggested_slot == "cover_photo")
