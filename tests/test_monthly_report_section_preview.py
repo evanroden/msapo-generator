@@ -197,7 +197,8 @@ def test_failed_rerender_labels_previous_page_not_ready_and_retry_preserves_edit
     assert not app.exception
     assert payload(app)['pages'], 'Last good preview should remain visually inspectable'
     assert not payload(app)['ready'], 'An earlier image cannot count as this revision ready'
-    assert 'Previous preview' in payload(app)['status']
+    assert 'Showing older preview' in payload(app)['status']
+    assert 'latest changes not shown' in payload(app)['status']
     assert any("Your edits are still here" in value.value for value in app.warning)
     app.run()
     assert app.button[0].label == "Retry preview"
