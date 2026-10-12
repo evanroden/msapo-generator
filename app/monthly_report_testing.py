@@ -126,4 +126,16 @@ def reset(base: Path) -> None:
         for name in (*directories, *files):
             if (Path(directory) / name).is_symlink():
                 raise OSError("Test reset refused a linked file or directory.")
-    shutil.rmtree(target)
+    # A disposed preview/conversion task may remove a transient child such as
+    # render-jobs between the symlink/ownership scan and rmtree's own walk.
+    # Treat ONLY a disappearing child as already cleaned. A missing root,
+    # permission error, symlink issue or surviving target remains a hard error:
+    # no reset is acknowledged until the entire namespace is gone.
+    def disappeared_child(_operation, path, exc):
+        if isinstance(exc, FileNotFoundError) and Path(path) != target:
+            return
+        raise exc
+
+    shutil.rmtree(target, onexc=disappeared_child)
+    if target.exists() or target.is_symlink():
+        raise OSError("The isolated namespace could not be completely reset.")
