@@ -10,10 +10,11 @@ def test_jump_links_keep_one_report_ordered_page_and_reach_final_review(monkeypa
     assert "(#report-section-activity)" in markup
     assert "(#report-section-training)" in markup
     assert "(#report-review)" in markup
-    assert "Sections to consider before sharing" in markup
-    assert any("Actual DOCX and PDF sizes" in c.value for c in app.caption)
+    assert "Sections to consider before sharing" not in markup
+    assert any(e.label == "Sections without new updates (optional)" for e in app.expander)
+    assert not any("Actual DOCX and PDF sizes" in c.value for c in app.caption)
     assert not any("Estimated document size" in c.value for c in app.caption)
-    assert any(e.label == "Expected pages (layout information only)" for e in app.expander)
+    assert not any(e.label == "Expected pages (layout information only)" for e in app.expander)
 
 
 def test_section_jumps_survive_activity_edit_without_extra_workflow_pages(monkeypatch, tmp_path):
