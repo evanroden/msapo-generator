@@ -95,7 +95,7 @@ def _clear_report_widgets():
     # Never let a QA widget, in-memory PDF, or old viewport flow into a real
     # report when the browser switches workflow modes.
     for key in tuple(st.session_state):
-        if key.startswith(("report_", "report_guided_", "monthly_qa_")):
+        if key.startswith(("report_", "report_guided_", "monthly_qa_")) and key != "monthly_qa_bad_docs_zip":
             del st.session_state[key]
 
 
