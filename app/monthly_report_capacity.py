@@ -126,6 +126,46 @@ def _table_scope(title):
     return normalized
 
 
+def _two_level_xlsx_header(columns, rows, site_column, suffix):
+    """Join an unambiguous merged-category header with its second header row.
+
+    Some saved workbooks place Chilled Water/Steam above separate Required and
+    Available labels. A blank site in that second header must not become an
+    invented unmapped capacity row. Only XLSX tables with observable merged
+    category blanks and at least two strictly labeled, number-free subheadings
+    qualify; ambiguous rows remain visible for explicit site review.
+    """
+    if (suffix != ".xlsx" or site_column < 0 or len(rows) < 2
+            or rows[0][site_column].strip()
+            or not any(not title.strip() for index, title in enumerate(columns)
+                       if index != site_column)):
+        return columns, rows
+    continuation = rows[0]
+    labeled = [value.strip() for index, value in enumerate(continuation)
+               if index != site_column and value.strip()]
+    if (len(labeled) < 2 or any(re.search(r"\\d", value) for value in labeled)
+            or not all(re.match(
+                r"(?i)^(?:required|available|capacity|units?|cooling|heating|chilled|steam|load|demand)\\b",
+                value) for value in labeled)
+            or not any(re.match(r"(?i)^(?:required|available|capacity|load|demand)\\b", value)
+                       for value in labeled)):
+        return columns, rows
+    result, group = [], ""
+    for index, (top, lower) in enumerate(zip(columns, continuation)):
+        if top.strip():
+            group = top.strip()
+        if index == site_column:
+            result.append(top)
+        elif lower.strip():
+            if group and _THERMAL.search(group) and _normal(group) not in _normal(lower):
+                result.append(group + " / " + lower)
+            else:
+                result.append(lower)
+        else:
+            result.append(top)
+    return tuple(result), rows[1:]
+
+
 def _candidate(table, source, page, facilities, context=""):
     records = _table_records(table)
     header = 0
@@ -143,6 +183,7 @@ def _candidate(table, source, page, facilities, context=""):
     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
     site_columns = [i for i, c in enumerate(columns) if _SITE.search(c)]
     site_column = site_columns[0] if len(site_columns) == 1 else -1
+    columns, rows = _two_level_xlsx_header(columns, rows, site_column, source.suffix)
     if site_column < 0:
         # Headerless facility labels can establish a column, but not a guessed site.
         scores = [sum(bool(match_site(row[i], facilities)) for row in rows) for i in range(width)]
