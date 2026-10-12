@@ -47,7 +47,7 @@ def test_four_current_parts_need_no_keep_or_change_questions():
     assert not at.exception
     assert len(at.get("image")) == 2
     assert {item.value for item in at.markdown} >= {
-        "#### Team chart", "#### Daytime outage procedure",
+        "#### Team chart", "#### Business-hours outage procedure",
         "#### After-hours outage procedure", "#### Facility contacts",
     }
     assert not at.text_area and not at.checkbox and not at.radio and not at.selectbox
@@ -55,12 +55,26 @@ def test_four_current_parts_need_no_keep_or_change_questions():
     procedures = next(item for item in at.expander if item.label == "ENFRA outage procedures")
     assert procedures.proto.expanded is False
     assert {item.label for item in procedures.button} == {
-        "Change daytime outage procedure", "Change after-hours outage procedure",
+        "Edit business-hours outage procedure", "Edit after-hours outage procedure",
     }
     assert at.session_state["editor_calls"] == []
     assert at.session_state["blocks"] == at.session_state["original"]
+    assert any("1 table row · 1 page" in c.value for c in at.caption)
+    assert any(c.value == "1 table row" for c in at.caption)
+    assert not any("Current report content" in c.value for c in at.caption)
     # Duplicate or blank headings must not erase a custom imported cell.
     assert any("Keep this custom cell" in frame.value.to_string() for frame in at.dataframe)
+
+
+def test_opening_and_closing_editor_is_not_a_data_mutation():
+    at = app()
+    initial = {key: block.fingerprint for key, block in at.session_state["blocks"].items()}
+    click(at, "Edit chart")
+    assert not at.exception
+    assert {key: block.fingerprint for key, block in at.session_state["blocks"].items()} == initial
+    click(at, "Done")
+    assert not at.exception
+    assert {key: block.fingerprint for key, block in at.session_state["blocks"].items()} == initial
 
 
 def test_live_preview_mode_has_no_duplicate_picture_or_table_previews():
@@ -75,12 +89,12 @@ def test_live_preview_mode_has_no_duplicate_picture_or_table_previews():
 
 def test_after_hours_change_preserves_other_three_parts_and_provenance():
     at = app()
-    click(at, "Change after-hours outage procedure")
+    click(at, "Edit after-hours outage procedure")
     assert not at.exception
     assert at.session_state["editor_calls"] == ["after_hours_workflow"]
     assert [w.label for w in at.text_area] == ["Edit after_hours_workflow"]
     at.text_area[0].input("Call the updated on-call operator.").run()
-    click(at, "Done changing after-hours outage procedure")
+    click(at, "Done")
     assert not at.text_area
     blocks = at.session_state["blocks"]
     original = at.session_state["original"]
@@ -92,8 +106,8 @@ def test_after_hours_change_preserves_other_three_parts_and_provenance():
 
 def test_changing_another_part_closes_previous_editor():
     at = app()
-    click(at, "Change after-hours outage procedure")
-    click(at, "Change daytime outage procedure")
+    click(at, "Edit after-hours outage procedure")
+    click(at, "Edit business-hours outage procedure")
     assert at.session_state["editor_calls"] == ["business_hours_workflow"]
     assert [w.label for w in at.text_area] == ["Edit business_hours_workflow"]
     assert at.session_state["blocks"] == at.session_state["original"]
@@ -101,18 +115,18 @@ def test_changing_another_part_closes_previous_editor():
 
 def test_opening_complex_imported_chart_never_converts_it():
     at = app()
-    click(at, "Change team chart")
+    click(at, "Edit chart")
     assert not at.exception
     assert "Build an editable team chart (optional)" in [expander.label for expander in at.expander]
     assert at.session_state["blocks"]["org_chart"] == at.session_state["original"]["org_chart"]
     assert not at.session_state["blocks"]["org_chart"].org_nodes
-    click(at, "Done changing team chart")
+    click(at, "Done")
     assert at.session_state["blocks"] == at.session_state["original"]
 
 
 def test_editing_one_contact_retains_notes_and_other_parts():
     at = app()
-    click(at, "Change facility contacts")
+    click(at, "Edit contacts")
     assert not at.exception
     assert at.session_state["blocks"] == at.session_state["original"]
     next(w for w in at.text_input if w.label == "Name").input("Updated Synthetic Person").run()
@@ -139,6 +153,6 @@ original["org_chart"] = replace(original["org_chart"], asset_hashes=(), extra_ta
 st.session_state.setdefault("original", original)''',
     )
     at = AppTest.from_string(native).run()
-    click(at, "Change team chart")
+    click(at, "Edit chart")
     assert not at.exception
     assert at.session_state["blocks"] == at.session_state["original"]
