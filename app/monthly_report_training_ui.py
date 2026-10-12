@@ -41,25 +41,26 @@ def render_training(draft, blocks, prefix, field):
         if matrix != previous:
             st.session_state[matrix_key] = matrix
             st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
-        st.write("Hospital staff training")
-        st.caption("This matrix is for hospital staff. ENFRA, asset-management and vendor contacts are not added automatically. Check manually entered names.")
-        st.caption("Completed · Pending · Not required. Blank history is shown as Not recorded; no completion is assumed.")
+        st.write("Hospital/client staff training")
+        st.caption("Client staff only. ENFRA and vendor contacts are excluded from automatic training records.")
+        st.caption("Blank = Not recorded; no completion is assumed.")
         if st.session_state.get(key + "_stale_standing"):
             st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
                        "Monthly notes and the saved report version are unchanged.")
-        new_training = st.text_input("Add a training requirement", key=key + "_new_requirement")
-        if st.button("Add training column", key=key + "_add_requirement", disabled=not new_training.strip()):
-            title = new_training.strip()
-            if title.casefold() in {c.casefold() for c in matrix.columns}:
-                st.error("That training already has a column.")
-            else:
-                proposed = replace(matrix, columns=(*matrix.columns, title), rows=tuple((*r, "Not recorded") for r in matrix.rows))
-                if st.session_state.get(key + "_stale_standing"):
-                    raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
-                stored = save_training(draft.profile, proposed, expected_revision=stored["revision"], actor=draft.prepared_by)
-                matrix = proposed
-                st.session_state[store_key] = stored
-                st.session_state[matrix_key] = matrix
+        with st.expander("Add requirement", expanded=False):
+            new_training = st.text_input("Add a training requirement", key=key + "_new_requirement")
+            if st.button("Add training column", key=key + "_add_requirement", disabled=not new_training.strip()):
+                title = new_training.strip()
+                if title.casefold() in {c.casefold() for c in matrix.columns}:
+                    st.error("That training already has a column.")
+                else:
+                    proposed = replace(matrix, columns=(*matrix.columns, title), rows=tuple((*r, "Not recorded") for r in matrix.rows))
+                    if st.session_state.get(key + "_stale_standing"):
+                        raise library.RevisionConflict("Shared training has newer information. Reload saved training before editing its matrix.")
+                    stored = save_training(draft.profile, proposed, expected_revision=stored["revision"], actor=draft.prepared_by)
+                    matrix = proposed
+                    st.session_state[store_key] = stored
+                    st.session_state[matrix_key] = matrix
         sites = [facility.title for facility in draft.profile.facilities]
         config = {"Site": st.column_config.SelectboxColumn("Site", options=sites, required=True)}
         labels = {"Completed": "🟢 Completed", "Pending": "🟠 Pending", "Not required": "⚪ Not required", "Not recorded": "— Not recorded"}
@@ -91,16 +92,18 @@ def render_training(draft, blocks, prefix, field):
     st.write("Training completed this month")
     if events:
         st.dataframe([dict(zip(events.columns, row)) for row in events.rows], hide_index=True)
-        remove = st.multiselect("Remove a training entry", range(len(events.rows)), format_func=lambda n: f"{events.rows[n][1]} · {events.rows[n][0]}", key=key + "_remove_events_" + _signature(events.rows))
-        if st.button("Remove selected entries", key=key + "_remove_button", disabled=not remove):
-            events = replace(events, rows=tuple(row for i, row in enumerate(events.rows) if i not in remove))
-    with st.form(key + "_event_form", clear_on_submit=False):
-        title = st.text_input("Training topic", key=key + "_event_topic")
-        when = st.date_input("Training date", value=draft.period.start, min_value=draft.period.start, max_value=draft.period.end, key=key + "_event_date")
-        mode = st.selectbox("How was the training completed?", FORMATS, key=key + "_event_format")
-        participants = st.multiselect("Participants", list(dict.fromkeys(r[0] for r in (matrix.rows if matrix is not None else ()))), accept_new_options=True, key=key + "_event_participants")
-        hours = st.text_input("Hours (leave blank if unknown)", key=key + "_event_hours")
-        submit = st.form_submit_button("Add completed training")
+        with st.expander("Remove training entries", expanded=False):
+            remove = st.multiselect("Remove a training entry", range(len(events.rows)), format_func=lambda n: f"{events.rows[n][1]} · {events.rows[n][0]}", key=key + "_remove_events_" + _signature(events.rows))
+            if st.button("Remove selected entries", key=key + "_remove_button", disabled=not remove):
+                events = replace(events, rows=tuple(row for i, row in enumerate(events.rows) if i not in remove))
+    with st.expander("Add training", expanded=False):
+        with st.form(key + "_event_form", clear_on_submit=False):
+            title = st.text_input("Training topic", key=key + "_event_topic")
+            when = st.date_input("Training date", value=draft.period.start, min_value=draft.period.start, max_value=draft.period.end, key=key + "_event_date")
+            mode = st.selectbox("Method", FORMATS, key=key + "_event_format")
+            participants = st.multiselect("Participants", list(dict.fromkeys(r[0] for r in (matrix.rows if matrix is not None else ()))), accept_new_options=True, key=key + "_event_participants")
+            hours = st.text_input("Hours (optional)", key=key + "_event_hours")
+            submit = st.form_submit_button("Add completed training")
     if submit:
         try:
             events = add_event(events, title=title, when=when, mode=mode, participants=participants, hours=hours, period=draft.period)
