@@ -185,3 +185,39 @@ def test_cannot_forge_source_proof_to_release_unreviewed_rendered_page():
     })
     with pytest.raises(ValueError, match="not safely preserved"):
         build_section_import(Path("not-opened.docx"), inspection, (result,))
+
+
+@pytest.mark.parametrize("section,slot", [
+    ("scorecards", "utility_analysis"),
+    ("subcontractors", "subcontractor_matrix"),
+    ("capital", "capital_renewal"),
+    ("training", "training_summary"),
+])
+def test_uncaptioned_original_photograph_keeps_its_document_section(section, slot):
+    item = ImportItem("uncaptioned-visible-image", "image",
+                      "word/document.xml", 16, 4, section,
+                      image_part="word/media/unnamed-photo.png",
+                      image_width=880, image_height=640)
+    inspection = DocxInspection(SOURCE, (item,), (), (), 4)
+    same = plan_for(inspection)[section]
+    assert same["approved"]
+    assert same["selected"] == [item.id]
+    assert same["destinations"][item.id] == slot
+    # Another client's section pictures are NOT safe to borrow merely to
+    # reuse an otherwise compatible report design.
+    foreign = automatic_section_plans(
+        inspection, StartingReportAnalysis((), "other", (), (), ())
+    )[section]
+    assert item.id not in foreign["selected"]
+
+
+def test_uncaptioned_vendor_quote_picture_is_not_claimed_price_free():
+    item = ImportItem("unread-proposal-image", "image",
+                      "word/document.xml", 21, 6, "proposals",
+                      image_part="word/media/quote.png",
+                      image_width=880, image_height=640)
+    inspection = DocxInspection(SOURCE, (item,), (), (), 6)
+    plan = plan_for(inspection)["proposals"]
+    assert not plan["approved"]
+    assert plan["questions"]
+    assert not plan["selected"]
