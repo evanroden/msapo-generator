@@ -48,10 +48,11 @@ def test_explicit_clear_and_replacement_are_not_reverted_by_hydration_guard():
     editor.set_value("").run()
     assert not app.error and not app.exception
     marker = app.session_state["editor_key"] + "_explicitly_edited"
-    with pytest.raises(KeyError):
-        _ = app.session_state[marker]
+    assert app.session_state[marker] == ""
     assert app.session_state["result"].text == ""
     app.run()
+    with pytest.raises(KeyError):
+        _ = app.session_state[marker]
     assert app.session_state["result"].text == ""
     editor = next(widget for widget in app.text_area if widget.label == "Activity summary")
     editor.set_value("A current, deliberate updated work-order statement.").run()
@@ -64,8 +65,7 @@ def test_stale_blank_cannot_erase_a_previous_explicit_operator_edit():
     next(w for w in app.text_area if w.label == "Activity summary").set_value(new_text).run()
     assert app.session_state["canonical_block"].text == new_text
     key = app.session_state["editor_key"]
-    with pytest.raises(KeyError):
-        _ = app.session_state[key + "_explicitly_edited"]
+    assert app.session_state[key + "_explicitly_edited"] == new_text
     # Generate/preview rerender can present a stale frontend empty widget
     # without a user callback. It must not change the authoritative draft.
     app.session_state[key] = ""
@@ -103,3 +103,39 @@ def test_a_deliberate_empty_clear_and_reentry_both_stay_authoritative():
     app.run()
     assert next(w for w in app.text_area if w.label == "Activity summary").value == (
         "Re-entered current-month work.")
+
+
+def test_interrupted_fragment_rerun_replays_exact_edit_until_canonical_commit():
+    # The browser can emit a partial preview/fragment run after accepting the
+    # textarea change but before the full draft reaches its final save point.
+    # The receipt must not disappear merely because _edit_content was called.
+    app_source = APP.replace(
+        'st.session_state["canonical_block"] = result',
+        'if st.session_state.get("commit_enabled", True):\n'
+        '    st.session_state["canonical_block"] = result',
+    )
+    app = AppTest.from_string(app_source, default_timeout=15)
+    app.session_state["commit_enabled"] = True
+    app.run()
+    assert not app.exception
+    original = app.session_state["canonical_block"].text
+    app.session_state["commit_enabled"] = False
+    update = "Latest September repair before the preview interruption."
+    next(w for w in app.text_area if w.label == "Activity summary").set_value(update).run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == original
+    assert app.session_state["result"].text == update
+    marker = app.session_state["editor_key"] + "_explicitly_edited"
+    assert app.session_state[marker] == update
+
+    # The next complete editor run must replay and commit that edit without
+    # requiring a second click, and the following run acknowledges its receipt.
+    app.session_state["commit_enabled"] = True
+    app.run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == update
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == update
+    app.run()
+    with pytest.raises(KeyError):
+        _ = app.session_state[marker]
+    assert app.session_state["canonical_block"].text == update
