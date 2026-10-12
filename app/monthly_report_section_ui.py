@@ -171,7 +171,18 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
         action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
-        plan = {"key": section.key, "action": action, "target": section.key, "omit": action == actions[2], "selected": [], "texts": {}, "tables": {}, "destinations": {}, "new_assets": [(slot, image) for slot, image in old.get("new_assets", []) if slot not in {"brand_logo", "client_logo"}], "image_notes": dict(old.get("image_notes", {})), "automatic": False}
+        plan = {"key": section.key, "action": action, "target": section.key,
+                "omit": action == actions[2], "selected": [], "texts": {},
+                "tables": {}, "destinations": {},
+                "new_assets": [(slot, image) for slot, image in old.get("new_assets", [])
+                               if slot not in {"brand_logo", "client_logo"}],
+                "image_notes": dict(old.get("image_notes", {})), "automatic": old.get("automatic", False),
+                # A separate price/text question cannot erase an already
+                # preserved native source diagram when this card reopens.
+                "auto_native_diagrams": old.get("auto_native_diagrams", False),
+                "captured_word_sections": old.get("captured_word_sections", ()),
+                "preserved_assets": list(old.get("preserved_assets", ())),
+                "word_page_records": list(old.get("word_page_records", ()))}
         blocking = []
         if plan["omit"]:
             st.caption("This section stays in the report. The uploaded content remains in the saved original for reference.")
@@ -258,13 +269,23 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 for slot, image in plan["new_assets"]:
                     st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
             if any(i.kind == "unsupported" for i in section.items):
-                # This is a one-way safety default: unreadable source objects
-                # are not copied to the client output. A selected replacement
-                # is a separate safe image and is still subject to export gates.
-                plan["unsupported_reviewed"] = True
-                plan["unsupported_choice"] = "Continue without the content that could not be shown"
-                st.caption("Artwork that could not be displayed is left out of the new report. "
-                           "It remains in the original Word file; any clear replacement you added is kept.")
+                # Do not silently exclude a difficult SmartArt/VML/OLE frame
+                # after removing the old generic "continue without" radio.
+                # It must be rendered into the original section or have an
+                # explicit clear replacement before this section is accepted.
+                preserved = bool(plan.get("page_layout") and plan.get("preserved_assets")
+                                 or plan.get("auto_native_diagrams") and plan.get("preserved_assets")
+                                 or plan.get("new_assets"))
+                plan["unsupported_reviewed"] = preserved
+                if not preserved:
+                    blocking.append(
+                        "A Word diagram in " + section.title +
+                        " could not be preserved. Use its original-page preview "
+                        "or the clear replacement upload; it will not be silently left out."
+                    )
+                else:
+                    st.caption("Source drawings are retained in this section, "
+                               "either as safe original-page images or named replacements.")
         _approve_plan(plan, p, field, old, plans, blocking,
                       quote_price_risk=_explicit_quote_price_risk(section, inspection))
 
