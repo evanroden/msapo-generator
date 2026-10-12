@@ -350,7 +350,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
     if st.session_state[page_key] not in image_pages:
         st.session_state[page_key] = image_pages[0]
     page_labels = {n: f"Page {n}" + (" · already in report" if (source.id, n) in existing
-                  else " · included" if n in source.selected_pages and page_allowed(source, n)
+                  else " · reviewed, not in report" if n in source.selected_pages and page_allowed(source, n)
                   else " · left out" if dict(source.client_page_exclusions).get(n) == page_fingerprint(source, n)
                   else " · needs review") for n in image_pages}
     page = st.selectbox("Page to review", image_pages, key=page_key, format_func=page_labels.get)
@@ -399,13 +399,26 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
             source = replace(source, selected_pages=tuple(sorted(selected)),
                              client_page_reviews=tuple(sorted(reviews.items())),
                              client_page_exclusions=tuple(sorted(exclusions.items())))
+            if auto_include:
+                # Track actual Include clicks in the current review sequence.
+                # A page removed from the report may still be selected in its
+                # immutable source record; that is NOT consent to restore it
+                # when a different page is newly reviewed.
+                clicked_key = p + "_explicit_keeps"
+                clicked = set(st.session_state.get(clicked_key, ()))
+                if action == "keep":
+                    clicked.add(page)
+                else:
+                    clicked.discard(page)
+                st.session_state[clicked_key] = tuple(sorted(clicked))
             remaining = [n for n in _undecided_pages(content, source) if (source.id, n) not in existing]
             if auto_include and not remaining:
-                # This is an exact, user-initiated review-completion receipt,
-                # NOT a standing permission to re-add previously removed pages.
-                # Retain it until the caller has actually merged the pages.
-                new_pages = tuple(n for n in source.selected_pages
-                                  if n in image_pages and (source.id, n) not in existing)
+                # An exact user-initiated completion receipt is consumed only
+                # after the corresponding pages merge into the report.
+                new_pages = tuple(n for n in st.session_state.pop(
+                    p + "_explicit_keeps", ())
+                    if n in image_pages and n in source.selected_pages
+                    and (source.id, n) not in existing)
                 request_key = prefix + "_auto_include"
                 if new_pages and all(page_allowed(source, n) for n in new_pages):
                     st.session_state[request_key] = {
@@ -548,7 +561,8 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                         try:
                             with st.spinner("Including reviewed water-treatment pages…"):
                                 additions = prepare_section_pages(
-                                    profile, (content,), destination, blocks, assets)
+                                    profile, (content,), destination, blocks, assets,
+                                    only_pages=frozenset(expected))
                         except (ValueError, OSError) as exc:
                             message = "Reviewed pages were not added: " + str(exc)
                             st.session_state[failure_key] = (request["fingerprint"], message)
