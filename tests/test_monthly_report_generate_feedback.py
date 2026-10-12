@@ -25,7 +25,7 @@ def _generate_ui(monkeypatch, tmp_path):
     original = guided.st.button
 
     def button(label, *args, **kwargs):
-        if label == "Generate DOCX and PDF":
+        if label == "Create Word and PDF":
             recorded.append((kwargs.get("type"), kwargs.get("disabled")))
         return original(label, *args, **kwargs)
 
@@ -36,7 +36,7 @@ def _generate_ui(monkeypatch, tmp_path):
 
 
 def _button(app):
-    return next(b for b in app.button if b.label == "Generate DOCX and PDF")
+    return next(b for b in app.button if b.label == "Create Word and PDF")
 
 
 def test_required_error_is_grey_and_explained_near_generate(monkeypatch, tmp_path):
@@ -45,7 +45,7 @@ def test_required_error_is_grey_and_explained_near_generate(monkeypatch, tmp_pat
     assert not app.exception
     assert _button(app).disabled
     assert seen[-1] == ("secondary", True)
-    assert any("required item" in c.value and "enable Generate" in c.value for c in app.caption)
+    assert any("required item" in c.value and "enable Create Word and PDF" in c.value for c in app.caption)
     assert any("Monthly Activity Summary" in e.value for e in app.error)
 
 
@@ -55,7 +55,7 @@ def test_unacknowledged_warning_is_grey_and_ack_enables_generate(monkeypatch, tm
     assert not app.exception
     assert seen[-1] == ("secondary", True)
     assert _button(app).disabled
-    assert any("specific warnings" in c.value and "enable Generate" in c.value for c in app.caption)
+    assert any("specific warnings" in c.value and "enable Create Word and PDF" in c.value for c in app.caption)
     next(w for w in app.checkbox if w.label == "I checked these specific warnings").check().run()
     assert not app.exception
     assert seen[-1] == ("primary", False)

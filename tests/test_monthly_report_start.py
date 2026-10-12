@@ -163,7 +163,7 @@ def test_from_scratch_regional_report_generates_and_next_month_keeps_design(monk
     next(b for b in app.button if b.label == "Start an editable org chart").click().run()
     next(w for w in app.text_input if w.label == "Name").set_value("Synthetic Manager").run()
     step(app, 4)
-    generate = next(b for b in app.button if b.label == "Generate DOCX and PDF")
+    generate = next(b for b in app.button if b.label == "Create Word and PDF")
     assert not generate.disabled, [w.value for w in (*app.error, *app.warning)]
     generate.click().run(timeout=60)
     assert not app.exception

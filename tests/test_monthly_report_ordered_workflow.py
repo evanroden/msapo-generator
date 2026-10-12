@@ -26,7 +26,7 @@ def test_report_order_all_editors_and_direct_previews(monkeypatch, tmp_path):
     assert not any(item.label == "Show writing help" for item in app.toggle)
     assert next(item for item in app.checkbox if item.label == "Add work-order spreadsheets")
     assert next(item for item in app.text_area if item.label == "Activity summary")
-    assert next(item for item in app.button if item.label == "Generate DOCX and PDF")
+    assert next(item for item in app.button if item.label == "Create Word and PDF")
 
 
 def test_inline_edits_save_resume_and_generate_without_navigation(monkeypatch, tmp_path):
@@ -52,7 +52,7 @@ def test_inline_edits_save_resume_and_generate_without_navigation(monkeypatch, t
     warning = next((item for item in resumed.checkbox if item.label == "I checked these specific warnings"), None)
     if warning:
         warning.check().run()
-    next(item for item in resumed.button if item.label == "Generate DOCX and PDF").click().run()
+    next(item for item in resumed.button if item.label == "Create Word and PDF").click().run()
     assert not resumed.exception
     assert captured and next(block for block in captured[-1].blocks if block.key == "activity_summary").text == "Completed the September inspections."
     assert {item.label for item in resumed.get("download_button")} >= {"Download DOCX", "Download PDF"}

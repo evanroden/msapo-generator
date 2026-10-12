@@ -128,7 +128,7 @@ def test_visible_followups_still_block_download_and_each_updates_independently(m
     step(app, 2)
     assert all(any(value.label == label for value in app.button) for label in ("Still open", "Update proposal"))
     step(app, 4)
-    assert next(value for value in app.button if value.label == "Generate DOCX and PDF").disabled
+    assert next(value for value in app.button if value.label == "Create Word and PDF").disabled
     assert review_destination(working_state(app)[1], issue.key) == (STEPS[1], "issues")
     assert any(value.value == "Equipment Performance Issues" for value in app.subheader)
     assert any(value.label == "Still open" for value in app.button)
@@ -240,8 +240,8 @@ def test_blank_sections_generate_without_empty_or_standing_confirmations_but_pri
     step(app, 4)
     assert not any("included but empty" in item.value or "standing site information" in item.value for item in app.warning)
     assert not any(item.label in ("I checked these specific warnings", "I checked the standing information for these sites") for item in app.checkbox)
-    assert not next(item for item in app.button if item.label == "Generate DOCX and PDF").disabled
-    next(item for item in app.button if item.label == "Generate DOCX and PDF").click().run()
+    assert not next(item for item in app.button if item.label == "Create Word and PDF").disabled
+    next(item for item in app.button if item.label == "Create Word and PDF").click().run()
     assert not app.exception
     generated_draft, raw = generated[0]
     paragraphs = [paragraph.text for paragraph in Document(BytesIO(raw)).paragraphs]
@@ -251,7 +251,7 @@ def test_blank_sections_generate_without_empty_or_standing_confirmations_but_pri
     # The section editor is always mounted; exercise the actual edit rather than
     # changing its underlying draft behind an existing widget value.
     next(item for item in app.text_area if item.label == "Activity summary").set_value("Synthetic service cost $100.").run()
-    assert next(item for item in app.button if item.label == "Generate DOCX and PDF").disabled
+    assert next(item for item in app.button if item.label == "Create Word and PDF").disabled
     assert any("pricing" in item.value.lower() for item in app.error)
 
 

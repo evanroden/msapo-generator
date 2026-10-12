@@ -18,11 +18,11 @@ def test_generate_discards_work_but_following_edits_get_a_new_active_generation(
     next(w for w in app.text_area if w.label == "Activity summary").set_value(
         "Completed synthetic September inspection.").run()
     assert not app.exception
-    button = next(b for b in app.button if b.label == "Generate DOCX and PDF")
+    button = next(b for b in app.button if b.label == "Create Word and PDF")
     warnings = next((w for w in app.checkbox if w.label == "I checked these specific warnings"), None)
     if warnings:
         warnings.check().run()
-    button = next(b for b in app.button if b.label == "Generate DOCX and PDF")
+    button = next(b for b in app.button if b.label == "Create Word and PDF")
     assert not button.disabled
     button.click().run()
     assert not app.exception

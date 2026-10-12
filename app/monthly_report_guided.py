@@ -129,9 +129,9 @@ def generation_block_reason(*, conflict, checks, warnings_ok):
     count = sum(bool(check.blocking) for check in checks)
     if count:
         noun = "item" if count == 1 else "items"
-        return f"Resolve the {count} required {noun} listed above to enable Generate."
+        return f"Resolve the {count} required {noun} listed above to enable Create Word and PDF."
     if not warnings_ok:
-        return "Read the specific warnings above, then check ‘I checked these specific warnings’ to enable Generate."
+        return "Read the specific warnings above, then check ‘I checked these specific warnings’ to enable Create Word and PDF."
     return ""
 
 
@@ -944,7 +944,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         empty_confirmation_key = prefix + "_empty_generation_confirmation"
         if st.session_state.get(empty_confirmation_key) not in (None, draft.fingerprint):
             st.session_state.pop(empty_confirmation_key, None)
-        pressed = st.button("Generate DOCX and PDF", key=prefix + "_generate",
+        st.caption("Creating files also saves a shared report version. Any save failure will be shown.")
+        pressed = st.button("Create Word and PDF", key=prefix + "_generate",
                             type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason))
         if pressed and not monthly_entry_sections:
             st.session_state[empty_confirmation_key] = draft.fingerprint
@@ -954,7 +955,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.warning("No new monthly information was entered in the section editors. "
                        "This draft may contain mostly dividers and saved standing material. "
                        "Check the report before sending it to a client.")
-            generate_anyway = st.button("Generate anyway", key=prefix + "_empty_generate_anyway")
+            generate_anyway = st.button("Create anyway", key=prefix + "_empty_generate_anyway")
         if (pressed and bool(monthly_entry_sections)) or generate_anyway:
             st.session_state.pop(empty_confirmation_key, None)
             try:
@@ -984,6 +985,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             except (ValueError, OSError) as exc:
                 st.warning(f"Downloads are ready, but this version could not be saved: {exc}")
         if package:
+            st.success("Ready to download")
             sizes = f"DOCX {len(package.docx) / (1024 * 1024):.1f} MB"
             if package.pdf:
                 sizes += f" · PDF {len(package.pdf) / (1024 * 1024):.1f} MB"
@@ -997,4 +999,4 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                    mime="application/pdf", key=prefix + "_pdf", on_click="ignore")
             if package.pdf_error:
                 st.warning(package.pdf_error)
-        st.caption("Generating saves a shared report version. In-progress edits are kept separately for this browser when automatic recovery is available.")
+
