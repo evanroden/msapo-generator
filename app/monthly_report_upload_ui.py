@@ -298,8 +298,8 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     return tuple(c.source for c in contents), blocks, specs
 
 
-def _render_section_page_review(profile, content, prefix, field, blocks):
-    """Review new page content once, with an explicit include/leave-out action."""
+def _render_section_page_review(profile, content, prefix, field, blocks, *, auto_include=False):
+    """Review pages once; completed Water reviews can add pages automatically."""
     from app.monthly_report_section_uploads import included_pages
 
     source = content.source
@@ -344,7 +344,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks):
     with st.expander("Read extracted text"):
         st.text(source.page_texts[page - 1][:12000] or "No native text on this page. Review the image above.")
     if (source.id, page) in existing:
-        st.caption("This page is already in the report. Edit its caption or remove it using the included pages below.")
+        st.caption("This page is already included. Remove it using the report pictures below, if needed.")
     else:
         captions = dict(source.captions)
         caption_key = field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}"))
@@ -377,6 +377,20 @@ def _render_section_page_review(profile, content, prefix, field, blocks):
                              client_page_reviews=tuple(sorted(reviews.items())),
                              client_page_exclusions=tuple(sorted(exclusions.items())))
             remaining = [n for n in _undecided_pages(content, source) if (source.id, n) not in existing]
+            if auto_include and not remaining:
+                # This is an exact, user-initiated review-completion receipt,
+                # NOT a standing permission to re-add previously removed pages.
+                # Retain it until the caller has actually merged the pages.
+                new_pages = tuple(n for n in source.selected_pages
+                                  if n in image_pages and (source.id, n) not in existing)
+                request_key = prefix + "_auto_include"
+                if new_pages and all(page_allowed(source, n) for n in new_pages):
+                    st.session_state[request_key] = {
+                        "source_id": source.id, "fingerprint": source.fingerprint,
+                        "pages": new_pages,
+                    }
+                else:
+                    st.session_state.pop(request_key, None)
             st.session_state[p + "_next_page"] = next((n for n in remaining if n > page), remaining[0] if remaining else page)
             # The caller persists this source before rerunning, retaining every
             # other section's canonical evidence object unchanged.
@@ -387,10 +401,10 @@ def _render_section_page_review(profile, content, prefix, field, blocks):
 
 def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field,
                            destination: str, *, blocks=None, assets=None):
-    """Return an addition only on its apply click; callers merge it atomically.
+    """Return reviewed page additions; Water adds when its final review is done.
 
-    The existing canonical evidence cache is shared with the optional batch/CMMS
-    workspace. Section routing never changes a saved source's classification.
+    The caller merges additions atomically. The source cache is canonical and
+    shared with the optional batch/CMMS workspace; classification is unchanged.
     """
     from app.monthly_report_section_uploads import (
         SECTION_UPLOADS, pending_pages, prepare_section_pages, section_contents, source_destinations,
@@ -457,7 +471,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.caption("Reviewing " + choices[selected].source.filename)
     else:
         selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
-    revised = _render_section_page_review(profile, choices[selected], local_key, field, blocks)
+    revised = _render_section_page_review(
+        profile, choices[selected], local_key, field, blocks,
+        auto_include=(destination == "water_reports"),
+    )
     contents = tuple(revised if c.source.id == selected else c for c in contents)
     st.session_state[key] = contents
     if st.session_state.pop(local_key + "_review_rerun", False):
@@ -466,11 +483,63 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     pending = pending_pages(scoped, destination, blocks)
     by_id = {c.source.id: c for c in scoped}
     ready = bool(pending) and all(page_allowed(by_id[identity].source, number) for identity, number in pending)
+    additions = {}
+    if destination == "water_reports":
+        # Only the last explicit include/leave-out click authorizes auto-add.
+        # Merely reopening an earlier reviewed file, changing sections, or
+        # removing an already included page can NEVER restore that page.
+        from app.monthly_report_section_uploads import included_pages
+        owned = included_pages(blocks)
+        request_key = local_key + "_auto_include"
+        failure_key = request_key + "_failure"
+        request = st.session_state.get(request_key)
+        if request:
+            identity = request["source_id"]
+            expected = tuple((identity, n) for n in request["pages"])
+            if expected and all(destination in owned.get(pair, ()) for pair in expected):
+                st.session_state.pop(request_key, None)
+                st.session_state.pop(failure_key, None)
+                request = None
+            else:
+                content = by_id.get(identity)
+                matches = (content is not None
+                           and content.source.fingerprint == request["fingerprint"]
+                           and all(pair in pending and page_allowed(content.source, pair[1])
+                                   for pair in expected)
+                           and not _undecided_pages(content, content.source))
+                if not matches:
+                    st.session_state.pop(request_key, None)
+                    st.session_state.pop(failure_key, None)
+                    st.warning("The reviewed source has changed. Check its pages again before including them.")
+                else:
+                    previous_failure = st.session_state.get(failure_key)
+                    retry = (st.button("Retry including reviewed pages", key=local_key + "_auto_retry")
+                             if previous_failure and previous_failure[0] == request["fingerprint"]
+                             else True)
+                    if previous_failure and not retry:
+                        st.error(previous_failure[1])
+                    elif retry:
+                        try:
+                            with st.spinner("Including reviewed water-treatment pages…"):
+                                additions = prepare_section_pages(
+                                    profile, (content,), destination, blocks, assets)
+                        except (ValueError, OSError) as exc:
+                            message = "Reviewed pages were not added: " + str(exc)
+                            st.session_state[failure_key] = (request["fingerprint"], message)
+                            st.error(message)
+                        else:
+                            st.session_state.pop(failure_key, None)
+        included = sum(destination in owners for owners in owned.values())
+        if included:
+            st.caption(f"{included} {'page' if included == 1 else 'pages'} included in this draft.")
+        if pending and not additions and not st.session_state.get(request_key):
+            st.caption("Finish reviewing the remaining pages to include your selected pages automatically.")
+        return tuple(c.source for c in contents), additions, {}
+
     if pending:
         st.caption(f"{sum(page_allowed(by_id[identity].source, n) for identity, n in pending)} of {len(pending)} selected new pages checked.")
     else:
         st.caption("No new pages selected. Previously added pages remain in your report.")
-    additions = {}
     if st.button("Add reviewed pages", key=local_key + "_apply", disabled=not ready, type="primary"):
         try:
             with st.spinner("Adding the reviewed pages…"):
@@ -479,6 +548,20 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             st.error(str(exc))
             st.caption("Your existing report is unchanged. The selected files and reviews are retained for another attempt.")
     return tuple(c.source for c in contents), additions, {}
+
+
+def acknowledge_autoincluded_water_pages(prefix, blocks):
+    """Clear one review receipt only after the caller actually merges pages."""
+    from app.monthly_report_section_uploads import included_pages
+    key = prefix + "_evidence_section_water_reports_auto_include"
+    request = st.session_state.get(key)
+    if not request:
+        return
+    owners = included_pages(blocks)
+    expected = ((request["source_id"], page) for page in request["pages"])
+    if all("water_reports" in owners.get(identity, ()) for identity in expected):
+        st.session_state.pop(key, None)
+        st.session_state.pop(key + "_failure", None)
 
 
 @st.fragment(run_every=1)
