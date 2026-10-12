@@ -65,10 +65,10 @@ def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_m
     app = monthly(monkeypatch, tmp_path)
     next(w for w in app.text_input if w.label == 'Prepared by').set_value('Synthetic Editor').run()
     step(app, 2)
-    update = next(w for w in app.text_area if w.label == 'Update to include in the report')
+    update = next(w for w in app.text_area if w.label == 'Status or findings')
     assert update.value == ''
     next(b for b in app.button if b.label == 'Reporting has not started').click().run()
-    update = next(w for w in app.text_area if w.label == 'Update to include in the report')
+    update = next(w for w in app.text_area if w.label == 'Status or findings')
     assert 'has not started' in update.value
     update.set_value('Synthetic equipment monitoring is awaiting activation.').run()
     next(b for b in app.button if b.label == 'Save progress').click().run()
@@ -76,4 +76,4 @@ def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_m
     assert next(b for b in saved.draft.blocks if b.key == 'mbcx_status').text == 'Synthetic equipment monitoring is awaiting activation.'
     app.selectbox('report_month_number').set_value(10).run()
     step(app, 2)
-    assert next(w for w in app.text_area if w.label == 'Update to include in the report').value == 'Synthetic equipment monitoring is awaiting activation.'
+    assert next(w for w in app.text_area if w.label == 'Status or findings').value == 'Synthetic equipment monitoring is awaiting activation.'
