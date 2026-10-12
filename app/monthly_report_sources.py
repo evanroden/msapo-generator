@@ -544,26 +544,35 @@ def image_numbers(content: SourceContent) -> tuple[int, ...]:
 
 
 def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
-                  destinations: tuple[tuple[str, str], ...]) -> tuple[ResolvedBlock, ...]:
+                  destinations: tuple[tuple[str, str], ...], *,
+                  only_pages: frozenset[tuple[str, int]] | None = None) -> tuple[ResolvedBlock, ...]:
     """Prepare serially into content-addressed storage, with an aggregate limit.
 
-    This creates immutable assets, never shared profile defaults. No manifest or
-    report snapshot is changed until the operator saves/generates explicitly.
+    An optional subset restricts which pages are actually inserted without
+    changing the canonical source fingerprint used in provenance references.
+    No shared profile defaults, manifest, or snapshot is changed here.
     """
     from app.monthly_report_content_policy import page_allowed
     sources = {c.source.id: c for c in contents}
     if len(dict(destinations)) != len(destinations):
         raise ValueError("Each source needs one page destination.")
+    allowed_pairs = set(only_pages) if only_pages is not None else None
+    matched_pairs = set()
     planned = []
     for identity, slot in destinations:
         if identity not in sources or slot not in PAGE_DESTINATIONS:
             raise ValueError("Unknown page source or destination.")
         content = sources[identity]
         allowed = set(image_numbers(content))
-        selected = tuple(n for n in content.source.selected_pages if n in allowed)
+        selected = tuple(
+            n for n in content.source.selected_pages
+            if n in allowed and (allowed_pairs is None or (identity, n) in allowed_pairs))
+        matched_pairs.update((identity, n) for n in selected)
         if any(n < 1 or n > len(content.source.page_texts) for n in content.source.selected_pages):
             raise ValueError("Selected source page does not exist.")
         planned.extend((content, slot, n) for n in selected)
+    if allowed_pairs is not None and matched_pairs != allowed_pairs:
+        raise ValueError("The requested source pages changed. Review them again before inclusion.")
     if len(planned) > MAX_EMBED_PAGES:
         raise ValueError("Embedding limit is 150 selected image/PDF pages per report. Reduce the selection before preparing.")
     for content, _, number in planned:

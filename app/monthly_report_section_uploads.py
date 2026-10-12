@@ -69,8 +69,14 @@ def pending_pages(contents, destination, blocks):
     return tuple(result)
 
 
-def prepare_section_pages(profile, contents, destination, blocks, assets=None):
-    """Validate a complete addition before returning it; never mutate the draft."""
+def prepare_section_pages(profile, contents, destination, blocks, assets=None, *,
+                          only_pages=None):
+    """Validate selected source/page additions; never mutate the draft.
+
+    The optional subset permits only pages selected in the *current* explicit
+    review interaction, even if other formerly selected pages have since been
+    removed from this report. Their original source record stays unchanged.
+    """
     if destination not in SECTION_UPLOADS:
         raise ValueError("Unknown report section for uploaded pages.")
     owners = included_pages(blocks)
@@ -80,6 +86,12 @@ def prepare_section_pages(profile, contents, destination, blocks, assets=None):
         if elsewhere:
             raise ValueError(f"{content.source.filename} already has pages in another section. Use its existing section to update it; no duplicate pages were added.")
     pending = set(pending_pages(contents, destination, blocks))
+    if only_pages is not None:
+        requested = set(only_pages)
+        if not requested or not requested.issubset(pending):
+            raise ValueError(
+                "The reviewed page selection changed. Reopen that page and choose Include again.")
+        pending = requested
     if not pending:
         return {}
     existing_count = sum(len(block.asset_hashes) for key, block in blocks.items()
@@ -88,7 +100,9 @@ def prepare_section_pages(profile, contents, destination, blocks, assets=None):
         raise ValueError("Embedding limit is 150 selected image/PDF pages per report. Remove pages before adding more.")
     destinations = tuple((c.source.id, destination) for c in contents
                          if any(identity == c.source.id for identity, _ in pending))
-    prepared = sources.prepare_pages(profile, contents, destinations)
+    prepared = sources.prepare_pages(
+        profile, contents, destinations,
+        only_pages=frozenset(pending) if only_pages is not None else None)
     result = {}
     for block in prepared:
         indexes = tuple(n for n, reference in enumerate(block.references) if page_identity(reference) in pending)
