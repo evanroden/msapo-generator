@@ -45,10 +45,16 @@ def _site_options(contract):
     # Explicit owner-confirmed alias relationship. Never group sites by address
     # or guess regional membership from a title or geographic location.
     result = []
+    # Only distinctive, owner-established abbreviations are safe *cover*
+    # identity evidence. The general facility catalog also contains city,
+    # street and ZIP shorthand; importing all of those as aliases could
+    # mistake incidental body/geographic mentions for report membership.
+    cover_aliases = {"united_memorial": ("UMMC",), "rochester_general": ("RGH",)}
     for key, value in FACILITIES.items():
         if key == "st_marys" and "unity_specialty" in FACILITIES:
             continue
         aliases = (FACILITIES["st_marys"]["name"],) if key == "unity_specialty" and "st_marys" in FACILITIES else ()
+        aliases = (*aliases, *cover_aliases.get(key, ()))
         result.append(Facility(key, value["name"], aliases))
     return available_sites(result, directory)
 
