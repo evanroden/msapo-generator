@@ -97,7 +97,16 @@ def test_actual_imperfect_pdf_pages_survive_word_and_pdf_generation(tmp_path, mo
         existing = tuple(b for b in draft.blocks if b.key not in {"improvements", "water_reports"})
         final = replace(draft, blocks=(*existing, *activity.values(), *chemistry.values()),
                         sources=(*draft.sources, vendor.source, water.source))
-        package = generate_report(final, acknowledged_fingerprint=final.fingerprint)
+        # Match the deployed guided exporter: source pages are resolved from
+        # the selected report's verified asset library, not an in-memory mock.
+        def asset_loader(reference):
+            return library.read_asset(profile.contract, profile.key, reference)
+
+        package = generate_report(
+            final,
+            acknowledged_fingerprint=final.fingerprint,
+            asset_loader=asset_loader,
+        )
         assert package.docx and package.pdf, package.pdf_error
         assert package.docx.startswith(b"PK") and package.pdf.startswith(b"%PDF-")
         refs = activity["improvements"].references + chemistry["water_reports"].references
