@@ -529,6 +529,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     recovery_available = active_work.enabled(browser_token)
     with st.expander("How to use this page"):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
+        st.caption("Selecting several sites combines them in one report. For separate reports, select each site individually.")
     with st.expander("Saving and recovery"):
         st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
         st.caption("Draft recovery uses a browser cookie and acknowledged server working copies; it may not recover when cookies are disabled or edits have not reached the app. Saving or generating a version shares it. Prepared by records attribution, not verified identity.")
