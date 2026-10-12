@@ -22,9 +22,7 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
 
     The caller provides this section's file workflow before the page editor.
     """
-    st.write("**System performance checks (MBCx)**")
-    st.caption("Use this section for results from ongoing checks of building equipment, such as an ENFRA Connect report. Add the results you received or a short update about their availability.")
-    st.write("**Update shown in the report**")
+    st.caption("Add monitoring results or a brief status update.")
     if status.source == "Omit" and (status.text.strip() or status.ai_paragraphs):
         st.info("This saved update is currently left out.")
         if st.button("Include this update", key=prefix + "_mbcx_include_" + status.fingerprint):
@@ -37,20 +35,22 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
             st.caption("Include this update to edit and check its wording with its supporting evidence.")
         else:
             st.caption("Edit and check this update in the wording and sources box above, where its supporting evidence is shown.")
-        st.text(status.text)
+        # The source-linked editor above is authoritative when included.
+        # Excluded legacy wording remains visible before the user chooses to
+        # include it, without creating another competing text editor.
+        if status.source == "Omit":
+            st.text(status.text)
     else:
         stamp = hashlib.sha256(repr(status.references).encode()).hexdigest()[:12]
         key = field(prefix + "_mbcx_status_" + stamp, status.text)
         choice_key = prefix + "_mbcx_sentence_chosen"
         current_text = st.session_state.get(key, status.text)
         if not current_text.strip():
-            st.caption("Write an update below, or choose a sentence only if it describes your sites. Nothing is assumed when this section is empty.")
+            st.caption("Choose a status only when it describes these sites.")
             for column, (label, sentence) in zip(st.columns(len(STATUS_STARTERS)), STATUS_STARTERS):
                 column.button(label, key=prefix + "_mbcx_starter_" + str(STATUS_STARTERS.index((label, sentence))),
                               on_click=_choose_sentence, args=(key, sentence, choice_key))
-        else:
-            st.caption("Keep this wording if it is still correct, or edit it here. Last month's report pages are stored separately from this update.")
-        text = st.text_area("Update to include in the report", key=key, height=120,
+        text = st.text_area("Status or findings", key=key, height=120,
                             help="This is the exact wording that will print when included. Leave it empty if your attached pages need no introduction.")
         chose_sentence = st.session_state.pop(choice_key, False)
         if text != status.text or chose_sentence:
@@ -65,10 +65,8 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
                 if st.button("Use this update", key=prefix + "_mbcx_update_review_" + status.fingerprint,
                              disabled=status.source == "Omit"):
                     status = replace(status, reviewed_fingerprint=status.fingerprint)
-    st.write("**Report pages for this month**")
-    st.caption("Add a PDF or Word report using the files area in this section. Include the relevant results; previously reviewed pages stay ready.")
-    if not pages.asset_hashes:
-        st.caption("No report pages added. A confirmed status update can be used on its own.")
+    # The single report uploader is already rendered above. A status-only
+    # MBCx report is valid and requires no second page count or upload prompt.
     if pages.text.strip():
         # A rare legacy conflict between included and omitted notes is left
         # untouched by normalization instead of silently reviving excluded text.
