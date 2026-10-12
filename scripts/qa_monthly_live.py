@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import secrets
 import time
+from datetime import datetime, timezone
 from zipfile import ZipFile
 
 import pymupdf
@@ -21,9 +22,15 @@ from playwright.sync_api import sync_playwright, expect, TimeoutError as Browser
 
 URL = os.environ.get("MONTHLY_QA_PUBLIC_URL", "https://msapo-generator.onrender.com").rstrip("/")
 EXPECTED = os.environ.get("MONTHLY_QA_EXPECTED_COMMIT", "").lower()
-ROOT = Path("test-artifacts/monthly-live-isolated")
+RUN_LABEL = os.environ.get("MONTHLY_QA_RUN_LABEL", "single")
+if not re.fullmatch(r"[a-z0-9-]{1,24}", RUN_LABEL):
+    raise ValueError("Invalid synthetic QA run label.")
+ROOT = Path("test-artifacts/monthly-live-isolated") / RUN_LABEL
 ROOT.mkdir(parents=True, exist_ok=True)
-EVIDENCE = {"expected_commit": EXPECTED, "public_url": URL, "checks": {}, "artifacts": {}, "synthetic_only": True}
+EVIDENCE = {"expected_commit": EXPECTED, "public_url": URL, "run_label": RUN_LABEL,
+            "checks": {}, "events": [], "artifacts": {}, "synthetic_only": True}
+STATE = re.compile(r"^QA fixture state: (empty|known-value prefill|original-source replay) · "
+                   r"generation ([0-9a-f]{12}) · revision (\\d+)$")
 
 
 def checkpoint(name: str, passed: bool, detail: str = "") -> None:
@@ -38,6 +45,113 @@ def screenshot(page, name):
     page.screenshot(path=str(p), full_page=False, timeout=30000)
     EVIDENCE["artifacts"][name + ".png"] = {"bytes": p.stat().st_size}
     return p
+
+
+def event(stage: str, **details) -> None:
+    """Only action stages, opaque IDs and revisions; never private payloads."""
+    EVIDENCE["events"].append({
+        "at_utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "stage": stage, **details,
+    })
+    print("QA EVENT " + stage + " " + json.dumps(details, sort_keys=True), flush=True)
+
+
+def state_diagnostics(page, action: str, error: Exception) -> None:
+    # Never write a full page dump or internal exception paths. Only already
+    # synthetic QA status captions and alert *kinds* may reach CI artifacts.
+    captions = page.get_by_text(re.compile(
+        r"^(QA fixture state:|QA fixture action|QA reset acknowledged:|Current fixture:)"
+    )).all_text_contents()
+    alerts = page.locator('[data-testid="stAlert"]').all_text_contents()
+    safe_alerts = [
+        "fixture install error" if "fixture could not be installed" in item.casefold()
+        else "reset error" if "reset" in item.casefold()
+        else "other alert"
+        for item in alerts[-5:]
+    ]
+    EVIDENCE.setdefault("diagnostics", []).append({
+        "action": action, "error_type": type(error).__name__,
+        "qa_status": captions[-6:], "alert_kinds": safe_alerts,
+    })
+    screenshot(page, "not-ready-" + action)
+
+
+def await_fixture_state(page, mode: str, *, previous_generation: str | None = None,
+                        timeout: int = 45000) -> dict:
+    """Wait for a committed, generation-bound state, not an always-visible button."""
+    if mode not in ("empty", "known-value prefill", "original-source replay"):
+        raise ValueError("Invalid fixture state.")
+    locator = page.get_by_text(re.compile(r"^QA fixture state: ")).first
+    different = ("(?!" + re.escape(previous_generation) + r"\\b)"
+                 if previous_generation else "")
+    revision = "0" if mode == "empty" else r"[1-9]\\d*"
+    pattern = re.compile(r"^QA fixture state: " + re.escape(mode) +
+                         r" · generation " + different +
+                         r"[0-9a-f]{12} · revision " + revision + r"$")
+    try:
+        expect(locator).to_have_text(pattern, timeout=timeout)
+        observed = locator.text_content() or ""
+        matched = STATE.fullmatch(observed)
+        if not matched or matched[1] != mode:
+            raise AssertionError("QA status did not match the requested fixture.")
+    except (AssertionError, BrowserTimeout) as exc:
+        state_diagnostics(page, mode.replace(" ", "-"), exc)
+        raise
+    return {"mode": matched[1], "generation": matched[2], "revision": int(matched[3])}
+
+
+def load_fixture(page, mode: str, *, previous_generation: str | None = None) -> dict:
+    label = "Load known-value report" if mode == "prefill" else "Replay synthetic source files"
+    expected = "known-value prefill" if mode == "prefill" else "original-source replay"
+    event("fixture_requested", mode=mode, generation=previous_generation)
+    page.get_by_role("button", name=label, exact=True).click()
+    state = await_fixture_state(page, expected)
+    receipt = page.get_by_text(re.compile(
+        r"^QA fixture action accepted and committed: " + mode + r" · action [0-9a-f]{12} · revision "
+    )).first
+    try:
+        receipt.wait_for(timeout=15000)
+        text = receipt.text_content() or ""
+        match = re.search(r"action ([0-9a-f]{12}) · revision (\\d+)", text)
+        if (not match or int(match[2]) != state["revision"]
+                or (previous_generation and state["generation"] != previous_generation)):
+            raise AssertionError("Fixture action was not committed in the expected QA generation.")
+    except (AssertionError, BrowserTimeout) as exc:
+        state_diagnostics(page, "fixture-receipt-" + mode, exc)
+        raise
+    event("fixture_committed", mode=mode, action=match[1],
+          generation=state["generation"], revision=state["revision"])
+    return state
+
+
+def reset_fixture(page, from_state: dict, stage: str) -> dict:
+    event("reset_requested", stage_id=stage, generation=from_state["generation"])
+    page.get_by_role("button", name="Reset this test only", exact=True).click()
+    # The Replay button existed before reset. Its visibility provided ZERO
+    # evidence that reset was acknowledged, causing an apparent lost click.
+    state = await_fixture_state(page, "empty", previous_generation=from_state["generation"],
+                                timeout=40000)
+    ack = page.get_by_text(re.compile(
+        r"^QA reset acknowledged: empty fixture · generation " + state["generation"] +
+        r" · action [0-9a-f]{12}"
+    )).first
+    try:
+        ack.wait_for(timeout=15000)
+        receipt = ack.text_content() or ""
+        match = re.search(r"action ([0-9a-f]{12})", receipt)
+        if not match:
+            raise AssertionError("Reset acknowledgment lacks a new action identifier.")
+        page.get_by_text("Choose known-value prefill or source replay", exact=False).wait_for(timeout=15000)
+        if page.get_by_text(re.compile(r"^Current fixture:")).count():
+            raise AssertionError("An old fixture remained mounted after acknowledged reset.")
+        if page.get_by_role("button", name="Download isolated QA DOCX", exact=True).count():
+            raise AssertionError("An old export remained available after reset.")
+    except (AssertionError, BrowserTimeout) as exc:
+        state_diagnostics(page, "reset-" + stage, exc)
+        raise
+    event("reset_acknowledged", stage_id=stage, action=match[1],
+          generation=state["generation"], revision=state["revision"])
+    return state
 
 
 def sha(raw: bytes) -> str:
@@ -86,7 +200,7 @@ def complete_report(page, mode):
     failure_detail = "; ".join(value.strip() for value in failed)
     screenshot(page, mode.replace(" ", "-") + "-comparison")
     checkpoint("fixture " + mode + " content/provenance",
-               bool(match and match[1] == match[2] and not failed),
+               bool(match and match[1] == match[2] == "18" and not failed),
                result + ("; unmet checks: " + failure_detail if failed else ""))
     page.get_by_role("button", name="Generate QA Word and PDF", exact=True).click()
     docx_button = page.get_by_role("button", name="Download isolated QA DOCX", exact=True)
@@ -147,8 +261,9 @@ def main():
             page.get_by_text("ISOLATED SYNTHETIC TESTING", exact=False).first.wait_for(timeout=30000)
             checkpoint("synthetic isolated interface visible", True)
             screenshot(page, "qa-entry")
-            page.get_by_role("button", name="Load known-value report", exact=True).click()
-            page.get_by_text("Current fixture: known-value prefill", exact=False).first.wait_for(timeout=45000)
+            start_state = await_fixture_state(page, "empty")
+            prefill_state = load_fixture(page, "prefill",
+                                         previous_generation=start_state["generation"])
             complete_report(page, "known-value prefill")
             # The visible Activity editor is a real Streamlit control.
             editor = page.get_by_role("textbox", name="Activity summary", exact=True).first
@@ -198,14 +313,14 @@ def main():
                        "expected " + expected_digest[:12] + "; observed " +
                        sha(observed.encode("utf-8"))[:12] + "; saved receipts " +
                        repr(page.get_by_text(re.compile(r"QA durable Activity SHA256:")).all_text_contents())[:160])
-            page.get_by_role("button", name="Reset this test only", exact=True).click()
-            page.get_by_role("button", name="Replay synthetic source files", exact=True).wait_for(timeout=40000)
-            page.get_by_role("button", name="Replay synthetic source files", exact=True).click()
-            page.get_by_text("Current fixture: original-source replay", exact=False).first.wait_for(timeout=45000)
+            empty_state = reset_fixture(page, prefill_state, "before-replay")
+            replay_state = load_fixture(page, "replay",
+                                        previous_generation=empty_state["generation"])
             complete_report(page, "original-source replay")
-            page.get_by_role("button", name="Reset this test only", exact=True).click()
-            page.get_by_text("Choose known-value prefill or source replay", exact=False).wait_for(timeout=40000)
-            checkpoint("isolated reset returns empty QA fixture", True)
+            final_state = reset_fixture(page, replay_state, "final")
+            checkpoint("isolated reset returns empty QA fixture",
+                       final_state["generation"] != replay_state["generation"] and
+                       final_state["revision"] == 0)
         finally:
             try:
                 screenshot(page, "end-state")
