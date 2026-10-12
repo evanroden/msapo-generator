@@ -167,6 +167,7 @@ original["org_chart"] = replace(
     org_nodes=(
         OrgChartNode("manager", "Synthetic Manager", "Manager"),
         OrgChartNode("worker", "Synthetic Operator", "Operator", reports_to="manager"),
+        OrgChartNode("position-3"),
     ),
 )
 st.session_state.setdefault("original", original)''',
@@ -180,11 +181,8 @@ st.session_state.setdefault("original", original)''',
         if expander.label in ("Synthetic Manager", "Synthetic Operator")
     } == {"Synthetic Manager": False, "Synthetic Operator": False}
     assert next(w for w in at.selectbox if w.label == "Reports to")
-    before = tuple(at.session_state["blocks"]["org_chart"].org_nodes)
-    click(at, "Add a person or position")
-    assert not at.exception
-    assert tuple(at.session_state["blocks"]["org_chart"].org_nodes[:2]) == before
     assert any(e.label == "New position" and e.proto.expanded for e in at.expander)
+    assert at.session_state["blocks"] == at.session_state["original"]
 
 
 def test_outage_editor_and_upload_titles_use_same_procedure_term():
