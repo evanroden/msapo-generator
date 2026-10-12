@@ -121,6 +121,24 @@ def test_known_value_qa_editor_prefills_synthetic_author_and_generates_both_form
 
 
 
+def test_accepted_generation_queue_survives_an_unrelated_editor_rerun(monkeypatch, tmp_path):
+    # A preview-triggered rerun may happen before the long report editor
+    # finishes rendering. The accepted click is durable in session state until
+    # the finalized report actually generates its two download packages.
+    app = visit(monkeypatch, tmp_path)
+    next(button for button in app.button if button.label == "Load known-value report").click().run()
+    assert not app.exception
+    app.session_state["monthly_qa_generate_queued"] = True
+    app.run()
+    assert not app.exception
+    assert not app.session_state.get("monthly_qa_generate_queued")
+    _, package = app.session_state["monthly_qa_package"]
+    assert package.docx.startswith(b"PK")
+    assert package.pdf and package.pdf.startswith(b"%PDF-")
+    assert {button.label for button in app.get("download_button")} >= {
+        "Download isolated QA DOCX", "Download isolated QA PDF"}
+
+
 def test_browser_reconnect_returns_to_same_qa_period_and_recovers_activity(monkeypatch, tmp_path):
     from app import monthly_report_active_work as active
     first = visit(monkeypatch, tmp_path)
