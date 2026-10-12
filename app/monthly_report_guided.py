@@ -489,49 +489,48 @@ def _keep_missing_sources(prefix, sources):
     return retain_unavailable(sources, missing)
 
 
+def _render_storage_maintenance():
+    """Administrative tools kept out of ordinary monthly authoring."""
+    if st.button("Check available storage", key="report_storage_check"):
+        from app.monthly_report_storage import storage_summary
+        try:
+            st.session_state["report_storage_summary"] = storage_summary()
+        except OSError:
+            st.session_state.pop("report_storage_summary", None)
+            st.warning("Storage could not be measured right now. Your saved reports were not changed.")
+    if storage := st.session_state.get("report_storage_summary"):
+        from app.monthly_report_storage import readable_bytes
+        st.write(f"Disk capacity: {readable_bytes(storage['total'])} · Available: {readable_bytes(storage['free'])} · Monthly report files: {'at least ' if not storage['complete'] else ''}{readable_bytes(storage['monthly'])}")
+        st.caption("Measured when you click Check available storage. The disk is also used by other app workflows. Originals are retained. Identical new assets and source files share one stored copy across all contracts and sites. Monthly history keeps references, so changing one site's selection does not change another report. Existing files can be consolidated below.")
+        if storage["free"] < max(512 * 1024 * 1024, storage["total"] * .05):
+            st.warning("Storage is running low. Keep space available before importing more large reports. This check does not delete anything.")
+    if st.button("Consolidate duplicate stored files", key="report_storage_consolidate"):
+        from app.monthly_report_objects import consolidate_existing
+        from app.monthly_report_storage import storage_summary, readable_bytes
+        try:
+            with st.spinner("Sharing identical stored files; originals and history remain available…"):
+                result = consolidate_existing()
+            st.session_state["report_storage_summary"] = storage_summary()
+            st.success(f"Consolidated {result['changed']} files; released {readable_bytes(result['reclaimed'])} from duplicate copies.")
+            if not result["complete"]:
+                st.info("This batch is complete. Run consolidation again to continue through the remaining files.")
+        except (ValueError, OSError):
+            st.warning("Consolidation stopped. Original paths and report history remain available; completed files can safely be reused when you retry.")
+
+
 def render_guided_workflow(browser_token, browser_timezone, field, move):
     last_contract, last_profile = remembered_report_preferences(browser_token)
     recovery_available = active_work.enabled(browser_token)
-    with st.expander("First time here? How to finish a monthly report"):
-        st.write("1. Choose your contract and the sites that belong in **one** report.\n2. Use a saved design, the general template, or a starting report.\n3. Scroll through the sections in report order and update them beside their previews. Every section stays in the report, including sections you leave blank.\n4. Review the whole report, then download DOCX and PDF.")
-        st.write("For vendor and chemical reports, check each page preview, then choose **Include page and continue** or **Leave page out and continue**. The next page needing review opens for you. Prices, legal-only pages and blank/signature-only pages do not belong in the client report.")
-        st.caption("Edit sections in any order. While this browser is recognized, changes are kept automatically after each edit and can recover from a refresh. Review and download is at the bottom.")
-    with st.expander("What will be remembered?"):
-        st.write("**For these sites:** saved designs, approved logos, charts, contacts and completed/saved report versions are shared. Unfinished browser work stays separate until a version is saved.")
-        st.write("**On this browser:** unfinished changes are kept separately from completed report versions when the browser cookie is available. Report history and contract-wide information are not updated by those working copies. On a shared computer, you can discard the browser's unfinished work.")
-        st.write("**Next month:** we reuse the latest saved earlier report for these exact sites. Layout and site information carry forward; monthly activity, vendor/chemical attachments and photos start fresh. Open issues and proposals remain follow-ups to review.")
-        st.caption("Your name provides attribution, not authentication. Completed report versions are saved when generated or through the optional saved-version controls. Automatic recovery may not work with cookies disabled or edits not yet sent to the app.")
-        if st.button("Check available storage", key="report_storage_check"):
-            from app.monthly_report_storage import storage_summary
-            try:
-                st.session_state["report_storage_summary"] = storage_summary()
-            except OSError:
-                st.session_state.pop("report_storage_summary", None)
-                st.warning("Storage could not be measured right now. Your saved reports were not changed.")
-        if storage := st.session_state.get("report_storage_summary"):
-            from app.monthly_report_storage import readable_bytes
-            st.write(f"Disk capacity: {readable_bytes(storage['total'])} · Available: {readable_bytes(storage['free'])} · Monthly report files: {'at least ' if not storage['complete'] else ''}{readable_bytes(storage['monthly'])}")
-            st.caption("Measured when you click Check available storage. The disk is also used by other app workflows. Originals are retained. Identical new assets and source files share one stored copy across all contracts and sites. Monthly history keeps references, so changing one site's selection does not change another report. Existing files can be consolidated below.")
-            if storage["free"] < max(512 * 1024 * 1024, storage["total"] * .05):
-                st.warning("Storage is running low. Keep space available before importing more large reports. This check does not delete anything.")
-        if st.button("Consolidate duplicate stored files", key="report_storage_consolidate"):
-            from app.monthly_report_objects import consolidate_existing
-            from app.monthly_report_storage import storage_summary, readable_bytes
-            try:
-                with st.spinner("Sharing identical stored files; originals and history remain available…"):
-                    result = consolidate_existing()
-                st.session_state["report_storage_summary"] = storage_summary()
-                st.success(f"Consolidated {result['changed']} files; released {readable_bytes(result['reclaimed'])} from duplicate copies.")
-                if not result["complete"]:
-                    st.info("This batch is complete. Run consolidation again to continue through the remaining files.")
-            except (ValueError, OSError):
-                st.warning("Consolidation stopped. Original paths and report history remain available; completed files can safely be reused when you retry.")
+    with st.expander("How to use this page"):
+        st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
+    with st.expander("Saving and recovery"):
+        st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
+        st.caption("Draft recovery uses a browser cookie and acknowledged server working copies; it may not recover when cookies are disabled or edits have not reached the app. Saving or generating a version shares it. Prepared by records attribution, not verified identity.")
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
     contract = choose_contract(last_contract, field)
     if not contract:
         return
     period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
-    st.caption("Suggested month: previous month on days 1–10; current month thereafter. Change it whenever needed.")
     profiles = library.list_profiles(contract)
     completed_setup = st.session_state.pop("report_setup_done", None)
     remembered = last_profile if last_contract == contract else ""
@@ -645,13 +644,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     if removed_prices:
         st.info("Price columns were left out of this working report: " + ", ".join(removed_prices) + ". The saved original remains available. Check the remaining wording and images for prices before download.")
     if snapshot:
-        st.info(f"Continue your saved {period.label} report for these sites. Your saved work is here; you do not need to upload the old report again.")
+        st.info(f"{period.label} saved report loaded.")
     elif prior_draft:
-        st.info(f"Your {period.label} starting point is the saved {prior_draft.period.label} report for these exact sites. Add this month’s work and update any site information that changed.")
+        st.info(f"{period.label} started from the saved {prior_draft.period.label} report for these sites.")
     else:
-        st.info("Your design for these sites is saved. Update this month’s work and any site information that changed, then review and download. Every section stays in the report.")
-    prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by))
-    st.caption("Enter your own name. This browser can reuse it while you work; it records attribution, not verified identity.")
+        st.info("Site details are ready. Update this month’s work below.")
+    prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by),
+                             help="Shown on this report; not a sign-in.")
     draft = replace(draft, prepared_by=prepared)
     if prepared.strip() and not st.session_state.get(prefix + "_directory_defaults_attempted"):
         from app.monthly_report_directory import apply_defaults
@@ -709,7 +708,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     source for source in missing if source.id != selected_missing.id)
                 st.session_state[draft_key] = draft
                 st.rerun()
-    st.caption("Work down the report in order. Existing information stays in place; update only what changed.")
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
@@ -748,6 +746,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with st.sidebar.expander("Master design administration — all contracts", expanded=False):
             from app.monthly_report_designs_ui import render_design_settings
             render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
+        with st.sidebar.expander("Storage maintenance — all contracts", expanded=False):
+            _render_storage_maintenance()
     with preview_column:
         with st.container(key="monthly_cover_preview_sticky"):
             from app.monthly_report_section_ui import render_pending_cover_selection
