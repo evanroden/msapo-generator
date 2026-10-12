@@ -141,5 +141,7 @@ def test_known_value_activity_input_is_hydrated_and_journaled_before_live_edit()
     assert sha256(initial.encode()).hexdigest().startswith("212afbc65093")
     assert sha256(("\\nSynthetic owner edit retained through a browser refresh.").encode()).hexdigest().startswith("c0803dd4bbb5")
     assert 'expect(editor).to_have_value(expected_seed, timeout=60000)' in script
-    assert 'page.get_by_text(seeded, exact=True).wait_for(timeout=60000)' in script
+    assert 'checkpoint("initial Activity editor hydrated", True)' in script
+    # A saved fixture snapshot need not have an unfinished-work journal.
+    assert 'page.get_by_text(seeded, exact=True).wait_for' not in script
     assert script.index("expect(editor).to_have_value(expected_seed") < script.index("original = editor.input_value()")
