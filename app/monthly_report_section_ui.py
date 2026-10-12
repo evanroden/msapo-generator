@@ -189,6 +189,10 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         else:
             from app.monthly_report_word_pages_ui import chart_page_review
             if chart_page_review(section, path, period, p, field, old, plan, blocking):
+                # A deliberate complete-page selection replaces automatic
+                # diagram capture; never combine two full-page copies.
+                plan["auto_native_diagrams"] = False
+                plan["captured_word_sections"] = ()
                 if action == actions[1]:
                     _replacement_pictures(section, p, plan)
                 elif plan["new_assets"]:
@@ -593,7 +597,14 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                             plans[section.key] = plan
                             st.caption("The replacement is selected for this section and "
                                        "will be saved only when you continue.")
-    questions = [section for section in sections if plans.get(section.key, {}).get("questions")]
+    # A recoverable diagram has its own exact-section retry/upload directly
+    # above. Do not show a second generic Keep/Edit/Leave-out radio for that
+    # same unresolved object.
+    questions = [
+        section for section in sections
+        if any(not message.startswith("A Word diagram or image")
+               for message in plans.get(section.key, {}).get("questions", ()))
+    ]
     if questions:
         st.subheader("A few details need a check")
         for index, section in enumerate(questions):
