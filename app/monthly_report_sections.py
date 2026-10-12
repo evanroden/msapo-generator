@@ -139,7 +139,10 @@ def build_section_import(path, inspection, plans):
                 if (slot not in allowed or record.get("slot") != slot or record.get("sha256") != digest
                         or not (record.get("reviewed") or source_proved)
                         or record.get("blank") or placeholder_matches(text)
-                        or kind in ("pricing", "legal", "signature", "blank", "review")):
+                        or kind in ("pricing", "legal", "signature", "blank")
+                        or (auto and record.get("visual_review_required") is not (kind == "review"))
+                        or (kind == "review" and not (
+                            auto and source_proved and record.get("visual_review_required") is True))):
                     raise ValueError("A diagram page was not safely preserved; check its section-specific recovery.")
                 ref = digest + ".png"
                 if ref not in assets:
