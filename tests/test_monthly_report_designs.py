@@ -201,7 +201,7 @@ def test_fresh_report_ui_automatically_uses_master_and_keeps_it_when_saved(tmp_p
     assert not app.exception
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Current site work.").run()
-    next(w for w in app.button if w.label == "Save progress").click().run()
+    next(w for w in app.button if w.label == "Save shared version").click().run()
     assert not app.exception
     profile = library.list_profiles(RRH_CONTRACT)[0]
     saved = library.load_snapshot(RRH_CONTRACT, profile.key, ReportPeriod(2026, 9))
