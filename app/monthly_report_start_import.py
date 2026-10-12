@@ -162,12 +162,20 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
 def cover_photo_candidates(items):
     """Only cover-page photographs, not logos, dividers or package leftovers."""
     from app.monthly_report_sections import small_artwork
-    return tuple(item for item in items
-                 if item.kind == "image" and item.part == "word/document.xml"
-                 and item.section in ("", "cover")
-                 and item.suggested_slot not in ("brand_logo", "client_logo")
-                 and not item.suggested_slot.startswith("divider_")
-                 and not small_artwork(item))
+    possible = tuple(item for item in items
+                     if item.kind == "image" and item.part == "word/document.xml"
+                     and item.section in ("", "cover")
+                     and item.suggested_slot not in ("brand_logo", "client_logo")
+                     and not item.suggested_slot.startswith("divider_")
+                     and not small_artwork(item))
+    if not possible:
+        return ()
+    # A Word cover can be followed by a long Contents page whose pictures
+    # still get classified as 'cover' by the text inspector. The first actual
+    # cover Word section is authoritative for choosing a photograph; later
+    # Contents/other section artwork is not another cover-photo option.
+    earliest = min(item.word_section for item in possible)
+    return tuple(item for item in possible if item.word_section == earliest)
 
 
 def suggested_cover_photo(items):
