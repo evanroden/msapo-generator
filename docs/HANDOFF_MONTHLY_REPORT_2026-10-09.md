@@ -1,5 +1,47 @@
 # Monthly report builder: next-LLM handoff
 
+## October 12, 2026 — current Phase 1 completion update
+
+The **single authoritative detailed completion/evidence ledger** is
+[MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md),
+including an October 12 C01–C08 reconciliation and per-build 113-scenario
+coverage notes. This October 9 handoff is historical and should no longer be
+used to infer that #137 is a draft, native tables/Copilot are absent, or no
+isolated live acceptance run has completed.
+
+- Current merged code after #161: `bad7cbcd34fe210ae41b731e9668516a68eb7b21`.
+  #157 reset/replay acknowledgments, #158 Compare-action receipt, #160
+  Activity hydration, #161 source-native hidden table metadata privacy fix.
+- Last exact **two independent first-attempt complete** live passes are on
+  `bae08f31bf59f51ea8c8094b3295d3fa21229aad`, [Tests 38248301457](https://github.com/evanroden/msapo-generator/actions/runs/38248301457) and
+  [live 38249005588](https://github.com/evanroden/msapo-generator/actions/runs/38249005588), artifact
+  [11747786107](https://github.com/evanroden/msapo-generator/actions/runs/38249005588/artifacts/11747786107):
+  18/18 known prefill + 18/18 real synthetic CSV/TXT replay on each pass,
+  durable Activity reload, new-generation resets with receipts, four
+  actual Word/PDF transfers per pass and final empty reset. #161 had a
+  separate passing PR-head test run [38253320380](https://github.com/evanroden/msapo-generator/actions/runs/38253320380);
+  do **not** transfer `bae08f31` live proof to `bad7cbcd` without retesting.
+- Exact unchanged **private** authentic Unity/USH August original hashes:
+  Word `d8705610e4da6f335c95159b42966deffb6e8369861a2c5a6e873c3267cea1ea`;
+  Adobe PDF `2b204491f9bd9b21452f2300b9844e8993b97e9cf69d1deb4b94c3a1a09c789b`.
+  Authored Adobe 24 PDF **40 pages**, untouched Word rendered by
+  LibreOffice 25.2.3.2 **43 pages**. LO shows a visibly clipped zero in
+  divider 10 and introduces an extra mostly blank Activity page. This is an
+  observed renderer difference, **not** an acceptance of app-generated
+  authentic native Word or PDF. The live 26-page synthetic PDFs use
+  LibreOffice 24.2 and different content.
+- Pending Phase 1 closure is authentic application-generated Word/PDF parity
+  with the original pinned master, wider image/metafile/metadata/privacy and
+  concurrency/source/training/contact edges and a concise owner check.
+  Do not publish the real sources in GitHub or use real client records for QA.
+  Phase 2 adaptive work is independently authorized and is not held by this
+  pending Phase 1 acceptance; do not redesign it in this fix stream.
+- The next owner functional batch when the **tested exact served SHA** is
+  available is: (1) isolated prefill 18/18, (2) edit Activity and verify
+  durable reload plus DOCX/PDF download, (3) acknowledge reset and load
+  source replay 18/18 and finally reset to empty. Keep authentic page-level
+  review a separate, small task with exact pages chosen from generated output.
+
 Read the newer [October 9 usability audit ledger](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md)
 alongside this handoff. Its automatic active-work and standing-data direction
 supersedes the routine manual Save instructions below; it does not imply those
