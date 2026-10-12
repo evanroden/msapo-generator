@@ -366,6 +366,16 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 st.warning("This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved.")
     else:
         st.session_state.pop(prefix + "_failed_digest", None)
+        previous = st.session_state.get(prefix + "_stage")
+        if previous and previous[0]:
+            # Removing the uploader's file cancels its unsaved review too.
+            # An explicitly opened saved original has no temporary handle and
+            # remains available through its independent action below.
+            previous[0].cleanup()
+            st.session_state.pop(prefix + "_stage", None)
+    if upload is not None and st.session_state.get(prefix + "_failed_digest") == digest:
+        st.info("The newly selected file has not been analyzed. Retry or choose another file before continuing.")
+        return True
     if state:
         original = library.imported_original(contract, state.profile.key)
         if original and st.button("Open the saved original for section review", key=prefix + "_original", disabled=not prepared.strip()):
