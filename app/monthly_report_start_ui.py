@@ -117,8 +117,8 @@ def site_choices(contract, profiles):
 
 
 def select_sites(contract, profiles, remembered, field, completed=None):
-    st.subheader("Which sites go in this one report?")
-    st.caption("Check one site for an individual report, or several sites to combine them in one report. For separate reports, complete this process once for each report.")
+    st.subheader("Sites in this report")
+    st.caption("Select one or more sites.")
     options = site_choices(contract, profiles)
     prefix = "report_sites_" + _key(contract)
     if completed:
@@ -143,7 +143,7 @@ def select_sites(contract, profiles, remembered, field, completed=None):
                     return None, None
     facilities = tuple(selected)
     if not facilities:
-        st.info("Check at least one site to continue.")
+        st.info("Select at least one site to continue.")
         return None, None
     st.caption(f"Sites selected ({len(facilities)}): " + "; ".join(f.title for f in facilities))
     # Validate before creating per-site widgets. Duplicate keys previously
