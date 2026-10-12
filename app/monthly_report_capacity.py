@@ -143,11 +143,11 @@ def _two_level_xlsx_header(columns, rows, site_column, suffix):
     continuation = rows[0]
     labeled = [value.strip() for index, value in enumerate(continuation)
                if index != site_column and value.strip()]
-    if (len(labeled) < 2 or any(re.search(r"\\d", value) for value in labeled)
+    if (len(labeled) < 2 or any(re.search(r"\d", value) for value in labeled)
             or not all(re.match(
-                r"(?i)^(?:required|available|capacity|units?|cooling|heating|chilled|steam|load|demand)\\b",
+                r"(?i)^(?:required|available|capacity|units?|cooling|heating|chilled|steam|load|demand)\b",
                 value) for value in labeled)
-            or not any(re.match(r"(?i)^(?:required|available|capacity|load|demand)\\b", value)
+            or not any(re.match(r"(?i)^(?:required|available|capacity|load|demand)\b", value)
                        for value in labeled)):
         return columns, rows
     result, group = [], ""
