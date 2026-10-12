@@ -120,12 +120,18 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         else:
             prior_generation = testing.generation()
             try:
-                testing.reset(live_storage_root)
+                # First release only this QA browser's cached pages; no report
+                # data has been destroyed if that separate cleanup fails.
+                # The old sequence removed storage before touching cache and
+                # could claim the fixture was "kept" after rmtree had started.
                 from app.monthly_report_preview_store import STORE
                 STORE.reset_scope()
-            except (ValueError, OSError) as exc:
+                testing.reset(live_storage_root)
+            except (ValueError, OSError):
                 st.session_state.pop("monthly_qa_reset_pending", None)
-                st.error("Test reset was stopped; the current fixture was kept: " + str(exc))
+                st.error("Isolated reset could not be confirmed. Reload this test "
+                         "to inspect its current state before retrying; no live "
+                         "report records were accessed.")
             else:
                 _clear_report_widgets()
                 # The parent entry point clears monthly_qa_* across generation
