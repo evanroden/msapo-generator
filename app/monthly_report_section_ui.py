@@ -457,7 +457,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         from app.monthly_report_picture_cards import review_cover_gallery
         candidates = cover_photo_candidates(cover_section.items)
         if candidates:
-            with st.expander("Cover photograph", expanded=len(candidates) > 1,
+            with st.expander("Cover photograph", expanded=True,
                              key=p + "_cover_gallery_expander", on_change="rerun") as gallery:
                 if gallery.open:
                     existing = plans["cover"]
