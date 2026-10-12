@@ -114,7 +114,7 @@ def test_saved_vendor_cards_start_collapsed_without_changing_report_fingerprint(
     app = vendor_app(rows)
     assert not app.exception
     card = next(e for e in app.expander if e.label == "Example Contact · HVAC · Synthetic Site")
-    assert card.expanded is False
+    assert card.proto.expanded is False
     assert any("Vendor contacts in this report" in caption.value for caption in app.caption)
     before = vendor_block(app)
     app.run()
@@ -128,6 +128,6 @@ def test_new_blank_vendor_contact_opens_and_does_not_invent_agreement_status():
     app = vendor_app((("", "", "", "", "", ""),))
     assert not app.exception
     card = next(e for e in app.expander if e.label == "Contact 1")
-    assert card.expanded is True
+    assert card.proto.expanded is True
     assert next(w for w in app.text_input if w.label == "Agreement status (MSA)").value == ""
     assert vendor_block(app).rows[0][-1] == ""
