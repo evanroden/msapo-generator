@@ -136,6 +136,16 @@ def reset(base: Path) -> None:
             return
         raise exc
 
-    shutil.rmtree(target, onexc=disappeared_child)
+    try:
+        shutil.rmtree(target, onexc=disappeared_child)
+    except FileNotFoundError:
+        # One post-render cleanup can finish deleting the verified namespace
+        # between rmtree's last traversal and its final rmdir. This exception
+        # does not prove that the reset failed or succeeded. Accept only a
+        # completely absent root, already checked for owner/generation and
+        # symlink safety above. A surviving root, missing initial marker,
+        # permission failure or another error remains an explicit failure.
+        if target.exists() or target.is_symlink():
+            raise
     if target.exists() or target.is_symlink():
         raise OSError("The isolated namespace could not be completely reset.")
