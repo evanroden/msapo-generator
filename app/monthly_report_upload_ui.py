@@ -323,6 +323,25 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
     for notice in source.notices:
         st.warning(notice)
     undecided = [n for n in _undecided_pages(content, source) if (source.id, n) not in existing]
+    if auto_include:
+        # Once all this source's decisions are complete, an included PDF is
+        # already usable. Reopen full page review only when deliberately asked,
+        # or immediately when a changed/new source page needs attention.
+        included_here = tuple(n for n in image_pages if (source.id, n) in existing)
+        expanded_key = p + "_edit_page_reviews"
+        if included_here and not undecided:
+            if not st.session_state.get(expanded_key, False):
+                if st.button(
+                    "Edit pages", key=p + "_open_page_reviews",
+                    help="Review the source pages or change excluded selections. Remove already included pages in the report pictures below.",
+                ):
+                    st.session_state[expanded_key] = True
+                    st.rerun()
+                st.session_state[p + "_canonical_view"] = source
+                return replace(content, source=source)
+            if st.button("Done reviewing pages", key=p + "_close_page_reviews"):
+                st.session_state[expanded_key] = False
+                st.rerun()
     page_key = field(p + "_page", undecided[0] if undecided else image_pages[0])
     pending = st.session_state.pop(p + "_next_page", None)
     if pending in image_pages:
@@ -417,8 +436,11 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
-    st.markdown("**" + title + "**")
-    st.caption("Choose a file, check its useful pages, then add them here. Existing report content is kept.")
+    if destination != "water_reports":
+        st.markdown("**" + title + "**")
+        st.caption("Choose a file, check its useful pages, then add them here. Existing report content is kept.")
+    # Water uses its one section-level instruction and uploader label. Its
+    # reviewed pages now attach automatically, not through another Add button.
     upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                              accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
     picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
