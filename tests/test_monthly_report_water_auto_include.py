@@ -1,7 +1,5 @@
 """Water pages attach after the final deliberate review, never merely on rerender."""
 
-from dataclasses import replace
-
 import fitz
 
 from app import monthly_report_sources as sources
@@ -85,7 +83,7 @@ def test_changed_caption_requires_new_water_review_before_auto_add(monkeypatch, 
     pages.set_value(2).run()
     button(app, "Leave page out and continue").click().run()
     assert "water_reports" not in app.session_state["test_blocks"]
-    assert app.session_state.get("test_apply_count", 0) == 0
+    assert app.session_state.filtered_state.get("test_apply_count", 0) == 0
 
     pages = next(w for w in app.selectbox if w.label == "Page to review")
     pages.set_value(1).run()
