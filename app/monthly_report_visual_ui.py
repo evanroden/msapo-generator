@@ -383,9 +383,10 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
 def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     block = preserve_asset_reviews(block, block)
     p = prefix + "_photos_" + block.key
-    with st.expander("Add progress photos", expanded=not block.asset_hashes):
+    with st.expander("Photos (optional)", expanded=not block.asset_hashes):
         uploads = st.file_uploader(
             "Progress photos",
+            label_visibility="collapsed",
             type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
             accept_multiple_files=True,
             max_upload_size=30,
@@ -429,7 +430,6 @@ def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
                 st.error(str(exc) if isinstance(exc, ValueError) else
                          "One of these photos could not be read. Choose another file; your existing photos and captions are unchanged.")
     if not block.asset_hashes:
-        st.info("Add photos when you have them. You can work on another section first.")
         return block
     editing_key = p + "_editing"
     pending_indexes = pending_asset_indexes(block)
