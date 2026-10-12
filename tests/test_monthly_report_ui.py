@@ -58,7 +58,7 @@ def test_empty_contract_selects_sites_and_starting_point_without_demo_or_day_sel
     assert not any(w.label == "Site / report" for w in app.selectbox)
     next(w for w in app.checkbox if w.key.startswith("report_sites_")).check().run()
     assert any(w.label == "Starting report" for w in app.get("file_uploader"))
-    assert next(b for b in app.button if b.label == "Analyze report").disabled
+    assert not any(b.label == "Analyze report" for b in app.button)
 
 
 def test_guided_text_survives_steps_and_workflow_switches(monkeypatch, tmp_path):
@@ -188,7 +188,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
     next(w for w in app.text_input if w.label == "Name for this group (optional)").set_value("Synthetic Region").run()
     next(w for w in app.checkbox if w.label == "This is a regional report").check().run()
     next(w for w in app.text_input if w.label == "Other names for Synthetic North").set_value("Synthetic Legacy North").run()
-    next(b for b in app.button if b.label == "Analyze report").click().run()
+    assert not any(b.label == "Analyze report" for b in app.button)
     assert not app.exception
     assert not library.list_profiles(RRH_CONTRACT)
     assert not any(w.label == "What are you preparing?" for w in app.radio)
@@ -204,7 +204,7 @@ def test_upload_setup_reviews_sections_and_preserves_partial_work(monkeypatch, t
             continue
         app.session_state[prefix + "_section_" + section.key + "_open"] = True
         app.run()
-        next(w for w in app.checkbox if w.key.startswith(prefix + "_section_" + section.key + "_ready_")).check().run()
+        assert not any(w.key.startswith(prefix + "_section_" + section.key + "_ready_") for w in app.checkbox)
         assert not app.exception
         assert app.session_state[prefix + "_section_plans"][section.key]["approved"], (section.key, [w.value for w in app.error])
         app.session_state[prefix + "_section_" + section.key + "_open"] = False
