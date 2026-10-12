@@ -278,17 +278,34 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     st.subheader("Start with any report from this contract")
     st.caption("Use an earlier month, another site, or a report already underway. We’ll identify its sites and dates and bring across the relevant content.")
     upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128, key=prefix + "_upload")
-    if st.button("Analyze report", key=prefix + "_analyze", disabled=upload is None, type="primary"):
-        try:
-            with st.spinner("Finding report sections and pictures…"):
-                staged = _stage(upload)
-            old = st.session_state.get(prefix + "_stage")
-            st.session_state[prefix + "_stage"] = staged
-            if old and old[0]:
-                old[0].cleanup()
-            st.rerun()
-        except (ValueError, OSError) as exc:
-            st.error(str(exc))
+    # File selection is the Analyze action. The exact content hash, never
+    # its reusable filename or a widget rerun, determines whether a new
+    # source must be inspected. An error leaves the existing staged draft
+    # intact and presents one explicit Retry, not repeated heavy parsing.
+    if upload is not None:
+        digest = hashlib.sha256(upload.getvalue()).hexdigest()
+        staged = st.session_state.get(prefix + "_stage")
+        loaded_hash = staged[2].sha256 if staged else ""
+        failed_hash = st.session_state.get(prefix + "_failed_digest")
+        retry = False
+        if failed_hash == digest:
+            st.warning("This starting report could not be analyzed. The previous draft remains unchanged.")
+            retry = st.button("Retry report analysis", key=prefix + "_retry_analysis")
+        if digest != loaded_hash and (digest != failed_hash or retry):
+            try:
+                with st.spinner("Reading sections and cover pictures…"):
+                    incoming = _stage(upload)
+                previous = st.session_state.get(prefix + "_stage")
+                st.session_state[prefix + "_stage"] = incoming
+                st.session_state.pop(prefix + "_failed_digest", None)
+                if previous and previous[0]:
+                    previous[0].cleanup()
+                st.rerun()
+            except (ValueError, OSError) as exc:
+                st.session_state[prefix + "_failed_digest"] = digest
+                st.warning("This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved.")
+    else:
+        st.session_state.pop(prefix + "_failed_digest", None)
     if state:
         original = library.imported_original(contract, state.profile.key)
         if original and st.button("Open the saved original for section review", key=prefix + "_original", disabled=not prepared.strip()):
@@ -310,7 +327,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         actor = st.text_input("Your name", key=field(p + "_actor", prepared))
         missing = [] if actor.strip() else ["Enter your name."]
     else:
-        candidate, actor, missing = _identity(contract, prepared, p, field, state)
+        candidate, actor, missing = _identity(contract, prepared, p, field, state, inspection)
     if not candidate:
         for message in missing:
             st.info(message)
@@ -325,9 +342,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     analysis = analyze_starting_report(inspection, candidate, period, known_sites.values(), known_profiles=profiles)
     if analysis.site_relation == "unknown":
         st.info("The starting report does not clearly name its sites. Confirm them once so another site's contacts and work are not copied into this report.")
-        source_keys = st.multiselect("Sites shown in the starting report", list(known_sites),
-                                    format_func=lambda key: known_sites[key].title,
-                                    key=field(p + "_source_sites", []))
+        from app.monthly_report_start_import import source_sites
+        inferred_source = {site.key for site in source_sites(inspection, known_sites.values())}
+        source_keys = [
+            site.key for site in known_sites.values()
+            if st.checkbox(site.title, key=field(p + "_source_site_" + site.key,
+                                                site.key in inferred_source))
+        ]
         with st.expander("A source site is not listed"):
             source_names = st.text_input("Source site name", key=field(p + "_source_site_name", ""),
                                          help="For several source sites, separate the names with semicolons.")
