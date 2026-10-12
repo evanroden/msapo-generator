@@ -150,7 +150,7 @@ def test_explicit_directory_save_updates_working_preview_and_saved_report_only(m
     assert any(key == "organization" and contact_block in shown.blocks for key, shown in observed)
     assert library.load_snapshot(profile.contract, profile.key, draft.period) == snapshot
     assert library.load_snapshot(other_profile.contract, other_profile.key, draft.period) == other_snapshot
-    next(b for b in app.button if b.label == "Save progress").click().run()
+    next(b for b in app.button if b.label == "Save shared version").click().run()
     assert not app.exception
     saved = library.load_snapshot(profile.contract, profile.key, draft.period)
     assert contact_block in saved.draft.blocks
