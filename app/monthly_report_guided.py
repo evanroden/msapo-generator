@@ -672,7 +672,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         # Discard only this editor's obsolete widget delta before the next draw.
         _resume_contacts(refreshed, prefix)
     from app.monthly_report_directory_ui import render_selected_directory
-    updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix)
+    # Shared contact maintenance belongs to the administration surface, not
+    # a competing report editor above Organizational Chart. Keep the same
+    # explicit shared-save scope, contact widget identity and return value.
+    with st.sidebar:
+        updated_contacts = render_selected_directory(contract, profile.facilities, prepared, prefix)
     if updated_contacts is not None:
         from app.monthly_report_directory import apply_contacts
         from app.monthly_report_directory_ui import _resume_contacts
