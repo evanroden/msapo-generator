@@ -28,6 +28,14 @@ def test_replay_callback_keeps_first_accepted_action_during_rerenders(monkeypatc
     ui._queue_fixture_request("prefill")
     assert state["monthly_qa_fixture_pending"] == accepted
 
+    # Compare also keeps one action through rerenders; a later reset must
+    # invalidate its receipt together with the current fixture.
+    ui._queue_compare_request()
+    comparison = dict(state["monthly_qa_compare_pending"])
+    assert len(comparison["id"]) == 32
+    ui._queue_compare_request()
+    assert state["monthly_qa_compare_pending"] == comparison
+
     # A new user reset cancels the old uncommitted fixture request.
     state["_monthly_qa_reset_receipt"] = {"id": "old"}
     ui._queue_reset_request()
@@ -112,5 +120,6 @@ def test_browser_replay_waits_for_durable_state_not_a_static_button():
     assert 'await_fixture_state(page, "empty", previous_generation=' in source
     assert 'QA reset acknowledged: empty fixture' in source
     assert 'QA fixture action accepted and committed:' in source
+    assert 'QA comparison completed:' in source
     assert 'page.get_by_role("button", name="Replay synthetic source files", exact=True).wait_for' not in source
     assert 'reset_fixture(page, replay_state, "final")' in source
