@@ -107,3 +107,48 @@ def test_image_upload_reads_automatically_then_reviews_all_sites(profile, monkey
     next(b for b in app.button if b.label == "Apply reviewed capacity for 2 sites").click().run()
     assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
+
+
+def test_saved_contract_capacity_uses_secondary_edit_control_and_preserves_version(profile, monkeypatch):
+    app = app_for(monkeypatch, profile)
+    assert not app.exception
+    saved = capacity.load_capacity(profile.contract)
+    assert saved and saved.revision == 1
+    assert not any(item.label == "Edit or replace shared capacity" for item in app.expander)
+
+    app.run()
+    assert not app.exception
+    assert any(item.label == "Edit or replace shared capacity" for item in app.expander)
+    assert any("Saved capacity for 2 contract sites" in item.value
+               for item in app.get("caption"))
+    assert any("Previously saved report versions stay unchanged" in item.value
+               for item in app.get("caption"))
+    assert next(item for item in app.toggle
+                if item.label == "Update existing capacity values").value is False
+    assert capacity.load_capacity(profile.contract) == saved
+
+    next(item for item in app.toggle
+         if item.label == "Update existing capacity values").set_value(True).run()
+    assert not app.exception
+    assert capacity.load_capacity(profile.contract) == saved
+    assert next(item for item in app.toggle
+                if item.label == "Update existing capacity values").value is True
+
+
+def test_first_time_capacity_upload_stays_primary_and_requires_no_optional_maintenance(
+        profile, monkeypatch):
+    monkeypatch.setattr(ui.st, "file_uploader", lambda *args, **kwargs: None)
+    app = AppTest.from_string(APP)
+    app.session_state["test_draft"] = draft(profile)
+    app.run()
+    assert not app.exception
+    assert capacity.load_capacity(profile.contract) is None
+    assert not any(item.label == "Edit or replace shared capacity" for item in app.expander)
+    assert any("Add capacity data once for these sites" in item.value
+               for item in app.get("caption"))
+    # No empty upload should alter the report or create a shared site table.
+    original = app.session_state["test_block"].fingerprint
+    app.run()
+    assert not app.exception
+    assert app.session_state["test_block"].fingerprint == original
+    assert capacity.load_capacity(profile.contract) is None
