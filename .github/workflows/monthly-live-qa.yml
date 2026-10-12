@@ -8,30 +8,53 @@ on:
 permissions:
   contents: read
 
+# Do not run two expensive Chromium/converter sessions against a 512 MiB
+# public service at once. Never cancel a QA job halfway through reset.
+concurrency:
+  group: monthly-isolated-live-production
+  cancel-in-progress: false
+
 jobs:
   synthetic-live:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'
+    # workflow_run's github.sha is the default-branch HEAD when dispatched.
+    # A Tests run for an older main must not race the newly deployed version.
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_sha == github.sha
     runs-on: ubuntu-24.04
     timeout-minutes: 32
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Confirm original tested SHA still equals latest main
+        id: still-current
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          current="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$current" = "$TESTED_SHA" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping stale tested main $TESTED_SHA because main is $current"
+          fi
       - uses: actions/setup-python@v5
+        if: steps.still-current.outputs.run == 'true'
         with:
           python-version: '3.12'
       - name: Install bounded browser and PDF analyzer
+        if: steps.still-current.outputs.run == 'true'
         run: |
           python -m pip install --disable-pip-version-check playwright==1.58.0 pymupdf==1.28.2
           python -m playwright install --with-deps chromium
       - name: Wait for served build; use and reset isolated synthetic report
+        if: steps.still-current.outputs.run == 'true'
         env:
           MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha }}
           MONTHLY_QA_PUBLIC_URL: https://msapo-generator.onrender.com
         run: |
           python -m scripts.qa_monthly_live
       - name: Preserve only synthetic browser/output evidence
-        if: always()
+        if: always() && steps.still-current.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: monthly-isolated-live-evidence
