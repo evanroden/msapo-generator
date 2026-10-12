@@ -3,6 +3,7 @@
 A blank widget mounted before saved-draft hydration is NOT a user edit.
 A user explicitly deleting text remains a valid, persistent edit.
 """
+import pytest
 from streamlit.testing.v1 import AppTest
 
 
@@ -32,7 +33,8 @@ def test_committed_activity_text_wins_over_unedited_blank_widget_mount():
     editor = next(widget for widget in app.text_area if widget.label == "Activity summary")
     assert editor.value == expected
     assert app.session_state["result"].text == expected
-    assert not app.session_state.get(app.session_state["editor_key"] + "_explicitly_edited", False)
+    with pytest.raises(KeyError):
+        _ = app.session_state[app.session_state["editor_key"] + "_explicitly_edited"]
     app.run()
     assert next(widget for widget in app.text_area if widget.label == "Activity summary").value == expected
     assert app.session_state["result"].text == expected
