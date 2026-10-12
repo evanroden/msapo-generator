@@ -25,7 +25,7 @@ def _generate_ui(monkeypatch, tmp_path):
     original = guided.st.button
 
     def button(label, *args, **kwargs):
-        if label == "Generate DOCX and PDF":
+        if label == "Create Word and PDF":
             recorded.append((kwargs.get("type"), kwargs.get("disabled")))
         return original(label, *args, **kwargs)
 
@@ -36,7 +36,7 @@ def _generate_ui(monkeypatch, tmp_path):
 
 
 def _button(app):
-    return next(b for b in app.button if b.label == "Generate DOCX and PDF")
+    return next(b for b in app.button if b.label == "Create Word and PDF")
 
 
 def test_required_error_is_grey_and_explained_near_generate(monkeypatch, tmp_path):
