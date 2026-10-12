@@ -114,3 +114,29 @@ def test_browser_replay_waits_for_durable_state_not_a_static_button():
     assert 'QA fixture action accepted and committed:' in source
     assert 'page.get_by_role("button", name="Replay synthetic source files", exact=True).wait_for' not in source
     assert 'reset_fixture(page, replay_state, "final")' in source
+
+
+def test_compare_callback_retains_first_action_during_unrelated_reruns(monkeypatch):
+    state = {}
+    monkeypatch.setattr(ui.st, "session_state", state)
+    ui._queue_comparison_request()
+    first = dict(state["monthly_qa_compare_queued"])
+    assert len(first["id"]) == 32 and first["accepted_at"]
+    ui._queue_comparison_request()
+    assert state["monthly_qa_compare_queued"] == first
+
+
+def test_comparison_acceptance_waits_for_matching_generation_revision():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "scripts" /
+              "qa_monthly_live.py").read_text()
+    ui_source = (Path(__file__).resolve().parents[1] / "app" /
+                 "monthly_report_testing_ui.py").read_text()
+    assert 'on_click=_queue_comparison_request' in ui_source
+    assert 'if request := st.session_state.get("monthly_qa_compare_queued")' in ui_source
+    assert 'fixture.compare(working)' in ui_source
+    assert 'QA comparison evaluated:' in ui_source
+    assert 'QA comparison evaluated:' in source
+    assert 'fixture_state["generation"]' in source
+    assert 'fixture_state["revision"]' in source
+    assert 'state_diagnostics(page, "comparison-"' in source
