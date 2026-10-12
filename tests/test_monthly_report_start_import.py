@@ -235,3 +235,53 @@ def test_older_report_with_no_standing_content_can_start_blank_and_keep_original
     draft = save_start(app)
     assert all(s.included for s in draft.sections)
     assert not any(b.text for b in draft.blocks)
+
+
+def test_new_bytes_under_the_same_filename_are_auto_analyzed_only_once(monkeypatch, tmp_path):
+    from app import monthly_report_section_ui as ui
+    from app.monthly_report_editor import _signature
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path / "runtime"))
+    path = report_file(tmp_path, activity=("September 2026 first version.",))
+    original_bytes = path.read_bytes()
+    path = report_file(tmp_path, activity=("September 2026 revised version.",))
+    revised_bytes = path.read_bytes()
+    assert original_bytes != revised_bytes
+    current = {"raw": original_bytes}
+    real_upload = ui.st.file_uploader
+
+    def uploader(label, *args, **kwargs):
+        if label != "Starting report":
+            return real_upload(label, *args, **kwargs)
+        value = BytesIO(current["raw"])
+        value.name = "same-report.docx"
+        value.size = len(value.getvalue())
+        return value
+
+    original_stage = ui._stage
+    called = []
+
+    def stage(upload):
+        called.append(upload.getvalue())
+        return original_stage(upload)
+
+    monkeypatch.setattr(ui.st, "file_uploader", uploader)
+    monkeypatch.setattr(ui, "_stage", stage)
+    app = AppTest.from_string('''
+from app.monthly_report_section_ui import render_section_setup
+from app.monthly_report_model import synthetic_profiles, ReportPeriod
+from app.monthly_report_ui import _field
+p=synthetic_profiles()[0]
+render_section_setup(p.contract, ReportPeriod(2026, 9), "Synthetic Editor", _field, identity=p)
+''', default_timeout=30).run()
+    profile = synthetic_profiles()[0]
+    key = "report_setup_" + _signature((profile.contract, profile.key, PERIOD.key)) + "_stage"
+    assert len(called) == 1
+    first_hash = app.session_state[key][2].sha256
+    current["raw"] = revised_bytes
+    app.run()
+    assert app.session_state[key][2].sha256 != first_hash
+    assert len(called) == 2
+    app.run()
+    assert len(called) == 2
+    assert not any(button.label == "Analyze report" for button in app.button)
+    assert not app.exception
