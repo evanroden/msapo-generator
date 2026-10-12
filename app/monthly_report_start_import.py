@@ -232,7 +232,14 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                         plan["selected"].append(item.id)
                         plan["tables"][item.id] = replace(table, rows=())
                 continue
-            if item.id in analysis.older_items or slot in preferred_logos:
+            if slot in preferred_logos:
+                continue
+            if item.id in analysis.older_items and item.kind != "image":
+                # Old prose is not current-month work. Its photos are still
+                # source artwork belonging to this exact section, however:
+                # retain them with immutable source/month provenance so they
+                # can be updated, rather than making every image disappear
+                # merely because the uploaded report is from August.
                 continue
             if section.key == "cover" and item.kind == "text" and slot != "footer_text":
                 continue  # The target report already supplies its cover title/date.
