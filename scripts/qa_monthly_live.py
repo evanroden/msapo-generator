@@ -90,7 +90,22 @@ def complete_report(page, mode):
                result + ("; unmet checks: " + failure_detail if failed else ""))
     page.get_by_role("button", name="Generate QA Word and PDF", exact=True).click()
     docx_button = page.get_by_role("button", name="Download isolated QA DOCX", exact=True)
-    docx_button.wait_for(timeout=175000)
+    try:
+        docx_button.wait_for(timeout=175000)
+    except BrowserTimeout:
+        # Distinguish an unaccepted click, a queued request and a failed
+        # export. The old timeout only said the button was not visible; the
+        # screenshot and status evidence are synthetic-only and bounded.
+        statuses = page.get_by_text(re.compile(
+            r"QA generation request received|QA export was blocked|Generating isolated"
+        )).all_text_contents()
+        alerts = page.locator('[data-testid="stAlert"]').all_text_contents()
+        page.get_by_role("button", name="Generate QA Word and PDF", exact=True).scroll_into_view_if_needed()
+        screenshot(page, "qa-generation-not-ready")
+        checkpoint("QA Word download becomes ready after accepted click", False,
+                   "status=" + repr(statuses[-3:])[:165] +
+                   "; alerts=" + repr(alerts[-3:])[:165])
+    checkpoint("QA Word download becomes ready after accepted click", True)
     page.get_by_role("button", name="Download isolated QA PDF", exact=True).wait_for(timeout=10000)
     tag = "source-replay" if "replay" in mode else "known-prefill"
     word_raw = download(page, "Download isolated QA DOCX", tag + ".docx")
