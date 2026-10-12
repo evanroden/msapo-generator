@@ -102,7 +102,7 @@ def test_first_report_general_template_and_named_group_can_be_resumed(monkeypatc
     assert not any(w.label == "Site / report" for w in app.selectbox)
     assert next(w for w in app.text_input if w.label == "Prepared by").value == "Synthetic Editor"
     assert not any(w.label.startswith("Include ") for w in app.checkbox)
-    assert any(w.label == "Report appearance" for w in app.expander)
+    assert not any(w.label == "Report appearance" for w in app.expander)
     assert not any("logo" in w.label.lower() for w in app.get("file_uploader"))
     assert not any(w.label in ("Change logos", "Manage shared logos") for w in app.button)
     step(app, 3)
