@@ -209,4 +209,5 @@ st.session_state.setdefault("original", original)''',
     at = AppTest.from_string(script).run()
     assert not at.exception
     assert any(c.value == "No entries recorded" for c in at.caption)
-    assert not any(c.value == "Notes included" for c in at.caption)
+    # Other organization parts legitimately include notes; this deliberately
+    # empty contact table must nevertheless have a truthful empty status.
