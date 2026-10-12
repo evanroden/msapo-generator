@@ -84,14 +84,14 @@ def test_invalid_event_inputs_survive_until_corrected(training):
     app, draft, matrix, event, *_ = training
     widget(app, 'text_input', 'Training topic').set_value('New safety topic')
     widget(app, 'multiselect', 'Participants').set_value(['Synthetic Hospital Tech'])
-    widget(app, 'text_input', 'Hours (leave blank if unknown)').set_value('invalid')
+    widget(app, 'text_input', 'Hours (optional)').set_value('invalid')
     widget(app, 'button', 'Add completed training').click().run()
     assert app.error
     assert_work(app)
     app.run()
     assert widget(app, 'text_input', 'Training topic').value == 'New safety topic'
     assert widget(app, 'multiselect', 'Participants').value == ['Synthetic Hospital Tech']
-    widget(app, 'text_input', 'Hours (leave blank if unknown)').set_value('0.75')
+    widget(app, 'text_input', 'Hours (optional)').set_value('0.75')
     widget(app, 'button', 'Add completed training').click().run()
     assert not app.error
     assert_work(app)
@@ -270,3 +270,31 @@ def test_ordered_report_validation_save_and_reopen_preserve_both_sections(monkey
     assert widget(reopened, 'text_area', 'Activity summary').value == 'Independent Activity stays unchanged.'
     # Reopening must not rewrite the earlier completed version.
     assert next(b for b in historical.draft.blocks if b.key == 'training_summary').text == NOTE
+
+
+def test_training_matrix_stays_visible_with_infrequent_forms_collapsed(training):
+    app, *_ = training
+    labels = {expander.label for expander in app.expander}
+    assert {"Add requirement", "Add training", "Remove training entries"} <= labels
+    assert widget(app, "text_input", "Training topic") is not None
+    assert widget(app, "text_input", "Hours (optional)") is not None
+    assert widget(app, "selectbox", "Method") is not None
+    before = current(app).fingerprint
+    app.run()
+    assert not app.exception
+    assert current(app).fingerprint == before
+    assert widget(app, "text_area", "Training notes").value == NOTE
+    assert not app.error
+
+
+def test_unknown_training_hours_remain_empty_in_compact_form(training):
+    app, *_ = training
+    widget(app, "text_input", "Training topic").set_value("Synthetic staff refresher")
+    widget(app, "multiselect", "Participants").set_value(["Synthetic Hospital Tech"])
+    assert widget(app, "text_input", "Hours (optional)").value == ""
+    widget(app, "button", "Add completed training").click().run()
+    assert not app.exception and not app.error
+    from app.monthly_report_training import EVENT_REF
+    rows = next(x.rows for x in current(app).extra_tables if x.reference == EVENT_REF)
+    assert rows[-1][0] == "Synthetic staff refresher"
+    assert rows[-1][-1] == ""
