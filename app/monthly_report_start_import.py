@@ -300,6 +300,14 @@ def build_starting_import(path, inspection, plans):
     mapped, mappings = build_section_import(path, inspection, active)
     automatic_refs = {f"docx:{inspection.sha256}:{identity}" for p in active if p.get("automatic")
                       for identity in p.get("selected", ())}
+    # A source-bound Word diagram screenshot was rendered, not human-certified
+    # for pricing hidden inside image pixels. Treat its asset provenance like
+    # every other automatic imported image, not as blanket visual approval.
+    automatic_refs.update(
+        f"docx:{inspection.sha256}:word-sections:{','.join(map(str, record['sections']))}:page:{record['page']}"
+        for plan in active if plan.get("auto_native_diagrams")
+        for record in plan.get("word_page_records", ())
+    )
     from app.monthly_report_asset_review import (
         asset_fingerprint,
         normalize_asset_reviews,
