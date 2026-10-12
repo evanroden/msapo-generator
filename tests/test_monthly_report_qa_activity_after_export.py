@@ -34,6 +34,10 @@ def test_qa_export_and_neutral_reruns_never_clear_hydrated_activity(monkeypatch,
     _, package = app.session_state["monthly_qa_package"]
     assert package.docx.startswith(b"PK") and package.pdf.startswith(b"%PDF-")
     assert _activity(app).value == SEED
+    from hashlib import sha256
+    expected_hash = "QA working Activity SHA256: " + sha256(
+        SEED.encode("utf-8")).hexdigest()
+    assert any(c.value == expected_hash for c in app.get("caption"))
     for _ in range(3):
         app.run()
         assert not app.exception
