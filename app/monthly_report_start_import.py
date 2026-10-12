@@ -159,6 +159,41 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period)
 
 
+def cover_photo_candidates(items):
+    """Only cover-page photographs, not logos, dividers or package leftovers."""
+    from app.monthly_report_sections import small_artwork
+    return tuple(item for item in items
+                 if item.kind == "image" and item.part == "word/document.xml"
+                 and item.section in ("", "cover")
+                 and item.suggested_slot not in ("brand_logo", "client_logo")
+                 and not item.suggested_slot.startswith("divider_")
+                 and not small_artwork(item)
+                 and (not item.image_width or not item.image_height
+                      or 0.42 <= item.image_width / item.image_height <= 2.9))
+
+
+def suggested_cover_photo(items):
+    """Default to a uniquely plausible large cover picture, never a logo.
+
+    The user can replace the suggestion in the thumbnail gallery. A tie or
+    missing size proof leaves the optional cover photo unset instead of
+    guessing from arbitrary client artwork.
+    """
+    candidates = cover_photo_candidates(items)
+    if not candidates:
+        return None
+    tagged = tuple(item for item in candidates if item.suggested_slot == "cover_photo")
+    if len(tagged) == 1:
+        return tagged[0]
+    ranked = sorted(candidates, key=lambda item: item.image_width * item.image_height,
+                    reverse=True)
+    if len(ranked) == 1:
+        return ranked[0]
+    first, second = ranked[:2]
+    area, runner_up = first.image_width * first.image_height, second.image_width * second.image_height
+    return first if area > 40000 and area >= 1.6 * max(1, runner_up) else None
+
+
 def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False):
     """Pre-fill recognizable content; ask only about unresolved source content.
 
@@ -169,6 +204,7 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
     known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     result = {}
     for section in section_reviews(inspection):
+        cover_default = suggested_cover_photo(section.items) if section.key == "cover" else None
         plan = {"key": section.key, "action": "Keep and review", "target": section.key,
                 "omit": False, "selected": [], "texts": {}, "tables": {}, "destinations": {},
                 "new_assets": [], "image_notes": {}, "automatic": True, "approved": True}
@@ -193,16 +229,27 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
             if section.key == "cover" and item.kind == "text" and slot != "footer_text":
                 continue  # The target report already supplies its cover title/date.
             if item.kind == "unsupported":
-                questions.append("Some Word artwork needs its complete page preserved.")
+                # Unreadable Word art is not permission to copy an opaque
+                # previous-client part. Omit it from the NEW report by default,
+                # preserve the original, and let explicitly supplied replacement
+                # imagery use the normal verified upload path.
+                plan["unsupported_reviewed"] = True
                 continue
             if section.key == "other":
                 questions.append("Choose where the additional content belongs.")
                 continue
             if item.kind == "image":
-                if small_artwork(item):
+                if section.key == "cover" and slot not in ("brand_logo", "client_logo"):
+                    # Optional cover photo is one chosen image; even when
+                    # several pictures exist the gallery does not need one
+                    # approval radio for each unrelated logo/photo.
+                    if cover_default is None or item.id != cover_default.id:
+                        continue
+                    slot = "cover_photo"
+                elif small_artwork(item):
                     continue
-                if not slot or (slot in ("cover_photo", "brand_logo", "client_logo")
-                                and sum(i.kind == "image" and i.suggested_slot == slot for i in section.items) > 1):
+                if section.key != "cover" and (not slot or (slot in ("cover_photo", "brand_logo", "client_logo")
+                                and sum(i.kind == "image" and i.suggested_slot == slot for i in section.items) > 1)):
                     questions.append("A picture's purpose is not clear.")
                     continue
             if item.kind == "text" and contains_price(item.text):
