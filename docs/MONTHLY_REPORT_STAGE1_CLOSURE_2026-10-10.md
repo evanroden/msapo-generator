@@ -32,7 +32,7 @@
 
 ### Bounded scenario results versus actual owner runs
 
-The **113 proposed original audit scenarios remain individually scoped**. The following test IDs have *actual narrower results* and should not be presented as entirely unrun: **P03** (Activity retained on real isolated reload, not an outage), **D05** (literal NR visible in synthetic outputs, not authentic future first-fill), **R08** (11 synthetic report sections plus RFI appendix rendered, not real master fidelity), **R09** (both files downloaded four times across two runs), **X01/X03/X04/X05/X06/X09** (real isolated browser on `bae08f31`) and **X02/X08/X10** (bounded isolation/failed-write CI, no full live multitab claim). All other original rows retain their explicit pending human/device/authentic source requirements; do not sum synthetic helper tests as full release passes or mark 113 defects. Rows later in this table preserve the original audit wording for traceability.
+The **113 proposed original audit scenarios remain individually scoped**. The following test IDs have *actual narrower results* and should not be presented as entirely unrun: **P03** (Activity retained on real isolated reload, not an outage), **P04/P07** (injected disk/late-write CI, not real network recovery), **C03/C05** (native price filtering CI, not owner images), **D05** (literal NR visible in synthetic outputs, not authentic future first-fill), **R08** (11 synthetic report sections plus RFI appendix rendered, not real master fidelity), **R09** (both files downloaded four times across two runs), **X01/X03/X04/X05/X06/X09** (real isolated browser on `bae08f31`) and **X02/X08/X10** (bounded isolation/failed-write CI, no full live multitab claim), **D11** (immutable historical snapshot CI), **Q05/Q06** (passive hyperlinks/hidden assets CI with visual limits) and **T01/T03** (revision and structural-edit CI). All other original rows retain their explicit pending human/device/authentic source requirements; do not sum synthetic helper tests as full release passes or mark 113 defects. Rows later in this table preserve the original audit wording for traceability.
 
 ## Exact production, synthetic and authentic gates
 
@@ -122,10 +122,10 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | P01 | Read start/retention copy | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | P02 | Edit and change sections | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | P03 | Auto-retain then refresh | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Bounded isolated live pass:** Activity edit SHA retained through complete reload twice on [38249005588](https://github.com/evanroden/msapo-generator/actions/runs/38249005588); genuine outage/reconnect still pending. |
-| P04 | Force recovery disk failure | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
+| P04 | Force recovery disk failure | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Bounded CI pass:** injected active-work disk-manifest failure preserves last valid draft and user-visible editor remains editable; test_monthly_report_generation_safety. Real reconnection/owner outage not run. |
 | P05 | Brief reconnect while editing | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | P06 | Close/reopen in active period | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
-| P07 | Delayed write then later edit | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
+| P07 | Delayed write then later edit | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Bounded CI pass:** generation tombstones/revision guards reject late stale writes after discard/recreate in test_monthly_report_generation_safety; live delayed-network two-tab not run. |
 | P08 | Edit two sections around failed retry | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | P09 | Standing contact correction | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
 | P10 | Start fresh after abandonment | F01/F09 · P1/P2 | Isolated browser interruption + storage fault | **Not run** |
@@ -159,9 +159,9 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | V06 | Compare section preview and exports | F02 | Separate vendor/onsite input plus DOCX/PDF | **Not run** |
 | C01 | Capital source document/table maps native columns | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
 | C02 | Scanned proposal image | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
-| C03 | Mixed price in body/native table | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
+| C03 | Mixed price in body/native table | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Bounded native CI pass:** mixed proposal price headings, filtered native grid and technical cells covered by test_monthly_report_native_layout and test_monthly_report_pricefree_tables; complete visible imported images/owner export pending. |
 | C04 | Price in pictures/alternate metadata | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
-| C05 | Blank retained price column safe | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
+| C05 | Blank retained price column safe | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Bounded CI pass:** source proposal headings/price-free native table preserve non-price schema and deliberately blank amount columns in test_monthly_report_pricefree_tables and test_monthly_report_content_policy; actual owner proposal import pending. |
 | C06 | Manual proposal edit survives source rerun | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
 | C07 | DOCX/PDF package/image scan | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
 | C08 | Ambiguous source table prompts focused choice | U03 · pricing safety | Synthetic price tables + DOCX/PDF package inspection | **Not run** |
@@ -175,7 +175,7 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | D08 | Changed thermal source/historical snapshots | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
 | D09 | Collapsed contact name/role/site | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
 | D10 | Contact current and future update | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
-| D11 | Old completed report unchanged | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
+| D11 | Old completed report unchanged | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Bounded CI pass:** test_monthly_report_contact_refresh verifies refresh does not alter immutable historical report snapshot JSON; genuine owner history comparison pending. |
 | D12 | Reuse outage diagram | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
 | D13 | Failed thermal write/retry | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
 | D14 | Ambiguous thermal site prompt | F06/F07/F14 · U04 · standing data | Isolated two-site standing stores + future/old reports | **Not run** |
@@ -203,11 +203,11 @@ Each row corresponds to a proposed test in original audit section 7. **Not run f
 | Q02 | Private evidence minimized | Privacy/output safety | Code/package/privacy review | **Not run** |
 | Q03 | No private artifacts in public repo | Privacy/output safety | Code/package/privacy review | **Not run** |
 | Q04 | Malformed/unsafe inputs bounded | Privacy/output safety | Code/package/privacy review | **Not run** |
-| Q05 | Only current passive links remain | Privacy/output safety | Code/package/privacy review | **Not run** |
-| Q06 | Removed hidden assets do not survive | Privacy/output safety | Code/package/privacy review | **Not run** |
-| T01 | Tracked deletion/reviewer removed | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
+| Q05 | Only current passive links remain | Privacy/output safety | Code/package/privacy review | **Bounded CI pass:** test_monthly_report_native_hyperlinks checks current source-proven hyperlink remains clickable in Word/PDF and altered/unproved links are removed; other source object families still require review. |
+| Q06 | Removed hidden assets do not survive | Privacy/output safety | Code/package/privacy review | **Bounded CI pass:** native package prune and header-image/PNG metadata canaries plus #161 table-description canaries; full visual raster/nested EMF/reachable hidden artifacts unaccepted. |
+| T01 | Tracked deletion/reviewer removed | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Bounded CI pass:** test_monthly_report_revision_view verifies tracked deleted paragraphs and table rows excluded from current Word view; original multi-file reviewer workflow still pending. |
 | T02 | Supported tracked text/comments | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
-| T03 | Unsupported structural edit rejected locally | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
+| T03 | Unsupported structural edit rejected locally | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Bounded CI pass:** test_monthly_report_revision_view rejects unsupported paragraph mark, cell deletion/merge and block insertion; owner corrected-copy workflow still pending. |
 | T04 | Corrected-copy import retry | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
 | T05 | Prior import remap after fix | Merged #99 import integrity | Synthetic tracked-change DOCX import | **Not run** |
 | X01 | Isolated testing mode enabled | Implemented in merged #136; synthetic exact-head and integrated CI green | Exact-head CI passed; isolated public browser, actual production output and owner acceptance remain pending | **Bounded live pass:** isolated entry and served SHA twice on [38249005588](https://github.com/evanroden/msapo-generator/actions/runs/38249005588); normal owner-device flows pending. |
