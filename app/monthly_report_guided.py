@@ -463,8 +463,8 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         spec = specs[original_spec.key]
         block = blocks.get(spec.key, ResolvedBlock(spec.key, "This month"))
         if spec.key == "vendor_reports" and not block.asset_hashes:
-            st.caption("Vendor service files belong in Monthly Activity Summary above. "
-                       "This part remains available for earlier report versions.")
+            # Keep genuine legacy content accessible; an empty compatibility
+            # slot does not need its own explanatory monthly report caption.
             continue
         st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
