@@ -126,7 +126,7 @@ def test_browser_replay_waits_for_durable_state_not_a_static_button():
 
 
 
-def test_known_value_activity_input_is_hydrated_and_journaled_before_live_edit():
+def test_known_value_activity_input_is_hydrated_before_live_edit():
     """Prevent constructing a new edit from a transient blank textarea.
 
     On fd759... the failed browser artifact had saved SHA 212afb... for the
@@ -139,7 +139,7 @@ def test_known_value_activity_input_is_hydrated_and_journaled_before_live_edit()
               "qa_monthly_live.py").read_text()
     initial = "Three September work orders: 3 total, 2 completed, 1 open (66.7%)."
     assert sha256(initial.encode()).hexdigest().startswith("212afbc65093")
-    assert sha256(("\\nSynthetic owner edit retained through a browser refresh.").encode()).hexdigest().startswith("c0803dd4bbb5")
+    assert sha256(("\nSynthetic owner edit retained through a browser refresh.").encode()).hexdigest().startswith("c0803dd4bbb5")
     assert 'expect(editor).to_have_value(expected_seed, timeout=60000)' in script
     assert 'checkpoint("initial Activity editor hydrated", True)' in script
     # A saved fixture snapshot need not have an unfinished-work journal.
