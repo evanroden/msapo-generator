@@ -84,7 +84,7 @@ def test_no_browser_cookie_keeps_manual_save_as_explicit_fallback(monkeypatch, t
     _value(app, 'Activity summary').set_value('Current unsaved text.').run()
     assert not app.exception
     assert any('Automatic recovery is unavailable' in x.value for x in app.warning)
-    assert any(b.label == 'Save progress' for b in app.button)
+    assert any(b.label == 'Save shared version' for b in app.button)
 
 
 def test_recovered_draft_does_not_silently_upgrade_to_a_later_master(monkeypatch, tmp_path):
