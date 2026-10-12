@@ -614,7 +614,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     local_key = evidence_key + "_structured_" + destination
     contents = st.session_state.setdefault(evidence_key, ())
     labels = {"activity_summary": "Add activity files (optional)", "capital_renewal": "Add capital renewal file", "proposals": "Add proposal file"}
-    st.caption("Add a source to draft useful information, or edit this section directly. Price-bearing pages cannot be included without resolving the safety checks; review each client-facing page.")
+    st.caption("Add files to help draft this section, or edit directly below. Detected pricing blocks page inclusion; review every client-facing page.")
     uploaded = st.file_uploader(labels[destination], type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
     additions = {}
