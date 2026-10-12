@@ -258,6 +258,16 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 questions.append("Choose where the additional content belongs.")
                 continue
             if item.kind == "image":
+                if section.key == "organization" and re.search(
+                        r"(?:^|[_-])contact[_-]matrix(?:[_.-]|$)",
+                        item.image_part.rsplit("/", 1)[-1].casefold()):
+                    # Authentic ENFRA reports can embed a picture captioned
+                    # only in the *media filename*, e.g. contact_matrix_rev6.
+                    # Otherwise the generic organization fallback incorrectly
+                    # makes the contact page another org_chart image. Never
+                    # infer membership from the filename: source-site checks
+                    # have already run above. Photo privacy review remains open.
+                    slot = "contact_matrix"
                 if not slot and section.key not in ("cover", "other", "proposals", "accounts_receivable"):
                     # A source image inside a recognized Word report section
                     # belongs with that section's visual evidence even when
