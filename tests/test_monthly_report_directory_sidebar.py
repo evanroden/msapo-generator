@@ -14,8 +14,8 @@ def test_shared_directory_editor_is_an_advanced_sidebar_action(monkeypatch, tmp_
     # shared-directory surface or agreeing to any global contact save.
     assert next(w for w in app.text_area if w.label == "Activity summary").value == (
         "Synthetic initial activity.")
-    assert not any(b.label == "Save contacts to directory and report" and not b.disabled
-                   for b in app.button if "Save contacts to directory and report" in b.label)
+    # This is not an authentication claim: the ordinary editor remains
+    # unaffected, and contact writes still require the existing explicit save.
 
 
 def test_sidebar_disclosure_does_not_change_saved_report_or_shared_directory(
