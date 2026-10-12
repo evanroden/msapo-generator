@@ -109,7 +109,13 @@ def _remove_unapproved_master_watermark_text(document):
 
 
 def _clear_source_drawing_metadata(document):
-    """Source frame descriptions are facts, not reusable master geometry."""
+    """Discard source-only accessibility labels, never current native geometry.
+
+    Drawings, Word table descriptions and source content-control names can
+    contain previous-client names/prices without appearing in printed text.
+    The current report supplies its own visible cells and captions; source
+    aliases/labels have no independent authority to accompany those cells.
+    """
     drawing_namespaces = {
         "http://schemas.openxmlformats.org/drawingml/2006/picture",
         "http://schemas.openxmlformats.org/drawingml/2006/main",
@@ -120,8 +126,17 @@ def _clear_source_drawing_metadata(document):
     for part in document.part.package.parts:
         if not hasattr(part, "element"):
             continue
-        for node in part.element.iter():
+        # Iterate a snapshot because stale nonvisual nodes are removed below.
+        for node in list(part.element.iter()):
             namespace, _, local = node.tag[1:].partition("}") if node.tag.startswith("{") else ("", "", node.tag)
+            if (namespace == "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                    and local in {"tblCaption", "tblDescription", "tag", "alias"}):
+                # Do not retain previous-client screen-reader descriptions or
+                # content-control bookkeeping in current-client output.
+                # Table grid/row/cell formatting and actual text are untouched.
+                if node.getparent() is not None:
+                    node.getparent().remove(node)
+                continue
             if namespace in drawing_namespaces and local in {"docPr", "cNvPr"}:
                 node.attrib.pop("descr", None)
                 node.attrib.pop("title", None)
