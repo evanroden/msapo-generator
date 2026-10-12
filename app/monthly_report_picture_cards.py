@@ -42,8 +42,81 @@ def picture_options(section, *, allow_branding=True):
     return choices
 
 
+def review_cover_gallery(images, path, prefix, old, plan):
+    """One clickable photo gallery; no per-image radio or mandatory selection.
+
+    A largest, plausible source cover photograph is preselected, but the
+    operator can choose any other candidate or leave the cover photograph
+    blank. Shared ENFRA/client logos do not belong in this decision.
+    """
+    from app.monthly_report_start_import import cover_photo_candidates, suggested_cover_photo
+    candidates = cover_photo_candidates(images)
+    if not candidates:
+        return
+    from app.monthly_report_content_policy import contains_price
+    ids = {item.id for item in candidates}
+    key = prefix + "_cover_photo_choice"
+    previous = old.get("cover_picture_id", None)
+    prior = next((i for i, slot in old.get("destinations", {}).items()
+                  if slot == "cover_photo" and i in ids), None)
+    guess = suggested_cover_photo(candidates)
+    default = (previous if previous in ids or previous == "" else
+               prior if prior else guess.id if guess else "")
+    if key not in st.session_state or st.session_state[key] not in (ids | {""}):
+        st.session_state[key] = default
+    selected = st.session_state[key]
+    st.markdown("**Cover photograph**")
+    st.caption("The most likely cover photo is selected when its placement and size identify it. Choose another picture or leave it blank.")
+    visible = set()
+    columns = st.columns(2, gap="medium")
+    for index, item in enumerate(candidates, 1):
+        with columns[(index - 1) % 2]:
+            with st.container(border=True):
+                st.caption(f"Picture {index}")
+                try:
+                    preview = read_import_image(path, item, preview=True)
+                    st.image(preview.data, width="stretch")
+                    visible.add(item.id)
+                except (ValueError, OSError):
+                    st.caption("This picture could not be displayed and will be left out.")
+                if contains_price(item.text):
+                    st.warning("This picture's caption mentions pricing and cannot be used as a cover photo.")
+                    continue
+                if item.id not in visible:
+                    continue
+                if item.id == selected:
+                    st.success("Selected cover photo")
+                elif st.button(f"Choose picture {index}", key=prefix + "_choose_cover_" + item.id,
+                               width="stretch"):
+                    selected = item.id
+                    st.session_state[key] = item.id
+    if st.button("No cover photograph", key=prefix + "_omit_cover",
+                 type="secondary", width="stretch"):
+        selected = ""
+        st.session_state[key] = ""
+    # Never let an unavailable, priced or stale source picture survive the
+    # new selection. Existing logos/footer stay in the same approved plan.
+    chosen = next((item for item in candidates if item.id == selected
+                   and item.id in visible and not contains_price(item.text)), None)
+    destinations = {identity: slot for identity, slot in plan.get("destinations", {}).items()
+                    if identity not in ids}
+    selected_ids = [identity for identity in plan.get("selected", ()) if identity not in ids]
+    if chosen:
+        selected_ids.append(chosen.id)
+        destinations[chosen.id] = "cover_photo"
+    plan["selected"] = selected_ids
+    plan["destinations"] = destinations
+    plan["cover_picture_id"] = chosen.id if chosen else ""
+    plan["picture_roles"] = {identity: "cover_photo" if chosen and identity == chosen.id else ""
+                             for identity in ids}
+    plan["picture_choices"] = [chosen.id] if chosen else []
+
+
 def review_pictures(images, section, path, prefix, scope, field, old, plan, blocking, *, allow_branding=True):
     if not images:
+        return
+    if section == "cover" and not allow_branding:
+        review_cover_gallery(images, path, prefix, old, plan)
         return
     options = picture_options(section, allow_branding=allow_branding)
     single = {"cover_photo", "client_logo", "brand_logo", "divider_" + section}
