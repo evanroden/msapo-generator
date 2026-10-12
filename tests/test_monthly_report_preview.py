@@ -99,8 +99,8 @@ def test_live_preview_failure_keeps_current_edit_and_labels_previous_pages_outda
     assert payload(app)['pages'], "Last-good same-report pages must remain inspectable"
     assert payload(app)['ready'] is False
     assert payload(app)['stale'] is True
-    assert "Previous preview" in payload(app)['status']
-    assert "NOT shown" in payload(app)['status']
+    assert "Showing older preview" in payload(app)['status']
+    assert "latest changes not shown" in payload(app)['status']
     assert any("Your edits are still here" in w.value for w in app.warning)
     # A second rerun must not relabel an outdated page as current.
     app.run()
@@ -113,7 +113,8 @@ def test_live_preview_failure_keeps_current_edit_and_labels_previous_pages_outda
     assert payload(app)['pages']
     assert payload(app)['ready'] is True
     assert payload(app)['stale'] is False
-    assert "Current preview ready" in payload(app)['status']
+    assert payload(app)['status'].startswith("Current · ")
+    assert "page" in payload(app)['status']
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic updated maintenance."
 
 
