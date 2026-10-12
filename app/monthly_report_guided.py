@@ -35,9 +35,14 @@ def _standing_specs(section):
     return tuple(b for b in section.blocks if b.key not in monthly)
 
 
-def _mark_explicit_rich_text_edit(marker):
-    """Differentiate an operator's real clear from a stale blank widget mount."""
-    st.session_state[marker] = True
+def _mark_explicit_rich_text_edit(marker, widget_key):
+    """Capture one exact operator-submitted value, including deliberate clear.
+
+    The receipt is consumed after the next full editor draw. Leaving a True
+    marker forever meant a later stale frontend blank could silently clear
+    saved wording despite no new operator action.
+    """
+    st.session_state[marker] = st.session_state.get(widget_key, "")
 
 
 def _forget_block_widgets(prefix, keys):
@@ -249,21 +254,27 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
     elif spec.type in ("rich_text", "stock_text"):
         editor_key = key + "_text_" + _signature(block.references)
         changed_marker = editor_key + "_explicitly_edited"
-        if (block.text and st.session_state.get(editor_key) == ""
-                and not st.session_state.get(changed_marker)):
-            # The committed draft can be hydrated while Streamlit still has
-            # an empty textarea value from its earlier initial mount/rerun.
-            # Setting the seed BEFORE instantiating the widget prevents that
-            # unacknowledged empty value from clearing saved report text.
-            # on_change below records deliberate operator edits, including an
-            # intentional clear; such edits are never forcibly restored.
+        displayed = st.session_state.get(editor_key, block.text)
+        receipt = st.session_state.get(changed_marker)
+        submitted = (changed_marker in st.session_state
+                     and isinstance(receipt, str) and receipt == displayed)
+        if displayed != block.text and not submitted:
+            # A rerun after generation, preview or browser hydration can mount
+            # an obsolete text widget (including an empty value). Only a
+            # one-use exact on_change receipt permits changing canonical text.
+            # Synchronize BEFORE rendering; an intentional clear has its
+            # own receipt and therefore remains a valid edit.
             st.session_state[editor_key] = block.text
         text = st.text_area(
             spec.key.replace("_", " ").capitalize(),
             key=field(editor_key, block.text), height=140,
-            on_change=_mark_explicit_rich_text_edit, args=(changed_marker,))
-        if text != block.text:
-            block = replace(block, source="This month", text=text, reviewed_fingerprint="", client_reviewed_fingerprint="")
+            on_change=_mark_explicit_rich_text_edit, args=(changed_marker, editor_key))
+        if submitted and text != block.text:
+            block = replace(block, source="This month", text=text,
+                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+        # A past edit never licenses future stale widget changes. This ticket
+        # is consumed even if the value is unchanged or was already applied.
+        st.session_state.pop(changed_marker, None)
     elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
