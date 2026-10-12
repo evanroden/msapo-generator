@@ -168,7 +168,7 @@ def test_reviewed_directory_contacts_can_seed_chart_without_replacing_it_silentl
     assert next(w for w in app.selectbox if w.label == 'Reports to').value == ''
     step(app, 2)
     step(app, 3)
-    next(b for b in app.button if b.label == 'Save progress').click().run()
+    next(b for b in app.button if b.label == 'Save shared version').click().run()
     assert not app.exception
     saved = library.load_snapshot(RRH_CONTRACT, profile.key, ReportPeriod(2026, 9)).draft
     chart = next(b for b in saved.blocks if b.key == 'org_chart')
@@ -266,7 +266,7 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
         next(w for w in app.text_input if w.label == "Email").value
         == "retained@example.invalid"
     )
-    next(b for b in app.button if b.label == "Save progress").click().run()
+    next(b for b in app.button if b.label == "Save shared version").click().run()
     assert not app.exception
     from app import monthly_report_library as library
     from app.contracts import RRH_CONTRACT
