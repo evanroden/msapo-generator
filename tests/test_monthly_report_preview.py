@@ -113,7 +113,8 @@ def test_live_preview_failure_keeps_current_edit_and_labels_previous_pages_outda
     assert payload(app)['pages']
     assert payload(app)['ready'] is True
     assert payload(app)['stale'] is False
-    assert "Current preview ready" in payload(app)['status']
+    assert payload(app)['status'].startswith("Current · ")
+    assert "page" in payload(app)['status']
     assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic updated maintenance."
 
 
