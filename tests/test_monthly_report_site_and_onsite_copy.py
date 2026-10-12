@@ -28,7 +28,7 @@ def test_site_selection_copy_keeps_one_and_two_site_identities(monkeypatch, tmp_
 
 def test_onsite_boundary_and_direct_vendor_activity_link_remain(monkeypatch, tmp_path):
     help_text = section_help("maintenance").guidance
-    assert "ENFRA onsite service calls only." in help_text
+    assert "ENFRA technicians onsite only." in help_text
     assert "[Monthly Activity Summary](#report-section-activity)" in help_text
     assert "not applicable" not in help_text.casefold()
 
