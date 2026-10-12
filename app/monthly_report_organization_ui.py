@@ -59,7 +59,7 @@ def _preview_part(draft, spec, block, prefix, assets, title, *, show_preview=Tru
         if block.asset_hashes:
             count = len(block.asset_hashes)
             details.append(f"{count} {'page' if count == 1 else 'pages'}")
-        st.caption(" · ".join(details) if details else "Notes included")
+        st.caption(" · ".join(details) if details else ("Notes included" if block.text.strip() else "No entries recorded"))
     else:
         st.caption("Not added yet")
     if not show_preview:
