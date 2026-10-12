@@ -243,7 +243,7 @@ def test_ordered_report_validation_save_and_reopen_preserve_both_sections(monkey
     widget(app, 'text_input', 'Prepared by').set_value('Synthetic Editor').run()
     widget(app, 'text_area', 'Activity summary').set_value('Independent Activity stays unchanged.').run()
     widget(app, 'text_area', 'Training notes').set_value(NOTE).run()
-    widget(app, 'button', 'Save progress').click().run()
+    widget(app, 'button', 'Save shared version').click().run()
     historical = library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', ReportPeriod(2026, 9))
     historical_path = {p: p.read_bytes() for p in library._root().rglob('*.json')}
     correction = 'Training corrected in the same action as an invalid event.'
@@ -258,7 +258,7 @@ def test_ordered_report_validation_save_and_reopen_preserve_both_sections(monkey
     widget(app, 'button', 'Add training column').click().run()
     assert not app.exception and not app.error
     assert widget(app, 'text_area', 'Training notes').value == correction
-    widget(app, 'button', 'Save progress').click().run()
+    widget(app, 'button', 'Save shared version').click().run()
     latest = library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', ReportPeriod(2026, 9))
     assert next(b for b in latest.draft.blocks if b.key == 'training_summary').text == correction
     reopened = AppTest.from_file(ROOT / 'run_web.py', default_timeout=30).run()
