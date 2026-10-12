@@ -455,11 +455,12 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
-    if destination != "water_reports":
+    if destination not in {"water_reports", "utility_analysis"}:
         st.markdown("**" + title + "**")
         st.caption("Choose a file, check its useful pages, then add them here. Existing report content is kept.")
-    # Water uses its one section-level instruction and uploader label. Its
-    # reviewed pages now attach automatically, not through another Add button.
+    # Water and Scorecards already have section-level instructions. Keep one
+    # labeled uploader without a duplicate title, while retaining the complete
+    # canonical page-review flow and its safety checks.
     upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                              accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
     picked = tuple((u.name, u.getvalue()) for u in (upload or ()))

@@ -209,3 +209,19 @@ else:
     assert not app.exception
     assert next(w for w in app.text_input if w.label == "Page caption").value == "Batch edited caption"
     assert button(app, "Add reviewed pages").disabled
+
+
+
+def test_scorecard_utility_upload_uses_one_labeled_control_without_extra_heading(
+        monkeypatch, tmp_path):
+    app = section_app(monkeypatch, tmp_path, pdf_bytes(1),
+                      label="Utility result files")
+    next(w for w in app.radio if w.label == "Section").set_value(
+        "utility_analysis").run()
+    assert not app.exception
+    assert not any("Utility results and charts" in node.value
+                   for node in app.markdown)
+    assert any(w.label == "Page to review" for w in app.selectbox)
+    # Reusing the local source review still requires explicit price-safe page
+    # acceptance; a labeled uploader is not an automatic approval.
+    assert button(app, "Add reviewed pages").disabled
