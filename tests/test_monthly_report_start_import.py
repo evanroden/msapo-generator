@@ -73,7 +73,15 @@ def test_earlier_report_rolls_monthly_content_forward_but_keeps_standing_contact
     path = report_file(tmp_path, month="July 2026", activity=("Repaired the pump.",), photo=True, table=True)
     analysis, draft, _ = build(path)
     assert analysis.source_period == (2026, 7) and analysis.older_items
-    assert not any(b.key in ("activity_summary", "improvements") for b in draft.blocks)
+    assert not any(b.key == "activity_summary" for b in draft.blocks)
+    # Previous-month prose cannot become a claim of work done this month,
+    # but its correctly located picture remains source-linked and unapproved
+    # so that updating an old report does not silently lose a visual.
+    artwork = next(b for b in draft.blocks if b.key == "improvements")
+    assert len(artwork.asset_hashes) == 1
+    assert pending_asset_indexes(artwork) == (0,)
+    assert any(value.startswith(f"docx:{inspect_docx(path).sha256}:")
+               for value in artwork.references)
     assert next(b for b in draft.blocks if b.key == "contact_matrix").extra_tables[0].rows
     ledger = next(b for b in draft.blocks if b.key == "work_orders").extra_tables[0]
     assert ledger.rows == (("July 2026", "4"), ("August 2026", "8"))
