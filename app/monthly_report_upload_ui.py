@@ -453,7 +453,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
-    if destination != "water_reports":
+    if destination not in ("water_reports", "utility_analysis"):
         st.markdown("**" + title + "**")
         st.caption("Choose a file, check its useful pages, then add them here. Existing report content is kept.")
     # Water uses its one section-level instruction and uploader label. Its
