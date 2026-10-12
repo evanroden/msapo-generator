@@ -36,10 +36,10 @@ export default function(component) {
             page.style.aspectRatio = String(size[0]) + ' / ' + String(size[1]);
             const placeholder = document.createElement('div');
             placeholder.className = 'report-preview-placeholder';
-            placeholder.textContent = data.ready ? 'Page ' + (index + 1) + ' · loads as you scroll' : (data.stale ? 'Previous preview, not current content' : 'Preview updates when this section is in view.');
+            placeholder.textContent = data.ready ? 'Page ' + (index + 1) + ' · loads as you scroll' : (data.stale ? 'Older preview — changes not shown' : (data.status ? '' : 'Preview loads when this section is in view.'));
             page.append(placeholder);
             const caption = document.createElement('figcaption');
-            caption.textContent = data.ready ? 'Page ' + (index + 1) + ' of ' + sizes.length : (data.stale ? 'Previous preview · page ' + (index + 1) + ' of ' + sizes.length : 'Draft layout');
+            caption.textContent = data.ready ? 'Page ' + (index + 1) + ' of ' + sizes.length : (data.stale ? 'Older preview · page ' + (index + 1) + ' of ' + sizes.length : '');
             figure.append(page, caption);
             scroll.append(figure);
         });

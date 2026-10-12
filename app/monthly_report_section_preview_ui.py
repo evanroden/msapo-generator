@@ -203,6 +203,19 @@ def _viewport_changed(prefix, section, widget_key):
         _enqueue_visible(state, section)
 
 
+def _preview_status(*, pending=False, pages=0, stale=False, failed=False):
+    """One state per pane; a stale last-good image must never look current."""
+    if failed:
+        return "Preview unavailable — retry"
+    if stale:
+        return ("Showing older preview — latest changes not shown · Updating…"
+                if pending else
+                "Showing older preview — latest changes not shown · Retry preview")
+    if pages:
+        return f"Current · {pages} page" + ("s" if pages != 1 else "")
+    return "Updating preview…" if pending else ""
+
+
 def _render_ordered_preview(section_key, prefix, title):
     state = _ordered_preview_state(prefix)
     _enqueue_visible(state, section_key)
@@ -214,12 +227,13 @@ def _render_ordered_preview(section_key, prefix, title):
         # neither conversion jobs nor recurring two-second fragment reruns.
         st.rerun(scope='app')
     entry = _current_entry(state, section_key)
-    st.subheader('Section preview')
-    st.caption(title + ' · Updates automatically while in view.')
+    # These panes repeat down the report. Suppress duplicate heading link IDs.
+    st.subheader('Preview', anchor=False)
     images, ticket = (), None
     stale = False
-    status = 'Preparing this section’s preview… You can keep editing.' if pending else ''
+    status = _preview_status(pending=pending)
     if entry and entry.get('error'):
+        status = _preview_status(failed=True)
         st.warning(entry['error'])
         if st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key):
             _discard(state, state['cache'].pop(section_key))
@@ -228,14 +242,13 @@ def _render_ordered_preview(section_key, prefix, title):
             st.rerun(scope='app')
     if entry and not entry.get('error'):
         ticket = entry['ticket']
-        status = f'Current preview ready · {ticket.pages} page' + ('s' if ticket.pages != 1 else '')
+        status = _preview_status(pages=ticket.pages)
     elif state['visible'].get(section_key):
         older = state.setdefault('last_good', {}).get(section_key)
         if older and STORE.available(state['owner'], older.get('ticket')):
             ticket = older['ticket']
             stale = True
-            status = ('Previous preview — changes are NOT shown yet. Updating…' if pending
-                      else 'Previous preview only — latest changes are NOT shown. Retry the preview.')
+            status = _preview_status(pending=pending, stale=True)
         elif older:
             _discard(state, state['last_good'].pop(section_key))
     if ticket and state['visible'].get(section_key):
@@ -244,7 +257,8 @@ def _render_ordered_preview(section_key, prefix, title):
         try:
             images = STORE.pages(state['owner'], ticket, indexes, dpi=view['dpi']) or ()
         except (ValueError, OSError):
-            status = 'This page preview is temporarily unavailable. Your edits are still here.'
+            status = _preview_status(failed=True)
+            st.warning('The page preview is temporarily unavailable. Your edits are still here.')
             images = ()
     widget_key = prefix + '_preview_surface_' + section_key
     render_view(key=widget_key, generation=state['wanted'].get(section_key, ''), title=title,
