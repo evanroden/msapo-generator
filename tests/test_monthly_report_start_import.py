@@ -186,7 +186,7 @@ from app.monthly_report_ui import _field
 p = synthetic_profiles()[0]
 render_section_setup(p.contract, ReportPeriod(2026, 9), "Synthetic Editor", _field, identity=p)
 ''', default_timeout=30).run()
-    next(b for b in app.button if b.label == "Analyze report").click().run()
+    assert not any(button.label == "Analyze report" for button in app.button)
     assert not app.exception
     return app
 
@@ -223,8 +223,9 @@ def test_unknown_source_site_blocks_start_until_membership_is_confirmed(monkeypa
     path = report_file(tmp_path, title="Report without site name", activity=("September 2026 current work",))
     app = start_app(monkeypatch, tmp_path, path)
     assert not any(b.label == "Continue to this month’s updates" for b in app.button)
-    selector = next(w for w in app.multiselect if w.label == "Sites shown in the starting report")
-    selector.set_value([synthetic_profiles()[0].facilities[0].key]).run()
+    selected_site = synthetic_profiles()[0].facilities[0].title
+    selector = next(w for w in app.checkbox if w.label == selected_site)
+    selector.check().run()
     assert "current work" in next(b.text for b in save_start(app).blocks if b.key == "activity_summary")
 
 
