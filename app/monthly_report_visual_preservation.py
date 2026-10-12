@@ -85,12 +85,17 @@ def preserve_section_diagrams(path, inspection, section):
     assets, records = [], []
     for page in pages:
         kind, _ = page_status(page.text, unreadable=not page.text.strip())
-        if (page.blank or kind in ("pricing", "legal", "signature", "blank", "review")
+        if (page.blank or kind in ("pricing", "legal", "signature", "blank")
                 or placeholder_matches(page.text)):
             raise DiagramPreservationError(
                 f"Page {page.number} of the original {section.title} drawing needs "
                 "a safe visual content check or clear replacement. It was not dropped or "
                 "approved without proof.")
+        # A diagram that has graphic pixels but no extractable Word text must
+        # remain visible in the working report. Preserve it as an unapproved
+        # image, not as nonexistent content. Later client-export privacy gates
+        # can require a specific image review; this is not a price clearance.
+        visual_review_required = kind == "review"
         digest = sha256(page.data).hexdigest()
         slot = VISUAL_SLOTS[section.key]
         assets.append((slot, ReportImage(page.data, "png", page.width, page.height)))
@@ -99,6 +104,7 @@ def preserve_section_diagrams(path, inspection, section):
             "sha256": digest, "text": page.text, "blank": page.blank,
             "source_sha256": inspection.sha256,
             "source_verified": True, "reviewed": False,
+            "visual_review_required": visual_review_required,
         })
     if not assets:
         raise DiagramPreservationError(
