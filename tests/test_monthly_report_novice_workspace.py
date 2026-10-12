@@ -71,7 +71,7 @@ def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_m
     update = next(w for w in app.text_area if w.label == 'Status or findings')
     assert 'has not started' in update.value
     update.set_value('Synthetic equipment monitoring is awaiting activation.').run()
-    next(b for b in app.button if b.label == 'Save progress').click().run()
+    next(b for b in app.button if b.label == 'Save shared version').click().run()
     saved = library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', ReportPeriod(2026, 9))
     assert next(b for b in saved.draft.blocks if b.key == 'mbcx_status').text == 'Synthetic equipment monitoring is awaiting activation.'
     app.selectbox('report_month_number').set_value(10).run()
