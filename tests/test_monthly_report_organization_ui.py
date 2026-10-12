@@ -195,3 +195,18 @@ def test_outage_editor_and_upload_titles_use_same_procedure_term():
     assert {button.label for button in at.button} >= {
         "Edit business-hours outage procedure", "Edit after-hours outage procedure"
     }
+
+
+def test_empty_imported_contact_table_does_not_claim_notes_are_included():
+    script = SCRIPT.replace(
+        'st.session_state.setdefault("original", original)',
+        '''original["contact_matrix"] = replace(
+    original["contact_matrix"], text="",
+    extra_tables=(ReportTable(("Role", "Name"), (), "empty-source"),),
+)
+st.session_state.setdefault("original", original)''',
+    )
+    at = AppTest.from_string(script).run()
+    assert not at.exception
+    assert any(c.value == "No entries recorded" for c in at.caption)
+    assert not any(c.value == "Notes included" for c in at.caption)
