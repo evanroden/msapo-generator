@@ -1,0 +1,260 @@
+{
+  "purpose": "Public synthetic QA fixtures, never private authentic evidence",
+  "generated_at": "2026-09-30T00:00:00Z fixture reference date (not an actual build timestamp)",
+  "testing_target": {
+    "contract": "QA Demonstration - Synthetic Only",
+    "site_for_in_scope": "Demo North",
+    "period": "2026-09"
+  },
+  "never_do": [
+    "Treat synthetic results as authentic parity acceptance",
+    "Copy price/legal/signature-only pages into a client report",
+    "Turn pending/invalid date into completed status",
+    "Import Demo South readings into Demo North",
+    "Silently discard valid diagrams"
+  ],
+  "files": [
+    {
+      "name": "QA_Vendor_Service_MixedPages.docx",
+      "bytes": 41019,
+      "sha256": "9d027202e01e50ad16c44364826cd9c1f11ed8b74f572414fae57235f2447bce",
+      "scenario": "QA_Vendor_Service_MixedPages",
+      "format": "docx",
+      "pages_in_rendered_pdf": 5,
+      "expected_relevant_pages_for_north": [
+        1
+      ],
+      "exclude_or_scope_block_pages": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "purpose": "vendor maintenance; blank/legal/signature/price",
+      "pdf_page_inspection": null
+    },
+    {
+      "name": "QA_Vendor_Service_MixedPages.pdf",
+      "bytes": 100596,
+      "sha256": "2a04c9e6620be9c4414492ea368f5bc8cb3a62b71cd97c82cd00407e0c8eb8fa",
+      "scenario": "QA_Vendor_Service_MixedPages",
+      "format": "pdf",
+      "pages_in_rendered_pdf": 5,
+      "expected_relevant_pages_for_north": [
+        1
+      ],
+      "exclude_or_scope_block_pages": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "purpose": "vendor maintenance; blank/legal/signature/price",
+      "pdf_page_inspection": [
+        {
+          "page": 1,
+          "chars": 769,
+          "images": 1
+        },
+        {
+          "page": 2,
+          "chars": 0,
+          "images": 1
+        },
+        {
+          "page": 3,
+          "chars": 913,
+          "images": 1
+        },
+        {
+          "page": 4,
+          "chars": 94,
+          "images": 1
+        },
+        {
+          "page": 5,
+          "chars": 417,
+          "images": 1
+        }
+      ]
+    },
+    {
+      "name": "QA_Water_Treatment_MixedPages.docx",
+      "bytes": 52545,
+      "sha256": "6f3fc07d9712993a9aac34afd7fff50057f6658619cd040b8c7ff79c81252025",
+      "scenario": "QA_Water_Treatment_MixedPages",
+      "format": "docx",
+      "pages_in_rendered_pdf": 5,
+      "expected_relevant_pages_for_north": [
+        1,
+        2
+      ],
+      "exclude_or_scope_block_pages": [
+        3,
+        4,
+        5
+      ],
+      "purpose": "chemical results, technical chart; legal/signature/blank",
+      "pdf_page_inspection": null
+    },
+    {
+      "name": "QA_Water_Treatment_MixedPages.pdf",
+      "bytes": 109374,
+      "sha256": "a2992a27815879c847115e215cfdf0f9533ec0e02970021e28d2199318ed8c5b",
+      "scenario": "QA_Water_Treatment_MixedPages",
+      "format": "pdf",
+      "pages_in_rendered_pdf": 5,
+      "expected_relevant_pages_for_north": [
+        1,
+        2
+      ],
+      "exclude_or_scope_block_pages": [
+        3,
+        4,
+        5
+      ],
+      "purpose": "chemical results, technical chart; legal/signature/blank",
+      "pdf_page_inspection": [
+        {
+          "page": 1,
+          "chars": 933,
+          "images": 2
+        },
+        {
+          "page": 2,
+          "chars": 387,
+          "images": 2
+        },
+        {
+          "page": 3,
+          "chars": 590,
+          "images": 2
+        },
+        {
+          "page": 4,
+          "chars": 122,
+          "images": 2
+        },
+        {
+          "page": 5,
+          "chars": 0,
+          "images": 2
+        }
+      ]
+    },
+    {
+      "name": "QA_Vendor_AmbiguousDate.docx",
+      "bytes": 37597,
+      "sha256": "d0cf500bf9eefdc4bc3679e7441d85433975d32de953e36e235e3cfed2283102",
+      "scenario": "QA_Vendor_AmbiguousDate",
+      "format": "docx",
+      "pages_in_rendered_pdf": 2,
+      "expected_relevant_pages_for_north": [
+        1,
+        2
+      ],
+      "exclude_or_scope_block_pages": [],
+      "purpose": "planned work with invalid completion date",
+      "pdf_page_inspection": null
+    },
+    {
+      "name": "QA_Vendor_AmbiguousDate.pdf",
+      "bytes": 80578,
+      "sha256": "a22c92eb83044ceaafe233043fd3aea3773c26858fbc76ad8ec1a2139d63cd05",
+      "scenario": "QA_Vendor_AmbiguousDate",
+      "format": "pdf",
+      "pages_in_rendered_pdf": 2,
+      "expected_relevant_pages_for_north": [
+        1,
+        2
+      ],
+      "exclude_or_scope_block_pages": [],
+      "purpose": "planned work with invalid completion date",
+      "pdf_page_inspection": [
+        {
+          "page": 1,
+          "chars": 682,
+          "images": 0
+        },
+        {
+          "page": 2,
+          "chars": 321,
+          "images": 0
+        }
+      ]
+    },
+    {
+      "name": "QA_Chemical_DifferentSite.docx",
+      "bytes": 37749,
+      "sha256": "b71794b0d0bda35f4d912caa382e1dfedf1ac9f6a2beb3ad03dfee9e21797475",
+      "scenario": "QA_Chemical_DifferentSite",
+      "format": "docx",
+      "pages_in_rendered_pdf": 3,
+      "expected_relevant_pages_for_north": [],
+      "exclude_or_scope_block_pages": [
+        1,
+        2,
+        3
+      ],
+      "purpose": "other site technical reading, priced page, blank",
+      "pdf_page_inspection": null
+    },
+    {
+      "name": "QA_Chemical_DifferentSite.pdf",
+      "bytes": 85079,
+      "sha256": "5db15a8c81ca1e86d3906f09c8a9ba42b26bf89aefaef4270e7a2b907ebbbb9d",
+      "scenario": "QA_Chemical_DifferentSite",
+      "format": "pdf",
+      "pages_in_rendered_pdf": 3,
+      "expected_relevant_pages_for_north": [],
+      "exclude_or_scope_block_pages": [
+        1,
+        2,
+        3
+      ],
+      "purpose": "other site technical reading, priced page, blank",
+      "pdf_page_inspection": [
+        {
+          "page": 1,
+          "chars": 746,
+          "images": 0
+        },
+        {
+          "page": 2,
+          "chars": 274,
+          "images": 0
+        },
+        {
+          "page": 3,
+          "chars": 0,
+          "images": 0
+        }
+      ]
+    },
+    {
+      "name": "QA_Water_Treatment_ImageOnlyScan.pdf",
+      "bytes": 89060,
+      "sha256": "6a8a35a7d847cefd3c6e00b267815faa32484de080adf053baa00bbfd7c69853",
+      "scenario": "image-only water report",
+      "format": "pdf",
+      "pages_in_rendered_pdf": 2,
+      "expected_relevant_pages_for_north": [],
+      "exclude_or_scope_block_pages": [
+        2
+      ],
+      "purpose": "First page needs reviewed OCR/vision or source re-upload; second page truly blank",
+      "pdf_page_inspection": [
+        {
+          "page": 1,
+          "chars": 0,
+          "images": 1
+        },
+        {
+          "page": 2,
+          "chars": 0,
+          "images": 0
+        }
+      ]
+    }
+  ]
+}
