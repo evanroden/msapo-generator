@@ -734,8 +734,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     with preview_column:
         with st.container(key="monthly_cover_preview_sticky"):
             from app.monthly_report_section_ui import render_pending_cover_selection
-            render_pending_cover_selection(contract, period, state)
-            render_section_preview(replace(draft, blocks=tuple(blocks.values())), "cover", assets, prefix, deferred=True)
+            proposed_draft, proposed_assets = render_pending_cover_selection(
+                replace(draft, blocks=tuple(blocks.values())), assets, contract, period, state)
+            render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
     # The sticky viewport belongs to the cover/import row only. Once the
     # editor reaches a new report section, its own preview replaces it.
     st.markdown(
