@@ -1,12 +1,40 @@
 """Hidden synthetic QA controls for the existing ordered Monthly Report editor."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from uuid import uuid4
+
 import streamlit as st
 
 from app import monthly_report_library as library
 from app import monthly_report_qa_fixture as fixture
 from app import monthly_report_testing as testing
 from app.monthly_report_editor import _key, _signature
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _queue_fixture_request(mode: str) -> None:
+    """An accepted click survives a fragment/editor rerun until committed or rejected."""
+    if mode not in ("prefill", "replay"):
+        raise ValueError("Invalid isolated fixture action.")
+    if not st.session_state.get("monthly_qa_fixture_pending"):
+        st.session_state["monthly_qa_fixture_pending"] = {
+            "mode": mode, "id": uuid4().hex, "accepted_at": _now(),
+        }
+
+
+def _queue_reset_request() -> None:
+    """Do not treat an always-visible Replay button as a reset acknowledgment."""
+    if not st.session_state.get("monthly_qa_reset_pending"):
+        st.session_state["monthly_qa_reset_pending"] = {
+            "id": uuid4().hex, "accepted_at": _now(),
+        }
+    st.session_state.pop("_monthly_qa_reset_receipt", None)
+    # Reset takes precedence over a not-yet-committed fixture action.
+    st.session_state.pop("monthly_qa_fixture_pending", None)
 
 
 def _select_fixture():
@@ -68,36 +96,88 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
     st.warning("ISOLATED SYNTHETIC TESTING — not a client report. No live report, contact, capacity, logo or design records are accessible here.")
     st.caption("Choose one route below. Known-value prefill checks report editing and generation; original-source replay separately exercises file extraction and placement. Both use the existing report engine.")
     a, b, c = st.columns(3)
-    chosen = None
-    if a.button("Load known-value report", key="monthly_qa_prefill"):
-        chosen = "prefill"
-    if b.button("Replay synthetic source files", key="monthly_qa_replay"):
-        chosen = "replay"
-    if c.button("Reset this test only", key="monthly_qa_reset"):
+    a.button("Load known-value report", key="monthly_qa_prefill",
+             on_click=_queue_fixture_request, args=("prefill",))
+    b.button("Replay synthetic source files", key="monthly_qa_replay",
+             on_click=_queue_fixture_request, args=("replay",))
+    c.button("Reset this test only", key="monthly_qa_reset",
+             on_click=_queue_reset_request)
+
+    reset_request = st.session_state.get("monthly_qa_reset_pending")
+    if reset_request:
         if _active_jobs():
-            st.error("A test preview or document-reading job is still running. Finish or cancel it before resetting this test.")
+            st.session_state.pop("monthly_qa_reset_pending", None)
+            st.error("Test reset rejected: a preview or document-reading job is still running. "
+                     "Finish it before trying again; the current fixture was kept.")
         else:
+            prior_generation = testing.generation()
             try:
                 testing.reset(live_storage_root)
                 from app.monthly_report_preview_store import STORE
                 STORE.reset_scope()
             except (ValueError, OSError) as exc:
-                st.error("Test reset was stopped: " + str(exc))
+                st.session_state.pop("monthly_qa_reset_pending", None)
+                st.error("Test reset was stopped; the current fixture was kept: " + str(exc))
             else:
                 _clear_report_widgets()
-                st.success("Only this isolated synthetic test's data was reset.")
+                # The parent entry point clears monthly_qa_* across generation
+                # changes. Keep this one receipt outside that prefix, and show
+                # it ONLY after the new empty namespace has really been read.
+                st.session_state["_monthly_qa_reset_receipt"] = {
+                    "id": reset_request["id"],
+                    "accepted_at": reset_request["accepted_at"],
+                    "prior_generation": prior_generation,
+                }
                 st.rerun()
-    if chosen:
+
+    pending = st.session_state.get("monthly_qa_fixture_pending")
+    if pending:
+        chosen = pending["mode"]
         try:
-            fixture.prepare(chosen)
+            draft = fixture.prepare(chosen)
+            persisted = library.load_snapshot(
+                fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
+            if persisted is None or persisted.draft.fingerprint != draft.fingerprint:
+                raise ValueError("The requested synthetic fixture was not committed.")
+            # A receipt must reflect real source routing and committed values,
+            # not merely the callback or a caption from a previous generation.
+            checks = fixture.compare(persisted.draft)["checks"]
+            if not checks or not all(checks.values()):
+                raise ValueError("The synthetic fixture was saved but its source comparison failed.")
+            if bool(persisted.draft.sources) != (chosen == "replay"):
+                raise ValueError("The committed fixture has the wrong source mode.")
         except (ValueError, OSError) as exc:
-            st.error("Isolated fixture could not be installed: " + str(exc))
+            st.session_state.pop("monthly_qa_fixture_pending", None)
+            st.session_state["monthly_qa_fixture_error"] = str(exc)
         else:
             _clear_report_widgets()
             _select_fixture()
-            st.session_state["monthly_qa_loaded"] = chosen
+            st.session_state["monthly_qa_fixture_receipt"] = {
+                "mode": chosen, "id": pending["id"],
+                "accepted_at": pending["accepted_at"], "committed_at": _now(),
+                "generation": testing.generation(),
+                "revision": persisted.revision,
+            }
             st.rerun()
+
+    if message := st.session_state.pop("monthly_qa_fixture_error", None):
+        st.error("Isolated fixture could not be installed; retry this action: " + message)
+
     saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
+    current_generation = testing.generation()
+    kind = ("original-source replay" if saved.draft.sources else "known-value prefill") if saved else "empty"
+    st.caption(f"QA fixture state: {kind} · generation {current_generation[:12]} · revision {saved.revision if saved else 0}")
+    if receipt := st.session_state.get("monthly_qa_fixture_receipt"):
+        if (saved and receipt["generation"] == current_generation
+                and receipt["revision"] == saved.revision
+                and receipt["mode"] == ("replay" if saved.draft.sources else "prefill")):
+            st.caption(f"QA fixture action accepted and committed: {receipt['mode']} · "
+                       f"action {receipt['id'][:12]} · revision {saved.revision} · "
+                       f"received {receipt['accepted_at']} · committed {receipt['committed_at']}")
+    if reset_receipt := st.session_state.get("_monthly_qa_reset_receipt"):
+        if not saved and reset_receipt["prior_generation"] != current_generation:
+            st.caption(f"QA reset acknowledged: empty fixture · generation {current_generation[:12]} · "
+                       f"action {reset_receipt['id'][:12]} · received {reset_receipt['accepted_at']}")
     if saved:
         # A fresh browser session has no widget state. Keep the same QA
         # fixture's contract, site set and month across refresh/reconnect;
