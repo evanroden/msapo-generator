@@ -70,7 +70,7 @@ def test_unsaved_text_and_source_state_survive_section_switches_and_direct_save(
     choose_section(app, "activity")
     assert next(value for value in app.text_area if value.label == "Activity summary").value == "Unsaved pump repair."
     assert working_state(app)[1].sources == (source,)
-    next(value for value in app.button if value.label == "Save progress").click().run()
+    next(value for value in app.button if value.label == "Save shared version").click().run()
     saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
     blocks = {block.key: block for block in saved.draft.blocks}
     assert blocks["activity_summary"].text == "Unsaved pump repair."
@@ -139,13 +139,13 @@ def test_visible_followups_still_block_download_and_each_updates_independently(m
 
 def test_save_keeps_name_and_revision_gates_without_extra_confirmation(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
-    assert next(value for value in app.button if value.label == "Save progress").disabled
+    assert next(value for value in app.button if value.label == "Save shared version").disabled
     next(value for value in app.text_input if value.label == "Prepared by").set_value("Synthetic Editor").run()
-    assert not next(value for value in app.button if value.label == "Save progress").disabled
+    assert not next(value for value in app.button if value.label == "Save shared version").disabled
     _, draft = working_state(app)
     library.save_snapshot(draft, expected_revision=0, entered_editor="Another synthetic editor")
     app.run()
-    assert next(value for value in app.button if value.label == "Save progress").disabled
+    assert next(value for value in app.button if value.label == "Save shared version").disabled
     assert any("Another version was saved" in value.value for value in app.warning)
 
 
@@ -312,7 +312,7 @@ def test_saved_cleared_contacts_and_capacity_stay_blank_after_reopen_and_rollove
         replace(block, source="This month", text="", rows=(), extra_tables=()) if block.key in cleared else block
         for block in draft.blocks
     ))
-    next(item for item in app.button if item.label == "Save progress").click().run()
+    next(item for item in app.button if item.label == "Save shared version").click().run()
     assert not app.exception
     saved = library.load_snapshot(profile.contract, profile.key, ReportPeriod(2026, 9))
     assert all(not block.rows and not block.extra_tables for block in saved.draft.blocks if block.key in cleared)
