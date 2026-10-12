@@ -388,8 +388,9 @@ def test_native_starting_import_omits_master_dividers_but_keeps_unknown_art_ques
     native=automatic_section_plans(inspection,analysis,native_design=True)
     assert 'divider' in generic['activity']['selected']
     assert 'divider' not in native['activity']['selected']
-    assert not native['issues']['questions']
-    assert native['issues']['approved']
+    # An unrendered native diagram must NOT be treated as a harmless omission.
+    assert native['issues']['questions']
+    assert not native['issues']['approved']
     assert not native['issues']['selected']
 
 
