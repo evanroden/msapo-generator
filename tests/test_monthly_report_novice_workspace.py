@@ -54,7 +54,7 @@ def test_general_template_sections_have_one_editing_home(monkeypatch, tmp_path):
     assert not any(w.label in ('Section to update', 'Site information to update') for w in app.selectbox)
     for label in ('Equipment issues', 'Utility analysis'):
         assert sum(w.label == label for w in app.text_area) == 1
-    assert any(b.label == 'Change team chart' for b in app.button)
+    assert any(b.label == 'Edit chart' for b in app.button)
     assert not any(w.label.startswith('Change the ') for w in app.checkbox)
     assert not any(w.label in ('Pictures/pages to keep', 'Picture/page to view') for w in (*app.selectbox, *app.multiselect))
 
