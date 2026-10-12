@@ -274,7 +274,7 @@ def test_importing_partial_report_preserves_unsaved_work(monkeypatch, tmp_path):
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic unsaved filter replacement.").run()
     step(app, 1)
-    next(b for b in app.button if b.label == "Analyze report").click().run()
+    assert not any(b.label == "Analyze report" for b in app.button)
     assert not any(w.label.startswith("This section is ready") for w in app.checkbox)
     next(b for b in app.button if b.label == "Continue to this month’s updates").click().run()
     assert not app.exception
