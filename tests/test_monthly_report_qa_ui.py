@@ -131,7 +131,8 @@ def test_accepted_generation_queue_survives_an_unrelated_editor_rerun(monkeypatc
     app.session_state["monthly_qa_generate_queued"] = True
     app.run()
     assert not app.exception
-    assert not app.session_state.get("monthly_qa_generate_queued")
+    with pytest.raises(KeyError):
+        _ = app.session_state["monthly_qa_generate_queued"]
     _, package = app.session_state["monthly_qa_package"]
     assert package.docx.startswith(b"PK")
     assert package.pdf and package.pdf.startswith(b"%PDF-")
