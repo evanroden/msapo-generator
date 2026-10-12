@@ -350,7 +350,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
     if st.session_state[page_key] not in image_pages:
         st.session_state[page_key] = image_pages[0]
     page_labels = {n: f"Page {n}" + (" · already in report" if (source.id, n) in existing
-                  else " · included" if n in source.selected_pages and page_allowed(source, n)
+                  else " · reviewed, not in report" if n in source.selected_pages and page_allowed(source, n)
                   else " · left out" if dict(source.client_page_exclusions).get(n) == page_fingerprint(source, n)
                   else " · needs review") for n in image_pages}
     page = st.selectbox("Page to review", image_pages, key=page_key, format_func=page_labels.get)
