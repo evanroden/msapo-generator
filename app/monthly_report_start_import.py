@@ -64,7 +64,15 @@ def _named_group(profile):
 
 def source_sites(inspection, known_sites):
     """Match complete names/aliases on the cover, never incidental body names."""
-    cover = " " + _words("\n".join(inspection.title_candidates)) + " "
+    # The inspector records some native cover text in the "cover"
+    # section rather than title_candidates. Only the first page's own
+    # document text may establish identity; body/service content is never
+    # permission to import another site's contacts or activity.
+    cover_lines = list(inspection.title_candidates)
+    cover_lines.extend(item.text for item in inspection.items
+                       if item.kind == "text" and item.part == "word/document.xml"
+                       and item.section in ("", "cover") and 0 <= item.position <= 80)
+    cover = " " + _words("\n".join(dict.fromkeys(cover_lines))) + " "
     matches = []
     for site in known_sites:
         for name in (site.title, *site.aliases):
