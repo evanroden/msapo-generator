@@ -249,7 +249,7 @@ def test_blank_sections_generate_without_empty_or_standing_confirmations_but_pri
     if not generated:
         assert any("No new monthly information was entered" in w.value
                    for w in app.warning)
-        next(b for b in app.button if b.label == "Generate anyway").click().run()
+        next(b for b in app.button if b.label == "Create anyway").click().run()
     assert not app.exception
     generated_draft, raw = generated[0]
     paragraphs = [paragraph.text for paragraph in Document(BytesIO(raw)).paragraphs]
