@@ -85,11 +85,14 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
                 diagnostics["visible_activity_sha256"] = hashlib.sha256(
                     displayed.encode("utf-8")).hexdigest()
                 diagnostics["visible_activity_length"] = len(displayed)
-            matched = page.get_by_text(re.compile(
-                r"^QA durable Activity SHA256: [0-9a-f]{64}$"
-            )).all_text_contents()
-            diagnostics["durable_activity_sha256"] = (
-                matched[-1].split(": ", 1)[1] if matched else None)
+            for label, key in (
+                ("QA working Activity SHA256:", "working_activity_sha256"),
+                ("QA durable Activity SHA256:", "durable_activity_sha256"),
+            ):
+                matched = page.get_by_text(re.compile(
+                    r"^" + re.escape(label) + r" [0-9a-f]{64}$"
+                )).all_text_contents()
+                diagnostics[key] = matched[-1].split(": ", 1)[1] if matched else None
         except Exception:
             # Diagnostics must never obscure or downgrade the primary failure.
             diagnostics["activity_hashes_unavailable"] = True
