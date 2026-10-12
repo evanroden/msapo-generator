@@ -86,5 +86,7 @@ def test_reset_refuses_real_errors_or_missing_root(monkeypatch, tmp_path, error,
 def test_ui_does_not_delete_storage_before_cache_or_claim_retention_on_error():
     source = inspect.getsource(ui.render)
     assert source.index("STORE.reset_scope()") < source.index("testing.reset(live_storage_root)")
-    assert "current fixture was kept" not in source
+    # The pre-reset active-job refusal may correctly say work was kept;
+    # only the obsolete AFTER-deletion failure claim is disallowed.
+    assert "Test reset was stopped; the current fixture was kept:" not in source
     assert "Isolated reset could not be confirmed" in source
