@@ -4,7 +4,7 @@ This folder contains **fully fictional** PDF/DOCX evidence for testing the ENFRA
 
 ## Files and reproducibility
 
-- `ENFRA_Synthetic_Imperfect_Vendor_Chemical_QA_Pack.zip` — nine ready-to-import documents (four DOCX and five PDF), plus the included generator, manifest and tester instructions.
+- `runtime/qa_fixtures/ENFRA_Synthetic_Imperfect_Vendor_Chemical_QA_Pack.zip` — the one immutable, runtime-shipped archive (four DOCX, five PDF, generator and instructions). The checked-in manifest and regeneration script in this documentation folder are kept out of the production image.
 - `MANIFEST.json` — original file SHA-256 hashes, page counts, scenario identifiers and expected inclusion/exclusion decisions.
 - `generate_fixtures.py` — source to regenerate the sample documents locally. Run it from a **disposable working directory** after copying the script there, or extract the included script and run `python generate_fixtures.py`. It needs python-docx, Pillow, PyMuPDF and LibreOffice CLI. Its output depends on the installed fonts/renderer; checked-in binary fixture hashes in MANIFEST are authoritative.
 
