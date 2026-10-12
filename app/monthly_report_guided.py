@@ -526,6 +526,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     with st.expander("Saving and recovery"):
         st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
         st.caption("Draft recovery uses a browser cookie and acknowledged server working copies; it may not recover when cookies are disabled or edits have not reached the app. Saving or generating a version shares it. Prepared by records attribution, not verified identity.")
+    with st.sidebar.expander("Storage maintenance — all contracts", expanded=False):
+        _render_storage_maintenance()
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
     contract = choose_contract(last_contract, field)
     if not contract:
@@ -746,8 +748,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with st.sidebar.expander("Master design administration — all contracts", expanded=False):
             from app.monthly_report_designs_ui import render_design_settings
             render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
-        with st.sidebar.expander("Storage maintenance — all contracts", expanded=False):
-            _render_storage_maintenance()
     with preview_column:
         with st.container(key="monthly_cover_preview_sticky"):
             from app.monthly_report_section_ui import render_pending_cover_selection
