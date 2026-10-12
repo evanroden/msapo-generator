@@ -110,7 +110,7 @@ def test_standalone_import_site_identity_recovers_from_duplicate_name(monkeypatc
     assert app.warning
     app.run()
     assert not app.exception
-    next(w for w in app.text_input if w.label == "Site not listed? Add its name here").set_value("").run()
+    next(w for w in app.text_input if w.label == "Add a site not listed (optional)").set_value("").run()
     assert not app.exception
     assert tuple(f.title for f in app.session_state["candidate"].facilities) == ("Unity Hospital",)
 
