@@ -90,3 +90,69 @@ def test_ui_does_not_delete_storage_before_cache_or_claim_retention_on_error():
     # only the obsolete AFTER-deletion failure claim is disallowed.
     assert "Test reset was stopped; the current fixture was kept:" not in source
     assert "Isolated reset could not be confirmed" in source
+
+
+@pytest.mark.parametrize("error", [
+    FileNotFoundError(errno.ENOENT, "A last cleanup entry disappeared."),
+    PermissionError(errno.EACCES, "A synthetic late cleanup error."),
+])
+def test_late_cleanup_error_after_exact_root_removal_is_confirmed(
+        monkeypatch, tmp_path, error):
+    """A removed test must not be reported as retained after rmtree finishes."""
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = fixture.profile()
+    # An unrelated live report with the same invented identity is immutable.
+    live = library.save_profile(profile, expected_revision=0,
+                                actor="Invented live author", confirmed=True)
+    with qa.isolated(COOKIE):
+        fixture.prepare("prefill")
+        previous = qa.generation()
+        target = qa._location(tmp_path, qa.scope())
+        original_rmtree = shutil.rmtree
+
+        def remove_then_raise(path, *, onexc):
+            original_rmtree(path, onexc=onexc)
+            assert not target.exists()
+            raise type(error)(error.errno, str(error), str(path))
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(shutil, "rmtree", remove_then_raise)
+            qa.reset(tmp_path)
+        assert not target.exists()
+        assert not target.is_symlink()
+        # Same-generation and copied worker contexts remain invalidated.
+        with pytest.raises(OSError, match="reset"):
+            library.load_snapshot(profile.contract, profile.key, fixture.PERIOD)
+    with qa.isolated(COOKIE):
+        assert library.load_snapshot(profile.contract, profile.key, fixture.PERIOD) is None
+        assert qa.generation() and qa.generation() != previous
+        assert all(fixture.compare(fixture.prepare("replay"))["checks"].values())
+    assert library.load_profile(profile.contract, profile.key) == live
+    assert library.load_snapshot(profile.contract, profile.key, fixture.PERIOD) is None
+
+
+def test_late_error_with_partial_qa_directory_remains_hard_failure(
+        monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with qa.isolated(COOKIE):
+        fixture.prepare("prefill")
+        target = qa._location(tmp_path, qa.scope())
+        scratch = target / "synthetic-cleanup.tmp"
+        scratch.write_text("invented transient")
+        original_rmtree = shutil.rmtree
+
+        def remove_one_child_then_fail(path, *, onexc):
+            scratch.unlink()
+            raise PermissionError(errno.EACCES, "Still has files", str(path))
+
+        with monkeypatch.context() as scoped:
+            scoped.setattr(shutil, "rmtree", remove_one_child_then_fail)
+            with pytest.raises(PermissionError):
+                qa.reset(tmp_path)
+        assert target.exists()
+        assert not scratch.exists()
+        assert library.load_snapshot(
+            fixture.CONTRACT, fixture.profile().key, fixture.PERIOD) is not None
+        # Retry stays possible after a genuine, incomplete cleanup.
+        original_rmtree(target)
+        assert not target.exists()
