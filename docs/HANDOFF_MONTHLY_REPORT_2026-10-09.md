@@ -1,5 +1,14 @@
 # Monthly report builder: next-LLM handoff
 
+> **Current October 12, 2026 update:** Use [the one authoritative Phase 1 closure ledger](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md) for exact current/previous builds, accepted actions, CI, live failures, private reference identities and the original 113-test coverage matrix. The older October 9 body below is preserved as a **historical record**, not as a current main/PR/Phase 2 instruction. Refresh main and the newest serialized live gate before any edits.
+>
+> The genuine unchanged private Unity/USH August original Word and paired 40-page Adobe PDF have each been **SHA-256 verified** and compared as source inputs. LibreOffice independently renders 43 pages from the original unchanged Word; this is an inherited renderer difference, not acceptance of app-generated output. Original media, private data and this renderer export remain outside public GitHub. Authenticate output against those originals privately; this does not establish Microsoft Word/Adobe parity.
+>
+> Merged [#157](https://github.com/evanroden/msapo-generator/pull/157) adds fixture/reset lifecycle acknowledgments and two serialized complete public QA first-attempt runs; merged [#158](https://github.com/evanroden/msapo-generator/pull/158) fixes transient Compare event loss. The last completed live [run 38246618585](https://github.com/evanroden/msapo-generator/actions/runs/38246618585) on served `df759f31` passed 18/18 known prefill, actual synthetic Word/PDF and tested canaries, but failed an Activity edit during initial textbox hydration (read as blank). [#160](https://github.com/evanroden/msapo-generator/pull/160) is now merged at `bae08f31`; its new integrated-head and live first-attempt gate must still be verified as a separate result. Do not infer that source replay or final reset passed on the failed run. Earlier [38181859322](https://github.com/evanroden/msapo-generator/actions/runs/38181859322) completed all stages on older `7702256d` only. Phase 1 has **not** earned release acceptance.
+>
+> Phase 2 is separately authorized, outside this Phase 1 closing work; historical text here that asks to postpone it is superseded. No authentic/owner signoff is implied by green CI, fixture results, a full synthetic PDF or a PR merge.
+
+
 Read the newer [October 9 usability audit ledger](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md)
 alongside this handoff. Its automatic active-work and standing-data direction
 supersedes the routine manual Save instructions below; it does not imply those
