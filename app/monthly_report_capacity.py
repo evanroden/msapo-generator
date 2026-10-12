@@ -185,8 +185,14 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
         # them; openpyxl's object graph is unnecessary for capacity cells.
         workbook = directory.inspect_workbook(raw)
         native_tables = []
+        # Directory's bounded XLSX inspector marks hidden/veryHidden sheets.
+        # Such sheets may contain stale or unrelated values; they must not
+        # silently become first-fill capacity facts merely because they exist
+        # in the package. Keep original bytes/provenance for a deliberate
+        # corrected upload, but only visible sheets enter automatic candidates.
+        hidden_count = sum(sheet.hidden for sheet in workbook.sheets)
         for sheet in workbook.sheets:
-            if not sheet.cells:
+            if sheet.hidden or not sheet.cells:
                 continue
             columns = sorted({cell.column for cell in sheet.cells})
             row_numbers = sorted({cell.row for cell in sheet.cells})
@@ -197,7 +203,10 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
             native_tables.append(SourceTable(sheet.name, records[0], records[1:]))
         source = ReportSource(workbook.sha256, Path(filename).name, workbook.sha256, ".xlsx",
                               page_texts=tuple("\n".join("\t".join(row) for row in _table_records(t)) for t in native_tables),
-                              notices=(*workbook.notices, "Workbook values use stored results; formulas are not executed."))
+                              notices=(*workbook.notices,
+                                       *(("Hidden thermal worksheets were excluded from automatic first-fill; "
+                                          "unhide and re-upload only those you intend to review.",) if hidden_count else ()),
+                                       "Workbook values use stored results; formulas are not executed."))
         content = SourceContent(source, tuple(native_tables))
         from app.monthly_report_sources import _path
         library._atomic_write(_path(profile, source.sha256, source.suffix), raw)
