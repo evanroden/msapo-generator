@@ -120,16 +120,16 @@ def test_guided_placeholder_warning_download_and_review_gates(monkeypatch, tmp_p
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("Insert image here").run()
     step(app, 4)
-    assert next(b for b in app.button if b.label == "Generate DOCX and PDF").disabled
+    assert next(b for b in app.button if b.label == "Create Word and PDF").disabled
     assert any("template instructions" in e.value for e in app.error)
     assert any("Monthly Activity Summary" in e.value for e in app.error)
     assert not any("activity_summary" in e.value for e in app.error)
     step(app, 2)
     next(w for w in app.text_area if w.label == "Activity summary").set_value("August 2026 activity.").run()
     step(app, 4)
-    assert next(b for b in app.button if b.label == "Generate DOCX and PDF").disabled
+    assert next(b for b in app.button if b.label == "Create Word and PDF").disabled
     next(w for w in app.checkbox if w.label == "I checked these specific warnings").check().run()
-    next(b for b in app.button if b.label == "Generate DOCX and PDF").click().run()
+    next(b for b in app.button if b.label == "Create Word and PDF").click().run()
     assert not app.exception
     assert [b.label for b in app.get("download_button")] == ["Download DOCX", "Download PDF"]
     step(app, 2)
