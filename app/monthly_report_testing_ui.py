@@ -36,6 +36,11 @@ def _working_report(saved):
     return draft
 
 
+def _queue_generation_request():
+    """Keep a received QA click through unrelated preview/editor reruns."""
+    st.session_state["monthly_qa_generate_queued"] = True
+
+
 def _active_jobs() -> bool:
     for key, entry in st.session_state.items():
         if key.endswith("_ai_job") and isinstance(entry, dict):
@@ -109,7 +114,10 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                    " · September 2026 · two invented sites · synthetic only")
         x, y = st.columns(2)
         compare_pressed = x.button("Compare fixture facts", key="monthly_qa_compare")
-        generate_pressed = y.button("Generate QA Word and PDF", key="monthly_qa_generate")
+        y.button("Generate QA Word and PDF", key="monthly_qa_generate",
+                 on_click=_queue_generation_request)
+        if st.session_state.get("monthly_qa_generate_queued"):
+            st.caption("QA generation request received; preparing this exact test report.")
         # Allocate this near the toolbar; resolve content after the editor finalizes.
         result_surface = st.container()
         st.divider()
@@ -126,15 +134,22 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                     "fingerprint": working.fingerprint,
                     "matched": sum(bool(v) for v in checks.values()),
                 }
-            if generate_pressed:
+            if st.session_state.get("monthly_qa_generate_queued"):
+                # A callback receipt persists the user's request even when a
+                # section preview/editor rerun happens between the click and
+                # this last, fully finalized guided draft. Do not clear until
+                # generation finishes or fails with an actionable error.
                 from app.monthly_report_docx import generate_report
                 try:
-                    package = generate_report(working,
-                                              acknowledged_fingerprint=working.fingerprint)
+                    with st.spinner("Generating isolated Word and PDF files…"):
+                        package = generate_report(
+                            working, acknowledged_fingerprint=working.fingerprint)
                 except (ValueError, OSError) as exc:
+                    st.session_state.pop("monthly_qa_generate_queued", None)
                     st.error("QA export was blocked: " + str(exc))
                 else:
                     st.session_state["monthly_qa_package"] = (working.fingerprint, package)
+                    st.session_state.pop("monthly_qa_generate_queued", None)
             if state := st.session_state.get("monthly_qa_comparison"):
                 if state.get("fingerprint") != working.fingerprint:
                     st.info("Previous comparison is outdated. Run Compare fixture facts again after editing.")
