@@ -329,7 +329,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
         # or immediately when a changed/new source page needs attention.
         included_here = tuple(n for n in image_pages if (source.id, n) in existing)
         expanded_key = p + "_edit_page_reviews"
-        if included_here and not undecided:
+        if (included_here and not undecided
+                and all(page_allowed(source, n) for n in included_here)):
             if not st.session_state.get(expanded_key, False):
                 if st.button(
                     "Edit pages", key=p + "_open_page_reviews",
@@ -363,7 +364,10 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
     with st.expander("Read extracted text"):
         st.text(source.page_texts[page - 1][:12000] or "No native text on this page. Review the image above.")
     if (source.id, page) in existing:
-        st.caption("This page is already included. Remove it using the report pictures below, if needed.")
+        if not page_allowed(source, page):
+            st.warning("This included page changed since its review. Correct or remove it below, then review the current source before export.")
+        else:
+            st.caption("This page is already included. Remove it using the report pictures below, if needed.")
     else:
         captions = dict(source.captions)
         caption_key = field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}"))
