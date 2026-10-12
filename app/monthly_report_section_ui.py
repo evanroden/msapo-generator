@@ -387,9 +387,34 @@ def render_pending_cover_selection(draft, assets, contract, period, state):
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
                          working_draft=None, working_assets=(), working_revision=None):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else identity.key if identity else "new", period.key))
-    st.subheader("Start with any report from this contract")
-    st.caption("Use an earlier month, another site, or a report already underway. We’ll identify its sites and dates and bring across the relevant content.")
-    upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128, key=prefix + "_upload")
+    # An existing report is already editable. Keep its replacement uploader
+    # optional, but always render the uploader in the same widget container
+    # across staged/review reruns so Streamlit cannot discard its bytes.
+    optional_import = working_draft is not None
+
+    def _open_saved_original():
+        if not state:
+            return
+        original = library.imported_original(contract, state.profile.key)
+        if original and st.button("Open the saved original for section review",
+                                  key=prefix + "_original", disabled=not prepared.strip()):
+            from app.monthly_report_import import inspect_docx
+            st.session_state[prefix + "_stage"] = (None, original, inspect_docx(original))
+            st.rerun()
+
+    if optional_import:
+        with st.expander("Use a different starting report",
+                         expanded=bool(st.session_state.get(prefix + "_stage")
+                                       or st.session_state.get(prefix + "_failed_digest"))):
+            st.caption("Upload an earlier or unfinished Word report.")
+            upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128,
+                                      key=prefix + "_upload")
+            _open_saved_original()
+    else:
+        st.subheader("Start with a report")
+        st.caption("Upload an earlier or unfinished Word report.")
+        upload = st.file_uploader("Starting report", type=["docx"], max_upload_size=128,
+                                  key=prefix + "_upload")
     # File selection is the Analyze action. The exact content hash, never
     # its reusable filename or a widget rerun, determines whether a new
     # source must be inspected. An error leaves the existing staged draft
@@ -428,15 +453,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     if upload is not None and st.session_state.get(prefix + "_failed_digest") == digest:
         st.info("The newly selected file has not been analyzed. Retry or choose another file before continuing.")
         return True
-    if state:
-        original = library.imported_original(contract, state.profile.key)
-        if original and st.button("Open the saved original for section review", key=prefix + "_original", disabled=not prepared.strip()):
-            from app.monthly_report_import import inspect_docx
-            st.session_state[prefix + "_stage"] = (None, original, inspect_docx(original))
-            st.rerun()
+    if not optional_import:
+        _open_saved_original()
     staged = st.session_state.get(prefix + "_stage")
     if not staged:
-        st.caption("Word DOCX, up to 128 MB. Your original file is retained.")
         return False
     if state and staged[0] is None and not prepared.strip():
         st.info("Enter Prepared by above to review the saved original.")
