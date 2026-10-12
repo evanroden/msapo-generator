@@ -214,19 +214,27 @@ def _contact_label(columns, row, index):
     return " · ".join(dict.fromkeys(v for v in (person, role, site) if v)) or f"Contact {index + 1}"
 
 
-def _contact_rows(columns, rows, p, field):
+def _contact_rows(columns, rows, p, field, *, vendor=False):
     edited = []
     remove_index = None
     for index, row in enumerate(rows):
         title = _contact_label(columns, row, index)
-        with st.expander(title, expanded=len(rows) <= 2):
+        # Existing vendor records are already identifiable by their compact
+        # name/discipline/site summary. Do not expand a full six-field form
+        # merely because a table contains one or two saved contacts.
+        # A newly created blank vendor entry opens for immediate input.
+        populated = any(str(value).strip() for value in row)
+        with st.expander(title, expanded=(not populated if vendor else len(rows) <= 2)):
             values = []
             for col, heading in enumerate(columns):
                 value = row[col] if col < len(row) else ""
+                agreement = vendor and heading.strip().casefold() == "msa"
                 values.append(
                     st.text_input(
-                        heading or "Detail " + str(col + 1),
+                        "Agreement status (MSA)" if agreement else (heading or "Detail " + str(col + 1)),
                         key=field(p + f"_{index}_{col}", value),
+                        help=("Master Service Agreement status. Leave blank when unknown."
+                              if agreement else None),
                         max_chars=500,
                     )
                 )
@@ -323,13 +331,16 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
     updated = []
     with left:
         st.caption(
-            "Click a contact to edit its fields. Unchanged contacts stay as they are."
+            "Vendor contacts in this report. Open a contact to edit."
+            if block.key == "subcontractor_matrix"
+            else "Click a contact to edit its fields. Unchanged contacts stay as they are."
         )
         for n, table in enumerate(tables):
             if len(tables) > 1:
                 st.write("Contact table " + str(n + 1))
             rows, removed = _contact_rows(
-                table.columns, table.rows, p + f"_table_{n}", field
+                table.columns, table.rows, p + f"_table_{n}", field,
+                vendor=(block.key == "subcontractor_matrix"),
             )
             changed = replace(table, rows=rows)
             updated.append(changed)
