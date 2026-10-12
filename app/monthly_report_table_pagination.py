@@ -4,7 +4,7 @@ from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 
 
-def keep_current_header_with_rows(table):
+def keep_current_header_with_rows(table, *, keep_all_rows_intact=False):
     """The caller has supplied one explicit header and at least one data row."""
     rows = table.findall(qn('w:tr'))
     if len(rows) < 2:
@@ -20,7 +20,7 @@ def keep_current_header_with_rows(table):
                                              'w:ins', 'w:del', 'w:trPrChange')
         # The first data row must move intact with the header. Otherwise Writer
         # can carry an empty split fragment and leave nearly a whole page unused.
-        if index <= 1:
+        if index <= 1 or keep_all_rows_intact:
             split = properties.find(qn('w:cantSplit'))
             if split is None:
                 split = OxmlElement('w:cantSplit')
