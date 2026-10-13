@@ -243,6 +243,14 @@ def test_blank_sections_generate_without_empty_or_standing_confirmations_but_pri
     assert not next(item for item in app.button if item.label == "Create Word and PDF").disabled
     next(item for item in app.button if item.label == "Create Word and PDF").click().run()
     assert not app.exception
+    # With no phantom stale Activity widget value, this really is an empty
+    # monthly report. Respect the existing scoped empty-report confirmation
+    # rather than silently reintroducing old library text just to generate.
+    if not generated:
+        assert any("No new monthly information was entered" in w.value
+                   for w in app.warning)
+        next(b for b in app.button if b.label == "Create anyway").click().run()
+    assert not app.exception
     generated_draft, raw = generated[0]
     paragraphs = [paragraph.text for paragraph in Document(BytesIO(raw)).paragraphs]
     assert len(generated_draft.sections) == len(default_sections())

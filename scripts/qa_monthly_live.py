@@ -69,10 +69,34 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
         else "other alert"
         for item in alerts[-5:]
     ]
-    EVIDENCE.setdefault("diagnostics", []).append({
+    diagnostics = {
         "action": action, "error_type": type(error).__name__,
         "qa_status": captions[-6:], "alert_kinds": safe_alerts,
-    })
+    }
+    # Synthetic QA only: diagnose visible-editor hydration against the
+    # server-acknowledged Activity journal without recording any source text.
+    # The existing strict pass/fail assertions remain unchanged.
+    if action.startswith("activity-"):
+        try:
+            editors = page.get_by_role("textbox", name="Activity summary", exact=True)
+            diagnostics["activity_widget_count"] = editors.count()
+            if editors.count():
+                displayed = editors.first.input_value(timeout=3000)
+                diagnostics["visible_activity_sha256"] = hashlib.sha256(
+                    displayed.encode("utf-8")).hexdigest()
+                diagnostics["visible_activity_length"] = len(displayed)
+            for label, key in (
+                ("QA working Activity SHA256:", "working_activity_sha256"),
+                ("QA durable Activity SHA256:", "durable_activity_sha256"),
+            ):
+                matched = page.get_by_text(re.compile(
+                    r"^" + re.escape(label) + r" [0-9a-f]{64}$"
+                )).all_text_contents()
+                diagnostics[key] = matched[-1].split(": ", 1)[1] if matched else None
+        except Exception:
+            # Diagnostics must never obscure or downgrade the primary failure.
+            diagnostics["activity_hashes_unavailable"] = True
+    EVIDENCE.setdefault("diagnostics", []).append(diagnostics)
     screenshot(page, "not-ready-" + action)
 
 
