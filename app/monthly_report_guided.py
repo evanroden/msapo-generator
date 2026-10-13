@@ -299,7 +299,7 @@ def _review_carried_update(block, period, prefix):
     return block
 
 
-def _edit_content(spec, block, state, prefix, assets, field, draft=None):
+def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True):
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -323,7 +323,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
     if spec.type in ("rich_text", "stock_text") and block.ai_paragraphs:
         # The authoritative source-linked text editor is rendered earlier.
         pass
-    elif spec.type in ("rich_text", "stock_text"):
+    elif spec.type in ("rich_text", "stock_text") and edit_text:
         editor_key = key + "_text_" + _signature(block.references)
         changed_marker = editor_key + "_explicitly_edited"
         scope = _rich_text_scope(prefix)
@@ -537,8 +537,16 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     specs.update({b.key: b for current in draft.sections for b in current.blocks})
     if section.key in ("issues", "proposals"):
         from app.monthly_report_followups import render_followups
+        draft = replace(draft, blocks=tuple(blocks.values()))
         draft = render_followups(draft, prefix, field, category="issue" if section.key == "issues" else "proposal")
+        if section.key == "issues":
+            blocks = {block.key: block for block in draft.blocks}
     handled = set()
+    if section.key == "issues" and "equipment_issues" in specs:
+        block = blocks.get("equipment_issues", ResolvedBlock("equipment_issues", "This month"))
+        blocks["equipment_issues"] = _edit_content(specs["equipment_issues"], block, state,
+            prefix, assets, field, draft, edit_text=False)
+        handled.add("equipment_issues")
     if section.key == "training":
         from app.monthly_report_training_ui import render_training
         blocks = render_training(draft, blocks, prefix, field)

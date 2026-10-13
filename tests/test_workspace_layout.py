@@ -40,6 +40,7 @@ st.button('Unrelated rerun')
     assert len(app.get('bidi_component')) == 1
 
 
-def test_pure_display_geometry_cases_execute_in_node():
-    result = subprocess.run(['node','--test','tests/workspace_geometry_test.cjs'],cwd=ROOT,text=True,capture_output=True)
+@pytest.mark.parametrize('script', ['tests/workspace_geometry_test.cjs', 'tests/preview_view_lifecycle_test.cjs'])
+def test_browser_logic_regressions_execute_in_node(script):
+    result = subprocess.run(['node','--test',script],cwd=ROOT,text=True,capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr

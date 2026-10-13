@@ -101,15 +101,13 @@ def test_resolution_requires_evidence_and_explicit_removal_and_is_restorable():
     next_month = new_month_draft(removed, ReportPeriod(2026, 10))
     assert item not in next_month.follow_ups
     assert prior_report().blocks[0].text  # The source snapshot remains immutable.
-    with pytest.raises(ValueError):
-        assemble_docx(
-            replace(
-                ready, follow_ups=(replace(approved[0], included=False), *approved[1:])
-            )
-        )
+    omitted = replace(ready, follow_ups=(replace(approved[0], included=False), *approved[1:]))
+    data = assemble_docx(omitted, acknowledged_fingerprint=omitted.fingerprint)
+    assert "pump vibration" not in "\n".join(p.text for p in Document(BytesIO(data)).paragraphs)
+    assert omitted.follow_ups[0].status == "ongoing"
 
 
-def test_changed_source_or_text_invalidates_followup_confirmation():
+def test_changed_source_still_blocks_issues_while_direct_edits_need_no_monthly_confirmation():
     current = new_month_draft(prior_report(), ReportPeriod(2026, 9))
     source = ReportSource(
         "synthetic-source",
@@ -126,7 +124,9 @@ def test_changed_source_or_text_invalidates_followup_confirmation():
     item = replace(item, reviewed_fingerprint=confirmation(item, current.period))
     current = replace(current, sources=(source,))
     assert not problems(item, current)
-    assert problems(replace(item, update="Different update"), current)
+    assert not problems(replace(item, update="Different update"), current)
+    proposal = current.follow_ups[1]
+    assert any("Confirm this proposal" in p for p in problems(proposal, current))
     assert any(
         "source changed" in p
         for p in problems(
@@ -153,16 +153,11 @@ def test_returning_user_reviews_carried_status_and_can_save_unfinished_work(
     choose_report(app, profile.facilities[0].title)
     step(app, 2)
     assert not any(w.label in ("Current status", "Proposal decision") for w in app.radio)
-    next(b for b in app.button if b.label == "Mark resolved").click().run()
+    next(w for w in app.selectbox if w.label == "Issue status").set_value("resolved").run()
     next(
         w for w in app.text_area if w.label == "Evidence or explanation for the status"
     ).set_value("Synthetic maintenance inspection verified resolution.").run()
-    next(
-        w
-        for w in app.checkbox
-        if w.label == "Leave this resolved item out of the report"
-    ).check().run()
-    next(b for b in app.button if b.label == "Confirm update").click().run()
+    next(b for b in app.button if b.label == "Remove from this report").click().run()
     assert not app.exception
     step(app, 3)
     step(app, 2)
@@ -173,6 +168,6 @@ def test_returning_user_reviews_carried_status_and_can_save_unfinished_work(
     assert issue.status == "resolved" and not issue.included
     assert not problems(issue, working)
     assert not any(w.label == "Section to update" for w in app.selectbox)
-    assert any(b.label == "Still correct" for b in app.button)
-    assert not any(b.label == "Mark resolved" for b in app.button)
-    assert any(b.label == "Update issue" for b in app.button)
+    assert any(b.label == "Include again" for b in app.button)
+    assert not any(b.label in ("Mark resolved", "Update issue", "Still open") for b in app.button)
+    assert not any(w.label == "Equipment issues" for w in app.text_area)

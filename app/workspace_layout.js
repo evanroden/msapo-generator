@@ -148,6 +148,13 @@ export default function(component) {
             css('reference-width',context.preview.width); css('reference-height',context.preview.height);
             css('column-gap',Math.max(0,context.preview.x-context.editor.x-context.editor.width));
         }
+        const enlargement = (context.mode === 'book' || context.mode === 'tabletop') ? context.preview : (confined ? context.editor : context.bounds);
+        if (enlargement) {
+            const inset = Math.min(8,enlargement.width/8,enlargement.height/8);
+            css('enlarge-left',enlargement.x+inset); css('enlarge-top',enlargement.y+inset);
+            css('enlarge-width',Math.max(1,enlargement.width-2*inset));
+            css('enlarge-height',Math.max(1,enlargement.height-2*inset));
+        }
         const navStyle = nav ? getComputedStyle(nav) : null;
         const navTop = navStyle?.position === 'sticky' ? parseFloat(navStyle.top)||0 : 0;
         const top = Math.max(sample.visual?.y || 0, sample.scrollport.y, navTop) + (nav ? nav.getBoundingClientRect().height : 0) + 12;

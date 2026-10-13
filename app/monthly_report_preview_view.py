@@ -13,7 +13,7 @@ CSS = """
 .report-preview-tools {display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:4px;}
 .report-preview-tools button, .report-preview-tools select {font:inherit; min-height:36px; background:white; color:#18382b; border:1px solid #557f7f; border-radius:4px;}
 .report-preview-tools button:focus-visible,.report-preview-scroll:focus-visible{outline:3px solid #557f7f;outline-offset:2px;}
-.report-preview[data-enlarged="true"] {position:fixed;inset:12px;width:auto;height:auto;z-index:1000;background:white;padding:8px;box-shadow:0 0 0 100vmax #0008;}
+.report-preview[data-enlarged="true"] {position:fixed;left:var(--epc-enlarge-left,12px);top:var(--epc-enlarge-top,12px);width:var(--epc-enlarge-width,calc(100dvw - 24px));height:var(--epc-enlarge-height,calc(100dvh - 24px));box-sizing:border-box;z-index:1000;background:white;padding:8px;box-shadow:0 4px 20px #0006;}
 .report-preview figure { margin:0 0 16px; }
 .report-preview-page { width:100%; background:white; position:relative; box-shadow:0 1px 6px #18382b26; }
 .report-preview-page img { position:absolute; inset:0; display:block; width:100%; height:100%; }
@@ -25,9 +25,15 @@ JS = r"""
 export default function(component) {
     const {parentElement, data, setStateValue} = component;
     const panel = parentElement.querySelector('.report-preview');
+    // V2 may invoke the render function again on the same mounted element.
+    // Dispose that invocation before its page DOM changes. The framework's
+    // later unmount cleanup remains idempotent and cannot cancel a new timer.
+    panel._previewCleanup?.();
+    let active = true;
+    let timer = null;
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
-    const state = panel._previewState || (panel._previewState = {visible:false, sent:'', timer:null, page:0, zoom:'width'});
+    const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0, zoom:'width'});
     const workspace = (parentElement.host || parentElement).closest('.epc-workspace');
     const pair = (parentElement.host || parentElement).closest('.epc-workspace-pair');
     const zoom = panel.querySelector('select');
@@ -88,6 +94,7 @@ export default function(component) {
         if (image.getAttribute('src') !== src) image.setAttribute('src', src);
     });
     function sizePages() {
+        if (!active) return;
         const available = Math.max(100,scroll.clientHeight-46);
         scroll.querySelectorAll('figure').forEach((figure,index) => {
             const ratio = sizes[index][0]/sizes[index][1];
@@ -103,6 +110,7 @@ export default function(component) {
         }
     }
     function remember() {
+        if (!active) return;
         const figure = scroll.querySelector('figure[data-index="'+state.page+'"]');
         state.offset = figure ? scroll.scrollTop - (figure.offsetTop-scroll.offsetTop) : 0;
         views.delete(viewKey); views.set(viewKey,{page:state.page,zoom:state.zoom,offset:state.offset});
@@ -112,6 +120,7 @@ export default function(component) {
         nextButton.disabled = state.page >= sizes.length-1;
     }
     function movePage(index) {
+        if (!active) return;
         state.page = Math.max(0,Math.min(sizes.length-1,index)); state.offset=0; state.restore=true;
         sizePages(); remember(); changed();
     }
@@ -119,15 +128,29 @@ export default function(component) {
     nextButton.onclick = () => movePage(state.page+1);
     zoom.onchange = () => {state.zoom=zoom.value;state.offset=0;state.restore=true;sizePages();remember();changed();};
     enlargeButton.onclick = () => {
-        state.enlarged = !state.enlarged;
+        if (!state.enlarged) {
+            const prior=window.__enfraEnlargedPreview;
+            if (prior && prior!==panel && prior.isConnected) prior.querySelector('[data-action="enlarge"]')?.click();
+            window.__enfraEnlargedPreview=panel;
+            remember();
+            state.enlargeReturn={page:state.page,zoom:state.zoom,offset:state.offset};
+            state.enlarged=true;
+        } else {
+            state.enlarged=false;
+            if (window.__enfraEnlargedPreview===panel) window.__enfraEnlargedPreview=null;
+            if (state.enlargeReturn) Object.assign(state,state.enlargeReturn);
+            state.page=Math.min(state.page,sizes.length-1);
+            zoom.value=state.zoom;
+        }
         panel.dataset.enlarged=String(state.enlarged);
         enlargeButton.textContent=state.enlarged?'Close enlargement':'Enlarge';
-        state.restore=true; sizePages(); changed();
+        state.restore=true; sizePages(); remember(); changed();
     };
-    function escape(event) {if (event.key==='Escape' && state.enlarged) enlargeButton.click();}
-    panel.addEventListener('keydown',escape);
+    function escape(event) {if (event.key==='Escape' && !event.isComposing && state.enlarged) enlargeButton.click();}
+    document.addEventListener('keydown',escape);
     function send() {
-        state.timer = null;
+        if (!active) return;
+        timer = null;
         const bounds = scroll.getBoundingClientRect();
         const figures = Array.from(scroll.querySelectorAll('figure'));
         const shown = figures.filter(figure => {
@@ -147,10 +170,12 @@ export default function(component) {
         }
     }
     function changed() {
-        if (state.timer !== null) clearTimeout(state.timer);
-        state.timer = setTimeout(send, 120);
+        if (!active) return;
+        if (timer !== null) clearTimeout(timer);
+        timer = setTimeout(send, 120);
     }
     const observer = new IntersectionObserver(entries => {
+        if (!active) return;
         const visible = entries.some(entry => entry.isIntersecting);
         if (state.visible !== visible || !state.sent) {
             state.visible = visible;
@@ -166,16 +191,21 @@ export default function(component) {
     const activeObserver = new MutationObserver(changed);
     if (pair) activeObserver.observe(pair,{attributes:true,attributeFilter:['data-epc-active']});
     sizePages(); remember(); changed();
-    return () => {
+    function cleanup() {
+        if (!active) return;
+        active = false;
         observer.disconnect();
         activeObserver.disconnect();
         workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
-        panel.removeEventListener('keydown',escape);
+        document.removeEventListener('keydown',escape);
         resize.disconnect();
         scroll.removeEventListener('scroll', changed);
-        if (state.timer !== null) clearTimeout(state.timer);
-        state.timer = null;
-    };
+        if (timer !== null) clearTimeout(timer);
+        timer = null;
+        if (panel._previewCleanup === cleanup) panel._previewCleanup = null;
+    }
+    panel._previewCleanup = cleanup;
+    return cleanup;
 }
 """
 

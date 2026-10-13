@@ -1,6 +1,8 @@
 """Local actual-PO DOM checks. Segment injection is simulation, never hardware proof."""
 import json
 import os
+import re
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -53,6 +55,35 @@ def capture(page, browser, name):
     return observed
 
 
+def preview_position(reference):
+    """Read the mounted user's controls plus their retained numeric view state."""
+    return reference.locator(".report-preview").evaluate("""panel => ({
+        page:panel._previewState.page,zoom:panel.querySelector('select').value,
+        offset:panel._previewState.offset,
+        label:panel.querySelector('.report-preview-position').textContent,
+        scrollTop:panel.querySelector('.report-preview-scroll').scrollTop,
+        scope:panel._previewState.scope
+    })""")
+
+
+def full_app_runs(page):
+    return int(page.get_by_text(re.compile(r"^Synthetic full-app run count: ")).inner_text().rsplit(": ",1)[1])
+
+
+def wait_preview_ack(reference, *, image, page_number, zoom):
+    reference.locator(f'img[alt="{image} — page {page_number + 1}"]').wait_for()
+    reference.locator(".report-preview").evaluate("""async (panel, expected) => {
+        const deadline=performance.now()+15000;
+        while (performance.now()<deadline) {
+            const state=panel._previewState;
+            if (state.page===expected.page && state.zoom===expected.zoom && state.timer===null &&
+                JSON.parse(state.sent||'{}').pages?.includes(expected.page)) return;
+            await new Promise(resolve=>requestAnimationFrame(resolve));
+        }
+        throw new Error('Preview operation never acknowledged requested page/zoom');
+    }""", {"page":page_number,"zoom":zoom})
+
+
 def exercise(engine, name):
     browser = engine.launch(headless=True)
     page = browser.new_page(viewport={"width":1440,"height":900})
@@ -91,15 +122,45 @@ def exercise(engine, name):
     check(name + " exact unblurred value and selection retained", before == after, after)
     check(name + " focus retained", scope.evaluate("node=>node===document.activeElement"))
     inject(page, None); settle(page, "wide")
+    # Long, explicitly reviewed synthetic scope produces a real multipage
+    # MSAPO with the repository template, not a fabricated preview document.
+    reviewed_scope = "Synthetic reviewed PO scope for adaptive acceptance." + "\n" + "\n".join(
+        f"{number + 1}. Inspect invented pump assembly and record synthetic verification details for review."
+        for number in range(55))
+    scope.fill(reviewed_scope); scope.press("Tab")
     requester = page.get_by_label("Your name (Requester / Asset Manager) *", exact=True)
     requester.fill("Synthetic Browser Reviewer"); requester.press("Tab")
     page.get_by_role("button", name="Generate both files and Smartsheet link", exact=True).click()
-    page.get_by_text("Synthetic generation count: 1", exact=True).wait_for()
+    page.get_by_text("Synthetic generation count: 1", exact=True).wait_for(timeout=150000)
     package.locator('img[alt^="Generated MSAPO — page "]').first.wait_for()
+    package.get_by_label("Preview zoom", exact=True).select_option("1.25")
+    package.get_by_role("button", name="Next preview page", exact=True).click()
+    wait_preview_ack(package,image="Generated MSAPO",page_number=1,zoom="1.25")
+    output_view = preview_position(package)
+    # This navigation requires a bounded raster update; it must stay a fragment
+    # action rather than replaying the PO workflow or rebuilding the document.
+    app_runs = full_app_runs(page)
+    package.get_by_role("button", name="Previous preview page", exact=True).click()
+    wait_preview_ack(package,image="Generated MSAPO",page_number=0,zoom="1.25")
+    package.get_by_role("button", name="Next preview page", exact=True).click()
+    wait_preview_ack(package,image="Generated MSAPO",page_number=1,zoom="1.25")
+    check(name + " preview page actions avoid full-app reruns",full_app_runs(page)==app_runs,
+          {"before":app_runs,"after":full_app_runs(page)})
     package.get_by_label("Compare original quote", exact=True).check()
     package.locator('img[alt^="Original quote — page "]').first.wait_for()
+    package.get_by_label("Preview zoom", exact=True).select_option("page")
+    package.get_by_role("button", name="Next preview page", exact=True).click()
+    wait_preview_ack(package,image="Original quote",page_number=1,zoom="page")
     package.get_by_label("Compare original quote", exact=True).uncheck()
-    package.locator('img[alt^="Generated MSAPO — page "]').first.wait_for()
+    wait_preview_ack(package,image="Generated MSAPO",page_number=1,zoom="1.25")
+    returned_view = preview_position(package)
+    check(name + " comparison restores exact output page zoom and scope",
+          all(returned_view[key]==output_view[key] for key in ("page","zoom","scope","label")),
+          {"before":output_view,"after":returned_view})
+    check(name + " comparison restores output reading offset",
+          abs(returned_view["offset"]-output_view["offset"])<=3 and
+          abs(returned_view["scrollTop"]-output_view["scrollTop"])<=3,
+          {"before":output_view,"after":returned_view})
     check(name + " view comparison never generates", page.get_by_text("Synthetic generation count: 1", exact=True).count() == 1)
     inject(page, [{"x":0,"y":0,"width":1440,"height":380},{"x":0,"y":410,"width":1440,"height":490}])
     settle(page, "tabletop")
@@ -123,6 +184,11 @@ def exercise(engine, name):
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    renderer = shutil.which("libreoffice") or shutil.which("soffice")
+    if not renderer:
+        raise RuntimeError("PO actual-output browser acceptance requires LibreOffice")
+    REPORT["renderer"] = subprocess.check_output([renderer,"--version"],text=True).strip()
+    REPORT["output_builder"] = "app.document_generator.build_msapo_pdf"
     with tempfile.TemporaryDirectory(prefix="po-adaptive-synthetic-") as temp:
         env = dict(os.environ, **{k:v for k,v in dotenv_values(ROOT / ".env.example").items() if v is not None})
         env.update(EPC_DATA_DIR=temp, ANTHROPIC_API_KEY="test-key-not-used", SMARTSHEET_API_MODE="disabled")
@@ -141,6 +207,9 @@ def main():
                 exercise(p.webkit, "playwright-webkit")
         finally:
             process.terminate(); process.wait(timeout=15); log.close()
+            evidence = Path(temp) / "evidence"
+            if evidence.exists():
+                shutil.copytree(evidence, OUT / "actual-msapo", dirs_exist_ok=True)
             (OUT / "geometry-and-results.json").write_text(json.dumps(REPORT, indent=2))
 
 

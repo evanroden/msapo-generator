@@ -1,5 +1,6 @@
 """Local-only synthetic application fixture; no live storage or external actions."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import sys
@@ -9,13 +10,23 @@ import fitz
 import requests
 import streamlit as st
 
-from app import web_ui, memory, smartsheet, receipt_jobs, expense_ui
+from app import web_ui, memory, smartsheet, receipt_jobs, expense_ui, config, document_generator, pdf_converter
+from app.document_generator import build_msapo_pdf as production_build_msapo_pdf
 
 root = Path(os.environ.get("EPC_DATA_DIR", ""))
 if not root.is_absolute() or not root.name.startswith("po-adaptive-synthetic-") or not root.is_dir():
     raise RuntimeError("This fixture requires its disposable local PO test directory")
 if memory._data_dir().resolve() != root.resolve():
     raise RuntimeError("PO test storage was not isolated")
+
+# The production PO renderer predates EPC_DATA_DIR. Confine its unchanged
+# intermediate-file/cleanup behavior to this fixture's disposable directory.
+render_dir = root / "renderer"
+render_dir.mkdir(exist_ok=True)
+for module in (config, document_generator, pdf_converter):
+    module.OUTPUT_DIR = render_dir
+pdf_converter.PDF_BACKEND = "libreoffice"
+st.session_state["synthetic_full_app_runs"] = st.session_state.get("synthetic_full_app_runs", 0) + 1
 
 
 def forbidden(*args, **kwargs):
@@ -43,7 +54,26 @@ requests.sessions.Session.request = forbidden
 
 def generated(**kwargs):
     st.session_state["synthetic_generation_count"] = st.session_state.get("synthetic_generation_count", 0) + 1
-    return document("Synthetic generated MSAPO", 2)
+    # Call the SAME builder/template/converter as the production button. The
+    # wrapper counts calls and records evidence; it never substitutes output.
+    payload = production_build_msapo_pdf(**kwargs)
+    with fitz.open(stream=payload, filetype="pdf") as result:
+        text = "\n".join(page.get_text() for page in result)
+        page_count = len(result)
+    marker = kwargs["scope"].splitlines()[0]
+    if "MSAPO" not in text or marker not in text:
+        raise RuntimeError("The actual MSAPO PDF lost its template or reviewed synthetic scope")
+    evidence = root / "evidence"
+    evidence.mkdir(exist_ok=True)
+    digest = hashlib.sha256(payload).hexdigest()
+    (evidence / (digest + ".pdf")).write_bytes(payload)
+    (evidence / (digest + ".json")).write_text(json.dumps({
+        "synthetic_only": True, "builder": "app.document_generator.build_msapo_pdf",
+        "template_sha256": hashlib.sha256(config.TEMPLATE_PATH.read_bytes()).hexdigest(),
+        "output_sha256": digest, "pages": page_count, "reviewed_scope_present": marker in text,
+        "master_text_present": "MSAPO" in text, "backend": pdf_converter.PDF_BACKEND,
+    }, indent=2))
+    return payload
 
 
 web_ui.build_msapo_pdf = generated
@@ -57,3 +87,5 @@ if not st.session_state.get("synthetic_browser_fixture_loaded"):
     st.session_state["synthetic_browser_fixture_loaded"] = True
 web_ui.main()
 st.caption("Synthetic generation count: " + str(st.session_state.get("synthetic_generation_count", 0)))
+
+st.caption("Synthetic full-app run count: " + str(st.session_state["synthetic_full_app_runs"]))

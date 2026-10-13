@@ -66,8 +66,10 @@ ANTHROPIC_API_KEY=test-key-not-used python -m pytest -q \
   tests/test_reference_preview.py
 ```
 
-Observed: **102 passed**. The set covers exact input/reference identity, actual
-signature-current output selection, explicit source comparison, unchanged bytes,
+Observed: **102 passed**. These unit/AppTest checks use a controlled PDF stub
+and prove routing to signature-current bytes; they are not acceptance of an
+actual generated MSAPO artifact. The set covers exact input/reference identity,
+explicit source comparison, unchanged bytes,
 zero generation/storage writes from view changes, manual source/scope/amount
 preservation, workflow return, output invalidation and the existing financial,
 routing, source-selection and package protections. An earlier targeted UI set
@@ -81,14 +83,36 @@ that every correctable field precedes output invalidation; it was not removed.
 
 `scripts/qa_po_adaptive.py` starts `tests/fixtures/workspaces/po_app.py` on
 loopback only, with its own explicitly named temporary storage root. The fixture
-uses the actual application UI, an invented multipage original quote and a
-controlled generated PDF. External reading, submissions and shares are blocked.
-The browser additionally rejects HTTP requests outside the loopback origin.
+uses the actual application UI and an invented multipage original quote.
+The original committed fixture (`0335ced`) used a controlled generated PDF; any
+run on that version is only bounded UI/state evidence, not an actual generated
+MSAPO acceptance pass.
+
+The revised fixture wraps **the original production
+`app.document_generator.build_msapo_pdf`**, using the repository's unchanged
+MSAPO template and LibreOffice converter. Its wrapper counts calls, verifies
+master text and the reviewed synthetic scope, and records the actual PDF and
+SHA-256 receipt. The original synthetic quote remains separate. Template hash
+and renderer/version are included in evidence. The renderer's existing
+`OUTPUT_DIR` bindings are redirected only inside this loopback fixture to its
+explicit disposable root, including intermediate-file cleanup. No production
+storage behavior changes. Missing LibreOffice fails the browser gate; it does
+not substitute a form or skip generation.
+
+External reading, submissions and shares are blocked. The browser additionally
+rejects HTTP requests outside the loopback origin. Published CI evidence may
+contain only these repository-backed synthetic documents.
 
 The script captures geometry and screenshots for Chromium and Playwright WebKit,
 asserts actual source/output image delivery, long-review stickiness, asymmetric
 book clearance, tabletop source/package transitions, unblurred text/selection/
 focus, explicit source comparison, compact reflow and local preview return.
+The generated form is deliberately multipage. The check advances its real
+preview to page 2 at 125%, temporarily opens the original quote at Fit page,
+and verifies exact output page/zoom/view identity and reading position within
+3 CSS pixels upon return. Previous/Next operations wait for actual raster and
+component viewport acknowledgments, then check the instrumented full-app run
+counter is unchanged. Comparison and navigation must not generate again.
 Artifacts contain synthetic data only. Segment geometry is injected; these
 checks do not establish native sensor support, shipping Safari or physical
 folding ergonomics.
@@ -97,8 +121,11 @@ Local execution stopped before Chromium launched because the installed
 Playwright package's browser executable was absent. The existing download log
 already recorded failed browser downloads; no repeated installation was
 attempted. Therefore there is no local PO browser pass or geometry claim.
-The harness is committed for the existing CI browser job. Record its exact-head
-executed outcome separately before accepting ADP-J02/J05 or PO geometry.
+The revised actual-builder harness also requires LibreOffice, which is absent
+locally. Python compilation and the focused regression suite can run locally;
+actual generated artifact, page/zoom, and fragment-only evidence require the
+existing CI browser job with LibreOffice. Record its exact-head executed outcome
+separately before accepting ADP-J02/J05 or PO geometry.
 
 Remaining separate obligations include actual multipage user quotes and shipping
 Safari/device checks, accessibility beyond programmatic labels/focus, and the
