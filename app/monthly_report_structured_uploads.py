@@ -207,6 +207,14 @@ def _activity_identity(line, source, event_date):
     return " · ".join(parts) + " — " + line if parts else line
 
 
+def _csv_has_site_scope_column(content):
+    """A row-specific site/client needs target mapping before auto-Activity."""
+    return content.source.suffix == ".csv" and any(
+        re.sub(r"[^a-z0-9]", "", title.casefold()) in
+        {"facility", "site", "client", "customer", "hospital", "building", "location"}
+        for table in content.tables for title in table.columns)
+
+
 def _csv_activity_entries(content):
     """Recognized vendor-work CSV columns only; never guess site or date scope.
 
@@ -219,8 +227,7 @@ def _csv_activity_entries(content):
     result = []
     for number, table in enumerate(content.tables, 1):
         names = tuple(re.sub(r"[^a-z0-9]", "", name.casefold()) for name in table.columns)
-        if any(name in {"facility", "site", "client", "customer", "hospital",
-                        "building", "location"} for name in names):
+        if _csv_has_site_scope_column(content):
             # The source may mix target and foreign sites. Without target
             # profile mapping, show the file for manual review instead.
             return ()
