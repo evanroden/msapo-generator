@@ -196,6 +196,7 @@ export default function(component) {
     listen(document,'visibilitychange'); listen(root,'scroll'); listen(scrollport,'scroll');
     schedule();
     const cleanup = () => {
+        if (disposed) return;
         disposed = true;
         if (frame !== null) cancelAnimationFrame(frame);
         resize.disconnect(); mutation.disconnect(); subscriptions.forEach(remove => remove());

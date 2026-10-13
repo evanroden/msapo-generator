@@ -425,3 +425,31 @@ def test_stale_result_must_not_repopulate_another_report_after_scope_change(monk
     ui._advance_preview_queue(state)
     assert 'activity' not in state['cache']
     assert not ui.STORE.available(owner,ticket), 'The previous report PDF must be discarded'
+
+
+def test_pending_and_completed_preview_do_not_force_an_extra_full_editor_run():
+    # The previous timer-registration path called st.rerun(scope='app') on
+    # both transitions. Count actual AppTest script executions; no renderer
+    # timing, source-string assertion or fabricated browser behavior is used.
+    app = AppTest.from_string('''
+import streamlit as st
+from concurrent.futures import Future
+from app.monthly_report_section_preview_ui import _ordered_preview_state, _render_ordered_preview
+st.session_state['full_runs'] = st.session_state.get('full_runs', 0) + 1
+state = _ordered_preview_state('synthetic_status')
+if not state['wanted']:
+    state['wanted']['activity'] = 'current'
+    state['visible']['activity'] = True
+    state['running'] = ('activity', 'current', Future())
+_render_ordered_preview('activity', 'synthetic_status', 'Synthetic Activity')
+st.text_input('Unrelated editor', key='untouched')
+''').run()
+    assert not app.exception
+    assert app.session_state['full_runs'] == 1
+    assert payload(app)['pending'] is True
+    state = app.session_state['synthetic_status_ordered_previews']
+    state['running'][2].set_result(completed_entry(state))
+    app.run()
+    assert not app.exception
+    assert app.session_state['full_runs'] == 2
+    assert payload(app)['pending'] is False and payload(app)['ready'] is True

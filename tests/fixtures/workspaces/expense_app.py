@@ -7,10 +7,25 @@ from decimal import Decimal
 from hashlib import sha256
 import fitz
 import streamlit as st
-from app import expense_ui
+from app import expense_ui, reference_preview
+from app.monthly_report_preview_view import render_view as original_render_view
 from app.receipt_analyzer import ReceiptAnalysis
 
 st.set_page_config(layout='wide')
+# A hidden fixture-only acknowledgement lets browser checks wait for a genuine
+# completed fragment render before comparing the full-app run counter.
+def observed_render_view(**kwargs):
+    key = kwargs['key']
+    counts = st.session_state.setdefault('_fixture_preview_renders', {})
+    counts[key] = counts.get(key, 0) + 1
+    result = original_render_view(**kwargs)
+    from html import escape
+    value = st.session_state.get(key, {})
+    request = (value.get('viewport') or {}) if isinstance(value, dict) else {}
+    pages = ','.join(str(page) for page in request.get('pages', ()))
+    st.html(f'<span hidden data-qa-preview-ack="{escape(key)}" data-count="{counts[key]}" data-request-pages="{escape(pages)}"></span>')
+    return result
+reference_preview.render_view = observed_render_view
 def forbidden(*args,**kwargs):
     raise AssertionError('External action forbidden in synthetic expense fixture')
 for name in ('start_receipt','prepare_receipt_content','analyze_prepared_receipt','_render_ios_mail_share','_remember_profile','build_expense_package'):

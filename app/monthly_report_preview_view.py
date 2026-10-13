@@ -31,6 +31,7 @@ export default function(component) {
     panel._previewCleanup?.();
     let active = true;
     let timer = null;
+    let pollTimer = null;
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
     const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0, zoom:'width'});
@@ -148,26 +149,46 @@ export default function(component) {
     };
     function escape(event) {if (event.key==='Escape' && !event.isComposing && state.enlarged) enlargeButton.click();}
     document.addEventListener('keydown',escape);
+    function permitted() {
+        return !workspace || workspace.dataset.epcMode !== 'tabletop' || pair?.dataset.epcActive === 'true';
+    }
+    function pollWhenPending() {
+        if (pollTimer !== null) clearTimeout(pollTimer);
+        pollTimer = null;
+        if (!active || !data.pending || !state.visible || !permitted() || document.hidden) return;
+        pollTimer = setTimeout(() => {
+            pollTimer = null;
+            if (!active || !state.visible || !permitted() || document.hidden) return;
+            state.pollSequence = (state.pollSequence || 0) + 1;
+            setStateValue('poll', {generation:data.generation, sequence:state.pollSequence});
+            // Keep a bounded heartbeat if a busy session defers this event.
+            // Re-render cleanup disposes this invocation's timer first.
+            pollWhenPending();
+        }, 2000);
+    }
     function send() {
         if (!active) return;
         timer = null;
         const bounds = scroll.getBoundingClientRect();
         const figures = Array.from(scroll.querySelectorAll('figure'));
-        const shown = figures.filter(figure => {
+        const visible = figures.map(figure => {
             const rect = figure.getBoundingClientRect();
-            return rect.bottom > bounds.top && rect.top < bounds.bottom;
-        }).slice(0,2).map(figure => Number(figure.dataset.index));
-        if (shown.length) state.page = shown[0];
+            return {index:Number(figure.dataset.index), height:Math.max(0,Math.min(rect.bottom,bounds.bottom)-Math.max(rect.top,bounds.top))};
+        }).filter(page => page.height > 0);
+        const shown = visible.slice(0,2).map(page => page.index);
+        // The last fit-page can leave a sliver of the preceding caption visible
+        // when scrolling clamps at the end. Keep the dominant page selected.
+        if (visible.length) state.page = visible.reduce((best,page) => page.height > best.height ? page : best).index;
         remember();
         const pixels = Math.max(1, scroll.clientWidth) * Math.min(window.devicePixelRatio || 1, 2);
         const dpi = pixels > 1100 ? 150 : pixels > 850 ? 120 : 96;
-        const permitted = !workspace || workspace.dataset.epcMode !== 'tabletop' || pair?.dataset.epcActive === 'true';
-        const value = {visible:state.visible && permitted, pages:shown.length ? shown : [0], dpi, generation:data.generation};
+        const value = {visible:state.visible && permitted(), pages:shown.length ? shown : [0], dpi, generation:data.generation};
         const serialized = JSON.stringify(value);
         if (serialized !== state.sent) {
             state.sent = serialized;
             setStateValue('viewport', value);
         }
+        pollWhenPending();
     }
     function changed() {
         if (!active) return;
@@ -188,6 +209,7 @@ export default function(component) {
     scroll.addEventListener('scroll', changed, {passive:true});
     function layoutChanged() {sizePages();changed();}
     workspace?.addEventListener('epc-workspace-layout', layoutChanged);
+    document.addEventListener('visibilitychange', changed);
     const activeObserver = new MutationObserver(changed);
     if (pair) activeObserver.observe(pair,{attributes:true,attributeFilter:['data-epc-active']});
     sizePages(); remember(); changed();
@@ -197,11 +219,14 @@ export default function(component) {
         observer.disconnect();
         activeObserver.disconnect();
         workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
+        document.removeEventListener('visibilitychange', changed);
         document.removeEventListener('keydown',escape);
         resize.disconnect();
         scroll.removeEventListener('scroll', changed);
         if (timer !== null) clearTimeout(timer);
         timer = null;
+        if (pollTimer !== null) clearTimeout(pollTimer);
+        pollTimer = null;
         if (panel._previewCleanup === cleanup) panel._previewCleanup = null;
     }
     panel._previewCleanup = cleanup;
@@ -227,10 +252,11 @@ def _preview_component(runtime):
     return st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
 
 
-def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None):
+def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None):
     view = _preview_component(Runtime.instance())
     return view(key=key, data={
         'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
-        'sizes': ticket.sizes if ticket else (), 'status': status,
+        'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
         'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
-    }, default={'viewport': None}, on_viewport_change=on_change, height='content')
+    }, default={'viewport': None, 'poll': None}, on_viewport_change=on_change,
+        on_poll_change=on_poll or (lambda: None), height='content')

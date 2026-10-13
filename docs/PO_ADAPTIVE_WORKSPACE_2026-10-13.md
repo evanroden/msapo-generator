@@ -112,7 +112,9 @@ preview to page 2 at 125%, temporarily opens the original quote at Fit page,
 and verifies exact output page/zoom/view identity and reading position within
 3 CSS pixels upon return. Previous/Next operations wait for actual raster and
 component viewport acknowledgments, then check the instrumented full-app run
-counter is unchanged. Comparison and navigation must not generate again.
+counter is unchanged. Comparison uses the toggle's visible semantic label and
+asserts the checkbox state; locked Streamlit's underlying React Aria input is
+visually hidden, so a direct pointer action on that input is not representative. Comparison and navigation must not generate again.
 Artifacts contain synthetic data only. Segment geometry is injected; these
 checks do not establish native sensor support, shipping Safari or physical
 folding ergonomics.

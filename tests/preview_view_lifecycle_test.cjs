@@ -59,7 +59,70 @@ test('new page data disposes prior observers and late callbacks cannot size or r
     assert.equal(sent[0].generation,'current');
     assert.equal(sent[0].visible,true);
     assert.deepEqual(Array.from(sent[0].pages),[0,1]);
+    const figures=panel.querySelectorAll('figure');
+    figures[0].getBoundingClientRect=()=>({top:-480,bottom:20});
+    figures[1].getBoundingClientRect=()=>({top:20,bottom:480});
+    observers[4].callback();
+    for(const callback of timers.values())callback();timers.clear();
+    assert.equal(panel._previewState.page,1,'a preceding caption sliver cannot select the wrong page');
+    assert.equal(panel.querySelector('.report-preview-position').textContent,'2 / 2');
     newCleanup();newCleanup();
     assert.equal(observers.filter(observer=>observer.active).length,0);
     assert.equal(document.listeners.get('keydown').size,0);
+});
+
+test('delayed workspace cleanup cannot release a newer tabletop scroll owner',()=>{
+    const root=new Element(),scrollport=new Element(),app=new Element(),document=new Element();
+    const classes=element=>{const values=new Set();element.classList={add:value=>values.add(value),remove:value=>values.delete(value),contains:value=>values.has(value)};};
+    [root,scrollport,app].forEach(classes);
+    root.closest=selector=>selector.includes('stMainBlockContainer')?app:scrollport;
+    const create=document.createElement=tag=>{const element=new Element(tag);element.remove=()=>{};return element;};
+    document.querySelector=()=>root;
+    const window=new Element();window.matchMedia=()=>new Element();
+    const observers=[],frames=new Map();let sequence=0;
+    class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
+    const context={window,document,navigator:{},CSS:{escape:value=>value},globalThis:{ENFRAWorkspaceGeometry:{}},ResizeObserver:Observer,MutationObserver:Observer,
+        requestAnimationFrame:callback=>{frames.set(++sequence,callback);return sequence;},cancelAnimationFrame:id=>frames.delete(id)};
+    const source=fs.readFileSync('app/workspace_layout.js','utf8');
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const previous=render({data:{workflow:'monthly',identity:'same-draft'}});
+    const current=render({data:{workflow:'monthly',identity:'same-draft'}});
+    // A newer measurement now owns the outer scroller. Delayed old cleanup
+    // must not clear this class or cancel the current measurement request.
+    scrollport.classList.add('epc-workspace-scroll-owner');
+    previous();
+    assert.equal(scrollport.classList.contains('epc-workspace-scroll-owner'),true);
+    assert.equal(frames.size,1);
+    current();current();
+    assert.equal(scrollport.classList.contains('epc-workspace-scroll-owner'),false);
+    assert.equal(frames.size,0);
+});
+
+test('only visible pending preview polls at two seconds and stale invocation cannot poll a new generation',()=>{
+    const {root,panel}=dom(),timers=new Map(),sent=[],observers=[];let sequence=0;
+    class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:(callback,delay)=>{timers.set(++sequence,{callback,delay});return sequence;},clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const invoke=(generation,pending)=>render({parentElement:root,data:{generation,pending,viewScope:'one|activity',pages:[],sizes:[],ready:false},setStateValue:(name,value)=>sent.push({name,value})});
+    const fire=delay=>{const entry=[...timers].find(([,value])=>value.delay===delay);assert.ok(entry,'expected timer '+delay);timers.delete(entry[0]);entry[1].callback();};
+    const cleanup=invoke('old',true);
+    fire(120);
+    assert.equal([...timers.values()].filter(t=>t.delay===2000).length,0,'offscreen pending work does not poll');
+    observers[0].callback([{isIntersecting:true}]);fire(120);fire(2000);
+    assert.equal(sent.filter(item=>item.name==='poll').length,1);
+    assert.equal(sent.at(-1).value.generation,'old');
+    assert.equal(sent.at(-1).value.sequence,1);
+    const stalePoll=[...timers.values()].find(t=>t.delay===2000).callback;
+    const newCleanup=invoke('current',false);cleanup();stalePoll();fire(120);
+    assert.equal(sent.filter(item=>item.name==='poll').length,1,'disposed generation cannot send a late poll');
+    assert.equal([...timers.values()].filter(t=>t.delay===2000).length,0,'current complete preview does not poll');
+    newCleanup();invoke('new-pending',true);fire(120);
+    document.hidden=true;document.listeners.get('visibilitychange').forEach(fn=>fn());fire(120);
+    assert.equal([...timers.values()].filter(t=>t.delay===2000).length,0,'hidden document suspends pending polls');
+    panel._previewCleanup();
+    assert.equal(timers.size,0);
 });

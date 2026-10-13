@@ -60,7 +60,7 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
     # Never write a full page dump or internal exception paths. Only already
     # synthetic QA status captions and alert *kinds* may reach CI artifacts.
     captions = page.get_by_text(re.compile(
-        r"^(QA fixture state:|QA fixture action|QA reset acknowledged:|QA comparison completed:|Current fixture:)"
+        r"^(QA fixture state:|QA fixture action|QA reset acknowledged:|QA comparison completed:|QA generation action|QA working report SHA256:|QA working Activity SHA256:|QA durable Activity SHA256:|Current fixture:)"
     )).all_text_contents()
     alerts = page.locator('[data-testid="stAlert"]').all_text_contents()
     safe_alerts = [
@@ -71,7 +71,7 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
     ]
     diagnostics = {
         "action": action, "error_type": type(error).__name__,
-        "qa_status": captions[-6:], "alert_kinds": safe_alerts,
+        "qa_status": captions[-12:], "alert_kinds": safe_alerts,
     }
     # Synthetic QA only: diagnose visible-editor hydration against the
     # server-acknowledged Activity journal without recording any source text.
@@ -212,6 +212,45 @@ def open_until_matching(page):
     raise AssertionError("Served build not verified within deployment window: " + last)
 
 
+def request_qa_generation(page, stage):
+    """Require a new action receipt for the visible report, then its completion."""
+    state_text = page.get_by_text(re.compile(r"^QA fixture state: ")).first.text_content() or ""
+    state = STATE.fullmatch(state_text)
+    if state is None:
+        raise AssertionError("No committed QA report identity before generation.")
+    fingerprint = (page.get_by_text(re.compile(r"^QA working report SHA256: [0-9a-f]{64}$"))
+                   .last.text_content() or "").split(": ")[-1]
+    prior = page.get_by_text(re.compile(r"^QA generation action ")).all_text_contents()
+    prior_id = re.search(r"action ([0-9a-f]{12})", prior[-1])[1] if prior else ""
+    event("generation_requested", stage_id=stage, generation=state[2], revision=int(state[3]),
+          fingerprint=fingerprint[:12])
+    page.get_by_role("button", name="Generate QA Word and PDF", exact=True).click()
+    pattern = (r"^QA generation action (accepted|completed|rejected): action " +
+               (r"(?!" + prior_id + r"\b)" if prior_id else "") +
+               r"([0-9a-f]{12}) · generation " + state[2] + r" · revision " + state[3] +
+               r" · fingerprint " + fingerprint[:12] + r" · received ")
+    receipt = page.get_by_text(re.compile(pattern)).last
+    try:
+        receipt.wait_for(timeout=25000)
+        accepted = re.match(pattern, receipt.text_content() or "")
+        if accepted is None:
+            raise AssertionError("QA generation receipt does not match the intended report.")
+        action = accepted[2]
+        event("generation_acknowledged", stage_id=stage, action=action, state=accepted[1])
+        final_pattern = (r"^QA generation action (completed|rejected): action " + action +
+                         r" · generation " + state[2] + r" · revision " + state[3] +
+                         r" · fingerprint " + fingerprint[:12] + r" · received ")
+        final = page.get_by_text(re.compile(final_pattern)).last
+        final.wait_for(timeout=175000)
+        completed = (final.text_content() or "").startswith("QA generation action completed:")
+        checkpoint(stage + " generation completed for accepted revision", completed,
+                   final.text_content() or "")
+        event("generation_completed", stage_id=stage, action=action)
+    except (BrowserTimeout, AssertionError) as exc:
+        state_diagnostics(page, "generation-" + stage, exc)
+        raise
+
+
 def complete_report(page, mode):
     checkpoint("fixture " + mode + " loaded", page.get_by_text(
         "Current fixture: " + mode, exact=False).first.is_visible())
@@ -239,7 +278,7 @@ def complete_report(page, mode):
     checkpoint("fixture " + mode + " content/provenance",
                bool(match and match[1] == match[2] == "18" and not failed),
                result + ("; unmet checks: " + failure_detail if failed else ""))
-    page.get_by_role("button", name="Generate QA Word and PDF", exact=True).click()
+    request_qa_generation(page, mode.replace(" ", "-"))
     docx_button = page.get_by_role("button", name="Download isolated QA DOCX", exact=True)
     try:
         docx_button.wait_for(timeout=175000)
@@ -248,15 +287,15 @@ def complete_report(page, mode):
         # export. The old timeout only said the button was not visible; the
         # screenshot and status evidence are synthetic-only and bounded.
         statuses = page.get_by_text(re.compile(
-            r"QA generation request received|QA export was blocked|Generating isolated"
+            r"QA generation action|QA export was blocked|Generating isolated"
         )).all_text_contents()
         alerts = page.locator('[data-testid="stAlert"]').all_text_contents()
         page.get_by_role("button", name="Generate QA Word and PDF", exact=True).scroll_into_view_if_needed()
         screenshot(page, "qa-generation-not-ready")
-        checkpoint("QA Word download becomes ready after accepted click", False,
+        checkpoint(mode + " QA Word download becomes ready after accepted click", False,
                    "status=" + repr(statuses[-3:])[:165] +
                    "; alerts=" + repr(alerts[-3:])[:165])
-    checkpoint("QA Word download becomes ready after accepted click", True)
+    checkpoint(mode + " QA Word download becomes ready after accepted click", True)
     page.get_by_role("button", name="Download isolated QA PDF", exact=True).wait_for(timeout=10000)
     tag = "source-replay" if "replay" in mode else "known-prefill"
     word_raw = download(page, "Download isolated QA DOCX", tag + ".docx")
@@ -436,6 +475,42 @@ def main():
                        "expected " + expected_digest[:12] + "; observed " +
                        sha(observed.encode("utf-8"))[:12] + "; saved receipts " +
                        repr(page.get_by_text(re.compile(r"QA durable Activity SHA256:")).all_text_contents())[:160])
+            # Clearing is an intentional edit, not an uninitialized widget.
+            # Require durable acknowledgment and a fresh-session empty editor
+            # before re-entry, then verify the new wording in actual outputs.
+            for step, wording in (("clear", ""), ("reentry", "Synthetic re-entered Activity after deliberate clear.")):
+                editor = page.get_by_role("textbox", name="Activity summary", exact=True).first
+                editor.fill(wording)
+                editor.press("Tab")
+                digest = sha(wording.encode("utf-8"))
+                durable = "QA durable Activity SHA256: " + digest
+                page.get_by_text(durable, exact=True).wait_for(timeout=90000)
+                expect(editor).to_have_value(wording)
+                page.reload(wait_until="domcontentloaded", timeout=60000)
+                editor = page.get_by_role("textbox", name="Activity summary", exact=True).first
+                try:
+                    expect(editor).to_have_value(wording, timeout=60000)
+                    page.get_by_text(durable, exact=True).wait_for(timeout=60000)
+                except (BrowserTimeout, AssertionError) as exc:
+                    state_diagnostics(page, "activity-" + step, exc)
+                    raise
+                checkpoint("Activity " + step + " survives acknowledged refresh", True)
+            request_qa_generation(page, "known-prefill-reentry")
+            reentered_word = download(page, "Download isolated QA DOCX", "reentry.docx")
+            reentered_pdf = download(page, "Download isolated QA PDF", "reentry.pdf")
+            from io import BytesIO
+            from xml.etree import ElementTree
+            # The live runner intentionally installs only the browser and PDF
+            # analyzer. Read real Word paragraphs with the standard library.
+            with ZipFile(BytesIO(reentered_word)) as package:
+                document = ElementTree.fromstring(package.read("word/document.xml"))
+            word_ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+            word_text = "\n".join("".join(p.itertext()) for p in document.findall(".//w:p", word_ns))
+            with pymupdf.open(stream=reentered_pdf, filetype="pdf") as pdf:
+                pdf_text = "\n".join(p.get_text() for p in pdf)
+            for label, content in (("Word", word_text), ("PDF", pdf_text)):
+                checkpoint("Re-entered Activity in " + label, wording in content and
+                           "Synthetic owner edit retained through a browser refresh." not in content)
             empty_state = reset_fixture(page, prefill_state, "before-replay")
             replay_state = load_fixture(page, "replay",
                                         previous_generation=empty_state["generation"])

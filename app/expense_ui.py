@@ -109,7 +109,7 @@ from app.receipt_jobs import start_receipt
 from app.api_retry import OPERATION_BUDGET_SECONDS
 from app.ui_highlight import highlight_needed_fields
 from app.workspace_layout import workspace, workspace_section, workspace_columns
-from app.reference_preview import render_reference
+from app.reference_preview import discard_reference_scope, render_reference
 
 
 # These two strings ARE the workflow identity: they are the segmented-control
@@ -2867,6 +2867,9 @@ def _reset_expense_report() -> None:
     # would restart at 1 and reuse a widget key this session has already used --
     # which resurrects the retired uploader's file list.
     next_nonce = int(st.session_state.get("expense_uploader_nonce", 0) or 0) + 1
+    owner_scope = st.session_state.get("expense_report_memory_context")
+    if owner_scope:
+        discard_reference_scope(str(owner_scope))
     for future, _ in st.session_state.get("expense_analysis_jobs", {}).values():
         future.cancel()
     for key in list(st.session_state):

@@ -41,9 +41,27 @@ def reference_pdf(raw: bytes, filename: str) -> bytes:
             return document.tobytes(garbage=3, deflate=True)
 
 
+def _scope_key(scope: str) -> str:
+    return sha256(str(scope).encode()).hexdigest()
+
+
+def discard_reference_scope(owner_scope: str) -> None:
+    """Forget only disposable previews for a draft explicitly being reset.
+
+    Removing the owner first invalidates retained fragment/callback closures;
+    tickets, originals and views for other draft scopes are unaffected.
+    """
+    owners = st.session_state.get('_workspace_reference_owners', {})
+    state = owners.pop(_scope_key(owner_scope), None)
+    if state is not None:
+        for entry in state['entries'].values():
+            if entry.get('ticket'):
+                STORE.discard(state['owner'], entry['ticket'])
+
+
 def _owner(scope: str):
     owners = st.session_state.setdefault('_workspace_reference_owners', {})
-    scope = sha256(str(scope).encode()).hexdigest()
+    scope = _scope_key(scope)
     if scope not in owners:
         owners[scope] = {'owner':'reference:' + uuid4().hex, 'entries':{}}
     while len(owners) > 12:
@@ -92,7 +110,13 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
     widget_key='workspace_reference_' + key
     generation=sha256((state['owner']+'|'+key+'|'+fingerprint).encode()).hexdigest()
 
+    def current():
+        owners = st.session_state.get('_workspace_reference_owners', {})
+        return owners.get(_scope_key(owner_scope)) is state and state['entries'].get(key) is entry
+
     def changed():
+        if not current():
+            return
         value=st.session_state.get(widget_key,{})
         selected=viewport(value.get('viewport'),generation) if isinstance(value,dict) else None
         if selected is not None:
@@ -100,6 +124,8 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
 
     @st.fragment
     def surface():
+        if not current():
+            return
         ticket=entry.get('ticket')
         view=entry.get('view',{'visible':False,'pages':(0,),'dpi':96})
         images=()
@@ -110,6 +136,9 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
         if view['visible'] and not ticket and not entry['error']:
             try:
                 ticket=STORE.put(state['owner'],SimpleNamespace(pdf=reference_pdf(raw,filename)))
+                if not current():
+                    STORE.discard(state['owner'], ticket)
+                    return
                 entry['ticket']=ticket
             except Exception as exc:
                 entry['error']=str(exc)[:240] or 'This source cannot be previewed.'
@@ -121,6 +150,8 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
                     images=STORE.pages(state['owner'],ticket,indexes,dpi=view['dpi']) or ()
                 except (OSError,ValueError) as exc:
                     entry['error']=str(exc)[:240]
+        if not current():
+            return
         if entry['error']:
             st.warning('Preview unavailable: ' + entry['error'])
             if st.button('Retry source preview',key=widget_key+'_retry'):

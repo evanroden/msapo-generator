@@ -227,3 +227,17 @@ def test_guided_issue_omission_survives_shared_save_and_new_session_without_hidd
     assert len([w for w in resumed.text_area if w.label == "Issue description"]) == 1
     assert next(w for w in resumed.text_area if w.label == "Issue description").value == "AHU belt noise."
     assert not any(w.label == "Equipment issues" for w in resumed.text_area)
+
+
+def test_independent_fixture_oracle_tracks_one_included_issue_after_migration(monkeypatch, tmp_path):
+    from app import monthly_report_testing as qa, monthly_report_qa_fixture as fixture
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    with qa.isolated("b" * 32):
+        draft = canonical_issues(fixture.prepare("prefill"))
+        name = "open equipment issue routed outside Activity"
+        assert fixture.compare(draft)["checks"][name]
+        omitted = replace(draft, follow_ups=tuple(replace(item, included=False) for item in draft.follow_ups))
+        assert not fixture.compare(omitted)["checks"][name]
+        issue = next(item for item in draft.follow_ups if item.category == "issue")
+        duplicate = replace(draft, follow_ups=(*draft.follow_ups, replace(issue, key="synthetic-duplicate")))
+        assert not fixture.compare(duplicate)["checks"][name]

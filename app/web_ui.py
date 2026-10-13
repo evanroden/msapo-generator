@@ -1209,6 +1209,9 @@ def _load_test_into_state() -> None:
     already-generated or already-failed.
     """
     from uuid import uuid4
+    from app.reference_preview import discard_reference_scope
+    if old_scope := st.session_state.get("po_workspace_identity"):
+        discard_reference_scope(old_scope)
     st.session_state["po_workspace_identity"] = uuid4().hex
     st.session_state["_po_package_compare_source"] = False
     st.session_state["po_package_compare_source"] = False
@@ -1252,6 +1255,9 @@ def _deactivate_synthetic_quote() -> None:
 
 def _quote_upload_changed() -> None:
     from uuid import uuid4
+    from app.reference_preview import discard_reference_scope
+    if old_scope := st.session_state.get("po_workspace_identity"):
+        discard_reference_scope(old_scope)
     st.session_state["po_workspace_identity"] = uuid4().hex
     st.session_state["_po_package_compare_source"] = False
     st.session_state["po_package_compare_source"] = False
@@ -1264,6 +1270,9 @@ def _clear_quote_upload() -> None:
     st.session_state["po_upload_available"] = False
     st.session_state["uploader_nonce"] = st.session_state.get("uploader_nonce", 0) + 1
     from uuid import uuid4
+    from app.reference_preview import discard_reference_scope
+    if old_scope := st.session_state.get("po_workspace_identity"):
+        discard_reference_scope(old_scope)
     st.session_state["po_workspace_identity"] = uuid4().hex
     st.session_state["_po_package_compare_source"] = False
     st.session_state["po_package_compare_source"] = False

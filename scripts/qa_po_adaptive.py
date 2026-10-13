@@ -11,7 +11,7 @@ import time
 import urllib.request
 
 from dotenv import dotenv_values
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "test-artifacts" / "po-adaptive"
@@ -146,12 +146,17 @@ def exercise(engine, name):
     wait_preview_ack(package,image="Generated MSAPO",page_number=1,zoom="1.25")
     check(name + " preview page actions avoid full-app reruns",full_app_runs(page)==app_runs,
           {"before":app_runs,"after":full_app_runs(page)})
-    package.get_by_label("Compare original quote", exact=True).check()
+    compare = package.get_by_label("Compare original quote", exact=True)
+    # Locked Streamlit uses a visually hidden React Aria input. Click its
+    # visible semantic label as a user would; never force the hidden input.
+    compare.locator("xpath=ancestor::label[1]").click()
+    expect(compare).to_be_checked()
     package.locator('img[alt^="Original quote — page "]').first.wait_for()
     package.get_by_label("Preview zoom", exact=True).select_option("page")
     package.get_by_role("button", name="Next preview page", exact=True).click()
     wait_preview_ack(package,image="Original quote",page_number=1,zoom="page")
-    package.get_by_label("Compare original quote", exact=True).uncheck()
+    compare.locator("xpath=ancestor::label[1]").click()
+    expect(compare).not_to_be_checked()
     wait_preview_ack(package,image="Generated MSAPO",page_number=1,zoom="1.25")
     returned_view = preview_position(package)
     check(name + " comparison restores exact output page zoom and scope",

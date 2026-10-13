@@ -27,9 +27,14 @@ def _named_call_lines(function: ast.FunctionDef, name: str) -> list[int]:
 def test_main_has_one_final_generation_route_and_no_separate_submit_or_email_route():
     source = WEB_UI.read_text(encoding="utf-8")
     tree = ast.parse(source)
-    main = _functions(tree)["main"]
-
-    assert len(_named_call_lines(main, "render_inline_smartsheet_handoff")) == 1
+    functions = _functions(tree)
+    main = functions["main"]
+    # The adaptive container delegates to the same single PO renderer. Guard
+    # both the route and the entire file so an extra submission/handoff path
+    # cannot hide in a different helper after this structural refactor.
+    assert len(_named_call_lines(main, "_render_purchase_workflow")) == 1
+    assert len(_named_call_lines(functions["_render_purchase_workflow"], "render_inline_smartsheet_handoff")) == 1
+    assert len(_named_call_lines(tree, "render_inline_smartsheet_handoff")) == 1
     assert source.count('"Generate both files and Smartsheet link"') == 1
     assert "Prepare Smartsheet submission" not in source
     assert "Generate Scope/Inclusions/Exclusions PDF" not in source

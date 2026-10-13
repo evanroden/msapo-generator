@@ -78,10 +78,10 @@ for Chromium and Playwright WebKit. The CI workflow
 production. It has no Render URL, credentials, real files, OCR requests,
 Smartsheet actions, email/share actions or business storage.
 
-Local Playwright browser installation returned a truncated archive, so the
-browser harness has **not** passed locally at this checkpoint. Its CI outcome
-must be recorded before declaring the geometry verified. Playwright WebKit
-is not shipping Safari. Injected geometry is not physical folding hardware.
+Local Playwright browser installation returned a truncated archive, so no local
+browser pass is claimed. CI outcomes are recorded below, including subsequent
+failures when stronger actual-image checks were added. Playwright WebKit is not
+shipping Safari. Injected geometry is not physical folding hardware.
 
 Coverage targeted by the harness: long-section pin/release/reverse, internal
 viewer fit, asymmetric book gap, upper/lower tabletop geometry, active-section
@@ -93,11 +93,12 @@ journeys or authentic/native-output acceptance.
 
 ## Remaining integration and acceptance
 
-- Wire these boundaries into actual monthly, PO and expense renderers. Preserve
-  all existing keys, mirrors, source identities, explicit submission handoffs,
-  current output invalidation and per-workflow test isolation.
-- Confirm source/result staging in PO, receipt-scoped references and mileage-only
-  expense pairing; confirm actual workflow switch/return behavior.
+- Monthly and Expense boundary wiring is implemented. PO wiring is separately
+  committed in `0335ced`; integrated-head CI must verify the combined result.
+  Existing keys, mirrors, source identities and explicit handoff actions remain.
+- Actual Expense and PO harnesses now exercise original multipage sources and
+  generated-result staging; their browser outcomes are still pending. Confirm
+  workflow switch/return behavior with source and draft identity preserved.
 - Run the actual application DOM, real generated multipage previews and resource
   gates after integration. Review page/zoom, image-heavy failure/retry, late jobs,
   gray-freeze instrumentation, large text, keyboard/IME and accessibility.
@@ -144,6 +145,40 @@ prove an offscreen source has zero PDF/raster entries, a four-page source loads
 only two requested pages and a second owner cannot read its ticket. Browser
 expense journeys and hardware/share cancellation remain unverified.
 
-The first real DOM CI run exposed a sticky-wrapper height failure. This is an
-open implementation defect under diagnosis; the sticky assertion is retained.
-A passed geometry resolver/AppTest is not acceptance of this browser behavior.
+## Browser checkpoints and repairs
+
+- Run `38336061830` failed the real wide sticky assertion: the reference flex
+  wrapper stretched to the full row height, defeating its containing interval.
+  Commit `31df00c` makes this app-owned reference wrapper non-stretching with
+  intrinsic height; the original geometry assertion remains.
+- Run `38336703871`, integrated commit `963f144`, passed the foundation harness
+  in Chromium and Playwright WebKit. Screenshot review then found that a
+  placeholder surface could satisfy that version of the harness. This pass
+  supports its geometry assertions, not actual multipage image readiness.
+- Run `38337327841`, integrated commit `d807419`, used actual two-page PDF
+  tickets/images and failed the retained JavaScript-error assertion after the
+  Chromium geometry assertions. Old component callbacks referenced one-page
+  sizes after the mounted preview became two pages. Commit `5ef2373` explicitly
+  disposes superseded render listeners, makes cleanup/timers invocation-local,
+  and rejects queued stale callbacks. A Node regression reproduces mounted
+  placeholder-to-two-page rendering, old queued observers and delayed cleanup;
+  the focused Python suite passed 31 tests. This is a lifecycle repair awaiting
+  the stronger real-browser CI rerun, not a browser pass.
+
+`7da64a5` confines explicit enlargement to the measured book/tabletop segment
+(or usable compact viewport), and Escape restores the previous page, zoom and
+reading offset. Actual Expense browser assertions cover these bounds and return
+behavior; they are pending CI. `8017832` admits image normalization through the
+existing preview resource-priority slot and rejects prior owner generations.
+
+The actual Expense harness uses private temporary EPC_DATA_DIR, invented PDFs
+and blocked external reader/share/generation boundaries. It asserts original
+page-two display, splits/manual overrides, book/tabletop transitions, mileage-only
+review, and unchanged full-app-run count during preview navigation. No physical
+hardware or authentic report evidence is inferred from those fixtures.
+
+Known remaining limits include framework popover portals outside app-owned
+containers, optional explicit focus override, physical keyboard/IME and Safari
+behavior, and all authentic input/output acceptance. Separate actual Monthly
+and PO harnesses are integrated by their owners; their run outcomes belong in
+the consolidated exact-head evidence ledger.

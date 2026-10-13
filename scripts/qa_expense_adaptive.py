@@ -2,11 +2,13 @@
 from __future__ import annotations
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import urllib.request
 from playwright.sync_api import sync_playwright, expect
 
@@ -31,10 +33,37 @@ def inject(page,segments):
     page.evaluate("segments=>{Object.defineProperty(window,'viewport',{configurable:true,value:{segments}});window.dispatchEvent(new Event('resize'));}",segments)
 
 
+def set_toggle(container,label,value,name):
+    control=container.get_by_label(label,exact=True)
+    # Streamlit 1.61 React Aria intentionally clips the semantic input inside
+    # VisuallyHidden. The enclosing label is the normal pointer target.
+    target=control.locator('xpath=ancestor::label[1]')
+    target.scroll_into_view_if_needed()
+    geometry=control.evaluate("""node=>{
+        const label=node.closest('label'), r=label.getBoundingClientRect();
+        const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+        return {input:node.getBoundingClientRect().toJSON(),label:r.toJSON(),
+                inputClip:getComputedStyle(node).clip,parentClip:getComputedStyle(node.parentElement).clip,
+                labelCenterHit:hit?.tagName,labelOwnsHit:Boolean(hit && label.contains(hit))};
+    }""")
+    if control.is_checked()!=value:
+        target.click()
+    expect(control).to_be_checked(checked=value)
+    check(name+' normal label pointer toggles intended input',control.is_checked()==value,geometry)
+
+
+def loaded_page(pair,index):
+    image=pair.locator(f'figure[data-index="{index}"] img')
+    expect(image).to_be_visible()
+    expect(image).to_have_attribute('src',re.compile(r'^data:image/jpeg;base64,'))
+    expect(image).to_have_js_property('complete',True)
+    check(f'loaded original page {index+1}',image.evaluate('(node)=>node.naturalWidth>0'))
+
+
 def run(browser_type,name):
     browser=browser_type.launch(headless=True)
     page=browser.new_page(viewport={'width':1440,'height':1000})
-    errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+    errors=[];page.on('pageerror',lambda e:errors.append(getattr(e,'stack',None) or str(e)))
     try:
         page.goto(URL)
         mode(page,'wide')
@@ -43,7 +72,8 @@ def run(browser_type,name):
         first=pairs.nth(0);second=pairs.nth(1)
         first.scroll_into_view_if_needed()
         expect(first.get_by_text('Preview · 2 pages',exact=True)).to_be_visible()
-        first.get_by_label('Split this receipt into multiple reimbursement lines',exact=True).check()
+        loaded_page(first,0)
+        set_toggle(first,'Split this receipt into multiple reimbursement lines',True,name+' receipt split')
         amount=first.get_by_label('Reimbursable amount *',exact=True).first
         amount.fill('13.25');amount.press('Tab')
         source=first.locator('.epc-workspace-reference')
@@ -52,13 +82,24 @@ def run(browser_type,name):
         check(name+' expense fields left of original source',bounds['editor']['x']<bounds['source']['x'],bounds)
         first.get_by_role('button',name='Next preview page',exact=True).click()
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
-        first.get_by_label('Preview zoom',exact=True).select_option('page')
+        first.get_by_label('Preview zoom',exact=True).select_option('1.5')
+        loaded_page(first,1)
+        acknowledgement=first.locator('[data-qa-preview-ack]')
+        expect(acknowledgement).to_have_attribute('data-request-pages','1')
         # A page/zoom change is a fragment-only view event, not a whole app rerun.
-        counter=page.get_by_text(__import__('re').compile(r'^Synthetic full app runs:')).text_content()
+        counter=page.get_by_text(re.compile(r'^Synthetic full app runs:')).text_content()
+        fragment_count=acknowledgement.get_attribute('data-count')
         first.get_by_role('button',name='Previous preview page',exact=True).click()
         expect(first.locator('.report-preview-position')).to_have_text('1 / 2')
-        check(name+' preview-only navigation does not rerun whole app',counter==page.get_by_text(__import__('re').compile(r'^Synthetic full app runs:')).text_content())
+        expect(acknowledgement).not_to_have_attribute('data-count',fragment_count)
+        expect(acknowledgement).to_have_attribute('data-request-pages','0')
+        loaded_page(first,0)
+        check(name+' preview-only navigation does not rerun whole app',counter==page.get_by_text(re.compile(r'^Synthetic full app runs:')).text_content())
         first.get_by_role('button',name='Next preview page',exact=True).click()
+        expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
+        expect(acknowledgement).to_have_attribute('data-request-pages','1')
+        loaded_page(first,1)
+        first.get_by_label('Preview zoom',exact=True).select_option('page')
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
         inject(page,[{'x':0,'y':0,'width':640,'height':1000},{'x':672,'y':0,'width':768,'height':1000}]);mode(page,'book')
         first.get_by_role('button',name='Enlarge',exact=True).click()
@@ -93,7 +134,7 @@ def run(browser_type,name):
         mileage=browser.new_page(viewport={'width':1180,'height':820})
         mileage.goto(URL+'?mileage_only=1');mode(mileage,'wide')
         check(name+' mileage-only has no fabricated receipt',mileage.locator('[data-epc-pair^="expense_receipt_"]').count()==0)
-        mileage.get_by_label('Include reimbursable business mileage',exact=True).check()
+        set_toggle(mileage,'Include reimbursable business mileage',True,name+' mileage')
         expect(mileage.get_by_label('Business miles *',exact=True)).to_be_visible()
         check(name+' mileage-only has actual trip review',mileage.get_by_text('Current trips and reimbursement',exact=True).count()==1)
         mileage.screenshot(path=str(OUT/f'{name}-mileage-only.png'))
@@ -118,9 +159,18 @@ def main():
                             if result.status==200:break
                     except OSError:pass
                     time.sleep(.1)
+                failures=[]
                 with sync_playwright() as p:
-                    run(p.chromium,'chromium')
-                    run(p.webkit,'playwright-webkit')
+                    for browser_type,name in ((p.chromium,'chromium'),(p.webkit,'playwright-webkit')):
+                        try:
+                            run(browser_type,name)
+                        except Exception as exc:
+                            # Independent fresh first attempts; preserve failures
+                            # while allowing the other engine to collect evidence.
+                            failures.append({'engine':name,'error':str(exc),'traceback':traceback.format_exc()})
+                EVIDENCE['failures']=failures
+                if failures:
+                    raise AssertionError('Expense browser acceptance failed: '+', '.join(failure['engine'] for failure in failures))
             finally:
                 process.terminate();process.wait(timeout=15)
                 (OUT/'results.json').write_text(json.dumps(EVIDENCE,indent=2))

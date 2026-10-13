@@ -210,6 +210,12 @@ def compare(draft: ReportDraft) -> dict:
     replay = bool(draft.sources)
     training = actual.get("training_summary", ResolvedBlock("training_summary", "This month"))
     issues = actual.get("equipment_issues", ResolvedBlock("equipment_issues", "This month"))
+    # Compare the visible issue representation independently of its migration.
+    # The starting fixture may still have legacy text; the actual editor uses
+    # included cards. Counting the expected fact once rejects duplicate output.
+    issue_text = "\n".join((issues.text, *(item.text for item in draft.follow_ups
+                                             if item.category == "issue" and item.included)))
+    expected_issue = "Open actuator issue: parts pending." if replay else "Synthetic actuator feedback follow-up."
     expected_sources = {item["name"]: item["sha256"] for item in manifest()["sources"]}
     observed_sources = {source.filename: source.sha256 for source in draft.sources}
     checks = {
@@ -233,9 +239,7 @@ def compare(draft: ReportDraft) -> dict:
             "synthetic lockout refresher" not in activity and bool(training.references)
         ) if replay else EXPECTED["training"] == training.text,
         "open equipment issue routed outside Activity": (
-            "Open actuator issue: parts pending." in issues.text and
-            "Open actuator issue: parts pending." not in activity
-        ) if replay else "Synthetic actuator feedback" in issues.text,
+            issue_text.count(expected_issue) == 1 and expected_issue not in activity),
         "intentionally empty design slots": all(
             key not in actual or (
                 actual[key].source == "Omit" or (
