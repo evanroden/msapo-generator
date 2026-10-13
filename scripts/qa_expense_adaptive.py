@@ -105,7 +105,10 @@ def preview_diagnostics(page):
       };
       const rect=node=>node?.getBoundingClientRect().toJSON()||null;
       const root=document.querySelector('.epc-workspace');
+      const draft=document.querySelector('[data-qa-expense-draft-ack]');
       return {mode:root?.dataset.epcMode,root:rect(root),rootScroll:root?.scrollTop,
+        draft:draft?{ready:draft.dataset.ready,fullRun:draft.dataset.fullRun,
+                     matches:JSON.parse(draft.dataset.matches)}:null,
         viewport:{width:innerWidth,height:innerHeight},
         pairs:[...document.querySelectorAll('.epc-workspace-pair')].slice(0,24).map(pair=>{
           const panel=deep(pair,'.report-preview')[0];
@@ -185,6 +188,13 @@ def packet_journey(page, first, name):
     amount.fill('11.25');amount.press('Tab')
     confirmation='I confirm this generated signature represents me and will review it again before sending the Outlook draft.'
     set_toggle(page,confirmation,True,name+' generated signature')
+    # Keep the edits above rapid. One post-batch server receipt distinguishes
+    # checked/client values from the canonical draft completing its full run.
+    draft_ack=page.locator('[data-qa-expense-draft-ack]')
+    expect(draft_ack).to_have_attribute('data-ready','true')
+    check(name+' rapid edits acknowledged in canonical draft',True,
+          {'full_run':draft_ack.get_attribute('data-full-run'),
+           'matches':json.loads(draft_ack.get_attribute('data-matches'))})
     generate=page.get_by_role('button',name='Generate expense report and email draft',exact=True)
     expect(generate).to_be_enabled()
     generate.click()

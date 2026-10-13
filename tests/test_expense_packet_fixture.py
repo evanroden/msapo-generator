@@ -40,6 +40,36 @@ def test_expense_fixture_fails_closed_without_its_marked_directory(monkeypatch, 
     assert not app.text_input
 
 
+def test_expense_fixture_acknowledges_only_completed_matching_draft(monkeypatch):
+    restore_fixture_overrides(monkeypatch)
+    with tempfile.TemporaryDirectory(prefix='expense-adaptive-synthetic-') as directory:
+        (Path(directory) / '.synthetic-expense-fixture').write_text('synthetic-only')
+        monkeypatch.setenv('EPC_DATA_DIR', directory)
+        app = AppTest.from_file(FIXTURE).run()
+        def acknowledgment():
+            return next(item.proto.body for item in app.get('html')
+                        if 'data-qa-expense-draft-ack' in item.proto.body)
+        assert 'data-ready="false"' in acknowledgment()
+        next(toggle for toggle in app.toggle if toggle.label.startswith('Split this receipt')).set_value(True).run()
+        amounts = [field for field in app.text_input if field.label == 'Reimbursable amount *']
+        descriptions = [field for field in app.text_input if field.label == 'Description / business purpose *']
+        amounts[0].set_value('13.25')
+        amounts[1].set_value('11.25')
+        descriptions[0].set_value('Unblurred synthetic expense correction')
+        descriptions[1].set_value('Synthetic split second reimbursement line')
+        next(box for box in app.checkbox if box.label.startswith('I confirm this generated')).set_value(True)
+        # Pending client values cannot change the prior completed-run receipt.
+        assert 'data-ready="false"' in acknowledgment()
+        app.run()
+        assert not app.exception
+        assert 'data-ready="true"' in acknowledgment()
+        assert 'Unblurred' not in acknowledgment() and '11.25' not in acknowledgment()
+        amounts = [field for field in app.text_input if field.label == 'Reimbursable amount *']
+        amounts[1].set_value('12.25').run()
+        assert 'data-ready="false"' in acknowledgment()
+        assert app.session_state.filtered_state.get('_fixture_generation_count', 0) == 0
+
+
 @requires_libreoffice
 def test_expense_fixture_generates_actual_split_receipt_workbook_and_pdf(monkeypatch):
     restore_fixture_overrides(monkeypatch)

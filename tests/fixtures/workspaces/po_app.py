@@ -31,14 +31,13 @@ st.session_state["synthetic_full_app_runs"] = st.session_state.get("synthetic_fu
 
 
 def observed_render_view(**kwargs):
-    """Acknowledge the actual fragment's received request, without business data."""
+    """Acknowledge its applied canonical view, including source-view return."""
     from html import escape
     key = kwargs["key"]
     counts = st.session_state.setdefault("_fixture_preview_renders", {})
     counts[key] = counts.get(key, 0) + 1
     result = original_render_view(**kwargs)
-    value = st.session_state.get(key, {})
-    request = (value.get("viewport") or {}) if isinstance(value, dict) else {}
+    request = kwargs.get("acknowledged_viewport") or {}
     pages = ",".join(str(page) for page in request.get("pages", ()))
     st.html(f'<span hidden data-qa-preview-ack="{escape(key)}" data-count="{counts[key]}" data-request-pages="{escape(pages)}"></span>')
     return result

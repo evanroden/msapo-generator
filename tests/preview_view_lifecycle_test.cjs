@@ -27,7 +27,7 @@ function dom() {
     const root=new Element(), panel=new Element();panel.className='report-preview';root.append(panel);
     for(const name of ['status','scroll','position']) {const e=new Element();e.className='report-preview-'+name;panel.append(e);}
     panel.append(new Element('select'));
-    for(const action of ['previous','next','enlarge']) {const e=new Element('button');e.dataset.action=action;panel.append(e);}
+    for(const action of ['previous','next','enlarge','retry-request']) {const e=new Element('button');e.dataset.action=action;panel.append(e);}
     return {root,panel};
 }
 
@@ -203,12 +203,12 @@ test('interrupted viewport delivery reconciles applied server state without repe
     const document=new Element();document.createElement=tag=>new Element(tag);
     const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,Boolean,
         IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
-        setTimeout:callback=>{timers.set(++sequence,callback);return sequence;},clearTimeout:id=>timers.delete(id)};
+        setTimeout:(callback,delay)=>{timers.set(++sequence,{callback,delay});return sequence;},clearTimeout:id=>timers.delete(id)};
     const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
     const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
     const invoke=ack=>render({parentElement:root,data:{generation:'receipt-a',viewScope:'expense|receipt-a',pages:[],sizes:[],ready:false,
         acknowledgedViewport:{visible:ack,pages:[0],dpi:96,generation:'receipt-a'}},setStateValue:(name,value)=>sent.push(value)});
-    const fire=()=>{for(const callback of timers.values())callback();timers.clear();};
+    const fire=(delay=120)=>{for(const [id,item] of [...timers])if(item.delay===delay){timers.delete(id);item.callback();}};
     invoke(false);observers[0].callback([{isIntersecting:true}]);fire();
     assert.equal(sent.length,1);assert.equal(sent[0].visible,true);
     // A competing rerun stored the browser value but did not apply its callback.
@@ -218,5 +218,59 @@ test('interrupted viewport delivery reconciles applied server state without repe
     assert.ok(sent[1].requestId>sent[0].requestId,'retry must remain a distinct Streamlit state update');
     invoke(true);fire();
     assert.equal(sent.length,2,'acknowledged viewport causes no redundant Python event');
+    assert.equal(timers.size,0,'acknowledgment cancels its retry timer');
+    invoke(false);fire();
+    const start=sent.length;
+    fire(2000);fire(2000);fire(2000);
+    assert.equal(sent.length,start+2,'no-response delivery retries at most twice');
+    assert.equal(timers.size,0,'a disconnected request cannot poll forever');
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,false);
+    for(let repeat=0;repeat<5;repeat++) {invoke(false);fire();fire(2000);}
+    assert.equal(sent.length,start+2,'stale rerenders cannot bypass the transmission budget');
+    assert.equal(timers.size,0,'exhausted rerenders cannot restart acknowledgment polling');
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,false,'recovery remains available after rerender');
+    assert.equal(panel.querySelector('.report-preview-status').textContent,'Preview request interrupted — retry.');
+    panel.querySelector('[data-action="retry-request"]').onclick();
+    assert.equal(sent.length,start+3,'explicit retry delivers only this bounded view request');
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,true);
+    fire(2000);fire(2000);fire(2000);
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,false);
+    // A different desired request receives its own budget and clears the old
+    // failure while pending; no click is required to navigate away from it.
+    context.window.devicePixelRatio=3;
+    panel.querySelector('.report-preview-scroll').clientWidth=600;
+    observers.at(-2).callback();fire();
+    assert.equal(sent.at(-1).dpi,150);
+    assert.equal(panel._previewState.requestAttempts,1);
+    assert.equal(panel.querySelector('[data-action="retry-request"]').hidden,true);
+    assert.equal(panel.querySelector('.report-preview-status').textContent,'');
     panel._previewCleanup();
+    assert.equal(timers.size,0,'unmount cancels pending acknowledgment recovery');
+});
+
+test('preview requests and pending polls yield to full editing reruns until framework idle',()=>{
+    const {root,panel}=dom(),app=new Element(),timers=new Map(),observers=[],sent=[];let sequence=0;
+    app.setAttribute('data-test-script-state','rerunRequested');
+    root.closest=selector=>selector==='[data-testid="stApp"]'?app:null;
+    class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,Boolean,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:(callback,delay)=>{timers.set(++sequence,{callback,delay});return sequence;},clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const fire=delay=>{for(const [id,item] of [...timers])if(item.delay===delay){timers.delete(id);item.callback();}};
+    render({parentElement:root,data:{generation:'edit',viewScope:'monthly|activity',pages:[],sizes:[],ready:false,pending:true},
+        setStateValue:(name,value)=>sent.push({name,value})});
+    observers[0].callback([{isIntersecting:true}]);fire(120);
+    assert.equal(sent.length,0,'viewport cannot supersede a queued business edit');
+    app.setAttribute('data-test-script-state','running');observers[3].callback();fire(120);
+    assert.equal(sent.length,0,'full rerun remains undisturbed');
+    app.setAttribute('data-test-script-state','notRunning');observers[3].callback();fire(120);
+    assert.equal(sent.length,1);assert.equal(sent[0].name,'viewport');
+    app.setAttribute('data-test-script-state','rerunRequested');fire(2000);
+    assert.equal(sent.length,1,'an already scheduled pending poll also yields');
+    app.setAttribute('data-test-script-state','notRunning');observers[3].callback();fire(120);fire(2000);
+    assert.equal(sent.length,2);assert.equal(sent[1].name,'poll');
+    panel._previewCleanup();assert.equal(timers.size,0);
 });

@@ -4,6 +4,14 @@ Status: inspected October 13, 2026. This note records implementation boundaries,
 not authentic acceptance. No authentic reports were uploaded, and no credentials,
 authorization settings, disk settings, or service plan were changed.
 
+## Implemented disconnected primitive — October 13, 15:10 UTC
+
+`app/monthly_report_fixture_vault.py` is present but no application route imports or enables it. `FixtureVault` denies every list/read/upload/download/replay-copy operation unless a supplied server verifier authorizes the current request, and rechecks before return/commit. This is an adapter boundary, **not implemented owner authentication**; constructing an `AuthorizedOwner` is not proof of identity.
+
+Synthetic tests cover immutable native DOCX originals/hash, confirmed source/target/scenario/independent expected manifests, atomic fsynced commits, owner isolation, descriptor-by-descriptor path validation, quota/free-space admission, authorization revocation and restart/reopen. `VaultListing` reports interrupted uploads separately: committed fixtures stay usable, retained safe bytes count toward quota, and unrecognized pending data blocks new admission without deletion. A replay copy is a fresh separate internal path with lineage, **not a generation lease or completed import**. No purge/reset API exists.
+
+Local focused suite: **40 passed**. Native DOCX package-index bounds do not approve its contents or replace production source inspection. No authentic file was used. The approved authentication adapter, private byte/media transport, SAME production importer with isolated worker/fragment/reset leases, explicit retention approval and actual Render restart/redeploy proof remain unimplemented or unverified. Existing anonymous Streamlit download URLs are still unsuitable for this feature.
+
 ## Verified starting capabilities
 
 - `app/device_identity.py` creates an anonymous `epc_device_id` cookie. It is

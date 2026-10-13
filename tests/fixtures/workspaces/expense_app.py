@@ -33,8 +33,7 @@ def observed_render_view(**kwargs):
     counts[key] = counts.get(key, 0) + 1
     result = original_render_view(**kwargs)
     from html import escape
-    value = st.session_state.get(key, {})
-    request = (value.get('viewport') or {}) if isinstance(value, dict) else {}
+    request = kwargs.get('acknowledged_viewport') or {}
     pages = ','.join(str(page) for page in request.get('pages', ()))
     st.html(f'<span hidden data-qa-preview-ack="{escape(key)}" data-count="{counts[key]}" data-request-pages="{escape(pages)}"></span>')
     return result
@@ -121,4 +120,28 @@ st.caption(f"Synthetic full app runs: {st.session_state['_fixture_full_runs']}")
 expense_ui.render_expense_workflow(st.session_state['_fixture_browser_token'],'America/New_York')
 expense_ui.preserve_expense_draft_state()
 
+# A completed full run must preserve the rapid edit batch before generation.
+# Emit only synthetic expected-value matches, never draft values or file bytes.
+snapshot = st.session_state.get('expense_draft_snapshot', {})
+files = st.session_state.get('expense_receipt_files', [])
+matches = {}
+if len(files) == 2:
+    first = sha256(files[0][1]).hexdigest()[:12]
+    second = sha256(files[1][1]).hexdigest()[:12]
+    account = sha256(b'Rochester Regional Health').hexdigest()[:10]
+    matches = {
+        'first_amount': snapshot.get(f'expense_amount_{first}') == '13.25',
+        'second_amount': snapshot.get(f'expense_amount_{first}_line_2') == '11.25',
+        'other_receipt': snapshot.get(f'expense_amount_{second}') == '24.50',
+        'first_description': snapshot.get(f'expense_description_{first}') == 'Unblurred synthetic expense correction',
+        'second_description': snapshot.get(f'expense_description_{first}_line_2') == 'Synthetic split second reimbursement line',
+        'split': snapshot.get(f'expense_split_{first}') is True,
+        'signature': snapshot.get(f'expense_signature_confirmed_{account}') is True
+            and snapshot.get(f'expense_signature_confirmed_name_{account}') == 'Synthetic Employee',
+    }
+from html import escape
+st.html('<span hidden data-qa-expense-draft-ack="true" data-ready="'
+        + str(bool(matches) and all(matches.values())).lower() + '" data-full-run="'
+        + str(st.session_state['_fixture_full_runs']) + '" data-matches="'
+        + escape(json.dumps(matches), quote=True) + '"></span>')
 st.caption('Synthetic expense generation count: ' + str(st.session_state.get('_fixture_generation_count', 0)))

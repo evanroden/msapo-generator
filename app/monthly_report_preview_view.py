@@ -20,7 +20,7 @@ CSS = """
 .report-preview-placeholder { position:absolute; inset:20px; color:#64746d; text-align:center; }
 .report-preview figcaption { text-align:center; padding-top:7px; }
 """
-HTML = '<div class="report-preview"><div class="report-preview-status" role="status" aria-live="polite"></div><div class="report-preview-tools"><button type="button" data-action="previous" aria-label="Previous preview page">Previous</button><span class="report-preview-position"></span><button type="button" data-action="next" aria-label="Next preview page">Next</button><select aria-label="Preview zoom"><option value="width">Fit width</option><option value="page">Fit page</option><option value="1.25">125%</option><option value="1.5">150%</option></select><button type="button" data-action="enlarge">Enlarge</button></div><div class="report-preview-scroll" tabindex="0" aria-label="Report section preview"></div></div>'
+HTML = '<div class="report-preview"><div class="report-preview-status" role="status" aria-live="polite"></div><div class="report-preview-tools"><button type="button" data-action="previous" aria-label="Previous preview page">Previous</button><span class="report-preview-position"></span><button type="button" data-action="next" aria-label="Next preview page">Next</button><select aria-label="Preview zoom"><option value="width">Fit width</option><option value="page">Fit page</option><option value="1.25">125%</option><option value="1.5">150%</option></select><button type="button" data-action="enlarge">Enlarge</button><button type="button" data-action="retry-request" hidden>Retry preview request</button></div><div class="report-preview-scroll" tabindex="0" aria-label="Report section preview"></div></div>'
 JS = r"""
 export default function(component) {
     const {parentElement, data, setStateValue} = component;
@@ -32,14 +32,24 @@ export default function(component) {
     let active = true;
     let timer = null;
     let pollTimer = null;
+    let ackTimer = null;
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
     const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0, zoom:'width'});
     // A browser send is not proof that its callback survived a competing
     // rerender. Reconcile with the server's applied view on every invocation.
     // Reading position remains client state; only this bounded request retries.
-    if (data.acknowledgedViewport) state.sent = JSON.stringify(data.acknowledgedViewport);
+    const ack = data.acknowledgedViewport;
+    const applied = ack ? JSON.stringify({visible:ack.visible,pages:ack.pages,dpi:ack.dpi,generation:ack.generation}) : null;
+    if (applied) state.sent = applied;
     const host = parentElement.host || parentElement;
+    const app = host.closest('[data-testid="stApp"]');
+    function frameworkBusy() {
+        // Locked-version adapter: Streamlit exposes this state on its real
+        // app root. A preview event must not replace a pending editing rerun.
+        const run = app?.getAttribute('data-test-script-state');
+        return Boolean(run && run !== 'notRunning');
+    }
     // The preview can mount before the layout adapter's first animation
     // frame adds its classes. Bind stable app-owned container keys now so
     // later active-section changes reach even an initially offscreen viewer.
@@ -50,6 +60,12 @@ export default function(component) {
     const previousButton = panel.querySelector('[data-action="previous"]');
     const nextButton = panel.querySelector('[data-action="next"]');
     const enlargeButton = panel.querySelector('[data-action="enlarge"]');
+    const retryRequest = panel.querySelector('[data-action="retry-request"]');
+    retryRequest.hidden = !state.requestFailed;
+    retryRequest.onclick = () => {
+        state.requestAttempts=0; state.requestFailed=false; state.sent=''; retryRequest.hidden=true;
+        status.textContent=data.status || ''; send();
+    };
     // Only reading position is retained; no report text goes into browser storage.
     const views = window.__enfraPreviewViews || (window.__enfraPreviewViews = new Map());
     const viewKey = data.viewScope;
@@ -61,7 +77,7 @@ export default function(component) {
     const pagesKnown = Boolean(data.sizes && data.sizes.length);
     const sizes = pagesKnown ? data.sizes : [[612,792]];
     const layout = JSON.stringify([data.generation, sizes, data.ready, data.stale]);
-    status.textContent = data.status || '';
+    status.textContent = state.requestFailed ? 'Preview request interrupted — retry.' : (data.status || '');
     if (state.layout !== layout) {
         const position = scroll.scrollTop;
         // An evicted/preparing ticket is not a one-page document. Keep the
@@ -190,10 +206,10 @@ export default function(component) {
     function pollWhenPending() {
         if (pollTimer !== null) clearTimeout(pollTimer);
         pollTimer = null;
-        if (!active || !data.pending || !visibleNow()) return;
+        if (!active || frameworkBusy() || !data.pending || !visibleNow()) return;
         pollTimer = setTimeout(() => {
             pollTimer = null;
-            if (!active || !visibleNow()) return;
+            if (!active || frameworkBusy() || !visibleNow()) return;
             state.pollSequence = (state.pollSequence || 0) + 1;
             setStateValue('poll', {generation:data.generation, sequence:state.pollSequence});
             // Keep a bounded heartbeat if a busy session defers this event.
@@ -204,6 +220,7 @@ export default function(component) {
     function send() {
         if (!active) return;
         timer = null;
+        if (frameworkBusy()) return; // app-state observer resumes after editing
         const bounds = scroll.getBoundingClientRect();
         const figures = Array.from(scroll.querySelectorAll('figure'));
         const visible = figures.map(figure => {
@@ -220,14 +237,50 @@ export default function(component) {
         const dpi = pixels > 1100 ? 150 : pixels > 850 ? 120 : 96;
         const value = {visible:visibleNow(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation};
         const serialized = JSON.stringify(value);
+        if (state.requestSignature !== serialized || serialized === applied) {
+            state.requestSignature=serialized; state.requestAttempts=0; state.requestFailed=false;
+            retryRequest.hidden=true; status.textContent=data.status || '';
+            if (ackTimer !== null) clearTimeout(ackTimer);
+            ackTimer=null;
+        }
         if (serialized !== state.sent) {
+            // A stale server acknowledgment can invoke this component again.
+            // Enforce the budget at transmission, not only in the timer: a
+            // rerender or observer must not acquire extra automatic attempts.
+            if (state.requestAttempts >= 3) {
+                interrupted();
+                return;
+            }
             state.sent = serialized;
             // A distinct receipt lets Streamlit deliver a retried state value
             // even when an interrupted callback already stored its old value.
             state.requestSequence = (state.requestSequence || 0) + 1;
+            state.requestAttempts = (state.requestAttempts || 0) + 1;
             setStateValue('viewport', {...value, requestId:state.requestSequence});
         }
+        // Different visible fragments can update together. A coalesced event
+        // may receive no rerender at all, so checking only the next invocation
+        // is insufficient. Retry this idempotent view request at most twice;
+        // then offer explicit recovery. Never retry report edits or generation.
+        if (applied && serialized !== applied && !state.requestFailed && ackTimer === null && !document.hidden) {
+            ackTimer=setTimeout(() => {
+                ackTimer=null;
+                if (!active || document.hidden || frameworkBusy()) return;
+                if (state.requestAttempts >= 3) {
+                    interrupted();
+                    return;
+                }
+                state.sent=''; send();
+            }, 2000);
+        }
         pollWhenPending();
+    }
+    function interrupted() {
+        state.requestFailed=true;
+        if (visibleNow()) {
+            status.textContent='Preview request interrupted — retry.';
+            retryRequest.hidden=false;
+        }
     }
     function changed() {
         if (!active) return;
@@ -251,6 +304,10 @@ export default function(component) {
     document.addEventListener('visibilitychange', changed);
     const activeObserver = new MutationObserver(changed);
     if (pair) activeObserver.observe(pair,{attributes:true,attributeFilter:['data-epc-active']});
+    const appObserver = app ? new MutationObserver(() => {
+        if (!frameworkBusy()) changed();
+    }) : null;
+    appObserver?.observe(app,{attributes:true,attributeFilter:['data-test-script-state']});
     sizePages(); remember(); changed();
     function cleanup() {
         if (!active) return;
@@ -259,6 +316,7 @@ export default function(component) {
         active = false;
         observer.disconnect();
         activeObserver.disconnect();
+        appObserver?.disconnect();
         workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
         document.removeEventListener('visibilitychange', changed);
         document.removeEventListener('keydown',escape);
@@ -268,6 +326,8 @@ export default function(component) {
         timer = null;
         if (pollTimer !== null) clearTimeout(pollTimer);
         pollTimer = null;
+        if (ackTimer !== null) clearTimeout(ackTimer);
+        ackTimer = null;
         if (panel._previewCleanup === cleanup) panel._previewCleanup = null;
     }
     panel._previewCleanup = cleanup;
