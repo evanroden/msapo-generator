@@ -18,6 +18,7 @@ than reporting a failure the code did not cause.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 from docx import Document
@@ -155,6 +156,51 @@ def test_end_to_end_render_produces_a_pdf_and_leaves_no_intermediates():
 
     after = {p.name for p in Path(OUTPUT_DIR).iterdir()}
     assert after == before, f"left intermediates behind: {sorted(after - before)}"
+
+
+def test_reviewed_scope_paragraphs_request_native_keep_together():
+    """Word and LibreOffice may wrap items, but must not orphan a final word."""
+    from dataclasses import replace
+
+    lines = [f"{number}. Inspect a synthetic asset before returning it to service."
+             for number in range(1, 12)]
+    path = generate_docx(replace(_analysis(), scope_of_work="\n".join(lines)), [], [])
+    try:
+        doc = Document(str(path))
+        work = [p for p in doc.paragraphs if p.text in lines]
+        assert len(work) == len(lines)
+        assert all(p.paragraph_format.keep_together is True for p in work)
+        heading, = (p for p in doc.paragraphs if p.text == "Detailed Scope of Work")
+        assert heading.paragraph_format.keep_with_next is True
+    finally:
+        path.unlink(missing_ok=True)
+
+
+@pytest.mark.skipif(
+    not _renderer_available(),
+    reason="libreoffice-writer is unavailable in this environment",
+)
+def test_long_native_msapo_pdf_has_no_split_short_scope_items():
+    """A 60-item real form previously stranded 'review.' on a new page."""
+    lines = [f"{number}. Inspect invented pump assembly and record synthetic verification "
+             f"details for review." for number in range(1, 61)]
+    pdf = build_msapo_pdf(analysis=_analysis(), scope="\n".join(lines),
+                          inclusions=["Labor and supplies"], exclusions=["Unapproved work"])
+
+    import fitz
+
+    with fitz.open(stream=pdf, filetype="pdf") as rendered:
+        assert len(rendered) >= 3
+        pages = [" ".join(page.get_text().split()) for page in rendered]
+    # Entire items, not just their numbers, must occur on a single real page.
+    for line in lines:
+        # Item 1 is a substring of item 11, 21, etc. A plain substring
+        # comparison would falsely count multiple pages even when the native
+        # renderer kept every individual paragraph intact. Match the complete
+        # numbered item with a digit boundary, without relaxing page integrity.
+        item = re.compile(r"(?<!\d)" + re.escape(line) + r"(?!\d)")
+        assert sum(bool(item.search(page)) for page in pages) == 1, (
+            f"Native pagination split or lost scope item: {line!r}")
 
 
 def test_each_conversion_gets_an_isolated_libreoffice_profile(monkeypatch):
