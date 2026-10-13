@@ -158,6 +158,8 @@ def exercise(browser_type, name, base):
     from playwright.sync_api import expect
     browser = browser_type.launch(headless=True)
     contexts, attempts, errors = [], [], []
+    error_details = []
+    phase = {"name": "initial navigation"}
 
     def session():
         cookie = secrets.token_hex(16)
@@ -179,8 +181,16 @@ def exercise(browser_type, name, base):
                 request.abort()
         context.route("**/*", route)
         page = context.new_page()
+        role = "primary" if len(contexts) == 1 else "coworker"
         page.set_default_timeout(20000)
-        page.on("pageerror", lambda error: errors.append(str(error)))
+        def browser_exception(error):
+            # Metadata only; synthetic browser harness. Retain every error as
+            # a hard failure, but identify which operator action canceled it.
+            errors.append(str(error))
+            error_details.append({"browser": role, "stage": phase["name"],
+                                  "message": str(error)[:500],
+                                  "stack": str(getattr(error, "stack", ""))[:1600]})
+        page.on("pageerror", browser_exception)
         page.goto(URL, wait_until="domcontentloaded")
         expect(page.get_by_role("heading", name="Shared report testing", exact=True)).to_be_visible(timeout=60000)
         return page, cookie
@@ -256,6 +266,7 @@ def exercise(browser_type, name, base):
         coworker_generation = (coworker_root / ".enfra-qa-namespace").read_text()
         download_original("coworker", coworker)
 
+        phase["name"] = "start real Starting report importer"
         page.get_by_role("button", name="Start fresh test with this fixture", exact=True).click()
         actor = page.get_by_role("textbox", name="Your name", exact=True)
         expect(actor).to_be_visible(timeout=60000)
@@ -273,6 +284,7 @@ def exercise(browser_type, name, base):
         proceed = page.get_by_role("button", name="Continue to this month’s updates", exact=True)
         expect(proceed).to_be_enabled(timeout=45000)
         capture(page, name, "production-starting-review")
+        phase["name"] = "enter ordered report/editor after import"
         proceed.click()
         activity = page.get_by_role("textbox", name="Activity summary", exact=True)
         expect(activity).to_be_visible(timeout=90000)
@@ -292,6 +304,7 @@ def exercise(browser_type, name, base):
             ("explicit-report-clear", "", "button"),
             ("reentry-after-report-clear", REENTRY_TEXT, "tab"),
         ):
+            phase["name"] = label + ": native edit"
             if mode == "button":
                 # After the prior page reload a visible textarea can arrive
                 # before Streamlit finishes wiring actions. Do not dispatch
@@ -310,6 +323,7 @@ def exercise(browser_type, name, base):
                     activity.press("Tab")
             receipt = durable_activity(page, root, wording)
             idle(page)
+            phase["name"] = label + ": browser reload"
             page.reload(wait_until="domcontentloaded")
             expect(activity).to_be_visible(timeout=60000)
             expect(activity).to_have_value(wording, timeout=30000)
@@ -317,15 +331,18 @@ def exercise(browser_type, name, base):
             # hydrating the next editor action after reload. Require the app's
             # completed rerun before taking a new operator action.
             idle(page)
+            phase["name"] = label + ": loaded and idle"
             check(name, label + " survives ordinary refresh with exact canonical draft", True, receipt)
             check(name, label + " does not reopen Starting report or duplicate editor",
                   page.get_by_role("textbox", name="Your name", exact=True).count() == 0 and activity.count() == 1)
         capture(page, name, "reentry-after-refresh")
+        phase["name"] = "coworker reload"
         coworker.reload(wait_until="domcontentloaded")
         expect(coworker.get_by_role("heading", name="Shared report testing", exact=True)).to_be_visible(timeout=60000)
         check(name, "edited report remains isolated from coworker", not journal(coworker_root)
               and coworker.get_by_role("textbox", name="Activity summary", exact=True).count() == 0)
         old_generation = (root / ".enfra-qa-namespace").read_text()
+        phase["name"] = "reset primary workspace"
         page.get_by_role("button", name="Reset this test workspace", exact=True).click()
         expect(activity).to_have_count(0, timeout=45000)
         idle(page)
@@ -335,6 +352,7 @@ def exercise(browser_type, name, base):
               (coworker_root / ".enfra-qa-namespace").read_text() == coworker_generation)
         # Selection is intentionally disposable on reset. Select the original
         # explicitly before proving its shared bytes still exist unchanged.
+        phase["name"] = "select and download original after reset"
         page.get_by_role("combobox", name="Shared fixture", exact=True).click()
         page.get_by_role("option", name=re.compile(r"^" + re.escape(friendly) + r" · ")).click()
         download_original("after-reset")
@@ -352,7 +370,9 @@ def exercise(browser_type, name, base):
         REPORT["browsers"].setdefault(name, {})["traceback"] = traceback.format_exc()
         raise
     finally:
-        REPORT["browsers"].setdefault(name, {}).update({"external_attempts": attempts, "browser_errors": errors})
+        REPORT["browsers"].setdefault(name, {}).update({
+            "external_attempts": attempts, "browser_errors": errors,
+            "page_error_details": error_details})
         for context in contexts:
             context.close()
         browser.close()
