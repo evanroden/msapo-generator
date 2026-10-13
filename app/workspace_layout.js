@@ -17,6 +17,10 @@ export default function(component) {
     let frame = null, disposed = false, pairs = [], lastGeometry = '';
     const subscriptions = [];
     root.classList.add('epc-workspace');
+    // This stamp changes only on a real top-level Python workspace render.
+    // Layout measurement, preview fragments and viewport changes do not change
+    // it. The reference viewer uses this as an acknowledgment of native edits.
+    root.dataset.epcFullRender = data.fullRender || '';
     const nav = data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
     const chrome = document.querySelector('[data-testid="stHeader"]');
     const safe = document.createElement('div');
