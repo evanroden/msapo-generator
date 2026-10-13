@@ -159,5 +159,6 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
                 st.rerun(scope='fragment')
         render_view(key=widget_key,generation=generation,title=title,ticket=ticket,
                     images=images,status=status,on_change=changed,
+                    acknowledged_viewport=view,
                     view_scope=state['owner']+'|'+key+'|'+fingerprint)
     surface()

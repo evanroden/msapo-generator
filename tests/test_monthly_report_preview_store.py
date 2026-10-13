@@ -126,6 +126,7 @@ def test_page_requests_are_bounded(cache, indexes):
 @pytest.mark.parametrize('change', [
     {'generation':'old'}, {'visible':'true'}, {'pages':[0,1,2]},
     {'pages':[-1]}, {'pages':[True]}, {'pages':['0']}, {'dpi':10000},
+    {'requestId':True}, {'requestId':0}, {'requestId':2**53},
 ])
 def test_browser_state_cannot_expand_page_or_generation_scope(change):
     value = {'generation':'current','visible':True,'pages':[0,1],'dpi':120, **change}

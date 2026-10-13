@@ -160,6 +160,22 @@ def retained_reference_callbacks(monkeypatch):
     store.close()
 
 
+def test_reference_acknowledges_only_applied_view_not_unhandled_widget_state(retained_reference_callbacks):
+    harness = retained_reference_callbacks
+    target = harness.render('synthetic-ack-draft', pdf_bytes(2))
+    assert target.view['acknowledged_viewport']['visible'] is False
+    harness.state['workspace_reference_source'] = {'viewport': {
+        'generation': target.view['generation'], 'visible': True,
+        'pages': [1], 'dpi': 96, 'requestId': 1,
+    }}
+    target.surface()  # Simulate a rerender before the callback was applied.
+    assert harness.rendered[-1]['acknowledged_viewport']['visible'] is False
+    target.view['on_change']()
+    target.surface()
+    assert harness.rendered[-1]['acknowledged_viewport'] == {
+        'visible': True, 'pages': (1,), 'dpi': 96}
+
+
 def test_discarded_scope_rejects_retained_fragment_and_callback_even_after_same_scope_reentry(
     retained_reference_callbacks,
 ):

@@ -196,3 +196,27 @@ test('tabletop active reference uses its measured upper bounds when observer cli
     assert.equal(sent.at(-1).visible,false,'background pages remain suspended');
     cleanup();
 });
+
+test('interrupted viewport delivery reconciles applied server state without repeating acknowledged work',()=>{
+    const {root,panel}=dom(),timers=new Map(),observers=[],sent=[];let sequence=0;
+    class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,Boolean,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:callback=>{timers.set(++sequence,callback);return sequence;},clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const invoke=ack=>render({parentElement:root,data:{generation:'receipt-a',viewScope:'expense|receipt-a',pages:[],sizes:[],ready:false,
+        acknowledgedViewport:{visible:ack,pages:[0],dpi:96,generation:'receipt-a'}},setStateValue:(name,value)=>sent.push(value)});
+    const fire=()=>{for(const callback of timers.values())callback();timers.clear();};
+    invoke(false);observers[0].callback([{isIntersecting:true}]);fire();
+    assert.equal(sent.length,1);assert.equal(sent[0].visible,true);
+    // A competing rerun stored the browser value but did not apply its callback.
+    // The canonical server acknowledgment remains false on the next invocation.
+    invoke(false);fire();
+    assert.equal(sent.length,2,'a send alone cannot leave a visible pane stuck forever');
+    assert.ok(sent[1].requestId>sent[0].requestId,'retry must remain a distinct Streamlit state update');
+    invoke(true);fire();
+    assert.equal(sent.length,2,'acknowledged viewport causes no redundant Python event');
+    panel._previewCleanup();
+});

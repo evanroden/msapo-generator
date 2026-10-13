@@ -257,11 +257,9 @@ def _render_ordered_preview(section_key, prefix, title):
     _advance_preview_queue(state)
     pending = _pending(state, section_key)
     entry = _current_entry(state, section_key)
-    # These panes repeat down the report. Suppress duplicate heading link IDs.
-    # anchor=False hides Streamlit's chain but still emits an auto-generated
-    # heading ID. Thirteen identical headings therefore still duplicate IDs.
-    # The containing report section already supplies the semantic heading.
-    st.caption('Preview')
+    # The containing section and workspace reference already name this pane.
+    # Keep its current/updating state in the viewer instead of adding another
+    # repeated heading/caption and reducing the usable tabletop page area.
     images, ticket = (), None
     stale = False
     status = _preview_status(pending=pending)
@@ -293,6 +291,7 @@ def _render_ordered_preview(section_key, prefix, title):
     widget_key = prefix + '_preview_surface_' + section_key
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
+                acknowledged_viewport=state['page_requests'].get(section_key),
                 pending=pending,
                 on_poll=_scoped_callback(_poll_changed, prefix, section_key, widget_key),
                 on_change=_scoped_callback(_viewport_changed, prefix, section_key, widget_key))

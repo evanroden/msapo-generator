@@ -213,3 +213,10 @@ This is browser implementation work, not physical-device or Safari acceptance.
 The viewer binds stable `st-key-epc_workspace_` / `st-key-epc_pair_` ancestors before the layout adapter's first animation frame. Presentation classes may not yet exist when the Streamlit v2 component mounts; missing that ancestor prevented active-section notifications from reaching an initially offscreen preview. Lifecycle regression covers that ordering; Chromium/WebKit proof remains required.
 
 Current `6f0c902` browser evidence confirms the real Monthly Chromium preview remains fragment-local (full runs 7→7, fragment progress) and both PO engines complete. WebKit Monthly instead encountered a Streamlit wire-cache connection error; bounded localhost-only protocol diagnostics are added without changing cache/runtime behavior. This is distinct from the next-pane preview startup repair. Revert the scoped code changes for rollback; preserve all report/storage data.
+
+
+### Applied-view acknowledgments and Expense output — 14:52 UTC
+
+Browser dispatch is distinct from the server's applied viewport. Each shared preview now receives the latter with its current generation; a rerender that did not apply the requested view causes a distinct bounded request-ID delivery. A matching applied view causes no repeat. This only reconciles bounded visibility/page/DPI requests, never business text or saves. Existing owner/generation/reset validation and global raster/conversion budgets remain intact. Tests explicitly model an interrupted callback that stored a widget value without applying it.
+
+On `29b650f`, actual Monthly/PO and shared DOM passed both engines; Expense Chromium still lacked its newly active second receipt, so the acknowledgment change needs browser proof. The previous WebKit cache error remains unresolved, though it did not recur. The isolated Expense fixture now executes the production Calc builder and its actual packet/download/source-return journey; no external reader, share, email or submission operation is permitted. Native Safari and physical folding remain separate.

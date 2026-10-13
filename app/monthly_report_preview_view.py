@@ -35,6 +35,10 @@ export default function(component) {
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
     const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0, zoom:'width'});
+    // A browser send is not proof that its callback survived a competing
+    // rerender. Reconcile with the server's applied view on every invocation.
+    // Reading position remains client state; only this bounded request retries.
+    if (data.acknowledgedViewport) state.sent = JSON.stringify(data.acknowledgedViewport);
     const host = parentElement.host || parentElement;
     // The preview can mount before the layout adapter's first animation
     // frame adds its classes. Bind stable app-owned container keys now so
@@ -218,7 +222,10 @@ export default function(component) {
         const serialized = JSON.stringify(value);
         if (serialized !== state.sent) {
             state.sent = serialized;
-            setStateValue('viewport', value);
+            // A distinct receipt lets Streamlit deliver a retried state value
+            // even when an interrupted callback already stored its old value.
+            state.requestSequence = (state.requestSequence || 0) + 1;
+            setStateValue('viewport', {...value, requestId:state.requestSequence});
         }
         pollWhenPending();
     }
@@ -272,6 +279,8 @@ def viewport(value, generation, pages=150):
     """Browser messages select bounded pages, never paths or another user's file."""
     if not isinstance(value, dict) or value.get('generation') != generation:
         return None
+    if 'requestId' in value and (type(value['requestId']) is not int or not 1 <= value['requestId'] <= 2**53 - 1):
+        return None
     indexes = value.get('pages', ())
     if (type(value.get('visible')) is not bool or not isinstance(indexes, (tuple, list))
             or not 1 <= len(indexes) <= 2
@@ -286,11 +295,14 @@ def _preview_component(runtime):
     return st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
 
 
-def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None):
+def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None, pending=False, on_poll=None, acknowledged_viewport=None):
     view = _preview_component(Runtime.instance())
+    applied = acknowledged_viewport or {'visible': False, 'pages': (0,), 'dpi': 96}
     return view(key=key, data={
         'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
         'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
+        'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
+                                 'dpi': applied['dpi'], 'generation': generation},
         'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
     }, default={'viewport': None, 'poll': None}, on_viewport_change=on_change,
         on_poll_change=on_poll or (lambda: None), height='content')
