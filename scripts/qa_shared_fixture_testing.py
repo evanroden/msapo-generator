@@ -246,6 +246,15 @@ def exercise(browser_type, name, base):
               {"sha256": digest, "size": len(original), "scenario": "AUTH03", "target": "Synthetic Testing Contract / Synthetic Site A / 2026-10"})
 
         def download_original(label, current=page):
+            # The selected combobox can show its new value before Streamlit
+            # commits the rerun that changes the binary download resource.
+            # Require the exact fixture/hash-scoped native action to be
+            # mounted before the one real download. This is not a retry or a
+            # weaker byte assertion: an obsolete or mismatched action fails.
+            scope = saved["fixture_id"] + "_" + digest[:16]
+            expected_widget = current.locator(".st-key-_shared_fixture_download_" + scope)
+            expect(expected_widget).to_be_visible(timeout=45000)
+            idle(current)
             with current.expect_download(timeout=30000) as event:
                 current.get_by_role("button", name="Download unchanged original", exact=True).click()
             downloaded = event.value
