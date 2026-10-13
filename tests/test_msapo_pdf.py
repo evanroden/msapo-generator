@@ -18,6 +18,7 @@ than reporting a failure the code did not cause.
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 from docx import Document
@@ -193,7 +194,12 @@ def test_long_native_msapo_pdf_has_no_split_short_scope_items():
         pages = [" ".join(page.get_text().split()) for page in rendered]
     # Entire items, not just their numbers, must occur on a single real page.
     for line in lines:
-        assert sum(line in page for page in pages) == 1, (
+        # Item 1 is a substring of item 11, 21, etc. A plain substring
+        # comparison would falsely count multiple pages even when the native
+        # renderer kept every individual paragraph intact. Match the complete
+        # numbered item with a digit boundary, without relaxing page integrity.
+        item = re.compile(r"(?<!\\d)" + re.escape(line) + r"(?!\\d)")
+        assert sum(bool(item.search(page)) for page in pages) == 1, (
             f"Native pagination split or lost scope item: {line!r}")
 
 
