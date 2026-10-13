@@ -402,9 +402,10 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                 # second copy merely because the rendered prefix differs.
                 # Require the SAME source/page reference: unrelated matching
                 # wording in a different source is not an acceptance receipt.
-                linked = sources.source_reference(source, number)
-                already_present = (linked in block.references
-                                   and normal(proposed) in normal(block.text))
+                origin = f"{source.id}:{number}:"
+                already_present = (
+                    any(ref.startswith(origin) for ref in block.references)
+                    and normal(proposed) in normal(block.text))
                 if not already_present:
                     texts.append(proposed)
             if item.get("include_page") is True and [source.id, number] in value.get("visual_pages", []) and page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)[0] not in {"pricing", "legal", "signature"}:
