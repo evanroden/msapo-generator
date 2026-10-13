@@ -207,6 +207,54 @@ def _activity_identity(line, source, event_date):
     return " · ".join(parts) + " — " + line if parts else line
 
 
+def _csv_activity_entries(content):
+    """Recognized vendor-work CSV columns only; never guess site or date scope.
+
+    None means this table has no unambiguous native Activity schema. An empty
+    tuple means it was recognized but no safe rows may be auto-included.
+    Existing work-order/status counting has its own separate reviewed path.
+    """
+    if content.source.suffix != ".csv" or not content.tables:
+        return None
+    result = []
+    for number, table in enumerate(content.tables, 1):
+        names = tuple(re.sub(r"[^a-z0-9]", "", name.casefold()) for name in table.columns)
+        if any(name in {"facility", "site", "client", "customer", "hospital",
+                        "building", "location"} for name in names):
+            # The source may mix target and foreign sites. Without target
+            # profile mapping, show the file for manual review instead.
+            return ()
+        def column(accepted):
+            found = [index for index, name in enumerate(names) if name in accepted]
+            return found[0] if len(found) == 1 else None
+        action = column({"activity", "workperformed", "workdescription",
+                         "servicenotes", "servicedetails", "actions", "findings"})
+        if action is None:
+            return None
+        vendor = column({"vendor", "contractor", "servicecompany"})
+        dated = column({"servicedate", "eventdate", "workdate",
+                        "inspectiondate", "date"})
+        status = column({"status", "workstatus", "completionstatus"})
+        for row in table.rows:
+            def cell(index):
+                return str(row[index]).strip() if index is not None and index < len(row) else ""
+            narrative = cell(action)
+            if not useful_activity(narrative) or contains_price(narrative):
+                continue
+            status_text = cell(status)
+            if status_text and not contains_price(status_text):
+                narrative += " (Status: " + status_text + ")"
+            date_text = cell(dated) if dated is not None else content.source.service_date
+            # Numeric and locale-ambiguous dates must not become reported facts.
+            if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", date_text):
+                date_text = ""
+            source = replace(content.source, vendor=cell(vendor) or content.source.vendor)
+            rendered = _activity_identity(narrative, source, date_text)
+            if not contains_price(rendered):
+                result.append((number, rendered))
+    return tuple(result)
+
+
 def native_update(contents, destination, existing=None, *, table_columns=None):
     existing = existing or ResolvedBlock(destination, "This month")
     references = list(existing.references)
