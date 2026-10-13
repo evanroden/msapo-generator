@@ -11,6 +11,7 @@ on:
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
+      - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
       - '.github/workflows/adaptive-workspaces.yml'
   push:
@@ -24,6 +25,7 @@ on:
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
+      - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
       - '.github/workflows/adaptive-workspaces.yml'
 
@@ -69,6 +71,9 @@ jobs:
       - name: Actual Monthly workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
         run: python scripts/qa_monthly_adaptive.py
+      - name: Shared fixture upload and actual Starting report workflow
+        if: ${{ !cancelled() }}
+        run: python scripts/qa_shared_fixture_testing.py
       - name: Upload synthetic screenshots and geometry
         if: always()
         uses: actions/upload-artifact@v4
@@ -79,5 +84,6 @@ jobs:
             test-artifacts/expense-adaptive/
             test-artifacts/po-adaptive/
             test-artifacts/monthly-adaptive/
+            test-artifacts/shared-fixture-testing/
           retention-days: 7
           if-no-files-found: warn

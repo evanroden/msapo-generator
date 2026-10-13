@@ -6,7 +6,9 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
-[Private authentic fixture boundary](PRIVATE_FIXTURE_BOUNDARY_2026-10-13.md) — verified capabilities, disabled owner-authorized fixture storage primitives/tests, required authentication approval and same-importer isolation design. No private route or new access configuration is enabled.
+[Shared authentic-report testing](SHARED_FIXTURE_TESTING_2026-10-13.md) — current owner-authorized anonymous shared fixture scope, locally verified, undeployed storage/UI/production-importer integration, isolation and remaining authentic/browser checks. Hidden navigation is not private access.
+
+[Fixture boundary history and source corrections](PRIVATE_FIXTURE_BOUNDARY_2026-10-13.md) — superseded owner-only proposal, retained storage/integrity evidence and canonical source correction checks. The owner declined authentication; no authentication approval is pending.
 
 [Current Phase 1 and Phase 2 execution ledger](PHASE1_PHASE2_EXECUTION_2026-10-13.md) — resume here for exact commits, CI/deployment outcomes, all original and adaptive requirement IDs, ownership, and remaining acceptance gates.
 

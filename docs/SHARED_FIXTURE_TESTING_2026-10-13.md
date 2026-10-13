@@ -1,0 +1,47 @@
+# Shared authentic-report testing
+
+**Implemented and locally verified in commit `22c8344`; no authentic files uploaded and no shared route deployed.** This note records Evan’s15:36UTC October13 decision: a hidden testing area shared with coworkers and agents **without login**. Anyone discovering the route can list, upload, read, replay and download fixtures. Hidden navigation is not private access. The previous owner-only authorization and anonymous-denial requirements are superseded, not passed; no authentication approval is pending.
+
+At the current checkpoint, main `bfbd0b7fb3d5aca7fa810abc5cbc75a7c3ae0de9` contains the merged adaptive work. Shared testing is committed locally as `22c8344` on `completion/shared-fixture-testing-20261013`. Do not treat the proposed route as deployed or invite actual uploads until its implementation, isolation and browser checks pass on the served build. Exact CI, deployment and run outcomes live in the [execution ledger](PHASE1_PHASE2_EXECUTION_2026-10-13.md).
+
+## Intended user flow and access scope
+
+The navigation selector is `?monthly_qa=fixtures`. A visible **Shared report testing** notice explains anonymous access. Select an existing immutable fixture or upload a native DOCX, record its friendly name, explicit source contract/sites/month, target contract/sites/month, scenario and independent expected-content manifest, then start a fresh test. The genuinely half-finished current-month file requires explicit identification; neither filename nor parser output establishes that fact.
+
+The application passes a verified copy into the same Starting-report inspection and review/import flow used in normal Monthly reporting. Users resolve real source/target/period questions in that flow, edit, preview and generate the actual report. No fictional fixture runner, expected-value prefill or parallel parser replaces extraction. Download original means unchanged uploaded bytes. Fixture metadata and original download are intentionally shared; each browser’s disposable editing run is separate.
+
+**Start fresh test with this fixture** and **Reset this test workspace** replace only the selected browser run and invalidate its pending generation. They preserve immutable shared fixtures. A reset does not purge originals, saved live histories or Library files. No automatic expiry or permanent-purge operation is introduced. Disk exhaustion must reject admission without deleting prior work.
+
+## Current architecture
+
+| Module / boundary | Role and constraint |
+| --- | --- |
+| `monthly_report_shared_fixtures.py` | Explicit shared-audience facade over byte-integrity storage; separate shared-library/run markers, no fictitious authenticated owner. Requires an explicit existing base directory. |
+| `monthly_report_fixture_vault.py` | Immutable DOCX bytes/hash, manifest integrity, safe descriptor traversal, atomic/fsynced writes, original quota/free-space checks and interrupted-write recovery. Its original protected API remains separately tested. |
+| `monthly_report_fixture_runs.py` | Exact target/profile/period mapping, verified original copy and lineage, actual `starting_import.inspect_docx`, production setup-stage handoff and exact QA scope/generation validation. |
+| `monthly_report_shared_testing_ui.py` | Shared disclosure, explicit metadata/scenario form, list/upload/original download, pending action receipts and production guided workflow. Receipt/generation checks reject stale actions. |
+| `monthly_report_ui.py` / `web_ui.py` | Hidden navigation choice and Monthly route/title; distinct shared-run token; clear stale mode-specific widget/job/output state on namespace transitions. Cookie identity provides isolation, not access restriction. |
+| `monthly_report_fixture_admission.py` | Metadata-only global reservation for initial staged original/lineage copies:128MiB budget and256MiB free headroom. It does not bound all generated run data, expire runs or delete files. A reservation is reclaimed only after a namespace generation is demonstrably gone/replaced. Integrated with focused admission tests; fresh exact-head CI/browser proof pending. |
+| Existing QA storage, previews and production importer | Scope originals, reports/history, contacts, thermal/training, source maps/designs/artwork and preview workers/caches; preserve exact reset leases and no live fallback. The shared library lives outside disposable QA namespaces. |
+
+The shared library uses `_enfra_shared_fixtures_v1`; separate run metadata uses `_enfra_shared_fixture_runs_v1`. Editable report state remains inside the marked `_enfra_monthly_report_qa_v1` namespace. Original-byte hashes are verified before staging and on resume. Missing or changed target/generation/lineage must stop the action rather than adopt another run. A completed draft must not automatically rerun the initial import and resurrect removed content.
+
+Original-byte/package bounds are admission safeguards, not proof that source content is safe or belongs in the target report. The production price/site/source-integrity checks remain active. Do not put genuine files, contacts, output or screenshots into public Git, build/static assets, logs or CI artifacts. Anonymous app sharing does not authorize publication through those development channels.
+
+## Evidence and remaining acceptance
+
+Root’s current nine-file selection covering shared storage/runs/admission/UI/core routes/URL recovery/original QA isolation/Starting import **162 passed / 19.48s**. Actual import/edit/refresh is implemented. Reviewer checks found the three raised blockers resolved, with no remaining blocker in that bounded review. Earlier agent107/10.85s, shared UI/core90/6.69s, root route13/6.40s and protected storage40/shared facade17 scopes overlap and are not summed. The URL harness initially omitted the test cookie that AppTest does not bootstrap; the corrected route test passed. Actual browser journey and fresh required CI remain pending. None used authentic files or proves deployed availability.
+
+Required next evidence:
+
+1. Synthetic upload/list/read/download preserves exact bytes/hash and explicit manifest. Two anonymous sessions see the same shared library but cannot overwrite each other’s disposable report state. Missing access denial is intentional; integrity, path and run-identity validation remain mandatory.
+2. Fresh fixture selection reaches the actual Starting-report inspection/classification/plans/import/merge path with the chosen target. No expected-content injection, external-reader invocation or live standing/history write occurs. Re-entry does not repeat a finished import.
+3. Reset retains fixtures and rejects stale tabs/jobs/callbacks using the exact generation, including worker threads and periodic preview fragments. Target drift, failed writes/retry and interrupted upload recovery preserve prior valid data.
+4. Original and cumulative-copy admission reject full or malformed storage safely. The resource gate and actual configured restart/redeploy path are checked before durability claims; no new hosting plan, credentials or infrastructure is included.
+5. After the served route passes synthetic browser checks, obtain the three real source reports with explicit scenario/target labels and independent expectations. Run same-site previous-month, different-site same-contract, and explicitly identified current-month partial scenarios separately. Preserve correct standing/history/source lineage and inspect every actual Word/PDF page. Authentic input/output evidence stays out of public development artifacts.
+
+Shipping Safari, physical folding ergonomics, authentic content/privacy and final owner acceptance remain separate. This shared-route change does not clear LIVE06: second replay Compare passed onbfbd0b7, but subsequent Generate was rejected after canonical Activity unexpectedly became empty. That production defect remains under diagnosis.
+
+## Rollback
+
+Revert the scoped UI/route/importer commits through the established publication workflow. Leave backward-compatible immutable fixture storage and existing report/standing/history/design data intact. Disabling navigation is not deletion and does not make previously shared downloads retroactively private. No cleanup or purge is part of code rollback.
