@@ -812,9 +812,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if st.button("Accept current revision", key=prefix + "_accept_revision", disabled=not accept):
             st.session_state[prefix + "_revision"] = current_revision
             st.rerun()
-    with st.expander("Save a report version (optional)"):
-        st.caption("Current edits are kept for this browser when recovery is available. Save a version only when you want it in the shared report history.")
-        if st.button("Save progress", key=prefix + "_save", disabled=conflict or not prepared.strip()):
+    with st.expander("Shared report history", expanded=False):
+        st.caption("Saving a version adds it to shared report history. Browser draft recovery is separate.")
+        if st.button("Save shared version", key=prefix + "_save", disabled=conflict or not prepared.strip()):
             saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
                                           open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
                                           pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())

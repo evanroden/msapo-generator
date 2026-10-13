@@ -139,7 +139,7 @@ def test_copilot_originals_and_unmatched_lines_are_retained(tmp_path, monkeypatc
     next(w for w in app.text_input if w.label == "Prepared by").set_value(
         "Synthetic Editor"
     ).run()
-    button(app, "Save progress").click().run()
+    button(app, "Save shared version").click().run()
     saved = library.load_snapshot(
         RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9)
     )
