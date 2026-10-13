@@ -150,3 +150,33 @@ def test_cmms_csv_with_status_date_and_work_order_stays_on_separate_review_path(
         b"WO-101,Completed,2026-09-18,Trane,Inspected pump.\n")
     result = structured.native_update((content,), "activity_summary")
     assert not result.text and not result.references
+
+
+def test_native_vendor_csv_activity_reaches_real_word_and_pdf(monkeypatch, tmp_path):
+    """Exercise the actual assembled synthetic monthly binaries, not a text stub."""
+    from tests.test_monthly_report_full_synthetic_output import approved_synthetic_draft
+    from app.monthly_report_docx import generate_report
+    import fitz
+
+    raw = (
+        b"Vendor,Event date,Work performed,Status,Price\n"
+        b"Trane,2026-09-16,Inspected chiller compressor.,Open,$1200\n"
+    )
+    profile = synthetic_profiles()[0]
+    draft = approved_synthetic_draft(monkeypatch, tmp_path)
+    content, _ = sources.ingest(profile, "vendor-technical-events.csv", raw)
+    linked = structured.native_update((content,), "activity_summary")
+    activity = replace(draft.blocks[0], text=linked.text)
+    final = replace(draft, blocks=(activity, draft.blocks[1]))
+    package = generate_report(final, acknowledged_fingerprint=final.fingerprint)
+    assert package.pdf and package.docx, package.pdf_error
+    word = Document(BytesIO(package.docx))
+    word_text = "\n".join(p.text for p in word.paragraphs)
+    assert "2026-09-16" in word_text and "Trane" in word_text
+    assert "Inspected chiller compressor." in word_text
+    assert "$1200" not in word_text
+    with fitz.open(stream=package.pdf, filetype="pdf") as pdf:
+        printed = "\n".join(page.get_text() for page in pdf)
+    assert "2026-09-16" in printed and "Trane" in printed
+    assert "Inspected chiller compressor." in printed
+    assert "$1200" not in printed
