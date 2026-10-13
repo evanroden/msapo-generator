@@ -281,9 +281,28 @@ def exercise(browser_type, name, base):
               SOURCE_TEXT in activity.input_value() and EXPECTATION_ONLY not in activity.input_value())
         capture(page, name, "imported-current-report")
 
-        for label, wording in (("manual-edit", MANUAL_TEXT), ("intentional-clear", ""), ("reentry", REENTRY_TEXT)):
-            activity.fill(wording)
-            activity.press("Tab")
+        # The native Streamlit multiline control presents Ctrl+Enter as its
+        # explicit apply gesture. Exercise keyboard clearing that way instead
+        # of depending only on WebKit's sometimes-interrupted Tab/blur event.
+        # Neither action is accepted until its EXACT empty journal is durable.
+        for label, wording, mode in (
+            ("manual-edit", MANUAL_TEXT, "tab"),
+            ("intentional-keyboard-clear", "", "apply"),
+            ("reentry", REENTRY_TEXT, "tab"),
+            ("explicit-report-clear", "", "button"),
+            ("reentry-after-report-clear", REENTRY_TEXT, "tab"),
+        ):
+            if mode == "button":
+                clear = page.get_by_role("button", name="Clear Activity for this report", exact=True)
+                expect(clear).to_be_enabled()
+                clear.click()
+            else:
+                activity.fill(wording)
+                expect(activity).to_have_value(wording)
+                if mode == "apply":
+                    activity.press("ControlOrMeta+Enter")
+                else:
+                    activity.press("Tab")
             receipt = durable_activity(page, root, wording)
             idle(page)
             page.reload(wait_until="domcontentloaded")
