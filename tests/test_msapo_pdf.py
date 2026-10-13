@@ -198,7 +198,7 @@ def test_long_native_msapo_pdf_has_no_split_short_scope_items():
         # comparison would falsely count multiple pages even when the native
         # renderer kept every individual paragraph intact. Match the complete
         # numbered item with a digit boundary, without relaxing page integrity.
-        item = re.compile(r"(?<!\\d)" + re.escape(line) + r"(?!\\d)")
+        item = re.compile(r"(?<!\d)" + re.escape(line) + r"(?!\d)")
         assert sum(bool(item.search(page)) for page in pages) == 1, (
             f"Native pagination split or lost scope item: {line!r}")
 
