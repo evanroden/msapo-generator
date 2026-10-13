@@ -131,6 +131,27 @@ def test_upload_pending_action_commits_shared_original_without_preparing_a_repor
     assert library.read(uploaded).receipt.metadata.friendly_name == "Coworker upload"
 
 
+def test_stale_start_for_another_selected_fixture_does_not_reset_or_import(sample, monkeypatch):
+    """A pending click bound to an old selection cannot discard current work."""
+    root, library, receipt, _ = sample
+    state = {"_shared_fixture_selection": "f" * 32}
+    assert receipt.fixture_id != state["_shared_fixture_selection"]
+    monkeypatch.setattr(ui.st, "session_state", state)
+    with testing.isolated(TOKEN_A):
+        live = memory._data_dir()
+        canary = live / "keep-this-current-run.txt"
+        canary.write_text("Current unfinished work must survive the stale source click.")
+        before = testing.generation()
+        ui._queue_run(receipt.fixture_id, before)
+        ui._process_pending(library, TOKEN_A, root)
+        assert testing.generation() == before
+        assert canary.read_text().startswith("Current unfinished work")
+        assert runs.read_run_fixture(library, TOKEN_A) is None
+    assert "_shared_fixture_pending" not in state
+    assert "selected shared fixture changed" in state["_shared_fixture_error"]
+    assert "No report was reset" in state["_shared_fixture_error"]
+
+
 def test_old_reset_request_cannot_delete_a_new_generation(sample, monkeypatch):
     root, library, _receipt, _original = sample
     state = {"_shared_fixture_pending": {"action": "reset", "phase": "reset", "generation": "0" * 32}}
