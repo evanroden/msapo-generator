@@ -97,6 +97,11 @@ def test_unknown_vendor_date_remain_uninvented_and_price_bearing_vendor_is_exclu
     text = structured.native_update((priced,), "activity_summary").text
     assert text == "2026-09-18 — Inspected the pump on site."
     assert "$150" not in text
+    for label in ("Trane rep@example.com", "Trane (212) 555-1212"):
+        contact = sample("Inspected the pump on site.", vendor=label, when="2026-09-18")
+        rendered = structured.native_update((contact,), "activity_summary").text
+        assert rendered == "2026-09-18 — Inspected the pump on site."
+        assert "@" not in rendered and "555-1212" not in rendered
 
 
 def test_csv_vendor_event_date_and_pending_status_are_source_grounded(monkeypatch, tmp_path):
