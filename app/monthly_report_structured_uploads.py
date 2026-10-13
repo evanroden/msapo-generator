@@ -157,7 +157,7 @@ def mapped_rows(content, destination, table_columns=None):
     return tuple(dict.fromkeys(rows))
 
 
-_EVENT_START = re.compile(r"^\s*\d{4}-\d{2}-\d{2}\s*\|")
+_EVENT_START = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s*\|")
 
 
 def _activity_lines(text, suffix):
