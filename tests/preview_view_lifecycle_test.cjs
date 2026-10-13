@@ -7,8 +7,9 @@ const vm = require('node:vm');
 
 class Element {
     constructor(tag='div') {Object.assign(this,{tag,children:[],dataset:{},style:{},listeners:new Map(),clientHeight:500,clientWidth:400,scrollTop:0,offsetTop:0});}
-    append(...children) {this.children.push(...children);}
+    append(...children) {for(const child of children)child.parent=this;this.children.push(...children);}
     replaceChildren(...children) {this.children=children;}
+    remove() {if(this.parent)this.parent.children=this.parent.children.filter(child=>child!==this);}
     querySelectorAll(selector) {
         const matches = element => selector.startsWith('.') ? element.className===selector.slice(1) :
             selector.startsWith('[data-action=') ? element.dataset.action===selector.match(/"(.*?)"/)[1] :
@@ -273,4 +274,32 @@ test('preview requests and pending polls yield to full editing reruns until fram
     app.setAttribute('data-test-script-state','notRunning');observers[3].callback();fire(120);fire(2000);
     assert.equal(sent.length,2);assert.equal(sent[1].name,'poll');
     panel._previewCleanup();assert.equal(timers.size,0);
+});
+
+test('late hidden response retains only the current decoded page during a visible layout return',()=>{
+    const {root,panel}=dom(),timers=new Map(),observers=[];let sequence=0;
+    class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,Boolean,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:callback=>{timers.set(++sequence,callback);return sequence;},clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const invoke=(pages,generation='current')=>render({parentElement:root,data:{generation,viewScope:'one|activity',
+        pages,sizes:[[612,792],[612,792],[612,792]],ready:true},setStateValue:()=>{}});
+    invoke([{index:0,image:'first'},{index:1,image:'second'}]);
+    panel._previewState.page=1;panel._previewState.visible=true;
+    const selected=panel.querySelector('figure[data-index="1"]').querySelector('img');
+    invoke([]); // Server applied the outgoing compact/hidden request.
+    assert.equal(panel.querySelectorAll('img').length,1);
+    assert.equal(panel.querySelector('img'),selected,'same decoded page survives the late empty response');
+    invoke([{index:2,image:'next'}]);
+    assert.equal(panel.querySelectorAll('img').length,2,'one retained selected page fits the two-image bound');
+    invoke([{index:0,image:'new-first'},{index:2,image:'new-next'}]);
+    assert.equal(panel.querySelectorAll('img').length,2,'two supplied pages evict any third retained page');
+    invoke([{index:1,image:'second'}]);panel._previewState.visible=false;invoke([]);
+    assert.equal(panel.querySelectorAll('img').length,0,'an actually hidden surface still releases its images');
+    panel._previewState.visible=true;invoke([{index:1,image:'second'}]);invoke([],'new-content');
+    assert.equal(panel.querySelectorAll('img').length,0,'new report content cannot inherit old imagery');
+    panel._previewCleanup();
 });

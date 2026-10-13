@@ -304,6 +304,12 @@ def exercise(browser_type, name):
         check(name, "sidebar-constrained segment uses honest fallback", editor_state(field) == before)
         inject(page, [{"x": 0, "y": 0, "width": 820, "height": 900}, {"x": 860, "y": 0, "width": 580, "height": 900}])
         mode(page, "book")
+        # A layout acknowledgment alone can precede the visible raster receipt.
+        # The selected actual page must survive/recover without blurring input.
+        book_image = actual.locator('figure[data-index="1"] img')
+        expect(book_image).to_be_visible(timeout=30000)
+        expect(book_image).to_have_js_property('complete', True)
+        check(name, "book selected native page actually decoded", book_image.evaluate('n=>n.naturalWidth>0'))
         book = capture(page, name, "actual-book")
         check(name, "unblurred input focus and selection survive book", editor_state(field) == before)
         check(name, "actual book preview clears measured crease", pair_state(book, "activity")["reference"]["left"] >= 860 - TOLERANCE, pair_state(book, "activity"))
@@ -311,6 +317,9 @@ def exercise(browser_type, name):
         mode(page, "tabletop")
         current_image(page, ACTIVITY)
         expect(actual.locator('figure[data-index="1"] img')).to_be_visible(timeout=30000)
+        expect(actual.locator('figure[data-index="1"] img')).to_have_js_property('complete', True)
+        check(name, "tabletop selected native page actually decoded",
+              actual.locator('figure[data-index="1"] img').evaluate('n=>n.naturalWidth>0'))
         title = actual.locator('.epc-context-title')
         expect(title).to_have_text('Monthly Activity Summary')
         check(name, "tabletop title is clear of persistent chrome", title.evaluate('''n=>{

@@ -110,7 +110,14 @@ export default function(component) {
         const wanted = supplied.get(index);
         let image = page.querySelector('img');
         if (!wanted) {
-            if (image) image.remove();
+            // A rapid compact -> book transition can receive the outgoing
+            // hidden-view response after this same page is visible again.
+            // Keep its already decoded image until the current view returns.
+            // There is no second image cache: at most the selected old page
+            // survives, and only when it fits beside fewer than two supplied
+            // images. A generation/layout change already replaces this DOM.
+            const retain = index === state.page && visibleNow() && supplied.size < 2;
+            if (image && !retain) image.remove();
             return;
         }
         if (!image) {
