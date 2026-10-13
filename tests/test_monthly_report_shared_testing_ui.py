@@ -155,7 +155,7 @@ def test_actual_starting_ui_two_sessions_refresh_and_scoped_reset(sample, monkey
     app = AppTest.from_string(_script(root, TOKEN_A), default_timeout=30).run()
     assert not app.exception
     assert any("without a login" in notice.value for notice in app.warning)
-    app.button(key="_shared_fixture_start").click().run()
+    app.button(key="_shared_fixture_start_" + receipt.fixture_id + "_" + receipt.original_sha256[:16]).click().run()
     assert not app.exception
     staged = app.session_state["_shared_fixture_staged"]
     assert staged.source_path.read_bytes() == original
@@ -171,7 +171,7 @@ def test_actual_starting_ui_two_sessions_refresh_and_scoped_reset(sample, monkey
 
     coworker = AppTest.from_string(_script(root, TOKEN_B), default_timeout=30).run()
     assert not coworker.exception
-    coworker.button(key="_shared_fixture_start").click().run()
+    coworker.button(key="_shared_fixture_start_" + receipt.fixture_id + "_" + receipt.original_sha256[:16]).click().run()
     assert not coworker.exception
     other = coworker.session_state["_shared_fixture_staged"]
     assert other.context.scope != staged.context.scope
@@ -182,6 +182,44 @@ def test_actual_starting_ui_two_sessions_refresh_and_scoped_reset(sample, monkey
     assert not staged.source_path.exists()
     assert other.source_path.read_bytes() == original
     assert library.download(receipt.fixture_id) == original
+
+
+def test_selected_fixture_changes_download_and_start_widget_identity(sample):
+    """A reset/reselection must not serve bytes from a formerly selected DOCX.
+
+    This is a widget identity regression. The Chromium/WebKit real download
+    assertion independently verifies the actual served byte/hash payload.
+    """
+    root, library, receipt, original = sample
+    second_doc = Document()
+    second_doc.add_paragraph("A distinct SYNTHETIC source; no real client information.")
+    stream = BytesIO()
+    second_doc.save(stream)
+    second = library.upload(
+        stream.getvalue(),
+        replace(receipt.metadata, friendly_name="Another synthetic original"),
+    )
+    assert second.original_sha256 != receipt.original_sha256
+    app = AppTest.from_string(_script(root, TOKEN_A), default_timeout=30).run()
+    assert not app.exception
+    initial = app.session_state["_shared_fixture_selection"]
+    before = next(x for x in app.get("download_button") if x.label == "Download unchanged original")
+    first_action = next(x for x in app.button if x.label == "Start fresh test with this fixture")
+    assert initial in {receipt.fixture_id, second.fixture_id}
+    assert before.key.endswith(initial + "_" + library.read(initial).receipt.original_sha256[:16])
+    assert first_action.key.endswith(initial + "_" + library.read(initial).receipt.original_sha256[:16])
+
+    target = second.fixture_id if initial == receipt.fixture_id else receipt.fixture_id
+    app.selectbox(key="_shared_fixture_selection").set_value(target).run()
+    assert not app.exception
+    assert app.session_state["_shared_fixture_selection"] == target
+    after = next(x for x in app.get("download_button") if x.label == "Download unchanged original")
+    next_action = next(x for x in app.button if x.label == "Start fresh test with this fixture")
+    expected_key = target + "_" + library.read(target).receipt.original_sha256[:16]
+    assert after.key.endswith(expected_key) and after.key != before.key
+    assert next_action.key.endswith(expected_key) and next_action.key != first_action.key
+    assert library.download(receipt.fixture_id) == original
+    assert library.download(second.fixture_id) == stream.getvalue()
 
 
 def test_hidden_ui_rejects_unbound_or_wrong_run_token_before_shared_access(sample):
@@ -202,7 +240,7 @@ def test_production_continue_import_and_manual_edits_survive_refresh_without_rei
 
     monkeypatch.setattr(requests.sessions.Session, "request", no_external)
     app = AppTest.from_string(_script(root, TOKEN_A), default_timeout=30).run()
-    app.button(key="_shared_fixture_start").click().run()
+    app.button(key="_shared_fixture_start_" + receipt.fixture_id + "_" + receipt.original_sha256[:16]).click().run()
     staged = app.session_state["_shared_fixture_staged"]
     next(item for item in app.text_input if item.label == "Your name").input("Synthetic Reviewer").run()
     next(item for item in app.button if item.label == "Continue to this month’s updates").click().run()
