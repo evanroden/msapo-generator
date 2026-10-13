@@ -19,6 +19,8 @@ _NO_EQUIPMENT_ISSUES = frozenset({
     "no equipment issues", "no current equipment issues", "no equipment issues this month",
     "no equipment performance issues", "no current equipment performance issues",
     "no equipment performance issues this month",
+    "zero equipment issues", "0 equipment issues", "zero equipment performance issues",
+    "0 equipment performance issues",
 })
 
 
@@ -91,17 +93,27 @@ def _digest(value):
 
 
 def seed_followups(draft):
+    from app.monthly_report_issues import canonical_issues
+    draft = canonical_issues(draft)
     result = [
         replace(
-            normalize_proposal(item), carried_from=draft.period.key, reviewed_fingerprint=""
+            normalize_proposal(item),
+            carried_from=(item.carried_from or draft.period.key) if item.category == "issue" else draft.period.key,
+            included=True, reviewed_fingerprint=""
         )
         for item in draft.follow_ups
-        if item.included
+        if (item.category == "issue" and item.text.strip()
+            and (item.status != "resolved" or problems(item, draft)))
+        or (item.category != "issue" and item.included)
     ]
     seen = {(item.category, item.text.strip()) for item in result}
     specs = {b.key: b for s in draft.sections for b in s.blocks}
     for block in draft.blocks:
         if block.key not in ("equipment_issues", "proposals") or block.source == "Omit":
+            continue
+        if block.key == "equipment_issues" and (block.ai_written or block.ai_paragraphs):
+            # Unreviewed source-linked issues must retain their existing gate;
+            # they cannot become plain, implicitly approved carry-forward text.
             continue
         category = "issue" if block.key == "equipment_issues" else "proposal"
         texts = [text for text in _followup_text_items(block.text)
@@ -159,7 +171,7 @@ def problems(item, draft):
         PROPOSAL_STATUSES if item.category == "proposal" else ISSUE_STATUSES
     ):
         messages.append("Choose a valid item type and current status.")
-    if not item.text.strip():
+    if not item.text.strip() and (item.category != "issue" or item.included):
         messages.append("Keep a description of the carried item.")
     if item.status in ("updated", "resolved") and not (
         item.evidence_note.strip() or item.references
@@ -167,24 +179,18 @@ def problems(item, draft):
         messages.append(
             "Add evidence for the update or resolution: a source page or an entered explanation."
         )
-    if not item.included and item.category == "issue" and item.status != "resolved":
-        messages.append(
-            "Only explicitly resolved items can be left out. Ongoing work remains in the report."
-        )
     valid = {
         source_reference(s, n)
         for s in draft.sources
         for n in range(1, len(s.page_texts) + 1)
     }
-    if any(ref not in valid for ref in item.references):
+    if (item.included or item.status in ("updated", "resolved")) and any(ref not in valid for ref in item.references):
         messages.append(
             "A follow-up source changed or is missing. Review its current page again."
         )
-    if item.reviewed_fingerprint != confirmation(item, draft.period):
+    if item.category == "proposal" and item.reviewed_fingerprint != confirmation(item, draft.period):
         messages.append(
             "Confirm this proposal's decision and whether it belongs in this report."
-            if item.category == "proposal" else
-            "Confirm whether this carried item is ongoing, updated or resolved this month."
         )
     return tuple(messages)
 
@@ -201,8 +207,12 @@ def render_followups(draft, prefix, field, *, category=None):
     if category is not None:
         if category not in ("issue", "proposal"):
             raise ValueError("Choose equipment issues or proposals to review.")
+        if category == "issue":
+            from app.monthly_report_issues import render_issue_cards
+            return render_issue_cards(draft, prefix, field)
         return _render_section_followups(draft, prefix, field, category)
-    return _render_all_followups(draft, prefix, field)
+    from app.monthly_report_issues import render_issue_cards
+    return _render_all_followups(render_issue_cards(draft, prefix, field), prefix, field)
 
 
 def _render_section_followups(draft, prefix, field, category):
@@ -316,7 +326,7 @@ def _render_section_followups(draft, prefix, field, category):
 def _render_all_followups(draft, prefix, field):
     import streamlit as st
 
-    if not draft.follow_ups:
+    if not any(item.category == "proposal" for item in draft.follow_ups):
         return draft
     st.subheader("Check issues and proposals carried forward")
     st.caption(
@@ -329,6 +339,9 @@ def _render_all_followups(draft, prefix, field):
     }
     items = []
     for item in draft.follow_ups:
+        if item.category == "issue":
+            items.append(item)
+            continue
         item = normalize_proposal(item)
         proposal = item.category == "proposal"
         p = prefix + "_follow_" + item.key

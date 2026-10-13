@@ -203,6 +203,25 @@ def _viewport_changed(prefix, section, widget_key):
         _enqueue_visible(state, section)
 
 
+def _poll_changed(prefix, section, widget_key):
+    """The view asks its own fragment to inspect the existing bounded job."""
+    state = _ordered_preview_state(prefix)
+    value = st.session_state.get(widget_key, {})
+    poll = value.get("poll") if isinstance(value, dict) else None
+    if (not isinstance(poll, dict) or poll.get("generation") != state["wanted"].get(section)
+            or type(poll.get("sequence")) is not int or poll["sequence"] < 1):
+        return
+    # No work or content mutation belongs in this callback. The following
+    # fragment run checks visibility, generation and existing queue admission.
+
+
+def _retry_preview(prefix, section):
+    state = _ordered_preview_state(prefix)
+    _discard(state, state["cache"].pop(section, {}))
+    state["ready_after"][section] = 0
+    _enqueue_visible(state, section)
+
+
 def _preview_status(*, pending=False, pages=0, stale=False, failed=False):
     """One state per pane; a stale last-good image must never look current."""
     if failed:
@@ -216,30 +235,39 @@ def _preview_status(*, pending=False, pages=0, stale=False, failed=False):
     return "Updating preview…" if pending else ""
 
 
+def _scoped_callback(callback, *args):
+    # Streamlit invokes widget callbacks before the fragment body. Bind its
+    # namespace here as well, before any cache lookup, queue change or retry.
+    from app.monthly_report_testing import capture_namespace, scope
+    captured = capture_namespace()
+
+    def run():
+        with captured():
+            if scope() is not None:
+                from app.memory import _data_dir
+                _data_dir()  # Reject a reset lease before mutating view/job state.
+            return callback(*args)
+
+    return run
+
+
 def _render_ordered_preview(section_key, prefix, title):
     state = _ordered_preview_state(prefix)
     _enqueue_visible(state, section_key)
     _advance_preview_queue(state)
     pending = _pending(state, section_key)
-    if state['timers'].get(section_key, False) != pending:
-        state['timers'][section_key] = pending
-        # Install/remove this visible pane's timer once. Offscreen sections have
-        # neither conversion jobs nor recurring two-second fragment reruns.
-        st.rerun(scope='app')
     entry = _current_entry(state, section_key)
-    # These panes repeat down the report. Suppress duplicate heading link IDs.
-    st.subheader('Preview', anchor=False)
+    # The containing section and workspace reference already name this pane.
+    # Keep its current/updating state in the viewer instead of adding another
+    # repeated heading/caption and reducing the usable tabletop page area.
     images, ticket = (), None
     stale = False
     status = _preview_status(pending=pending)
     if entry and entry.get('error'):
         status = _preview_status(failed=True)
         st.warning(entry['error'])
-        if st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key):
-            _discard(state, state['cache'].pop(section_key))
-            state['ready_after'][section_key] = 0
-            _enqueue_visible(state, section_key)
-            st.rerun(scope='app')
+        st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key,
+                  on_click=_scoped_callback(_retry_preview, prefix, section_key))
     if entry and not entry.get('error'):
         ticket = entry['ticket']
         status = _preview_status(pages=ticket.pages)
@@ -261,9 +289,12 @@ def _render_ordered_preview(section_key, prefix, title):
             st.warning('The page preview is temporarily unavailable. Your edits are still here.')
             images = ()
     widget_key = prefix + '_preview_surface_' + section_key
-    render_view(key=widget_key, generation=state['wanted'].get(section_key, ''), title=title,
+    render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
-                on_change=lambda: _viewport_changed(prefix, section_key, widget_key))
+                acknowledged_viewport=state['page_requests'].get(section_key),
+                pending=pending,
+                on_poll=_scoped_callback(_poll_changed, prefix, section_key, widget_key),
+                on_change=_scoped_callback(_viewport_changed, prefix, section_key, widget_key))
 
 
 def _request_scope(draft, section_key, assets):
@@ -308,22 +339,23 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
         state['ready_after'][section_key] = monotonic() + DEBOUNCE_SECONDS if prior else 0
     _enqueue_visible(state, section_key)
     _advance_preview_queue(state)
-    pending = _pending(state, section_key)
-    state['timers'][section_key] = pending
-    # Periodic Streamlit fragment reruns may execute independently of the
+    # Component polling reruns only its preview fragment while visible and
+    # pending. Timer transitions must never interrupt the full ordered editor.
+    # Preview fragment reruns may execute independently of the
     # enclosing full-script context. Carry the server-selected namespace into
     # that callback as well as into its asynchronous worker.
     from app.monthly_report_testing import scope
     if scope() is not None:
-        from contextvars import copy_context
-        captured = copy_context()
+        from app.monthly_report_testing import capture_namespace
+        captured = capture_namespace()
 
         def scoped_fragment(section_key, prefix, title):
-            return captured.run(_render_ordered_preview, section_key, prefix, title)
+            with captured():
+                return _render_ordered_preview(section_key, prefix, title)
 
-        st.fragment(run_every='2s' if pending else None)(scoped_fragment)(section_key, prefix, title)
+        st.fragment(scoped_fragment)(section_key, prefix, title)
     else:
-        st.fragment(run_every='2s' if pending else None)(_render_ordered_preview)(section_key, prefix, title)
+        st.fragment(_render_ordered_preview)(section_key, prefix, title)
     return None
 
 

@@ -167,6 +167,9 @@ def review_message(check, draft):
     """Tell a manager what to do and where, without exposing model field IDs."""
     from app.monthly_report_sections import readable_label
     key = check.block_key
+    source = next((source for source in draft.sources if source.id == key), None)
+    if source is not None and check.code.startswith("source_"):
+        return check.message + f" [Correct source details](#source-details-{source.id})."
     follow_up = next((item for item in draft.follow_ups if item.key == key), None)
     if follow_up:
         category = "proposals" if follow_up.category == "proposal" else "equipment issues"
@@ -187,6 +190,8 @@ def review_message(check, draft):
     if check.code == "library_save":
         return f"The shared replacement for {label.lower()} needs confirmation before it can be saved. Keep the existing saved content to continue."
     message = check.message
+    if check.code == "carried_period":
+        return f"{location} — {label}: {message} [Edit this section](#report-section-{review_destination(draft, key)[1] or 'cover'})."
     if key:
         message = message.replace(key, label).replace(key.replace("_", " "), label.lower())
     if check.code in {"placeholder", "pricing", "period"} and key:
@@ -294,7 +299,49 @@ def _review_carried_update(block, period, prefix):
     return block
 
 
-def _edit_content(spec, block, state, prefix, assets, field, draft=None):
+def _period_editor_transition(prefix, block, period):
+    """Replay only an exact item decision if its full draft commit was interrupted."""
+    key = prefix + "_period_transition_" + block.key
+    pending = st.session_state.get(key)
+    if not isinstance(pending, dict):
+        return block
+    if pending.get("scope") != (_rich_text_scope(prefix), period.key):
+        st.session_state.pop(key, None)
+        return block
+    result = pending["result"]
+    if result.fingerprint == block.fingerprint:
+        st.session_state.pop(key, None)
+        return block
+    if block.fingerprint in pending.get("baselines", ()):
+        st.session_state[prefix + "_period_editor_refresh"] = True
+        return result
+    st.session_state.pop(key, None)
+    st.info("This dated item changed before its earlier choice finished. Review the current wording again.")
+    return block
+
+
+def _record_period_editor_transition(prefix, canonical_before, before, after, period, editor_key):
+    if before == after:
+        return after
+    st.session_state[prefix + "_period_transition_" + before.key] = {
+        "scope": (_rich_text_scope(prefix), period.key),
+        "baselines": (canonical_before.fingerprint, before.fingerprint), "result": after,
+    }
+    # The item operation includes the current manual edit. Its former text
+    # callback must not restore the pre-decision value if this editor key returns.
+    st.session_state.pop(editor_key + "_explicitly_edited", None)
+    st.session_state[prefix + "_period_editor_refresh"] = True
+    return after
+
+
+def _refresh_period_editors_after_commit(prefix):
+    # Business actions may change visible wording; refresh only after the whole
+    # canonical draft and its recovery attempt completed, never mid-editor.
+    if st.session_state.pop(prefix + "_period_editor_refresh", False):
+        st.rerun()
+
+
+def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True):
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -318,7 +365,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
     if spec.type in ("rich_text", "stock_text") and block.ai_paragraphs:
         # The authoritative source-linked text editor is rendered earlier.
         pass
-    elif spec.type in ("rich_text", "stock_text"):
+    elif spec.type in ("rich_text", "stock_text") and edit_text:
+        canonical_before = block
+        if draft is not None and not block.ai_written:
+            block = _period_editor_transition(prefix, block, draft.period)
         editor_key = key + "_text_" + _signature(block.references)
         changed_marker = editor_key + "_explicitly_edited"
         scope = _rich_text_scope(prefix)
@@ -343,6 +393,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
             # permits changing canonical text. A genuine clear has a receipt
             # and therefore remains a valid edit.
             st.session_state[editor_key] = block.text
+        editor_anchor = "report-editor-" + spec.key
+        if draft is not None:
+            from html import escape
+            st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
         text = st.text_area(
             spec.key.replace("_", " ").capitalize(),
             key=field(editor_key, block.text), height=140,
@@ -358,6 +412,14 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
             # newer draft on the next rerun.
             st.session_state.pop(changed_marker, None)
         _render_rich_text_recovery(changed_marker, editor_key, block, scope)
+        if draft is not None and not block.ai_written:
+            from app.monthly_report_period_items_ui import render_period_items
+            section_title = next((section.title for section in draft.sections
+                                  if any(item.key == spec.key for item in section.blocks)),
+                                 spec.key.replace("_", " ").capitalize())
+            resolved = render_period_items(block, draft.period, draft.sources, prefix,
+                section_title=section_title, editor_anchor=editor_anchor)
+            block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
     elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
@@ -532,8 +594,16 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     specs.update({b.key: b for current in draft.sections for b in current.blocks})
     if section.key in ("issues", "proposals"):
         from app.monthly_report_followups import render_followups
+        draft = replace(draft, blocks=tuple(blocks.values()))
         draft = render_followups(draft, prefix, field, category="issue" if section.key == "issues" else "proposal")
+        if section.key == "issues":
+            blocks = {block.key: block for block in draft.blocks}
     handled = set()
+    if section.key == "issues" and "equipment_issues" in specs:
+        block = blocks.get("equipment_issues", ResolvedBlock("equipment_issues", "This month"))
+        blocks["equipment_issues"] = _edit_content(specs["equipment_issues"], block, state,
+            prefix, assets, field, draft, edit_text=False)
+        handled.add("equipment_issues")
     if section.key == "training":
         from app.monthly_report_training_ui import render_training
         blocks = render_training(draft, blocks, prefix, field)
@@ -620,6 +690,7 @@ def _render_storage_maintenance():
 
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
+    st.session_state["_monthly_source_detail_anchors"] = set()
     last_contract, last_profile = remembered_report_preferences(browser_token)
     recovery_available = active_work.enabled(browser_token)
     with st.expander("How to use this page"):
@@ -827,64 +898,58 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         "proposals": "Proposals", "training": "Training", "rfi": "RFI",
         "accounts_receivable": "A/R",
     }
-    with st.container(key="monthly_report_navigation"):
-        st.caption(f"{contract} · {period.label} · " +
-                   ", ".join(f.title for f in profile.facilities))
-        links = [f"[{short_links.get(section.key, section.title)}](#report-section-{section.key})"
-                 for section in included_sections(draft.sections)]
-        st.markdown("**Jump to:** " + " · ".join((*links, "[Review & download](#report-review)")))
-    st.markdown(
-        '<style>.st-key-monthly_report_navigation{position:sticky;top:3rem;z-index:15;'
-        'background:var(--background-color,#fff);border-bottom:1px solid rgba(128,128,128,.25);'
-        'padding:.25rem .5rem;max-height:6rem;overflow-y:auto;}</style>',
-        unsafe_allow_html=True,
-    )
-    editor_column, preview_column = st.columns(2, gap="large")
-    with editor_column:
-        # Contract, period, sites and preparer were already chosen at Start.
-        # Do not repeat a "Cover and report details" step or a hidden
-        # appearance/settings form. The starting-report photo gallery below
-        # handles an imported cover image when its identity is uncertain.
-        from app.monthly_report_section_ui import render_section_setup
-        render_section_setup(contract, period, prepared, field, state=state,
-                             working_draft=replace(draft, blocks=tuple(blocks.values())),
-                             working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
-        with st.expander("Report design and version"):
-            from app.monthly_report_designs_ui import render_design_status
-            render_design_status(draft)
-        # Global design installation changes *future reports across all
-        # contracts*. It is not a monthly report field or routine approval.
-        with st.sidebar.expander("Master design administration — all contracts", expanded=False):
-            from app.monthly_report_designs_ui import render_design_settings
-            render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
-    with preview_column:
-        with st.container(key="monthly_cover_preview_sticky"):
-            from app.monthly_report_section_ui import render_pending_cover_selection
-            proposed_draft, proposed_assets = render_pending_cover_selection(
-                replace(draft, blocks=tuple(blocks.values())), assets, contract, period, state)
-            render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
-    # The sticky viewport belongs to the cover/import row only. Once the
-    # editor reaches a new report section, its own preview replaces it.
-    st.markdown(
-        '<style>.st-key-monthly_cover_preview_sticky{position:sticky;'
-        'top:8.25rem;align-self:flex-start;z-index:3;max-height:calc(100vh - 9rem);'
-        'overflow-y:auto;overscroll-behavior:contain;}'
-        '@media(max-width:800px){.st-key-monthly_cover_preview_sticky{'
-        'position:relative;top:auto;max-height:none;overflow:visible;}}</style>',
-        unsafe_allow_html=True,
-    )
-    for section in draft.sections:
-        st.divider()
-        st.subheader(section.title, anchor="report-section-" + section.key)
-        st.caption(section_help(section.key).guidance)
-        editor_column, preview_column = st.columns(2, gap="large")
-        with editor_column:
-            draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field)
-        with preview_column:
-            if section.key in {"organization", "subcontractors", "training"} and not prepared.strip():
-                st.caption("Enter Prepared by above to view saved contact and team pages.")
-            else:
-                render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
+    from app.workspace_layout import workspace, workspace_section, workspace_columns
+    with workspace("monthly", prefix, navigation_key="monthly_report_navigation"):
+        with st.container(key="monthly_report_navigation"):
+            st.caption(f"{contract} · {period.label} · " +
+                       ", ".join(f.title for f in profile.facilities))
+            links = [f"[{short_links.get(section.key, section.title)}](#report-section-{section.key})"
+                     for section in included_sections(draft.sections)]
+            st.markdown("**Jump to:** " + " · ".join((*links, "[Review & download](#report-review)")))
+        st.markdown(
+            '<style>.st-key-monthly_report_navigation{position:sticky;top:3rem;z-index:15;'
+            'background:var(--background-color,#fff);border-bottom:1px solid rgba(128,128,128,.25);'
+            'padding:.25rem .5rem;max-height:6rem;overflow-y:auto;}</style>',
+            unsafe_allow_html=True,
+        )
+        with workspace_section("monthly_cover", "Cover"):
+            editor_column, preview_column = workspace_columns("monthly_cover")
+            with editor_column:
+                # Contract, period, sites and preparer were already chosen at Start.
+                # Do not repeat a "Cover and report details" step or a hidden
+                # appearance/settings form. The starting-report photo gallery below
+                # handles an imported cover image when its identity is uncertain.
+                from app.monthly_report_section_ui import render_section_setup
+                render_section_setup(contract, period, prepared, field, state=state,
+                                     working_draft=replace(draft, blocks=tuple(blocks.values())),
+                                     working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
+                with st.expander("Report design and version"):
+                    from app.monthly_report_designs_ui import render_design_status
+                    render_design_status(draft)
+                # Global design installation changes *future reports across all
+                # contracts*. It is not a monthly report field or routine approval.
+                with st.sidebar.expander("Master design administration — all contracts", expanded=False):
+                    from app.monthly_report_designs_ui import render_design_settings
+                    render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
+            with preview_column:
+                with st.container(key="monthly_cover_preview_sticky"):
+                    from app.monthly_report_section_ui import render_pending_cover_selection
+                    proposed_draft, proposed_assets = render_pending_cover_selection(
+                        replace(draft, blocks=tuple(blocks.values())), assets, contract, period, state)
+                    render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
+        for section in draft.sections:
+            with workspace_section("monthly_" + section.key, section.title):
+                st.divider()
+                st.subheader(section.title, anchor="report-section-" + section.key)
+                st.caption(section_help(section.key).guidance)
+                editor_column, preview_column = workspace_columns("monthly_" + section.key)
+                with editor_column:
+                    draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field)
+                with preview_column:
+                    if section.key in {"organization", "subcontractors", "training"} and not prepared.strip():
+                        st.caption("Enter Prepared by above to view saved contact and team pages.")
+                    else:
+                        render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
     draft = complete_guided_sections(replace(draft, blocks=tuple(blocks.values())))
     footer = blocks.get("footer_text")
@@ -1098,3 +1163,4 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if package.pdf_error:
                 st.warning(package.pdf_error)
 
+    _refresh_period_editors_after_commit(prefix)

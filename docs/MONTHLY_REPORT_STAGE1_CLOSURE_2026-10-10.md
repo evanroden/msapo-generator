@@ -1,5 +1,7 @@
 # ENFRA Monthly Report Builder — Phase 1 release-acceptance ledger
 
+> Current execution and Phase 2 status: [October 13 consolidated ledger](PHASE1_PHASE2_EXECUTION_2026-10-13.md). This file preserves the original 113-scenario inventory and bounded historical evidence; its old final-head assertions do not accept newer code.
+
 **Status: IN PROGRESS — NOT RELEASE-ACCEPTED.** Updated October 11, 2026. This is an evidence ledger, not a declaration that all original audit tests were executed. Preserve F01–F16, #101 P1–P12, U01–U06 and all 113 original proposed checks below. Green CI, a served commit, actual Word/PDF exports, authentic document fidelity and owner acceptance are separate gates.
 
 **Sources:** [Issue #101](https://github.com/evanroden/msapo-generator/issues/101), [October 9 usability audit](MONTHLY_REPORT_USABILITY_AUDIT_2026-10-09.md), [October 9 handoff](HANDOFF_MONTHLY_REPORT_2026-10-09.md), and the private original paired Word/Adobe PDF/October 10 review. Historical baseline rows below preserve original scope; the dated proof here supersedes their older shorthand.

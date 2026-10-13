@@ -6,6 +6,14 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Private authentic fixture boundary](PRIVATE_FIXTURE_BOUNDARY_2026-10-13.md) — verified capabilities, disabled owner-authorized fixture storage primitives/tests, required authentication approval and same-importer isolation design. No private route or new access configuration is enabled.
+
+[Current Phase 1 and Phase 2 execution ledger](PHASE1_PHASE2_EXECUTION_2026-10-13.md) — resume here for exact commits, CI/deployment outcomes, all original and adaptive requirement IDs, ownership, and remaining acceptance gates.
+
+[Adaptive workspace architecture and checks](ADAPTIVE_WORKSPACES_2026-10-13.md) — shared geometry resolver, stable keyed sections, bounded preview sizing, synthetic browser harness, and rollback scope.
+
+[Dated report item resolution](MONTHLY_PERIOD_ITEM_RESOLUTION_2026-10-13.md) — exact manual-item historical labeling, report-only exclusion and explicit restore, preserving source and required safety gates.
+
 [Stage-one Monthly Report closure ledger](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md) — statuses for F01–F16, #101 P1–P12, U01–U06 and explicit mapping of all 113 proposed acceptance checks. This tracks exact CI separately from deployed build, authentic exports and owner acceptance.
 
 [Monthly report resource budget](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RESOURCE_BUDGET.md) — viewport-driven previews, shared cache/converter limits and a capped-container acceptance probe.
@@ -235,3 +243,7 @@ Browser-scoped active monthly work: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_ACTI
 Site click and Start responsiveness: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SITE_FEEDBACK.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SITE_FEEDBACK.md). Selected-site confirmation, bounded UI logo-canvas caching, and Start progress without changing the native report design.
 
 Inline section terminology: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SECTION_TERMS.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SECTION_TERMS.md). MBCx/ENFRA Connect/RFI and hospital-training/onsite-vendor boundaries.
+
+- [PO adaptive workspace: isolated original quote and current MSAPO pairing](PO_ADAPTIVE_WORKSPACE_2026-10-13.md).
+
+Preview run observations and exact QA action receipts: [PREVIEW_RUN_OBSERVATIONS_2026-10-13.md](PREVIEW_RUN_OBSERVATIONS_2026-10-13.md). Demonstrated full-app timer rerun repair, bounded synthetic-only browser counters, retained generation failures and explicit evidence limits.

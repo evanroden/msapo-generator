@@ -117,7 +117,7 @@ def test_capacity_lives_with_utility_results_without_standing_confirmation(monke
     assert any("_edit_thermal_capacity_table_" in (value.key or "") for value in app.dataframe)
 
 
-def test_visible_followups_still_block_download_and_each_updates_independently(monkeypatch, tmp_path):
+def test_unreviewed_proposal_still_blocks_download_and_issue_edits_are_independent(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     include(app, "Equipment Performance Issues", "Pending & Declined Proposals")
     next(value for value in app.text_input if value.label == "Prepared by").set_value("Synthetic Editor").run()
@@ -126,14 +126,15 @@ def test_visible_followups_still_block_download_and_each_updates_independently(m
     proposal = ReportFollowUp("follow-synthetic-controls", "proposal", "Controls renewal.", "2026-08", status="pending")
     app.session_state[draft_key] = replace(draft, follow_ups=(issue, proposal))
     step(app, 2)
-    assert all(any(value.label == label for value in app.button) for label in ("Still open", "Update proposal"))
+    assert any(value.label == "Issue description" for value in app.text_area)
+    assert any(value.label == "Update proposal" for value in app.button)
     step(app, 4)
     assert next(value for value in app.button if value.label == "Create Word and PDF").disabled
     assert review_destination(working_state(app)[1], issue.key) == (STEPS[1], "issues")
     assert any(value.value == "Equipment Performance Issues" for value in app.subheader)
-    assert any(value.label == "Still open" for value in app.button)
+    assert any(value.label == "Issue description" for value in app.text_area)
     assert any(value.label == "Update proposal" for value in app.button)
-    next(value for value in app.button if value.label == "Still open").click().run()
+    next(value for value in app.text_area if value.label == "Issue description").set_value("Corrected pump vibration finding.").run()
     assert working_state(app)[1].follow_ups[1] == proposal
 
 

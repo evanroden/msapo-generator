@@ -432,7 +432,7 @@ def ai_references(block):
         else block.references
     )
     # Carry-forward bookkeeping identifies report periods, not source pages.
-    return tuple(r for r in references if not r.startswith(("report-period:", "report-origin:")))
+    return tuple(r for r in references if not r.startswith(("report-period:", "report-origin:", "period-item:v1:")))
 
 
 def refresh_evidence(block, sources):

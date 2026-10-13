@@ -1,0 +1,28 @@
+/* Only app-owned workspace containers and their locked-version adapter classes. */
+.stMainBlockContainer:has([class*="st-key-epc_workspace_"]) {max-width:1680px !important;}
+.epc-pair-marker {display:none;}
+.epc-workspace {--epc-preview-top:5rem; --epc-preview-height:min(78dvh, 780px);}
+.epc-workspace-pair, .epc-workspace-editor, .epc-workspace-reference {min-inline-size:0;}
+.epc-workspace-row {display:grid !important; grid-template-columns:minmax(0,1.12fr) minmax(0,1fr); align-items:stretch !important; column-gap:var(--epc-column-gap,24px) !important;}
+.epc-workspace-row > .epc-editor-column, .epc-workspace-row > .epc-reference-column {width:auto !important; min-width:0 !important;}
+.epc-reference-column {align-self:stretch !important;}
+.epc-reference-track {height:100%; min-height:100%;}
+.epc-workspace-reference {position:sticky; top:var(--epc-preview-top); align-self:start; flex:0 0 auto !important; height:fit-content !important; z-index:3;}
+.epc-workspace [data-testid="stDataFrame"] {max-width:100%;}
+.epc-workspace button:focus-visible {outline:3px solid #557f7f; outline-offset:3px;}
+.epc-preview-controls {display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:.35rem 0;}
+.epc-preview-controls button {font:inherit; min-height:44px; padding:.5rem .75rem; border:1px solid #557f7f; border-radius:.4rem; background:var(--background-color,#fff); color:inherit; cursor:pointer;}
+.epc-context-title {font-weight:600; margin-bottom:.5rem;}
+.epc-workspace:not([data-epc-mode="compact"]) .epc-compact-open, .epc-workspace:not([data-epc-mode="compact"]) .epc-compact-back {display:none;}
+.epc-workspace[data-epc-mode="book"] .epc-workspace-row {grid-template-columns:minmax(0,var(--epc-editor-width)) minmax(0,var(--epc-reference-width)); column-gap:var(--epc-column-gap) !important;}
+.epc-workspace[data-epc-mode="compact"] .epc-workspace-row {grid-template-columns:minmax(0,1fr);}
+.epc-workspace[data-epc-mode="compact"] .epc-workspace-reference {position:relative; top:auto;}
+.epc-workspace[data-epc-mode="compact"] .epc-workspace-pair:not([data-epc-preview-open="true"]) .epc-reference-column {display:none;}
+.epc-workspace[data-epc-mode="tabletop"], .epc-workspace[data-epc-confined="true"] {position:fixed; z-index:14; left:var(--epc-editor-left); top:var(--epc-editor-top); width:var(--epc-editor-width); height:var(--epc-editor-height); overflow:auto; overscroll-behavior-y:contain; background:var(--background-color,#fff); padding:.5rem; box-sizing:border-box;}
+.epc-workspace[data-epc-mode="tabletop"] .epc-workspace-row {grid-template-columns:minmax(0,1fr); gap:0 !important;}
+.epc-workspace[data-epc-mode="tabletop"] .epc-reference-column {position:static; width:0 !important; height:0; min-height:0;}
+.epc-workspace[data-epc-mode="tabletop"] .epc-workspace-reference {position:fixed; left:var(--epc-reference-left); top:var(--epc-reference-top); width:var(--epc-reference-width); height:var(--epc-reference-height) !important; overflow:auto; box-sizing:border-box; padding:.5rem; background:var(--background-color,#fff); visibility:hidden; pointer-events:none;}
+.epc-workspace[data-epc-mode="tabletop"] .epc-workspace-pair[data-epc-active="true"] .epc-workspace-reference {visibility:visible; pointer-events:auto;}
+.epc-workspace[data-epc-mode="tabletop"] .epc-workspace-pair:not([data-epc-active="true"]) .epc-workspace-reference {display:none !important;}
+.epc-workspace-scroll-owner {overflow-y:hidden !important;}
+@media (prefers-reduced-motion:reduce) {.epc-workspace * {scroll-behavior:auto !important;}}

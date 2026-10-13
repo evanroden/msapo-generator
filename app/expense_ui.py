@@ -108,6 +108,8 @@ from app.receipt_analyzer import (
 from app.receipt_jobs import start_receipt
 from app.api_retry import OPERATION_BUDGET_SECONDS
 from app.ui_highlight import highlight_needed_fields
+from app.workspace_layout import workspace, workspace_section, workspace_columns
+from app.reference_preview import discard_reference_scope, render_reference
 
 
 # These two strings ARE the workflow identity: they are the segmented-control
@@ -238,727 +240,754 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
     report_memory_context = str(
         st.session_state.setdefault("expense_report_memory_context", uuid.uuid4().hex)
     )
-    st.markdown(
-        """
-        <div class="hero">
-            <p class="brand-kicker">EXPENSE REPORT WORKFLOW</p>
-            <h1>Expense Report <span class="zing">Process Control</span></h1>
-            <p class="hero-subtitle">
-                Add receipts and mileage, review the prefilled fields, then create
-                the completed Excel form, combined PDF, and approval email draft.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        """
-        <div class="step-header">
-            <div class="step-num">1</div>
-            <p class="step-title">Upload receipts</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    # The nonce is part of the uploader's widget KEY. Streamlit offers no way to
-    # remove a file from a file_uploader programmatically, so "remove this
-    # receipt" and "clear the report" both bump the nonce, which retires the old
-    # widget and mounts an empty one. Reading it here (rather than deriving it
-    # from the file list) keeps the key stable across ordinary reruns; a key
-    # that changed every run would drop the operator's selection silently.
-    uploader_nonce = int(st.session_state.get("expense_uploader_nonce", 0) or 0)
-    uploads = st.file_uploader(
-        "Upload one image or PDF per receipt",
-        type=_RECEIPT_TYPES,
-        accept_multiple_files=True,
-        max_upload_size=_MAX_RECEIPT_BYTES // (1024 * 1024),
-        key=f"expense_receipt_uploader_{uploader_nonce}",
-        help=(
-            "Select multiple files at once. Screenshots, phone photos, HEIC, and "
-            "PDF receipts are supported. One file may contain multiple receipt pages."
-        ),
-    )
-    mirrored_uploads = list(st.session_state.get("expense_receipt_files", []) or [])
-    current_uploads = [
-        (upload.name, upload.getvalue(), upload.type or "application/octet-stream")
-        for upload in (uploads or [])
-    ]
-    uploader_seen_key = f"expense_receipt_uploader_seen_{uploader_nonce}"
-    previous_uploader_ids = st.session_state.get(uploader_seen_key, ())
-    new_uploads = _new_receipt_uploads(previous_uploader_ids, current_uploads)
-    st.session_state[uploader_seen_key] = tuple(
-        _receipt_digest(payload)
-        for _, payload, _ in current_uploads
-    )
-    if current_uploads:
-        # Warn only about additions that appeared in the uploader THIS rerun.
-        # Streamlit returns the full persistent selection after every unrelated
-        # text/date/control edit, so comparing the entire current list with the
-        # mirror labels every ordinary rerun as a duplicate re-selection.
-        _, duplicate_names = _merge_receipt_sources(mirrored_uploads, new_uploads)
-        # File-uploader values cannot be restored programmatically after that
-        # widget is hidden by a workflow switch. Merge its current additions
-        # into the bounded byte mirror so the restored files do not disappear
-        # on the next ordinary rerun.
-        upload_sources, _ = _merge_receipt_sources(
-            mirrored_uploads,
-            current_uploads,
-        )
-        st.session_state["expense_receipt_files"] = upload_sources
-        st.session_state.pop("expense_restored_without_uploader", None)
-    else:
-        upload_sources = mirrored_uploads
-        duplicate_names = []
-        if upload_sources:
-            st.session_state["expense_restored_without_uploader"] = True
-            st.caption(
-                "Your in-progress receipts were restored. Add more files above, "
-                "remove one beside its preview, or clear the entire report."
-            )
-    unique_uploads, stored_duplicate_names = _unique_receipts(upload_sources or [])
-    duplicate_names.extend(stored_duplicate_names)
-    # Receipt identity is the SHA-256 of the bytes, not the filename. Two phone
-    # photos named IMG_0001.jpg from different receipts are distinct; the same
-    # receipt re-uploaded under a new name is not. Every per-receipt session key
-    # below is derived from this id, so re-uploading an identical file
-    # deliberately restores its already-reviewed fields instead of asking again.
-    active_ids = {receipt_id for receipt_id, _, _ in unique_uploads}
-    _clear_removed_receipts(active_ids)
-    if duplicate_names:
-        st.warning(
-            "Duplicate receipt files were ignored: "
-            + ", ".join(duplicate_names)
-            + "."
-        )
-    if upload_sources:
-        if st.button(
-            "Clear expense report and start over",
-            key="expense_clear_report",
-            help="Removes this in-progress expense report from the current browser session.",
-        ):
-            _reset_expense_report()
-            st.rerun()
-    # Ordering matters: the clear-and-start-over button is rendered ABOVE this
-    # guard so an over-budget receipt set is still recoverable. Moving the size
-    # check earlier returns before that button exists, and the operator is
-    # stranded on a page whose only control is a file uploader that will refuse
-    # everything -- with the offending bytes already parked in the mirror.
-    total_upload_bytes = sum(len(data) for _, _, data in unique_uploads)
-    if total_upload_bytes > _MAX_REPORT_UPLOAD_BYTES:
-        st.error(
-            "These receipts total more than 60 MB. Remove or resize the largest "
-            "files before continuing."
-        )
-        for receipt_id, filename, payload in unique_uploads:
-            if st.button(
-                f"Remove {filename} ({len(payload) / (1024 * 1024):.1f} MB)",
-                key=f"expense_remove_receipt_{receipt_id[:12]}",
-            ):
-                _remove_receipt_from_draft(receipt_id)
-                st.rerun()
-        return
-
-    _content_digests().retain(payload for _, _, payload in unique_uploads)
-    _advance_receipt_jobs(unique_uploads)
-    analyses = {
-        receipt_id: st.session_state.get(f"expense_receipt_analysis_{receipt_id}", ReceiptAnalysis())
-        for receipt_id, _, _ in unique_uploads
-    }
-    if _unread_receipts(unique_uploads):
-        _receipt_reading_progress()
-
-    if unique_uploads:
-        st.caption(
-            f"{len(unique_uploads)} unique receipt"
-            f"{'s' if len(unique_uploads) != 1 else ''} ready for review. "
-            "Original uploads remain unchanged; compact copies are used only in the workbook."
-        )
-    else:
-        st.caption(
-            "No receipt is required for mileage-only reimbursement. You can add "
-            "business mileage below or upload receipts now."
+    with workspace('expense', report_memory_context):
+        st.markdown(
+            """
+            <div class="hero">
+                <p class="brand-kicker">EXPENSE REPORT WORKFLOW</p>
+                <h1>Expense Report <span class="zing">Process Control</span></h1>
+                <p class="hero-subtitle">
+                    Add receipts and mileage, review the prefilled fields, then create
+                    the completed Excel form, combined PDF, and approval email draft.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-    st.markdown(
-        """
-        <div class="step-header">
-            <div class="step-num">2</div>
-            <p class="step-title">Confirm report details</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    # No placeholder and no index=None: this control silently defaults to the
-    # first contract. That is why it stays OUTSIDE the collapsible details panel
-    # below (see the 2026-08-13 disclosure notes, section 2.3) -- hiding a
-    # scoping control that defaults without saying so is the unknown-facility
-    # hazard already fixed on the purchase-order side.
-    accounts = tuple(contracts.contract_names())
-    account = st.selectbox(
-        "Account / contract *",
-        accounts,
-        key="expense_account",
-        help=(
-            "This filters the verified job-number choices and sets the "
-            "account director the approval email goes to."
-        ),
-    )
-    # Must run after the account selectbox (it needs the chosen account) and
-    # before any detail widget below is instantiated, for the same
-    # post-render-write reason given in this function's docstring.
-    _seed_profile(browser_token, account, browser_timezone)
-    for problem in director_config_problems(accounts):
-        st.warning(problem)
-    _account_token_for_note = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
-    if account_director(account) is None and not str(
-        st.session_state.get(f"expense_approver_name_{_account_token_for_note}", "") or ""
-    ).strip():
-        st.caption(
-            "No director is set up for this account yet -- enter the ENFRA "
-            "director over this contract below (not the contract administrator)."
+        st.markdown(
+            """
+            <div class="step-header">
+                <div class="step-num">1</div>
+                <p class="step-title">Upload receipts</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-    # Every step-2 widget key is namespaced by this digest so switching accounts
-    # gives a fresh, independently remembered set of details rather than
-    # carrying one facility's approver into another's report. _seed_profile
-    # recomputes the SAME expression internally; the two must stay identical or
-    # the seeds land on keys no widget reads and the fields render blank with no
-    # error. tests/test_expense_disclosure.py hardcodes this derivation too.
-    account_token = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
-    # After _seed_profile (a remembered name always wins) and before the name
-    # widget renders (a post-render write is discarded).
-    _apply_receipt_name_guess(account_token, analyses.values())
-    name_guess = str(
-        st.session_state.get(f"expense_employee_name_guess_{account_token}", "") or ""
-    )
-
-    # Progressive disclosure, matching the purchase-order flow. Every field
-    # below is still rendered exactly once and stays fully editable -- nothing
-    # is removed and nothing becomes read-only. Only PLACEMENT changes: once the
-    # account's confirmed history has supplied every detail, the block collapses
-    # behind one line instead of presenting ten controls the operator does not
-    # need to touch.
-    #
-    # Placement is decided from session_state BEFORE rendering, because a
-    # widget's value does not exist until it renders. The account selector above
-    # stays visible deliberately: it has no placeholder and silently defaults to
-    # the first contract, so hiding it would repeat the unknown-facility hazard
-    # already fixed on the purchase-order side.
-    def _detail_unset(state_key: str) -> bool:
-        return not str(st.session_state.get(state_key, "") or "").strip()
-
-    _outstanding_details = sum(
-        (
-            _detail_unset(f"expense_employee_name_{account_token}"),
-            # A name guessed from receipts and not yet changed keeps the panel
-            # open: it has not been confirmed by the person it names.
-            bool(name_guess)
-            and str(
-                st.session_state.get(f"expense_employee_name_{account_token}", "") or ""
-            ).strip()
-            == name_guess,
-            _detail_unset(f"expense_employee_number_{account_token}"),
-            _detail_unset(f"expense_approver_name_{account_token}"),
-            _detail_unset(f"expense_approver_email_{account_token}"),
-            _detail_unset(f"expense_manager_name_{account_token}"),
-            _detail_unset(f"expense_manager_email_{account_token}"),
-            (
-                st.session_state.get(f"expense_mail_destination_{account_token}")
-                == "satellite"
-                and _detail_unset(f"expense_satellite_office_{account_token}")
+        # The nonce is part of the uploader's widget KEY. Streamlit offers no way to
+        # remove a file from a file_uploader programmatically, so "remove this
+        # receipt" and "clear the report" both bump the nonce, which retires the old
+        # widget and mounts an empty one. Reading it here (rather than deriving it
+        # from the file list) keeps the key stable across ordinary reruns; a key
+        # that changed every run would drop the operator's selection silently.
+        uploader_nonce = int(st.session_state.get("expense_uploader_nonce", 0) or 0)
+        uploads = st.file_uploader(
+            "Upload one image or PDF per receipt",
+            type=_RECEIPT_TYPES,
+            accept_multiple_files=True,
+            max_upload_size=_MAX_RECEIPT_BYTES // (1024 * 1024),
+            key=f"expense_receipt_uploader_{uploader_nonce}",
+            help=(
+                "Select multiple files at once. Screenshots, phone photos, HEIC, and "
+                "PDF receipts are supported. One file may contain multiple receipt pages."
             ),
         )
-    )
-    # Highlight the specific fields still needing a value. The expense block is
-    # not split into resolved/unresolved containers the way the purchase-order
-    # page is, so the keys are named directly. Recomputed every rerun, so a
-    # field stops being highlighted on the run after it is filled.
-    _needs_value_keys = [
-        key
-        for key, missing in (
-            (f"expense_employee_name_{account_token}",
-             _detail_unset(f"expense_employee_name_{account_token}")),
-            (f"expense_employee_number_{account_token}",
-             _detail_unset(f"expense_employee_number_{account_token}")),
-            (f"expense_approver_name_{account_token}",
-             _detail_unset(f"expense_approver_name_{account_token}")),
-            (f"expense_approver_email_{account_token}",
-             _detail_unset(f"expense_approver_email_{account_token}")),
-            (f"expense_manager_name_{account_token}",
-             _detail_unset(f"expense_manager_name_{account_token}")),
-            (f"expense_manager_email_{account_token}",
-             _detail_unset(f"expense_manager_email_{account_token}")),
-            (f"expense_satellite_office_{account_token}",
-             st.session_state.get(f"expense_mail_destination_{account_token}")
-             == "satellite"
-             and _detail_unset(f"expense_satellite_office_{account_token}")),
+        mirrored_uploads = list(st.session_state.get("expense_receipt_files", []) or [])
+        current_uploads = [
+            (upload.name, upload.getvalue(), upload.type or "application/octet-stream")
+            for upload in (uploads or [])
+        ]
+        uploader_seen_key = f"expense_receipt_uploader_seen_{uploader_nonce}"
+        previous_uploader_ids = st.session_state.get(uploader_seen_key, ())
+        new_uploads = _new_receipt_uploads(previous_uploader_ids, current_uploads)
+        st.session_state[uploader_seen_key] = tuple(
+            _receipt_digest(payload)
+            for _, payload, _ in current_uploads
         )
-        if missing
-    ]
-    # Safe to emit raw because account_token is hex: Streamlit rewrites anything
-    # outside [A-Za-z0-9_-] to a hyphen when it builds the st-key- class, so a
-    # key built from the account NAME instead would produce a selector matching
-    # nothing -- no error, no highlight, nothing to notice in a green test run.
-    # ui_highlight normalises defensively, but keep the token hex anyway.
-    if _needs_value_keys:
-        highlight_needed_fields(_needs_value_keys)
-
-    if _outstanding_details:
-        _details_panel = st.container()
-    else:
-        _details_panel = st.expander(
-            "Report details \u2014 filled from this account's confirmed history",
-            expanded=False,
-        )
-
-    with _details_panel:
-        if not _outstanding_details:
-            st.caption(
-                "Every detail below stays editable. Open this panel to change "
-                "anything the tool filled for you."
+        if current_uploads:
+            # Warn only about additions that appeared in the uploader THIS rerun.
+            # Streamlit returns the full persistent selection after every unrelated
+            # text/date/control edit, so comparing the entire current list with the
+            # mirror labels every ordinary rerun as a duplicate re-selection.
+            _, duplicate_names = _merge_receipt_sources(mirrored_uploads, new_uploads)
+            # File-uploader values cannot be restored programmatically after that
+            # widget is hidden by a workflow switch. Merge its current additions
+            # into the bounded byte mirror so the restored files do not disappear
+            # on the next ordinary rerun.
+            upload_sources, _ = _merge_receipt_sources(
+                mirrored_uploads,
+                current_uploads,
             )
-        detail_columns = st.columns(2)
-        with detail_columns[0]:
-            employee_name_key = f"expense_employee_name_{account_token}"
-            employee_number_key = f"expense_employee_number_{account_token}"
-            employee_number_recall_key = (
-                f"expense_employee_number_recalled_for_{account_token}"
-            )
-            employee_name = st.text_input(
-                "Employee name *",
-                key=employee_name_key,
-                on_change=_recall_employee_number_for_name,
-                args=(
-                    browser_token,
-                    account,
-                    employee_name_key,
-                    employee_number_key,
-                    employee_number_recall_key,
-                ),
-            ).strip()
-            if name_guess and employee_name == name_guess:
-                st.warning(
-                    "Guessed from a name printed on your receipts -- low confidence. "
-                    "Check this is YOUR name exactly as it should appear on the "
-                    "report, and correct it if not."
-                )
-            employee_number = st.text_input(
-                "Employee number *",
-                key=employee_number_key,
-                help=(
-                    "After a confirmed report, this is recalled for the same employee "
-                    "name on this browser and account. It remains editable."
-                ),
-                on_change=_clear_employee_number_recall,
-                args=(employee_number_recall_key,),
-            ).strip()
-            if st.session_state.get(employee_number_recall_key) == _employee_name_key(
-                employee_name
-            ):
-                st.caption(
-                    "Employee number recalled from this employee's last confirmed report."
-                )
-            employee_home_bu = _employee_home_business_unit(account)
-            home_bu_display_key = f"expense_employee_home_bu_display_{account_token}"
-            # Derived, not entered: the value is recomputed and written back on
-            # every rerun so the disabled field cannot go stale after an account
-            # change. A disabled widget still needs a session value -- rendering
-            # it without one shows an empty box and the operator has no way to
-            # correct it, because the field is (correctly) not editable.
-            st.session_state[home_bu_display_key] = employee_home_bu
-            st.text_input(
-                "Employee Home Business Unit",
-                disabled=True,
-                key=home_bu_display_key,
-                help="Filled automatically from the selected ENFRA account.",
-            )
-        with detail_columns[1]:
-            report_date = st.date_input(
-                "Report date *",
-                key=f"expense_report_date_{account_token}",
-                format="MM/DD/YYYY",
-            )
-            approver_name_key = f"expense_approver_name_{account_token}"
-            approver_email_key = f"expense_approver_email_{account_token}"
-            approver_recall_key = f"expense_approver_recalled_{account_token}"
-            remembered_approvers = tuple(expense_approvers(account))
-            current_approver = str(
-                st.session_state.get(approver_name_key, "") or ""
-            ).strip()
-            current_approver_email = str(
-                st.session_state.get(approver_email_key, "") or ""
-            ).strip()
-            fallback_key = f"expense_approver_fallback_{account_token}"
-            fallback = st.session_state.get(fallback_key)
-            if not (
-                isinstance(fallback, tuple)
-                and len(fallback) == 2
-                and all(isinstance(value, str) for value in fallback)
-            ):
-                fallback = None
-            if fallback is None and current_approver and current_approver_email:
-                fallback = (current_approver, current_approver_email)
-                st.session_state[fallback_key] = fallback
-            # The CURRENT value is prepended, not merely offered. This selectbox
-            # uses index=None with accept_new_options=True, so a name the
-            # operator typed -- or the director seeded from config, which has
-            # never been "confirmed" and so is absent from expense_approvers()
-            # -- exists only in session_state. Building the option list from the
-            # remembered pairs alone drops that value out of options on the very
-            # next rerun and the field empties itself.
-            approver_names, approver_identities, current_option = _approver_options(
-                current_approver,
-                current_approver_email,
-                remembered_approvers,
-                fallback,
-            )
-            if current_approver and current_option != current_approver:
-                st.session_state[approver_name_key] = current_option
-            selected_approver_option = str(st.selectbox(
-                "ENFRA account director *",
-                approver_names,
-                index=None,
-                key=approver_name_key,
-                placeholder="Type or select the account director",
-                accept_new_options=True,
-                filter_mode="fuzzy",
-                help=(
-                    "The ENFRA director over this contract -- NOT the contract "
-                    "administrator. The approval email is addressed to them. "
-                    "Start typing to search directors confirmed for this account, "
-                    "or enter a new name. Selecting a remembered name fills the email."
-                ),
-                on_change=_recall_approver_email,
-                args=(
-                    approver_name_key,
-                    approver_email_key,
-                    approver_recall_key,
-                    approver_identities,
-                ),
-            ) or "").strip()
-            selected_identity = approver_identities.get(selected_approver_option)
-            approver_name = (
-                selected_identity[0]
-                if selected_identity is not None
-                else selected_approver_option
-            )
-            approver_email = st.text_input(
-                "ENFRA account director email *",
-                key=approver_email_key,
-                on_change=_clear_approver_recall,
-                args=(approver_recall_key,),
-            ).strip()
-            if st.session_state.get(approver_recall_key) == _approver_identity_key(
-                approver_name, approver_email
-            ):
-                st.caption("Director email recalled from this account's confirmed history.")
-            configured_director = account_director(account)
-            if configured_director is not None and (
-                approver_name.casefold(), approver_email.casefold()
-            ) == (
-                configured_director[0].casefold(),
-                configured_director[1].casefold(),
-            ):
-                st.caption("This account's director, from the tool's routing setup.")
-
-        manager_columns = st.columns(2)
-        with manager_columns[0]:
-            manager_name = st.text_input(
-                "Your manager's name (Cc) *",
-                key=f"expense_manager_name_{account_token}",
-                help=(
-                    "Your own manager, copied on the approval email. Remembered on "
-                    "this browser after your first report."
-                ),
-            ).strip()
-        with manager_columns[1]:
-            manager_email = st.text_input(
-                "Your manager's email (Cc) *",
-                key=f"expense_manager_email_{account_token}",
-            ).strip()
-
-        mail_destination = st.radio(
-            "Where should the reimbursement check be mailed? *",
-            tuple(_MAIL_LABELS),
-            format_func=lambda value: _MAIL_LABELS[value],
-            horizontal=True,
-            key=f"expense_mail_destination_{account_token}",
-        )
-        satellite_office = ""
-        if mail_destination == "satellite":
-            satellite_office = st.text_input(
-                "Satellite office *",
-                key=f"expense_satellite_office_{account_token}",
-            ).strip()
-
-        # Non-RRH accounts never see this control, so the default has to be a
-        # real value rather than 0 or None: _default_job_allocation formats it
-        # as "%02dAMA" for RRH only, but the variable is read unconditionally
-        # below and a None here becomes a TypeError on a non-RRH account.
-        service_year = 1
-        if contracts.is_rrh(account):
-            service_year = int(
-                st.selectbox(
-                    "RRH service year *",
-                    tuple(range(1, 10)),
-                    key=f"expense_service_year_{account_token}",
-                    help=(
-                        "The service year sets the editable Account / Cost Type default: "
-                        "year 1 = 01AMA, year 2 = 02AMA, and so on."
-                    ),
-                )
-            )
-            st.caption(
-                f"Receipt coding starts with 695400022 · {service_year:02d}AMA · 5490. "
-                "Each receipt can be changed independently."
-            )
-    # Computed outside the panel because it feeds BOTH the receipt lines and the
-    # mileage rows, which render further down regardless of whether the details
-    # block collapsed. It is a seed, not a value: _seed_job_allocation only
-    # applies it where the operator has not overridden the field.
-    allocation_seed = _default_job_allocation(account, service_year)
-
-    # employee_signature_confirmed is deliberately False here and replaced below
-    # via dataclasses.replace once the checkbox has rendered. The details object
-    # is needed earlier (for warnings and the signature preview name), and
-    # ExpenseReportDetails is frozen, so this is a two-phase build rather than a
-    # mutation. Do not "simplify" by moving construction after the checkbox --
-    # employee_name is what decides whether the checkbox renders at all.
-    details = ExpenseReportDetails(
-        account=account,
-        employee_name=employee_name,
-        employee_number=employee_number,
-        employee_home_bu=employee_home_bu,
-        report_date=report_date,
-        approver_name=approver_name,
-        approver_email=approver_email,
-        mail_destination=mail_destination,
-        satellite_office=satellite_office,
-        employee_signature_confirmed=False,
-        manager_name=manager_name,
-        manager_email=manager_email,
-    )
-
-    st.markdown(
-        """
-        <div class="step-header">
-            <div class="step-num">3</div>
-            <p class="step-title">Review expenses and coding</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "Every required value stays with the receipt or mileage entry it belongs "
-        "to. Job number, Account / Cost Type, and Cost Code are prefilled but editable."
-    )
-    items: list[ExpenseItem] = []
-    for index, (receipt_id, filename, file_bytes) in enumerate(unique_uploads, 1):
-        receipt_items = _render_receipt(
-            index=index,
-            receipt_id=receipt_id,
-            filename=filename,
-            file_bytes=file_bytes,
-            analysis=analyses[receipt_id],
-            account=account,
-            allocation_seed=allocation_seed,
-        )
-        items.extend(receipt_items)
-
-    mileage_items = _render_mileage_entries(
-        account=account,
-        account_token=account_token,
-        report_date=report_date,
-        allocation_seed=allocation_seed,
-    )
-
-    total = total_reimbursement(items, mileage_items)
-    summary_columns = st.columns(3)
-    summary_columns[0].metric("Receipts", len(unique_uploads))
-    summary_columns[1].metric("Mileage entries", len(mileage_items))
-    summary_columns[2].metric("Total reimbursement", f"${total:,.2f}")
-
-    review_warnings = expense_report_warnings(details, items, mileage_items)
-    if review_warnings:
-        st.warning(
-            "Review before sending: "
-            + "; ".join(warning.rstrip(". ") for warning in review_warnings)
-            + "."
-        )
-
-    st.markdown(
-        """
-        <div class="step-header">
-            <div class="step-num yellow">4</div>
-            <p class="step-title">Generate the report and approval email</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "The Excel file contains the completed official form and, when receipts "
-        "are present, a printable RECEIPTS worksheet. The PDF places the form "
-        "first and each receipt after it. Windows Outlook receives that PDF in "
-        "the draft; web and iPad mail routes provide a prefilled email and an "
-        "attachment reminder. Nothing is sent automatically."
-    )
-
-    signature_confirmed = False
-    if employee_name:
-        try:
-            signature_preview = employee_signature_png(employee_name)
-        except ExpenseReportError as exc:
-            st.error(str(exc))
+            st.session_state["expense_receipt_files"] = upload_sources
+            st.session_state.pop("expense_restored_without_uploader", None)
         else:
-            confirmation_key = f"expense_signature_confirmed_{account_token}"
-            confirmed_name_key = f"expense_signature_confirmed_name_{account_token}"
-            # The employee attests to a signature image that is embedded at C66
-            # of the form the approver receives. If the name changes after the
-            # box was ticked, the tick must NOT carry over: it would otherwise
-            # attest to a signature the operator never saw. The keys are
-            # account-scoped and both survive a workflow switch through the
-            # draft mirror, so this comparison stays meaningful across it.
-            if (
-                st.session_state.get(confirmation_key)
-                and st.session_state.get(confirmed_name_key)
-                and st.session_state.get(confirmed_name_key) != employee_name
+            upload_sources = mirrored_uploads
+            duplicate_names = []
+            if upload_sources:
+                st.session_state["expense_restored_without_uploader"] = True
+                st.caption(
+                    "Your in-progress receipts were restored. Add more files above, "
+                    "remove one beside its preview, or clear the entire report."
+                )
+        unique_uploads, stored_duplicate_names = _unique_receipts(upload_sources or [])
+        duplicate_names.extend(stored_duplicate_names)
+        # Receipt identity is the SHA-256 of the bytes, not the filename. Two phone
+        # photos named IMG_0001.jpg from different receipts are distinct; the same
+        # receipt re-uploaded under a new name is not. Every per-receipt session key
+        # below is derived from this id, so re-uploading an identical file
+        # deliberately restores its already-reviewed fields instead of asking again.
+        active_ids = {receipt_id for receipt_id, _, _ in unique_uploads}
+        _clear_removed_receipts(active_ids)
+        if duplicate_names:
+            st.warning(
+                "Duplicate receipt files were ignored: "
+                + ", ".join(duplicate_names)
+                + "."
+            )
+        if upload_sources:
+            if st.button(
+                "Clear expense report and start over",
+                key="expense_clear_report",
+                help="Removes this in-progress expense report from the current browser session.",
             ):
-                st.session_state[confirmation_key] = False
-            signature_columns = st.columns([1, 2])
-            with signature_columns[0]:
-                st.image(signature_preview, width=320)
-                st.caption(f"Printed name: {employee_name}")
-            with signature_columns[1]:
-                signature_confirmed = st.checkbox(
-                    "I confirm this generated signature represents me and will "
-                    "review it again before sending the Outlook draft.",
-                    key=confirmation_key,
-                )
-                if signature_confirmed:
-                    st.session_state[confirmed_name_key] = employee_name
-    details = replace(
-        details,
-        employee_signature_confirmed=signature_confirmed,
-    )
-    problems = validate_expense_report(details, items, mileage_items, content_digests=_content_digests())
-    if problems:
-        st.warning(
-            "Before generating: "
-            + "; ".join(problem.rstrip(". ") for problem in problems)
-            + "."
+                _reset_expense_report()
+                st.rerun()
+        # Ordering matters: the clear-and-start-over button is rendered ABOVE this
+        # guard so an over-budget receipt set is still recoverable. Moving the size
+        # check earlier returns before that button exists, and the operator is
+        # stranded on a page whose only control is a file uploader that will refuse
+        # everything -- with the offending bytes already parked in the mirror.
+        total_upload_bytes = sum(len(data) for _, _, data in unique_uploads)
+        if total_upload_bytes > _MAX_REPORT_UPLOAD_BYTES:
+            st.error(
+                "These receipts total more than 60 MB. Remove or resize the largest "
+                "files before continuing."
+            )
+            for receipt_id, filename, payload in unique_uploads:
+                if st.button(
+                    f"Remove {filename} ({len(payload) / (1024 * 1024):.1f} MB)",
+                    key=f"expense_remove_receipt_{receipt_id[:12]}",
+                ):
+                    _remove_receipt_from_draft(receipt_id)
+                    st.rerun()
+            return
+
+        _content_digests().retain(payload for _, _, payload in unique_uploads)
+        _advance_receipt_jobs(unique_uploads)
+        analyses = {
+            receipt_id: st.session_state.get(f"expense_receipt_analysis_{receipt_id}", ReceiptAnalysis())
+            for receipt_id, _, _ in unique_uploads
+        }
+        if _unread_receipts(unique_uploads):
+            _receipt_reading_progress()
+
+        if unique_uploads:
+            st.caption(
+                f"{len(unique_uploads)} unique receipt"
+                f"{'s' if len(unique_uploads) != 1 else ''} ready for review. "
+                "Original uploads remain unchanged; compact copies are used only in the workbook."
+            )
+        else:
+            st.caption(
+                "No receipt is required for mileage-only reimbursement. You can add "
+                "business mileage below or upload receipts now."
+            )
+
+        st.markdown(
+            """
+            <div class="step-header">
+                <div class="step-num">2</div>
+                <p class="step-title">Confirm report details</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        # No placeholder and no index=None: this control silently defaults to the
+        # first contract. That is why it stays OUTSIDE the collapsible details panel
+        # below (see the 2026-08-13 disclosure notes, section 2.3) -- hiding a
+        # scoping control that defaults without saying so is the unknown-facility
+        # hazard already fixed on the purchase-order side.
+        accounts = tuple(contracts.contract_names())
+        account = st.selectbox(
+            "Account / contract *",
+            accounts,
+            key="expense_account",
+            help=(
+                "This filters the verified job-number choices and sets the "
+                "account director the approval email goes to."
+            ),
+        )
+        # Must run after the account selectbox (it needs the chosen account) and
+        # before any detail widget below is instantiated, for the same
+        # post-render-write reason given in this function's docstring.
+        _seed_profile(browser_token, account, browser_timezone)
+        for problem in director_config_problems(accounts):
+            st.warning(problem)
+        _account_token_for_note = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
+        if account_director(account) is None and not str(
+            st.session_state.get(f"expense_approver_name_{_account_token_for_note}", "") or ""
+        ).strip():
+            st.caption(
+                "No director is set up for this account yet -- enter the ENFRA "
+                "director over this contract below (not the contract administrator)."
+            )
+        # Every step-2 widget key is namespaced by this digest so switching accounts
+        # gives a fresh, independently remembered set of details rather than
+        # carrying one facility's approver into another's report. _seed_profile
+        # recomputes the SAME expression internally; the two must stay identical or
+        # the seeds land on keys no widget reads and the fields render blank with no
+        # error. tests/test_expense_disclosure.py hardcodes this derivation too.
+        account_token = hashlib.sha256(account.encode("utf-8")).hexdigest()[:10]
+        # After _seed_profile (a remembered name always wins) and before the name
+        # widget renders (a post-render write is discarded).
+        _apply_receipt_name_guess(account_token, analyses.values())
+        name_guess = str(
+            st.session_state.get(f"expense_employee_name_guess_{account_token}", "") or ""
         )
 
-    # Content fingerprint over every reviewed input INCLUDING the receipt bytes.
-    # It is what stops a stale package from being downloaded after an edit: the
-    # render gate at the bottom of this function compares it again, so an edited
-    # report cannot hand the approver a PDF built from the previous values.
-    # Weakening it to hash only the "important" fields silently reopens that.
-    signature = expense_report_signature(details, items, mileage_items, content_digests=_content_digests())
-    generated_signature = str(st.session_state.get("expense_generated_signature", ""))
-    if generated_signature and generated_signature != signature:
-        st.warning(
-            "A report detail changed. Generate again to refresh the files and email draft."
-        )
+        # Progressive disclosure, matching the purchase-order flow. Every field
+        # below is still rendered exactly once and stays fully editable -- nothing
+        # is removed and nothing becomes read-only. Only PLACEMENT changes: once the
+        # account's confirmed history has supplied every detail, the block collapses
+        # behind one line instead of presenting ten controls the operator does not
+        # need to touch.
+        #
+        # Placement is decided from session_state BEFORE rendering, because a
+        # widget's value does not exist until it renders. The account selector above
+        # stays visible deliberately: it has no placeholder and silently defaults to
+        # the first contract, so hiding it would repeat the unknown-facility hazard
+        # already fixed on the purchase-order side.
+        def _detail_unset(state_key: str) -> bool:
+            return not str(st.session_state.get(state_key, "") or "").strip()
 
-    if st.button(
-        "Generate expense report and email draft",
-        type="primary",
-        width="stretch",
-        disabled=bool(problems),
-        key="generate_expense_package",
-    ):
-        with st.spinner("Creating the Excel report, receipt packet, and email draft…"):
-            # This handler covers WORKBOOK failure only, and discarding the
-            # package is correct here because none was produced. A PDF renderer
-            # outage is NOT handled here: build_expense_package catches it
-            # internally and returns a package with pdf_bytes=None plus
-            # pdf_error, which drives the Excel-only fallback below. Hoisting
-            # the PDF conversion out to this level is the plausible-looking
-            # wrong change -- it is exactly what used to happen, and it made the
-            # Excel-only fallback unreachable by construction, throwing away
-            # every receipt line, allocation and mileage row the operator had
-            # entered. See the 2026-08-12 hardening notes, section 4.1.
-            try:
-                package = build_expense_package(
-                    details,
-                    items,
-                    mileage_items=mileage_items,
+        _outstanding_details = sum(
+            (
+                _detail_unset(f"expense_employee_name_{account_token}"),
+                # A name guessed from receipts and not yet changed keeps the panel
+                # open: it has not been confirmed by the person it names.
+                bool(name_guess)
+                and str(
+                    st.session_state.get(f"expense_employee_name_{account_token}", "") or ""
+                ).strip()
+                == name_guess,
+                _detail_unset(f"expense_employee_number_{account_token}"),
+                _detail_unset(f"expense_approver_name_{account_token}"),
+                _detail_unset(f"expense_approver_email_{account_token}"),
+                _detail_unset(f"expense_manager_name_{account_token}"),
+                _detail_unset(f"expense_manager_email_{account_token}"),
+                (
+                    st.session_state.get(f"expense_mail_destination_{account_token}")
+                    == "satellite"
+                    and _detail_unset(f"expense_satellite_office_{account_token}")
+                ),
+            )
+        )
+        # Highlight the specific fields still needing a value. The expense block is
+        # not split into resolved/unresolved containers the way the purchase-order
+        # page is, so the keys are named directly. Recomputed every rerun, so a
+        # field stops being highlighted on the run after it is filled.
+        _needs_value_keys = [
+            key
+            for key, missing in (
+                (f"expense_employee_name_{account_token}",
+                 _detail_unset(f"expense_employee_name_{account_token}")),
+                (f"expense_employee_number_{account_token}",
+                 _detail_unset(f"expense_employee_number_{account_token}")),
+                (f"expense_approver_name_{account_token}",
+                 _detail_unset(f"expense_approver_name_{account_token}")),
+                (f"expense_approver_email_{account_token}",
+                 _detail_unset(f"expense_approver_email_{account_token}")),
+                (f"expense_manager_name_{account_token}",
+                 _detail_unset(f"expense_manager_name_{account_token}")),
+                (f"expense_manager_email_{account_token}",
+                 _detail_unset(f"expense_manager_email_{account_token}")),
+                (f"expense_satellite_office_{account_token}",
+                 st.session_state.get(f"expense_mail_destination_{account_token}")
+                 == "satellite"
+                 and _detail_unset(f"expense_satellite_office_{account_token}")),
+            )
+            if missing
+        ]
+        # Safe to emit raw because account_token is hex: Streamlit rewrites anything
+        # outside [A-Za-z0-9_-] to a hyphen when it builds the st-key- class, so a
+        # key built from the account NAME instead would produce a selector matching
+        # nothing -- no error, no highlight, nothing to notice in a green test run.
+        # ui_highlight normalises defensively, but keep the token hex anyway.
+        if _needs_value_keys:
+            highlight_needed_fields(_needs_value_keys)
+
+        if _outstanding_details:
+            _details_panel = st.container()
+        else:
+            _details_panel = st.expander(
+                "Report details \u2014 filled from this account's confirmed history",
+                expanded=False,
+            )
+
+        with _details_panel:
+            if not _outstanding_details:
+                st.caption(
+                    "Every detail below stays editable. Open this panel to change "
+                    "anything the tool filled for you."
                 )
-            except Exception as exc:
-                st.session_state["expense_generation_error"] = str(exc)[:500]
-                st.session_state.pop("expense_generated_package", None)
-                st.session_state.pop("expense_generated_eml", None)
-                st.session_state.pop("expense_generated_signature", None)
-            else:
-                # A failed .eml build must not cost the operator the package:
-                # the error is recorded separately and the report is still
-                # stored, so the iPhone/iPad share route (which never touches
-                # this code) and both file downloads keep working. Raising or
-                # discarding here would turn an Outlook-only problem into total
-                # re-entry of the whole report.
-                eml_bytes = b""
-                email_error = ""
-                if package.pdf_bytes:
-                    try:
-                        eml_bytes = _build_expense_eml(details, package)
-                    except Exception as exc:
-                        email_error = str(exc)[:500]
-                st.session_state["expense_generated_package"] = package
-                st.session_state["expense_generated_eml"] = eml_bytes
-                st.session_state["expense_generated_signature"] = signature
-                if email_error:
-                    st.session_state["expense_email_error"] = email_error
-                else:
-                    st.session_state.pop("expense_email_error", None)
-                st.session_state.pop("expense_generation_error", None)
-                # Memory is written only on a SUCCESSFUL generation. A half-typed
-                # approver or a mis-selected job number never reaches the store,
-                # so the next report's prefill can only ever be a combination
-                # the operator actually carried through to a finished package.
-                _remember_profile(
-                    browser_token=browser_token,
-                    details=details,
-                    approver_context_id=report_memory_context,
-                    # First receipt line, else first mileage row, else the seed.
-                    # Receipts win because a split receipt's first line is the
-                    # one the operator most likely re-coded by hand; the seed is
-                    # the last resort so the stored coding is never empty.
-                    allocation=(
-                        items[0].allocation
-                        if items
-                        else mileage_items[0].allocation
-                        if mileage_items
-                        else allocation_seed
+            detail_columns = st.columns(2)
+            with detail_columns[0]:
+                employee_name_key = f"expense_employee_name_{account_token}"
+                employee_number_key = f"expense_employee_number_{account_token}"
+                employee_number_recall_key = (
+                    f"expense_employee_number_recalled_for_{account_token}"
+                )
+                employee_name = st.text_input(
+                    "Employee name *",
+                    key=employee_name_key,
+                    on_change=_recall_employee_number_for_name,
+                    args=(
+                        browser_token,
+                        account,
+                        employee_name_key,
+                        employee_number_key,
+                        employee_number_recall_key,
                     ),
+                ).strip()
+                if name_guess and employee_name == name_guess:
+                    st.warning(
+                        "Guessed from a name printed on your receipts -- low confidence. "
+                        "Check this is YOUR name exactly as it should appear on the "
+                        "report, and correct it if not."
+                    )
+                employee_number = st.text_input(
+                    "Employee number *",
+                    key=employee_number_key,
+                    help=(
+                        "After a confirmed report, this is recalled for the same employee "
+                        "name on this browser and account. It remains editable."
+                    ),
+                    on_change=_clear_employee_number_recall,
+                    args=(employee_number_recall_key,),
+                ).strip()
+                if st.session_state.get(employee_number_recall_key) == _employee_name_key(
+                    employee_name
+                ):
+                    st.caption(
+                        "Employee number recalled from this employee's last confirmed report."
+                    )
+                employee_home_bu = _employee_home_business_unit(account)
+                home_bu_display_key = f"expense_employee_home_bu_display_{account_token}"
+                # Derived, not entered: the value is recomputed and written back on
+                # every rerun so the disabled field cannot go stale after an account
+                # change. A disabled widget still needs a session value -- rendering
+                # it without one shows an empty box and the operator has no way to
+                # correct it, because the field is (correctly) not editable.
+                st.session_state[home_bu_display_key] = employee_home_bu
+                st.text_input(
+                    "Employee Home Business Unit",
+                    disabled=True,
+                    key=home_bu_display_key,
+                    help="Filled automatically from the selected ENFRA account.",
                 )
+            with detail_columns[1]:
+                report_date = st.date_input(
+                    "Report date *",
+                    key=f"expense_report_date_{account_token}",
+                    format="MM/DD/YYYY",
+                )
+                approver_name_key = f"expense_approver_name_{account_token}"
+                approver_email_key = f"expense_approver_email_{account_token}"
+                approver_recall_key = f"expense_approver_recalled_{account_token}"
+                remembered_approvers = tuple(expense_approvers(account))
+                current_approver = str(
+                    st.session_state.get(approver_name_key, "") or ""
+                ).strip()
+                current_approver_email = str(
+                    st.session_state.get(approver_email_key, "") or ""
+                ).strip()
+                fallback_key = f"expense_approver_fallback_{account_token}"
+                fallback = st.session_state.get(fallback_key)
+                if not (
+                    isinstance(fallback, tuple)
+                    and len(fallback) == 2
+                    and all(isinstance(value, str) for value in fallback)
+                ):
+                    fallback = None
+                if fallback is None and current_approver and current_approver_email:
+                    fallback = (current_approver, current_approver_email)
+                    st.session_state[fallback_key] = fallback
+                # The CURRENT value is prepended, not merely offered. This selectbox
+                # uses index=None with accept_new_options=True, so a name the
+                # operator typed -- or the director seeded from config, which has
+                # never been "confirmed" and so is absent from expense_approvers()
+                # -- exists only in session_state. Building the option list from the
+                # remembered pairs alone drops that value out of options on the very
+                # next rerun and the field empties itself.
+                approver_names, approver_identities, current_option = _approver_options(
+                    current_approver,
+                    current_approver_email,
+                    remembered_approvers,
+                    fallback,
+                )
+                if current_approver and current_option != current_approver:
+                    st.session_state[approver_name_key] = current_option
+                selected_approver_option = str(st.selectbox(
+                    "ENFRA account director *",
+                    approver_names,
+                    index=None,
+                    key=approver_name_key,
+                    placeholder="Type or select the account director",
+                    accept_new_options=True,
+                    filter_mode="fuzzy",
+                    help=(
+                        "The ENFRA director over this contract -- NOT the contract "
+                        "administrator. The approval email is addressed to them. "
+                        "Start typing to search directors confirmed for this account, "
+                        "or enter a new name. Selecting a remembered name fills the email."
+                    ),
+                    on_change=_recall_approver_email,
+                    args=(
+                        approver_name_key,
+                        approver_email_key,
+                        approver_recall_key,
+                        approver_identities,
+                    ),
+                ) or "").strip()
+                selected_identity = approver_identities.get(selected_approver_option)
+                approver_name = (
+                    selected_identity[0]
+                    if selected_identity is not None
+                    else selected_approver_option
+                )
+                approver_email = st.text_input(
+                    "ENFRA account director email *",
+                    key=approver_email_key,
+                    on_change=_clear_approver_recall,
+                    args=(approver_recall_key,),
+                ).strip()
+                if st.session_state.get(approver_recall_key) == _approver_identity_key(
+                    approver_name, approver_email
+                ):
+                    st.caption("Director email recalled from this account's confirmed history.")
+                configured_director = account_director(account)
+                if configured_director is not None and (
+                    approver_name.casefold(), approver_email.casefold()
+                ) == (
+                    configured_director[0].casefold(),
+                    configured_director[1].casefold(),
+                ):
+                    st.caption("This account's director, from the tool's routing setup.")
 
-    generation_error = str(st.session_state.get("expense_generation_error", "") or "")
-    if generation_error:
-        st.error(f"The expense package could not be generated: {generation_error}")
-    email_error = str(st.session_state.get("expense_email_error", "") or "")
-    if email_error:
-        st.error(
-            "The attached-PDF Outlook draft could not be created: "
-            f"{email_error} The iPhone/iPad share option can still pass the "
-            "generated PDF directly to Mail or Outlook."
+            manager_columns = st.columns(2)
+            with manager_columns[0]:
+                manager_name = st.text_input(
+                    "Your manager's name (Cc) *",
+                    key=f"expense_manager_name_{account_token}",
+                    help=(
+                        "Your own manager, copied on the approval email. Remembered on "
+                        "this browser after your first report."
+                    ),
+                ).strip()
+            with manager_columns[1]:
+                manager_email = st.text_input(
+                    "Your manager's email (Cc) *",
+                    key=f"expense_manager_email_{account_token}",
+                ).strip()
+
+            mail_destination = st.radio(
+                "Where should the reimbursement check be mailed? *",
+                tuple(_MAIL_LABELS),
+                format_func=lambda value: _MAIL_LABELS[value],
+                horizontal=True,
+                key=f"expense_mail_destination_{account_token}",
+            )
+            satellite_office = ""
+            if mail_destination == "satellite":
+                satellite_office = st.text_input(
+                    "Satellite office *",
+                    key=f"expense_satellite_office_{account_token}",
+                ).strip()
+
+            # Non-RRH accounts never see this control, so the default has to be a
+            # real value rather than 0 or None: _default_job_allocation formats it
+            # as "%02dAMA" for RRH only, but the variable is read unconditionally
+            # below and a None here becomes a TypeError on a non-RRH account.
+            service_year = 1
+            if contracts.is_rrh(account):
+                service_year = int(
+                    st.selectbox(
+                        "RRH service year *",
+                        tuple(range(1, 10)),
+                        key=f"expense_service_year_{account_token}",
+                        help=(
+                            "The service year sets the editable Account / Cost Type default: "
+                            "year 1 = 01AMA, year 2 = 02AMA, and so on."
+                        ),
+                    )
+                )
+                st.caption(
+                    f"Receipt coding starts with 695400022 · {service_year:02d}AMA · 5490. "
+                    "Each receipt can be changed independently."
+                )
+        # Computed outside the panel because it feeds BOTH the receipt lines and the
+        # mileage rows, which render further down regardless of whether the details
+        # block collapsed. It is a seed, not a value: _seed_job_allocation only
+        # applies it where the operator has not overridden the field.
+        allocation_seed = _default_job_allocation(account, service_year)
+
+        # employee_signature_confirmed is deliberately False here and replaced below
+        # via dataclasses.replace once the checkbox has rendered. The details object
+        # is needed earlier (for warnings and the signature preview name), and
+        # ExpenseReportDetails is frozen, so this is a two-phase build rather than a
+        # mutation. Do not "simplify" by moving construction after the checkbox --
+        # employee_name is what decides whether the checkbox renders at all.
+        details = ExpenseReportDetails(
+            account=account,
+            employee_name=employee_name,
+            employee_number=employee_number,
+            employee_home_bu=employee_home_bu,
+            report_date=report_date,
+            approver_name=approver_name,
+            approver_email=approver_email,
+            mail_destination=mail_destination,
+            satellite_office=satellite_office,
+            employee_signature_confirmed=False,
+            manager_name=manager_name,
+            manager_email=manager_email,
         )
 
-    # Both halves of this gate are required. The isinstance check survives a
-    # session restored across a deploy holding some other object under that key;
-    # the fingerprint comparison is what suppresses a package built from values
-    # the operator has since edited. Dropping either one lets a download button
-    # appear that hands the approver the wrong document, with no visible symptom
-    # -- the file name and the page look identical either way.
-    package = st.session_state.get("expense_generated_package")
-    if (
-        isinstance(package, ExpensePackage)
-        and st.session_state.get("expense_generated_signature") == signature
-    ):
-        _render_generated_package(
-            details=details,
-            package=package,
-            eml_bytes=st.session_state.get("expense_generated_eml", b""),
+        st.markdown(
+            """
+            <div class="step-header">
+                <div class="step-num">3</div>
+                <p class="step-title">Review expenses and coding</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
+        st.caption(
+            "Every required value stays with the receipt or mileage entry it belongs "
+            "to. Job number, Account / Cost Type, and Cost Code are prefilled but editable."
+        )
+        items: list[ExpenseItem] = []
+        for index, (receipt_id, filename, file_bytes) in enumerate(unique_uploads, 1):
+            with workspace_section('expense_receipt_' + receipt_id[:12], f'Receipt {index}'):
+                receipt_items = _render_receipt(
+                    index=index,
+                    receipt_id=receipt_id,
+                    filename=filename,
+                    file_bytes=file_bytes,
+                    analysis=analyses[receipt_id],
+                    account=account,
+                    allocation_seed=allocation_seed,
+                )
+                items.extend(receipt_items)
+
+        with workspace_section('expense_mileage', 'Mileage review'):
+            mileage_editor, mileage_reference = workspace_columns('expense_mileage')
+            with mileage_editor:
+                mileage_items = _render_mileage_entries(
+                    account=account,
+                    account_token=account_token,
+                    report_date=report_date,
+                    allocation_seed=allocation_seed,
+                )
+            with mileage_reference:
+                from app.expense_report import mileage_reimbursement
+                if mileage_items:
+                    st.caption('Current trips and reimbursement')
+                    for trip in mileage_items:
+                        reimbursement = mileage_reimbursement(trip)
+                        amount = f'${reimbursement:,.2f}' if reimbursement is not None else 'Enter a valid date and miles'
+                        st.write(f'{trip.destination or "Destination needed"} · {trip.transaction_date or "Date needed"} · {amount}')
+                        if trip.purpose:
+                            st.caption(trip.purpose)
+                else:
+                    st.caption('Add business mileage to review trips and reimbursement here.')
+
+        total = total_reimbursement(items, mileage_items)
+        summary_columns = st.columns(3)
+        summary_columns[0].metric("Receipts", len(unique_uploads))
+        summary_columns[1].metric("Mileage entries", len(mileage_items))
+        summary_columns[2].metric("Total reimbursement", f"${total:,.2f}")
+
+        review_warnings = expense_report_warnings(details, items, mileage_items)
+        if review_warnings:
+            st.warning(
+                "Review before sending: "
+                + "; ".join(warning.rstrip(". ") for warning in review_warnings)
+                + "."
+            )
+
+        st.markdown(
+            """
+            <div class="step-header">
+                <div class="step-num yellow">4</div>
+                <p class="step-title">Generate the report and approval email</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "The Excel file contains the completed official form and, when receipts "
+            "are present, a printable RECEIPTS worksheet. The PDF places the form "
+            "first and each receipt after it. Windows Outlook receives that PDF in "
+            "the draft; web and iPad mail routes provide a prefilled email and an "
+            "attachment reminder. Nothing is sent automatically."
+        )
+
+        signature_confirmed = False
+        if employee_name:
+            try:
+                signature_preview = employee_signature_png(employee_name)
+            except ExpenseReportError as exc:
+                st.error(str(exc))
+            else:
+                confirmation_key = f"expense_signature_confirmed_{account_token}"
+                confirmed_name_key = f"expense_signature_confirmed_name_{account_token}"
+                # The employee attests to a signature image that is embedded at C66
+                # of the form the approver receives. If the name changes after the
+                # box was ticked, the tick must NOT carry over: it would otherwise
+                # attest to a signature the operator never saw. The keys are
+                # account-scoped and both survive a workflow switch through the
+                # draft mirror, so this comparison stays meaningful across it.
+                if (
+                    st.session_state.get(confirmation_key)
+                    and st.session_state.get(confirmed_name_key)
+                    and st.session_state.get(confirmed_name_key) != employee_name
+                ):
+                    st.session_state[confirmation_key] = False
+                signature_columns = st.columns([1, 2])
+                with signature_columns[0]:
+                    st.image(signature_preview, width=320)
+                    st.caption(f"Printed name: {employee_name}")
+                with signature_columns[1]:
+                    signature_confirmed = st.checkbox(
+                        "I confirm this generated signature represents me and will "
+                        "review it again before sending the Outlook draft.",
+                        key=confirmation_key,
+                    )
+                    if signature_confirmed:
+                        st.session_state[confirmed_name_key] = employee_name
+        details = replace(
+            details,
+            employee_signature_confirmed=signature_confirmed,
+        )
+        problems = validate_expense_report(details, items, mileage_items, content_digests=_content_digests())
+        if problems:
+            st.warning(
+                "Before generating: "
+                + "; ".join(problem.rstrip(". ") for problem in problems)
+                + "."
+            )
+
+        # Content fingerprint over every reviewed input INCLUDING the receipt bytes.
+        # It is what stops a stale package from being downloaded after an edit: the
+        # render gate at the bottom of this function compares it again, so an edited
+        # report cannot hand the approver a PDF built from the previous values.
+        # Weakening it to hash only the "important" fields silently reopens that.
+        signature = expense_report_signature(details, items, mileage_items, content_digests=_content_digests())
+        generated_signature = str(st.session_state.get("expense_generated_signature", ""))
+        if generated_signature and generated_signature != signature:
+            st.warning(
+                "A report detail changed. Generate again to refresh the files and email draft."
+            )
+
+        if st.button(
+            "Generate expense report and email draft",
+            type="primary",
+            width="stretch",
+            disabled=bool(problems),
+            key="generate_expense_package",
+        ):
+            with st.spinner("Creating the Excel report, receipt packet, and email draft…"):
+                # This handler covers WORKBOOK failure only, and discarding the
+                # package is correct here because none was produced. A PDF renderer
+                # outage is NOT handled here: build_expense_package catches it
+                # internally and returns a package with pdf_bytes=None plus
+                # pdf_error, which drives the Excel-only fallback below. Hoisting
+                # the PDF conversion out to this level is the plausible-looking
+                # wrong change -- it is exactly what used to happen, and it made the
+                # Excel-only fallback unreachable by construction, throwing away
+                # every receipt line, allocation and mileage row the operator had
+                # entered. See the 2026-08-12 hardening notes, section 4.1.
+                try:
+                    package = build_expense_package(
+                        details,
+                        items,
+                        mileage_items=mileage_items,
+                    )
+                except Exception as exc:
+                    st.session_state["expense_generation_error"] = str(exc)[:500]
+                    st.session_state.pop("expense_generated_package", None)
+                    st.session_state.pop("expense_generated_eml", None)
+                    st.session_state.pop("expense_generated_signature", None)
+                else:
+                    # A failed .eml build must not cost the operator the package:
+                    # the error is recorded separately and the report is still
+                    # stored, so the iPhone/iPad share route (which never touches
+                    # this code) and both file downloads keep working. Raising or
+                    # discarding here would turn an Outlook-only problem into total
+                    # re-entry of the whole report.
+                    eml_bytes = b""
+                    email_error = ""
+                    if package.pdf_bytes:
+                        try:
+                            eml_bytes = _build_expense_eml(details, package)
+                        except Exception as exc:
+                            email_error = str(exc)[:500]
+                    st.session_state["expense_generated_package"] = package
+                    st.session_state["expense_generated_eml"] = eml_bytes
+                    st.session_state["expense_generated_signature"] = signature
+                    if email_error:
+                        st.session_state["expense_email_error"] = email_error
+                    else:
+                        st.session_state.pop("expense_email_error", None)
+                    st.session_state.pop("expense_generation_error", None)
+                    # Memory is written only on a SUCCESSFUL generation. A half-typed
+                    # approver or a mis-selected job number never reaches the store,
+                    # so the next report's prefill can only ever be a combination
+                    # the operator actually carried through to a finished package.
+                    _remember_profile(
+                        browser_token=browser_token,
+                        details=details,
+                        approver_context_id=report_memory_context,
+                        # First receipt line, else first mileage row, else the seed.
+                        # Receipts win because a split receipt's first line is the
+                        # one the operator most likely re-coded by hand; the seed is
+                        # the last resort so the stored coding is never empty.
+                        allocation=(
+                            items[0].allocation
+                            if items
+                            else mileage_items[0].allocation
+                            if mileage_items
+                            else allocation_seed
+                        ),
+                    )
+
+        generation_error = str(st.session_state.get("expense_generation_error", "") or "")
+        if generation_error:
+            st.error(f"The expense package could not be generated: {generation_error}")
+        email_error = str(st.session_state.get("expense_email_error", "") or "")
+        if email_error:
+            st.error(
+                "The attached-PDF Outlook draft could not be created: "
+                f"{email_error} The iPhone/iPad share option can still pass the "
+                "generated PDF directly to Mail or Outlook."
+            )
+
+        # Both halves of this gate are required. The isinstance check survives a
+        # session restored across a deploy holding some other object under that key;
+        # the fingerprint comparison is what suppresses a package built from values
+        # the operator has since edited. Dropping either one lets a download button
+        # appear that hands the approver the wrong document, with no visible symptom
+        # -- the file name and the page look identical either way.
+        package = st.session_state.get("expense_generated_package")
+        if (
+            isinstance(package, ExpensePackage)
+            and st.session_state.get("expense_generated_signature") == signature
+        ):
+            with workspace_section('expense_packet', 'Generated expense packet'):
+                handoff, packet_reference = workspace_columns('expense_packet')
+                with handoff:
+                    _render_generated_package(
+                        details=details,
+                        package=package,
+                        eml_bytes=st.session_state.get("expense_generated_eml", b""),
+                    )
+                with packet_reference:
+                    if package.pdf_bytes:
+                        render_reference(key='expense_packet', owner_scope=report_memory_context,
+                                         title='Generated expense packet', raw=package.pdf_bytes,
+                                         filename=package.basename + '.pdf')
+                    else:
+                        st.caption('The PDF is unavailable. The editable workbook remains available.')
 
 
 def _unread_receipts(receipts):
@@ -1095,23 +1124,11 @@ def _render_receipt(
         unsafe_allow_html=True,
     )
 
-    preview_column, fields_column = st.columns([1, 2])
+    fields_column, preview_column = workspace_columns('expense_receipt_' + token)
     with preview_column:
-        preview_key = f"expense_preview_{receipt_id}"
-        if preview_key not in st.session_state:
-            try:
-                st.session_state[preview_key] = receipt_preview_bytes(file_bytes, filename)
-            except Exception as exc:
-                # Cache the EMPTY result, not just the success. A receipt this
-                # renderer cannot handle (an exotic PDF, a corrupt HEIC) would
-                # otherwise re-raise and re-render on every keystroke on the
-                # page. A missing thumbnail is cosmetic; the original bytes are
-                # still what goes into the workbook and the PDF packet.
-                st.session_state[preview_key] = b""
-                st.caption(f"Preview unavailable: {str(exc)[:160]}")
-        preview = st.session_state.get(preview_key, b"")
-        if preview:
-            st.image(preview, caption=f"Receipt {index}", width="stretch")
+        render_reference(key='expense_receipt_' + token,
+                         owner_scope=str(st.session_state.get("expense_report_memory_context", "")),
+                         title=f'Original receipt {index}', raw=file_bytes, filename=filename)
         if st.button(
             "Remove this receipt",
             key=f"expense_remove_receipt_{token}",
@@ -2850,6 +2867,9 @@ def _reset_expense_report() -> None:
     # would restart at 1 and reuse a widget key this session has already used --
     # which resurrects the retired uploader's file list.
     next_nonce = int(st.session_state.get("expense_uploader_nonce", 0) or 0) + 1
+    owner_scope = st.session_state.get("expense_report_memory_context")
+    if owner_scope:
+        discard_reference_scope(str(owner_scope))
     for future, _ in st.session_state.get("expense_analysis_jobs", {}).values():
         future.cancel()
     for key in list(st.session_state):

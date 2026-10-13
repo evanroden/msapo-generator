@@ -26,7 +26,8 @@ def test_older_preview_explicitly_disclaims_new_edits():
 def test_preview_headings_do_not_duplicate_shareable_chain_anchors():
     source = (Path(__file__).resolve().parents[1] /
               "app" / "monthly_report_section_preview_ui.py").read_text()
-    assert "st.subheader('Preview', anchor=False)" in source
+    assert "st.caption('Preview')" not in source
+    assert "st.subheader('Preview'" not in source
     assert "st.subheader('Section preview')" not in source
     assert "Updates automatically while in view." not in source
     renderer = (Path(__file__).resolve().parents[1] /

@@ -397,14 +397,21 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
     draft = normalize_mbcx(draft)
     if period == draft.period:
         return draft
+    from app.monthly_report_issues import canonical_issues
+    draft = canonical_issues(draft)
     from app.monthly_report_followups import seed_followups
     follow_ups = seed_followups(draft)
     carried_keys = {"equipment_issues", "proposals"}
     blocks = tuple(
+        _carry_period_content(b, draft.period)
+        if b.key == "equipment_issues" and (b.ai_written or b.ai_paragraphs) else
         preserve_asset_reviews(b, ResolvedBlock(b.key, "This month", photos_per_page=b.photos_per_page,
                       asset_hashes=b.asset_hashes if b.key in carried_keys else (),
                       asset_captions=b.asset_captions if b.key in carried_keys else (),
-                      references=b.references if b.key in carried_keys and b.asset_hashes else (),
+                      references=(tuple(ref for ref in b.references
+                                        if not ref.startswith("issue-statement-removed:"))
+                                  if b.key == "equipment_issues" else
+                                  b.references if b.key in carried_keys and b.asset_hashes else ()),
                       extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables)))
         if b.key in MONTHLY_BLOCKS or b.key in carried_keys else _carry_period_content(b, draft.period) for b in draft.blocks)
     # Keep evidence backing carried content at its original date and hash;

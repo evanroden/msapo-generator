@@ -447,7 +447,8 @@ def _build_docx(draft, *, asset_loader=None):
         carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
         if carried:
             from app.monthly_report_followups import report_text
-            document.add_heading("Carried-forward items", 2)
+            if section.key != "issues":
+                document.add_heading("Carried-forward items", 2)
             for item in carried:
                 _text(document, report_text(item))
     return _save(document)

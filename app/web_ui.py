@@ -1208,6 +1208,13 @@ def _load_test_into_state() -> None:
     quote would otherwise survive into the sample's run and make it look either
     already-generated or already-failed.
     """
+    from uuid import uuid4
+    from app.reference_preview import discard_reference_scope
+    if old_scope := st.session_state.get("po_workspace_identity"):
+        discard_reference_scope(old_scope)
+    st.session_state["po_workspace_identity"] = uuid4().hex
+    st.session_state["_po_package_compare_source"] = False
+    st.session_state["po_package_compare_source"] = False
     analysis = _build_test_analysis()
     quote_text = analysis.scope_of_work
     token = hashlib.sha256(quote_text.encode("utf-8")).hexdigest()[:12]
@@ -1247,6 +1254,13 @@ def _deactivate_synthetic_quote() -> None:
 
 
 def _quote_upload_changed() -> None:
+    from uuid import uuid4
+    from app.reference_preview import discard_reference_scope
+    if old_scope := st.session_state.get("po_workspace_identity"):
+        discard_reference_scope(old_scope)
+    st.session_state["po_workspace_identity"] = uuid4().hex
+    st.session_state["_po_package_compare_source"] = False
+    st.session_state["po_package_compare_source"] = False
     _deactivate_synthetic_quote()
     key = f"uploader_{st.session_state.get('uploader_nonce', 0)}"
     st.session_state["po_upload_available"] = st.session_state.get(key) is not None
@@ -1255,6 +1269,13 @@ def _quote_upload_changed() -> None:
 def _clear_quote_upload() -> None:
     st.session_state["po_upload_available"] = False
     st.session_state["uploader_nonce"] = st.session_state.get("uploader_nonce", 0) + 1
+    from uuid import uuid4
+    from app.reference_preview import discard_reference_scope
+    if old_scope := st.session_state.get("po_workspace_identity"):
+        discard_reference_scope(old_scope)
+    st.session_state["po_workspace_identity"] = uuid4().hex
+    st.session_state["_po_package_compare_source"] = False
+    st.session_state["po_package_compare_source"] = False
     _deactivate_synthetic_quote()
 
 
@@ -1634,8 +1655,8 @@ def main() -> None:
        widgets that did not render, so returning early from the reviewed path
        would erase the operator's own corrections. Invalidation therefore
        suppresses generation and the handoff, never the fields.
-       ``tests/test_web_ui_helpers.py`` pins rule 2 by scanning this function's
-       source for a return statement after that point.
+       ``tests/test_web_ui_helpers.py`` pins rule 2 by scanning the purchase
+       renderer's source for a return statement after that point.
 
     ``st.form`` is the obvious refactor and it is WRONG here. The gate below
     reads every field on every rerun to build ``draft_problems``; inside a form
@@ -1742,6 +1763,40 @@ def main() -> None:
         _render_footer(workflow_mode)
         return
 
+    from contextlib import ExitStack
+    from uuid import uuid4
+    from app.workspace_layout import workspace
+    identity = st.session_state.setdefault("po_workspace_identity", uuid4().hex)
+    with workspace("purchase", identity):
+        with ExitStack() as presentation:
+            _render_purchase_workflow(browser_token, identity, presentation)
+
+
+def _render_purchase_quote_reference(identity, *, key, quote_text, quote_source,
+                                     uploaded=False):
+    """Inspect the active unchanged quote, or the active pasted-text snapshot."""
+    from app.reference_preview import render_reference
+    if uploaded or quote_source in ("upload", "synthetic"):
+        render_reference(key=key, owner_scope=identity, title="Original quote",
+                         raw=st.session_state.get("uploaded_file_bytes", b""),
+                         filename=st.session_state.get("uploaded_file_name", "quote.txt"))
+    elif quote_source == "paste" and quote_text:
+        render_reference(key=key, owner_scope=identity, title="Pasted quote reference",
+                         text=quote_text)
+    else:
+        st.caption("Add a quote to inspect it here while completing the request.")
+
+
+def _render_purchase_workflow(browser_token, identity, presentation) -> None:
+    """Render the original PO controls once inside two presentation boundaries.
+
+    The caller owns the ExitStack so early intake returns and Streamlit reruns
+    always release container contexts. Closing the first pair starts package
+    review; no widget is duplicated, hidden conditionally or reparented.
+    Keep the analyzed-quote path free of early returns: all corrections must
+    render before output invalidation, exactly as in the original main body.
+    """
+    from app.workspace_layout import workspace_section, workspace_columns
     restore_po_draft(st.session_state)
 
     st.markdown(
@@ -1781,6 +1836,10 @@ def main() -> None:
                 st.session_state.get("uploader_nonce", 0) + 1
             )
             st.rerun()
+
+    presentation.enter_context(workspace_section("purchase_review", "Quote and request review"))
+    editor, reference = workspace_columns("purchase_review")
+    presentation.enter_context(editor)
 
     st.markdown(
         """
@@ -1913,6 +1972,10 @@ def main() -> None:
         synthetic_active=bool(st.session_state.get("synthetic_quote_active")),
         synthetic_text=st.session_state.get("quote_text", ""),
     )
+
+    with reference:
+        _render_purchase_quote_reference(identity, key="purchase_quote",
+            quote_text=quote_text, quote_source=quote_source, uploaded=uploaded is not None)
 
     # Both guards below CLEAR the analysis before returning. That is the point:
     # without it the page would keep rendering the previous quote's vendor,
@@ -2858,6 +2921,11 @@ def main() -> None:
             "opening Smartsheet."
         )
 
+    presentation.close()
+    presentation.enter_context(workspace_section("purchase_package", "Generated package review"))
+    editor, reference = workspace_columns("purchase_package")
+    presentation.enter_context(editor)
+
     st.markdown(
         """
         <div class="step-header">
@@ -2970,6 +3038,23 @@ def main() -> None:
             "A detail changed. Use the button again to refresh both files and the link."
         )
 
+    with reference:
+        current_pdf = st.session_state.get("scope_pdf_bytes")
+        if current_pdf and st.session_state.get("scope_pdf_signature") == current_pdf_signature:
+            st.session_state.setdefault("po_package_compare_source",
+                                        st.session_state.get("_po_package_compare_source", False))
+            compare_source = st.toggle("Compare original quote", key="po_package_compare_source")
+            st.session_state["_po_package_compare_source"] = compare_source
+            if compare_source:
+                _render_purchase_quote_reference(identity, key="purchase_package_quote",
+                    quote_text=cached_quote, quote_source=st.session_state.get("quote_source", ""))
+            else:
+                from app.reference_preview import render_reference
+                render_reference(key="purchase_msapo", owner_scope=identity,
+                                 title="Generated MSAPO", raw=current_pdf, filename="MSAPO.pdf")
+        else:
+            st.caption("The generated MSAPO preview appears after you create the package.")
+    presentation.close()
     _render_footer()
 
 

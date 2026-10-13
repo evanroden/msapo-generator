@@ -52,8 +52,15 @@ def test_general_template_sections_have_one_editing_home(monkeypatch, tmp_path):
     assert {'Equipment Performance Issues', 'Priority Capital Renewal List', 'Pending & Declined Proposals',
             'Organizational Chart', 'Sub-Contractor Status'} <= set(titles)
     assert not any(w.label in ('Section to update', 'Site information to update') for w in app.selectbox)
-    for label in ('Equipment issues', 'Utility analysis'):
-        assert sum(w.label == label for w in app.text_area) == 1
+    assert sum(w.label == 'Utility analysis' for w in app.text_area) == 1
+    # Issues now have one canonical card editor per item, without a second
+    # narrative able to restore removed content. New reports can add directly.
+    assert not any(w.label == 'Equipment issues' for w in app.text_area)
+    assert sum(b.label == 'Add issue' for b in app.button) == 1
+    next(b for b in app.button if b.label == 'Add issue').click().run()
+    assert not app.exception
+    assert sum(w.label == 'Issue description' for w in app.text_area) == 1
+    assert not any(w.label == 'Equipment issues' for w in app.text_area)
     assert any(b.label == 'Edit chart' for b in app.button)
     assert not any(w.label.startswith('Change the ') for w in app.checkbox)
     assert not any(w.label in ('Pictures/pages to keep', 'Picture/page to view') for w in (*app.selectbox, *app.multiselect))

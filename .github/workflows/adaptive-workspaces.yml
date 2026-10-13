@@ -1,0 +1,83 @@
+name: Adaptive workspace DOM
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'tests/fixtures/workspaces/**'
+      - 'tests/workspace_geometry_test.cjs'
+      - 'tests/preview_view_lifecycle_test.cjs'
+      - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_expense_adaptive.py'
+      - 'scripts/qa_po_adaptive.py'
+      - 'scripts/qa_monthly_adaptive.py'
+      - 'requirements*.lock'
+      - '.github/workflows/adaptive-workspaces.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'tests/fixtures/workspaces/**'
+      - 'tests/workspace_geometry_test.cjs'
+      - 'tests/preview_view_lifecycle_test.cjs'
+      - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_expense_adaptive.py'
+      - 'scripts/qa_po_adaptive.py'
+      - 'scripts/qa_monthly_adaptive.py'
+      - 'requirements*.lock'
+      - '.github/workflows/adaptive-workspaces.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: adaptive-dom-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-dom:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked app and browser harness
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc
+          python -m pip install -r requirements-dev.lock
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Pure geometry and real Streamlit DOM
+        run: |
+          node --test tests/workspace_geometry_test.cjs
+          node --test tests/preview_view_lifecycle_test.cjs
+          python scripts/qa_adaptive_workspaces.py
+      - name: Actual Expense workflow with isolated synthetic inputs
+        if: ${{ !cancelled() }}
+        run: python scripts/qa_expense_adaptive.py
+      - name: Actual Purchase order workflow with isolated synthetic inputs
+        if: ${{ !cancelled() }}
+        run: python scripts/qa_po_adaptive.py
+      - name: Actual Monthly workflow with isolated synthetic inputs
+        if: ${{ !cancelled() }}
+        run: python scripts/qa_monthly_adaptive.py
+      - name: Upload synthetic screenshots and geometry
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adaptive-synthetic-browser-evidence
+          path: |
+            test-artifacts/adaptive-workspaces/
+            test-artifacts/expense-adaptive/
+            test-artifacts/po-adaptive/
+            test-artifacts/monthly-adaptive/
+          retention-days: 7
+          if-no-files-found: warn
