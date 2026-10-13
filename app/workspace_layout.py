@@ -14,6 +14,7 @@ from hashlib import sha256
 from html import escape
 from pathlib import Path
 import re
+from uuid import uuid4
 
 import streamlit as st
 from streamlit.runtime import Runtime
@@ -54,6 +55,10 @@ def workspace(workflow: str, identity: str, *, navigation_key: str = ""):
             "workflow": workflow,
             "identity": sha256(str(identity).encode()).hexdigest()[:24],
             "navigationKey": navigation_key,
+            # New only for a real top-level workspace render, never a preview
+            # fragment. It lets display-only viewers distinguish a queued
+            # native edit from the completed full-app rerun that accepted it.
+            "fullRender": uuid4().hex,
         }, height=1, width="stretch")
         yield root
 
