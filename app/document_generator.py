@@ -56,6 +56,8 @@ def _add_bullet(doc, item_text: str):
     except KeyError:
         para = doc.add_paragraph()
         item_text = f"•  {item_text}"
+    # Keep short bullet continuations together in Writer/Word pagination.
+    para.paragraph_format.keep_together = True
     run = para.add_run(item_text)
     return para
 
@@ -185,11 +187,15 @@ def _append_scope_content(
     run = p.add_run("Detailed Scope of Work")
     run.bold = True
     run.font.size = Pt(11)
+    p.paragraph_format.keep_with_next = True
 
     for para_text in analysis.scope_of_work.split("\n"):
         stripped = para_text.strip()
         if stripped:
-            doc.add_paragraph(stripped)
+            paragraph = doc.add_paragraph(stripped)
+            # A short wrapped continuation (e.g. a lone last word) must not
+            # be pushed onto the following native MSAPO page on its own.
+            paragraph.paragraph_format.keep_together = True
 
     doc.add_paragraph("")  # spacer
 
