@@ -223,7 +223,12 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
                 # must not be reinserted when the same file is read again.
-                if reference in existing.references:
+                # Date/site corrections alter a source fingerprint without
+                # changing its original bytes or page identity. A prior manual
+                # correction/deletion on that page must not be duplicated merely
+                # because the source metadata was corrected and reviewed again.
+                origin = f"{content.source.id}:{number}:"
+                if any(ref.startswith(origin) for ref in existing.references):
                     continue
                 tagged_txt = (content.source.suffix == ".txt"
                               and any(_EVENT_START.match(line) for line in text.splitlines()))
@@ -234,11 +239,15 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                for line in _activity_lines(text, content.source.suffix):
+                for line, header_date in _activity_lines(
+                        text, content.source.suffix, with_dates=True):
                     line = line.strip()
                     if useful_activity(line) and not contains_price(line):
-                        paragraphs.append(line)
-                        references.append(reference)
+                        dated = header_date if tagged_txt else content.source.service_date
+                        grounded = _activity_identity(line, content.source, dated)
+                        if not contains_price(grounded):
+                            paragraphs.append(grounded)
+                            references.append(reference)
         text = "\n\n".join(dict.fromkeys(filter(None, (*existing.text.split("\n\n"), *paragraphs))))
         return replace(existing, text=text, references=tuple(dict.fromkeys(references)), reviewed_fingerprint="")
     rows = list(existing.rows)
