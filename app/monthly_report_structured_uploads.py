@@ -190,6 +190,23 @@ def _activity_lines(text, suffix, *, with_dates=False):
     return tuple(result)
 
 
+def _activity_identity(line, source, event_date):
+    """Prefix only verified source-authored vendor/date, never file/report dates."""
+    from datetime import date
+    parts = []
+    try:
+        dated = date.fromisoformat(event_date).isoformat() if event_date else ""
+    except ValueError:
+        dated = ""
+    if dated and dated not in line:
+        parts.append(dated)
+    vendor = source.vendor.strip()
+    if vendor and len(vendor) <= 160 and not contains_price(vendor):
+        if vendor.casefold() not in line.casefold():
+            parts.append(vendor)
+    return " · ".join(parts) + " — " + line if parts else line
+
+
 def native_update(contents, destination, existing=None, *, table_columns=None):
     existing = existing or ResolvedBlock(destination, "This month")
     references = list(existing.references)
