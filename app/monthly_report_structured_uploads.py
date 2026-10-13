@@ -209,9 +209,10 @@ def _activity_identity(line, source, event_date):
 
 def _csv_has_site_scope_column(content):
     """A row-specific site/client needs target mapping before auto-Activity."""
+    site_tokens = {"facility", "site", "client", "customer",
+                   "hospital", "building", "location"}
     return content.source.suffix == ".csv" and any(
-        re.sub(r"[^a-z0-9]", "", title.casefold()) in
-        {"facility", "site", "client", "customer", "hospital", "building", "location"}
+        site_tokens.intersection(re.findall(r"[a-z0-9]+", title.casefold()))
         for table in content.tables for title in table.columns)
 
 
