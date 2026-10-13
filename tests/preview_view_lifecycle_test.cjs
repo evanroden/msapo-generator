@@ -327,7 +327,7 @@ test('native editing event withholds preview fragments until matching full-rende
         setTimeout:(callback,delay)=>{timers.set(++sequence,{callback,delay});return sequence;},
         clearTimeout:id=>timers.delete(id)};
     const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8')
-        .split('JS = r"""\\n')[1].split('\\n"""')[0];
+        .split('JS = r"""\n')[1].split('\n"""')[0];
     const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
     const cleanup=render({parentElement:root,data:{generation:'same',viewScope:'expense|receipt',
         pages:[],sizes:[[612,792]],ready:true},setStateValue:(name,value)=>sent.push({name,value})});
