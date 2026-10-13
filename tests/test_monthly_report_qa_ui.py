@@ -128,7 +128,19 @@ def test_accepted_generation_queue_survives_an_unrelated_editor_rerun(monkeypatc
     app = visit(monkeypatch, tmp_path)
     next(button for button in app.button if button.label == "Load known-value report").click().run()
     assert not app.exception
-    app.session_state["monthly_qa_generate_queued"] = True
+    from app import monthly_report_testing_ui as testing_ui
+    with qa.isolated(ACTOR_COOKIE):
+        saved = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
+        draft = saved.draft
+        # Use the finalized mounted editor, which may normalize review metadata.
+        from app.monthly_report_editor import _signature
+        draft = app.session_state["report_guided_" + _signature((fixture.CONTRACT, fixture.profile().key, fixture.PERIOD.key)) + "_draft"]
+        app.session_state["monthly_qa_generate_queued"] = {
+            "generation": qa.generation(), "revision": saved.revision,
+            "identity": (draft.profile.contract, draft.profile.key, draft.period.key),
+            "fingerprint": draft.fingerprint, "id": "a" * 32,
+            "accepted_at": "synthetic accepted action", "status": "accepted",
+        }
     app.run()
     assert not app.exception
     with pytest.raises(KeyError):
@@ -166,3 +178,43 @@ def test_browser_reconnect_returns_to_same_qa_period_and_recovers_activity(monke
     assert next(w for w in reopened.text_input if w.label == "Prepared by").value == fixture.ACTOR
     assert any("Recovered your unfinished changes" in s.value for s in reopened.success)
     assert not reopened.error
+
+
+def test_generation_receipt_remains_visible_after_failure_and_newer_edit(monkeypatch, tmp_path):
+    from app import monthly_report_docx as output
+    app = visit(monkeypatch, tmp_path)
+    next(b for b in app.button if b.label == "Replay synthetic source files").click().run()
+    calls = []
+    def fail(*args, **kwargs):
+        calls.append(1)
+        raise ValueError("Synthetic renderer is unavailable; retry this operation.")
+    monkeypatch.setattr(output, "generate_report", fail)
+    next(b for b in app.button if b.label == "Generate QA Word and PDF").click().run()
+    assert not app.exception and len(calls) == 1
+    receipt = dict(app.session_state["monthly_qa_generation_receipt"])
+    assert receipt["status"] == "rejected"
+    app.run()
+    assert app.session_state["monthly_qa_generation_receipt"] == receipt
+    assert any("Synthetic renderer is unavailable" in e.value for e in app.error)
+    # A pending earlier action cannot silently approve a newer finalized draft.
+    app.session_state["monthly_qa_generate_queued"] = {**receipt, "status": "accepted"}
+    next(w for w in app.text_area if w.label == "Activity summary").set_value("Synthetic newer correction").run()
+    assert not app.exception and len(calls) == 1
+    assert app.session_state["monthly_qa_generation_receipt"]["status"] == "rejected"
+    assert any("report changed after" in e.value for e in app.error)
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic newer correction"
+
+
+def test_generation_context_rejects_other_revision_identity_and_reset():
+    from types import SimpleNamespace
+    from app import monthly_report_testing_ui as testing_ui
+    # Use the ordinary synthetic model; no fixture reads/writes are needed.
+    from app.monthly_report_model import synthetic_draft, synthetic_profiles
+    draft = synthetic_draft(synthetic_profiles()[0], fixture.PERIOD)
+    saved = SimpleNamespace(revision=4)
+    request = {"generation": "current", "revision": 4,
+               "identity": (draft.profile.contract, draft.profile.key, draft.period.key),
+               "fingerprint": draft.fingerprint}
+    assert testing_ui._generation_matches(request, draft, saved, "current")
+    for changed in ({"generation": "old"}, {"revision": 3}, {"identity": ("other", "site", "2026-09")}, {"fingerprint": "old"}):
+        assert not testing_ui._generation_matches({**request, **changed}, draft, saved, "current")

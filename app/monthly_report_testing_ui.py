@@ -72,9 +72,44 @@ def _queue_compare_request() -> None:
         }
 
 
-def _queue_generation_request():
-    """Keep a received QA click through unrelated preview/editor reruns."""
-    st.session_state["monthly_qa_generate_queued"] = True
+def _queue_generation_request(context):
+    """Bind the accepted click to the report last presented by this toolbar."""
+    if not st.session_state.get("monthly_qa_generate_queued"):
+        request = {**context, "id": uuid4().hex, "accepted_at": _now(), "status": "accepted"}
+        st.session_state["monthly_qa_generate_queued"] = request
+        st.session_state["monthly_qa_generation_receipt"] = request
+
+
+def _generation_context(saved, generation):
+    working = _working_report(saved)
+    return {"generation": generation, "revision": saved.revision,
+            "fingerprint": working.fingerprint,
+            "identity": (working.profile.contract, working.profile.key, working.period.key)}
+
+
+def _generation_matches(request, working, saved, generation):
+    return (isinstance(request, dict) and request.get("generation") == generation
+            and request.get("revision") == saved.revision
+            and request.get("identity") == (working.profile.contract, working.profile.key, working.period.key)
+            and request.get("fingerprint") == working.fingerprint)
+
+
+def _finish_generation(request, status, message=""):
+    st.session_state["monthly_qa_generation_receipt"] = {
+        **request, "status": status, "finished_at": _now(), "message": message,
+    }
+    st.session_state.pop("monthly_qa_generate_queued", None)
+
+
+def _render_generation_receipt(generation):
+    receipt = st.session_state.get("monthly_qa_generation_receipt")
+    if not isinstance(receipt, dict) or receipt.get("generation") != generation:
+        return
+    st.caption(f"QA generation action {receipt['status']}: action {receipt['id'][:12]} · "
+               f"generation {generation[:12]} · revision {receipt['revision']} · "
+               f"fingerprint {receipt['fingerprint'][:12]} · received {receipt['accepted_at']}")
+    if receipt["status"] == "rejected":
+        st.error("QA export was blocked: " + receipt["message"])
 
 
 def _active_jobs() -> bool:
@@ -275,10 +310,13 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         x, y = st.columns(2)
         x.button("Compare fixture facts", key="monthly_qa_compare",
                  on_click=_queue_compare_request)
+        generation_context = _generation_context(saved, current_generation)
         y.button("Generate QA Word and PDF", key="monthly_qa_generate",
-                 on_click=_queue_generation_request)
-        if st.session_state.get("monthly_qa_generate_queued"):
-            st.caption("QA generation request received; preparing this exact test report.")
+                 on_click=_queue_generation_request,
+                 args=(generation_context,))
+        generation_surface = st.empty()
+        with generation_surface.container():
+            _render_generation_receipt(current_generation)
         # Allocate this near the toolbar; resolve content after the editor finalizes.
         result_surface = st.container()
         st.divider()
@@ -286,12 +324,16 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         from app.monthly_report_guided import render_guided_workflow
         render_guided_workflow(browser_token, browser_timezone, field, move)
         working = _working_report(saved)
+        # Bind the mounted toolbar to the finalized editor for this completed run.
+        # Streamlit retains this callback argument object until the next click.
+        generation_context.update(_generation_context(saved, current_generation))
         # Test-only diagnosis: record exactly what the finalized server draft
         # contains, independent of the browser textarea and unfinished journal.
         # Synthetic QA scope is enforced at render() entry; never echo text.
         from hashlib import sha256
         activity_text = next((block.text for block in working.blocks
                               if block.key == "activity_summary"), "")
+        st.caption("QA working report SHA256: " + working.fingerprint)
         st.caption("QA working Activity SHA256: " +
                    sha256(activity_text.encode("utf-8")).hexdigest())
         with result_surface:
@@ -314,22 +356,25 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                         "id": compare_request["id"], "at": _now(),
                     }
                     st.session_state.pop("monthly_qa_compare_pending", None)
-            if st.session_state.get("monthly_qa_generate_queued"):
-                # A callback receipt persists the user's request even when a
-                # section preview/editor rerun happens between the click and
-                # this last, fully finalized guided draft. Do not clear until
-                # generation finishes or fails with an actionable error.
-                from app.monthly_report_docx import generate_report
-                try:
-                    with st.spinner("Generating isolated Word and PDF files…"):
-                        package = generate_report(
-                            working, acknowledged_fingerprint=working.fingerprint)
-                except (ValueError, OSError) as exc:
-                    st.session_state.pop("monthly_qa_generate_queued", None)
-                    st.error("QA export was blocked: " + str(exc))
+            if request := st.session_state.get("monthly_qa_generate_queued"):
+                # Preview callbacks may interrupt an accepted action. Keep its
+                # receipt, but never silently export a different finalized draft.
+                if not _generation_matches(request, working, saved, current_generation):
+                    _finish_generation(request, "rejected", "The report changed after this generation request. "
+                                       "Review the current report and choose Generate QA Word and PDF again.")
                 else:
-                    st.session_state["monthly_qa_package"] = (working.fingerprint, package)
-                    st.session_state.pop("monthly_qa_generate_queued", None)
+                    from app.monthly_report_docx import generate_report
+                    try:
+                        with st.spinner("Generating isolated Word and PDF files…"):
+                            package = generate_report(
+                                working, acknowledged_fingerprint=working.fingerprint)
+                    except (ValueError, OSError) as exc:
+                        _finish_generation(request, "rejected", str(exc))
+                    else:
+                        st.session_state["monthly_qa_package"] = (working.fingerprint, package)
+                        _finish_generation(request, "completed")
+            with generation_surface.container():
+                _render_generation_receipt(current_generation)
             if state := st.session_state.get("monthly_qa_comparison"):
                 if state.get("fingerprint") != working.fingerprint:
                     st.info("Previous comparison is outdated. Run Compare fixture facts again after editing.")
