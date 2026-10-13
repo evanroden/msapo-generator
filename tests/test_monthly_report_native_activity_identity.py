@@ -180,3 +180,26 @@ def test_native_vendor_csv_activity_reaches_real_word_and_pdf(monkeypatch, tmp_p
     assert "2026-09-16" in printed and "Trane" in printed
     assert "Inspected chiller compressor." in printed
     assert "$1200" not in printed
+
+
+def test_cached_reader_does_not_duplicate_dated_native_activity():
+    source = sample("Completed strainer cleaning and leak inspection. Result: no leakage found.",
+                    vendor="Trane", when="2026-09-03")
+    native = structured.native_update((source,), "activity_summary")
+    assert "2026-09-03 · Trane — Completed strainer cleaning" in native.text
+    result, pages = structured.reader_update((source,), "activity_summary", {
+        "items": [{"source": source.source.id, "page": 1,
+                   "text": "Completed strainer cleaning and leak inspection. Result: no leakage found.",
+                   "row": [], "include_page": False}],
+    }, native)
+    assert result.text == native.text
+    assert result.references == native.references
+    assert pages == {}
+    corrected = replace(source, source=replace(source.source,
+                                               service_date="2026-09-04"))
+    repeated, _ = structured.reader_update((corrected,), "activity_summary", {
+        "items": [{"source": corrected.source.id, "page": 1,
+                   "text": "Completed strainer cleaning and leak inspection. Result: no leakage found.",
+                   "row": []}],
+    }, native)
+    assert repeated.text == native.text
