@@ -201,7 +201,11 @@ def _activity_identity(line, source, event_date):
     if dated and dated not in line:
         parts.append(dated)
     vendor = source.vendor.strip()
-    if vendor and len(vendor) <= 160 and not contains_price(vendor):
+    # A source's vendor label can contain a person's email or telephone
+    # instead of a company identity. Do not introduce that contact detail
+    # merely by enriching otherwise client-safe Activity wording.
+    unsafe_contact = "@" in vendor or sum(ch.isdigit() for ch in vendor) >= 10
+    if vendor and not unsafe_contact and len(vendor) <= 160 and not contains_price(vendor):
         if vendor.casefold() not in line.casefold():
             parts.append(vendor)
     return " · ".join(parts) + " — " + line if parts else line
