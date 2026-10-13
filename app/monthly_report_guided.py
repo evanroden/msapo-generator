@@ -88,6 +88,19 @@ def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
     }
 
 
+def _clear_rich_text_for_this_report(marker, widget_key, block, scope, prefix):
+    """Explicit report-only empty edit; obey the same revision/epoch receipt guard.
+
+    The native multiline widget can require an explicit apply gesture after
+    editing. This separate action gives the operator a deliberate one-click
+    clear without touching original evidence or saved shared report history.
+    """
+    if _rich_text_scope(prefix) != scope:
+        return  # A stale tab cannot clear a different imported/reset report.
+    st.session_state[widget_key] = ""
+    _mark_explicit_rich_text_edit(marker, widget_key, block, scope)
+
+
 def _pending_rich_text_edit(prefix, block):
     """A delivered callback is newer input before the final draft assignment."""
     key = _rich_text_editor_key(prefix, block)
@@ -433,6 +446,15 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             key=field(editor_key, block.text), height=140,
             on_change=_mark_explicit_rich_text_edit,
             args=(changed_marker, editor_key, block, scope))
+        if spec.key == "activity_summary":
+            st.button(
+                "Clear Activity for this report",
+                key=prefix + "_clear_activity_report_" + _signature(scope),
+                disabled=(not block.text and not displayed),
+                help="Clears only this working report's Activity wording, not source files, older report versions or standing information.",
+                on_click=_clear_rich_text_for_this_report,
+                args=(changed_marker, editor_key, block, scope, prefix),
+            )
         if submitted and text != block.text:
             block = _edited_rich_text(block, text)
             # Do not consume yet. Preview/fragment work can interrupt a full
