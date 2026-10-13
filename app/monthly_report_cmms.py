@@ -24,6 +24,7 @@ class CMMSMapping:
     date_format: str = "ISO"
     complete_months: tuple[str, ...] = ()
     complete_facilities: tuple[str, ...] = ()
+    finish_date_means_completed: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,8 @@ def map_cmms(table: SourceTable, mapping: CMMSMapping, profile: ReportProfile,
         raise ValueError("Map the finish date and work-order identity to actual columns.")
     if mapping.status and not mapping.completed_statuses:
         raise ValueError("Select which status values mean completed work.")
+    if not mapping.status and not mapping.finish_date_means_completed:
+        raise ValueError("Choose whether a valid finish date means completed work for this export, or map a status column.")
     if not mapping.facility and mapping.assigned_facility not in {f.key for f in profile.facilities}:
         raise ValueError("Map a facility column or explicitly assign this export to a profile facility.")
     windows = month_window(period)

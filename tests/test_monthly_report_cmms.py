@@ -96,3 +96,13 @@ def test_missing_required_columns_or_ambiguous_category_are_rejected():
                     replace(MAPPING, cm_values=("Preventive",))):
         with pytest.raises(ValueError):
             map_cmms(TABLE, mapping, PROFILE, PERIOD, "synthetic-source")
+
+
+def test_missing_status_requires_explicit_finish_date_rule_and_keeps_unknown_coverage():
+    mapping = replace(MAPPING, status="", completed_statuses=())
+    with pytest.raises(ValueError, match="Choose whether a valid finish date"):
+        map_cmms(TABLE, mapping, PROFILE, PERIOD, "synthetic-source")
+    result = map_cmms(TABLE, replace(mapping, finish_date_means_completed=True),
+                      PROFILE, PERIOD, "synthetic-source")
+    assert [row[1] for row in result.blocks[0].rows] == ["001", "002", "005"]
+    assert all(row[2:] == ("", "", "") for row in result.blocks[1].rows)

@@ -83,10 +83,20 @@ def test_cmms_mapping_applies_real_schema_and_invalidates_on_change(monkeypatch,
     assert not any(w.label == "I confirm this CMMS mapping and coverage" for w in app.checkbox)
     button(app, "Apply CMMS mapping").click().run()
     assert not app.exception
+    assert not cmms_ready(app)
+    assert any("Choose whether a valid finish date" in w.value for w in app.error)
+    next(w for w in app.checkbox if w.label == "A valid finish date means completed work in this export").check().run()
+    button(app, "Apply CMMS mapping").click().run()
+    assert not app.exception
     assert cmms_ready(app)
+    # The accepted choice survives a neutral rerun, but changing the mapped
+    # date column cannot reuse it or leave old mapping results current.
+    app.run()
+    assert next(w for w in app.checkbox if w.label == "A valid finish date means completed work in this export").value
     select(app, "Finish date column").set_value("").run()
     assert not app.exception
     assert not cmms_ready(app)
+    assert not next(w for w in app.checkbox if w.label == "A valid finish date means completed work in this export").value
     button(app, "Apply CMMS mapping").click().run()
     assert not app.exception
     assert any("Map the finish date and work-order identity" in w.value for w in app.error)

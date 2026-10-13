@@ -21,20 +21,24 @@ def reference_pdf(raw: bytes, filename: str) -> bytes:
     """Preserve PDF bytes; create bounded disposable copies for image sources."""
     if not isinstance(raw, bytes) or not raw:
         raise ValueError('No source bytes are available.')
+    if len(raw) > 30 * 1024 * 1024:
+        raise ValueError('This source exceeds the 30 MB preview input limit.')
     if raw.startswith(b'%PDF-'):
         return raw
     # Reuse the approved receipt image/frame bounds, without invoking a reader.
     # At most ten frames are normalized once for this disposable source copy.
     from app.expense_report import receipt_attachment_pages
     import fitz
-    pages = receipt_attachment_pages(raw, filename)
-    with fitz.open() as document:
-        for image in pages:
-            with fitz.open(stream=image, filetype='jpeg') as source:
-                image_pdf = source.convert_to_pdf()
-            with fitz.open(stream=image_pdf, filetype='pdf') as page:
-                document.insert_pdf(page)
-        return document.tobytes(garbage=3, deflate=True)
+    from app.monthly_report_render_jobs import work_slot
+    with work_slot(preview=True):
+        pages = receipt_attachment_pages(raw, filename)
+        with fitz.open() as document:
+            for image in pages:
+                with fitz.open(stream=image, filetype='jpeg') as source:
+                    image_pdf = source.convert_to_pdf()
+                with fitz.open(stream=image_pdf, filetype='pdf') as page:
+                    document.insert_pdf(page)
+            return document.tobytes(garbage=3, deflate=True)
 
 
 def _owner(scope: str):
@@ -86,10 +90,11 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
         if old.get('ticket'):
             STORE.discard(state['owner'],old['ticket'])
     widget_key='workspace_reference_' + key
+    generation=sha256((state['owner']+'|'+key+'|'+fingerprint).encode()).hexdigest()
 
     def changed():
         value=st.session_state.get(widget_key,{})
-        selected=viewport(value.get('viewport'),fingerprint) if isinstance(value,dict) else None
+        selected=viewport(value.get('viewport'),generation) if isinstance(value,dict) else None
         if selected is not None:
             entry['view']=selected
 
@@ -121,7 +126,7 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
             if st.button('Retry source preview',key=widget_key+'_retry'):
                 entry['error']=''
                 st.rerun(scope='fragment')
-        render_view(key=widget_key,generation=fingerprint,title=title,ticket=ticket,
+        render_view(key=widget_key,generation=generation,title=title,ticket=ticket,
                     images=images,status=status,on_change=changed,
                     view_scope=state['owner']+'|'+key+'|'+fingerprint)
     surface()

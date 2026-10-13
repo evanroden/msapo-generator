@@ -241,3 +241,5 @@ Browser-scoped active monthly work: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_ACTI
 Site click and Start responsiveness: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SITE_FEEDBACK.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SITE_FEEDBACK.md). Selected-site confirmation, bounded UI logo-canvas caching, and Start progress without changing the native report design.
 
 Inline section terminology: [COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SECTION_TERMS.md](COMMIT_NOTES_2026-10-10_MONTHLY_REPORT_SECTION_TERMS.md). MBCx/ENFRA Connect/RFI and hospital-training/onsite-vendor boundaries.
+
+- [PO adaptive workspace: isolated original quote and current MSAPO pairing](PO_ADAPTIVE_WORKSPACE_2026-10-13.md).

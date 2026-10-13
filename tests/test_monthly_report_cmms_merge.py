@@ -13,7 +13,8 @@ from app.monthly_report_sources import SourceTable
 PROFILE = synthetic_profiles()[1]
 PERIOD = ReportPeriod(2026, 9)
 MAPPING = CMMSMapping("Finished", "ID", facility="Facility", description="Task",
-                      complete_months=(PERIOD.key,), complete_facilities=("north",))
+                      complete_months=(PERIOD.key,), complete_facilities=("north",),
+                      finish_date_means_completed=True)
 TABLE = SourceTable("Synthetic", ("ID", "Finished", "Facility", "Task"), (
     ("001", "2026-09-02", "Demo North", "Inspected demonstration pump"),
 ))

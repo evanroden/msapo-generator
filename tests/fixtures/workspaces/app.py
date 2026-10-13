@@ -4,7 +4,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 import streamlit as st
 from app.workspace_layout import workspace, workspace_section, workspace_columns
-from app.monthly_report_preview_view import render_view
+from app.reference_preview import render_reference
+
+@st.cache_data
+def synthetic_pdf(section):
+    import fitz
+    with fitz.open() as document:
+        for index in range(2):
+            page = document.new_page()
+            page.insert_text((48, 72), f'SYNTHETIC {section.upper()} - PAGE {index + 1}', fontsize=18)
+            page.insert_text((48, 105), 'Rendered test content. No client facts or business output.', fontsize=11)
+        return document.tobytes()
 
 st.set_page_config(layout="wide")
 st.markdown('<style>.block-container{max-width:1000px !important;padding-top:1rem}header{visibility:hidden}</style>',unsafe_allow_html=True)
@@ -22,5 +32,5 @@ with workspace('monthly', 'synthetic-report-a', navigation_key='monthly_report_n
                 for index in range(12 if section != 'short' else 1):
                     st.text_input(f'{section} detail {index}',key=section+str(index))
             with preview:
-                st.caption('Actual synthetic preview surface')
-                render_view(key='preview_'+section,generation='synthetic-v1',title=section.title(),on_change=lambda:None)
+                render_reference(key='preview_'+section, owner_scope='synthetic-report-a',
+                                 title=section.title(), raw=synthetic_pdf(section), filename=section+'.pdf')

@@ -43,7 +43,7 @@ def test_document_signature_changes_with_routing_or_scope():
 
 
 def test_review_path_does_not_return_before_rendering_correctable_fields():
-    source = inspect.getsource(web_ui.main)
+    source = inspect.getsource(web_ui._render_purchase_workflow)
     review_path = source.split(
         'token = st.session_state.get("analysis_token", "x")', 1
     )[1]

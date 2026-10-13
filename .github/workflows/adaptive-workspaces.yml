@@ -7,6 +7,8 @@ on:
       - 'tests/fixtures/workspaces/**'
       - 'tests/workspace_geometry_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_expense_adaptive.py'
+      - 'scripts/qa_po_adaptive.py'
       - 'requirements*.lock'
       - '.github/workflows/adaptive-workspaces.yml'
   push:
@@ -16,6 +18,8 @@ on:
       - 'tests/fixtures/workspaces/**'
       - 'tests/workspace_geometry_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_expense_adaptive.py'
+      - 'scripts/qa_po_adaptive.py'
       - 'requirements*.lock'
       - '.github/workflows/adaptive-workspaces.yml'
 
@@ -49,11 +53,18 @@ jobs:
         run: |
           node --test tests/workspace_geometry_test.cjs
           python scripts/qa_adaptive_workspaces.py
+      - name: Actual Expense workflow with isolated synthetic inputs
+        run: python scripts/qa_expense_adaptive.py
+      - name: Actual Purchase order workflow with isolated synthetic inputs
+        run: python scripts/qa_po_adaptive.py
       - name: Upload synthetic screenshots and geometry
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: adaptive-synthetic-browser-evidence
-          path: test-artifacts/adaptive-workspaces/
+          path: |
+            test-artifacts/adaptive-workspaces/
+            test-artifacts/expense-adaptive/
+            test-artifacts/po-adaptive/
           retention-days: 7
           if-no-files-found: warn

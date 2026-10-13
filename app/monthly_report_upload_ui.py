@@ -142,8 +142,13 @@ def _cmms(content, profile, period, prefix, field):
         st.session_state[key] = [v for v in st.session_state[key] if v in options]
         return st.multiselect(label, options, key=key)
     statuses = selected_values("Statuses that mean completed", choices(values["status"]), "_complete") if values["status"] else []
+    finish_date_means_completed = False
     if not values["status"]:
-        st.caption("Without a status column, a valid finish date is treated as completed work.")
+        st.caption("No completion status column is mapped. Choose the rule supported by this export.")
+        rule_key = prefix + "_finish_rule_" + _signature((source.fingerprint, values["finished"]))[:16]
+        finish_date_means_completed = st.checkbox(
+            "A valid finish date means completed work in this export",
+            key=field(rule_key, False))
     pm = selected_values("Category values that mean PM", choices(values["category"]), "_pm") if values["category"] else []
     cm = selected_values("Category values that mean CM", choices(values["category"]), "_cm") if values["category"] else []
     date_format = st.selectbox("Date format", ["ISO", "MM/DD/YYYY", "DD/MM/YYYY"], key=field(prefix + "_date_format", "ISO"))
@@ -152,7 +157,8 @@ def _cmms(content, profile, period, prefix, field):
     facilities = st.multiselect("Facilities covered completely in those months", [f.key for f in profile.facilities],
                                 format_func=lambda v: next(f.title for f in profile.facilities if f.key == v), key=field(prefix + "_coverage", []))
     mapping = CMMSMapping(**values, assigned_facility=assigned, completed_statuses=tuple(statuses), pm_values=tuple(pm),
-                          cm_values=tuple(cm), date_format=date_format, complete_months=tuple(months), complete_facilities=tuple(facilities))
+                          cm_values=tuple(cm), date_format=date_format, complete_months=tuple(months), complete_facilities=tuple(facilities),
+                          finish_date_means_completed=finish_date_means_completed)
     signature = _signature((source.fingerprint, asdict(mapping), period.key))
     result_key = prefix + "_result"
     result = st.session_state.get(result_key)

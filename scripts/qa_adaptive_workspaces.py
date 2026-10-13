@@ -87,10 +87,14 @@ def exercise(browser_type, name):
     settled(page,'wide')
     first=page.locator('.st-key-epc_pair_monthly_activity')
     preview=first.locator('.epc-workspace-reference')
+    # A wrapper alone is not a viewer. Wait for actual bounded raster content,
+    # then let its ResizeObserver size settle before measuring sticky geometry.
+    preview.locator('.report-preview img').first.wait_for(state='visible',timeout=30000)
     page.locator('[data-testid="stMain"]').evaluate('(node)=>{node.scrollTop=500}')
     page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
     wide=capture(page,name,'wide-sticky')
     firstGeo=wide['pairs'][0]
+    check(name+' actual preview surface mounted',firstGeo['surface'] is not None and firstGeo['surface']['bounds']['height']>180,firstGeo)
     check(name+' long preview pins at measured top',abs(firstGeo['preview']['top']-firstGeo['stickyTop']) <= 3, firstGeo)
     check(name+' viewer fits actual viewport',preview.locator('.report-preview').bounding_box()['y']+preview.locator('.report-preview').bounding_box()['height'] <= 900+3)
     page.locator('[data-testid="stMain"]').evaluate('''(node)=>{
@@ -104,6 +108,9 @@ def exercise(browser_type, name):
     page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
     reverse=capture(page,name,'reverse-boundary')
     check(name+' reverse scroll restores same preview',abs(reverse['pairs'][0]['preview']['top']-reverse['pairs'][0]['stickyTop'])<=3)
+    preview.get_by_role('button',name='Next preview page').click()
+    preview.get_by_label('Preview zoom').select_option('page')
+    page.wait_for_function("() => Array.from(document.querySelector('.st-key-epc_pair_monthly_activity').querySelectorAll('*')).some(n=>n.shadowRoot?.querySelector('.report-preview-position')?.textContent==='2 / 2')")
     field=page.get_by_label('Work summary activity',exact=True)
     field.click(); field.fill('Typed without blur; preserved through geometry transitions')
     field.evaluate('(node)=>node.setSelectionRange(6,11)')
@@ -119,6 +126,7 @@ def exercise(browser_type, name):
     after=field.evaluate('(node)=>({value:node.value,start:node.selectionStart,end:node.selectionEnd})')
     check(name+' unblurred input and selection survive',before==after,after)
     check(name+' input node retained and focus preserved',field.evaluate('(node)=>node===document.activeElement'))
+    check(name+' page and zoom retained through book and tabletop',preview.locator('.report-preview-position').inner_text()=='2 / 2' and preview.get_by_label('Preview zoom').input_value()=='page')
     page.locator('.epc-workspace').evaluate('''root=>{
        const next=root.querySelector('.st-key-epc_pair_monthly_scorecards');
        root.scrollTop+=next.getBoundingClientRect().top-root.getBoundingClientRect().top+80;

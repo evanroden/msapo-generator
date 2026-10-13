@@ -228,7 +228,10 @@ def _render_ordered_preview(section_key, prefix, title):
         st.rerun(scope='app')
     entry = _current_entry(state, section_key)
     # These panes repeat down the report. Suppress duplicate heading link IDs.
-    st.subheader('Preview', anchor=False)
+    # anchor=False hides Streamlit's chain but still emits an auto-generated
+    # heading ID. Thirteen identical headings therefore still duplicate IDs.
+    # The containing report section already supplies the semantic heading.
+    st.caption('Preview')
     images, ticket = (), None
     stale = False
     status = _preview_status(pending=pending)
