@@ -119,3 +119,31 @@ Report state and originals remain under the existing production code paths.
 - https://www.w3.org/TR/cssom-view/#the-visualviewport-interface
 
 These references establish API semantics, not device/browser availability.
+
+## Expense integration checkpoint
+
+The expense isolation gate ran before UI mutation: two real AppTest sessions,
+original synthetic image bytes and independent edits/splits/removals, temporary
+EPC_DATA_DIR, denied socket/subprocess/external-reader/native-share boundaries.
+Real SQLite and Python write paths were constrained to the temporary root.
+Both tests passed; no Monthly QA namespace was used.
+
+The expense renderer now uses one shared workspace and per-receipt boundaries,
+with the existing single editor on the left and the original bounded source
+viewer on the right. Existing receipt hashes, splits, calculations and controls
+are unchanged. Mileage pairs the existing editor with current trip/reimbursement
+information. The existing current-package signature gate pairs manual handoff
+controls with the actual generated PDF; missing PDFs retain Excel fallback.
+`reference_preview.py` uses the existing owner-scoped global PreviewStore,
+loads only visible sources and rasterizes at most two requested pages. PDFs
+remain byte-for-byte original; images use existing bounded normalization.
+
+Executed integration-focused checks: 14 passed across isolation, draft mirror,
+disclosure, source-viewer and workspace tests. Source viewing tests separately
+prove an offscreen source has zero PDF/raster entries, a four-page source loads
+only two requested pages and a second owner cannot read its ticket. Browser
+expense journeys and hardware/share cancellation remain unverified.
+
+The first real DOM CI run exposed a sticky-wrapper height failure. This is an
+open implementation defect under diagnosis; the sticky assertion is retained.
+A passed geometry resolver/AppTest is not acceptance of this browser behavior.

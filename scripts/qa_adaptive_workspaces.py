@@ -30,7 +30,19 @@ def check(name, condition, detail=None):
 
 
 def geometry(page):
-    return page.locator('.epc-workspace').evaluate('''root => ({
+    return page.locator('.epc-workspace').evaluate('''root => {
+      const describe = node => {
+        if (!node) return null;
+        const style=getComputedStyle(node);
+        return {tag:node.tagName,classes:node.className,testid:node.dataset.testid,
+          bounds:node.getBoundingClientRect().toJSON(),
+          display:style.display,position:style.position,height:style.height,
+          minHeight:style.minHeight,maxHeight:style.maxHeight,flex:style.flex,
+          alignSelf:style.alignSelf,alignItems:style.alignItems,
+          overflow:style.overflow,transform:style.transform,
+          previewHeight:style.getPropertyValue('--epc-preview-height')};
+      };
+      return ({
       mode:root.dataset.epcMode,reason:root.dataset.epcReason,
       root:root.getBoundingClientRect().toJSON(),scrollTop:root.scrollTop,
       pairs:Array.from(root.querySelectorAll('.epc-workspace-pair')).map(pair=>({
@@ -38,8 +50,13 @@ def geometry(page):
         pair:pair.getBoundingClientRect().toJSON(),
         preview:pair.querySelector('.epc-workspace-reference').getBoundingClientRect().toJSON(),
         stickyTop:parseFloat(getComputedStyle(pair.querySelector('.epc-workspace-reference')).top),
-        visibility:getComputedStyle(pair.querySelector('.epc-workspace-reference')).visibility
-      }))})''')
+        visibility:getComputedStyle(pair.querySelector('.epc-workspace-reference')).visibility,
+        surface:describe(pair.querySelector('.report-preview') ||
+          Array.from(pair.querySelectorAll('*')).map(n=>n.shadowRoot?.querySelector('.report-preview')).find(Boolean)),
+        reference:describe(pair.querySelector('.epc-workspace-reference')),
+        ancestors:(()=>{let n=pair.querySelector('.epc-workspace-reference'),a=[];
+          for(let i=0;n && i<7;i++,n=n.parentElement)a.push(describe(n));return a;})()
+      }))});}''')
 
 
 def settled(page, mode):
