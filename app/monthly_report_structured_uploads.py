@@ -246,7 +246,7 @@ def _csv_activity_entries(content):
                 narrative += " (Status: " + status_text + ")"
             date_text = cell(dated) if dated is not None else content.source.service_date
             # Numeric and locale-ambiguous dates must not become reported facts.
-            if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", date_text):
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
                 date_text = ""
             source = replace(content.source, vendor=cell(vendor) or content.source.vendor)
             rendered = _activity_identity(narrative, source, date_text)
