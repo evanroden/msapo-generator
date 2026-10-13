@@ -722,6 +722,7 @@ def _render_storage_maintenance():
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.session_state["_monthly_source_detail_anchors"] = set()
+    st.session_state["_monthly_source_detail_forms"] = {}
     last_contract, last_profile = remembered_report_preferences(browser_token)
     recovery_available = active_work.enabled(browser_token)
     with st.expander("How to use this page"):
@@ -898,6 +899,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         contents, failed = restore_sources(profile, draft.sources)
         st.session_state[prefix + "_evidence"] = contents
         st.session_state[prefix + "_unavailable_sources"] = failed
+        # The original upload widgets are intentionally not restored by a new
+        # Streamlit session. Retain a canonical date/site correction path for
+        # every saved source, even if the upload was already processed.
+        st.session_state[prefix + "_source_details_on_resume"] = True
     available_ids = {content.source.id for content in st.session_state.get(prefix + "_evidence", ())}
     missing = tuple(source for source in st.session_state.get(prefix + "_unavailable_sources", ())
                     if source.id not in available_ids)
@@ -921,6 +926,26 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     source for source in missing if source.id != selected_missing.id)
                 st.session_state[draft_key] = draft
                 st.rerun()
+    if st.session_state.get(prefix + "_source_details_on_resume") and draft.sources:
+        from app.monthly_report_source_details import facility_choice, source_date, KEEP_FACILITY
+        from app.monthly_report_upload_ui import render_source_details
+        needs_correction = any(
+            source_date(source.service_date) is None
+            or facility_choice(source, profile) in ("", KEEP_FACILITY)
+            for source in draft.sources
+        )
+        review_key = field(prefix + "_review_saved_source_details", needs_correction)
+        if st.checkbox("Review source dates and sites from saved files", key=review_key):
+            st.caption("Correct the date or site beside each saved source. Original files and reviewed page decisions are retained.")
+            corrections = {}
+            for source in draft.sources:
+                corrections[source.id] = render_source_details(
+                    source, profile, prefix + "_resumed_" + source.id, field)
+            if any(corrections[source.id] != source for source in draft.sources):
+                draft = replace(draft, sources=tuple(corrections[source.id] for source in draft.sources))
+                st.session_state[prefix + "_evidence"] = tuple(
+                    replace(content, source=corrections.get(content.source.id, content.source))
+                    for content in st.session_state.get(prefix + "_evidence", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
