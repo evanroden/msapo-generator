@@ -203,3 +203,12 @@ def test_cached_reader_does_not_duplicate_dated_native_activity():
                    "row": []}],
     }, native)
     assert repeated.text == native.text
+    # A deliberately cleared source-linked Activity is authoritative; a late
+    # exact suggestion is not permission to resurrect the deleted wording.
+    emptied = replace(native, text="")
+    late, _ = structured.reader_update((source,), "activity_summary", {
+        "items": [{"source": source.source.id, "page": 1,
+                   "text": "Completed strainer cleaning and leak inspection. Result: no leakage found.",
+                   "row": []}],
+    }, emptied)
+    assert late.text == "" and late.references == native.references
