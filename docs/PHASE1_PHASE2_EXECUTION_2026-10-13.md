@@ -2,7 +2,17 @@
 
 **IN PROGRESS — neither phase is release-accepted.** This is the current resumable execution record for the October 13, 2026 handoff. Both phases are authorized. Older instructions to defer Phase 2 are superseded; older valid evidence remains bounded to its original commit, input and assertion.
 
-## Current verified checkpoint — October 13, after 17:34 UTC
+## Current checkpoint — October 13, after 17:42 UTC
+
+**Main is `a10404b41583a34ed32463e4864259ffd395513b`, but release acceptance is not green across all gates.** Main required [Tests 38439765467](https://github.com/evanroden/msapo-generator/actions/runs/38439765467) passed (including container and 512 MiB/0.5 CPU resource gates). The new exact-served main also passed two independent serialized synthetic [live sessions 38440502927](https://github.com/evanroden/msapo-generator/actions/runs/38440502927). These newer outcomes supersede the prior “pending on merged-main” note below **only for those specific gates**.
+
+**Adaptive DOM [38439765439](https://github.com/evanroden/msapo-generator/actions/runs/38439765439) FAILED on merged main** during the shared-fixture WebKit journey, although its PR #202 exact-head run [38438989014](https://github.com/evanroden/msapo-generator/actions/runs/38438989014) passed and the merged-main Chromium workflow passed. After a successfully saved manual edit/refresh, WebKit deliberate emptying through `textarea.fill("")` and Tab did not yield an exact durable journal acknowledgment within 45 seconds. The [failed synthetic artifact 11834467717](https://github.com/evanroden/msapo-generator/actions/runs/38439765439/artifacts/11834467717) captures an empty visible Activity textarea while the generated preview still displayed the earlier manually corrected text. This establishes a **missing durable acknowledgment for that executed interaction**, not a proven root cause. Do not reinterpret a successful live Chromium export, previous passing WebKit branch, or output preview as acceptance of this failed WebKit clearing action. Preserve the existing test assertion; diagnose input/blur/rerun provenance and recoverability instead of retry-until-green.
+
+Independent visual inspection of PR #201's original adaptive artifact [11831597215](https://github.com/evanroden/msapo-generator/actions/runs/38432162098/artifacts/11831597215) was completed for selected synthetic book/tabletop/PO/Expense/shared-fixture screenshots. The Monthly book capture showed decoded native Activity page 2 next to its editor; tabletop's bounded upper area showed only the upper portion of the selected image at 125%, so full-page reading/fit remains a separate usability check. The shared fixture screenshot immediately after import still showed a lazy cover-preview placeholder; it cannot establish all actual preview pages were visually accepted. These are scoped screenshot observations, not real owner-file fidelity.
+
+**Remaining:** diagnose/fix WebKit deliberate clear and rerun exact browser gate on the integrated head; finish uncommitted vendor/event-date native extraction through an allowed, reviewable source path; confirm actual Render disk/redeploy behavior before authentic uploads; obtain owner-selected sources and targets/expectations for AUTH01–03; complete shipping Safari/hardware and Word/Adobe review. The documentation-only checkpoint PR #203 changes no application behavior.
+
+## Historical verified checkpoint — October 13, after 17:34 UTC
 
 **Phase 1 and Phase 2 remain open pending authentic report and physical/rendering acceptance.** This is an evidence checkpoint, not a completeness percentage. Previous dated entries below are historical; preserve their executed successes and failures at the SHA tested.
 
