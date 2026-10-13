@@ -139,6 +139,15 @@ def test_csv_with_mixed_sites_stays_out_of_auto_activity_until_scoped_review(mon
     result = structured.native_update((content,), "activity_summary")
     assert not result.text and not result.references
     assert "Foreign Site" in content.source.page_texts[0]
+    # The optional document reader cannot circumvent the same site-scope guard.
+    # Its values are genuinely present in the original but foreign to this
+    # report; a clear review action is required instead of silent insertion.
+    import pytest
+    with pytest.raises(ValueError, match="site-specific rows"):
+        structured.reader_update((content,), "activity_summary", {
+            "items": [{"source": content.source.id, "page": 1,
+                       "text": "Inspected foreign AHU.", "row": []}]
+        })
 
 
 def test_cmms_csv_with_status_date_and_work_order_stays_on_separate_review_path(monkeypatch, tmp_path):
