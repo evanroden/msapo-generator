@@ -148,6 +148,17 @@ def test_csv_with_mixed_sites_stays_out_of_auto_activity_until_scoped_review(mon
             "items": [{"source": content.source.id, "page": 1,
                        "text": "Inspected foreign AHU.", "row": []}]
         })
+    # An ordinary descriptive column title must not bypass the site guard.
+    named, _ = sources.ingest(profile, "mixed-site-names.csv",
+        b"Facility Name,Vendor,Event date,Work performed\n"
+        b"Foreign Site,Trane,2026-09-16,Inspected foreign AHU.\n")
+    blocked = structured.native_update((named,), "activity_summary")
+    assert not blocked.text and not blocked.references
+    with pytest.raises(ValueError, match="site-specific rows"):
+        structured.reader_update((named,), "activity_summary", {
+            "items": [{"source": named.source.id, "page": 1,
+                       "text": "Inspected foreign AHU.", "row": []}]
+        })
 
 
 def test_cmms_csv_with_status_date_and_work_order_stays_on_separate_review_path(monkeypatch, tmp_path):
