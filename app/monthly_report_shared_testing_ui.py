@@ -178,6 +178,17 @@ def _process_pending(library, browser_token, live_storage_root):
         finally:
             st.session_state.pop(_PREFIX + "pending", None)
         return
+    # A delayed Start callback may belong to a different combobox selection.
+    # Reject it BEFORE discarding this browser's current run or staging bytes.
+    # The next rerun also checks this when a two-phase Start was interrupted.
+    if (pending.get("action") == "start" and
+            _PREFIX + "selection" in st.session_state and
+            st.session_state[_PREFIX + "selection"] != pending.get("fixture_id")):
+        st.session_state.pop(_PREFIX + "pending", None)
+        st.session_state[_PREFIX + "error"] = (
+            "The selected shared fixture changed after Start was clicked. "
+            "No report was reset or imported; select the intended fixture and choose Start again.")
+        return
     if pending["phase"] == "reset":
         if pending["generation"] != testing.generation():
             st.session_state.pop(_PREFIX + "pending", None)
