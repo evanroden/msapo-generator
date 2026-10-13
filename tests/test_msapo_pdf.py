@@ -163,7 +163,7 @@ def test_reviewed_scope_paragraphs_request_native_keep_together():
 
     lines = [f"{number}. Inspect a synthetic asset before returning it to service."
              for number in range(1, 12)]
-    path = generate_docx(replace(_analysis(), scope_of_work="\\n".join(lines)), [], [])
+    path = generate_docx(replace(_analysis(), scope_of_work="\n".join(lines)), [], [])
     try:
         doc = Document(str(path))
         work = [p for p in doc.paragraphs if p.text in lines]
@@ -183,7 +183,7 @@ def test_long_native_msapo_pdf_has_no_split_short_scope_items():
     """A 60-item real form previously stranded 'review.' on a new page."""
     lines = [f"{number}. Inspect invented pump assembly and record synthetic verification "
              f"details for review." for number in range(1, 61)]
-    pdf = build_msapo_pdf(analysis=_analysis(), scope="\\n".join(lines),
+    pdf = build_msapo_pdf(analysis=_analysis(), scope="\n".join(lines),
                           inclusions=["Labor and supplies"], exclusions=["Unapproved work"])
 
     import fitz
