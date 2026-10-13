@@ -35,8 +35,12 @@ export default function(component) {
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
     const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0, zoom:'width'});
-    const workspace = (parentElement.host || parentElement).closest('.epc-workspace');
-    const pair = (parentElement.host || parentElement).closest('.epc-workspace-pair');
+    const host = parentElement.host || parentElement;
+    // The preview can mount before the layout adapter's first animation
+    // frame adds its classes. Bind stable app-owned container keys now so
+    // later active-section changes reach even an initially offscreen viewer.
+    const workspace = host.closest('[class*="st-key-epc_workspace_"]') || host.closest('.epc-workspace');
+    const pair = host.closest('[class*="st-key-epc_pair_"]') || host.closest('.epc-workspace-pair');
     const zoom = panel.querySelector('select');
     const positionLabel = panel.querySelector('.report-preview-position');
     const previousButton = panel.querySelector('[data-action="previous"]');

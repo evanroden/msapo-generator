@@ -206,3 +206,10 @@ scroll ancestor. Inactive references are display-hidden, preserving all editor
 instances. Geometry excludes the measured persistent header; tests hit-test the
 upper title and require actual decoded imagery for the newly selected receipt.
 This is browser implementation work, not physical-device or Safari acceptance.
+
+
+### Preview startup and protocol diagnostic checkpoint — 14:40 UTC
+
+The viewer binds stable `st-key-epc_workspace_` / `st-key-epc_pair_` ancestors before the layout adapter's first animation frame. Presentation classes may not yet exist when the Streamlit v2 component mounts; missing that ancestor prevented active-section notifications from reaching an initially offscreen preview. Lifecycle regression covers that ordering; Chromium/WebKit proof remains required.
+
+Current `6f0c902` browser evidence confirms the real Monthly Chromium preview remains fragment-local (full runs 7→7, fragment progress) and both PO engines complete. WebKit Monthly instead encountered a Streamlit wire-cache connection error; bounded localhost-only protocol diagnostics are added without changing cache/runtime behavior. This is distinct from the next-pane preview startup repair. Revert the scoped code changes for rollback; preserve all report/storage data.

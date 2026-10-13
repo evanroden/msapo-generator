@@ -196,6 +196,9 @@ def exercise(browser_type, name):
 
     context.route("**/*", route)
     page = context.new_page()
+    from workspace_wire_observations import WireObservations
+    wire = WireObservations(8520)
+    wire.attach(page)
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
@@ -352,6 +355,7 @@ def exercise(browser_type, name):
             REPORT["browsers"][name]["capture_failure"] = str(capture_error)[:500]
         raise
     finally:
+        (OUT / (name + "-wire.json")).write_text(json.dumps(wire.snapshot(), indent=2))
         context.close()
         browser.close()
 

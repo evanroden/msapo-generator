@@ -174,7 +174,10 @@ test('tabletop active reference uses its measured upper bounds when observer cli
     const {root,panel}=dom(),timers=new Map(),observers=[],sent=[];let sequence=0;
     const workspace=new Element(),pair=new Element();
     workspace.dataset.epcMode='tabletop';pair.dataset.epcActive='true';
-    root.closest=selector=>selector==='.epc-workspace'?workspace:pair;
+    // Only the server-rendered keyed containers exist at first mount. The
+    // async layout adapter has not added either presentation class yet.
+    root.closest=selector=>selector==='[class*="st-key-epc_workspace_"]'?workspace:
+        selector==='[class*="st-key-epc_pair_"]'?pair:null;
     panel.getBoundingClientRect=()=>({left:80,right:1360,top:56,bottom:380,width:1280,height:324});
     class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
     const document=new Element();document.createElement=tag=>new Element(tag);

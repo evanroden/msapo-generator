@@ -30,7 +30,8 @@ authorization settings, disk settings, or service plan were changed.
   reuse these boundaries, with an authenticated owner and independent run ID.
 - `app/monthly_report_preview_store.py` separates live and QA stores and checks
   the generation before cache access. `monthly_report_section_preview_ui.py`
-  copies context into its worker and periodic fragment. Reset rejects stale
+  copies worker context and binds only the QA namespace/reset lease inside UI
+  fragments, preserving Streamlit's current fragment context. Reset rejects stale
   leases. These protections must remain present for authentic runs.
 - `receipt_jobs.start_receipt` rejects external reader work under the existing
   isolated monthly context. Native DOCX fixture imports must retain that rule.
