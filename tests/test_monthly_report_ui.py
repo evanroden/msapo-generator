@@ -78,8 +78,7 @@ def test_guided_text_survives_steps_and_workflow_switches(monkeypatch, tmp_path)
 def test_explicit_activity_clear_is_report_scoped_and_supports_reentry(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     saved = library.list_profiles(RRH_CONTRACT)[0]
-    original = next(b for b in library.load_profile(RRH_CONTRACT, saved.key).blocks
-                    if b.key == "activity_summary")
+    original = library.load_profile(RRH_CONTRACT, saved.key).block("activity_summary")
     assert original.text == "Synthetic initial activity."
     clear = next(b for b in app.button if b.label == "Clear Activity for this report")
     assert not clear.disabled
@@ -92,8 +91,7 @@ def test_explicit_activity_clear_is_report_scoped_and_supports_reentry(monkeypat
     assert next(b for b in app.button if b.label == "Clear Activity for this report").disabled
 
     # The old standing reference and original report history are not deleted.
-    assert next(b for b in library.load_profile(RRH_CONTRACT, saved.key).blocks
-                if b.key == "activity_summary") == original
+    assert library.load_profile(RRH_CONTRACT, saved.key).block("activity_summary") == original
     next(w for w in app.text_area if w.label == "Activity summary").set_value(
         "Restored current-month report wording.").run()
     app.run()
