@@ -75,6 +75,34 @@ def test_guided_text_survives_steps_and_workflow_switches(monkeypatch, tmp_path)
         assert next(w for w in app.text_area if w.label == "Activity summary").value == "Synthetic reviewed repair."
 
 
+def test_explicit_activity_clear_is_report_scoped_and_supports_reentry(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    saved = library.list_profiles(RRH_CONTRACT)[0]
+    original = next(b for b in library.load_profile(RRH_CONTRACT, saved.key).blocks
+                    if b.key == "activity_summary")
+    assert original.text == "Synthetic initial activity."
+    clear = next(b for b in app.button if b.label == "Clear Activity for this report")
+    assert not clear.disabled
+    clear.click().run()
+    assert not app.exception
+    editor = next(w for w in app.text_area if w.label == "Activity summary")
+    assert editor.value == ""
+    app.run()
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == ""
+    assert next(b for b in app.button if b.label == "Clear Activity for this report").disabled
+
+    # The old standing reference and original report history are not deleted.
+    assert next(b for b in library.load_profile(RRH_CONTRACT, saved.key).blocks
+                if b.key == "activity_summary") == original
+    next(w for w in app.text_area if w.label == "Activity summary").set_value(
+        "Restored current-month report wording.").run()
+    app.run()
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == (
+        "Restored current-month report wording.")
+    assert not next(b for b in app.button if b.label == "Clear Activity for this report").disabled
+    assert not app.exception
+
+
 def test_guided_progress_is_persistent_and_resumes_same_month(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
