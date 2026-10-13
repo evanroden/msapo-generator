@@ -655,7 +655,9 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         try:
             value = job["future"].result()
             current = additions.get(destination, blocks.get(destination))
-            if current is not None and current.fingerprint != job.get("baseline"):
+            from app.monthly_report_guided import _pending_rich_text_edit
+            if current is not None and (current.fingerprint != job.get("baseline")
+                                        or _pending_rich_text_edit(prefix, current)):
                 st.session_state[local_key + "_pending"] = (job, value)
                 raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
             result, pages = structured.reader_update(job["contents"], destination, value, current,
@@ -741,6 +743,10 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             previous = blocks.get(destination)
             from app.monthly_report_model import ResolvedBlock
             previous = previous or ResolvedBlock(destination, "This month")
+            from app.monthly_report_guided import _pending_rich_text_edit
+            # Register a retry against the input already delivered this run,
+            # without committing the draft before its normal save boundary.
+            previous = _pending_rich_text_edit(prefix, previous) or previous
             confirmed = True
             if report.needs_site_confirmation:
                 confirmed = st.checkbox(

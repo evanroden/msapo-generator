@@ -64,6 +64,20 @@ def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
     }
 
 
+def _pending_rich_text_edit(prefix, block):
+    """A delivered callback is newer input before the final draft assignment."""
+    key = prefix + "_edit_" + block.key + "_text_" + _signature(block.references)
+    receipt = st.session_state.get(key + "_explicitly_edited")
+    if (isinstance(receipt, dict)
+            and receipt.get("scope") == _rich_text_scope(prefix)
+            and receipt.get("baseline") == block.fingerprint
+            and isinstance(receipt.get("text"), str)
+            and receipt["text"] != block.text
+            and receipt["text"] == st.session_state.get(key)):
+        return _edited_rich_text(block, receipt["text"])
+    return None
+
+
 def _recover_rich_text_edit(marker, widget_key, block, scope):
     recovered = st.session_state.get(marker + "_recovery")
     if isinstance(recovered, dict) and recovered.get("scope") == scope:
@@ -444,7 +458,8 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             matches = (request["contract"] == draft.profile.contract
                        and request["profile"] == draft.profile.key
                        and request["month"] == draft.period.key)
-            if matches and request["expected"] == current.fingerprint:
+            if (matches and request["expected"] == current.fingerprint
+                    and not _pending_rich_text_edit(prefix, current)):
                 if request["text"] not in current.text:
                     updated = replace(current, source="This month",
                         text="\n\n".join(filter(None, (current.text.strip(), request["text"]))),
