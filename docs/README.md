@@ -6,7 +6,7 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
-[Shared authentic-report testing](SHARED_FIXTURE_TESTING_2026-10-13.md) — current owner-authorized anonymous shared fixture scope, locally verified, undeployed storage/UI/production-importer integration, isolation and remaining authentic/browser checks. Hidden navigation is not private access.
+[Shared authentic-report testing](SHARED_FIXTURE_TESTING_2026-10-13.md) — current owner-authorized anonymous shared fixture scope, branch-published, locally verified but undeployed storage/UI/production-importer integration, isolation and remaining authentic/browser checks. Hidden navigation is not private access.
 
 [Fixture boundary history and source corrections](PRIVATE_FIXTURE_BOUNDARY_2026-10-13.md) — superseded owner-only proposal, retained storage/integrity evidence and canonical source correction checks. The owner declined authentication; no authentication approval is pending.
 
