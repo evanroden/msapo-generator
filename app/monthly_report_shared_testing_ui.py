@@ -185,9 +185,13 @@ def _process_pending(library, browser_token, live_storage_root):
             _PREFIX + "selection" in st.session_state and
             st.session_state[_PREFIX + "selection"] != pending.get("fixture_id")):
         st.session_state.pop(_PREFIX + "pending", None)
+        if pending.get("phase") == "reset":
+            message = "No report was reset or imported."
+        else:
+            message = "The earlier request already reset this test; no different fixture was imported."
         st.session_state[_PREFIX + "error"] = (
             "The selected shared fixture changed after Start was clicked. "
-            "No report was reset or imported; select the intended fixture and choose Start again.")
+            + message + " Select the intended fixture and choose Start again.")
         return
     if pending["phase"] == "reset":
         if pending["generation"] != testing.generation():
