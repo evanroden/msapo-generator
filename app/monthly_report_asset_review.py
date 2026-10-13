@@ -18,7 +18,7 @@ def _references(block):
     # Reporting-period confirmation has its own gate. It does not change the
     # picture's bytes, caption or original source provenance.
     return tuple(dict.fromkeys(r for r in block.references
-                               if not r.startswith(("report-period:", "report-origin:"))))
+                               if not r.startswith(("report-period:", "report-origin:", "period-item:v1:"))))
 
 
 def asset_context(block, index):

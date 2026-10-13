@@ -66,7 +66,11 @@ test('new page data disposes prior observers and late callbacks cannot size or r
     for(const callback of timers.values())callback();timers.clear();
     assert.equal(panel._previewState.page,1,'a preceding caption sliver cannot select the wrong page');
     assert.equal(panel.querySelector('.report-preview-position').textContent,'2 / 2');
+    // Explicit source inspection can unmount before the scroll debounce fires.
+    // Persist that exact latest offset rather than the previous acknowledgment.
+    panel.querySelector('.report-preview-scroll').scrollTop=137;
     newCleanup();newCleanup();
+    assert.equal(context.window.__enfraPreviewViews.get('draft-a|activity').offset,137);
     assert.equal(observers.filter(observer=>observer.active).length,0);
     assert.equal(document.listeners.get('keydown').size,0);
 });

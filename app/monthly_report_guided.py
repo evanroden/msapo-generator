@@ -299,6 +299,48 @@ def _review_carried_update(block, period, prefix):
     return block
 
 
+def _period_editor_transition(prefix, block, period):
+    """Replay only an exact item decision if its full draft commit was interrupted."""
+    key = prefix + "_period_transition_" + block.key
+    pending = st.session_state.get(key)
+    if not isinstance(pending, dict):
+        return block
+    if pending.get("scope") != (_rich_text_scope(prefix), period.key):
+        st.session_state.pop(key, None)
+        return block
+    result = pending["result"]
+    if result.fingerprint == block.fingerprint:
+        st.session_state.pop(key, None)
+        return block
+    if block.fingerprint in pending.get("baselines", ()):
+        st.session_state[prefix + "_period_editor_refresh"] = True
+        return result
+    st.session_state.pop(key, None)
+    st.info("This dated item changed before its earlier choice finished. Review the current wording again.")
+    return block
+
+
+def _record_period_editor_transition(prefix, canonical_before, before, after, period, editor_key):
+    if before == after:
+        return after
+    st.session_state[prefix + "_period_transition_" + before.key] = {
+        "scope": (_rich_text_scope(prefix), period.key),
+        "baselines": (canonical_before.fingerprint, before.fingerprint), "result": after,
+    }
+    # The item operation includes the current manual edit. Its former text
+    # callback must not restore the pre-decision value if this editor key returns.
+    st.session_state.pop(editor_key + "_explicitly_edited", None)
+    st.session_state[prefix + "_period_editor_refresh"] = True
+    return after
+
+
+def _refresh_period_editors_after_commit(prefix):
+    # Business actions may change visible wording; refresh only after the whole
+    # canonical draft and its recovery attempt completed, never mid-editor.
+    if st.session_state.pop(prefix + "_period_editor_refresh", False):
+        st.rerun()
+
+
 def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True):
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
@@ -324,6 +366,9 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         # The authoritative source-linked text editor is rendered earlier.
         pass
     elif spec.type in ("rich_text", "stock_text") and edit_text:
+        canonical_before = block
+        if draft is not None and not block.ai_written:
+            block = _period_editor_transition(prefix, block, draft.period)
         editor_key = key + "_text_" + _signature(block.references)
         changed_marker = editor_key + "_explicitly_edited"
         scope = _rich_text_scope(prefix)
@@ -348,6 +393,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             # permits changing canonical text. A genuine clear has a receipt
             # and therefore remains a valid edit.
             st.session_state[editor_key] = block.text
+        editor_anchor = "report-editor-" + spec.key
+        if draft is not None:
+            from html import escape
+            st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
         text = st.text_area(
             spec.key.replace("_", " ").capitalize(),
             key=field(editor_key, block.text), height=140,
@@ -363,6 +412,14 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             # newer draft on the next rerun.
             st.session_state.pop(changed_marker, None)
         _render_rich_text_recovery(changed_marker, editor_key, block, scope)
+        if draft is not None and not block.ai_written:
+            from app.monthly_report_period_items_ui import render_period_items
+            section_title = next((section.title for section in draft.sections
+                                  if any(item.key == spec.key for item in section.blocks)),
+                                 spec.key.replace("_", " ").capitalize())
+            resolved = render_period_items(block, draft.period, draft.sources, prefix,
+                section_title=section_title, editor_anchor=editor_anchor)
+            block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
     elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
@@ -1106,3 +1163,4 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             if package.pdf_error:
                 st.warning(package.pdf_error)
 
+    _refresh_period_editors_after_commit(prefix)

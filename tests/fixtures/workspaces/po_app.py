@@ -10,8 +10,9 @@ import fitz
 import requests
 import streamlit as st
 
-from app import web_ui, memory, smartsheet, receipt_jobs, expense_ui, config, document_generator, pdf_converter
+from app import web_ui, memory, smartsheet, receipt_jobs, expense_ui, config, document_generator, pdf_converter, reference_preview
 from app.document_generator import build_msapo_pdf as production_build_msapo_pdf
+from app.monthly_report_preview_view import render_view as original_render_view
 
 root = Path(os.environ.get("EPC_DATA_DIR", ""))
 if not root.is_absolute() or not root.name.startswith("po-adaptive-synthetic-") or not root.is_dir():
@@ -27,6 +28,23 @@ for module in (config, document_generator, pdf_converter):
     module.OUTPUT_DIR = render_dir
 pdf_converter.PDF_BACKEND = "libreoffice"
 st.session_state["synthetic_full_app_runs"] = st.session_state.get("synthetic_full_app_runs", 0) + 1
+
+
+def observed_render_view(**kwargs):
+    """Acknowledge the actual fragment's received request, without business data."""
+    from html import escape
+    key = kwargs["key"]
+    counts = st.session_state.setdefault("_fixture_preview_renders", {})
+    counts[key] = counts.get(key, 0) + 1
+    result = original_render_view(**kwargs)
+    value = st.session_state.get(key, {})
+    request = (value.get("viewport") or {}) if isinstance(value, dict) else {}
+    pages = ",".join(str(page) for page in request.get("pages", ()))
+    st.html(f'<span hidden data-qa-preview-ack="{escape(key)}" data-count="{counts[key]}" data-request-pages="{escape(pages)}"></span>')
+    return result
+
+
+reference_preview.render_view = observed_render_view
 
 
 def forbidden(*args, **kwargs):

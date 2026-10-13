@@ -178,7 +178,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
     layout_keys = {spec.key for spec in layout_blocks()} & used_block_keys(draft)
     for block in draft.blocks:
         if block.key in layout_keys and block.source != "Omit":
-            texts.append((block.key, block.text))
+            texts.append((block.key, block.text, block))
             if not block.reviewed:
                 checks.append(ReportCheck("review", f"Review the AI draft: {block.key}.", True, block.key))
             if block.pending_library_save:
@@ -215,7 +215,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             if block and block.source != "Omit":
                 if not block.reviewed:
                     checks.append(ReportCheck("review", f"Review the AI draft: {spec.key}.", True, spec.key))
-                texts.append((spec.key, block.text))
+                texts.append((spec.key, block.text, block))
                 texts.extend((spec.key, caption) for caption in block.asset_captions)
                 texts.extend((spec.key, cell) for row in block.rows for cell in row)
                 if block.rows:
@@ -226,14 +226,22 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                         checks.append(ReportCheck("pricing", "Remove pricing columns from the client report.", True, spec.key))
         if not has_content:
             checks.append(ReportCheck("empty", f"{section.title} is included but empty.", False, section.key))
-    for key, text in texts:
+    for item in texts:
+        key, text = item[:2]
+        narrative = item[2] if len(item) == 3 else None
         if contains_price(text):
             checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key))
         phrases = placeholder_matches(text)
         if phrases:
             checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key))
         if key != "report_identity":
-            stale = stale_period_mentions(text, draft.period.year, draft.period.month)
+            if narrative is not None:
+                from app.monthly_report_period_items import apply_exclusions, unresolved_mentions
+                stale = unresolved_mentions(narrative, draft.period, draft.sources)
+                if apply_exclusions(narrative, draft.period).text != narrative.text:
+                    checks.append(ReportCheck("period_removed", "Previously excluded dated wording reappeared. Resolve that exact item before generating.", True, key))
+            else:
+                stale = stale_period_mentions(text, draft.period.year, draft.period.month)
             if stale:
                 checks.append(ReportCheck("period", f"Check period references in {key}: {', '.join(stale)}.", False, key))
     if estimated_bytes > 15 * 1024 * 1024:

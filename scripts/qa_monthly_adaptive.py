@@ -23,6 +23,8 @@ import urllib.request
 from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.workspace_browser_observations import CLIENT_INIT, CLIENT_SNAPSHOT
 OUT = ROOT / "test-artifacts" / "monthly-adaptive"
 URL = "http://127.0.0.1:8520"
 ACTIVITY = ".st-key-epc_pair_monthly_activity"
@@ -56,6 +58,26 @@ def check(browser, name, passed, detail=None):
     print(("PASS " if passed else "FAIL ") + browser + " " + name, flush=True)
     if not passed:
         raise AssertionError(name + ": " + str(detail))
+
+
+def set_checkbox(container, label, selected, browser):
+    control = container.get_by_role("checkbox", name=label, exact=True)
+    # The locked Streamlit runtime wraps its semantic input in React Aria
+    # VisuallyHidden. Click the visible semantic label just as a user does;
+    # direct check() targets the clipped input and scrolls to the wrong box.
+    target = control.locator("xpath=ancestor::label[1]")
+    target.scroll_into_view_if_needed()
+    observed = control.evaluate("""node => {
+      const label=node.closest('label'), rect=label.getBoundingClientRect();
+      const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+      return {input:node.getBoundingClientRect().toJSON(),label:rect.toJSON(),
+        parentClip:getComputedStyle(node.parentElement).clip,
+        hitTag:hit?.tagName,labelOwnsHit:Boolean(hit&&label.contains(hit))};
+    }""")
+    if control.is_checked() != selected:
+        target.click()
+    expect(control).to_be_checked(checked=selected)
+    check(browser, "normal label pointer sets " + label, control.is_checked() == selected, observed)
 
 
 def frames(page):
@@ -112,6 +134,7 @@ def snapshot(page):
 
 def capture(page, name, label):
     observed = snapshot(page)
+    observed["runtime_observations"] = page.evaluate(CLIENT_SNAPSHOT)
     REPORT["browsers"].setdefault(name, {}).setdefault("states", {})[label] = observed
     page.screenshot(path=str(OUT / f"{name}-{label}.png"), timeout=30000)
     (OUT / "results.json").write_text(json.dumps(REPORT, indent=2))
@@ -154,6 +177,7 @@ def exercise(browser_type, name):
     browser = browser_type.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 900})
     attempts, errors = [], []
+    context.add_init_script(CLIENT_INIT)
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
     context.add_init_script("""window.__monthlyShareAttempts=[];
       Object.defineProperty(navigator,'share',{configurable:true,value:()=>{
@@ -198,7 +222,7 @@ def exercise(browser_type, name):
         # Genuine controls make a long editing section without synthetic padding,
         # alternate editors, forced preview height or eager rendering all sections.
         for label in ("Add work-order spreadsheets", "Add reviewed vendor service pages"):
-            page.locator(ACTIVITY).get_by_role("checkbox", name=label, exact=True).check()
+            set_checkbox(page.locator(ACTIVITY), label, True, name)
         scroll_pair(page, ACTIVITY)
         actual = current_image(page, ACTIVITY)
         baseline = capture(page, name, "actual-activity-current")

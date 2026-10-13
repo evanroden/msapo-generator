@@ -71,12 +71,20 @@ def full_app_runs(page):
 
 
 def wait_preview_ack(reference, *, image, page_number, zoom):
-    reference.locator(f'img[alt="{image} — page {page_number + 1}"]').wait_for()
+    loaded = reference.locator(f'img[alt="{image} — page {page_number + 1}"]')
+    expect(loaded).to_be_visible()
+    expect(loaded).to_have_js_property("complete", True)
+    assert loaded.evaluate("node=>node.naturalWidth>0"), "Selected original/result page is not decoded"
+    # Wait on the actual fragment's request acknowledgment. The old assertion
+    # read state.timer, a removed private implementation field that was always
+    # undefined after invocation-local cleanup was introduced.
+    expect(reference.locator('[data-qa-preview-ack]').last).to_have_attribute(
+        'data-request-pages', re.compile(r'(^|,)' + str(page_number) + r'(,|$)'))
     reference.locator(".report-preview").evaluate("""async (panel, expected) => {
         const deadline=performance.now()+15000;
         while (performance.now()<deadline) {
             const state=panel._previewState;
-            if (state.page===expected.page && state.zoom===expected.zoom && state.timer===null &&
+            if (state.page===expected.page && state.zoom===expected.zoom &&
                 JSON.parse(state.sent||'{}').pages?.includes(expected.page)) return;
             await new Promise(resolve=>requestAnimationFrame(resolve));
         }
@@ -89,6 +97,16 @@ def exercise(engine, name):
     page = browser.new_page(viewport={"width":1440,"height":900})
     errors = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
+    try:
+        exercise_page(page, name, errors)
+    except Exception:
+        page.screenshot(path=str(OUT / (name + "-failure.png")))
+        raise
+    finally:
+        browser.close()
+
+
+def exercise_page(page, name, errors):
     page.route("**/*", lambda route: route.continue_() if route.request.url.startswith(URL) else route.abort())
     page.goto(URL, wait_until="domcontentloaded")
     page.wait_for_selector(".st-key-epc_pair_purchase_review")
@@ -184,11 +202,11 @@ def exercise(engine, name):
     check(name + " local editing return", package.locator(".epc-workspace-reference").is_hidden())
     capture(page, name, "compact")
     check(name + " no browser errors", not errors, errors)
-    browser.close()
 
 
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
+    failures = []
     renderer = shutil.which("libreoffice") or shutil.which("soffice")
     if not renderer:
         raise RuntimeError("PO actual-output browser acceptance requires LibreOffice")
@@ -208,14 +226,21 @@ def main():
                 except OSError: pass
                 time.sleep(.1)
             with sync_playwright() as p:
-                exercise(p.chromium, "chromium")
-                exercise(p.webkit, "playwright-webkit")
+                for engine, name in ((p.chromium, "chromium"), (p.webkit, "playwright-webkit")):
+                    try:
+                        exercise(engine, name)
+                    except Exception as exc:
+                        import traceback
+                        failures.append({"browser": name, "error": str(exc), "traceback": traceback.format_exc()})
         finally:
             process.terminate(); process.wait(timeout=15); log.close()
             evidence = Path(temp) / "evidence"
             if evidence.exists():
                 shutil.copytree(evidence, OUT / "actual-msapo", dirs_exist_ok=True)
+            REPORT["failures"] = failures
             (OUT / "geometry-and-results.json").write_text(json.dumps(REPORT, indent=2))
+    if failures:
+        raise AssertionError("Actual PO DOM failures: " + "; ".join(failure["browser"] + ": " + failure["error"] for failure in failures))
 
 
 if __name__ == "__main__": main()

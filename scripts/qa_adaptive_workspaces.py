@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -14,7 +15,7 @@ import tempfile
 import time
 import urllib.request
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'test-artifacts' / 'adaptive-workspaces'
@@ -78,10 +79,18 @@ def capture(page, browser, label):
     return observed
 
 
+def loaded_page(preview,index,name):
+    image=preview.locator(f'figure[data-index="{index}"] img')
+    expect(image).to_be_visible(timeout=30000)
+    expect(image).to_have_attribute('src',re.compile(r'^data:image/jpeg;base64,'))
+    expect(image).to_have_js_property('complete',True)
+    check(name+' selected page image loaded',image.evaluate('(node)=>node.naturalWidth>0 && node.naturalHeight>0'),{'page':index+1})
+
+
 def exercise(browser_type, name):
     browser=browser_type.launch(headless=True)
     page=browser.new_page(viewport={'width':1440,'height':900})
-    errors=[]; page.on('pageerror',lambda exc:errors.append(str(exc)))
+    errors=[]; page.on('pageerror',lambda exc:errors.append(getattr(exc,'stack',None) or str(exc)))
     page.goto(URL,wait_until='domcontentloaded')
     page.wait_for_selector('.epc-workspace-row')
     settled(page,'wide')
@@ -89,7 +98,7 @@ def exercise(browser_type, name):
     preview=first.locator('.epc-workspace-reference')
     # A wrapper alone is not a viewer. Wait for actual bounded raster content,
     # then let its ResizeObserver size settle before measuring sticky geometry.
-    preview.locator('.report-preview img').first.wait_for(state='visible',timeout=30000)
+    loaded_page(preview,0,name+' wide')
     page.locator('[data-testid="stMain"]').evaluate('(node)=>{node.scrollTop=500}')
     page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
     wide=capture(page,name,'wide-sticky')
@@ -106,20 +115,30 @@ def exercise(browser_type, name):
     check(name+' preview releases at its section boundary',boundary['pairs'][0]['preview']['bottom'] <= boundary['pairs'][0]['pair']['bottom']+3,boundary['pairs'][0])
     page.locator('[data-testid="stMain"]').evaluate('(node)=>{node.scrollTop=500}')
     page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+    loaded_page(preview,0,name+' reverse')
     reverse=capture(page,name,'reverse-boundary')
     check(name+' reverse scroll restores same preview',abs(reverse['pairs'][0]['preview']['top']-reverse['pairs'][0]['stickyTop'])<=3)
     preview.get_by_role('button',name='Next preview page').click()
     preview.get_by_label('Preview zoom').select_option('page')
     page.wait_for_function("() => Array.from(document.querySelector('.st-key-epc_pair_monthly_activity').querySelectorAll('*')).some(n=>n.shadowRoot?.querySelector('.report-preview-position')?.textContent==='2 / 2')")
+    loaded_page(preview,1,name+' before transitions')
     field=page.get_by_label('Work summary activity',exact=True)
     field.click(); field.fill('Typed without blur; preserved through geometry transitions')
     field.evaluate('(node)=>node.setSelectionRange(6,11)')
     before=field.evaluate('(node)=>({value:node.value,start:node.selectionStart,end:node.selectionEnd})')
     inject(page,[{'x':0,'y':0,'width':650,'height':900},{'x':690,'y':0,'width':750,'height':900}])
-    settled(page,'book'); book=capture(page,name,'asymmetric-book')
+    settled(page,'book')
+    loaded_page(preview,1,name+' book')
+    expect(preview.locator('.report-preview-position')).to_have_text('2 / 2')
+    expect(preview.get_by_label('Preview zoom')).to_have_value('page')
+    book=capture(page,name,'asymmetric-book')
     check(name+' asymmetric crease clearance',book['pairs'][0]['preview']['left']>=696-3,book['pairs'][0])
     inject(page,[{'x':0,'y':0,'width':1440,'height':380},{'x':0,'y':410,'width':1440,'height':490}])
-    settled(page,'tabletop'); table=capture(page,name,'tabletop')
+    settled(page,'tabletop')
+    loaded_page(preview,1,name+' tabletop')
+    expect(preview.locator('.report-preview-position')).to_have_text('2 / 2')
+    expect(preview.get_by_label('Preview zoom')).to_have_value('page')
+    table=capture(page,name,'tabletop')
     active=[p for p in table['pairs'] if p['active']=='true']
     check(name+' one upper preview',len(active)==1 and active[0]['preview']['bottom']<=380 and active[0]['preview']['top']>=0,active)
     check(name+' lower working scroll root',table['root']['top']>=416-3 and table['root']['bottom']<=900+3,table['root'])
@@ -132,6 +151,7 @@ def exercise(browser_type, name):
        root.scrollTop+=next.getBoundingClientRect().top-root.getBoundingClientRect().top+80;
     }''')
     page.wait_for_function("document.querySelector('.st-key-epc_pair_monthly_scorecards').dataset.epcActive==='true'")
+    loaded_page(page.locator('.st-key-epc_pair_monthly_scorecards .epc-workspace-reference'),0,name+' next section')
     capture(page,name,'tabletop-next-section')
     inject(page,None); settled(page,'wide')
     page.set_viewport_size({'width':390,'height':844});settled(page,'compact')
@@ -139,6 +159,7 @@ def exercise(browser_type, name):
     check(name+' compact has no horizontal overflow',page.evaluate('document.documentElement.scrollWidth<=document.documentElement.clientWidth+2'))
     first.get_by_role('button',name='View preview',exact=True).click()
     check(name+' compact preview opens',first.locator('.epc-workspace-reference').is_visible())
+    loaded_page(preview,1,name+' compact')
     first.get_by_role('button',name='Back to editing',exact=True).click()
     check(name+' compact returns to editor',first.locator('.epc-workspace-reference').is_hidden())
     capture(page,name,'compact')

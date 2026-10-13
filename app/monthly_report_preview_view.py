@@ -215,6 +215,8 @@ export default function(component) {
     sizePages(); remember(); changed();
     function cleanup() {
         if (!active) return;
+        // A source switch may unmount before the scroll debounce acknowledges.
+        remember();
         active = false;
         observer.disconnect();
         activeObserver.disconnect();
