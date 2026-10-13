@@ -147,6 +147,7 @@ def capture(page, name, label):
       headings:[...document.querySelectorAll('h1,h2,h3')].map(n=>n.textContent),
       alerts:[...document.querySelectorAll('[data-testid="stAlert"]')].map(n=>n.textContent),
       textareas:[...document.querySelectorAll('textarea')].map(n=>({label:n.getAttribute('aria-label'),value:n.value})),
+      comboboxes:[...document.querySelectorAll('[role="combobox"]')].map(n=>({label:n.getAttribute('aria-label'),tag:n.tagName,value:n.value,text:n.textContent})),
       scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')
     })""")
     REPORT["browsers"].setdefault(name, {}).setdefault("states", {})[label] = observed
@@ -215,7 +216,20 @@ def exercise(browser_type, name, base):
         page.get_by_role("button", name="Save shared fixture", exact=True).click()
         shared = page.get_by_role("combobox", name="Shared fixture", exact=True)
         expect(shared).to_be_visible(timeout=45000)
-        expect(page.get_by_text(re.compile(r"^" + re.escape(friendly) + r" · ")).first).to_be_visible(timeout=45000)
+        # Streamlit 1.61.1 renders the selected label as the accessible
+        # combobox input value, not as a text node. Assert that precise value
+        # and the immutable receipt, rather than waiting on get_by_text.
+        expect(shared).to_have_value(re.compile(r"^" + re.escape(friendly) + r" · [0-9a-f]{8}$"), timeout=45000)
+        manifests = [json.loads(path.read_text()) for path in
+                     (base / "_enfra_shared_fixtures_v1").glob("*/manifest.json")]
+        matches = [value for value in manifests if value["metadata"]["friendly_name"] == friendly]
+        check(name, "selected upload has one durable immutable receipt", len(matches) == 1
+              and matches[0]["original_sha256"] == digest
+              and matches[0]["original_size"] == len(original))
+        saved = matches[0]
+        check(name, "selected fixture identity matches durable receipt",
+              shared.input_value() == friendly + " · " + saved["fixture_id"][:8])
+        REPORT["browsers"].setdefault(name, {})["uploaded_receipt"] = saved
         page.get_by_text("Confirmed source, target and expected results", exact=True).click()
         expect(page.get_by_text("Original SHA256: " + digest, exact=True)).to_be_visible()
         check(name, "real browser upload saved immutable synthetic original", True,
