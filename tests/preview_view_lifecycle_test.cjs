@@ -303,3 +303,60 @@ test('late hidden response retains only the current decoded page during a visibl
     assert.equal(panel.querySelectorAll('img').length,0,'new report content cannot inherit old imagery');
     panel._previewCleanup();
 });
+
+
+test('native editing event withholds preview fragments until matching full-render receipt is idle',()=>{
+    const {root,panel}=dom(),app=new Element(),workspace=new Element();
+    const timers=new Map(),sent=[],observers={intersection:[],resize:[],mutation:[]};
+    let sequence=0;
+    app.setAttribute('data-test-script-state','notRunning');
+    workspace.dataset.epcFullRender='full-before-native-edit';
+    workspace.dataset.epcMode='wide';
+    root.closest=selector=>selector==='[data-testid="stApp"]'?app:
+        selector==='[class*="st-key-epc_workspace_"]'?workspace:null;
+    class Intersection {constructor(callback){this.callback=callback;observers.intersection.push(this);}
+        observe(){}disconnect(){}}
+    class Resize {constructor(callback){this.callback=callback;observers.resize.push(this);}
+        observe(){}disconnect(){}}
+    class Mutation {constructor(callback){this.callback=callback;observers.mutation.push(this);}
+        observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const window={devicePixelRatio:1};
+    const context={window,document,Map,JSON,Array,Number,Math,String,Boolean,
+        IntersectionObserver:Intersection,ResizeObserver:Resize,MutationObserver:Mutation,
+        setTimeout:(callback,delay)=>{timers.set(++sequence,{callback,delay});return sequence;},
+        clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8')
+        .split('JS = r"""\\n')[1].split('\\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const cleanup=render({parentElement:root,data:{generation:'same',viewScope:'expense|receipt',
+        pages:[],sizes:[[612,792]],ready:true},setStateValue:(name,value)=>sent.push({name,value})});
+    const fire=delay=>{
+        for(const [id,item] of [...timers])if(item.delay===delay){timers.delete(id);item.callback();}
+    };
+    observers.intersection[0].callback([{isIntersecting:true}]);fire(120);
+    assert.equal(sent.length,1);
+    const gate=window.__enfraPreviewNativeEditGates.get(app);
+    assert.ok(gate && !gate.pending);
+    app.listeners.get('change').forEach(fn=>fn({target:{
+        matches:selector=>selector.includes('input'),closest:()=>null
+    }}));
+    assert.equal(gate.pending,true,'the native event queues a whole report rerun');
+    panel.querySelector('.report-preview-scroll').clientWidth=1200;
+    observers.resize[0].callback();fire(120);
+    assert.equal(sent.length,1,'no fragment may overtake pending business input');
+    workspace.dataset.epcFullRender='full-after-native-edit';
+    app.setAttribute('data-test-script-state','running');
+    observers.mutation[0].callback();fire(120);
+    assert.equal(gate.pending,true,'a new stamp without script completion is not an acknowledgment');
+    assert.equal(sent.length,1,'preview remains deferred during the full run');
+    app.setAttribute('data-test-script-state','notRunning');
+    observers.mutation[0].callback();fire(120);
+    assert.equal(gate.pending,false,'only a distinct completed full-run stamp releases it');
+    assert.equal(sent.length,2,'deferred viewport request is sent after canonical editing');
+    assert.equal(sent[1].value.dpi,150);
+    assert.equal(Object.hasOwn(gate,'text'),false,'no input or receipt text is copied');
+    cleanup();
+    assert.equal(app.listeners.get('change').size,0,'all native listeners clean up');
+    assert.equal(window.__enfraPreviewNativeEditGates.get(app),undefined);
+});
