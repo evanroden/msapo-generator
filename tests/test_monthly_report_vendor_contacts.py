@@ -62,8 +62,8 @@ def test_vendor_pages_show_with_empty_or_populated_table_without_requiring_revie
 def test_vendor_agreement_edit_preserves_unknown_and_invalidates_only_changed_content():
     rows = (("Synthetic Site", "HVAC", "Example Vendor", "Example Contact", "", ""),)
     app = vendor_app(rows)
-    assert next(w for w in app.text_input if w.label == "MSA").value == ""
-    next(w for w in app.text_input if w.label == "MSA").set_value("Needs confirmation").run()
+    assert next(w for w in app.text_input if w.label == "Agreement status (MSA)").value == ""
+    next(w for w in app.text_input if w.label == "Agreement status (MSA)").set_value("Needs confirmation").run()
     assert not app.exception
     block = vendor_block(app)
     assert block.rows[0][-1] == "Needs confirmation"
@@ -107,3 +107,27 @@ def test_known_legacy_boolean_values_keep_false_and_blank_distinct():
     seed, config = _typed_table(spec, rows)
     assert [row["MSA"] for row in seed] == [None, False, True]
     assert config["MSA"]["type_config"]["type"] == "checkbox"
+
+
+def test_saved_vendor_cards_start_collapsed_without_changing_report_fingerprint():
+    rows = (("Synthetic Site", "HVAC", "Example Vendor", "Example Contact", "", "Needs confirmation"),)
+    app = vendor_app(rows)
+    assert not app.exception
+    card = next(e for e in app.expander if e.label == "Example Contact · HVAC · Synthetic Site")
+    assert card.proto.expanded is False
+    assert any("Vendor contacts in this report" in caption.value for caption in app.caption)
+    before = vendor_block(app)
+    app.run()
+    assert not app.exception
+    assert vendor_block(app) == before
+    assert vendor_block(app).rows[0][-1] == "Needs confirmation"
+    assert next(w for w in app.text_input if w.label == "Agreement status (MSA)").value == "Needs confirmation"
+
+
+def test_new_blank_vendor_contact_opens_and_does_not_invent_agreement_status():
+    app = vendor_app((("", "", "", "", "", ""),))
+    assert not app.exception
+    card = next(e for e in app.expander if e.label == "Contact 1")
+    assert card.proto.expanded is True
+    assert next(w for w in app.text_input if w.label == "Agreement status (MSA)").value == ""
+    assert vendor_block(app).rows[0][-1] == ""
