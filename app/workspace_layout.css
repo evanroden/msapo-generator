@@ -23,5 +23,6 @@
 .epc-workspace[data-epc-mode="tabletop"] .epc-reference-column {position:static; width:0 !important; height:0; min-height:0;}
 .epc-workspace[data-epc-mode="tabletop"] .epc-workspace-reference {position:fixed; left:var(--epc-reference-left); top:var(--epc-reference-top); width:var(--epc-reference-width); height:var(--epc-reference-height) !important; overflow:auto; box-sizing:border-box; padding:.5rem; background:var(--background-color,#fff); visibility:hidden; pointer-events:none;}
 .epc-workspace[data-epc-mode="tabletop"] .epc-workspace-pair[data-epc-active="true"] .epc-workspace-reference {visibility:visible; pointer-events:auto;}
+.epc-workspace[data-epc-mode="tabletop"] .epc-workspace-pair:not([data-epc-active="true"]) .epc-workspace-reference {display:none !important;}
 .epc-workspace-scroll-owner {overflow-y:hidden !important;}
 @media (prefers-reduced-motion:reduce) {.epc-workspace * {scroll-behavior:auto !important;}}

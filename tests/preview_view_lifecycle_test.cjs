@@ -130,3 +130,42 @@ test('only visible pending preview polls at two seconds and stale invocation can
     panel._previewCleanup();
     assert.equal(timers.size,0);
 });
+
+test('hidden remount and cache reload preserve a page anchor until real pagination returns',()=>{
+    const {root,panel}=dom(),timers=new Map(),observers=[];let sequence=0;
+    class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const context={window:{devicePixelRatio:1},document,Map,JSON,Array,Number,Math,String,Boolean,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:callback=>{timers.set(++sequence,callback);return sequence;},clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const invoke=sizes=>render({parentElement:root,data:{generation:'same-content',viewScope:'one|activity',pages:[],sizes,ready:Boolean(sizes.length)},setStateValue:()=>{}});
+    const sizes=[[612,792],[612,792],[612,792]];
+    invoke(sizes);
+    panel.querySelector('[data-action="next"]').onclick();
+    panel.querySelector('[data-action="next"]').onclick();
+    const scroll=panel.querySelector('.report-preview-scroll');
+    scroll.scrollTop=73;
+    // Hide before cleanup, as compact/tabletop may do before a fragment update.
+    panel._previewCleanup();
+    scroll.clientWidth=0;scroll.clientHeight=0;scroll.scrollTop=0;
+    invoke([]);
+    assert.equal(panel._previewState.page,2,'unknown pagination cannot clamp to placeholder page one');
+    assert.equal(context.window.__enfraPreviewViews.get('one|activity').offset,73);
+    assert.equal(panel.querySelector('.report-preview-position').textContent,'—');
+    invoke(sizes);
+    assert.equal(panel._previewState.page,2);
+    const figure=scroll.querySelector('figure[data-index="2"]');
+    Object.defineProperty(figure,'offsetTop',{get:()=>scroll.clientWidth*2});
+    scroll.clientWidth=600;scroll.clientHeight=400;
+    observers.at(-2).callback();
+    assert.equal(scroll.scrollTop,1273,'becoming measurable restores exact page and offset');
+    assert.equal(panel.querySelector('.report-preview-position').textContent,'3 / 3');
+    scroll.clientWidth=450;
+    observers.at(-2).callback();
+    assert.equal(scroll.scrollTop,973,'resize preserves the same page anchor');
+    invoke([[612,792]]);
+    assert.equal(panel._previewState.page,0,'known changed pagination uses nearest surviving page');
+    panel._previewCleanup();
+});

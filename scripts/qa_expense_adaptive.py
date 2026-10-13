@@ -60,6 +60,28 @@ def loaded_page(pair,index):
     check(f'loaded original page {index+1}',image.evaluate('(node)=>node.naturalWidth>0'))
 
 
+def tabletop_reference(page, pair, title, name):
+    expect(pair).to_have_attribute('data-epc-active','true')
+    heading=pair.locator('.epc-context-title')
+    expect(heading).to_have_text(title)
+    expect(heading).to_be_visible()
+    observed=pair.evaluate("""pair=>{
+        const ref=pair.querySelector('.epc-workspace-reference');
+        const title=ref.querySelector('.epc-context-title');
+        const box=ref.getBoundingClientRect(), label=title.getBoundingClientRect();
+        return {reference:box.toJSON(),title:label.toJSON(),
+            hidden:[...pair.closest('.epc-workspace').querySelectorAll('.epc-workspace-pair:not([data-epc-active="true"]) .epc-workspace-reference')]
+                .map(node=>({display:getComputedStyle(node).display,rects:node.getClientRects().length}))};
+    }""")
+    check(name+' upper title fits active reference',
+          observed['title']['top']>=observed['reference']['top'] and
+          observed['title']['bottom']<=observed['reference']['bottom'],observed)
+    # A hidden wrapper alone was insufficient: Streamlit child visibility
+    # overrides leaked an inactive Mileage caption across the receipt preview.
+    check(name+' inactive reference descendants cannot overlap active source',
+          all(x['display']=='none' and x['rects']==0 for x in observed['hidden']),observed)
+
+
 def run(browser_type,name):
     browser=browser_type.launch(headless=True)
     page=browser.new_page(viewport={'width':1440,'height':1000})
@@ -118,6 +140,8 @@ def run(browser_type,name):
         check(name+' expense focus preserved',description.evaluate('(node)=>document.activeElement===node'))
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
         expect(first.get_by_label('Preview zoom',exact=True)).to_have_value('page')
+        tabletop_reference(page,first,'Receipt 1',name)
+        loaded_page(first,1)
         page.screenshot(path=str(OUT/f'{name}-expense-tabletop.png'))
         first.get_by_role('button',name='Enlarge',exact=True).click()
         enlarged=first.locator('.report-preview').bounding_box()
@@ -127,6 +151,8 @@ def run(browser_type,name):
         expect(first.get_by_label('Preview zoom',exact=True)).to_have_value('page')
         page.locator('.epc-workspace').evaluate("root=>{const n=root.querySelectorAll('.epc-workspace-pair')[1];root.scrollTop+=n.getBoundingClientRect().top-root.getBoundingClientRect().top+80;}")
         expect(second).to_have_attribute('data-epc-active','true')
+        tabletop_reference(page,second,'Receipt 2',name)
+        loaded_page(second,0)
         check(name+' second receipt shows its own source',second.locator('.epc-workspace-reference').is_visible())
         inject(page,None);mode(page,'wide')
         expect(amount).to_have_value('13.25')

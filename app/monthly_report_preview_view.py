@@ -50,12 +50,15 @@ export default function(component) {
         Object.assign(state, retained, {scope:viewKey, restore:true});
     }
     zoom.value = state.zoom;
-    const sizes = data.sizes && data.sizes.length ? data.sizes : [[612,792]];
+    const pagesKnown = Boolean(data.sizes && data.sizes.length);
+    const sizes = pagesKnown ? data.sizes : [[612,792]];
     const layout = JSON.stringify([data.generation, sizes, data.ready, data.stale]);
     status.textContent = data.status || '';
     if (state.layout !== layout) {
         const position = scroll.scrollTop;
-        state.page = Math.min(state.page, sizes.length - 1);
+        // An evicted/preparing ticket is not a one-page document. Keep the
+        // user's anchor until actual pagination is available again.
+        if (pagesKnown) state.page = Math.min(state.page, sizes.length - 1);
         scroll.replaceChildren();
         sizes.forEach((size, index) => {
             const figure = document.createElement('figure');
@@ -96,6 +99,13 @@ export default function(component) {
     });
     function sizePages() {
         if (!active) return;
+        if (!scroll.clientWidth || !scroll.clientHeight) {
+            state.restore = true;
+            return;
+        }
+        const dimensions = scroll.clientWidth + 'x' + scroll.clientHeight;
+        if (state.dimensions !== dimensions) state.restore = true;
+        state.dimensions = dimensions;
         const available = Math.max(100,scroll.clientHeight-46);
         scroll.querySelectorAll('figure').forEach((figure,index) => {
             const ratio = sizes[index][0]/sizes[index][1];
@@ -104,7 +114,7 @@ export default function(component) {
             figure.style.width = Math.max(80,width)+'px';
             figure.style.marginInline = 'auto';
         });
-        if (state.restore) {
+        if (state.restore && pagesKnown) {
             const figure = scroll.querySelector('figure[data-index="'+state.page+'"]');
             if (figure) scroll.scrollTop = figure.offsetTop - scroll.offsetTop + (state.offset || 0);
             state.restore = false;
@@ -113,15 +123,18 @@ export default function(component) {
     function remember() {
         if (!active) return;
         const figure = scroll.querySelector('figure[data-index="'+state.page+'"]');
-        state.offset = figure ? scroll.scrollTop - (figure.offsetTop-scroll.offsetTop) : 0;
+        // Hidden/zero-size references and temporary placeholder pagination
+        // cannot overwrite the last usable reading position.
+        if (!state.restore && pagesKnown && scroll.clientWidth && scroll.clientHeight && figure)
+            state.offset = scroll.scrollTop - (figure.offsetTop-scroll.offsetTop);
         views.delete(viewKey); views.set(viewKey,{page:state.page,zoom:state.zoom,offset:state.offset});
         while (views.size > 64) views.delete(views.keys().next().value);
-        positionLabel.textContent = (state.page+1)+' / '+sizes.length;
-        previousButton.disabled = state.page <= 0;
-        nextButton.disabled = state.page >= sizes.length-1;
+        positionLabel.textContent = pagesKnown ? (state.page+1)+' / '+sizes.length : '—';
+        previousButton.disabled = !pagesKnown || state.page <= 0;
+        nextButton.disabled = !pagesKnown || state.page >= sizes.length-1;
     }
     function movePage(index) {
-        if (!active) return;
+        if (!active || !pagesKnown) return;
         state.page = Math.max(0,Math.min(sizes.length-1,index)); state.offset=0; state.restore=true;
         sizePages(); remember(); changed();
     }
@@ -178,11 +191,12 @@ export default function(component) {
         const shown = visible.slice(0,2).map(page => page.index);
         // The last fit-page can leave a sliver of the preceding caption visible
         // when scrolling clamps at the end. Keep the dominant page selected.
-        if (visible.length) state.page = visible.reduce((best,page) => page.height > best.height ? page : best).index;
+        if (pagesKnown && !state.restore && scroll.clientWidth && scroll.clientHeight && visible.length)
+            state.page = visible.reduce((best,page) => page.height > best.height ? page : best).index;
         remember();
         const pixels = Math.max(1, scroll.clientWidth) * Math.min(window.devicePixelRatio || 1, 2);
         const dpi = pixels > 1100 ? 150 : pixels > 850 ? 120 : 96;
-        const value = {visible:state.visible && permitted(), pages:shown.length ? shown : [0], dpi, generation:data.generation};
+        const value = {visible:state.visible && permitted(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation};
         const serialized = JSON.stringify(value);
         if (serialized !== state.sent) {
             state.sent = serialized;

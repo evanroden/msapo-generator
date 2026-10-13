@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from urllib.parse import urlparse
 
 from dotenv import dotenv_values
 from playwright.sync_api import expect, sync_playwright
@@ -107,7 +108,18 @@ def exercise(engine, name):
 
 
 def exercise_page(page, name, errors):
-    page.route("**/*", lambda route: route.continue_() if route.request.url.startswith(URL) else route.abort())
+    blocked=[]
+    def local_request(route):
+        parsed=urlparse(route.request.url)
+        # First-party Streamlit v2 modules may use blob URLs in WebKit.
+        # Those are browser-local bytes, not an external reader/network route.
+        if parsed.scheme in {'blob','data'} or (parsed.hostname=='127.0.0.1' and parsed.port==8519):
+            route.continue_()
+        else:
+            blocked.append(parsed.scheme+':'+(parsed.hostname or 'external'))
+            route.abort()
+    page.route("**/*", local_request)
+    REPORT.setdefault('blocked_external',{})[name]=blocked
     page.goto(URL, wait_until="domcontentloaded")
     page.wait_for_selector(".st-key-epc_pair_purchase_review")
     settle(page, "wide")
@@ -202,6 +214,7 @@ def exercise_page(page, name, errors):
     check(name + " local editing return", package.locator(".epc-workspace-reference").is_hidden())
     capture(page, name, "compact")
     check(name + " no browser errors", not errors, errors)
+    check(name + " zero external browser requests", not blocked, blocked)
 
 
 def main():

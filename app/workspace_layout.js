@@ -31,33 +31,44 @@ export default function(component) {
         subscriptions.push(() => target.removeEventListener(type, listener));
     }
     function addControls(pair, reference, title) {
-        if (pair.querySelector('.epc-preview-controls')) return;
-        const controls = document.createElement('div');
-        controls.className = 'epc-preview-controls';
-        const open = document.createElement('button');
-        open.type = 'button'; open.className = 'epc-compact-open';
-        open.textContent = 'View preview'; open.setAttribute('aria-expanded', 'false');
+        let open = pair.querySelector('.epc-compact-open');
+        if (!open) {
+            const controls = document.createElement('div');
+            controls.className = 'epc-preview-controls';
+            open = document.createElement('button');
+            open.type = 'button'; open.className = 'epc-compact-open';
+            open.textContent = 'View preview'; open.setAttribute('aria-expanded', 'false');
+            controls.append(open); pair.prepend(controls);
+        }
         open.onclick = () => {
             state.returnFocus = document.activeElement;
             pair.dataset.epcPreviewOpen = 'true'; open.setAttribute('aria-expanded', 'true');
             reference.scrollIntoView({block:'start'}); reference.focus({preventScroll:true});
             schedule();
         };
-        controls.append(open);
-        pair.prepend(controls);
-        const titleNode = document.createElement('div');
-        titleNode.className = 'epc-context-title'; titleNode.textContent = title;
-        reference.prepend(titleNode);
-        const back = document.createElement('button');
-        back.type = 'button'; back.className = 'epc-compact-back'; back.textContent = 'Back to editing';
+        // A Streamlit fragment may replace reference children while the pair's
+        // existing Open control survives. Restore each app-owned node on its
+        // own surface instead of mistaking the pair control for complete setup.
+        let titleNode = reference.querySelector('.epc-context-title');
+        if (!titleNode) {
+            titleNode = document.createElement('div');
+            titleNode.className = 'epc-context-title';
+            reference.prepend(titleNode);
+        }
+        if (titleNode.textContent !== title) titleNode.textContent = title;
+        let back = reference.querySelector('.epc-compact-back');
+        if (!back) {
+            back = document.createElement('button');
+            back.type = 'button'; back.className = 'epc-compact-back'; back.textContent = 'Back to editing';
+            const backControls = document.createElement('div');
+            backControls.className = 'epc-preview-controls'; backControls.append(back);
+            reference.prepend(backControls);
+        }
         back.onclick = () => {
             pair.dataset.epcPreviewOpen = 'false'; open.setAttribute('aria-expanded', 'false');
             if (state.returnFocus?.isConnected) state.returnFocus.focus({preventScroll:true});
             pair.scrollIntoView({block:'start'}); schedule();
         };
-        const backControls = document.createElement('div');
-        backControls.className = 'epc-preview-controls'; backControls.append(back);
-        reference.prepend(backControls);
     }
     function discover() {
         pairs = Array.from(root.querySelectorAll('[data-epc-pair]')).map(marker => {

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from urllib.parse import urlparse
 import urllib.request
 
@@ -270,6 +271,10 @@ def exercise(browser_type, name):
         current_image(page, ACTIVITY)
         returned = pair_state(capture(page, name, "actual-reverse-boundary"), "activity")
         check(name, "return preserves output page and zoom", (returned["page"], returned["zoom"]) == (before_view["page"], before_view["zoom"]), {"before": before_view, "returned": returned})
+        returned_image = actual.locator('figure[data-index="1"] img')
+        expect(returned_image).to_be_visible(timeout=30000)
+        expect(returned_image).to_have_js_property('complete', True)
+        check(name, "returned selected page actually decoded", returned_image.evaluate('n=>n.naturalWidth>0'))
 
         # Keep one unblurred native input/node alive through all display changes.
         field.click()
@@ -281,10 +286,16 @@ def exercise(browser_type, name):
         check(name, "unblurred input survives resize", editor_state(field) == before)
         page.set_viewport_size({"width": 1440, "height": 900})
         inject(page, [{"x": 0, "y": 0, "width": 650, "height": 900}, {"x": 690, "y": 0, "width": 750, "height": 900}])
+        # The real setup sidebar puts the app at x=380. A 650px first
+        # segment leaves less than the required 360px editor width. Its
+        # honest compact fallback is required, not a failed book layout.
+        mode(page, "compact")
+        check(name, "sidebar-constrained segment uses honest fallback", editor_state(field) == before)
+        inject(page, [{"x": 0, "y": 0, "width": 820, "height": 900}, {"x": 860, "y": 0, "width": 580, "height": 900}])
         mode(page, "book")
         book = capture(page, name, "actual-book")
         check(name, "unblurred input focus and selection survive book", editor_state(field) == before)
-        check(name, "actual book preview clears measured crease", pair_state(book, "activity")["reference"]["left"] >= 690 - TOLERANCE, pair_state(book, "activity"))
+        check(name, "actual book preview clears measured crease", pair_state(book, "activity")["reference"]["left"] >= 860 - TOLERANCE, pair_state(book, "activity"))
         inject(page, [{"x": 0, "y": 0, "width": 1440, "height": 380}, {"x": 0, "y": 410, "width": 1440, "height": 490}])
         mode(page, "tabletop")
         tabletop = capture(page, name, "actual-tabletop")
@@ -318,7 +329,7 @@ def exercise(browser_type, name):
         check(name, "zero external browser requests or sharing", not attempts and not page.evaluate("window.__monthlyShareAttempts.length"), attempts)
         check(name, "no uncaught browser errors", not errors, errors)
     except Exception as exc:
-        REPORT["browsers"].setdefault(name, {})["failure"] = {"type": type(exc).__name__, "message": str(exc)[:3000], "browser_errors": errors, "blocked_external": attempts}
+        REPORT["browsers"].setdefault(name, {})["failure"] = {"type": type(exc).__name__, "message": str(exc)[:3000], "traceback": traceback.format_exc(), "browser_errors": errors, "blocked_external": attempts}
         try:
             capture(page, name, "failure")
         except Exception as capture_error:
