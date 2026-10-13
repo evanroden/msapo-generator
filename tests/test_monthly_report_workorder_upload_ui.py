@@ -1,5 +1,6 @@
 """A supported WO CSV produces editable metrics without overwriting manual text."""
 from io import BytesIO
+import pytest
 
 from app import monthly_report_ai as ai, monthly_report_upload_ui as ui
 from test_monthly_report_ui import monthly
@@ -71,3 +72,23 @@ def test_workorder_accept_is_idempotent_and_does_not_insert_raw_csv(monkeypatch,
     editor = next(w for w in app.text_area if w.label == "Activity summary")
     assert editor.value.count("3 total, 2 completed, 1 open") == 1
     assert not any(b.label == "Add these work-order totals to Activity" for b in app.button)
+
+
+@pytest.mark.parametrize("manual", ["Manual correction entered before accepting totals.", ""])
+def test_totals_clicked_with_new_text_reject_stale_baseline_without_losing_edit(
+        monkeypatch, tmp_path, manual):
+    app = monthly(monkeypatch, tmp_path)
+    _upload(monkeypatch)
+    app.run()
+    next(w for w in app.text_area if w.label == "Activity summary").set_value(manual)
+    next(b for b in app.button if b.label == "Add these work-order totals to Activity").click().run()
+    assert not app.exception
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == manual
+    assert any("report changed after you reviewed" in w.value for w in app.warning)
+    # Re-reviewing the unchanged evidence against the now-current wording
+    # remains possible and adds the totals exactly once.
+    next(b for b in app.button if b.label == "Add these work-order totals to Activity").click().run()
+    assert not app.exception
+    text = next(w for w in app.text_area if w.label == "Activity summary").value
+    assert manual in text
+    assert text.count("3 total, 2 completed, 1 open") == 1

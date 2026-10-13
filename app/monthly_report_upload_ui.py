@@ -32,7 +32,7 @@ def _sync_source_fields(source, prefix, field):
     previous = st.session_state.get(prefix + "_canonical_view")
     if previous is None or previous == source:
         return
-    attributes = ("classification", "vendor", "service_date", "facility", "work_order",
+    attributes = ("classification", "vendor", "work_order",
                   "actions", "findings", "recommendations", "follow_ups", "out_of_limit")
     for attr in attributes:
         if getattr(previous, attr) != getattr(source, attr):
@@ -48,6 +48,71 @@ def _sync_source_fields(source, prefix, field):
         if before.get(number) != after.get(number):
             value = after.get(number, f"{source.filename} · page/item {number}")
             st.session_state[field(prefix + f"_caption_{number}", value)] = value
+
+def render_source_details(source, profile, prefix, field):
+    """One explicit date/site correction form for native text and image sources.
+
+    Pending form values are separate from canonical evidence. Opening the form
+    or editing a field cannot approve or silently change source metadata.
+    """
+    from app.monthly_report_source_details import (
+        KEEP_FACILITY, correct_source_details, facility_choice, source_date,
+    )
+    p = prefix + "_source_details"
+    # The guided renderer resets this set once per full page render. A source
+    # can be reachable through both writing and page review; give its first
+    # resolver one unique local anchor rather than duplicate heading IDs.
+    anchors = st.session_state.setdefault("_monthly_source_detail_anchors", set())
+    if source.id not in anchors:
+        from html import escape
+        st.markdown('<span id="source-details-' + escape(source.id, quote=True) + '"></span>',
+                    unsafe_allow_html=True)
+        anchors.add(source.id)
+    baseline = (source.service_date, source.facility)
+    previous = st.session_state.get(p + "_baseline")
+    changed_elsewhere = previous is not None and previous != baseline
+    initial_date = source_date(source.service_date)
+    initial_facility = facility_choice(source, profile)
+    date_key = field(p + "_date", initial_date)
+    site_key = field(p + "_site", initial_facility)
+    if changed_elsewhere:
+        # Never apply a stale form over another source view's newer correction.
+        st.session_state[date_key] = initial_date
+        st.session_state[site_key] = initial_facility
+    st.session_state[p + "_baseline"] = baseline
+    missing = initial_date is None or initial_facility in ("", KEEP_FACILITY)
+    with st.expander("Date and facility · " + source.filename, expanded=missing):
+        if changed_elsewhere:
+            st.info("This source was corrected elsewhere. Check the updated details before saving.")
+        if source.service_date and initial_date is None:
+            st.warning("The source date could not be read: " + source.service_date)
+        st.caption("Use the date and site shown in the source. Leave unknown details blank; the filename does not establish them.")
+        if source.selected_pages:
+            st.caption("Selected source pages/items: " + ", ".join(map(str, source.selected_pages)))
+        sites = {site.key: site.title for site in profile.facilities}
+        options = ["", *sites]
+        if initial_facility == KEEP_FACILITY:
+            options.insert(1, KEEP_FACILITY)
+        if st.session_state[site_key] not in options:
+            st.session_state[site_key] = initial_facility
+        labels = {"": "Not established", KEEP_FACILITY: "Keep unresolved: " + source.facility, **sites}
+        with st.form(p + "_form"):
+            chosen_date = st.date_input("Source date", value=None, key=date_key,
+                                        format="YYYY-MM-DD")
+            chosen_facility = st.selectbox("Source facility", options, key=site_key,
+                                          format_func=labels.get)
+            submitted = st.form_submit_button("Save corrected details")
+        if submitted and not changed_elsewhere:
+            try:
+                source = correct_source_details(source, profile, chosen_date, chosen_facility)
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state[p + "_baseline"] = (source.service_date, source.facility)
+                st.caption("Corrected details applied to this draft.")
+    return source
+
+
 def _cmms(content, profile, period, prefix, field):
     source = content.source
     tables = [t for i, t in enumerate(content.tables, 1) if i in source.selected_pages]
@@ -148,6 +213,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     content, source = by_id[selected], by_id[selected].source
     p = key + "_" + selected
     _sync_source_fields(source, p, field)
+    source = render_source_details(source, profile, p, field)
     pending = st.session_state.pop(p + "_page_action", None)
     if pending:
         st.session_state[p + "_pages"] = pending[0]
@@ -157,8 +223,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             st.caption("Suggestions come from readable labels and keywords. Review or correct them; blank means not established.")
             classification = st.selectbox("Classification", sources.CLASSIFICATIONS, key=field(p + "_classification", source.classification))
             changes = {"classification": classification}
-            for attr, label in (("vendor", "Vendor"), ("service_date", "Service/report date (YYYY-MM-DD)"),
-                                ("facility", "Source facility"), ("work_order", "Job / work-order number")):
+            for attr, label in (("vendor", "Vendor"), ("work_order", "Job / work-order number")):
                 changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
             st.caption("Profile facilities and aliases: " + "; ".join(f.title + (" (" + ", ".join(f.aliases) + ")" if f.aliases else "") for f in profile.facilities))
             tags = st.text_input("Equipment tags (comma-separated)", key=field(p + "_tags", ", ".join(source.tags)))
@@ -307,6 +372,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
     source = content.source
     p = prefix + "_" + source.id
     _sync_source_fields(source, p, field)
+    source = render_source_details(source, profile, p, field)
+    content = replace(content, source=source)
     image_pages = sources.image_numbers(content)
     existing = included_pages(blocks)
     if not image_pages:
@@ -318,8 +385,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
         st.caption("These are suggested facts from the file. Blank means not established; adding it here does not change its classification.")
         changes = {}
         st.caption("File classification: " + source.classification)
-        for attr, label in (("vendor", "Vendor"), ("service_date", "Service/report date (YYYY-MM-DD)"),
-                            ("facility", "Source facility"), ("work_order", "Job / work-order number")):
+        for attr, label in (("vendor", "Vendor"), ("work_order", "Job / work-order number")):
             changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
         source = replace(source, **changes)
     for notice in source.notices:
@@ -655,7 +721,9 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         try:
             value = job["future"].result()
             current = additions.get(destination, blocks.get(destination))
-            if current is not None and current.fingerprint != job.get("baseline"):
+            from app.monthly_report_guided import _pending_rich_text_edit
+            if current is not None and (current.fingerprint != job.get("baseline")
+                                        or _pending_rich_text_edit(prefix, current)):
                 st.session_state[local_key + "_pending"] = (job, value)
                 raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
             result, pages = structured.reader_update(job["contents"], destination, value, current,
@@ -672,7 +740,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             if destination == "activity_summary" and pages:
                 selected = []
                 for content in job["contents"]:
-                    source = content.source
+                    source = next((item.source for item in contents
+                                   if item.source.id == content.source.id), content.source)
                     from app.monthly_report_section_uploads import included_pages
                     present = included_pages(blocks)
                     numbers = tuple(n for n in sorted(
@@ -741,6 +810,10 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             previous = blocks.get(destination)
             from app.monthly_report_model import ResolvedBlock
             previous = previous or ResolvedBlock(destination, "This month")
+            from app.monthly_report_guided import _pending_rich_text_edit
+            # Register a retry against the input already delivered this run,
+            # without committing the draft before its normal save boundary.
+            previous = _pending_rich_text_edit(prefix, previous) or previous
             confirmed = True
             if report.needs_site_confirmation:
                 confirmed = st.checkbox(
@@ -757,6 +830,21 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                       key=local_key + "_accept_work_orders_" + report.source_id[:16],
                       on_click=accept_workorders, disabled=not confirmed)
 
+    def finish_with_source_details():
+        nonlocal contents
+        owned = set(st.session_state.get(local_key + "_native_ids", ()))
+        owned.update(st.session_state.get(local_key + "_completed_ids", ()))
+        updated = []
+        for content in contents:
+            if content.source.id in owned:
+                source = render_source_details(
+                    content.source, profile, local_key + "_" + content.source.id, field)
+                content = replace(content, source=source)
+            updated.append(content)
+        contents = tuple(updated)
+        st.session_state[evidence_key] = contents
+        return tuple(content.source for content in contents), additions, {}
+
     complete_finished_job()
     picked = tuple((u.name, u.getvalue()) for u in (uploaded or ()))
     signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
@@ -769,7 +857,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         if ids <= set(st.session_state.get(local_key + "_completed_ids", ())):
             st.session_state[local_key + "_read"] = signature
             show_workorder_metrics()
-            return tuple(c.source for c in contents), additions, {}
+            return finish_with_source_details()
         processed = set(st.session_state.get(local_key + "_native_ids", ()))
         fresh = tuple(c for c in scoped if c.source.id not in processed)
         additions[destination] = structured.native_update(
@@ -788,7 +876,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 st.session_state[local_key + "_read"] = signature
                 st.caption("Automatic reading is off. Any readable text was added below for review; edit the summary directly or use Copilot.")
                 show_workorder_metrics()
-                return tuple(content.source for content in contents), additions, {}
+                return finish_with_source_details()
             force = st.session_state.pop(local_key + "_force_network", False)
             cached = None if force else ai.cached(profile, "section_upload", digest)
             if cached is not None:
@@ -836,4 +924,4 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             st.rerun()
     if local_key + "_job" in st.session_state:
         _section_read_progress(local_key)
-    return tuple(c.source for c in contents), additions, {}
+    return finish_with_source_details()

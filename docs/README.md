@@ -6,6 +6,12 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[Private authentic fixture boundary](PRIVATE_FIXTURE_BOUNDARY_2026-10-13.md) — verified existing capabilities, required owner-authentication approval, immutable fixture storage and same-importer isolation design. No new access configuration is enabled.
+
+[Current Phase 1 and Phase 2 execution ledger](PHASE1_PHASE2_EXECUTION_2026-10-13.md) — resume here for exact commits, CI/deployment outcomes, all original and adaptive requirement IDs, ownership, and remaining acceptance gates.
+
+[Adaptive workspace architecture and checks](ADAPTIVE_WORKSPACES_2026-10-13.md) — shared geometry resolver, stable keyed sections, bounded preview sizing, synthetic browser harness, and rollback scope.
+
 [Stage-one Monthly Report closure ledger](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md) — statuses for F01–F16, #101 P1–P12, U01–U06 and explicit mapping of all 113 proposed acceptance checks. This tracks exact CI separately from deployed build, authentic exports and owner acceptance.
 
 [Monthly report resource budget](COMMIT_NOTES_2026-10-09_MONTHLY_REPORT_RESOURCE_BUDGET.md) — viewport-driven previews, shared cache/converter limits and a capped-container acceptance probe.

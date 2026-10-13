@@ -261,7 +261,7 @@ def _render_ordered_preview(section_key, prefix, title):
             st.warning('The page preview is temporarily unavailable. Your edits are still here.')
             images = ()
     widget_key = prefix + '_preview_surface_' + section_key
-    render_view(key=widget_key, generation=state['wanted'].get(section_key, ''), title=title,
+    render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
                 on_change=lambda: _viewport_changed(prefix, section_key, widget_key))
 

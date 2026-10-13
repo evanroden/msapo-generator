@@ -1,32 +1,54 @@
 """A scrollable preview that requests only visible pages, without remote scripts."""
 from base64 import b64encode
+from functools import lru_cache
 
 import streamlit as st
+from streamlit.runtime import Runtime
 
 
 CSS = """
-.report-preview { font:13px system-ui,sans-serif; color:#40524a; width:100%; }
+.report-preview { font:13px system-ui,sans-serif; color:#40524a; width:100%; height:var(--epc-preview-height,min(78dvh,780px)); display:flex; flex-direction:column; min-height:180px; }
 .report-preview-status { min-height:22px; line-height:22px; padding:0 8px; }
-.report-preview-scroll { height:730px; overflow:auto; background:#edf1ef; padding:12px; box-sizing:border-box; }
+.report-preview-scroll { flex:1; min-height:0; overflow:auto; background:#edf1ef; padding:12px; box-sizing:border-box; }
+.report-preview-tools {display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:4px;}
+.report-preview-tools button, .report-preview-tools select {font:inherit; min-height:36px; background:white; color:#18382b; border:1px solid #557f7f; border-radius:4px;}
+.report-preview-tools button:focus-visible,.report-preview-scroll:focus-visible{outline:3px solid #557f7f;outline-offset:2px;}
+.report-preview[data-enlarged="true"] {position:fixed;inset:12px;width:auto;height:auto;z-index:1000;background:white;padding:8px;box-shadow:0 0 0 100vmax #0008;}
 .report-preview figure { margin:0 0 16px; }
 .report-preview-page { width:100%; background:white; position:relative; box-shadow:0 1px 6px #18382b26; }
 .report-preview-page img { position:absolute; inset:0; display:block; width:100%; height:100%; }
 .report-preview-placeholder { position:absolute; inset:20px; color:#64746d; text-align:center; }
 .report-preview figcaption { text-align:center; padding-top:7px; }
 """
-HTML = '<div class="report-preview"><div class="report-preview-status" role="status"></div><div class="report-preview-scroll" tabindex="0" aria-label="Report section preview"></div></div>'
+HTML = '<div class="report-preview"><div class="report-preview-status" role="status" aria-live="polite"></div><div class="report-preview-tools"><button type="button" data-action="previous" aria-label="Previous preview page">Previous</button><span class="report-preview-position"></span><button type="button" data-action="next" aria-label="Next preview page">Next</button><select aria-label="Preview zoom"><option value="width">Fit width</option><option value="page">Fit page</option><option value="1.25">125%</option><option value="1.5">150%</option></select><button type="button" data-action="enlarge">Enlarge</button></div><div class="report-preview-scroll" tabindex="0" aria-label="Report section preview"></div></div>'
 JS = r"""
 export default function(component) {
     const {parentElement, data, setStateValue} = component;
     const panel = parentElement.querySelector('.report-preview');
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
-    const state = panel._previewState || (panel._previewState = {visible:false, sent:'', timer:null});
+    const state = panel._previewState || (panel._previewState = {visible:false, sent:'', timer:null, page:0, zoom:'width'});
+    const workspace = (parentElement.host || parentElement).closest('.epc-workspace');
+    const pair = (parentElement.host || parentElement).closest('.epc-workspace-pair');
+    const zoom = panel.querySelector('select');
+    const positionLabel = panel.querySelector('.report-preview-position');
+    const previousButton = panel.querySelector('[data-action="previous"]');
+    const nextButton = panel.querySelector('[data-action="next"]');
+    const enlargeButton = panel.querySelector('[data-action="enlarge"]');
+    // Only reading position is retained; no report text goes into browser storage.
+    const views = window.__enfraPreviewViews || (window.__enfraPreviewViews = new Map());
+    const viewKey = data.viewScope;
+    if (state.scope !== viewKey) {
+        const retained = views.get(viewKey) || {page:0,zoom:'width',offset:0};
+        Object.assign(state, retained, {scope:viewKey, restore:true});
+    }
+    zoom.value = state.zoom;
     const sizes = data.sizes && data.sizes.length ? data.sizes : [[612,792]];
     const layout = JSON.stringify([data.generation, sizes, data.ready, data.stale]);
     status.textContent = data.status || '';
     if (state.layout !== layout) {
         const position = scroll.scrollTop;
+        state.page = Math.min(state.page, sizes.length - 1);
         scroll.replaceChildren();
         sizes.forEach((size, index) => {
             const figure = document.createElement('figure');
@@ -45,6 +67,7 @@ export default function(component) {
         });
         scroll.scrollTop = position;
         state.layout = layout;
+        state.restore = true;
     }
     const supplied = new Map((data.pages || []).map(page => [page.index, page]));
     scroll.querySelectorAll('figure').forEach(figure => {
@@ -64,6 +87,45 @@ export default function(component) {
         const src = 'data:image/jpeg;base64,' + wanted.image;
         if (image.getAttribute('src') !== src) image.setAttribute('src', src);
     });
+    function sizePages() {
+        const available = Math.max(100,scroll.clientHeight-46);
+        scroll.querySelectorAll('figure').forEach((figure,index) => {
+            const ratio = sizes[index][0]/sizes[index][1];
+            const width = state.zoom === 'page' ? Math.min(scroll.clientWidth-24,available*ratio) :
+                (scroll.clientWidth-24)*(Number(state.zoom)||1);
+            figure.style.width = Math.max(80,width)+'px';
+            figure.style.marginInline = 'auto';
+        });
+        if (state.restore) {
+            const figure = scroll.querySelector('figure[data-index="'+state.page+'"]');
+            if (figure) scroll.scrollTop = figure.offsetTop - scroll.offsetTop + (state.offset || 0);
+            state.restore = false;
+        }
+    }
+    function remember() {
+        const figure = scroll.querySelector('figure[data-index="'+state.page+'"]');
+        state.offset = figure ? scroll.scrollTop - (figure.offsetTop-scroll.offsetTop) : 0;
+        views.delete(viewKey); views.set(viewKey,{page:state.page,zoom:state.zoom,offset:state.offset});
+        while (views.size > 64) views.delete(views.keys().next().value);
+        positionLabel.textContent = (state.page+1)+' / '+sizes.length;
+        previousButton.disabled = state.page <= 0;
+        nextButton.disabled = state.page >= sizes.length-1;
+    }
+    function movePage(index) {
+        state.page = Math.max(0,Math.min(sizes.length-1,index)); state.offset=0; state.restore=true;
+        sizePages(); remember(); changed();
+    }
+    previousButton.onclick = () => movePage(state.page-1);
+    nextButton.onclick = () => movePage(state.page+1);
+    zoom.onchange = () => {state.zoom=zoom.value;state.offset=0;state.restore=true;sizePages();remember();changed();};
+    enlargeButton.onclick = () => {
+        state.enlarged = !state.enlarged;
+        panel.dataset.enlarged=String(state.enlarged);
+        enlargeButton.textContent=state.enlarged?'Close enlargement':'Enlarge';
+        state.restore=true; sizePages(); changed();
+    };
+    function escape(event) {if (event.key==='Escape' && state.enlarged) enlargeButton.click();}
+    panel.addEventListener('keydown',escape);
     function send() {
         state.timer = null;
         const bounds = scroll.getBoundingClientRect();
@@ -72,9 +134,12 @@ export default function(component) {
             const rect = figure.getBoundingClientRect();
             return rect.bottom > bounds.top && rect.top < bounds.bottom;
         }).slice(0,2).map(figure => Number(figure.dataset.index));
+        if (shown.length) state.page = shown[0];
+        remember();
         const pixels = Math.max(1, scroll.clientWidth) * Math.min(window.devicePixelRatio || 1, 2);
         const dpi = pixels > 1100 ? 150 : pixels > 850 ? 120 : 96;
-        const value = {visible:state.visible, pages:shown.length ? shown : [0], dpi, generation:data.generation};
+        const permitted = !workspace || workspace.dataset.epcMode !== 'tabletop' || pair?.dataset.epcActive === 'true';
+        const value = {visible:state.visible && permitted, pages:shown.length ? shown : [0], dpi, generation:data.generation};
         const serialized = JSON.stringify(value);
         if (serialized !== state.sent) {
             state.sent = serialized;
@@ -93,12 +158,19 @@ export default function(component) {
         }
     }, {rootMargin:'120px 0px', threshold:0.01});
     observer.observe(panel);
-    const resize = new ResizeObserver(changed);
+    const resize = new ResizeObserver(() => {sizePages(); changed();});
     resize.observe(scroll);
     scroll.addEventListener('scroll', changed, {passive:true});
-    changed();
+    function layoutChanged() {sizePages();changed();}
+    workspace?.addEventListener('epc-workspace-layout', layoutChanged);
+    const activeObserver = new MutationObserver(changed);
+    if (pair) activeObserver.observe(pair,{attributes:true,attributeFilter:['data-epc-active']});
+    sizePages(); remember(); changed();
     return () => {
         observer.disconnect();
+        activeObserver.disconnect();
+        workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
+        panel.removeEventListener('keydown',escape);
         resize.disconnect();
         scroll.removeEventListener('scroll', changed);
         if (state.timer !== null) clearTimeout(state.timer);
@@ -120,10 +192,15 @@ def viewport(value, generation, pages=150):
     return {'visible': value['visible'], 'pages': tuple(dict.fromkeys(indexes)), 'dpi': value['dpi']}
 
 
-def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change):
-    view = st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
+@lru_cache(maxsize=2)
+def _preview_component(runtime):
+    return st.components.v2.component('report_preview_surface', html=HTML, css=CSS, js=JS)
+
+
+def render_view(*, key, generation, title, ticket=None, images=(), status='', stale=False, on_change, view_scope=None):
+    view = _preview_component(Runtime.instance())
     return view(key=key, data={
-        'generation': generation, 'title': title, 'ready': ticket is not None and not stale, 'stale': bool(stale),
+        'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
         'sizes': ticket.sizes if ticket else (), 'status': status,
         'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],
-    }, default={'viewport': None}, on_viewport_change=on_change, height=760)
+    }, default={'viewport': None}, on_viewport_change=on_change, height='content')

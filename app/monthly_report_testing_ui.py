@@ -286,6 +286,14 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         from app.monthly_report_guided import render_guided_workflow
         render_guided_workflow(browser_token, browser_timezone, field, move)
         working = _working_report(saved)
+        # Test-only diagnosis: record exactly what the finalized server draft
+        # contains, independent of the browser textarea and unfinished journal.
+        # Synthetic QA scope is enforced at render() entry; never echo text.
+        from hashlib import sha256
+        activity_text = next((block.text for block in working.blocks
+                              if block.key == "activity_summary"), "")
+        st.caption("QA working Activity SHA256: " +
+                   sha256(activity_text.encode("utf-8")).hexdigest())
         with result_surface:
             compare_request = st.session_state.get("monthly_qa_compare_pending")
             if compare_request:
