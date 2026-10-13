@@ -293,6 +293,11 @@ def exercise(browser_type, name, base):
             ("reentry-after-report-clear", REENTRY_TEXT, "tab"),
         ):
             if mode == "button":
+                # After the prior page reload a visible textarea can arrive
+                # before Streamlit finishes wiring actions. Do not dispatch
+                # an intentional Clear into that transient render; require
+                # the actual app's idle signal, then one native button click.
+                idle(page)
                 clear = page.get_by_role("button", name="Clear Activity for this report", exact=True)
                 expect(clear).to_be_enabled()
                 clear.click()
@@ -308,6 +313,10 @@ def exercise(browser_type, name, base):
             page.reload(wait_until="domcontentloaded")
             expect(activity).to_be_visible(timeout=60000)
             expect(activity).to_have_value(wording, timeout=30000)
+            # Value visibility is not a guarantee that Streamlit has finished
+            # hydrating the next editor action after reload. Require the app's
+            # completed rerun before taking a new operator action.
+            idle(page)
             check(name, label + " survives ordinary refresh with exact canonical draft", True, receipt)
             check(name, label + " does not reopen Starting report or duplicate editor",
                   page.get_by_role("textbox", name="Your name", exact=True).count() == 0 and activity.count() == 1)

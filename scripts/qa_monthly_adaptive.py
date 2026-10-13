@@ -120,10 +120,14 @@ def exercise_site_selection(page, browser):
     }""")
     REPORT["browsers"].setdefault(browser, {})["site_selection"] = diagnostics
     try:
-        box = label.bounding_box()
-        if not box:
-            raise AssertionError("The visible site label has no pointer target")
-        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        # The disclosure and report/preview reruns can move the label after a
+        # saved coordinate is sampled. Click the ACTUAL live label once using
+        # Playwright's native pointer actionability/geometry, not DOM click(),
+        # not a cached pixel, and never a retry/fallback to keyboard input.
+        # An earlier failed main artifact showed the old y=505 sample versus
+        # the same site at y=638 in its screenshot, with zero label events.
+        expect(label).to_be_visible()
+        label.click()
         expect(south).not_to_be_checked()
         expect(page.get_by_text("Sites selected (1): Demo North", exact=True)).to_be_visible(timeout=45000)
         expect(activity).to_have_count(0)
