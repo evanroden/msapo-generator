@@ -399,6 +399,11 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                 continue
         if number not in source.needs_vision and any(normal(c) not in normal(source.page_texts[number - 1]) for c in cells if c.strip()):
             raise ValueError("Suggested wording was not present on the cited source page.")
+        if (destination == "activity_summary"
+                and _csv_has_site_scope_column(by_id[source.id])):
+            raise ValueError(
+                "This CSV contains site-specific rows. Check the target facility "
+                "and explicitly select the relevant work before adding Activity.")
         refs.append(sources.source_reference(source, number))
         if destination == "activity_summary":
             if text.strip() and useful_activity(text):
