@@ -297,12 +297,21 @@ def render(browser_token, browser_timezone, field, move, live_storage_root):
                     st.write(expected.section + " · exclude · " + fact)
             st.caption("Original SHA256: " + receipt.original_sha256)
         try:
+            # Streamlit may retain a mounted download_button's binary payload
+            # when only a separate fixture selector changes. A constant widget
+            # key let the second browser download the FIRST browser's DOCX
+            # after reset, even though the selector displayed the correct
+            # fixture. Bind the native widget identity to the exact immutable
+            # fixture and source hash, never merely the visible filename.
+            # A reselect remounts only these actions, not the report editor.
+            source_action_scope = selected + "_" + receipt.original_sha256[:16]
             st.download_button("Download unchanged original", library.download(selected),
                                file_name="fixture-" + selected[:12] + ".docx", mime=receipt.media_type,
-                               key=_PREFIX + "download", on_click="ignore")
+                               key=_PREFIX + "download_" + source_action_scope, on_click="ignore")
         except (ValueError, OSError):
             st.error("The selected original could not be verified for download.")
-        st.button("Start fresh test with this fixture", key=_PREFIX + "start", on_click=_queue_run,
+        st.button("Start fresh test with this fixture",
+                  key=_PREFIX + "start_" + source_action_scope, on_click=_queue_run,
                   args=(selected, context.generation))
         st.caption("Starting a fresh test replaces this browser’s current test workspace and keeps every shared fixture.")
     else:
