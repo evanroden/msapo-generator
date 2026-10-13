@@ -48,7 +48,7 @@ def test_explicit_clear_and_replacement_are_not_reverted_by_hydration_guard():
     editor.set_value("").run()
     assert not app.error and not app.exception
     marker = app.session_state["editor_key"] + "_explicitly_edited"
-    assert app.session_state[marker] == ""
+    assert app.session_state[marker]["text"] == ""
     assert app.session_state["result"].text == ""
     app.run()
     with pytest.raises(KeyError):
@@ -65,7 +65,7 @@ def test_stale_blank_cannot_erase_a_previous_explicit_operator_edit():
     next(w for w in app.text_area if w.label == "Activity summary").set_value(new_text).run()
     assert app.session_state["canonical_block"].text == new_text
     key = app.session_state["editor_key"]
-    assert app.session_state[key + "_explicitly_edited"] == new_text
+    assert app.session_state[key + "_explicitly_edited"]["text"] == new_text
     # Generate/preview rerender can present a stale frontend empty widget
     # without a user callback. It must not change the authoritative draft.
     app.session_state[key] = ""
@@ -126,7 +126,7 @@ def test_interrupted_fragment_rerun_replays_exact_edit_until_canonical_commit():
     assert app.session_state["canonical_block"].text == original
     assert app.session_state["result"].text == update
     marker = app.session_state["editor_key"] + "_explicitly_edited"
-    assert app.session_state[marker] == update
+    assert app.session_state[marker]["text"] == update
 
     # The next complete editor run must replay and commit that edit without
     # requiring a second click, and the following run acknowledges its receipt.
@@ -139,3 +139,101 @@ def test_interrupted_fragment_rerun_replays_exact_edit_until_canonical_commit():
     with pytest.raises(KeyError):
         _ = app.session_state[marker]
     assert app.session_state["canonical_block"].text == update
+
+
+
+def _interrupted_edit(text):
+    source = APP.replace(
+        'st.session_state["canonical_block"] = result',
+        'if st.session_state.get("commit_enabled", True):\n'
+        '    st.session_state["canonical_block"] = result',
+    )
+    app = AppTest.from_string(source, default_timeout=15).run()
+    app.session_state["commit_enabled"] = False
+    next(w for w in app.text_area if w.label == "Activity summary").set_value(text).run()
+    assert not app.exception
+    assert app.session_state["result"].text == text
+    app.session_state["commit_enabled"] = True
+    return app
+
+
+def test_pending_edit_cannot_overwrite_newer_canonical_wording_and_is_recoverable():
+    from dataclasses import replace
+    interrupted = "My interrupted manual correction."
+    app = _interrupted_edit(interrupted)
+    latest = "A newer reviewed source correction."
+    app.session_state["canonical_block"] = replace(
+        app.session_state["canonical_block"], text=latest)
+    app.run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == latest
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == latest
+    key = app.session_state["editor_key"]
+    assert app.session_state[key + "_explicitly_edited_recovery"]["text"] == interrupted
+    # Recovery is an explicit new operation against the currently displayed
+    # version; merely expanding/re-rendering the disclosure cannot apply it.
+    app.run()
+    assert app.session_state["canonical_block"].text == latest
+    next(b for b in app.button if b.label == "Apply interrupted edit").click().run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == interrupted
+    with pytest.raises(KeyError):
+        _ = app.session_state[key + "_explicitly_edited_recovery"]
+
+
+def test_interrupted_clear_does_not_erase_newer_content_and_can_be_dismissed():
+    from dataclasses import replace
+    app = _interrupted_edit("")
+    latest = "Newer source text which must survive the old clear."
+    app.session_state["canonical_block"] = replace(
+        app.session_state["canonical_block"], text=latest)
+    app.run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == latest
+    assert any("cleared this section" in c.value for c in app.get("caption"))
+    next(b for b in app.button if b.label == "Keep current wording").click().run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == latest
+    assert not any(b.label == "Apply interrupted edit" for b in app.button)
+
+
+@pytest.mark.parametrize("generation_key", [
+    "hydration_probe_rich_text_epoch", "_monthly_qa_generation",
+])
+def test_pending_receipt_from_earlier_report_generation_cannot_repopulate_new_work(generation_key):
+    app = _interrupted_edit("Old generation's interrupted text.")
+    original = app.session_state["canonical_block"].text
+    app.session_state[generation_key] = "new-generation"
+    app.run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == original
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == original
+    assert not any(b.label == "Apply interrupted edit" for b in app.button)
+    with pytest.raises(KeyError):
+        _ = app.session_state[app.session_state["editor_key"] + "_explicitly_edited"]
+
+
+def test_equal_text_is_not_acknowledgment_of_an_unrelated_block_revision():
+    from dataclasses import replace
+    text = "A manual edit shared by both candidate versions."
+    app = _interrupted_edit(text)
+    newer = replace(app.session_state["canonical_block"], text=text,
+                    pending_library_save=True)
+    app.session_state["canonical_block"] = newer
+    app.run()
+    assert not app.exception
+    assert app.session_state["canonical_block"] == newer
+    assert app.session_state[app.session_state["editor_key"] + "_explicitly_edited_recovery"]["text"] == text
+
+
+@pytest.mark.parametrize("receipt", [True, "Obsolete receipt", {"text": "Obsolete receipt"}])
+def test_legacy_or_incomplete_receipt_does_not_authorize_widget_overwrite(receipt):
+    app = AppTest.from_string(APP, default_timeout=15).run()
+    key = app.session_state["editor_key"]
+    original = app.session_state["canonical_block"].text
+    app.session_state[key] = "Obsolete receipt"
+    app.session_state[key + "_explicitly_edited"] = receipt
+    app.run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == original
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == original

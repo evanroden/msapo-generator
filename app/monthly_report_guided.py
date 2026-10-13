@@ -2,6 +2,7 @@
 
 from dataclasses import asdict, replace
 import re
+from uuid import uuid4
 
 import streamlit as st
 
@@ -35,14 +36,66 @@ def _standing_specs(section):
     return tuple(b for b in section.blocks if b.key not in monthly)
 
 
-def _mark_explicit_rich_text_edit(marker, widget_key):
-    """Capture one exact operator-submitted value, including deliberate clear.
+def _rich_text_scope(prefix):
+    """Bind callbacks to this report incarnation, including isolated resets."""
+    epoch = st.session_state.setdefault(prefix + "_rich_text_epoch", uuid4().hex)
+    # The durable journal receives its first generation *after* widgets render,
+    # and a successful export can rotate that journal while keeping this editor.
+    # Its save generation is therefore not an editor incarnation. The local
+    # epoch rotates on import/restart, and a QA reset also clears that epoch.
+    return _signature((prefix, epoch, st.session_state.get("_monthly_qa_generation", "")))
 
-    The receipt is consumed after the next full editor draw. Leaving a True
-    marker forever meant a later stale frontend blank could silently clear
-    saved wording despite no new operator action.
+
+def _edited_rich_text(block, text):
+    return replace(block, source="This month", text=text,
+                   reviewed_fingerprint="", client_reviewed_fingerprint="")
+
+
+def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
+    """Capture the exact submission and the version the operator edited.
+
+    A string alone cannot distinguish an interrupted edit from a stale edit
+    after an import or reset. Replay is allowed only against this baseline.
     """
-    st.session_state[marker] = st.session_state.get(widget_key, "")
+    text = st.session_state.get(widget_key, "")
+    st.session_state[marker] = {
+        "text": text, "baseline": block.fingerprint,
+        "result": _edited_rich_text(block, text).fingerprint, "scope": scope,
+    }
+
+
+def _recover_rich_text_edit(marker, widget_key, block, scope):
+    recovered = st.session_state.get(marker + "_recovery")
+    if isinstance(recovered, dict) and recovered.get("scope") == scope:
+        st.session_state[widget_key] = recovered["text"]
+        _mark_explicit_rich_text_edit(marker, widget_key, block, scope)
+        st.session_state.pop(marker + "_recovery", None)
+
+
+def _dismiss_rich_text_recovery(key):
+    st.session_state.pop(key, None)
+
+
+def _render_rich_text_recovery(marker, widget_key, block, scope):
+    recovery_key = marker + "_recovery"
+    recovered = st.session_state.get(recovery_key)
+    if not isinstance(recovered, dict):
+        return
+    if recovered.get("scope") != scope:
+        st.session_state.pop(recovery_key, None)
+        return
+    with st.expander("Review interrupted edit"):
+        st.caption("This section changed before your earlier edit finished. "
+                   "The current wording is unchanged; your interrupted edit is kept here for this session.")
+        if recovered["text"]:
+            st.code(recovered["text"], language=None, wrap_lines=True)
+        else:
+            st.caption("The interrupted edit cleared this section.")
+        st.button("Apply interrupted edit", key=marker + "_apply_recovery",
+                  on_click=_recover_rich_text_edit,
+                  args=(marker, widget_key, block, scope))
+        st.button("Keep current wording", key=marker + "_dismiss_recovery",
+                  on_click=_dismiss_rich_text_recovery, args=(recovery_key,))
 
 
 def _forget_block_widgets(prefix, keys):
@@ -254,15 +307,22 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
     elif spec.type in ("rich_text", "stock_text"):
         editor_key = key + "_text_" + _signature(block.references)
         changed_marker = editor_key + "_explicitly_edited"
+        scope = _rich_text_scope(prefix)
         displayed = st.session_state.get(editor_key, block.text)
         receipt = st.session_state.get(changed_marker)
-        if changed_marker in st.session_state and receipt == block.text:
-            # The authoritative draft now contains the exact submitted text:
-            # acknowledge the edit. A later stale widget cannot reuse it.
+        valid = (isinstance(receipt, dict) and isinstance(receipt.get("text"), str)
+                 and receipt.get("scope") == scope)
+        if valid and receipt.get("result") == block.fingerprint:
+            # Acknowledge the exact resulting block, not merely equal wording.
             st.session_state.pop(changed_marker, None)
             receipt = None
-        submitted = (changed_marker in st.session_state
-                     and isinstance(receipt, str) and receipt == displayed)
+            valid = False
+        submitted = (valid and receipt.get("baseline") == block.fingerprint
+                     and receipt["text"] == displayed)
+        if valid and not submitted:
+            # Do not overwrite newer content or lose the interrupted operator
+            # input. Recovery is report-scoped and requires an explicit choice.
+            st.session_state[changed_marker + "_recovery"] = receipt
         if displayed != block.text and not submitted:
             # A rerun after generation, preview or browser hydration can mount
             # obsolete text. Only an unacknowledged exact on_change receipt
@@ -272,10 +332,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
         text = st.text_area(
             spec.key.replace("_", " ").capitalize(),
             key=field(editor_key, block.text), height=140,
-            on_change=_mark_explicit_rich_text_edit, args=(changed_marker, editor_key))
+            on_change=_mark_explicit_rich_text_edit,
+            args=(changed_marker, editor_key, block, scope))
         if submitted and text != block.text:
-            block = replace(block, source="This month", text=text,
-                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+            block = _edited_rich_text(block, text)
             # Do not consume yet. Preview/fragment work can interrupt a full
             # rerun before the edited block reaches the authoritative draft.
             # Replay only this exact submitted value until that draft agrees.
@@ -283,6 +343,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None):
             # A mismatched/old receipt is never a license to overwrite a
             # newer draft on the next rerun.
             st.session_state.pop(changed_marker, None)
+        _render_rich_text_recovery(changed_marker, editor_key, block, scope)
     elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
@@ -590,6 +651,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     draft_key = prefix + "_draft"
     resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
     if draft_key not in st.session_state or resume:
+        # A replacement import/restart must not inherit unacknowledged text
+        # callbacks even when the same sites, month and widget key are reused.
+        st.session_state[prefix + "_rich_text_epoch"] = uuid4().hex
         active = None
         active_generation = ""
         if recovery_available:
