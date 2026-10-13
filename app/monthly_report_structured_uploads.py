@@ -160,30 +160,33 @@ def mapped_rows(content, destination, table_columns=None):
 _EVENT_START = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s*\|")
 
 
-def _activity_lines(text, suffix):
-    """Extract only activity-labelled passages from a multi-section TXT export.
+def _activity_lines(text, suffix, *, with_dates=False):
+    """Select Activity passages; optionally retain their exact event header date.
 
-    Never classify Training, RFI, water or scorecard statements as completed
-    onsite work merely because the same text file includes them. Historical
-    vendor service labels still belong in Activity. Non-sectioned texts retain
-    their existing conservative extraction.
+    The default string-only result remains compatible with existing callers.
+    Source dates are evidence, not proof that work is complete or current.
     """
     if suffix != ".txt" or not any(_EVENT_START.match(line) for line in text.splitlines()):
-        return tuple(text.splitlines())
+        lines = tuple(text.splitlines())
+        return tuple((line, "") for line in lines) if with_dates else lines
+    from datetime import date
     current_is_activity = False
+    event_date = ""
     result = []
     excluded = ("training summary", "water treatment", "rfi matrix",
                 "monthly scorecards", "equipment performance issues")
     for line in text.splitlines():
         match = _EVENT_START.match(line)
         if match:
+            try:
+                event_date = date.fromisoformat(match.group(1)).isoformat()
+            except ValueError:
+                event_date = ""  # Invalid dates stay unresolved.
             label = line.rsplit("|", 1)[-1].casefold().strip()
             current_is_activity = not any(term in label for term in excluded)
-            # The event header is source context; never infer completion or
-            # the employer solely from its classification label.
             continue
         if current_is_activity:
-            result.append(line)
+            result.append((line, event_date) if with_dates else line)
     return tuple(result)
 
 
