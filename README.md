@@ -125,13 +125,18 @@ aliases and content before saving. A stale cover never decides the age of all
 content. Originals/unmatched items remain available; unsupported native Word
 shapes need an exported image or an editable replacement chart.
 
-Four freely navigable steps cover the report, this month's work, site information,
-and review/download. **Save progress** resumes the same month on another visit.
-Browser memory recalls the report/preparer; entered names are attribution, not
-verified identity. New months retain standing assets and carry issues/proposals
-forward for explicit ongoing/updated/resolved review. Existing same-month work
-is not silently erased. Confirmed contact-directory imports provide site/contact
-suggestions. Client logos and all site-specific content remain on the runtime disk.
+The ordered report page keeps every section directly editable, with an
+actual per-section preview in supported wide/book/tabletop layouts. Report
+changes use acknowledged browser working-copy recovery where available;
+**Save shared version** records a deliberate shared history snapshot, and
+**Create Word and PDF** also saves a shared version. These are different from
+a routine manual Save progress button. Browser memory recalls the report and
+preparer; entered names are attribution, not verified identity. New months
+retain standing assets and carry issues/proposals forward for explicit review.
+Existing same-month work is not silently erased. Confirmed contact-directory
+imports provide site/contact suggestions. Source/date/site corrections remain
+available when reopening reports. Client logos and site-specific data remain
+on the runtime disk.
 
 Upload vendor/chemical evidence, choose relevant pages, review extracted facts,
 and request editable source-linked wording. Optional Copilot notes and a filled
