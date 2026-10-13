@@ -97,3 +97,56 @@ def test_unknown_vendor_date_remain_uninvented_and_price_bearing_vendor_is_exclu
     text = structured.native_update((priced,), "activity_summary").text
     assert text == "2026-09-18 — Inspected the pump on site."
     assert "$150" not in text
+
+
+def test_csv_vendor_event_date_and_pending_status_are_source_grounded(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    raw = (
+        "Vendor,Event date,Work performed,Status,Price\n"
+        "Trane,2026-09-16,Inspected chiller compressor.,Open,\"$2,000\"\n"
+        "Trane,2026-09-20,Calibrated drive controller.,Completed,\"$300\"\n"
+    ).encode()
+    profile = synthetic_profiles()[0]
+    content, _ = sources.ingest(profile, "vendor-events.csv", raw)
+    result = structured.native_update((content,), "activity_summary")
+    assert "2026-09-16 · Trane — Inspected chiller compressor. (Status: Open)" in result.text
+    assert "2026-09-20 · Trane — Calibrated drive controller. (Status: Completed)" in result.text
+    assert "$2,000" not in result.text and "$300" not in result.text
+    assert len(result.references) == 1
+    assert structured.native_update((content,), "activity_summary", result) == result
+    assert sources.source_bytes(profile, content.source) == raw
+
+
+def test_csv_ambiguous_event_date_stays_unknown_without_report_month_inference(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    content, _ = sources.ingest(
+        profile, "ambiguous.csv",
+        b"Vendor,Event date,Work performed\nTrane,09/10/2026,Inspected AHU motor.\n")
+    result = structured.native_update((content,), "activity_summary")
+    assert result.text == "Trane — Inspected AHU motor."
+    assert "2026-09" not in result.text
+
+
+def test_csv_with_mixed_sites_stays_out_of_auto_activity_until_scoped_review(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    content, _ = sources.ingest(
+        profile, "mixed-sites.csv",
+        b"Site,Vendor,Event date,Work performed\n"
+        b"Foreign Site,Trane,2026-09-16,Inspected foreign AHU.\n"
+        b"Demo North,Trane,2026-09-18,Inspected local AHU.\n")
+    result = structured.native_update((content,), "activity_summary")
+    assert not result.text and not result.references
+    assert "Foreign Site" in content.source.page_texts[0]
+
+
+def test_cmms_csv_with_status_date_and_work_order_stays_on_separate_review_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile = synthetic_profiles()[0]
+    content, _ = sources.ingest(
+        profile, "cmms.csv",
+        b"Work Order,Status,Event date,Vendor,Work performed\n"
+        b"WO-101,Completed,2026-09-18,Trane,Inspected pump.\n")
+    result = structured.native_update((content,), "activity_summary")
+    assert not result.text and not result.references
