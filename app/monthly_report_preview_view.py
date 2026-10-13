@@ -44,17 +44,62 @@ export default function(component) {
     if (applied) state.sent = applied;
     const host = parentElement.host || parentElement;
     const app = host.closest('[data-testid="stApp"]');
+    let editGate = null;
+    let onEditorReceipt = null;
     function frameworkBusy() {
         // Locked-version adapter: Streamlit exposes this state on its real
         // app root. A preview event must not replace a pending editing rerun.
         const run = app?.getAttribute('data-test-script-state');
-        return Boolean(run && run !== 'notRunning');
+        return Boolean(editGate?.pending || (run && run !== 'notRunning'));
     }
     // The preview can mount before the layout adapter's first animation
     // frame adds its classes. Bind stable app-owned container keys now so
     // later active-section changes reach even an initially offscreen viewer.
     const workspace = host.closest('[class*="st-key-epc_workspace_"]') || host.closest('.epc-workspace');
     const pair = host.closest('[class*="st-key-epc_pair_"]') || host.closest('.epc-workspace-pair');
+    // Browser native changes can queue a complete Streamlit editor rerun before
+    // data-test-script-state becomes 'running'. A preview fragment sent in this
+    // interval can overtake that edit; an interleaved full/fragment response
+    // was observed to reuse a ForwardMsg hash already evicted by WebKit.
+    // Coordinate VIEW requests only: do not inspect widget values, clone a
+    // widget, send business state, or alter any form submission.
+    const gates = window.__enfraPreviewNativeEditGates ||
+        (window.__enfraPreviewNativeEditGates = new WeakMap());
+    if (app && workspace) {
+        editGate = gates.get(app);
+        if (!editGate || editGate.workspace !== workspace) {
+            const gate = {workspace, pending:false, before:'', refs:0, listeners:new Set()};
+            const releaseAfterFullRender = () => {
+                if (!gate.pending) return;
+                const finished = workspace.dataset.epcFullRender;
+                if (finished && finished !== gate.before &&
+                        app.getAttribute('data-test-script-state') === 'notRunning') {
+                    gate.pending = false;
+                    for (const listener of gate.listeners) listener();
+                }
+            };
+            const nativeChange = event => {
+                const target = event.target;
+                if (!target?.matches?.('input,textarea,select') ||
+                        target.closest?.('.report-preview')) return;
+                const current = workspace.dataset.epcFullRender;
+                if (current) {
+                    gate.pending = true;
+                    gate.before = current;
+                }
+            };
+            app.addEventListener('change', nativeChange, true);
+            const observer = new MutationObserver(releaseAfterFullRender);
+            observer.observe(workspace, {attributes:true,attributeFilter:['data-epc-full-render']});
+            observer.observe(app, {attributes:true,attributeFilter:['data-test-script-state']});
+            gate.dispose = () => {app.removeEventListener('change',nativeChange,true);observer.disconnect();};
+            editGate = gate;
+            gates.set(app, gate);
+        }
+        editGate.refs++;
+        onEditorReceipt = () => {if (active) changed();};
+        editGate.listeners.add(onEditorReceipt);
+    }
     const zoom = panel.querySelector('select');
     const positionLabel = panel.querySelector('.report-preview-position');
     const previousButton = panel.querySelector('[data-action="previous"]');
@@ -324,6 +369,10 @@ export default function(component) {
         observer.disconnect();
         activeObserver.disconnect();
         appObserver?.disconnect();
+        if (editGate && onEditorReceipt) {
+            editGate.listeners.delete(onEditorReceipt);
+            if (--editGate.refs === 0) {editGate.dispose();gates.delete(app);}
+        }
         workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
         document.removeEventListener('visibilitychange', changed);
         document.removeEventListener('keydown',escape);
