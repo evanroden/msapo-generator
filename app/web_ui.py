@@ -1713,11 +1713,11 @@ def main() -> None:
         if requested:
             st.session_state["workflow_mode"] = requested
 
-    # An intentionally hidden synthetic-QA link opens the monthly workflow
+    # An intentionally hidden testing link opens the monthly workflow
     # directly, even when another workflow was last active in this browser.
     # It is a navigation hint only; the server-side QA namespace is selected
     # independently inside render_monthly_report_workflow.
-    if (st.query_params.get("monthly_qa") == "isolated"
+    if (st.query_params.get("monthly_qa") in {"isolated", "fixtures"}
             and st.query_params.get("workflow") != _workflow_query_name(MONTHLY_REPORT_WORKFLOW)):
         st.session_state["workflow_mode"] = MONTHLY_REPORT_WORKFLOW
 
@@ -1751,8 +1751,8 @@ def main() -> None:
             st.query_params["workflow"] = route
     except (AttributeError, RuntimeError, ValueError):
         pass
-    if workflow_mode != MONTHLY_REPORT_WORKFLOW and st.query_params.get("monthly_qa") == "isolated":
-        # Switching away from synthetic testing also exits the hidden route.
+    if workflow_mode != MONTHLY_REPORT_WORKFLOW and st.query_params.get("monthly_qa") in {"isolated", "fixtures"}:
+        # Switching away from testing also exits the hidden route.
         del st.query_params["monthly_qa"]
     if workflow_mode == MONTHLY_REPORT_WORKFLOW:
         render_monthly_report_workflow(browser_token, browser_timezone)

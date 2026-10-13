@@ -73,6 +73,7 @@ class ReportIdentity:
     contract: str
     sites: tuple[str, ...]
     month: str
+    site_titles: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,10 @@ def _identity(value):
         raise ValueError("Sites must be an explicit unique tuple.")
     for site in value.sites:
         _text(site, "Site", 200)
+    if not isinstance(value.site_titles, tuple) or (value.site_titles and len(value.site_titles) != len(value.sites)):
+        raise ValueError("Site titles must align with their canonical site identities.")
+    for title in value.site_titles:
+        _text(title, "Site title", 200)
     if (not isinstance(value.month, str) or not _PERIOD.fullmatch(value.month)
             or int(value.month[:4]) < 1):
         raise ValueError("Reporting month must be YYYY-MM.")
@@ -362,8 +367,10 @@ class FixtureVault:
             details = value["metadata"]
             metadata = FixtureMetadata(
                 friendly_name=details["friendly_name"],
-                source=ReportIdentity(details["source"]["contract"], tuple(details["source"]["sites"]), details["source"]["month"]),
-                target=ReportIdentity(details["target"]["contract"], tuple(details["target"]["sites"]), details["target"]["month"]),
+                source=ReportIdentity(details["source"]["contract"], tuple(details["source"]["sites"]), details["source"]["month"],
+                                      tuple(details["source"].get("site_titles", ()))),
+                target=ReportIdentity(details["target"]["contract"], tuple(details["target"]["sites"]), details["target"]["month"],
+                                      tuple(details["target"].get("site_titles", ()))),
                 scenario=details["scenario"], owner_expectations=details["owner_expectations"],
                 expected_content=tuple(ExpectedSection(item["section"], tuple(item["includes"]), tuple(item["excludes"]))
                                        for item in details["expected_content"]),
