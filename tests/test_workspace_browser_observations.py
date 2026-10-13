@@ -34,6 +34,8 @@ def test_safe_snapshot_has_counts_and_hashes_without_report_or_input_values():
 
 def test_real_preview_fragment_observer_emits_only_safe_test_metadata(monkeypatch, tmp_path):
     import json
+    import re
+    from html import unescape
     from streamlit.testing.v1 import AppTest
     from app import monthly_report_section_preview_ui as ui
     # Restore the real production function after this instrumentation test.
@@ -55,13 +57,18 @@ with isolated('a'*32):
     emit_snapshot()
 ''').run()
     assert not app.exception
-    captions = [item.value for item in app.caption if item.value.startswith('Synthetic workspace observations: ')]
-    observed = json.loads(captions[-1].split(': ', 1)[1])
+    def latest():
+        values = [match.group(1) for item in app.get('html')
+                  if (match := re.search(r'data-enfra-workspace-observations="([^"]+)"', item.proto.body))]
+        assert values
+        assert not any(item.value.startswith('Synthetic workspace observations: ') for item in app.caption)
+        return json.loads(unescape(values[-1]))
+    observed = latest()
     assert observed['full_runs'] == observed['preview_mounts'] == 1
     assert observed['preview_fragment_runs'] == observed['pending_jobs'] == 0
     assert observed['running_jobs'] == 0
     assert observed['assembly_lease_active'] is False
     app.run()
     assert not app.exception
-    observed = json.loads([item.value for item in app.caption if item.value.startswith('Synthetic workspace observations: ')][-1].split(': ',1)[1])
+    observed = latest()
     assert observed['full_runs'] == observed['preview_mounts'] == 2

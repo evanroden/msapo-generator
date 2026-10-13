@@ -31,6 +31,30 @@ def generation() -> str | None:
     return _LEASE.get()
 
 
+def capture_namespace():
+    """Capture only our storage identity/lease for a later UI callback.
+
+    A whole ``copy_context`` also captures Streamlit's render/fragment state.
+    Restoring that inside a fragment can register its widgets outside the
+    fragment and turn every preview request into a full editor rerun. Worker
+    threads may still copy their context; UI callbacks must retain the current
+    framework context and bind only these two application-owned variables.
+    """
+    identity, lease = scope(), generation()
+
+    @contextmanager
+    def activate():
+        chosen = _SCOPE.set(identity)
+        previous_generation = _LEASE.set(lease)
+        try:
+            yield
+        finally:
+            _LEASE.reset(previous_generation)
+            _SCOPE.reset(chosen)
+
+    return activate
+
+
 @contextmanager
 def isolated(browser_token: str):
     """Bind one server request and its copied async contexts to a QA identity."""

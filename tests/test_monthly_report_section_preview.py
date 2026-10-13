@@ -453,3 +453,84 @@ st.text_input('Unrelated editor', key='untouched')
     assert not app.exception
     assert app.session_state['full_runs'] == 2
     assert payload(app)['pending'] is False and payload(app)['ready'] is True
+
+
+def test_isolated_preview_widgets_keep_actual_framework_fragment_identity(monkeypatch, tmp_path):
+    from app import monthly_report_testing as testing
+    from streamlit.runtime.scriptrunner_utils.script_run_context import ThreadState
+    seen = []
+    original = ui.render_view
+
+    def observed(**kwargs):
+        seen.append((ThreadState.get().fragment_id, testing.scope(), testing.generation()))
+        return original(**kwargs)
+
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    monkeypatch.setattr(ui, 'render_view', observed)
+    app = AppTest.from_string('''
+import os
+from pathlib import Path
+from app.monthly_report_testing import isolated, data_dir
+from app.monthly_report_model import synthetic_draft, synthetic_profiles, ReportPeriod
+from app.monthly_report_section_preview_ui import render_section_preview
+with isolated('a'*32):
+    data_dir(Path(os.environ['EPC_DATA_DIR']))
+    draft=synthetic_draft(synthetic_profiles()[0],ReportPeriod(2026,9))
+    render_section_preview(draft,'activity',{},'synthetic')
+    render_section_preview(draft,'training',{},'synthetic')
+''').run()
+    assert not app.exception
+    assert len(seen) == 2
+    assert all(fragment and namespace and lease for fragment, namespace, lease in seen)
+    assert seen[0][0] != seen[1][0], 'each section must own a distinct actual fragment'
+    assert seen[0][1:] == seen[1][1:], 'both previews retain the same isolated lease'
+    for component in app.get('bidi_component'):
+        metadata = app.session_state._state._new_widget_state.widget_metadata[component.proto.id]
+        assert metadata.fragment_id in {item[0] for item in seen}
+    assert testing.scope() is None and testing.generation() is None
+
+
+def test_captured_namespace_preserves_current_runtime_context_and_rejects_reset(tmp_path):
+    from contextvars import ContextVar
+    from app import monthly_report_testing as testing
+    framework = ContextVar('synthetic_current_fragment', default='outer')
+    with testing.isolated('b'*32):
+        target = testing.data_dir(tmp_path)
+        captured = testing.capture_namespace()
+        old = (testing.scope(), testing.generation())
+    framework.set('current-fragment')
+    with testing.isolated('c'*32):
+        sibling = testing.data_dir(tmp_path)
+        sibling_identity = (testing.scope(), testing.generation())
+        with captured():
+            assert framework.get() == 'current-fragment'
+            assert (testing.scope(), testing.generation()) == old
+            assert testing.data_dir(tmp_path) == target
+            testing.reset(tmp_path)
+        assert (testing.scope(), testing.generation()) == sibling_identity
+        assert testing.data_dir(tmp_path) == sibling
+    with captured():
+        with pytest.raises(OSError, match='reset'):
+            testing.data_dir(tmp_path)
+    assert not target.exists() and sibling.exists()
+    assert testing.scope() is None and testing.generation() is None
+
+
+def test_preview_callback_carries_namespace_before_cache_access_and_rejects_reset(monkeypatch, tmp_path):
+    from app import monthly_report_testing as testing
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    seen = []
+    with testing.isolated('d'*32):
+        target = testing.data_dir(tmp_path)
+        expected = (testing.scope(), testing.generation())
+        callback = ui._scoped_callback(lambda value: seen.append((value, testing.scope(), testing.generation())), 'view')
+    callback()
+    assert seen == [('view', *expected)]
+    assert testing.scope() is None
+    with testing.isolated('d'*32):
+        testing.data_dir(tmp_path)
+        testing.reset(tmp_path)
+    with pytest.raises(OSError, match='reset'):
+        callback()
+    assert seen == [('view', *expected)]
+    assert not target.exists(), 'stale callback cannot recreate its erased namespace'

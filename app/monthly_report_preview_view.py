@@ -165,13 +165,27 @@ export default function(component) {
     function permitted() {
         return !workspace || workspace.dataset.epcMode !== 'tabletop' || pair?.dataset.epcActive === 'true';
     }
+    function visibleNow() {
+        if (document.hidden || !permitted()) return false;
+        if (workspace?.dataset.epcMode !== 'tabletop') return state.visible;
+        // The intended fixed upper surface is outside the lower scroll root.
+        // WebKit's IntersectionObserver may clip it to that ancestor despite
+        // its viewport-fixed placement. Measure only the active reference;
+        // inactive/hidden references have no positive rendered rectangle.
+        const bounds = panel.getBoundingClientRect(), view = window.visualViewport;
+        const left = view?.offsetLeft || 0, top = view?.offsetTop || 0;
+        const right = left + (view?.width || window.innerWidth);
+        const bottom = top + (view?.height || window.innerHeight);
+        return bounds.width > 0 && bounds.height > 0 && bounds.right > left &&
+            bounds.left < right && bounds.bottom > top && bounds.top < bottom;
+    }
     function pollWhenPending() {
         if (pollTimer !== null) clearTimeout(pollTimer);
         pollTimer = null;
-        if (!active || !data.pending || !state.visible || !permitted() || document.hidden) return;
+        if (!active || !data.pending || !visibleNow()) return;
         pollTimer = setTimeout(() => {
             pollTimer = null;
-            if (!active || !state.visible || !permitted() || document.hidden) return;
+            if (!active || !visibleNow()) return;
             state.pollSequence = (state.pollSequence || 0) + 1;
             setStateValue('poll', {generation:data.generation, sequence:state.pollSequence});
             // Keep a bounded heartbeat if a busy session defers this event.
@@ -196,7 +210,7 @@ export default function(component) {
         remember();
         const pixels = Math.max(1, scroll.clientWidth) * Math.min(window.devicePixelRatio || 1, 2);
         const dpi = pixels > 1100 ? 150 : pixels > 850 ? 120 : 96;
-        const value = {visible:state.visible && permitted(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation};
+        const value = {visible:visibleNow(), pages:pagesKnown && shown.length ? shown : [state.page], dpi, generation:data.generation};
         const serialized = JSON.stringify(value);
         if (serialized !== state.sent) {
             state.sent = serialized;

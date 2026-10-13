@@ -169,3 +169,27 @@ test('hidden remount and cache reload preserve a page anchor until real paginati
     assert.equal(panel._previewState.page,0,'known changed pagination uses nearest surviving page');
     panel._previewCleanup();
 });
+
+test('tabletop active reference uses its measured upper bounds when observer clips lower ancestor',()=>{
+    const {root,panel}=dom(),timers=new Map(),observers=[],sent=[];let sequence=0;
+    const workspace=new Element(),pair=new Element();
+    workspace.dataset.epcMode='tabletop';pair.dataset.epcActive='true';
+    root.closest=selector=>selector==='.epc-workspace'?workspace:pair;
+    panel.getBoundingClientRect=()=>({left:80,right:1360,top:56,bottom:380,width:1280,height:324});
+    class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const context={window:{devicePixelRatio:1,innerWidth:1440,innerHeight:900},document,Map,JSON,Array,Number,Math,String,Boolean,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:callback=>{timers.set(++sequence,callback);return sequence;},clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const cleanup=render({parentElement:root,data:{generation:'one',viewScope:'expense|receipt2',pages:[],sizes:[],ready:false},setStateValue:(name,value)=>sent.push(value)});
+    const fire=()=>{for(const callback of timers.values())callback();timers.clear();};
+    observers[0].callback([{isIntersecting:false}]);fire();
+    assert.equal(sent.at(-1).visible,true,'visible active upper preview must be admitted');
+    pair.dataset.epcActive='false';observers[2].callback();fire();
+    assert.equal(sent.at(-1).visible,false,'outgoing receipt cannot continue requesting pages');
+    pair.dataset.epcActive='true';document.hidden=true;observers[2].callback();fire();
+    assert.equal(sent.at(-1).visible,false,'background pages remain suspended');
+    cleanup();
+});

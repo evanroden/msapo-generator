@@ -69,13 +69,15 @@ def tabletop_reference(page, pair, title, name):
         const ref=pair.querySelector('.epc-workspace-reference');
         const title=ref.querySelector('.epc-context-title');
         const box=ref.getBoundingClientRect(), label=title.getBoundingClientRect();
+        const hit=document.elementFromPoint(label.left+label.width/2,label.top+label.height/2);
         return {reference:box.toJSON(),title:label.toJSON(),
+            unobscured:Boolean(hit&&title.contains(hit)),
             hidden:[...pair.closest('.epc-workspace').querySelectorAll('.epc-workspace-pair:not([data-epc-active="true"]) .epc-workspace-reference')]
                 .map(node=>({display:getComputedStyle(node).display,rects:node.getClientRects().length}))};
     }""")
     check(name+' upper title fits active reference',
           observed['title']['top']>=observed['reference']['top'] and
-          observed['title']['bottom']<=observed['reference']['bottom'],observed)
+          observed['title']['bottom']<=observed['reference']['bottom'] and observed['unobscured'],observed)
     # A hidden wrapper alone was insufficient: Streamlit child visibility
     # overrides leaked an inactive Mileage caption across the receipt preview.
     check(name+' inactive reference descendants cannot overlap active source',

@@ -275,6 +275,14 @@ def exercise(browser_type, name):
         expect(returned_image).to_be_visible(timeout=30000)
         expect(returned_image).to_have_js_property('complete', True)
         check(name, "returned selected page actually decoded", returned_image.evaluate('n=>n.naturalWidth>0'))
+        updates = page.evaluate(CLIENT_SNAPSHOT)['server']
+        previous_updates = baseline['runtime_observations']['server']
+        check(name, "preview navigation and section scrolling avoid full-app reruns",
+              updates['full_runs'] == previous_updates['full_runs'],
+              {'before':previous_updates,'after':updates})
+        check(name, "actual Monthly preview requests run inside fragments",
+              updates['preview_fragment_runs'] > previous_updates['preview_fragment_runs'],
+              {'before':previous_updates['preview_fragment_runs'],'after':updates['preview_fragment_runs']})
 
         # Keep one unblurred native input/node alive through all display changes.
         field.click()
@@ -298,6 +306,14 @@ def exercise(browser_type, name):
         check(name, "actual book preview clears measured crease", pair_state(book, "activity")["reference"]["left"] >= 860 - TOLERANCE, pair_state(book, "activity"))
         inject(page, [{"x": 0, "y": 0, "width": 1440, "height": 380}, {"x": 0, "y": 410, "width": 1440, "height": 490}])
         mode(page, "tabletop")
+        current_image(page, ACTIVITY)
+        expect(actual.locator('figure[data-index="1"] img')).to_be_visible(timeout=30000)
+        title = actual.locator('.epc-context-title')
+        expect(title).to_have_text('Monthly Activity Summary')
+        check(name, "tabletop title is clear of persistent chrome", title.evaluate('''n=>{
+            const r=n.getBoundingClientRect(), hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+            return Boolean(hit&&n.contains(hit));
+        }'''))
         tabletop = capture(page, name, "actual-tabletop")
         check(name, "unblurred input focus and selection survive tabletop", editor_state(field) == before)
         active = [p for p in tabletop["pairs"] if p["active"] == "true"]

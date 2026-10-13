@@ -182,3 +182,27 @@ containers, optional explicit focus override, physical keyboard/IME and Safari
 behavior, and all authentic input/output acceptance. Separate actual Monthly
 and PO harnesses are integrated by their owners; their run outcomes belong in
 the consolidated exact-head evidence ledger.
+
+
+## Fragment ownership and measured tabletop visibility repair
+
+Actual QA browser instrumentation found that whole-context restoration inside a
+Monthly preview fragment also restored Streamlit's older rendering context.
+`capture_namespace()` now binds only the application-owned QA scope and reset
+lease. It leaves Streamlit's current fragment and delta-generator state intact.
+Viewport, poll and retry callbacks bind that same namespace before touching
+caches, and validate the reset lease before any state mutation. Worker threads
+continue to carry their captured context. Tests inspect real Streamlit widget
+metadata and prove stale callbacks cannot recreate an erased QA namespace.
+
+The browser checks require page navigation/section scrolling to leave full-app
+counts unchanged while fragment counts increase. Synthetic diagnostics use
+hidden DOM data so they cannot enlarge the section being measured. Exact runs,
+including failures, are in the consolidated execution ledger.
+
+Tabletop reference visibility uses positive measured viewport bounds for the
+active fixed upper pane because WebKit can report it clipped to the lower
+scroll ancestor. Inactive references are display-hidden, preserving all editor
+instances. Geometry excludes the measured persistent header; tests hit-test the
+upper title and require actual decoded imagery for the newly selected receipt.
+This is browser implementation work, not physical-device or Safari acceptance.

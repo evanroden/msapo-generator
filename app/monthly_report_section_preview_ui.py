@@ -235,6 +235,22 @@ def _preview_status(*, pending=False, pages=0, stale=False, failed=False):
     return "Updating preview…" if pending else ""
 
 
+def _scoped_callback(callback, *args):
+    # Streamlit invokes widget callbacks before the fragment body. Bind its
+    # namespace here as well, before any cache lookup, queue change or retry.
+    from app.monthly_report_testing import capture_namespace, scope
+    captured = capture_namespace()
+
+    def run():
+        with captured():
+            if scope() is not None:
+                from app.memory import _data_dir
+                _data_dir()  # Reject a reset lease before mutating view/job state.
+            return callback(*args)
+
+    return run
+
+
 def _render_ordered_preview(section_key, prefix, title):
     state = _ordered_preview_state(prefix)
     _enqueue_visible(state, section_key)
@@ -253,7 +269,7 @@ def _render_ordered_preview(section_key, prefix, title):
         status = _preview_status(failed=True)
         st.warning(entry['error'])
         st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key,
-                  on_click=_retry_preview, args=(prefix, section_key))
+                  on_click=_scoped_callback(_retry_preview, prefix, section_key))
     if entry and not entry.get('error'):
         ticket = entry['ticket']
         status = _preview_status(pages=ticket.pages)
@@ -278,8 +294,8 @@ def _render_ordered_preview(section_key, prefix, title):
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
                 pending=pending,
-                on_poll=lambda: _poll_changed(prefix, section_key, widget_key),
-                on_change=lambda: _viewport_changed(prefix, section_key, widget_key))
+                on_poll=_scoped_callback(_poll_changed, prefix, section_key, widget_key),
+                on_change=_scoped_callback(_viewport_changed, prefix, section_key, widget_key))
 
 
 def _request_scope(draft, section_key, assets):
@@ -331,11 +347,12 @@ def render_ordered_section_preview(draft, section_key, assets, prefix):
     # that callback as well as into its asynchronous worker.
     from app.monthly_report_testing import scope
     if scope() is not None:
-        from contextvars import copy_context
-        captured = copy_context()
+        from app.monthly_report_testing import capture_namespace
+        captured = capture_namespace()
 
         def scoped_fragment(section_key, prefix, title):
-            return captured.run(_render_ordered_preview, section_key, prefix, title)
+            with captured():
+                return _render_ordered_preview(section_key, prefix, title)
 
         st.fragment(scoped_fragment)(section_key, prefix, title)
     else:

@@ -18,6 +18,7 @@ export default function(component) {
     const subscriptions = [];
     root.classList.add('epc-workspace');
     const nav = data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+    const chrome = document.querySelector('[data-testid="stHeader"]');
     const safe = document.createElement('div');
     safe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
     root.append(safe);
@@ -100,6 +101,10 @@ export default function(component) {
     function snapshot() {
         const visual = window.visualViewport;
         const outer = rect(scrollport), block = rect(app), style = getComputedStyle(app), insets = getComputedStyle(safe);
+        const header = chrome?.getBoundingClientRect();
+        const chromeBottom = header && header.width > 0 && header.bottom > outer.y &&
+            header.left < block.x + block.width && header.right > block.x ? header.bottom : outer.y;
+        const workingTop = Math.max(outer.y, chromeBottom);
         const left = parseFloat(style.paddingLeft) || 0, right = parseFloat(style.paddingRight) || 0;
         const textScale = Math.max(1,(parseFloat(getComputedStyle(root).fontSize)||16)/16);
         let segments = null, posture = 'unknown';
@@ -107,7 +112,8 @@ export default function(component) {
         try { posture = navigator.devicePosture?.type || 'unknown'; } catch (_) {}
         return {layout:{width:document.documentElement.clientWidth, height:window.innerHeight},
             visual:visual ? {x:visual.offsetLeft,y:visual.offsetTop,width:visual.width,height:visual.height,scale:visual.scale} : null,
-            app:{x:block.x + left,y:outer.y,width:Math.max(0,block.width-left-right),height:outer.height},
+            app:{x:block.x + left,y:workingTop,width:Math.max(0,block.width-left-right),height:Math.max(0,outer.y+outer.height-workingTop)},
+            chromeBottom,
             scrollport:outer, segments, posture, minEditor:360*textScale,minPreview:320*textScale,minHeight:240*textScale,
             safe:{top:parseFloat(insets.paddingTop)||0,right:parseFloat(insets.paddingRight)||0,bottom:parseFloat(insets.paddingBottom)||0,left:parseFloat(insets.paddingLeft)||0}};
     }
@@ -168,7 +174,7 @@ export default function(component) {
         }
         const navStyle = nav ? getComputedStyle(nav) : null;
         const navTop = navStyle?.position === 'sticky' ? parseFloat(navStyle.top)||0 : 0;
-        const top = Math.max(sample.visual?.y || 0, sample.scrollport.y, navTop) + (nav ? nav.getBoundingClientRect().height : 0) + 12;
+        const top = Math.max(sample.visual?.y || 0, sample.scrollport.y, sample.chromeBottom, navTop) + (nav ? nav.getBoundingClientRect().height : 0) + 12;
         css('preview-top',top);
         const bottom = Math.min(sample.scrollport.y+sample.scrollport.height, (sample.visual?.y||0)+(sample.visual?.height||sample.layout.height));
         css('preview-height',context.mode === 'tabletop' && context.preview ? Math.max(120,context.preview.height-24) : Math.max(180,bottom-top-16));
@@ -197,6 +203,7 @@ export default function(component) {
     function schedule() {if (!disposed && frame === null) frame = requestAnimationFrame(measure);}
     const resize = new ResizeObserver(schedule);
     resize.observe(app); resize.observe(scrollport); if (nav) resize.observe(nav);
+    if (chrome) resize.observe(chrome);
     const mutation = new MutationObserver(schedule);
     mutation.observe(root, {childList:true,subtree:true});
     listen(window,'resize'); listen(window,'orientationchange');

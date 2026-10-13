@@ -7,6 +7,7 @@ text, input values, source names, cookies, paths or owner identities are emitted
 from __future__ import annotations
 
 from functools import wraps
+from html import escape
 import json
 import os
 from pathlib import Path
@@ -96,7 +97,10 @@ def emit_snapshot():
         observed["foreground_waiters"] = jobs._FOREGROUND_WAITING
     observed["cache"] = {key: value for key, value in STORE.stats().items()
                          if isinstance(value, (int, float))}
-    st.caption(LABEL + json.dumps(observed, separators=(",", ":"), sort_keys=True))
+    # Diagnostics must not add hundreds of visible pixels to each preview's
+    # sticky boundary. Keep the bounded synthetic snapshot in an inert node.
+    value = escape(json.dumps(observed, separators=(",", ":"), sort_keys=True), quote=True)
+    st.html('<span hidden data-enfra-workspace-observations="' + value + '"></span>')
 
 
 # Use page.add_init_script before navigation. Only durations and stable DOM
@@ -124,9 +128,8 @@ CLIENT_SNAPSHOT = r"""() => {
  let focus=document.activeElement;
  while(focus?.shadowRoot?.activeElement) focus=focus.shadowRoot.activeElement;
  const pair=focus?.closest?.('.epc-workspace-pair');
- const state=[...document.querySelectorAll('[data-testid="stCaptionContainer"]')]
-  .map(n=>n.textContent).filter(text=>text.startsWith('Synthetic workspace observations: '))
-  .map(text=>{try{return JSON.parse(text.slice('Synthetic workspace observations: '.length));}catch(_){return null;}})
+ const state=[...document.querySelectorAll('[data-enfra-workspace-observations]')]
+  .map(n=>{try{return JSON.parse(n.dataset.enfraWorkspaceObservations);}catch(_){return null;}})
   .filter(Boolean).sort((a,b)=>b.sequence-a.sequence)[0]||null;
  return {server:state,client:safe?{...safe,longTasks:safe.longTasks.slice(-100)}:null,
   focus:{tag:focus?.tagName||null,type:focus?.getAttribute?.('type')||null,

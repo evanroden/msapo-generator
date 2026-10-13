@@ -2,7 +2,16 @@
 
 **IN PROGRESS — neither phase is release-accepted.** This is the current resumable execution record for the October 13, 2026 handoff. Both phases are authorized. Older instructions to defer Phase 2 are superseded; older valid evidence remains bounded to its original commit, input and assertion.
 
-## Current checkpoint — 14:13 UTC, October 13
+## Current checkpoint — 14:24 UTC, October 13
+
+- Main/public remain `0741865`. PR #199 head `98ce0cc471a9549d41b6f8bab5fd55e818c9a9bd` passed required CI **38411498834** (container/resource and full suite). Browser **38411498858 failed**, artifact **11822766667**. **Actual PO completed in both Chromium and Playwright WebKit** with real five-page output and source/output return. Expense Chromium passed; Expense WebKit passed the strengthened title/inactive-pane assertions but its newly active second receipt remained an unloaded placeholder. Monthly WebKit completed this harness; Chromium timed out waiting for the initial 18/18 Compare acknowledgment. These are bounded outcomes, not final journey acceptance.
+- Runtime instrumentation on the earlier actual Monthly run showed **zero fragment reruns** and full runs rising **12→17** during page/boundary navigation with unchanged content hashes. Locked Streamlit 1.61.1 source inspection and an actual widget-metadata regression found the cause: restoring the entire copied context inside the QA fragment erased Streamlit's current fragment/render identity. The repair captures **only the QA namespace and reset lease**, keeps framework context current, and binds viewport/poll/retry callbacks before any cache access. Real widget metadata now proves distinct section fragment IDs; a stale callback after reset cannot mutate state or recreate its erased namespace. Worker-thread context remains preserved.
+- The existing synthetic diagnostic captions also added hundreds of pixels to preview boundaries. They now use hidden inert DOM metadata, with the same allowlisted counters/hashes and tests; no report/input text is captured. Browser acceptance now requires actual selected-page decoding and **unchanged full-app count with increasing fragment count** during navigation/section scrolling.
+- WebKit tabletop's fixed upper surface may be clipped by IntersectionObserver to the lower ancestor. Active tabletop visibility now additionally uses the actual positive viewport-intersecting reference rectangle; inactive/hidden/background references remain blocked. A Node regression exercises clipped observer state, active receipt change and background suspension. The workspace measures the persistent Streamlit header before computing usable segment bounds; title hit-testing verifies it is not hidden by chrome.
+- Latest focused Python selection: **50 passed / 1 renderer-marker skip / 14.68 s**. Separate updated observer selection: **3 passed / 2.72 s**. Node: **22 passed** (17 geometry + 5 lifecycle). Counts overlap and are not added. These latest edits need their own exact-head CI/browser run. No live rerun or new private access was performed.
+
+## Previous checkpoint — 14:13 UTC, October 13
+
 
 - Main/public remain `0741865`; exact-main CI and failed live evidence below remain current. No new production-heavy replay has been launched while local/CI browser defects are being resolved.
 - PR #199 published `dba839c1296a81e12ebbfe93e8187273dfcc4325` passed required CI **38409751242**: **2,284 passed / 2 warnings / 396.98 s**, container and 512 MiB / 0.5 CPU gates. Checkout `7107816` merged that exact head into main `0741865`.
