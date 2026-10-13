@@ -51,13 +51,37 @@ def _edited_rich_text(block, text):
                    reviewed_fingerprint="", client_reviewed_fingerprint="")
 
 
+def _rich_text_editor_key(prefix, block):
+    # Callback arguments alone cannot identify a delayed browser value: the
+    # framework applies incoming widget state BEFORE invoking its currently
+    # registered callback. Give a reset/import a distinct native widget ID.
+    # Ordinary edits, journal writes, preview reruns and geometry keep this key.
+    return (prefix + "_edit_" + block.key + "_text_" +
+            _signature((block.references, _rich_text_scope(prefix))))
+
+
 def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
     """Capture the exact submission and the version the operator edited.
 
     A string alone cannot distinguish an interrupted edit from a stale edit
     after an import or reset. Replay is allowed only against this baseline.
     """
-    text = st.session_state.get(widget_key, "")
+    text = st.session_state.get(widget_key)
+    if (block.key == "activity_summary"
+            and st.session_state.get("_monthly_report_storage_mode") == "isolated"):
+        # Only the explicitly synthetic route emits these bounded metadata
+        # receipts. A failed live regression must show what the callback saw,
+        # not merely that the final draft unexpectedly became empty.
+        from hashlib import sha256
+        events = list(st.session_state.get("monthly_qa_activity_callbacks", ()))
+        events.append({"widget": _signature(widget_key), "scope": scope,
+                       "baseline": block.fingerprint,
+                       "before": sha256(block.text.encode()).hexdigest(),
+                       "after": sha256(text.encode()).hexdigest() if isinstance(text, str) else "missing"})
+        st.session_state["monthly_qa_activity_callbacks"] = tuple(events[-8:])
+    if not isinstance(text, str):
+        # A removed/uninitialized widget is not an intentional empty edit.
+        return
     st.session_state[marker] = {
         "text": text, "baseline": block.fingerprint,
         "result": _edited_rich_text(block, text).fingerprint, "scope": scope,
@@ -66,7 +90,7 @@ def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
 
 def _pending_rich_text_edit(prefix, block):
     """A delivered callback is newer input before the final draft assignment."""
-    key = prefix + "_edit_" + block.key + "_text_" + _signature(block.references)
+    key = _rich_text_editor_key(prefix, block)
     receipt = st.session_state.get(key + "_explicitly_edited")
     if (isinstance(receipt, dict)
             and receipt.get("scope") == _rich_text_scope(prefix)
@@ -369,7 +393,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         canonical_before = block
         if draft is not None and not block.ai_written:
             block = _period_editor_transition(prefix, block, draft.period)
-        editor_key = key + "_text_" + _signature(block.references)
+        editor_key = _rich_text_editor_key(prefix, block)
         changed_marker = editor_key + "_explicitly_edited"
         scope = _rich_text_scope(prefix)
         displayed = st.session_state.get(editor_key, block.text)
@@ -399,6 +423,13 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
         text = st.text_area(
             spec.key.replace("_", " ").capitalize(),
+            # The native protocol default must agree with the actual draft.
+            # A new browser mount initially reads this field; relying solely
+            # on a one-shot set_value leaves an empty value it can echo on a
+            # later unrelated button/fragment request. In pinned 1.61.1 a keyed
+            # text area's ID excludes value (only max_chars is whitelisted),
+            # so changing this default does not remount or reset current input.
+            value=receipt["text"] if submitted else block.text,
             key=field(editor_key, block.text), height=140,
             on_change=_mark_explicit_rich_text_edit,
             args=(changed_marker, editor_key, block, scope))

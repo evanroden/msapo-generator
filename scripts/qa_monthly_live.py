@@ -60,7 +60,7 @@ def state_diagnostics(page, action: str, error: Exception) -> None:
     # Never write a full page dump or internal exception paths. Only already
     # synthetic QA status captions and alert *kinds* may reach CI artifacts.
     captions = page.get_by_text(re.compile(
-        r"^(QA fixture state:|QA fixture action|QA reset acknowledged:|QA comparison completed:|QA generation action|QA working report SHA256:|QA working Activity SHA256:|QA durable Activity SHA256:|Current fixture:)"
+        r"^(QA fixture state:|QA fixture action|QA reset acknowledged:|QA comparison completed:|QA generation action|QA working report SHA256:|QA working Activity SHA256:|QA durable Activity SHA256:|QA Activity callback |Current fixture:)"
     )).all_text_contents()
     alerts = page.locator('[data-testid="stAlert"]').all_text_contents()
     safe_alerts = [

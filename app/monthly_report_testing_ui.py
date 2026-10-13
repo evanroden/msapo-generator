@@ -336,6 +336,10 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
         st.caption("QA working report SHA256: " + working.fingerprint)
         st.caption("QA working Activity SHA256: " +
                    sha256(activity_text.encode("utf-8")).hexdigest())
+        for index, callback in enumerate(st.session_state.get("monthly_qa_activity_callbacks", ())):
+            st.caption(f"QA Activity callback {index + 1}: widget {callback['widget']} · "
+                       f"scope {callback['scope']} · baseline {callback['baseline']} · "
+                       f"before {callback['before']} · after {callback['after']}")
         with result_surface:
             compare_request = st.session_state.get("monthly_qa_compare_pending")
             if compare_request:
