@@ -58,10 +58,7 @@ def test_qa_export_does_not_turn_a_saved_activity_widget_empty_on_rerun(
     assert _activity(app).value == SEED
     # A temporary frontend blank mount during another long-running action
     # is not an operator's explicit deletion; prefill remains authoritative.
-    from app.monthly_report_editor import _signature
-    from app.monthly_report_ui import _field
-    prefix = "report_guided_" + _signature((CONTRACT, profile().key, PERIOD.key))
-    editor_key = prefix + "_edit_activity_summary_text_" + _signature(())
+    editor_key = _activity(app).key
     app.session_state[editor_key] = ""
     app.run()
     assert not app.exception

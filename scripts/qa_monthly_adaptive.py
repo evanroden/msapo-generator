@@ -81,6 +81,70 @@ def set_checkbox(container, label, selected, browser):
     check(browser, "normal label pointer sets " + label, control.is_checked() == selected, observed)
 
 
+def exercise_site_selection(page, browser):
+    """Real pointer and keyboard input must change the server-selected sites.
+
+    The public Cloud Browser observed a label click with no state transition
+    while Space worked. This runs actual Playwright mouse input once in each
+    engine; no DOM click(), state injection or retry/fallback can mask failure.
+    """
+    north = page.get_by_role("checkbox", name="Demo North", exact=True)
+    south = page.get_by_role("checkbox", name="Demo South", exact=True)
+    activity = page.get_by_role("textbox", name="Activity summary", exact=True)
+    original = activity.input_value()
+    disclosure = page.get_by_text("Report sites — expand to change", exact=True)
+    label = south.locator("xpath=ancestor::label[1]")
+    if not label.is_visible() and disclosure.count():
+        disclosure.click()
+    label.scroll_into_view_if_needed()
+    page.wait_for_function("""() => document.querySelector('[data-testid="stApp"]')
+      ?.getAttribute('data-test-script-state') === 'notRunning'""", timeout=45000)
+    expect(north).to_be_checked()
+    expect(south).to_be_checked()
+    diagnostics = south.evaluate("""node => {
+      const label=node.closest('label'), rect=label.getBoundingClientRect();
+      const hit=document.elementFromPoint(rect.left+rect.width/2,rect.top+rect.height/2);
+      window.__siteSelectionEvents=[];
+      const events=['pointerdown','pointerup','mousedown','mouseup','click','keydown','keyup','focusin'];
+      const listener=event=>{
+        if(window.__siteSelectionEvents.length<30) window.__siteSelectionEvents.push({
+          type:event.type,trusted:event.isTrusted,target:event.target.tagName,
+          pointerType:event.pointerType||'',key:event.key||'',checked:node.checked});
+      };
+      for(const type of events) label.addEventListener(type,listener,true);
+      window.__siteSelectionCleanup=()=>{for(const type of events) label.removeEventListener(type,listener,true);};
+      return {checked:node.checked,disabled:node.disabled,input:node.getBoundingClientRect().toJSON(),
+        label:rect.toJSON(),parentClip:getComputedStyle(node.parentElement).clip,
+        hitTag:hit?.tagName,labelOwnsHit:Boolean(hit&&label.contains(hit)),
+        pressable:label.getAttribute('data-react-aria-pressable')};
+    }""")
+    REPORT["browsers"].setdefault(browser, {})["site_selection"] = diagnostics
+    try:
+        box = label.bounding_box()
+        if not box:
+            raise AssertionError("The visible site label has no pointer target")
+        page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        expect(south).not_to_be_checked()
+        expect(page.get_by_text("Sites selected (1): Demo North", exact=True)).to_be_visible(timeout=45000)
+        expect(activity).to_have_count(0)
+        check(browser, "native mouse unchecks a site and the server opens its exact single-site selection", True)
+        # Use the native keyboard path deliberately as the second operation,
+        # never as a retry for a failed pointer operation above.
+        south.press("Space")
+        expect(south).to_be_checked()
+        expect(north).to_be_checked()
+        expect(page.get_by_text("Sites selected (2): Demo North; Demo South", exact=True)).to_be_visible(timeout=45000)
+        expect(activity).to_have_value(original, timeout=45000)
+        check(browser, "keyboard reselects the combined sites and restores their existing Activity draft", True)
+        capture(page, browser, "site-selection-pointer-keyboard")
+    finally:
+        diagnostics["events"] = page.evaluate("window.__siteSelectionEvents||[]")
+        diagnostics["after"] = south.evaluate("""node=>({checked:node.checked,disabled:node.disabled,
+          focused:document.activeElement===node,scriptState:document.querySelector('[data-testid="stApp"]')
+          ?.getAttribute('data-test-script-state')})""")
+        page.evaluate("window.__siteSelectionCleanup?.()")
+
+
 def frames(page):
     page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
 
@@ -211,6 +275,7 @@ def exercise(browser_type, name):
         page.get_by_role("button", name="Compare fixture facts", exact=True).click()
         expect(page.get_by_text(re.compile(r"^QA comparison completed: known-value prefill · 18/18"))).to_be_visible(timeout=60000)
         check(name, "actual known-value pipeline independently checks 18/18", True)
+        exercise_site_selection(page, name)
 
         field = page.get_by_role("textbox", name="Activity summary", exact=True)
         original = field.input_value()

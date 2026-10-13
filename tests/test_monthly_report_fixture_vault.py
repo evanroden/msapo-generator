@@ -128,6 +128,39 @@ def test_cross_owner_selection_has_no_fallback_or_mutation(tmp_path, original, m
     assert instance.download("verified-session-a", receipt.fixture_id) == original
 
 
+def test_named_site_metadata_roundtrips_and_older_manifests_remain_readable(tmp_path, original, metadata):
+    instance = vault.FixtureVault(tmp_path, authorize_owner=Verifier())
+    named = replace(metadata,
+                    source=vault.ReportIdentity("Synthetic contract", ("site-a",), "2026-09", ("Site A",)),
+                    target=vault.ReportIdentity("Synthetic contract", ("site-a",), "2026-10", ("Site A",)))
+    receipt = instance.upload("verified-session-a", original, named)
+    assert instance.read("verified-session-a", receipt.fixture_id).receipt.metadata == named
+    # Simulate the earlier immutable manifest schema, which omitted titles.
+    # Update its recorded length as the original writer would have done.
+    manifest = next(tmp_path.rglob("manifest.json"))
+    value = json.loads(manifest.read_bytes())
+    for identity in (value["metadata"]["source"], value["metadata"]["target"]):
+        identity.pop("site_titles", None)
+    encoded = json.dumps(value).encode()
+    manifest.write_bytes(encoded)
+    transaction = manifest.with_name(vault._TRANSACTION)
+    commit = json.loads(transaction.read_bytes())
+    commit["files"]["manifest.json"] = len(encoded)
+    transaction.write_text(json.dumps(commit))
+    reopened = instance.read("verified-session-a", receipt.fixture_id)
+    assert reopened.receipt.metadata.target.site_titles == ()
+    assert reopened.receipt.metadata.target.sites == ("site-a",)
+    assert reopened.original == original
+
+
+@pytest.mark.parametrize("titles", [("Site A", "Site B"), ("",), ["Site A"]])
+def test_named_sites_require_one_nonempty_title_per_key(tmp_path, original, metadata, titles):
+    named = replace(metadata, target=replace(metadata.target, site_titles=titles))
+    with pytest.raises(ValueError):
+        vault.FixtureVault(tmp_path, authorize_owner=Verifier()).upload("verified-session-a", original, named)
+    assert not entries(tmp_path)
+
+
 @pytest.mark.parametrize("name", ["list", "read", "download", "replay-copy", "upload"])
 def test_revocation_is_rechecked_before_return_or_commit(tmp_path, original, metadata, name):
     instance = vault.FixtureVault(tmp_path, authorize_owner=Verifier())

@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 
 APP = '''
 import streamlit as st
-from app.monthly_report_guided import _edit_content
+from app.monthly_report_guided import _edit_content, _rich_text_editor_key
 from app.monthly_report_model import BlockSpec, ResolvedBlock
 from app.monthly_report_ui import _field
 from app.monthly_report_editor import _signature
@@ -19,7 +19,7 @@ block = st.session_state.setdefault(
     ResolvedBlock("activity_summary", "This month",
                   text="Three September work orders: 3 total, 2 completed, 1 open (66.7%)."))
 spec = BlockSpec("activity_summary", "rich_text")
-editor_key = "hydration_probe_edit_activity_summary_text_" + _signature(block.references)
+editor_key = _rich_text_editor_key("hydration_probe", block)
 st.session_state.setdefault(editor_key, "")
 result = _edit_content(spec, block, None, "hydration_probe", {}, _field)
 st.session_state["result"] = result
@@ -237,3 +237,120 @@ def test_legacy_or_incomplete_receipt_does_not_authorize_widget_overwrite(receip
     assert not app.exception
     assert app.session_state["canonical_block"].text == original
     assert next(w for w in app.text_area if w.label == "Activity summary").value == original
+
+
+def _wire_value(widget_id, text):
+    from streamlit.proto.WidgetStates_pb2 import WidgetStates
+    message = WidgetStates()
+    message.widgets.add(id=widget_id, string_value=text)
+    return message
+
+
+def test_native_mount_default_is_canonical_before_the_one_shot_hydration_arrives():
+    app = AppTest.from_string(APP, default_timeout=15).run()
+    editor = next(w for w in app.text_area if w.label == "Activity summary")
+    expected = app.session_state["canonical_block"].text
+    # Test the actual native protocol, not just AppTest's server-side value.
+    # A newly mounted browser first initializes from default; another widget's
+    # rerun can echo that value before set_value has reached its effect.
+    assert editor.proto.default == expected
+    app._run(_wire_value(editor.proto.id, editor.proto.default))
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == expected
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == expected
+
+
+@pytest.mark.parametrize("generation_key", ["hydration_probe_rich_text_epoch", "_monthly_qa_generation"])
+def test_old_incarnation_native_clear_cannot_be_relabelled_as_new_report_input(generation_key):
+    app = AppTest.from_string(APP, default_timeout=15).run()
+    old = next(w for w in app.text_area if w.label == "Activity summary")
+    stale_message = _wire_value(old.proto.id, "")
+    expected = app.session_state["canonical_block"].text
+    app.session_state[generation_key] = "new-report-incarnation"
+    app.run()
+    current = next(w for w in app.text_area if w.label == "Activity summary")
+    assert current.proto.id != old.proto.id
+    # Deliver an actual older frontend WidgetStates message after the new
+    # callback has registered, not a manufactured old application receipt.
+    app._run(stale_message)
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == expected
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == expected
+    assert not any(b.label == "Apply interrupted edit" for b in app.button)
+
+
+def test_native_current_clear_and_reentry_keep_identity_and_mount_defaults_exact():
+    app = AppTest.from_string(APP, default_timeout=15).run()
+    editor = next(w for w in app.text_area if w.label == "Activity summary")
+    identity = editor.proto.id
+    app._run(_wire_value(identity, ""))
+    assert not app.exception and app.session_state["canonical_block"].text == ""
+    app.run()
+    current = next(w for w in app.text_area if w.label == "Activity summary")
+    assert current.proto.id == identity and current.proto.default == "" and current.value == ""
+    app._run(_wire_value(identity, "A partial new sentence — still typing"))
+    assert not app.exception
+    app.run()
+    current = next(w for w in app.text_area if w.label == "Activity summary")
+    assert current.proto.id == identity
+    assert current.proto.default == current.value == app.session_state["canonical_block"].text == "A partial new sentence — still typing"
+
+
+def test_initial_journal_and_preview_reruns_do_not_change_native_editor_identity():
+    app = AppTest.from_string(APP, default_timeout=15).run()
+    identity = next(w for w in app.text_area if w.label == "Activity summary").proto.id
+    app.session_state["hydration_probe_active_generation"] = "durable-journal-initialized"
+    app.session_state["hydration_probe_active_sequence"] = 4
+    app.run()
+    assert next(w for w in app.text_area if w.label == "Activity summary").proto.id == identity
+
+
+@pytest.mark.parametrize("widget_state", [{}, {"editor": None}, {"editor": 0}])
+def test_missing_or_nontext_widget_callback_cannot_authorize_clear(monkeypatch, widget_state):
+    from types import SimpleNamespace
+    from app import monthly_report_guided as guided
+    from app.monthly_report_model import ResolvedBlock
+    state = dict(widget_state)
+    monkeypatch.setattr(guided, "st", SimpleNamespace(session_state=state))
+    block = ResolvedBlock("activity_summary", "This month", text="Keep my current wording.")
+    guided._mark_explicit_rich_text_edit("receipt", "editor", block, "current-scope")
+    assert "receipt" not in state
+    # An unrelated missing callback must also retain a previously delivered
+    # recoverable receipt instead of replacing it with a fabricated clear.
+    pending = {"text": "An interrupted sentence", "scope": "current-scope"}
+    state["receipt"] = pending
+    guided._mark_explicit_rich_text_edit("receipt", "editor", block, "current-scope")
+    assert state["receipt"] is pending
+
+
+def test_synthetic_activity_callback_diagnostics_are_bounded_hashes_only(monkeypatch):
+    from hashlib import sha256
+    from types import SimpleNamespace
+    from app import monthly_report_guided as guided
+    from app.monthly_report_model import ResolvedBlock
+    state = {"_monthly_report_storage_mode": "isolated"}
+    monkeypatch.setattr(guided, "st", SimpleNamespace(session_state=state))
+    block = ResolvedBlock("activity_summary", "This month", text="Synthetic baseline")
+    for number in range(12):
+        state["editor"] = f"Synthetic edit {number}"
+        guided._mark_explicit_rich_text_edit("receipt", "editor", block, "synthetic-scope")
+    events = state["monthly_qa_activity_callbacks"]
+    assert len(events) == 8
+    assert events[0]["after"] == sha256(b"Synthetic edit 4").hexdigest()
+    assert events[-1]["after"] == sha256(b"Synthetic edit 11").hexdigest()
+    assert events[-1]["before"] == sha256(block.text.encode()).hexdigest()
+    assert set(events[-1]) == {"widget", "scope", "baseline", "before", "after"}
+    assert "Synthetic" not in str(events)
+
+
+@pytest.mark.parametrize("mode", [None, "live", "fixtures"])
+def test_ordinary_and_shared_fixture_edits_do_not_emit_synthetic_diagnostics(monkeypatch, mode):
+    from types import SimpleNamespace
+    from app import monthly_report_guided as guided
+    from app.monthly_report_model import ResolvedBlock
+    state = {"_monthly_report_storage_mode": mode, "editor": "Current wording"}
+    monkeypatch.setattr(guided, "st", SimpleNamespace(session_state=state))
+    block = ResolvedBlock("activity_summary", "This month", text="Previous wording")
+    guided._mark_explicit_rich_text_edit("receipt", "editor", block, "current-scope")
+    assert state["receipt"]["text"] == "Current wording"
+    assert "monthly_qa_activity_callbacks" not in state

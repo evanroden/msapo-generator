@@ -73,3 +73,25 @@ def test_existing_session_widget_selection_overrides_outdated_query():
     assert not at.exception
     assert at.segmented_control[0].value == MONTHLY_REPORT_WORKFLOW
     assert _param(at, "workflow") == "monthly"
+
+
+def test_shared_fixture_link_opens_actual_testing_area_and_workflow_exit_removes_route(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    # AppTest does not execute the browser cookie bootstrap component.
+    monkeypatch.setattr("app.web_ui.device_token", lambda cookies: "c" * 32)
+    at = AppTest.from_file(ROOT / "run_web.py", default_timeout=20)
+    at.query_params["monthly_qa"] = "fixtures"
+    at.query_params["workflow"] = "purchase"
+    at.run()
+    assert not at.exception
+    assert at.segmented_control[0].value == MONTHLY_REPORT_WORKFLOW
+    assert any("Shared report testing" == heading.value for heading in at.subheader)
+    assert any("without a login" in warning.value for warning in at.warning)
+    assert not any("Synthetic" in button.label for button in at.button)
+    at.segmented_control[0].set_value(EXPENSE_WORKFLOW).run()
+    assert not at.exception
+    assert "monthly_qa" not in at.query_params
+    at.segmented_control[0].set_value(MONTHLY_REPORT_WORKFLOW).run()
+    assert not at.exception
+    assert at.session_state["_monthly_report_storage_mode"] == "live"
+    assert not any(heading.value == "Shared report testing" for heading in at.subheader)

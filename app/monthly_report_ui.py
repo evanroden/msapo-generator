@@ -1,10 +1,23 @@
 """Real-report entry point. Synthetic report builders are test fixtures only."""
 
 from datetime import date
+from hashlib import sha256
+import re
 
 import streamlit as st
 
 MONTHLY_REPORT_WORKFLOW = "Monthly report"
+
+
+def shared_fixture_run_token(browser_token: str) -> str:
+    """Separate disposable fixture runs from the same browser's synthetic QA.
+
+    This is isolation, not authentication. The fixture library is deliberately
+    shared with every visitor to the hidden testing route.
+    """
+    if not isinstance(browser_token, str) or not re.fullmatch(r"[0-9a-f]{32}", browser_token):
+        raise ValueError("Shared testing requires this browser's valid device identity.")
+    return sha256(("shared-fixture:" + browser_token).encode("ascii")).hexdigest()[:32]
 
 
 def preserve_report_draft_state() -> None:
@@ -44,16 +57,18 @@ def _move(order_key: str, section_key: str, offset: int) -> None:
 def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "") -> None:
     # This hidden selector is a navigation choice only. The actual separation
     # is the server-side physical namespace in monthly_report_testing.
-    requested = st.query_params.get("monthly_qa") == "isolated"
-    mode = "isolated" if requested else "live"
+    selected = st.query_params.get("monthly_qa")
+    mode = selected if selected in {"isolated", "fixtures"} else "live"
+    requested = mode != "live"
     last = st.session_state.get("_monthly_report_storage_mode")
     if last != mode and (last is not None or requested):
         # A Streamlit session that switches modes must not reuse a report
         # editor widget, PDF, source queue or image from its prior namespace.
         for key in tuple(st.session_state):
-            if key.startswith(("report_", "report_guided_")) or key.startswith("monthly_qa_"):
+            if key.startswith(("report_", "report_guided_", "monthly_qa_", "_shared_fixture_")):
                 del st.session_state[key]
         st.session_state.pop("_monthly_qa_reset_receipt", None)
+        st.session_state.pop("_monthly_qa_generation", None)
     st.session_state["_monthly_report_storage_mode"] = mode
     restore_report_draft_state()
     st.title("Monthly report")
@@ -61,9 +76,14 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
         if requested:
             from app.memory import _data_dir
             from app.monthly_report_testing import isolated, generation
-            from app.monthly_report_testing_ui import render
+            if mode == "fixtures":
+                from app.monthly_report_shared_testing_ui import render
+                run_token = shared_fixture_run_token(browser_token)
+            else:
+                from app.monthly_report_testing_ui import render
+                run_token = browser_token
             live_root = _data_dir()  # Resolve only the base; do not read live records.
-            with isolated(browser_token):
+            with isolated(run_token):
                 _data_dir()  # Bind this run to one immutable QA generation.
                 current = generation()
                 previous = st.session_state.get("_monthly_qa_generation")
@@ -71,10 +91,10 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
                     # Another tab reset this browser's test. Its former
                     # editor/PDF must not populate the new empty namespace.
                     for key in tuple(st.session_state):
-                        if key.startswith(("report_", "report_guided_")) or key.startswith("monthly_qa_"):
+                        if key.startswith(("report_", "report_guided_", "monthly_qa_", "_shared_fixture_")) and key != "_shared_fixture_pending":
                             del st.session_state[key]
                 st.session_state["_monthly_qa_generation"] = current
-                render(browser_token, browser_timezone, _field, _move, live_root)
+                render(run_token, browser_timezone, _field, _move, live_root)
         else:
             from app.monthly_report_guided import render_guided_workflow
             render_guided_workflow(browser_token, browser_timezone, _field, _move)
