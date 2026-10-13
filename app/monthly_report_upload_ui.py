@@ -59,6 +59,13 @@ def render_source_details(source, profile, prefix, field):
         KEEP_FACILITY, correct_source_details, facility_choice, source_date,
     )
     p = prefix + "_source_details"
+    # A restored source can be reviewed both by its section and by the saved-
+    # source panel. One canonical form per source prevents duplicate widget keys
+    # and conflicting submissions within a single guided render. Standalone
+    # review widgets do not install this optional page-scoped registry.
+    rendered = st.session_state.get("_monthly_source_detail_forms")
+    if isinstance(rendered, dict) and source.id in rendered:
+        return rendered[source.id]
     # The guided renderer resets this set once per full page render. A source
     # can be reachable through both writing and page review; give its first
     # resolver one unique local anchor rather than duplicate heading IDs.
@@ -110,6 +117,8 @@ def render_source_details(source, profile, prefix, field):
             else:
                 st.session_state[p + "_baseline"] = (source.service_date, source.facility)
                 st.caption("Corrected details applied to this draft.")
+    if isinstance(rendered, dict):
+        rendered[source.id] = source
     return source
 
 
