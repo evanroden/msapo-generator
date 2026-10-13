@@ -293,6 +293,11 @@ def exercise(browser_type, name, base):
             ("reentry-after-report-clear", REENTRY_TEXT, "tab"),
         ):
             if mode == "button":
+                # After the prior page reload a visible textarea can arrive
+                # before Streamlit finishes wiring actions. Do not dispatch
+                # an intentional Clear into that transient render; require
+                # the actual app's idle signal, then one native button click.
+                idle(page)
                 clear = page.get_by_role("button", name="Clear Activity for this report", exact=True)
                 expect(clear).to_be_enabled()
                 clear.click()
