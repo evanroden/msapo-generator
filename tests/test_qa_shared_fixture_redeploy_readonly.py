@@ -134,7 +134,7 @@ def test_full_native_widget_identity_is_validated_against_selected_prefix_and_sh
     with pytest.raises(AssertionError, match="unique"):
         _native_fixture_id([css, other_css], ID[:8], SHA)
     with pytest.raises(AssertionError, match="unique"):
-        _native_fixture_id(["fake-prefix" + css], ID[:8], SHA)
+        _native_fixture_id(["fake-prefixst-key-_shared_fixture_download_" + ID + "_" + SHA[:16]], ID[:8], SHA)
 
 
 def test_unknown_served_revision_and_hash_are_rejected_before_browser():
