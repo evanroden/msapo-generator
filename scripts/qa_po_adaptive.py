@@ -145,10 +145,12 @@ def exercise_page(page, name, errors):
     source_panel = review.locator(".report-preview")
     expect(source_panel).to_be_visible()
     source_panel.scroll_into_view_if_needed()
+    # This fixture selects invented sample text. Its decoded raster must
+    # identify itself as a sample, not masquerade as an original upload.
     first_source_page = review.locator(".report-preview img").first
     try:
         expect(first_source_page).to_be_visible(timeout=30000)
-        expect(first_source_page).to_have_attribute("alt", re.compile(r"^Original quote — page 1$"))
+        expect(first_source_page).to_have_attribute("alt", re.compile(r"^Synthetic sample quote — page 1$"))
         check(name + " visible original page decoded", first_source_page.evaluate("node=>node.complete && node.naturalWidth>0"))
     except Exception:
         # Synthetic-only structural receipt, including the actual alt/title.
@@ -211,17 +213,17 @@ def exercise_page(page, name, errors):
     wait_preview_ack(package,image="Generated MSAPO",page_number=1)
     check(name + " preview scrolling avoids full-app reruns",full_app_runs(page)==app_runs,
           {"before":app_runs,"after":full_app_runs(page)})
-    # The original is still in the earlier quote/correction pair. Inspect
-    # both pages there, then return to the separately generated package.
+    # The selected synthetic sample remains in the earlier correction pair.
+    # A genuine uploaded original uses a different truthful source label.
     check(name + " obsolete Compare original quote switch removed",
           page.get_by_label("Compare original quote", exact=True).count() == 0)
     # The earlier source viewer is lazy. Scroll the actual reference pane
     # into the viewport before expecting a decoded page from its fragment.
     # A permanently visible pane must still load: no retries or forced DOM clicks.
     review.locator(".epc-workspace-reference").scroll_into_view_if_needed()
-    review.locator('img[alt^="Original quote — page "]').first.wait_for()
+    review.locator('img[alt^="Synthetic sample quote — page "]').first.wait_for()
     scroll_preview_to_page(review,1)
-    wait_preview_ack(review,image="Original quote",page_number=1)
+    wait_preview_ack(review,image="Synthetic sample quote",page_number=1)
     package.scroll_into_view_if_needed()
     wait_preview_ack(package,image="Generated MSAPO",page_number=1)
     returned_view = preview_position(package)
