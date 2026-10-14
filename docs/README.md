@@ -12,7 +12,9 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 [Fixture boundary history and source corrections](PRIVATE_FIXTURE_BOUNDARY_2026-10-13.md) — superseded owner-only proposal, retained storage/integrity evidence and canonical source correction checks. The owner declined authentication; no authentication approval is pending.
 
-[October 14 current remaining acceptance and restart checkpoint](PHASE1_PHASE2_REMAINING_2026-10-14.md) — compact current status, authentic-file and live-build evidence boundaries, active PRs, exact next steps. Start here for outstanding Phase 1/2 work.\n\n[Current Phase 1 and Phase 2 execution ledger](PHASE1_PHASE2_EXECUTION_2026-10-13.md) — resume here for exact commits, CI/deployment outcomes, all original and adaptive requirement IDs, ownership, and remaining acceptance gates.
+[October 14 current remaining acceptance and restart checkpoint](PHASE1_PHASE2_REMAINING_2026-10-14.md) — compact current status, authentic-file and live-build evidence boundaries, active PRs, exact next steps. Start here for outstanding Phase 1/2 work.
+
+[Current Phase 1 and Phase 2 execution ledger](PHASE1_PHASE2_EXECUTION_2026-10-13.md) — resume here for exact commits, CI/deployment outcomes, all original and adaptive requirement IDs, ownership, and remaining acceptance gates.
 
 [Adaptive workspace architecture and checks](ADAPTIVE_WORKSPACES_2026-10-13.md) — shared geometry resolver, stable keyed sections, bounded preview sizing, synthetic browser harness, and rollback scope.
 
