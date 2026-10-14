@@ -140,7 +140,27 @@ def exercise_page(page, name, errors):
     review = page.locator(".st-key-epc_pair_purchase_review")
     package = page.locator(".st-key-epc_pair_purchase_package")
     scope = page.get_by_label("Scope of Work", exact=True)
-    review.locator('img[alt^="Original quote — page "]').first.wait_for()
+    # This real source is lazily rasterized. Assert the accessible document
+    # panel AND decoded first page, not merely the first visual page frame.
+    source_panel = review.locator(".report-preview")
+    expect(source_panel).to_be_visible()
+    source_panel.scroll_into_view_if_needed()
+    first_source_page = review.locator(".report-preview img").first
+    try:
+        expect(first_source_page).to_be_visible(timeout=30000)
+        expect(first_source_page).to_have_attribute("alt", re.compile(r"^Original quote — page 1$"))
+        check(name + " visible original page decoded", first_source_page.evaluate("node=>node.complete && node.naturalWidth>0"))
+    except Exception:
+        # Synthetic-only structural receipt, including the actual alt/title.
+        # Captures first failures instead of retrying an invisible test step.
+        REPORT.setdefault("first_source_diagnostics", {})[name] = source_panel.evaluate("""panel => ({
+            title:panel.querySelector(".report-preview-status")?.textContent,
+            figures:panel.querySelectorAll("figure").length,
+            images:[...panel.querySelectorAll("img")].map(n=>({alt:n.alt,complete:n.complete,
+                naturalWidth:n.naturalWidth,visible:!!n.getClientRects().length})),
+            scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')
+        })""")
+        raise
     check(name + " exactly one authoritative scope editor", scope.count() == 1)
     page.locator('[data-testid="stMain"]').evaluate("node => {node.scrollTop=650}")
     page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
