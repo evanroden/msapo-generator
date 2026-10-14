@@ -125,13 +125,35 @@ def select_sites(contract, profiles, remembered, field, completed=None):
         st.session_state[prefix + "_new_site"] = ""
     seed = next((p for p in profiles if p.key == (completed or remembered)), None)
     selected = []
-    for f in options:
-        key = field(prefix + "_" + f.key, bool(seed and f.key in membership_key(seed.facilities)))
-        if completed:
-            st.session_state[key] = bool(seed and f.key in membership_key(seed.facilities))
-        detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
-        if st.checkbox(f.title, key=key, help=detail):
-            selected.append(f)
+    # Native width="stretch" expands the Streamlit row, but NOT its associated
+    # clickable <label> (observed 968px row vs 236px label in both engines).
+    # Extend that SAME semantic label, not a second click handler or duplicated
+    # checkbox. All pointer, touch, label and keyboard paths retain one input.
+    # Scope styling to this specific container; no other report/PO toggles.
+    with st.container(key="monthly_native_site_choices"):
+        st.html("""
+        <style>
+        .st-key-monthly_native_site_choices [data-testid="stCheckbox"] label:has(input[type="checkbox"]) {
+            box-sizing: border-box;
+            width: 100% !important;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+        .st-key-monthly_native_site_choices [data-testid="stCheckbox"] label:has(input[type="checkbox"]):focus-within {
+            outline: 2px solid currentColor;
+            outline-offset: 2px;
+        }
+        </style>
+        """)
+        for f in options:
+            key = field(prefix + "_" + f.key, bool(seed and f.key in membership_key(seed.facilities)))
+            if completed:
+                st.session_state[key] = bool(seed and f.key in membership_key(seed.facilities))
+            detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
+            if st.checkbox(f.title, key=key, help=detail, width="stretch"):
+                selected.append(f)
     with st.expander("Add a site that is not listed"):
         custom = st.text_input("Site name", key=field(prefix + "_new_site", ""), help="Use a semicolon between names when adding several actual sites.")
         for name in custom.split(";"):

@@ -27,11 +27,13 @@ CONTRACT = "Rochester Regional Health"
 FIRST = "United Memorial Medical Center"
 SECOND = "Rochester General Hospital"
 results = {"synthetic_isolated_storage": True, "actual_user_pointer": True,
-           "physical_device": False, "checks": [], "failures": []}
+           "physical_device": False, "touch_emulated": True, "checks": [], "failures": []}
 
 
 def visit(browser, engine, method):
-    context = browser.new_context(viewport={"width": 1365, "height": 900})
+    touch = method == "touch"
+    context = browser.new_context(viewport={"width": 390 if touch else 1365, "height": 844 if touch else 900},
+                                  has_touch=touch)
     page = context.new_page()
     events = []
     def route(request):
@@ -56,9 +58,12 @@ def visit(browser, engine, method):
         # Capture a small DOM/hit-test receipt BEFORE the one native action.
         record["before"] = box.evaluate("""node => {
             const label=node.closest('label'), rect=label.getBoundingClientRect();
+            const row=node.closest('[data-testid="stCheckbox"]'), rowRect=row?.getBoundingClientRect();
             const hit=document.elementFromPoint(rect.left+Math.min(18,rect.width/2),rect.top+rect.height/2);
+            const rowEndHit=rowRect&&document.elementFromPoint(rowRect.right-24,rowRect.top+rowRect.height/2);
             return {checked:node.checked,disabled:node.disabled,control:node.getBoundingClientRect().toJSON(),
-                label:rect.toJSON(),squareHitOwned:!!hit&&label.contains(hit),
+                label:rect.toJSON(),row:rowRect?.toJSON(),squareHitOwned:!!hit&&label.contains(hit),
+                rowEndHitTag:rowEndHit?.tagName,rowEndHitOwned:!!rowEndHit&&label.contains(rowEndHit),
                 scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')};
         }""")
         record["phase"] = "single native " + method + " activation"
@@ -68,8 +73,17 @@ def visit(browser, engine, method):
         elif method == "text":
             label.get_by_text(FIRST, exact=True).click()
         elif method == "row":
-            r = label.bounding_box()
-            label.click(position={"x": max(1, r["width"] - 12), "y": r["height"] / 2})
+            geom = record["before"]
+            # The native row is materially wider than the text label. Prove
+            # the right-hand row surface itself hits its owning semantic label.
+            # Earlier tests only hit the narrow label's trailing 12 pixels.
+            assert geom["row"] and geom["label"]["width"] >= 340, geom
+            assert geom["label"]["right"] >= geom["row"]["right"] - 32, geom
+            assert geom["rowEndHitOwned"], geom
+            r = geom["row"]
+            page.mouse.click(r["right"] - 24, r["top"] + r["height"] / 2)
+        elif method == "touch":
+            label.tap()
         elif method == "keyboard":
             box.focus()
             box.press("Space")
@@ -161,7 +175,7 @@ def main():
                                                ("playwright-webkit", playwright.webkit)):
                         browser = browser_type.launch(headless=True)
                         try:
-                            for mode in ("square", "text", "row", "keyboard"):
+                            for mode in ("square", "text", "row", "keyboard", "touch"):
                                 visit(browser, name, mode)
                         finally:
                             browser.close()
@@ -173,7 +187,7 @@ def main():
         raise AssertionError("Fresh ordinary Monthly pointer failure: " +
                              "; ".join(f["engine"] + "/" + f["path"] + ": " +
                                        f["error_type"] for f in results["failures"]))
-    print("PASS eight genuine zero-selection native-input journeys; no QA prefill")
+    print("PASS ten genuinely fresh zero-site mouse/keyboard/emulated-touch journeys; no QA prefill")
 
 
 if __name__ == "__main__":
