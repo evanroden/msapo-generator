@@ -8,19 +8,20 @@ from streamlit.runtime import Runtime
 
 CSS = """
 .report-preview { font:13px system-ui,sans-serif; color:#40524a; width:100%; height:var(--epc-preview-height,min(78dvh,780px)); display:flex; flex-direction:column; min-height:180px; }
-.report-preview-status { min-height:22px; line-height:22px; padding:0 8px; }
-.report-preview-scroll { flex:1; min-height:0; overflow:auto; background:#edf1ef; padding:12px; box-sizing:border-box; }
-.report-preview-tools {display:flex; flex-wrap:wrap; align-items:center; gap:6px; padding:4px;}
-.report-preview-tools button, .report-preview-tools select {font:inherit; min-height:36px; background:white; color:#18382b; border:1px solid #557f7f; border-radius:4px;}
-.report-preview-tools button:focus-visible,.report-preview-scroll:focus-visible{outline:3px solid #557f7f;outline-offset:2px;}
-.report-preview[data-enlarged="true"] {position:fixed;left:var(--epc-enlarge-left,12px);top:var(--epc-enlarge-top,12px);width:var(--epc-enlarge-width,calc(100dvw - 24px));height:var(--epc-enlarge-height,calc(100dvh - 24px));box-sizing:border-box;z-index:1000;background:white;padding:8px;box-shadow:0 4px 20px #0006;}
+.report-preview-header { min-height:28px; display:flex; align-items:center; gap:8px; padding:2px 8px; }
+.report-preview-status { flex:1; min-width:0; line-height:22px; }
+.report-preview-position { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.report-preview-retry { font:inherit; min-height:36px; padding:4px 10px; background:white; color:#18382b; border:1px solid #557f7f; border-radius:4px; }
+.report-preview-retry[hidden] { display:none; }
+.report-preview-retry:focus-visible, .report-preview-scroll:focus-visible { outline:3px solid #557f7f; outline-offset:2px; }
+.report-preview-scroll { flex:1; min-height:0; overflow:auto; background:#edf1ef; padding:12px; box-sizing:border-box; overscroll-behavior:contain; }
 .report-preview figure { margin:0 0 16px; }
 .report-preview-page { width:100%; background:white; position:relative; box-shadow:0 1px 6px #18382b26; }
 .report-preview-page img { position:absolute; inset:0; display:block; width:100%; height:100%; }
 .report-preview-placeholder { position:absolute; inset:20px; color:#64746d; text-align:center; }
 .report-preview figcaption { text-align:center; padding-top:7px; }
 """
-HTML = '<div class="report-preview"><div class="report-preview-status" role="status" aria-live="polite"></div><div class="report-preview-tools"><button type="button" data-action="previous" aria-label="Previous preview page">Previous</button><span class="report-preview-position"></span><button type="button" data-action="next" aria-label="Next preview page">Next</button><select aria-label="Preview zoom"><option value="width">Fit width</option><option value="page">Fit page</option><option value="1.25">125%</option><option value="1.5">150%</option></select><button type="button" data-action="enlarge">Enlarge</button><button type="button" data-action="retry-request" hidden>Retry preview request</button></div><div class="report-preview-scroll" tabindex="0" aria-label="Report section preview"></div></div>'
+HTML = '<div class="report-preview"><div class="report-preview-header"><span class="report-preview-status" role="status" aria-live="polite"></span><span class="report-preview-position" aria-label="Visible page"></span><button type="button" class="report-preview-retry" data-action="retry-request" hidden>Retry preview</button></div><div class="report-preview-scroll" tabindex="0" aria-label="Report preview — scroll to read all pages"></div></div>'
 JS = r"""
 export default function(component) {
     const {parentElement, data, setStateValue} = component;
@@ -35,7 +36,7 @@ export default function(component) {
     let ackTimer = null;
     const scroll = panel.querySelector('.report-preview-scroll');
     const status = panel.querySelector('.report-preview-status');
-    const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0, zoom:'width'});
+    const state = panel._previewState || (panel._previewState = {visible:false, sent:'', page:0});
     // A browser send is not proof that its callback survived a competing
     // rerender. Reconcile with the server's applied view on every invocation.
     // Reading position remains client state; only this bounded request retries.
@@ -100,11 +101,9 @@ export default function(component) {
         onEditorReceipt = () => {if (active) changed();};
         editGate.listeners.add(onEditorReceipt);
     }
-    const zoom = panel.querySelector('select');
     const positionLabel = panel.querySelector('.report-preview-position');
-    const previousButton = panel.querySelector('[data-action="previous"]');
-    const nextButton = panel.querySelector('[data-action="next"]');
-    const enlargeButton = panel.querySelector('[data-action="enlarge"]');
+    // Only actual view-request failures have a recovery button. Page navigation,
+    // fit/zoom and enlargement toolbars are intentionally absent in all workflows.
     const retryRequest = panel.querySelector('[data-action="retry-request"]');
     retryRequest.hidden = !state.requestFailed;
     retryRequest.onclick = () => {
@@ -115,10 +114,9 @@ export default function(component) {
     const views = window.__enfraPreviewViews || (window.__enfraPreviewViews = new Map());
     const viewKey = data.viewScope;
     if (state.scope !== viewKey) {
-        const retained = views.get(viewKey) || {page:0,zoom:'width',offset:0};
+        const retained = views.get(viewKey) || {page:0,offset:0};
         Object.assign(state, retained, {scope:viewKey, restore:true});
     }
-    zoom.value = state.zoom;
     const pagesKnown = Boolean(data.sizes && data.sizes.length);
     const sizes = pagesKnown ? data.sizes : [[612,792]];
     const layout = JSON.stringify([data.generation, sizes, data.ready, data.stale]);
@@ -182,12 +180,11 @@ export default function(component) {
         const dimensions = scroll.clientWidth + 'x' + scroll.clientHeight;
         if (state.dimensions !== dimensions) state.restore = true;
         state.dimensions = dimensions;
-        const available = Math.max(100,scroll.clientHeight-46);
-        scroll.querySelectorAll('figure').forEach((figure,index) => {
-            const ratio = sizes[index][0]/sizes[index][1];
-            const width = state.zoom === 'page' ? Math.min(scroll.clientWidth-24,available*ratio) :
-                (scroll.clientWidth-24)*(Number(state.zoom)||1);
-            figure.style.width = Math.max(80,width)+'px';
+        // All pages are stacked at the actual pane width, maintaining each
+        // page's native aspect ratio; no layout-dependent zoom state survives.
+        const width = Math.max(1, scroll.clientWidth - 24);
+        scroll.querySelectorAll('figure').forEach(figure => {
+            figure.style.width = width + 'px';
             figure.style.marginInline = 'auto';
         });
         if (state.restore && pagesKnown) {
@@ -203,41 +200,10 @@ export default function(component) {
         // cannot overwrite the last usable reading position.
         if (!state.restore && pagesKnown && scroll.clientWidth && scroll.clientHeight && figure)
             state.offset = scroll.scrollTop - (figure.offsetTop-scroll.offsetTop);
-        views.delete(viewKey); views.set(viewKey,{page:state.page,zoom:state.zoom,offset:state.offset});
+        views.delete(viewKey); views.set(viewKey,{page:state.page,offset:state.offset});
         while (views.size > 64) views.delete(views.keys().next().value);
         positionLabel.textContent = pagesKnown ? (state.page+1)+' / '+sizes.length : '—';
-        previousButton.disabled = !pagesKnown || state.page <= 0;
-        nextButton.disabled = !pagesKnown || state.page >= sizes.length-1;
     }
-    function movePage(index) {
-        if (!active || !pagesKnown) return;
-        state.page = Math.max(0,Math.min(sizes.length-1,index)); state.offset=0; state.restore=true;
-        sizePages(); remember(); changed();
-    }
-    previousButton.onclick = () => movePage(state.page-1);
-    nextButton.onclick = () => movePage(state.page+1);
-    zoom.onchange = () => {state.zoom=zoom.value;state.offset=0;state.restore=true;sizePages();remember();changed();};
-    enlargeButton.onclick = () => {
-        if (!state.enlarged) {
-            const prior=window.__enfraEnlargedPreview;
-            if (prior && prior!==panel && prior.isConnected) prior.querySelector('[data-action="enlarge"]')?.click();
-            window.__enfraEnlargedPreview=panel;
-            remember();
-            state.enlargeReturn={page:state.page,zoom:state.zoom,offset:state.offset};
-            state.enlarged=true;
-        } else {
-            state.enlarged=false;
-            if (window.__enfraEnlargedPreview===panel) window.__enfraEnlargedPreview=null;
-            if (state.enlargeReturn) Object.assign(state,state.enlargeReturn);
-            state.page=Math.min(state.page,sizes.length-1);
-            zoom.value=state.zoom;
-        }
-        panel.dataset.enlarged=String(state.enlarged);
-        enlargeButton.textContent=state.enlarged?'Close enlargement':'Enlarge';
-        state.restore=true; sizePages(); remember(); changed();
-    };
-    function escape(event) {if (event.key==='Escape' && !event.isComposing && state.enlarged) enlargeButton.click();}
-    document.addEventListener('keydown',escape);
     function permitted() {
         return !workspace || workspace.dataset.epcMode !== 'tabletop' || pair?.dataset.epcActive === 'true';
     }
@@ -280,7 +246,7 @@ export default function(component) {
             return {index:Number(figure.dataset.index), height:Math.max(0,Math.min(rect.bottom,bounds.bottom)-Math.max(rect.top,bounds.top))};
         }).filter(page => page.height > 0);
         const shown = visible.slice(0,2).map(page => page.index);
-        // The last fit-page can leave a sliver of the preceding caption visible
+        // A clamped final page can leave a sliver of the preceding caption visible
         // when scrolling clamps at the end. Keep the dominant page selected.
         if (pagesKnown && !state.restore && scroll.clientWidth && scroll.clientHeight && visible.length)
             state.page = visible.reduce((best,page) => page.height > best.height ? page : best).index;
@@ -375,7 +341,6 @@ export default function(component) {
         }
         workspace?.removeEventListener('epc-workspace-layout', layoutChanged);
         document.removeEventListener('visibilitychange', changed);
-        document.removeEventListener('keydown',escape);
         resize.disconnect();
         scroll.removeEventListener('scroll', changed);
         if (timer !== null) clearTimeout(timer);
