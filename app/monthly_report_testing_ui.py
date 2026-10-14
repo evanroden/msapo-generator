@@ -80,10 +80,52 @@ def _queue_generation_request(context):
         st.session_state["monthly_qa_generation_receipt"] = request
 
 
+def _hash_generation_part(value):
+    """One-way structural QA digest: never emit source words, names or assets."""
+    from dataclasses import asdict, is_dataclass
+    from hashlib import sha256
+    import json
+
+    structured = asdict(value) if is_dataclass(value) else value
+    raw = json.dumps(structured, sort_keys=True, separators=(",", ":"), default=str)
+    return sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _generation_parts(draft):
+    """Identify the exact immutable part changed between click and execution.
+
+    This is confined to the synthetic-only QA route. For production/customer
+    reports there is no request/field logging, and the pre-existing fail-closed
+    fingerprint and journal boundaries remain authoritative.
+    """
+    parts = {key: _hash_generation_part(getattr(draft, key))
+             for key in ("profile", "period", "prepared_by", "sections",
+                         "address_line", "synthetic", "follow_ups")}
+    # Knowing that 'blocks' changed was insufficient for the prior failures:
+    # Activity was unchanged, while another field could have been normalized.
+    parts.update({"block:" + block.key: _hash_generation_part(block)
+                  for block in draft.blocks})
+    parts.update({"source:" + str(index): _hash_generation_part(source)
+                  for index, source in enumerate(draft.sources)})
+    parts["block-count"] = _hash_generation_part(len(draft.blocks))
+    parts["source-count"] = _hash_generation_part(len(draft.sources))
+    return parts
+
+
+def _generation_part_changes(request, working):
+    previous = request.get("part_hashes", {}) if isinstance(request, dict) else {}
+    current = _generation_parts(working)
+    return {name: {"accepted": previous.get(name, "")[:12],
+                   "current": current.get(name, "")[:12]}
+            for name in sorted(set(previous) | set(current))
+            if previous.get(name) != current.get(name)}
+
+
 def _generation_context(saved, generation):
     working = _working_report(saved)
     return {"generation": generation, "revision": saved.revision,
             "fingerprint": working.fingerprint,
+            "part_hashes": _generation_parts(working),
             "identity": (working.profile.contract, working.profile.key, working.period.key)}
 
 
@@ -110,6 +152,11 @@ def _render_generation_receipt(generation):
                f"fingerprint {receipt['fingerprint'][:12]} · received {receipt['accepted_at']}")
     if receipt["status"] == "rejected":
         st.error("QA export was blocked: " + receipt["message"])
+        changes = receipt.get("part_changes") or {}
+        if changes:
+            st.caption("QA structural change since accepted click (hashes only): " +
+                       ", ".join(f"{name} {item['accepted']} → {item['current']}"
+                                 for name, item in changes.items()))
 
 
 def _active_jobs() -> bool:
@@ -364,7 +411,13 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                 # Preview callbacks may interrupt an accepted action. Keep its
                 # receipt, but never silently export a different finalized draft.
                 if not _generation_matches(request, working, saved, current_generation):
-                    _finish_generation(request, "rejected", "The report changed after this generation request. "
+                    # Preserve the first failing attempt's component changes;
+                    # never silently retry or accept a different draft.
+                    diagnosed = {**request, "part_changes": _generation_part_changes(request, working),
+                                 "current_fingerprint": working.fingerprint,
+                                 "current_revision": saved.revision,
+                                 "current_generation": current_generation}
+                    _finish_generation(diagnosed, "rejected", "The report changed after this generation request. "
                                        "Review the current report and choose Generate QA Word and PDF again.")
                 else:
                     from app.monthly_report_docx import generate_report
