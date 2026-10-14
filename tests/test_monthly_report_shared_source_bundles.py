@@ -80,7 +80,10 @@ def test_reference_bundle_never_uses_disposable_qa_runs_or_existing_fixture_buck
 
 @pytest.mark.parametrize("options,expected", [
     ({"forged_hash": True}, "SHA-256"),
-    ({"extra": True}, "extraneous"),
+    # A ninth ZIP member is refused by the central-directory bound before
+    # the manifest scan; this is a stricter rejection than reaching the
+    # later exact-members check. The original is never written.
+    ({"extra": True}, "index is malformed"),
     ({"path_traversal": True}, "name"),
     ({"symlink": True}, "Unsafe"),
 ])
