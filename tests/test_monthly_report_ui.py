@@ -62,7 +62,7 @@ def test_prepared_by_prerequisite_has_exact_nearby_link_and_single_anchor(monkey
         for key in ("organization", "subcontractors", "training"):
             result = guided._render_ordered_section(
                 blocked, SimpleNamespace(key=key), original,
-                None, None, None, None, None, None)
+                None, None, None, None, None)
             assert result == (blocked, original)
     assert len(notices) == 3
     assert all("[Prepared by](#report-prepared-by)" in message
