@@ -564,7 +564,7 @@ def client_table_draft(draft):
 def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field):
     """Edit one report section without splitting standing and monthly content."""
     if section.key in {"organization", "subcontractors", "training"} and not draft.prepared_by.strip():
-        st.info("Enter Prepared by above to view or edit saved contact and team information.")
+        st.info("Enter [Prepared by](#report-prepared-by) to view or edit saved contact and team information. Existing report content is retained.")
         return draft, blocks
     # A source-acceptance callback is delivered before widgets redraw. Use
     # this report's identity + the exact block revision the user reviewed;
@@ -885,6 +885,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.info(f"{period.label} started from the saved {prior_draft.period.label} report for these sites.")
     else:
         st.info("Site details are ready. Update this month’s work below.")
+    st.markdown('<span id="report-prepared-by" style="display:block;scroll-margin-top:8rem"></span>', unsafe_allow_html=True)
     prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by),
                              help="Shown on this report; not a sign-in.")
     draft = replace(draft, prepared_by=prepared)
@@ -1029,7 +1030,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field)
                 with preview_column:
                     if section.key in {"organization", "subcontractors", "training"} and not prepared.strip():
-                        st.caption("Enter Prepared by above to view saved contact and team pages.")
+                        st.caption("Enter [Prepared by](#report-prepared-by) to view the saved section output; its data is retained.")
                     else:
                         render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
