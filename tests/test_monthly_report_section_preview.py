@@ -208,6 +208,63 @@ def test_failed_rerender_labels_previous_page_not_ready_and_retry_preserves_edit
     assert app.text_area[0].value == "Still here after rendering failure"
 
 
+
+def test_ticket_evicted_between_availability_and_raster_read_recovers_without_blank_success(monkeypatch, tmp_path):
+    # The process-wide cache can be reclaimed by another visitor after a
+    # successful STORE.available check. The previous code still published
+    # "Current · N pages" with zero images until another unrelated rerun.
+    app, _ = preview_app(monkeypatch, tmp_path)
+    state = app.session_state['synthetic_ordered_previews']
+    old_ticket = state['cache']['activity']['ticket']
+    original = ui.STORE.pages
+    calls = [0]
+
+    def evict_once(owner, ticket, indexes, *, dpi=120):
+        if calls[0] == 0:
+            calls[0] += 1
+            ui.STORE.discard(owner, ticket)
+            return None
+        return original(owner, ticket, indexes, dpi=dpi)
+
+    monkeypatch.setattr(ui.STORE, 'pages', evict_once)
+    app.run()
+    assert not app.exception
+    after_miss = payload(app)
+    assert not after_miss['ready'], 'An evicted preview is not current output'
+    assert not after_miss['pages'], 'An evicted preview must not keep inaccessible page placeholders'
+    assert not after_miss['status'].startswith('Current')
+    assert state['cache'].get('activity', {}).get('ticket') != old_ticket
+    assert after_miss['pending'] or app.button, 'Must automatically rebuild or offer relevant Retry'
+
+    app.run()
+    assert not app.exception
+    assert payload(app)['ready'] and payload(app)['pages']
+    assert payload(app)['status'].startswith('Current')
+    assert calls[0] == 1
+
+
+def test_unreadable_current_page_has_specific_retry_not_current_blank_page(monkeypatch, tmp_path):
+    app, _ = preview_app(monkeypatch, tmp_path)
+    original = ui.STORE.pages
+
+    def fail_raster(*args, **kwargs):
+        raise ValueError('Synthetic page raster exceeds budget')
+
+    monkeypatch.setattr(ui.STORE, 'pages', fail_raster)
+    app.run()
+    assert not app.exception
+    assert not payload(app)['ready'] and not payload(app)['pages']
+    assert payload(app)['status'] == 'Preview unavailable — retry'
+    assert any('Reduce large images or retry' in warning.value for warning in app.warning)
+    assert [button.label for button in app.button] == ['Retry preview']
+
+    monkeypatch.setattr(ui.STORE, 'pages', original)
+    app.button[0].click().run()
+    app.run()
+    assert not app.exception
+    assert payload(app)['ready'] and payload(app)['pages']
+
+
 @requires_libreoffice
 def test_real_section_render_excludes_cover_toc_and_other_sections_and_keeps_text():
     report = draft()
