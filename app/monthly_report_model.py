@@ -109,6 +109,13 @@ class ColumnSpec:
     type: Literal["text", "date", "number", "currency", "boolean"] = "text"
 
 
+CONTACT_COLUMNS = (
+    ColumnSpec("facility", "Facility"), ColumnSpec("role", "Role"),
+    ColumnSpec("name", "Name"), ColumnSpec("phone", "Phone"),
+    ColumnSpec("email", "Email"),
+)
+
+
 @dataclass(frozen=True)
 class BlockSpec:
     key: str
@@ -117,6 +124,15 @@ class BlockSpec:
     allowed_sources: tuple[str, ...] = BLOCK_SOURCES
     stock_text_keys: tuple[str, ...] = ()
     columns: tuple[ColumnSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        # The original image-capable contact block also receives the editor's
+        # five-field rows. Give that legacy form its schema on restoration as
+        # well as first use. Never derive headings from a person or an old
+        # client's source row, and never replace an explicit imported schema.
+        # Keep image_page: an approved contact-page image remains supported.
+        if self.key == "contact_matrix" and self.type == "image_page" and not self.columns:
+            object.__setattr__(self, "columns", CONTACT_COLUMNS)
 
 
 @dataclass(frozen=True)
@@ -309,7 +325,7 @@ def default_sections() -> tuple[SectionSpec, ...]:
             BlockSpec("org_chart", "image_page", True),
             BlockSpec("business_hours_workflow", "image_page"),
             BlockSpec("after_hours_workflow", "image_page"),
-            BlockSpec("contact_matrix", "image_page"),
+            BlockSpec("contact_matrix", "image_page", columns=CONTACT_COLUMNS),
         )),
         SectionSpec("activity", "2", "Monthly Activity Summary", (
             BlockSpec("work_orders", "work_order_grid", stock_text_keys=("cmms_pending",)),
