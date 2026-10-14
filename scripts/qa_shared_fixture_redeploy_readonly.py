@@ -24,6 +24,7 @@ ORIGIN = "https://msapo-generator.onrender.com"
 FIXTURE_ROUTE = "/?workflow=monthly&monthly_qa=fixtures"
 BUILD_ROUTE = "/?workflow=monthly&monthly_qa=isolated"
 _ID = re.compile(r"[0-9a-f]{32}\Z")
+_ID_PREFIX = re.compile(r"[0-9a-f]{8}\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 KIND = "enfra-shared-fixture-redeploy-readonly-v1"
@@ -33,6 +34,13 @@ MAX_ORIGINAL = 25 * 1024 * 1024
 def _valid_id(value: str) -> str:
     if not isinstance(value, str) or not _ID.fullmatch(value):
         raise ValueError("Pass the exact 32-character opaque shared fixture ID.")
+    return value
+
+
+def _selector_id(value: str) -> str:
+    """Use the eight-character ID displayed in the UI, or its full identity."""
+    if not isinstance(value, str) or not (_ID.fullmatch(value) or _ID_PREFIX.fullmatch(value)):
+        raise ValueError("Provide the displayed eight-hex ID prefix or its full 32-hex ID.")
     return value
 
 
@@ -133,7 +141,7 @@ def _served_commit(page, expected: str) -> None:
 def verify_one(fixture_id: str, original_hash: str, served_commit: str,
                phase: str) -> dict:
     """Read only one explicitly specified original; never enumerate its contents."""
-    fixture_id = _valid_id(fixture_id)
+    requested = _selector_id(fixture_id)
     original_hash = _valid_hash(original_hash)
     served_commit = _valid_commit(served_commit)
     if phase not in ("before", "after"):
@@ -162,12 +170,25 @@ def verify_one(fixture_id: str, original_hash: str, served_commit: str,
             # option, then the full 32-character fixture ID + original SHA
             # encoded by the current native download widget.
             options = page.get_by_role(
-                "option", name=re.compile(r" · " + fixture_id[:8] + r"$"))
-            if options.count() != 1:
-                raise AssertionError("The specified fixture ID is absent or its short label is ambiguous.")
+                "option", name=re.compile(r" · " + requested[:8] + r"$"))
+            expect(options).to_have_count(1, timeout=20000)
             options.first.click()
             page.get_by_text("Confirmed source, target and expected results", exact=True).click()
             expect(page.get_by_text("Original SHA256: " + original_hash, exact=True)).to_be_visible(timeout=45000)
+            # Source-specific native action classes expose the FULL opaque
+            # ID; a displayed eight-character prefix alone is not proof of
+            # which stored original is actually wired for download.
+            token = re.compile(r"st-key-_shared_fixture_download_([0-9a-f]{32})_" +
+                               original_hash[:16] + r"\Z")
+            classes = page.locator('[class*="st-key-_shared_fixture_download_"]').evaluate_all(
+                "(nodes) => nodes.map(node => node.className).filter(value => typeof value === 'string')")
+            identities = {match[1] for name in classes for candidate in name.split()
+                          if (match := token.fullmatch(candidate))}
+            if len(identities) != 1:
+                raise AssertionError("No unique full source-bound native download control is mounted.")
+            fixture_id = next(iter(identities))
+            if fixture_id[:8] != requested[:8] or (len(requested) == 32 and fixture_id != requested):
+                raise AssertionError("The native download is wired to the wrong shared original.")
             scope = fixture_id + "_" + original_hash[:16]
             download_widget = page.locator(".st-key-_shared_fixture_download_" + scope)
             expect(download_widget).to_be_visible(timeout=45000)
