@@ -105,6 +105,23 @@ def compare(before: dict, after: dict) -> dict:
     }
 
 
+def _native_fixture_id(classes: list[str], selected: str, original_hash: str) -> str:
+    """Only the full source/SHA-bound native action authorizes a download."""
+    selected = _selector_id(selected)
+    original_hash = _valid_hash(original_hash)
+    token = re.compile(r"st-key-_shared_fixture_download_([0-9a-f]{32})_" +
+                       original_hash[:16] + r"\Z")
+    identities = {match[1] for name in classes if isinstance(name, str)
+                  for candidate in name.split()
+                  if (match := token.fullmatch(candidate))}
+    if len(identities) != 1:
+        raise AssertionError("No unique full source-bound native download control is mounted.")
+    full = next(iter(identities))
+    if full[:8] != selected[:8] or (len(selected) == 32 and full != selected):
+        raise AssertionError("The native download is wired to the wrong shared original.")
+    return full
+
+
 def _browser_route(route, refused: list[str]) -> None:
     parsed = urlparse(route.request.url)
     if parsed.scheme in {"blob", "data"}:
@@ -177,8 +194,6 @@ def verify_one(fixture_id: str, original_hash: str, served_commit: str,
             # Source-specific native action classes expose the FULL opaque
             # ID; a displayed eight-character prefix alone is not proof of
             # which stored original is actually wired for download.
-            token = re.compile(r"st-key-_shared_fixture_download_([0-9a-f]{32})_" +
-                               original_hash[:16] + r"\Z")
             page.wait_for_function(
                 """() => document.querySelector('[data-testid="stApp"]')
                   ?.getAttribute('data-test-script-state') === 'notRunning'""",
@@ -187,13 +202,7 @@ def verify_one(fixture_id: str, original_hash: str, served_commit: str,
             expect(page.locator('[class*="st-key-_shared_fixture_download_"]').first).to_be_visible(timeout=45000)
             classes = page.locator('[class*="st-key-_shared_fixture_download_"]').evaluate_all(
                 "(nodes) => nodes.map(node => node.className).filter(value => typeof value === 'string')")
-            identities = {match[1] for name in classes for candidate in name.split()
-                          if (match := token.fullmatch(candidate))}
-            if len(identities) != 1:
-                raise AssertionError("No unique full source-bound native download control is mounted.")
-            fixture_id = next(iter(identities))
-            if fixture_id[:8] != requested[:8] or (len(requested) == 32 and fixture_id != requested):
-                raise AssertionError("The native download is wired to the wrong shared original.")
+            fixture_id = _native_fixture_id(classes, requested, original_hash)
             scope = fixture_id + "_" + original_hash[:16]
             download_widget = page.locator(".st-key-_shared_fixture_download_" + scope)
             expect(download_widget).to_be_visible(timeout=45000)
