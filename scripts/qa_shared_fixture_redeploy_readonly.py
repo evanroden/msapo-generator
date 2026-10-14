@@ -16,7 +16,6 @@ import json
 import os
 from pathlib import Path
 import re
-import tempfile
 import time
 from urllib.parse import urlparse
 
