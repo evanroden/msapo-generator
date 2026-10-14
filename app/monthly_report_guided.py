@@ -895,6 +895,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.info(f"{period.label} started from the saved {prior_draft.period.label} report for these sites.")
     else:
         st.info("Site details are ready. Update this month’s work below.")
+    # A missing preparer must never strand someone in a distant section with
+    # only a generic instruction. This stable in-page anchor identifies the
+    # actual native text input immediately below it (not a fake proxy field).
+    st.markdown('<span id="report-prepared-by"></span>', unsafe_allow_html=True)
     prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by),
                              help="Shown on this report; not a sign-in.")
     draft = replace(draft, prepared_by=prepared)
@@ -1039,7 +1043,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field)
                 with preview_column:
                     if section.key in {"organization", "subcontractors", "training"} and not prepared.strip():
-                        st.caption("Enter Prepared by above to view saved contact and team pages.")
+                        st.caption("Saved team and contact pages are kept. "
+                                   "[Enter Prepared by](#report-prepared-by) above to view them.")
                     else:
                         render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
