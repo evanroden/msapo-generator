@@ -348,20 +348,25 @@ def _render_reference_bundle_shelf(live_storage_root):
         # the verified download response, and only for that exact source.
         action_scope = receipt.bundle_id + "_" + receipt.archive_sha256[:16]
         if st.button("Prepare verified ZIP download", key=_PREFIX + "source_bundle_prepare_" + action_scope):
-            st.session_state[_PREFIX + "prepared_bundle"] = action_scope
-        if st.session_state.get(_PREFIX + "prepared_bundle") == action_scope:
             try:
-                data = shelf.download(receipt.bundle_id)
+                shelf.download(receipt.bundle_id)  # Explicit full-byte check once.
             except (OSError, ValueError):
-                st.error("Archive verification failed; original download is unavailable.")
                 st.session_state.pop(_PREFIX + "prepared_bundle", None)
+                st.error("Archive verification failed; original download is unavailable.")
             else:
-                st.download_button("Download unchanged source archive", data,
-                                   file_name="ENFRA_MSAPO_Owner_Originals_2026-10-14_PORTABLE.zip",
-                                   mime="application/zip",
-                                   key=_PREFIX + "source_bundle_download_" + action_scope,
-                                   on_click="ignore")
-                st.caption("Download is hash-verified on this request. Test-run Reset never deletes the reference archive.")
+                st.session_state[_PREFIX + "prepared_bundle"] = action_scope
+        if st.session_state.get(_PREFIX + "prepared_bundle") == action_scope:
+            # Streamlit 1.61+ supports deferred download data callables. Do
+            # not retain or reread 88 MB of client sources on unrelated full
+            # editor reruns after Prepare. Reverify on the actual click.
+            def verified_source_bytes():
+                return shelf.download(receipt.bundle_id)
+            st.download_button("Download unchanged source archive", verified_source_bytes,
+                               file_name="ENFRA_MSAPO_Owner_Originals_2026-10-14_PORTABLE.zip",
+                               mime="application/zip",
+                               key=_PREFIX + "source_bundle_download_" + action_scope,
+                               on_click="ignore")
+            st.caption("Archive bytes are verified on download. Test-run Reset never deletes the reference archive.")
 
 
 
@@ -396,20 +401,22 @@ def _render_synthetic_evidence_shelf(live_storage_root):
         action_scope = receipt.bundle_id + "_" + receipt.archive_sha256[:16]
         if st.button("Prepare evidence ZIP download",
                      key=_PREFIX + "evidence_bundle_prepare_" + action_scope):
-            st.session_state[_PREFIX + "prepared_evidence_bundle"] = action_scope
-        if st.session_state.get(_PREFIX + "prepared_evidence_bundle") == action_scope:
             try:
-                payload = shelf.download(receipt.bundle_id)
+                shelf.download(receipt.bundle_id)  # Verify once on explicit Prepare.
             except (ValueError, OSError):
                 st.error("Evidence archive integrity check failed; download is unavailable.")
                 st.session_state.pop(_PREFIX + "prepared_evidence_bundle", None)
             else:
-                st.download_button("Download unchanged synthetic evidence archive", payload,
-                                   file_name="ENFRA_MSAPO_Synthetic_Evidence_" + receipt.archive_sha256[:12] + ".zip",
-                                   mime="application/zip",
-                                   key=_PREFIX + "evidence_bundle_download_" + action_scope,
-                                   on_click="ignore")
-                st.caption("Only this explicit request reads the complete ZIP; Reset leaves its immutable evidence intact.")
+                st.session_state[_PREFIX + "prepared_evidence_bundle"] = action_scope
+        if st.session_state.get(_PREFIX + "prepared_evidence_bundle") == action_scope:
+            def verified_evidence_bytes():
+                return shelf.download(receipt.bundle_id)
+            st.download_button("Download unchanged synthetic evidence archive", verified_evidence_bytes,
+                               file_name="ENFRA_MSAPO_Synthetic_Evidence_" + receipt.archive_sha256[:12] + ".zip",
+                               mime="application/zip",
+                               key=_PREFIX + "evidence_bundle_download_" + action_scope,
+                               on_click="ignore")
+            st.caption("Source bytes are reverified on click; Reset preserves this immutable archive.")
 
 
 def render(browser_token, browser_timezone, field, move, live_storage_root):
