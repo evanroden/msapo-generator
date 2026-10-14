@@ -217,23 +217,34 @@ def _identifier(value):
 
 
 def _check_native_package(original):
-    # Bound central-directory work BEFORE ZipFile creates one Python object per
-    # member. This route accepts normal DOCX packages, not ZIP64 or giant ZIP
-    # catalogs. It never decompresses, extracts or approves any source content.
-    offset = original.rfind(b"PK\x05\x06", max(0, len(original) - 65557))
+    # Validate central-directory bounds before ZipFile allocates member objects.
+    # The shared AUTH route needs to ingest a real 28.5 MB original, but may
+    # never trade the native parser's expanded/XML safety budgets for size.
+    offset = original.rfind(b"PK\\x05\\x06", max(0, len(original) - 65557))
     if offset < 0 or len(original) - offset < 22:
         raise ValueError("Fixture must be a native Starting report DOCX.")
     _, disk, central_disk, on_disk, count, central_size, central_offset, comment = struct.unpack_from("<4s4H2LH", original, offset)
-    if (disk or central_disk or on_disk != count or not 1 <= count <= 10000
+    if (disk or central_disk or on_disk != count or not 1 <= count <= 4000
             or central_size > 2 * 1024 * 1024 or central_offset + central_size > offset
             or offset + 22 + comment != len(original)):
         raise ValueError("Fixture DOCX package index exceeds the safe native-reader bound.")
     try:
         with ZipFile(BytesIO(original)) as package:
-            names = package.namelist()
-            if (len(names) > 10000 or len(set(names)) != len(names)
+            info = package.infolist()
+            names = [member.filename for member in info]
+            if (len(info) > 4000 or len(set(names)) != len(names)
                     or not {"[Content_Types].xml", "word/document.xml"}.issubset(names)):
                 raise ValueError("Fixture must be a native Starting report DOCX with unique package members.")
+            if any(name.startswith("/") or "\\\\" in name or ".." in name.split("/") for name in names):
+                raise ValueError("Fixture contains an unsafe package path.")
+            if (sum(member.file_size for member in info) > 256 * 1024 * 1024
+                    or any(member.file_size > 64 * 1024 * 1024 or member.flag_bits & 1
+                           for member in info)):
+                raise ValueError("Fixture DOCX expanded package exceeds the native-reader budget.")
+            xml = [member for member in info if member.filename.endswith((".xml", ".rels"))]
+            if (sum(member.file_size for member in xml) > 64 * 1024 * 1024
+                    or any(member.file_size > 32 * 1024 * 1024 for member in xml)):
+                raise ValueError("Fixture DOCX XML exceeds the native-reader budget.")
     except BadZipFile as exc:
         raise ValueError("Fixture must be a native Starting report DOCX.") from exc
 
