@@ -375,8 +375,31 @@ test('native editing event withholds preview fragments until matching full-rende
     assert.equal(gate.pending,false,'only a distinct completed full-run stamp releases it');
     assert.equal(sent.length,2,'deferred viewport request is sent after canonical editing');
     assert.equal(sent[1].value.dpi,150);
+    // Ordinary labels/focus and viewer-native Retry never imply a business
+    // rerun; WebKit checkbox labels do, even before their native change event.
+    const activate=target=>app.listeners.get('click').forEach(fn=>fn({target}));
+    const textLabel={querySelector:()=>null};
+    activate({closest:selector=>selector==='label'?textLabel:null});
+    assert.equal(gate.pending,false,'text-label focus cannot stall an output preview');
+    activate({closest:selector=>selector==='.report-preview'?panel:null});
+    assert.equal(gate.pending,false,'preview-owned actions cannot stall themselves');
+    const choiceLabel={querySelector:selector=>selector.includes('checkbox')?{}:null};
+    activate({closest:selector=>selector==='label'?choiceLabel:null});
+    assert.equal(gate.pending,true,'checkbox click guards before a change event bubbles');
+    panel.querySelector('.report-preview-scroll').clientWidth=360;
+    observers.resize[0].callback();fire(120);
+    assert.equal(sent.length,2,'WebKit click must not interleave a fragment with editor rerun');
+    workspace.dataset.epcFullRender='full-after-checkbox';
+    app.setAttribute('data-test-script-state','running');
+    observers.mutation[0].callback();fire(120);
+    assert.equal(sent.length,2,'a running full script is not finished');
+    app.setAttribute('data-test-script-state','notRunning');
+    observers.mutation[0].callback();fire(120);
+    assert.equal(gate.pending,false,'click gate releases only on a completed full render');
+    assert.equal(sent.length,3,'latest coalesced viewport follows the full editor');
     assert.equal(Object.hasOwn(gate,'text'),false,'no input or receipt text is copied');
     cleanup();
     assert.equal(app.listeners.get('change').size,0,'all native listeners clean up');
+    assert.equal(app.listeners.get('click').size,0,'the label capture listener cleans up');
     assert.equal(window.__enfraPreviewNativeEditGates.get(app),undefined);
 });
