@@ -79,21 +79,38 @@ export default function(component) {
                     for (const listener of gate.listeners) listener();
                 }
             };
-            const nativeChange = event => {
-                const target = event.target;
-                if (!target?.matches?.('input,textarea,select') ||
-                        target.closest?.('.report-preview')) return;
+            const awaitNativeEdit = () => {
                 const current = workspace.dataset.epcFullRender;
                 if (current) {
                     gate.pending = true;
                     gate.before = current;
                 }
             };
+            const nativeChange = event => {
+                const target = event.target;
+                if (!target?.matches?.('input,textarea,select') ||
+                        target.closest?.('.report-preview')) return;
+                awaitNativeEdit();
+            };
+            // Streamlit's checkbox/toggle label can synchronously request its
+            // full editor rerun before a native input "change" bubbles to this
+            // adapter (observed with WebKit split-receipt editing). Capture
+            // only deliberate checkbox/radio label activation before React
+            // handles the click; never block on ordinary input focus, scroll,
+            // preview Retry, file pickers, or browser-native zoom.
+            const nativeChoiceClick = event => {
+                const target = event.target;
+                if (!target?.closest || target.closest('.report-preview')) return;
+                const label = target.closest('label');
+                if (label?.querySelector('input[type="checkbox"], input[type="radio"]'))
+                    awaitNativeEdit();
+            };
             app.addEventListener('change', nativeChange, true);
+            app.addEventListener('click', nativeChoiceClick, true);
             const observer = new MutationObserver(releaseAfterFullRender);
             observer.observe(workspace, {attributes:true,attributeFilter:['data-epc-full-render']});
             observer.observe(app, {attributes:true,attributeFilter:['data-test-script-state']});
-            gate.dispose = () => {app.removeEventListener('change',nativeChange,true);observer.disconnect();};
+            gate.dispose = () => {app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);observer.disconnect();};
             editGate = gate;
             gates.set(app, gate);
         }
