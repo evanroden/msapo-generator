@@ -60,7 +60,7 @@ def validate_reference_archive(original: bytes, *, max_bytes: int = _MAX_ARCHIVE
     # Reject a ZIP-bomb-sized central-directory catalog before Python's
     # ZipFile allocates one ZipInfo for every claimed archive member. The
     # portable reference format holds exactly six files and two small records.
-    offset = original.rfind(b"PK\\x05\\x06", max(0, len(original) - 65557))
+    offset = original.rfind(b"PK\x05\x06", max(0, len(original) - 65557))
     if offset < 0 or len(original) - offset < 22:
         raise ValueError("Reference bundle is not a complete ordinary ZIP.")
     (_, disk, center_disk, entries_on_disk, entries, index_size,
