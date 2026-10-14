@@ -44,8 +44,10 @@ def visit(browser, engine, method):
     page.route("**/*", route)
     record = {"engine": engine, "path": method}
     try:
+        record["phase"] = "choose fresh contract"
         page.goto(BASE_URL, wait_until="domcontentloaded")
         page.get_by_role("button", name=CONTRACT, exact=True).click()
+        record["phase"] = "verify zero-selection baseline"
         box = page.get_by_role("checkbox", name=FIRST, exact=True)
         label = box.locator("xpath=ancestor::label[1]")
         label.scroll_into_view_if_needed()
@@ -59,6 +61,7 @@ def visit(browser, engine, method):
                 label:rect.toJSON(),squareHitOwned:!!hit&&label.contains(hit),
                 scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')};
         }""")
+        record["phase"] = "single native " + method + " activation"
         if method == "square":
             r = label.bounding_box()
             label.click(position={"x": min(18, r["width"] / 3), "y": r["height"] / 2})
@@ -72,10 +75,12 @@ def visit(browser, engine, method):
             box.press("Space")
         else:
             raise AssertionError("Unknown input mode")
+        record["phase"] = "verify one native site selected and work enabled"
         expect(box).to_be_checked(timeout=45000)
         expect(page.get_by_text("Sites selected (1): " + FIRST, exact=True)).to_be_visible(timeout=45000)
         expect(page.get_by_text("Select at least one site to continue.", exact=True)).to_have_count(0)
         expect(page.get_by_text("Starting report", exact=True)).to_be_visible(timeout=45000)
+        record["phase"] = "second site and return to zero"
         # Distinct second site and recovery from zero. These must not silently
         # promote the first failure: it already had an independent assertion.
         second = page.get_by_role("checkbox", name=SECOND, exact=True)
@@ -89,20 +94,33 @@ def visit(browser, engine, method):
         second.locator("xpath=ancestor::label[1]").click()
         expect(second).not_to_be_checked(timeout=45000)
         expect(page.get_by_text("Select at least one site to continue.", exact=True)).to_be_visible(timeout=45000)
+        record["phase"] = "reload zero-site result with normal contract re-entry"
         page.reload(wait_until="domcontentloaded")
+        # Before a draft has actually been created, a clean report has not
+        # saved its contract. A normal reload may rightly return to the
+        # contract selector. Use the ordinary user click to reach the same
+        # selector; do not pretend an absent checkbox is a selection failure.
+        if page.get_by_role("button", name=CONTRACT, exact=True).count():
+            page.get_by_role("button", name=CONTRACT, exact=True).click()
         expect(page.get_by_role("checkbox", name=FIRST, exact=True)).not_to_be_checked(timeout=45000)
+        expect(page.get_by_text("Select at least one site to continue.", exact=True)).to_be_visible(timeout=45000)
         record["result"] = "pass"
         if events:
             raise AssertionError("A synthetic browser requested an external URL")
         results["checks"].append(record)
     except Exception as exc:
+        # Save screenshot BEFORE any further locator could fail (the checked
+        # element may have moved, e.g. after reload). Keep the first failure.
+        try:
+            page.screenshot(path=str(OUT / f"{engine}-{method}-first-failure.png"))
+        except Exception:
+            pass
         record["result"] = "fail"
         record["error_type"] = type(exc).__name__
         record["message"] = str(exc)[:1000]
         try:
             record["after"] = page.get_by_role("checkbox", name=FIRST, exact=True).evaluate(
                 "node => ({checked:node.checked,disabled:node.disabled})")
-            page.screenshot(path=str(OUT / f"{engine}-{method}-first-failure.png"))
         except Exception:
             pass
         results["failures"].append(record)
