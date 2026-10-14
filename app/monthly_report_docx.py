@@ -392,10 +392,21 @@ def _build_docx(draft, *, asset_loader=None):
         _display_page(document, label=f"Section {section.number}" if not section.appendix else f"Appendix {section.number}", title=section.title, light=bool(divider_asset))
         configure_content(document.add_section(WD_SECTION_START.NEW_PAGE))
         document.add_heading(f"{section.number}. {section.title}", 1)
+        chart_emitted = False
         for spec in section.blocks:
             block = blocks.get(spec.key)
             if block is None or block.source == "Omit":
                 continue
+            if (section.key == "organization" and spec.key == "contact_matrix"
+                    and chart_emitted and (block.text.strip() or block.rows or
+                                          any(t.rows for t in block.extra_tables) or block.asset_hashes)):
+                # A full-size chart and facility contacts have distinct jobs.
+                # Never squeeze contact rows underneath the chart or split an
+                # existing line into a new page without a human-readable title.
+                # This is the generic fallback only: native design geometry
+                # must be evaluated separately, never rewritten by this path.
+                heading = document.add_heading("Facility contacts", 2)
+                heading.paragraph_format.page_break_before = True
             _text(document, block.text)
             from app.monthly_report_visuals import org_groups, org_page, photo_count, photo_page
             if block.org_nodes:
@@ -444,6 +455,8 @@ def _build_docx(draft, *, asset_loader=None):
                     for cell, value in zip(table.add_row().cells, values):
                         cell.text = "" if value is None else str(value)
                 _format_table(table, True)
+            if spec.key == "org_chart" and (block.org_nodes or block.asset_hashes):
+                chart_emitted = True
         carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
         if carried:
             from app.monthly_report_followups import report_text
