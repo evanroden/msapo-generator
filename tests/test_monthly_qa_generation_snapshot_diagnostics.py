@@ -41,3 +41,26 @@ def test_diagnostics_do_not_record_value_or_user_text():
     assert "prepared_by" in parts
     assert "Private source" not in str(parts)
     assert "Private source" not in str(context)
+
+
+def test_synthetic_vendor_cell_reconciliation_is_identified_without_contents():
+    from app.monthly_report_model import ResolvedBlock, ReportTable
+
+    original = draft()
+    table = ReportTable(("Facility", "Vendor"), (("Invented site", "Invented source vendor"),),
+                        "synthetic:fixture")
+    vendor = ResolvedBlock("subcontractor_matrix", "This month", extra_tables=(table,))
+    baseline = replace(original, blocks=tuple(b for b in original.blocks
+                                               if b.key != vendor.key) + (vendor,))
+    context = {"part_hashes": ui._generation_parts(baseline)}
+    next_table = replace(table, rows=(("Invented site", ""),))
+    changed = replace(baseline, blocks=tuple(b if b.key != vendor.key else
+                                            replace(b, extra_tables=(next_table,))
+                                            for b in baseline.blocks))
+    detail = ui._generation_part_changes(context, changed)
+    assert "block:subcontractor_matrix" in detail
+    assert "block:subcontractor_matrix.extra_tables" in detail
+    assert "block:subcontractor_matrix.extra_tables[0].row[0].cell[1]" in detail
+    assert "block:subcontractor_matrix.extra_tables[0].row[0].cell[0]" not in detail
+    assert "Invented source vendor" not in str(detail)
+    assert "Invented source vendor" not in str(context)
