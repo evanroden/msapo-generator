@@ -11,7 +11,7 @@ import pytest
 
 from scripts.qa_shared_fixture_redeploy_readonly import (
     KIND, ORIGIN, _browser_route, _save_new, _valid_commit, _valid_hash,
-    _valid_id, _validate_manifest, compare, verify_one,
+    _valid_id, _selector_id, _validate_manifest, compare, verify_one,
 )
 
 
