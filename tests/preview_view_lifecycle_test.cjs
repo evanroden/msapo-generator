@@ -397,8 +397,32 @@ test('native editing event withholds preview fragments until matching full-rende
     observers.mutation[0].callback();fire(120);
     assert.equal(gate.pending,false,'click gate releases only on a completed full render');
     assert.equal(sent.length,3,'latest coalesced viewport follows the full editor');
+    // WebKit can send view fragments while a long Activity text area is still
+    // unblurred through book/tabletop/wide transitions. Its first input event
+    // must guard those fragments BEFORE the native change/full-editor rerun.
+    const typeInto=target=>app.listeners.get('input').forEach(fn=>fn({target}));
+    typeInto({matches:selector=>selector==='input',closest:()=>null});
+    assert.equal(gate.pending,false,'ordinary unrelated controls do not stall previews');
+    typeInto({matches:selector=>selector==='textarea',
+        closest:selector=>selector==='.report-preview'?panel:null});
+    assert.equal(gate.pending,false,'typing inside preview is not a report edit');
+    typeInto({matches:selector=>selector==='textarea',
+        closest:selector=>selector.includes('st-key-epc_edit_')?{}:null});
+    assert.equal(gate.pending,true,'unblurred Activity input must guard before blur');
+    panel.querySelector('.report-preview-scroll').clientWidth=1200;
+    observers.resize[0].callback();fire(120);
+    assert.equal(sent.length,3,'resize/fold preview fragment cannot overtake uncommitted text');
+    workspace.dataset.epcFullRender='full-after-unblurred-activity';
+    app.setAttribute('data-test-script-state','running');
+    observers.mutation[0].callback();fire(120);
+    assert.equal(gate.pending,true,'new full-render stamp needs completed editor run');
+    app.setAttribute('data-test-script-state','notRunning');
+    observers.mutation[0].callback();fire(120);
+    assert.equal(gate.pending,false,'acknowledged edited report releases only deferred view requests');
+    assert.equal(sent.length,4,'one bounded latest preview request follows full Activity commit');
     assert.equal(Object.hasOwn(gate,'text'),false,'no input or receipt text is copied');
     cleanup();
+    assert.equal(app.listeners.get('input').size,0,'multiline capture listener cleans up');
     assert.equal(app.listeners.get('change').size,0,'all native listeners clean up');
     assert.equal(app.listeners.get('click').size,0,'the label capture listener cleans up');
     assert.equal(window.__enfraPreviewNativeEditGates.get(app),undefined);
