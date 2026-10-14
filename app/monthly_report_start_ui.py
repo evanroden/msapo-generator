@@ -130,7 +130,7 @@ def select_sites(contract, profiles, remembered, field, completed=None):
         if completed:
             st.session_state[key] = bool(seed and f.key in membership_key(seed.facilities))
         detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
-        if st.checkbox(f.title, key=key, help=detail):
+        if st.checkbox(f.title, key=key, help=detail, width="stretch"):
             selected.append(f)
     with st.expander("Add a site that is not listed"):
         custom = st.text_input("Site name", key=field(prefix + "_new_site", ""), help="Use a semicolon between names when adding several actual sites.")
