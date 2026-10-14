@@ -24,7 +24,7 @@ from app.monthly_report_start import report_key
 
 
 _PREFIX = "_shared_fixture_"
-_LIMIT = 25 * 1024 * 1024
+_LIMIT = 32 * 1024 * 1024
 
 
 def _queue_upload():
