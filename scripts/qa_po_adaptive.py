@@ -140,7 +140,29 @@ def exercise_page(page, name, errors):
     review = page.locator(".st-key-epc_pair_purchase_review")
     package = page.locator(".st-key-epc_pair_purchase_package")
     scope = page.get_by_label("Scope of Work", exact=True)
-    review.locator('img[alt^="Original quote — page "]').first.wait_for()
+    # This real source is lazily rasterized. Assert the accessible document
+    # panel AND decoded first page, not merely the first visual page frame.
+    source_panel = review.locator(".report-preview")
+    expect(source_panel).to_be_visible()
+    source_panel.scroll_into_view_if_needed()
+    # This fixture selects invented sample text. Its decoded raster must
+    # identify itself as a sample, not masquerade as an original upload.
+    first_source_page = review.locator(".report-preview img").first
+    try:
+        expect(first_source_page).to_be_visible(timeout=30000)
+        expect(first_source_page).to_have_attribute("alt", re.compile(r"^Synthetic sample quote — page 1$"))
+        check(name + " visible original page decoded", first_source_page.evaluate("node=>node.complete && node.naturalWidth>0"))
+    except Exception:
+        # Synthetic-only structural receipt, including the actual alt/title.
+        # Captures first failures instead of retrying an invisible test step.
+        REPORT.setdefault("first_source_diagnostics", {})[name] = source_panel.evaluate("""panel => ({
+            title:panel.querySelector(".report-preview-status")?.textContent,
+            figures:panel.querySelectorAll("figure").length,
+            images:[...panel.querySelectorAll("img")].map(n=>({alt:n.alt,complete:n.complete,
+                naturalWidth:n.naturalWidth,visible:!!n.getClientRects().length})),
+            scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')
+        })""")
+        raise
     check(name + " exactly one authoritative scope editor", scope.count() == 1)
     page.locator('[data-testid="stMain"]').evaluate("node => {node.scrollTop=650}")
     page.evaluate("() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
@@ -191,26 +213,29 @@ def exercise_page(page, name, errors):
     wait_preview_ack(package,image="Generated MSAPO",page_number=1)
     check(name + " preview scrolling avoids full-app reruns",full_app_runs(page)==app_runs,
           {"before":app_runs,"after":full_app_runs(page)})
-    compare = package.get_by_label("Compare original quote", exact=True)
-    # Locked Streamlit uses a visually hidden React Aria input. Click its
-    # visible semantic label as a user would; never force the hidden input.
-    compare.locator("xpath=ancestor::label[1]").click()
-    expect(compare).to_be_checked()
-    package.locator('img[alt^="Original quote — page "]').first.wait_for()
-    scroll_preview_to_page(package,1)
-    wait_preview_ack(package,image="Original quote",page_number=1)
-    compare.locator("xpath=ancestor::label[1]").click()
-    expect(compare).not_to_be_checked()
+    # The selected synthetic sample remains in the earlier correction pair.
+    # A genuine uploaded original uses a different truthful source label.
+    check(name + " obsolete Compare original quote switch removed",
+          page.get_by_label("Compare original quote", exact=True).count() == 0)
+    # The earlier source viewer is lazy. Scroll the actual reference pane
+    # into the viewport before expecting a decoded page from its fragment.
+    # A permanently visible pane must still load: no retries or forced DOM clicks.
+    review.locator(".epc-workspace-reference").scroll_into_view_if_needed()
+    review.locator('img[alt^="Synthetic sample quote — page "]').first.wait_for()
+    scroll_preview_to_page(review,1)
+    wait_preview_ack(review,image="Synthetic sample quote",page_number=1)
+    package.scroll_into_view_if_needed()
     wait_preview_ack(package,image="Generated MSAPO",page_number=1)
     returned_view = preview_position(package)
-    check(name + " comparison restores exact output reading page and scope",
+    check(name + " earlier quote inspection restores output reading page and scope",
           all(returned_view[key]==output_view[key] for key in ("page","scope","label")),
           {"before":output_view,"after":returned_view})
-    check(name + " comparison restores output reading offset",
+    check(name + " earlier quote inspection restores output reading offset",
           abs(returned_view["offset"]-output_view["offset"])<=3 and
           abs(returned_view["scrollTop"]-output_view["scrollTop"])<=3,
           {"before":output_view,"after":returned_view})
-    check(name + " view comparison never generates", page.get_by_text("Synthetic generation count: 1", exact=True).count() == 1)
+    check(name + " earlier quote inspection never regenerates",
+          page.get_by_text("Synthetic generation count: 1", exact=True).count() == 1)
     inject(page, [{"x":0,"y":0,"width":1440,"height":380},{"x":0,"y":410,"width":1440,"height":490}])
     settle(page, "tabletop")
     page.locator(".epc-workspace").evaluate("""root=>{
