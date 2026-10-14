@@ -1,5 +1,12 @@
 # ENFRA Phase 1 and Phase 2 execution and evidence ledger
 
+## October 14 native Word table null treatment — UX21/P15
+
+In the native editable table mapping `_table`, a missing Python `None` value was coerced with `str(value)` and therefore printed the literal **None**. The generic DOCX fallback assigned untyped values directly to `python-docx` cells and could fail on `None`/numbers. Its supplemental imported-table nonempty check also called `strip()` on each value and could fail on missing cells. This is a bounded code-path defect, not proof of the particular owner-observed table until the actual RGH/UMMC originals and exports are inspected.
+
+The targeted fix preserves source/schema/native rows and columns; writes **blank** for absent values, **0** for zero (never suppresses an actual measurement), and preserves explicit `NR` as entered. Supplemental table inclusion accepts a substantive zero without claiming missing data are zero. Exact values and tests are generated from synthetic data only; preflight, provenance, no-price checks, original assets, standing records and report history remain unchanged. Regressions cover a native table and generic Word tables including imported two-column rows. The running branch's CI and native page proof must be recorded separately before merging; no actual RGH/UMMC visual or owner Word/Adobe acceptance is implied.
+
+
 ## October 14 preview cache race repair — P02/UX04/UX22, PR #222
 
 [PR #222](https://github.com/evanroden/msapo-generator/pull/222) starts at merged main `c90fd926` (PR #220), preserving continuous toolbar-free previews and existing preview workers. It addresses a **code-proved cache race**, not a proved cause of the tester's 15–25-second delays: the PDF could be evicted between `STORE.available` and `STORE.pages`, after which the component previously said `Current · N pages` or `Preview · N pages` while supplying no raster. Monthly now removes that failed ticket and requeues the same current section through the existing visibility/bounded worker or exposes an exact Retry. Shared PO/Expense reference viewing invalidates the missing disposable source ticket and exposes a specific Retry rather than a success receipt. Decode errors become recoverable and are never called current. Same-report stale previews are still marked as older; no other report's bytes or prior edit is promoted.
