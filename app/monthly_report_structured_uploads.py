@@ -321,6 +321,7 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                     paragraphs.append(line)
                     references.append(sources.source_reference(content.source, number))
                 continue
+            output_identity = _non_table_activity_identity(content.source)
             for number, text in enumerate(content.source.page_texts, 1):
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
@@ -345,8 +346,8 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                         text, content.source.suffix, with_dates=True):
                     line = line.strip()
                     if useful_activity(line) and not contains_price(line):
-                        dated = header_date if tagged_txt else content.source.service_date
-                        grounded = _activity_identity(line, content.source, dated)
+                        dated = header_date if tagged_txt else output_identity.service_date
+                        grounded = _activity_identity(line, output_identity, dated)
                         if not contains_price(grounded):
                             paragraphs.append(grounded)
                             references.append(reference)
