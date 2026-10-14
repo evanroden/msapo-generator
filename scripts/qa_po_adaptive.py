@@ -195,6 +195,10 @@ def exercise_page(page, name, errors):
     # both pages there, then return to the separately generated package.
     check(name + " obsolete Compare original quote switch removed",
           page.get_by_label("Compare original quote", exact=True).count() == 0)
+    # The earlier source viewer is lazy. Scroll the actual reference pane
+    # into the viewport before expecting a decoded page from its fragment.
+    # A permanently visible pane must still load: no retries or forced DOM clicks.
+    review.locator(".epc-workspace-reference").scroll_into_view_if_needed()
     review.locator('img[alt^="Original quote — page "]').first.wait_for()
     scroll_preview_to_page(review,1)
     wait_preview_ack(review,image="Original quote",page_number=1)
