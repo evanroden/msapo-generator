@@ -69,13 +69,16 @@ def test_real_generic_pdf_keeps_contact_table_off_chart_page(tmp_path, monkeypat
         with fitz.open(path) as pdf:
             chart_pages = [index for index, page in enumerate(pdf) if page.get_images(full=True)
                            and index >= 3]
+            # Long table cells legitimately wrap names over multiple lines in
+            # the PDF text layer. Locate rows by their synthetic phone fields,
+            # then prove both entries and the chart remain on separate pages.
             contacts = [index for index, page in enumerate(pdf)
-                        if "Synthetic Contact North" in page.get_text()]
+                        if "555-0100" in page.get_text()]
             assert chart_pages, "Actual chart illustration was omitted from PDF."
             assert contacts, "Actual contact row was omitted from PDF."
             assert contacts[0] > chart_pages[0], "Facility contacts were squeezed beneath the chart."
             assert "Facility contacts" in pdf[contacts[0]].get_text()
-            assert "Synthetic Contact North" not in pdf[chart_pages[0]].get_text()
-            assert "Synthetic Contact South" in pdf[contacts[0]].get_text()
+            assert "555-0100" not in pdf[chart_pages[0]].get_text()
+            assert "555-0200" in pdf[contacts[0]].get_text()
     finally:
         path.unlink(missing_ok=True)
