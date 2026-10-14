@@ -2,6 +2,19 @@
 
 **IN PROGRESS — neither phase is release-accepted.** This is the current resumable execution record for the October 13, 2026 handoff. Both phases are authorized. Older instructions to defer Phase 2 are superseded; older valid evidence remains bounded to its original commit, input and assertion.
 
+## Latest synthetic release gate — October 14, verified after 05:05 UTC
+
+**Product main `ad55fb6b9e043f10812224f00c9c17b78845ff8e` has now passed ALL THREE separately executed, exact-SHA synthetic gates:**
+- [Required 38513548917](https://github.com/evanroden/msapo-generator/actions/runs/38513548917) **SUCCESS**, 2,491 passing pytest cases (two existing openpyxl warnings), healthy production container, generated synthetic Word/PDF and 512 MiB / 0.5 CPU resource checks.
+- [Adaptive Chromium/WebKit 38513548892](https://github.com/evanroden/msapo-generator/actions/runs/38513548892) **SUCCESS**, actual synthetic PO, Expenses, Monthly and shared-fixture Starting workflows.
+- [Serialized deployed-live 38513993073](https://github.com/evanroden/msapo-generator/actions/runs/38513993073) **SUCCESS**, exactly this main served on Render, two isolated first-attempt Chromium sessions with synthetic source replay/Word/PDF/privacy, durable Activity actions and isolation. A successful CI job on a code SHA is not native MS Word/Adobe or Safari hardware acceptance.
+
+**Previous real failure remains recorded:** [main `d261a835` live 38513519449](https://github.com/evanroden/msapo-generator/actions/runs/38513519449) failed the first session's durable Activity re-entry receipt after deliberate clear, with artifact 11870624024. A possible intervening code deployment is **not established as the cause**; no retry or weaker assertion was used to conceal it. The later exact `ad55fb6` first-attempt success is a separate passed gate, not a relabelled earlier failure.
+
+**Release acceptance is STILL IN PROGRESS** pending the explicitly selected already-uploaded **synthetic** shared DOCX original's byte-for-byte SHA across two observed distinct Render served code revisions, actual owner **AUTH01–03** with independent source/site/month/expected-section evidence, human inspection of native Microsoft Word/Adobe page geometry and genuine owner documents, and shipping physical Safari/tablet/foldable acceptance. The PR #214 read-only fixture verifier is merged but has **not** been executed against a selected production original. The no-login test route is anonymous/discoverable; neither phase can be declared owner accepted from synthetic tests alone. No authentication, Render disk/plan, billing, credentials, owner originals, fixture deletion or standing report changes are authorized by this ledger.
+
+**This new first section supersedes older "in progress", "not yet merged", and "current main" assertions below only as chronological status snapshots; old failures and the original 113 ORIG / 97 SIM / 251-case crosswalk remain unchanged.**
+
 ## Exact combined-main synthetic verification update — October 14, after 04:56 UTC
 
 **Main `ad55fb6b9e043f10812224f00c9c17b78845ff8e` Required [38513548917](https://github.com/evanroden/msapo-generator/actions/runs/38513548917) passed** **2,491 pytest tests / two existing openpyxl fixture warnings**, production healthy container and 512MiB/0.5-CPU resource probes. **Its separate adaptive Chromium/WebKit [38513548892](https://github.com/evanroden/msapo-generator/actions/runs/38513548892) passed** the geometry, PO, Expenses, Monthly and shared fixture/actual Starting workflow checks. **Public exact-served synthetic two-session live [38513993073](https://github.com/evanroden/msapo-generator/actions/runs/38513993073) was still in progress at this snapshot**; do not transfer the earlier success to this exact SHA or call both phases release accepted.
