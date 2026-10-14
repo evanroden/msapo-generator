@@ -99,7 +99,7 @@ class SharedFixtureLibrary:
     audience = SHARED_AUDIENCE
 
     def __init__(self, storage_root: Path, *,
-                 max_fixture_bytes: int = 25 * 1024 * 1024,
+                 max_fixture_bytes: int = 32 * 1024 * 1024,
                  max_library_bytes: int = 128 * 1024 * 1024,
                  max_run_copy_bytes: int = 128 * 1024 * 1024):
         self._storage = _SharedStorage(
