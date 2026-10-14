@@ -180,6 +180,12 @@ def verify_one(fixture_id: str, original_hash: str, served_commit: str,
             # which stored original is actually wired for download.
             token = re.compile(r"st-key-_shared_fixture_download_([0-9a-f]{32})_" +
                                original_hash[:16] + r"\Z")
+            page.wait_for_function(
+                """() => document.querySelector('[data-testid="stApp"]')
+                  ?.getAttribute('data-test-script-state') === 'notRunning'""",
+                timeout=45000,
+            )
+            expect(page.locator('[class*="st-key-_shared_fixture_download_"]').first).to_be_visible(timeout=45000)
             classes = page.locator('[class*="st-key-_shared_fixture_download_"]').evaluate_all(
                 "(nodes) => nodes.map(node => node.className).filter(value => typeof value === 'string')")
             identities = {match[1] for name in classes for candidate in name.split()
