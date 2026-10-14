@@ -151,6 +151,30 @@ def test_table_values_are_not_interpreted_as_markup(draft):
     assert document.tables[0].cell(1, 1).text == "Pending & checked"
 
 
+
+
+def test_generic_docx_blanks_only_actual_null_table_cells_and_keeps_zero(draft):
+    from app.monthly_report_docx import _build_docx
+    from app.monthly_report_model import ReportTable
+    spec = BlockSpec("table", "table", True, columns=(
+        ColumnSpec("service", "Service"), ColumnSpec("capacity", "Capacity")))
+    section = replace(draft.sections[0], blocks=(spec,))
+    block = ResolvedBlock("table", "This month",
+                          rows=(("Steam", None), ("Chilled water", 0), ("Power", "NR")),
+                          extra_tables=(ReportTable(
+                              ("Type", "Result"),
+                              ((None, None), ("Summer", None), ("Winter", 0))),))
+    output = Document(BytesIO(_build_docx(
+        replace(draft, sections=(section,), blocks=(block,)))))
+    assert [[cell.text for cell in row.cells] for row in output.tables[0].rows] == [
+        ["Service", "Capacity"], ["Steam", ""],
+        ["Chilled water", "0"], ["Power", "NR"]]
+    assert [[cell.text for cell in row.cells] for row in output.tables[1].rows] == [
+        ["Type", "Result"], ["", ""], ["Summer", ""], ["Winter", "0"]]
+    assert "None" not in output.tables[0]._tbl.xml
+    assert "None" not in output.tables[1]._tbl.xml
+
+
 def test_pdf_failure_retains_docx_and_removes_partial_output(monkeypatch, tmp_path, draft):
     from app import pdf_converter
     paths = []
