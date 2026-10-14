@@ -210,6 +210,24 @@ def test_current_columns_adapt_native_table_without_losing_cells(tmp_path):
     assert [cell.text for cell in document.tables[0].rows[1].cells]==['Alpha','Beta','Gamma']
 
 
+
+
+def test_native_tables_leave_unknown_values_blank_without_losing_zero_or_labels():
+    from app.monthly_report_native_layout import _table
+    document = Document()
+    table = document.add_table(rows=2, cols=2)
+    _table(table._tbl, ("Service", "Capacity"),
+           (("Steam", None), ("Chilled water", 0), ("Heating", "NR")))
+    values = [[cell.text for cell in row.cells] for row in table.rows]
+    assert values == [
+        ["Service", "Capacity"],
+        ["Steam", ""],
+        ["Chilled water", "0"],
+        ["Heating", "NR"],
+    ]
+    assert "None" not in table._tbl.xml
+
+
 def test_cleared_list_paragraph_does_not_show_empty_bullets(tmp_path):
     path=source(tmp_path)
     document=Document(path)
