@@ -118,8 +118,8 @@ def _select_expected(page, *, kind: str, expected_sha: str, expected_size: int,
 
 def fetch_archive(*, kind: str, expected_sha: str, expected_size: int,
                   destination: Path, requested_prefix: str | None = None) -> dict:
-    from playwright.sync_api import sync_playwright, expect
-
+    # Invalid caller identity must fail without requiring browser dependencies,
+    # touching disk or making any external request.
     audit._valid_inputs(
         kind, requested_prefix or "0" * 12, expected_sha, expected_size,
         "0" * 40, "before",
@@ -130,6 +130,8 @@ def fetch_archive(*, kind: str, expected_sha: str, expected_size: int,
         raise ValueError("Use a 12-hex archive prefix or full 32-hex ID.")
     if destination.exists() or destination.is_symlink():
         raise FileExistsError("The output already exists and must not be overwritten.")
+    from playwright.sync_api import sync_playwright, expect
+
     settings = audit.SHELVES[kind]
     refused, errors = [], []
     with sync_playwright() as playwright:
