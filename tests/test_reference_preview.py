@@ -176,6 +176,41 @@ def test_reference_acknowledges_only_applied_view_not_unhandled_widget_state(ret
         'visible': True, 'pages': (1,), 'dpi': 96}
 
 
+
+def test_raster_eviction_between_lookup_and_page_read_is_not_a_success_receipt(
+    retained_reference_callbacks, monkeypatch,
+):
+    harness = retained_reference_callbacks
+    target = harness.render('synthetic-cache-race', pdf_bytes(2))
+    harness.request(target, indexes=(0, 1))
+    target.surface()
+    first = target.entry['ticket']
+    assert first is not None and harness.rendered[-1]['images']
+
+    original_pages = harness.store.pages
+    def expire_after_lookup(owner, ticket, indexes, *, dpi=120):
+        harness.store.discard(owner, ticket)
+        return None
+    monkeypatch.setattr(harness.store, 'pages', expire_after_lookup)
+    target.surface()
+    missed = harness.rendered[-1]
+    assert missed['ticket'] is None
+    assert not missed['images']
+    assert missed['status'] == 'Preview unavailable — retry'
+    assert not harness.store.available(target.owner['owner'], first)
+    assert 'cache expired' in target.entry['error']
+
+    # An explicit Retry clears only the disposable preview error; its
+    # immutable source bytes and selected page range remain authoritative.
+    monkeypatch.setattr(harness.store, 'pages', original_pages)
+    target.entry['error'] = ''
+    target.surface()
+    restored = harness.rendered[-1]
+    assert restored['ticket'] is not None and restored['ticket'] != first
+    assert [index for index, _raw in restored['images']] == [0, 1]
+    assert target.entry['view']['pages'] == (0, 1)
+
+
 def test_discarded_scope_rejects_retained_fragment_and_callback_even_after_same_scope_reentry(
     retained_reference_callbacks,
 ):
