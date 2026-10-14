@@ -51,7 +51,12 @@ export default function(component) {
         // Locked-version adapter: Streamlit exposes this state on its real
         // app root. A preview event must not replace a pending editing rerun.
         const run = app?.getAttribute('data-test-script-state');
-        return Boolean(editGate?.pending || (run && run !== 'notRunning'));
+        // An unblurred editor may keep its own old preview until the edit
+        // is acknowledged. Other visible section previews must still load;
+        // native change/click triggering a full Streamlit rerun blocks ALL.
+        const guarded = editGate?.pending && (editGate.blockAll ||
+            !editGate.scopePair || editGate.scopePair === pair);
+        return Boolean(guarded || (run && run !== 'notRunning'));
     }
     // The preview can mount before the layout adapter's first animation
     // frame adds its classes. Bind stable app-owned container keys now so
@@ -69,22 +74,32 @@ export default function(component) {
     if (app && workspace) {
         editGate = gates.get(app);
         if (!editGate || editGate.workspace !== workspace) {
-            const gate = {workspace, pending:false, before:'', refs:0, listeners:new Set()};
+            const gate = {workspace, pending:false, before:'', blockAll:false,
+                scopePair:null, refs:0, listeners:new Set()};
             const releaseAfterFullRender = () => {
                 if (!gate.pending) return;
                 const finished = workspace.dataset.epcFullRender;
                 if (finished && finished !== gate.before &&
                         app.getAttribute('data-test-script-state') === 'notRunning') {
                     gate.pending = false;
+                    gate.blockAll = false;
+                    gate.scopePair = null;
                     for (const listener of gate.listeners) listener();
                 }
             };
-            const awaitNativeEdit = () => {
+            const awaitNativeEdit = (inputTarget = null) => {
                 const current = workspace.dataset.epcFullRender;
-                if (current) {
-                    gate.pending = true;
-                    gate.before = current;
-                }
+                if (!current) return;
+                const withinPair = inputTarget?.closest?.('[class*="st-key-epc_pair_"]') ||
+                    inputTarget?.closest?.('.epc-workspace-pair') || null;
+                if (!gate.pending) gate.before = current;
+                gate.pending = true;
+                // Native change/choice is about to start a full editor rerun:
+                // no preview fragment in any section may compete with it.
+                // Mere typing has no completed editor request yet; hold only
+                // the affected pair so visible adjacent sections can render.
+                gate.blockAll = gate.blockAll || !withinPair;
+                gate.scopePair = gate.blockAll ? null : withinPair;
             };
             const nativeChange = event => {
                 const target = event.target;
@@ -105,12 +120,27 @@ export default function(component) {
                 if (label?.querySelector('input[type="checkbox"], input[type="radio"]'))
                     awaitNativeEdit();
             };
+            // Multiline text remains unacknowledged while the operator types.
+            // A geometry change can otherwise dispatch view fragments before
+            // blur/on_change commits the native text area. Capture only its
+            // input EVENT (not any text) and defer disposable view updates
+            // until the distinct completed editor render acknowledges it.
+            // Ordinary focus, viewer controls and non-editor fields do not
+            // open this gate; it does not submit or alter business data.
+            const nativeEditorInput = event => {
+                const target = event.target;
+                if (!target?.matches?.('textarea') || target.closest?.('.report-preview')) return;
+                if (!target.closest?.('[class*="st-key-epc_edit_"]') &&
+                        !target.closest?.('.epc-workspace-editor')) return;
+                awaitNativeEdit(target);
+            };
+            app.addEventListener('input', nativeEditorInput, true);
             app.addEventListener('change', nativeChange, true);
             app.addEventListener('click', nativeChoiceClick, true);
             const observer = new MutationObserver(releaseAfterFullRender);
             observer.observe(workspace, {attributes:true,attributeFilter:['data-epc-full-render']});
             observer.observe(app, {attributes:true,attributeFilter:['data-test-script-state']});
-            gate.dispose = () => {app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);observer.disconnect();};
+            gate.dispose = () => {app.removeEventListener('input',nativeEditorInput,true);app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);observer.disconnect();};
             editGate = gate;
             gates.set(app, gate);
         }
