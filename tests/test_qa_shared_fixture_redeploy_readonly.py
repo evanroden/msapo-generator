@@ -45,7 +45,7 @@ def test_valid_hash_only_before_and_after_distinct_served_builds():
     assert result["before_commit"] == BEFORE
     assert result["after_commit"] == AFTER
     # No original bytes, source text or human-submitted metadata in the output.
-    assert "original" not in result or "original_bytes" not in result
+    assert "original_bytes" not in result
     assert not any(k in result for k in (
         "raw", "body", "contract", "site", "filename", "email", "phone",
     ))
