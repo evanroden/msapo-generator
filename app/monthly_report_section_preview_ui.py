@@ -266,7 +266,7 @@ def _render_ordered_preview(section_key, prefix, title):
     status = _preview_status(pending=pending)
     if entry and entry.get('error'):
         error = entry['error']
-    elif entry:
+    if entry and not entry.get('error'):
         ticket = entry['ticket']
         status = _preview_status(pages=ticket.pages)
     elif state['visible'].get(section_key):
@@ -319,7 +319,8 @@ def _render_ordered_preview(section_key, prefix, title):
                     error = ('The cached preview expired before pages could be '
                              'displayed. Retry the preview.')
     if error:
-        status = _preview_status(failed=True)
+        if not stale:
+            status = _preview_status(failed=True)
         st.warning(error)
         st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key,
                   on_click=_scoped_callback(_retry_preview, prefix, section_key))
