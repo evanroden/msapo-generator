@@ -131,3 +131,31 @@ def test_new_blank_vendor_contact_opens_and_does_not_invent_agreement_status():
     assert card.proto.expanded is True
     assert next(w for w in app.text_input if w.label == "Agreement status (MSA)").value == ""
     assert vendor_block(app).rows[0][-1] == ""
+
+
+def test_vendor_native_inputs_do_not_replay_previous_report_incarnation():
+    # A complete starting-report import can replace source content without
+    # changing contract, site or reporting month. Old native IDs must never
+    # echo pre-import vendor values during a later Generate/preview rerun.
+    rows = (("Synthetic Site", "HVAC", "Current Vendor", "Current Contact", "", "Pending"),)
+    app = vendor_app(rows)
+    assert not app.exception
+    old = next(w for w in app.text_input if w.label == "Agreement status (MSA)")
+    old_id = old.key
+    assert old.value == "Pending"
+    baseline = vendor_block(app)
+    # Simulate a stale browser text-input value from the previous incarnation.
+    app.session_state[old_id] = "Obsolete prior-report status"
+    app.session_state["report_vendor_rich_text_epoch"] = "new-imported-report-incarnation"
+    app.run()
+    assert not app.exception
+    current = next(w for w in app.text_input if w.label == "Agreement status (MSA)")
+    assert current.key != old_id
+    assert current.value == "Pending"
+    assert vendor_block(app) == baseline
+    # Explicit new editing within this incarnation still persists as usual.
+    current.set_value("Needs confirmation").run()
+    assert not app.exception
+    assert vendor_block(app).rows[0][-1] == "Needs confirmation"
+    app.run()
+    assert vendor_block(app).rows[0][-1] == "Needs confirmation"
