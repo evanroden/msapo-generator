@@ -24,13 +24,18 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "test-artifacts" / "monthly-preparer-navigation"
 PORT = 8528
 URL = f"http://127.0.0.1:{PORT}"
-REPORT = {"synthetic_only": True, "physical_device": False, "checks": [], "failures": []}
+REPORT = {"synthetic_only": True, "physical_device": False, "checks": [], "failures": [],
+          "scope": "correction navigation after completed initial fixture mount; not early-startup typing stress"}
+
+
+READY = """() => Boolean(document.querySelector('.epc-workspace')?.dataset.epcFullRender) &&
+ document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning'"""
 
 
 def exercise(browser, engine, width, method):
     context = browser.new_context(viewport={"width": width, "height": 900})
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
-    unexpected = []
+    unexpected, browser_errors = [], []
 
     def route(request):
         parsed = urlparse(request.request.url)
@@ -43,19 +48,46 @@ def exercise(browser, engine, width, method):
     context.route("**/*", route)
     page = context.new_page()
     page.set_default_timeout(20000)
+    page.on("pageerror", lambda error: browser_errors.append(str(error)[:500]))
+    from workspace_wire_observations import WireObservations
+    wire = WireObservations(PORT)
+    wire.attach(page)
     record = {"engine": engine, "width": width, "activation": method}
     label = f"{engine}-{width}-{method}"
     try:
-        record["phase"] = "real known-value fixture and acknowledged empty preparer"
+        record["phase"] = "real known-value fixture and completed initial mount"
         page.goto(URL, wait_until="domcontentloaded")
         page.get_by_role("button", name="Load known-value report", exact=True).click()
         expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
         field = page.get_by_role("textbox", name="Prepared by", exact=True)
         activity = page.get_by_role("textbox", name="Activity summary", exact=True)
         expect(activity).to_be_visible(timeout=60000)
+        # Fixture-state and an early textarea can arrive before the initial
+        # full form has finished mounting. This is a navigation test, not a
+        # race with initial hydration. Wait on its existing completion marker,
+        # not a sleep/retry, then perform exactly one clear and native blur.
+        page.wait_for_function(READY, timeout=20000)
+        expect(field).not_to_have_value("")
         original = activity.input_value()
+        assert original, "Initial Activity hydration is a prerequisite, not a blank oracle."
+        record["before_clear"] = field.evaluate("""node => {
+            window.__preparerEvents=[];
+            for(const kind of ['input','change','blur']) node.addEventListener(kind,event=>{
+                if(window.__preparerEvents.length<16) window.__preparerEvents.push({
+                    kind:event.type,trusted:event.isTrusted,empty:node.value==='',
+                    fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender});
+            });
+            return {empty:node.value==='',fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender,
+                    scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')};
+        }""")
+        record["phase"] = "one preparer clear and acknowledged completed rerender"
         field.fill("")
         field.press("Tab")
+        page.wait_for_function("""before => {
+            const stamp=document.querySelector('.epc-workspace')?.dataset.epcFullRender;
+            return stamp && stamp!==before && document.querySelector('[data-testid="stApp"]')
+                ?.getAttribute('data-test-script-state')==='notRunning';
+        }""", arg=record["before_clear"]["fullRender"], timeout=20000)
         # Compact reference panes intentionally start hidden. Count committed
         # DOM captions here, then open the actual pane and require its semantic
         # link to be visible/actionable below. Hidden controls are not a pass.
@@ -99,6 +131,7 @@ def exercise(browser, engine, width, method):
         page.keyboard.press("Tab")
         expect(links).to_have_count(0, timeout=45000)
         expect(activity).to_have_value(original)
+        record["events"] = page.evaluate("window.__preparerEvents||[]")
         record["phase"] = "ordinary reload preserves corrected field and Activity"
         page.reload(wait_until="domcontentloaded")
         expect(field).to_have_value("Synthetic Navigation Reviewer", timeout=45000)
@@ -112,11 +145,19 @@ def exercise(browser, engine, width, method):
         record.update(result="fail", error=type(exc).__name__, message=str(exc)[:2000])
         try:
             record["focus"] = page.evaluate("({tag:document.activeElement?.tagName,label:document.activeElement?.getAttribute('aria-label'),hash:location.hash})")
+            record["events"] = page.evaluate("window.__preparerEvents||[]")
+            record["after"] = page.evaluate("""() => ({
+                preparerEmpty:document.querySelector('input[aria-label="Prepared by"]')?.value==='',
+                fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender,
+                scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state'),
+                correctionLinks:document.querySelectorAll('a[href="#report-prepared-by"]').length})""")
             page.screenshot(path=str(OUT / (label + "-first-failure.png")))
         except Exception:
             pass
         REPORT["failures"].append(record)
     finally:
+        record["browser_errors"] = browser_errors
+        (OUT / (label + "-wire.json")).write_text(json.dumps(wire.snapshot(), indent=2))
         context.close()
 
 
