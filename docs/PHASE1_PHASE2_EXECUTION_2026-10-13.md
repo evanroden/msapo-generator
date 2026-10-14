@@ -1,5 +1,12 @@
 # ENFRA Phase 1 and Phase 2 execution and evidence ledger
 
+## October 14 preview cache race repair — P02/UX04/UX22, PR #222
+
+[PR #222](https://github.com/evanroden/msapo-generator/pull/222) starts at merged main `c90fd926` (PR #220), preserving continuous toolbar-free previews and existing preview workers. It addresses a **code-proved cache race**, not a proved cause of the tester's 15–25-second delays: the PDF could be evicted between `STORE.available` and `STORE.pages`, after which the component previously said `Current · N pages` or `Preview · N pages` while supplying no raster. Monthly now removes that failed ticket and requeues the same current section through the existing visibility/bounded worker or exposes an exact Retry. Shared PO/Expense reference viewing invalidates the missing disposable source ticket and exposes a specific Retry rather than a success receipt. Decode errors become recoverable and are never called current. Same-report stale previews are still marked as older; no other report's bytes or prior edit is promoted.
+
+Focused regressions in `tests/test_monthly_report_section_preview.py` and `tests/test_reference_preview.py` simulate the eviction precisely after availability, an unreadable raster and recovery to the correct page indices. **Status: branch changes committed, exact-head CI and actual browser/served checks not yet concluded when this note was written.** P02 time-to-first-useful-page, image-heavy contention, editor responsiveness, long tasks and gray/frozen incidents remain open. No Render service resource, storage policy, source, prepared report, design pin or history was changed. Rollback is a code revert, not a standing-data reset.
+
+
 ## October 14 continuation: P03 and pointer-from-zero coverage (PR #220)
 
 **Status is in progress; owner/device, live served and authentic Word/PDF acceptance are NOT established.** The Oct 14 10:37 UTC baseline is [main `e5dd65b3`](https://github.com/evanroden/msapo-generator/commit/e5dd65b3ae23e610c15f6b66e26e5352d3cbd05d) after docs-only PR #218. Its [required 38549625249](https://github.com/evanroden/msapo-generator/actions/runs/38549625249) and exact-served two-session [monthly live 38550544129](https://github.com/evanroden/msapo-generator/actions/runs/38550544129) were previously verified; that evidence belongs to that served/runtime code, not this new branch. No current authenticated Render workspace was selectable through the connector.

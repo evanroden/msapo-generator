@@ -147,12 +147,25 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
             if view['visible']:
                 indexes=tuple(index for index in view['pages'] if index < ticket.pages) or (0,)
                 try:
-                    images=STORE.pages(state['owner'],ticket,indexes,dpi=view['dpi']) or ()
+                    loaded=STORE.pages(state['owner'],ticket,indexes,dpi=view['dpi'])
+                    if loaded:
+                        images=loaded
+                    else:
+                        # Available and pages are separate cache acquisitions.
+                        # Eviction between them previously rendered a valid
+                        # "Preview · N pages" receipt above blank pages.
+                        entry['ticket']=None
+                        ticket=None
+                        entry['error']='The source preview cache expired. Retry this preview.'
                 except (OSError,ValueError) as exc:
-                    entry['error']=str(exc)[:240]
+                    STORE.discard(state['owner'],ticket)
+                    entry['ticket']=None
+                    ticket=None
+                    entry['error']=str(exc)[:240] or 'The source page could not be displayed.'
         if not current():
             return
         if entry['error']:
+            status='Preview unavailable — retry'
             st.warning('Preview unavailable: ' + entry['error'])
             if st.button('Retry source preview',key=widget_key+'_retry'):
                 entry['error']=''

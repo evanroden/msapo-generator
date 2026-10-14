@@ -262,12 +262,10 @@ def _render_ordered_preview(section_key, prefix, title):
     # repeated heading/caption and reducing the usable tabletop page area.
     images, ticket = (), None
     stale = False
+    error = ""
     status = _preview_status(pending=pending)
     if entry and entry.get('error'):
-        status = _preview_status(failed=True)
-        st.warning(entry['error'])
-        st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key,
-                  on_click=_scoped_callback(_retry_preview, prefix, section_key))
+        error = entry['error']
     if entry and not entry.get('error'):
         ticket = entry['ticket']
         status = _preview_status(pages=ticket.pages)
@@ -279,15 +277,55 @@ def _render_ordered_preview(section_key, prefix, title):
             status = _preview_status(pending=pending, stale=True)
         elif older:
             _discard(state, state['last_good'].pop(section_key))
+
     if ticket and state['visible'].get(section_key):
         view = state['page_requests'].get(section_key, {'pages': (0,), 'dpi': 120})
         indexes = tuple(index for index in view['pages'] if index < ticket.pages) or (0,)
         try:
-            images = STORE.pages(state['owner'], ticket, indexes, dpi=view['dpi']) or ()
+            raster = STORE.pages(state['owner'], ticket, indexes, dpi=view['dpi'])
         except (ValueError, OSError):
+            # A page decode/size failure must not claim a current image exists.
+            # It stays recoverable through the same explicit Retry path as a
+            # failed conversion, without automatically looping expensive work.
+            if stale:
+                _discard(state, state['last_good'].pop(section_key, {}))
+                stale = False  # An evicted prior image is no longer on screen.
+                status = _preview_status(pending=pending)
+            else:
+                _discard(state, state['cache'].pop(section_key, {}))
+                error = ('The requested preview page could not be displayed. '
+                         'Reduce large images or retry the preview.')
+                state['cache'][section_key] = {
+                    'fingerprint': state['wanted'].get(section_key), 'error': error,
+                }
+            ticket = None
+        else:
+            if raster:
+                images = raster
+            else:
+                # STORE.available and STORE.pages are separate acquisitions.
+                # Another visitor or a cache expiry may evict the PDF between
+                # them. Previously this left a "Current · N pages" success
+                # label above blank placeholders until some unrelated rerun.
+                if stale:
+                    _discard(state, state['last_good'].pop(section_key, {}))
+                    stale = False  # Missing bytes cannot be called an older image.
+                else:
+                    _discard(state, state['cache'].pop(section_key, {}))
+                    _enqueue_visible(state, section_key)
+                    _advance_preview_queue(state)
+                    pending = _pending(state, section_key)
+                ticket = None
+                status = _preview_status(pending=pending)
+                if not pending:
+                    error = ('The cached preview expired before pages could be '
+                             'displayed. Retry the preview.')
+    if error:
+        if not stale:
             status = _preview_status(failed=True)
-            st.warning('The page preview is temporarily unavailable. Your edits are still here.')
-            images = ()
+        st.warning(error)
+        st.button('Retry preview', key=prefix + '_ordered_retry_' + section_key,
+                  on_click=_scoped_callback(_retry_preview, prefix, section_key))
     widget_key = prefix + '_preview_surface_' + section_key
     render_view(key=widget_key, view_scope=state['owner'] + '|' + widget_key, generation=state['wanted'].get(section_key, ''), title=title,
                 ticket=ticket, images=images, status=status, stale=stale,
