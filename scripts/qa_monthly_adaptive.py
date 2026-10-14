@@ -132,15 +132,33 @@ def exercise_site_selection(page, browser):
         expect(page.get_by_text("Sites selected (1): Demo North", exact=True)).to_be_visible(timeout=45000)
         expect(activity).to_have_count(0)
         check(browser, "native mouse unchecks a site and the server opens its exact single-site selection", True)
-        # Use the native keyboard path deliberately as the second operation,
-        # never as a retry for a failed pointer operation above.
-        south.press("Space")
+        # Move to a genuine unselected widget state using normal browser
+        # pointer actions. A single label click must then start that site;
+        # no synthetic session-state patch or keyboard fallback is permitted.
+        north_label = north.locator("xpath=ancestor::label[1]")
+        north_label.click()
+        expect(north).not_to_be_checked()
+        expect(page.get_by_text("Select at least one site to continue.", exact=True)).to_be_visible(timeout=45000)
+        check(browser, "both sites can be deselected by native pointer", True)
+        label.click()
         expect(south).to_be_checked()
+        expect(north).not_to_be_checked()
+        expect(page.get_by_text("Sites selected (1): Demo South", exact=True)).to_be_visible(timeout=45000)
+        check(browser, "one native label click starts from zero selected sites", True)
+        north_label.click()
         expect(north).to_be_checked()
+        expect(south).to_be_checked()
         expect(page.get_by_text("Sites selected (2): Demo North; Demo South", exact=True)).to_be_visible(timeout=45000)
         expect(activity).to_have_value(original, timeout=45000)
-        check(browser, "keyboard reselects the combined sites and restores their existing Activity draft", True)
-        capture(page, browser, "site-selection-pointer-keyboard")
+        # Deliberately exercise keyboard separately, not as a failed-click
+        # fallback. Existing combined-report draft returns after restoration.
+        south.press("Space")
+        expect(south).not_to_be_checked()
+        south.press("Space")
+        expect(south).to_be_checked()
+        expect(activity).to_have_value(original, timeout=45000)
+        check(browser, "keyboard works independently and combined draft returns intact", True)
+        capture(page, browser, "site-selection-zero-pointer-keyboard")
     finally:
         diagnostics["events"] = page.evaluate("window.__siteSelectionEvents||[]")
         diagnostics["after"] = south.evaluate("""node=>({checked:node.checked,disabled:node.disabled,
@@ -188,7 +206,6 @@ def snapshot(page):
             editor:rect(editor),stickyTop:ref?parseFloat(getComputedStyle(ref).top):null,
             surface:rect(surface),status:deep(pair,'.report-preview-status')[0]?.textContent,
             page:deep(pair,'.report-preview-position')[0]?.textContent,
-            zoom:deep(pair,'select[aria-label="Preview zoom"]')[0]?.value,
             images:deep(pair,'.report-preview img').map(n=>({alt:n.alt,loaded:n.complete&&n.naturalWidth>0,
               width:n.naturalWidth,height:n.naturalHeight})),
             heading:pair.querySelector('[data-epc-title]')?.dataset.epcTitle};
@@ -324,11 +341,24 @@ def exercise(browser_type, name):
         check(name, "own preview pins below measured navigation", abs(ap["reference"]["top"] - ap["stickyTop"]) <= TOLERANCE and ap["reference"]["top"] >= pinned["nav"]["bottom"] - TOLERANCE, {"activity": ap, "nav": pinned["nav"]})
         check(name, "real shadow viewer fits available height", ap["surface"]["bottom"] <= 900 + TOLERANCE and ap["surface"]["height"] > 100, ap)
         check(name, "preview remains right of its single editor", ap["reference"]["left"] > ap["pair"]["left"] + 200, ap)
-        actual.get_by_label("Preview zoom", exact=True).select_option("1.25")
-        actual.get_by_role("button", name="Next preview page", exact=True).click()
-        frames(page)
+        # All pages belong to a single normal scrollport: no page, zoom,
+        # fit or enlarge application controls should exist in any workflow.
+        controls = actual.locator(
+            '.report-preview-tools, [data-action="previous"], [data-action="next"], '
+            '[data-action="enlarge"], select[aria-label="Preview zoom"]')
+        check(name, "no preview page/zoom/enlarge toolbar", controls.count() == 0)
+        preview_scroll = actual.locator(".report-preview-scroll")
+        preview_scroll.evaluate("""node => {
+          const second=node.querySelector('figure[data-index="1"]');
+          if (!second) throw Error('The real report has no second preview page');
+          node.scrollTop=second.offsetTop-node.offsetTop+16;
+          node.dispatchEvent(new Event('scroll',{bubbles:true}));
+        }""")
+        expect(actual.locator(".report-preview-position")).to_have_text(
+            re.compile(r"^2 /"), timeout=20000)
         before_view = pair_state(snapshot(page), "activity")
-        check(name, "actual page navigation advances", before_view["page"].startswith("2 /"), before_view["page"])
+        check(name, "natural continuous preview scroll advances to page two",
+              before_view["page"].startswith("2 /"), before_view["page"])
         page.locator(ACTIVITY).evaluate("""pair=>{
           const main=document.querySelector('[data-testid="stMain"]');
           main.scrollTop+=pair.getBoundingClientRect().bottom-220;
@@ -342,14 +372,15 @@ def exercise(browser_type, name):
         scroll_pair(page, ACTIVITY)
         current_image(page, ACTIVITY)
         returned = pair_state(capture(page, name, "actual-reverse-boundary"), "activity")
-        check(name, "return preserves output page and zoom", (returned["page"], returned["zoom"]) == (before_view["page"], before_view["zoom"]), {"before": before_view, "returned": returned})
+        check(name, "return preserves output reading page", returned["page"] == before_view["page"],
+              {"before": before_view, "returned": returned})
         returned_image = actual.locator('figure[data-index="1"] img')
         expect(returned_image).to_be_visible(timeout=30000)
         expect(returned_image).to_have_js_property('complete', True)
         check(name, "returned selected page actually decoded", returned_image.evaluate('n=>n.naturalWidth>0'))
         updates = page.evaluate(CLIENT_SNAPSHOT)['server']
         previous_updates = baseline['runtime_observations']['server']
-        check(name, "preview navigation and section scrolling avoid full-app reruns",
+        check(name, "preview scrolling and section scrolling avoid full-app reruns",
               updates['full_runs'] == previous_updates['full_runs'],
               {'before':previous_updates,'after':updates})
         check(name, "actual Monthly preview requests run inside fragments",
