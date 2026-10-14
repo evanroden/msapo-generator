@@ -120,10 +120,10 @@ def test_operator_deleted_source_action_remains_deleted_after_source_date_correc
 
 
 def test_dated_multi_event_txt_still_uses_each_header_and_not_one_global_date():
-    body = ("2026-09-04 | WO-01 | Vendor service\\n"
-            "Inspected fan motor. Replacement remains pending.\\n"
-            "2026-09-18 | WO-02 | Vendor service\\n"
-            "Calibrated controller. Further follow-up recommended.\\n")
+    body = ("2026-09-04 | WO-01 | Vendor service\n"
+            "Inspected fan motor. Replacement remains pending.\n"
+            "2026-09-18 | WO-02 | Vendor service\n"
+            "Calibrated controller. Further follow-up recommended.\n")
     source = ReportSource("a" * 64, "vendor-evidence.txt", "a" * 64, ".txt",
                           vendor="Trane", service_date="2026-09-04",
                           page_texts=(body,))
