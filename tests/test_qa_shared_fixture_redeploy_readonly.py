@@ -31,7 +31,7 @@ def sample(phase="before", *, commit=BEFORE, when=None):
         ),
         "read_only_checks": [
             "exact_served_commit", "selected_original_identity",
-            "original_download_sha256",
+            "original_download_sha256", "served_commit_after_download",
         ],
     }
 
