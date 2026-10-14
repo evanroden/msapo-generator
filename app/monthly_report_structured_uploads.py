@@ -217,6 +217,14 @@ _DOC_VENDOR_LABEL = re.compile(
     r"(?im)^\s*(?:vendor|contractor|service company)\s*[:=]\s*(\S[^\r\n]*)")
 
 
+def _date_only_source_label(text):
+    """A completed/report/service *date* label is not completed field work."""
+    match = re.fullmatch(
+        r"(?i)\\s*(?:(?:service|completed|report|inspection|work)\\s+)?"
+        r"date\\s*[:=]\\s*(.+?)\\s*", text)
+    return bool(match and _DOC_DATE_TOKEN.fullmatch(match.group(1).rstrip(".")))
+
+
 def _non_table_activity_identity(source):
     """A first-found DOC/PDF/email label is not a per-event attribution.
 
