@@ -14,7 +14,7 @@ from app.monthly_report_training import (FORMATS, MATRIX_REF, STATUSES,
 def render_training(draft, blocks, prefix, field):
     from app.monthly_report_directory import load_directory
     if not draft.prepared_by.strip():
-        st.info("Enter your name above to view or edit saved team training.")
+        st.info("Enter [Prepared by](#report-prepared-by) to view or edit saved team training. Existing records remain unchanged.")
         return blocks
     block = training_block(blocks)
     original_block = block
