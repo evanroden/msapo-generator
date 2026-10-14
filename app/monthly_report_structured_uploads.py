@@ -212,9 +212,9 @@ def _activity_identity(line, source, event_date):
 
 
 _DOC_DATE_TOKEN = re.compile(
-    r"(?<!\\d)(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}/\\d{1,2}/\\d{2,4})(?!\\d)")
+    r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4})(?!\d)")
 _DOC_VENDOR_LABEL = re.compile(
-    r"(?im)^\\s*(?:vendor|contractor|service company)\\s*[:=]\\s*(\\S[^\\r\\n]*)")
+    r"(?im)^\s*(?:vendor|contractor|service company)\s*[:=]\s*(\S[^\r\n]*)")
 
 
 def _non_table_activity_identity(source):
