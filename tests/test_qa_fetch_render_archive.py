@@ -110,7 +110,7 @@ def test_bad_identity_fails_before_launching_external_browser(tmp_path):
     with pytest.raises(ValueError):
         fetcher.fetch_archive(kind="synthetic", expected_sha="0" * 64,
                               expected_size=88_159_285, destination=tmp_path / "file.zip")
-    with pytest.raises(ValueError, match="12-hex"):
+    with pytest.raises(ValueError, match="12-character"):
         fetcher.fetch_archive(kind="originals", expected_sha="0" * 64,
                               expected_size=1000, requested_prefix="notanid",
                               destination=tmp_path / "file.zip")
