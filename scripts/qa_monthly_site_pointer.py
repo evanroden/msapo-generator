@@ -100,8 +100,13 @@ def visit(browser, engine, method):
         # saved its contract. A normal reload may rightly return to the
         # contract selector. Use the ordinary user click to reach the same
         # selector; do not pretend an absent checkbox is a selection failure.
-        if page.get_by_role("button", name=CONTRACT, exact=True).count():
-            page.get_by_role("button", name=CONTRACT, exact=True).click()
+        # A fresh zero-site report does not persist the contract yet. Reload
+        # legitimately returns to the contract cards; await that real page
+        # before the one ordinary contract click used to resume navigation.
+        contract_card = page.get_by_role("button", name=CONTRACT, exact=True)
+        expect(contract_card).to_be_visible(timeout=15000)
+        contract_card.click()
+        expect(page.get_by_text("Sites in this report", exact=True)).to_be_visible(timeout=15000)
         expect(page.get_by_role("checkbox", name=FIRST, exact=True)).not_to_be_checked(timeout=45000)
         expect(page.get_by_text("Select at least one site to continue.", exact=True)).to_be_visible(timeout=45000)
         record["result"] = "pass"
