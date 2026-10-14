@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       fixture_id:
-        description: Exact 32-character ID of an already selected shared fixture
+        description: Displayed 8-character ID prefix or full 32-character ID of an existing shared fixture
         type: string
         required: true
       original_sha256:
