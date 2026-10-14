@@ -191,26 +191,25 @@ def exercise_page(page, name, errors):
     wait_preview_ack(package,image="Generated MSAPO",page_number=1)
     check(name + " preview scrolling avoids full-app reruns",full_app_runs(page)==app_runs,
           {"before":app_runs,"after":full_app_runs(page)})
-    compare = package.get_by_label("Compare original quote", exact=True)
-    # Locked Streamlit uses a visually hidden React Aria input. Click its
-    # visible semantic label as a user would; never force the hidden input.
-    compare.locator("xpath=ancestor::label[1]").click()
-    expect(compare).to_be_checked()
-    package.locator('img[alt^="Original quote — page "]').first.wait_for()
-    scroll_preview_to_page(package,1)
-    wait_preview_ack(package,image="Original quote",page_number=1)
-    compare.locator("xpath=ancestor::label[1]").click()
-    expect(compare).not_to_be_checked()
+    # The original is still in the earlier quote/correction pair. Inspect
+    # both pages there, then return to the separately generated package.
+    check(name + " obsolete Compare original quote switch removed",
+          page.get_by_label("Compare original quote", exact=True).count() == 0)
+    review.locator('img[alt^="Original quote — page "]').first.wait_for()
+    scroll_preview_to_page(review,1)
+    wait_preview_ack(review,image="Original quote",page_number=1)
+    package.scroll_into_view_if_needed()
     wait_preview_ack(package,image="Generated MSAPO",page_number=1)
     returned_view = preview_position(package)
-    check(name + " comparison restores exact output reading page and scope",
+    check(name + " earlier quote inspection restores output reading page and scope",
           all(returned_view[key]==output_view[key] for key in ("page","scope","label")),
           {"before":output_view,"after":returned_view})
-    check(name + " comparison restores output reading offset",
+    check(name + " earlier quote inspection restores output reading offset",
           abs(returned_view["offset"]-output_view["offset"])<=3 and
           abs(returned_view["scrollTop"]-output_view["scrollTop"])<=3,
           {"before":output_view,"after":returned_view})
-    check(name + " view comparison never generates", page.get_by_text("Synthetic generation count: 1", exact=True).count() == 1)
+    check(name + " earlier quote inspection never regenerates",
+          page.get_by_text("Synthetic generation count: 1", exact=True).count() == 1)
     inject(page, [{"x":0,"y":0,"width":1440,"height":380},{"x":0,"y":410,"width":1440,"height":490}])
     settle(page, "tabletop")
     page.locator(".epc-workspace").evaluate("""root=>{
