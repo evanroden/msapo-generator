@@ -1,5 +1,12 @@
 # ENFRA Phase 1 and Phase 2 execution and evidence ledger
 
+## October 14 PO source/output stage separation — VIS01/VIS02
+
+[PR #221](https://github.com/evanroden/msapo-generator/pull/221), prepared after main merge #220, removes the obsolete **Compare original quote** package toggle rather than replacing it with another menu. The original active uploaded bytes or approved paste remain in the earlier correction/source pair; the later package pair shows the **actual current generated MSAPO** only. Generation and stale-signature restrictions remain unchanged, as do the original quote plus reviewed MSAPO two-file attachments and manual handoff.
+
+The built-in sample no longer substitutes literal `(synthetic sample quote placeholder)` bytes: its reviewable UTF-8 sample quote matches its own analysis text and is explicitly labeled **Synthetic sample quote**. Genuine quote modes still use their own bytes or paste snapshot. Isolated AppTest covers sample bytes/identity, stage separation and no obsolete toggle; Chromium/WebKit PO journey now scrolls source at its earlier location and returns to the exact output page, without a business regeneration. **Branch green is not served or owner acceptance**; no claim is made about real uploaded multipage quotes, native Safari or sending/submission. For remaining source honesty, date/site/layout/authentic report and device work retain the October 14 handoff requirements.
+
+
 ## October 14 continuation: P03 and pointer-from-zero coverage (PR #220)
 
 **Status is in progress; owner/device, live served and authentic Word/PDF acceptance are NOT established.** The Oct 14 10:37 UTC baseline is [main `e5dd65b3`](https://github.com/evanroden/msapo-generator/commit/e5dd65b3ae23e610c15f6b66e26e5352d3cbd05d) after docs-only PR #218. Its [required 38549625249](https://github.com/evanroden/msapo-generator/actions/runs/38549625249) and exact-served two-session [monthly live 38550544129](https://github.com/evanroden/msapo-generator/actions/runs/38550544129) were previously verified; that evidence belongs to that served/runtime code, not this new branch. No current authenticated Render workspace was selectable through the connector.
