@@ -105,9 +105,14 @@ def test_malformed_zip_limits_and_no_overwrite(tmp_path):
 def test_evidence_quota_and_corruption_fail_closed_preserving_previous_bytes(tmp_path):
     first = evidence_archive()
     second = evidence_archive(tag="second")
+    # The admission cap applies to uncompressed ZIP members as well as
+    # the outer ZIP. Setting it to only the compressed bytes would reject this
+    # otherwise valid fixture before the quota boundary under test.
+    cap = 64 * 1024
+    assert len(first) < cap and len(second) < cap
     shelf = SharedSyntheticEvidenceBundles(
-        tmp_path, max_archive_bytes=max(len(first),len(second)),
-        max_shelf_bytes=64*1024 + len(first) + len(second)//2)
+        tmp_path, max_archive_bytes=cap,
+        max_shelf_bytes=cap + len(first) + len(second)//2)
     receipt = shelf.upload(first)
     with pytest.raises(VaultQuotaExceeded, match="full"):
         shelf.upload(second)
