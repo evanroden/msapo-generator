@@ -327,13 +327,15 @@ test('late hidden response retains only the current decoded page during a visibl
 
 test('native editing event withholds preview fragments until matching full-render receipt is idle',()=>{
     const {root,panel}=dom(),app=new Element(),workspace=new Element();
+    const editPair=new Element(),scorecardPair=new Element();
     const timers=new Map(),sent=[],observers={intersection:[],resize:[],mutation:[]};
     let sequence=0;
     app.setAttribute('data-test-script-state','notRunning');
     workspace.dataset.epcFullRender='full-before-native-edit';
     workspace.dataset.epcMode='wide';
     root.closest=selector=>selector==='[data-testid="stApp"]'?app:
-        selector==='[class*="st-key-epc_workspace_"]'?workspace:null;
+        selector==='[class*="st-key-epc_workspace_"]'?workspace:
+        selector==='[class*="st-key-epc_pair_"]'?editPair:null;
     class Intersection {constructor(callback){this.callback=callback;observers.intersection.push(this);}
         observe(){}disconnect(){}}
     class Resize {constructor(callback){this.callback=callback;observers.resize.push(this);}
@@ -407,11 +409,33 @@ test('native editing event withholds preview fragments until matching full-rende
         closest:selector=>selector==='.report-preview'?panel:null});
     assert.equal(gate.pending,false,'typing inside preview is not a report edit');
     typeInto({matches:selector=>selector==='textarea',
-        closest:selector=>selector.includes('st-key-epc_edit_')?{}:null});
+        closest:selector=>selector.includes('st-key-epc_edit_')?{}:
+            selector.includes('st-key-epc_pair_')?editPair:null});
     assert.equal(gate.pending,true,'unblurred Activity input must guard before blur');
+    assert.equal(gate.blockAll,false,'typing does not claim a whole editor rerun');
+    assert.equal(gate.scopePair,editPair,'only the edited section is held');
+    // A user may scroll the lower tabletop editor to an unrelated section
+    // *without blurring* Activity. Its initially unseen preview must still
+    // request its first useful page rather than saying loads when visible.
+    const {root:siblingRoot}=dom(),siblingSent=[];
+    siblingRoot.closest=selector=>selector==='[data-testid="stApp"]'?app:
+        selector==='[class*="st-key-epc_workspace_"]'?workspace:
+        selector==='[class*="st-key-epc_pair_"]'?scorecardPair:null;
+    const siblingCleanup=render({parentElement:siblingRoot,data:{generation:'same',
+        viewScope:'expense|scorecards',pages:[],sizes:[[612,792]],ready:true},
+        setStateValue:(name,value)=>siblingSent.push({name,value})});
+    observers.intersection.at(-1).callback([{isIntersecting:true}]);fire(120);
+    assert.equal(siblingSent.length,1,
+        'another newly visible section requests content while Activity is still unblurred');
     panel.querySelector('.report-preview-scroll').clientWidth=1200;
     observers.resize[0].callback();fire(120);
-    assert.equal(sent.length,3,'resize/fold preview fragment cannot overtake uncommitted text');
+    assert.equal(sent.length,3,'the actively edited section withholds its preview while unblurred');
+    // Native blur/change now actually starts a full Streamlit render; protect
+    // all panes during this short race, then release on the canonical receipt.
+    app.listeners.get('change').forEach(fn=>fn({target:{
+        matches:selector=>selector.includes('textarea'),closest:()=>null
+    }}));
+    assert.equal(gate.blockAll,true,'committing native edit protects all sections');
     workspace.dataset.epcFullRender='full-after-unblurred-activity';
     app.setAttribute('data-test-script-state','running');
     observers.mutation[0].callback();fire(120);
@@ -421,6 +445,7 @@ test('native editing event withholds preview fragments until matching full-rende
     assert.equal(gate.pending,false,'acknowledged edited report releases only deferred view requests');
     assert.equal(sent.length,4,'one bounded latest preview request follows full Activity commit');
     assert.equal(Object.hasOwn(gate,'text'),false,'no input or receipt text is copied');
+    siblingCleanup();
     cleanup();
     assert.equal(app.listeners.get('input').size,0,'multiline capture listener cleans up');
     assert.equal(app.listeners.get('change').size,0,'all native listeners clean up');
