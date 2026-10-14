@@ -278,9 +278,9 @@ class SharedSourceBundles:
 # client report. The root, descriptor-safe atomic writes, immutable receipt
 # and read-time hash checks are shared, rather than maintaining a second vault.
 _EVIDENCE_BUCKET = "_enfra_shared_synthetic_evidence_v1"
-_EVIDENCE_MANIFEST = re.compile(r"ENFRA_MSAPO_\\d{4}-\\d{2}-\\d{2}_evidence_manifest\\.json\\Z")
-_EVIDENCE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _().,-]{0,180}\\.zip\\Z")
-_EVIDENCE_README = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _().,-]{0,180}\\.md\\Z")
+_EVIDENCE_MANIFEST = re.compile(r"ENFRA_MSAPO_\d{4}-\d{2}-\d{2}_evidence_manifest\.json\Z")
+_EVIDENCE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _().,-]{0,180}\.zip\Z")
+_EVIDENCE_README = re.compile(r"[A-Za-z0-9][A-Za-z0-9 _().,-]{0,180}\.md\Z")
 _MAX_EVIDENCE_ARCHIVE = 24 * 1024 * 1024
 _MAX_EVIDENCE_SHELF = 64 * 1024 * 1024
 _MAX_EVIDENCE_MEMBER = 10 * 1024 * 1024
@@ -296,7 +296,7 @@ def validate_synthetic_evidence_archive(original: bytes, *,
     """
     if type(original) is not bytes or not 1 <= len(original) <= max_bytes:
         raise storage.VaultQuotaExceeded("The synthetic evidence ZIP exceeds its bounded upload limit.")
-    offset = original.rfind(b"PK\\x05\\x06", max(0, len(original) - 65557))
+    offset = original.rfind(b"PK\x05\x06", max(0, len(original) - 65557))
     if offset < 0 or len(original) - offset < 22:
         raise ValueError("The evidence bundle is not a complete ZIP.")
     (_, disk, center_disk, disk_entries, entries, index_size,
