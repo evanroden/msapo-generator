@@ -1,5 +1,26 @@
 # Shared authentic-report testing
 
+## Opt-in production original-hash verification across served builds — October 14
+
+The separate [shared fixture persistence verifier](../scripts/qa_shared_fixture_redeploy_readonly.py) and manually dispatched GitHub Actions workflow `Shared Fixture Redeploy Read-only` check **one explicitly selected already-uploaded DOCX**. They never upload, replace, reset, invoke AI, modify Render service/disk settings or attach the original bytes to an artifact. Prefer a clearly labelled **synthetic** test fixture; never select a real owner's confidential document without their explicit approval. The existing URL is anonymous, discoverable and **not confidential**.
+
+First, visit `https://msapo-generator.onrender.com/?workflow=monthly&monthly_qa=fixtures`, choose a small synthetic shared original, and record **(a)** the eight-hex fixture ID suffix displayed beside its name, and **(b)** the full 64-hex `Original SHA256` from the expanded source/target receipt. If no synthetic fixture exists, create one through an intentionally approved owner/coworker test; this verifier **does not** create it. The browser resolves that eight-character prefix to the full 32-character ID through the actual hash-scoped download control and rejects missing/ambiguous/mismatched selections.
+
+On the [GitHub Actions page](https://github.com/evanroden/msapo-generator/actions/workflows/shared-fixture-redeploy-readonly.yml), run **before** with that same displayed prefix, full original digest and **the exact full 40-character Git SHA currently served by Render**. Its isolated QA build marker must match the specified SHA before **and after** the one original download; a mid-check Render deployment cutover fails instead of producing a falsely attributed receipt. Save the resulting small hash-only JSON artifact. After a verified Render **code redeployment** to a different full SHA (prefer ordinary approved auto-deploy, not a manual restart or storage alteration), run **after** for the *same* prefix/hash and that different served SHA. Keep both JSON receipts. The workflow is explicitly `workflow_dispatch` only: not automated on push, never scheduled, and never deletes or evicts an existing fixture.
+
+Compare the two independently produced JSON receipts with:
+
+```bash
+python -m scripts.qa_shared_fixture_redeploy_readonly compare \
+  --before /path/to/before.json --after /path/to/after.json \
+  --output /path/to/verified-comparison.json
+```
+
+The comparator fails if the fixture's full ID, original digest or exact size changes; either pass is missing its served-commit/download proof; timestamps run backward; or both observations used the **same served SHA**. It emits only the original identifier, SHA, byte count, two served commit SHAs and a bounded PASS declaration. The original DOCX is downloaded only into the disposable runner/browser directory, **not** into the uploaded evidence. A temporary empty isolated QA browser namespace may initialize while reading the existing build marker; no ordinary business/report data is edited.
+
+**Evidence status:** merely merging or running one pass does **not** close the redeploy-retention release gate. Require concrete before/after workflow run IDs and an actual successful comparator on distinct served builds, plus the known Render deployment event. Even then this proves *this selected original's hash* survived a code redeploy, **not** that free disk capacity is sufficient, every file is preserved, any authentic AUTH01–03 report is correct, or output was accepted in physical Safari/Microsoft Word/Adobe.
+
+
 ## Current supplement — October 13, 23:55 ET / October 14, 03:55 UTC
 
 **Latest accepted synthetic integration is main `0dced2428955f657736e7aa74ac555a31dc82a05` (merged PR #212 after PR #211).** On this *exact* code, [Required 38504975272](https://github.com/evanroden/msapo-generator/actions/runs/38504975272), [adaptive Chromium/WebKit 38504975128](https://github.com/evanroden/msapo-generator/actions/runs/38504975128), and [deployed first-attempt two-session live 38505669642](https://github.com/evanroden/msapo-generator/actions/runs/38505669642) all passed. The latest Activity patch retains source-authored vendor/ISO event-date identity from bounded TXT/DOCX/typed vendor CSV evidence without restoring operator deletions or copying prices/contact details; mixed-site CSV is withheld for manual review. Content-bound native Clear in PR #212 corrects the native button identity exercised by [the genuine earlier WebKit failure on main `0f5a765`](https://github.com/evanroden/msapo-generator/actions/runs/38503264365). Do not erase or re-label that failed historical gate.
