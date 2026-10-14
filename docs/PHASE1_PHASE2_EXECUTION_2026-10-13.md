@@ -1,5 +1,7 @@
 # ENFRA Phase 1 and Phase 2 execution and evidence ledger
 
+**Current October 14 remaining-work checkpoint:** [PHASE1_PHASE2_REMAINING_2026-10-14.md](PHASE1_PHASE2_REMAINING_2026-10-14.md). It supersedes the dated pending-status lines for PRs #220/#222/#223/#224/#228 (all merged), distinguishes current implementation, test and owner-acceptance gaps, and identifies active noncompeting branches. The historical 113/97/source/adaptive evidence below is retained for traceability, **not** a current defect list.
+
 ## October 14 external-agent reference shelf — upload pending
 
 The owner supplied six original documents for future testing. Their private originals, source SHA-256 manifest and one portable ZIP are retained in a persistent **ChatGPT Library** folder, which is *not* a generic external-agent download service. No document bytes, document names, source digests, extracted images or pricing data are to be committed to public Git, CI or logs. Deleting this chat must not be confused with proof of independent third-party hosting.
