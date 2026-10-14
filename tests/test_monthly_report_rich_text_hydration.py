@@ -395,7 +395,7 @@ def test_interrupted_clear_displays_intent_inline_without_autoapplying():
     app.run()
     assert not app.exception
     assert not any(e.label == "Review interrupted edit" for e in app.expander)
-    assert any("interrupted edit cleared the section" in e.value for e in app.caption)
+    assert any("interrupted edit cleared this section" in e.value for e in app.caption)
     assert app.session_state["canonical_block"].text == "Newer synthetic Activity that must remain."
     next(b for b in app.button if b.label == "Apply interrupted edit").click().run()
     assert not app.exception
