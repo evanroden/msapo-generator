@@ -1,5 +1,16 @@
 # ENFRA Phase 1 and Phase 2 execution and evidence ledger
 
+## Persistent cross-chat test evidence — October 14 (Library, not public Git)
+
+The owner requested test artifacts be retrievable by later agents instead of relying on short-lived Actions downloads or ephemeral container files. The eight archived artifacts and manifests were uploaded and their existence re-read through Files Library at:
+
+`/ENFRA/MSAPO/Acceptance-Evidence/2026-10-14/`
+
+Start with `ENFRA_MSAPO_2026-10-14_evidence_README.md` and `ENFRA_MSAPO_2026-10-14_evidence_manifest.json`. The manifest gives SHA-256, sizes, source GitHub workflow run and tested source SHA for each archive. Saved synthetic evidence includes original failed main adaptive WebKit screenshots/DOM (`a8b49ba5`), passing PR #224 Chromium/WebKit evidence (`a41f2732`), synthetic PR #223 DOCX/PDF plus offline page render, and the predecessor failed two-session live run (`c90fd926`). These are **distinct evidence levels**, not a single passed release run.
+
+The Library is accessible to future agents operating in the **same owner Library account**, not anonymously to unrelated coworkers. Customer originals remain separately in the owner Library with a private source-integrity inventory; no original file was placed in public Git or the anonymous shared fixture vault. This Library archive does not select AUTH01–03 scenarios or prove genuine client exports. Future runs should use their own dated Library subfolder, preserve all SHA/commit/run lineage and keep this index current.
+
+
 ## October 14 native Word table null treatment — UX21/P15
 
 In the native editable table mapping `_table`, a missing Python `None` value was coerced with `str(value)` and therefore printed the literal **None**. The generic DOCX fallback assigned untyped values directly to `python-docx` cells and could fail on `None`/numbers. Its supplemental imported-table nonempty check also called `strip()` on each value and could fail on missing cells. This is a bounded code-path defect, not proof of the particular owner-observed table until the actual RGH/UMMC originals and exports are inspected.
