@@ -1,0 +1,68 @@
+name: Shared Fixture Redeploy Read-only
+
+# Explicit opt-in only. Do not turn on push/schedule or upload fixtures here.
+on:
+  workflow_dispatch:
+    inputs:
+      fixture_id:
+        description: Exact 32-character ID of an already selected shared fixture
+        type: string
+        required: true
+      original_sha256:
+        description: Independently recorded 64-character original DOCX SHA-256
+        type: string
+        required: true
+      expected_commit:
+        description: Full 40-character Git commit expected to be SERVED on Render
+        type: string
+        required: true
+      phase:
+        description: Before or after an observed Render production redeploy
+        type: choice
+        required: true
+        options:
+          - before
+          - after
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shared-fixture-readonly-${{ inputs.fixture_id }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 21
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install only bounded Chromium browser verifier
+        run: |
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium
+      - name: Check original hash on exact current served SHA without uploads
+        env:
+          FIXTURE_ID: ${{ inputs.fixture_id }}
+          ORIGINAL_SHA256: ${{ inputs.original_sha256 }}
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
+          PHASE: ${{ inputs.phase }}
+        run: |
+          set -euo pipefail
+          python -m scripts.qa_shared_fixture_redeploy_readonly verify \
+            --fixture-id "$FIXTURE_ID" \
+            --original-sha256 "$ORIGINAL_SHA256" \
+            --expected-commit "$EXPECTED_COMMIT" \
+            --phase "$PHASE" \
+            --output "test-artifacts/shared-fixture-redeploy/$PHASE.json"
+      - name: Upload hash/identity-only receipt; never the source DOCX
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-fixture-readonly-${{ inputs.phase }}-${{ inputs.fixture_id }}
+          path: test-artifacts/shared-fixture-redeploy/*.json
+          if-no-files-found: error
+          retention-days: 30
