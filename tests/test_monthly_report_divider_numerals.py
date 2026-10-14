@@ -118,12 +118,37 @@ def test_alternate_branches_receive_identical_measured_digit_geometry():
     assert [node.text for node in doc.element.body.iter(W + 't')].count('0') == 2
 
 
+def _docx_native_parts(raw):
+    """Compare actual package parts, not clock-dependent ZIP timestamps.
+
+    python-docx records current wall time in each ZIP member on save. That
+    packaging metadata can change across the next two-second boundary while
+    every XML relationship, image, font, shape and other document part remains
+    identical. A no-op check must compare all parts and compression types.
+    """
+    with ZipFile(BytesIO(raw)) as archive:
+        return {item.filename: (item.compress_type, archive.read(item.filename))
+                for item in archive.infolist()}
+
+
 def test_proposals_number_is_not_rewritten_in_other_section_preview():
     doc = _synthetic_doc()
     before = BytesIO(); doc.save(before)
     assert not fit_proposals_numeral(doc, section_key='training')
     after = BytesIO(); doc.save(after)
-    assert before.getvalue() == after.getvalue()
+    assert _docx_native_parts(before.getvalue()) == _docx_native_parts(after.getvalue())
+
+
+def test_native_part_invariance_guard_detects_actual_word_document_mutation():
+    doc = _synthetic_doc()
+    before = BytesIO(); doc.save(before)
+    # A genuine Word XML/content change must still fail the no-op comparison.
+    doc.add_paragraph('A changed paragraph must be detected.')
+    after = BytesIO(); doc.save(after)
+    old_parts, new_parts = (_docx_native_parts(x.getvalue()) for x in (before, after))
+    assert old_parts.keys() == new_parts.keys()
+    assert old_parts['word/document.xml'] != new_parts['word/document.xml']
+    assert old_parts != new_parts
 
 
 def test_ambiguous_or_nonmatching_design_retains_native_geometry():
