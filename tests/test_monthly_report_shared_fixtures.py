@@ -218,3 +218,53 @@ def test_shared_and_authorized_private_libraries_do_not_expose_each_others_entri
     with pytest.raises(FileNotFoundError):
         owner_only.read("verified-session", shared_receipt.fixture_id)
     assert owner_only.download("verified-session", private_receipt.fixture_id) == original
+
+
+def test_shared_auth_fixture_accepts_realistic_26mib_native_original_with_identical_copy(
+        tmp_path, original, metadata):
+    """Regression for the >25 MiB original, using invented bytes only."""
+    from zipfile import ZIP_STORED
+
+    payload = BytesIO()
+    with ZipFile(payload, "w", compression=ZIP_STORED) as package:
+        with ZipFile(BytesIO(original)) as source:
+            for member in source.infolist():
+                package.writestr(member.filename, source.read(member.filename))
+        # Unreferenced invented media exercises actual ZIP admission/storage and
+        # replay without publishing any owner DOCX or generating report content.
+        package.writestr("word/media/synthetic-photo.jpg", b"\x7f" * (26 * 1024 * 1024))
+    native_docx = payload.getvalue()
+    assert 25 * 1024 * 1024 < len(native_docx) < 32 * 1024 * 1024
+    library = SharedFixtureLibrary(tmp_path)
+    receipt = library.upload(native_docx, metadata)
+    assert receipt.original_size == len(native_docx)
+    assert receipt.original_sha256 == sha256(native_docx).hexdigest()
+    assert SharedFixtureLibrary(tmp_path).download(receipt.fixture_id) == native_docx
+    replay = library.replay_copy(receipt.fixture_id, run_id="1" * 32, generation="2" * 32)
+    assert replay.original_path.read_bytes() == native_docx
+    assert library.download(receipt.fixture_id) == native_docx
+
+
+def test_shared_auth_rejects_path_escape_and_oversized_xml_without_mutating_library(
+        tmp_path, original, metadata):
+    from zipfile import ZIP_DEFLATED
+
+    library = SharedFixtureLibrary(tmp_path)
+    kept = library.upload(original, metadata)
+    escaped = BytesIO()
+    with ZipFile(escaped, "w") as package:
+        with ZipFile(BytesIO(original)) as source:
+            for member in source.infolist():
+                package.writestr(member.filename, source.read(member.filename))
+        package.writestr("../outside.xml", "<unsafe/>")
+    with pytest.raises(ValueError, match="unsafe"):
+        library.upload(escaped.getvalue(), metadata)
+
+    oversized_xml = BytesIO()
+    with ZipFile(oversized_xml, "w", compression=ZIP_DEFLATED) as package:
+        package.writestr("[Content_Types].xml", "<Types/>")
+        package.writestr("word/document.xml", b"X" * (33 * 1024 * 1024))
+    with pytest.raises(ValueError, match="XML"):
+        library.upload(oversized_xml.getvalue(), metadata)
+    assert library.list().fixtures == (kept,)
+    assert library.download(kept.fixture_id) == original
