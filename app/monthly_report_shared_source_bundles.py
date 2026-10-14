@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import struct
 from uuid import uuid4
 from zipfile import BadZipFile, ZipFile
 
@@ -56,6 +57,18 @@ def validate_reference_archive(original: bytes, *, max_bytes: int = _MAX_ARCHIVE
     """
     if not isinstance(original, bytes) or not 1 <= len(original) <= max_bytes:
         raise storage.VaultQuotaExceeded("The reference archive exceeds its bounded upload allowance.")
+    # Reject a ZIP-bomb-sized central-directory catalog before Python's
+    # ZipFile allocates one ZipInfo for every claimed archive member. The
+    # portable reference format holds exactly six files and two small records.
+    offset = original.rfind(b"PK\\x05\\x06", max(0, len(original) - 65557))
+    if offset < 0 or len(original) - offset < 22:
+        raise ValueError("Reference bundle is not a complete ordinary ZIP.")
+    (_, disk, center_disk, entries_on_disk, entries, index_size,
+     index_offset, comment) = struct.unpack_from("<4s4H2LH", original, offset)
+    if (disk or center_disk or entries != 8 or entries_on_disk != entries
+            or index_size > 32 * 1024 or index_offset + index_size > offset
+            or offset + 22 + comment != len(original)):
+        raise ValueError("Reference ZIP index is malformed or exceeds its safe member bound.")
     try:
         with ZipFile(BytesIO(original)) as archive:
             members = archive.infolist()
