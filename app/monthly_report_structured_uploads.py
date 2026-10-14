@@ -220,8 +220,8 @@ _DOC_VENDOR_LABEL = re.compile(
 def _date_only_source_label(text):
     """A completed/report/service *date* label is not completed field work."""
     match = re.fullmatch(
-        r"(?i)\\s*(?:(?:service|completed|report|inspection|work)\\s+)?"
-        r"date\\s*[:=]\\s*(.+?)\\s*", text)
+        r"(?i)\s*(?:(?:service|completed|report|inspection|work)\s+)?"
+        r"date\s*[:=]\s*(.+?)\s*", text)
     return bool(match and _DOC_DATE_TOKEN.fullmatch(match.group(1).rstrip(".")))
 
 
