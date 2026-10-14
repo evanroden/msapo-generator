@@ -49,6 +49,36 @@ def step(app, number):
     assert not app.exception
 
 
+def test_prepared_by_prerequisite_has_exact_nearby_link_and_single_anchor(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    blocked = SimpleNamespace(prepared_by="")
+    original = {"contact_matrix": object()}
+    notices = []
+    # This is one gate used by all three sections; it must not silently
+    # change blocks or open a second editor when attribution is blank.
+    with monkeypatch.context() as patch:
+        patch.setattr(guided.st, "info", notices.append)
+        for key in ("organization", "subcontractors", "training"):
+            result = guided._render_ordered_section(
+                blocked, SimpleNamespace(key=key), original,
+                None, None, None, None, None, None)
+            assert result == (blocked, original)
+    assert len(notices) == 3
+    assert all("[Prepared by](#report-prepared-by)" in message
+               and "retained" in message for message in notices)
+
+    # The actual app emits the targeted anchor exactly once before the one
+    # Prepared by editor: no duplicate/new attribution widget.
+    app = monthly(monkeypatch, tmp_path)
+    anchors = [node.value for node in app.markdown
+               if 'id="report-prepared-by"' in node.value]
+    assert len(anchors) == 1
+    assert len([widget for widget in app.text_input
+                if widget.label == "Prepared by"]) == 1
+    assert not app.exception
+
+
 def test_empty_contract_selects_sites_and_starting_point_without_demo_or_day_selector(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path, saved=False)
     assert not app.date_input
