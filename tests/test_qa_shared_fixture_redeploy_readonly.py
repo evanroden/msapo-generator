@@ -103,6 +103,8 @@ def test_invalid_fixture_ids_fail_before_any_browser_request(bad):
     with pytest.raises(ValueError):
         _valid_id(bad)
     with pytest.raises(ValueError):
+        _selector_id(bad)
+    with pytest.raises(ValueError):
         verify_one(bad, SHA, BEFORE, "before")
 
 
