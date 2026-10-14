@@ -1213,8 +1213,6 @@ def _load_test_into_state() -> None:
     if old_scope := st.session_state.get("po_workspace_identity"):
         discard_reference_scope(old_scope)
     st.session_state["po_workspace_identity"] = uuid4().hex
-    st.session_state["_po_package_compare_source"] = False
-    st.session_state["po_package_compare_source"] = False
     analysis = _build_test_analysis()
     quote_text = analysis.scope_of_work
     token = hashlib.sha256(quote_text.encode("utf-8")).hexdigest()[:12]
@@ -1259,8 +1257,6 @@ def _quote_upload_changed() -> None:
     if old_scope := st.session_state.get("po_workspace_identity"):
         discard_reference_scope(old_scope)
     st.session_state["po_workspace_identity"] = uuid4().hex
-    st.session_state["_po_package_compare_source"] = False
-    st.session_state["po_package_compare_source"] = False
     _deactivate_synthetic_quote()
     key = f"uploader_{st.session_state.get('uploader_nonce', 0)}"
     st.session_state["po_upload_available"] = st.session_state.get(key) is not None
@@ -1274,8 +1270,6 @@ def _clear_quote_upload() -> None:
     if old_scope := st.session_state.get("po_workspace_identity"):
         discard_reference_scope(old_scope)
     st.session_state["po_workspace_identity"] = uuid4().hex
-    st.session_state["_po_package_compare_source"] = False
-    st.session_state["po_package_compare_source"] = False
     _deactivate_synthetic_quote()
 
 
@@ -3041,17 +3035,12 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     with reference:
         current_pdf = st.session_state.get("scope_pdf_bytes")
         if current_pdf and st.session_state.get("scope_pdf_signature") == current_pdf_signature:
-            st.session_state.setdefault("po_package_compare_source",
-                                        st.session_state.get("_po_package_compare_source", False))
-            compare_source = st.toggle("Compare original quote", key="po_package_compare_source")
-            st.session_state["_po_package_compare_source"] = compare_source
-            if compare_source:
-                _render_purchase_quote_reference(identity, key="purchase_package_quote",
-                    quote_text=cached_quote, quote_source=st.session_state.get("quote_source", ""))
-            else:
-                from app.reference_preview import render_reference
-                render_reference(key="purchase_msapo", owner_scope=identity,
-                                 title="Generated MSAPO", raw=current_pdf, filename="MSAPO.pdf")
+            # The original quote remains next to the earlier correction editor.
+            # Package review always shows the actual generated MSAPO, without
+            # competing Compare/fit/page controls or a second source viewer.
+            from app.reference_preview import render_reference
+            render_reference(key="purchase_msapo", owner_scope=identity,
+                             title="Generated MSAPO", raw=current_pdf, filename="MSAPO.pdf")
         else:
             st.caption("The generated MSAPO preview appears after you create the package.")
     presentation.close()
