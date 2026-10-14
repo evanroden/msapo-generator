@@ -283,6 +283,20 @@ def run(browser_type,name):
         set_toggle(first,'Split this receipt into multiple reimbursement lines',True,name+' receipt split')
         amount=first.get_by_label('Reimbursable amount *',exact=True).first
         amount.fill('13.25');amount.press('Tab')
+        # Native blur queues the complete expense editor rerun. Navigating a
+        # lazy receipt raster before this accepted edit is acknowledged can
+        # interleave a stale source fragment with the full response (WebKit
+        # first-attempt run 38606086144). Wait for the actual server-side
+        # synthetic edit receipt and completed render, not a fixed sleep or a
+        # retry of the preview assertion. Do not substitute UI input_value.
+        page.wait_for_function("""() => {
+            const ack=document.querySelector('[data-qa-expense-draft-ack]');
+            const app=document.querySelector('[data-testid="stApp"]');
+            if (!ack || !app || app.getAttribute('data-test-script-state')!=='notRunning') return false;
+            try {return JSON.parse(ack.dataset.matches||'{}').first_amount===true;}
+            catch (_) {return false;}
+        }""", timeout=30000)
+        check(name+' first amount acknowledged by finalized expense draft before receipt navigation', True)
         source=first.locator('.epc-workspace-reference')
         editor=first.locator('.epc-workspace-editor')
         bounds={'editor':editor.bounding_box(),'source':source.bounding_box()}
