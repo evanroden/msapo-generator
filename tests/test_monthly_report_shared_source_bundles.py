@@ -104,7 +104,7 @@ def test_reference_shelf_quota_does_not_erase_first_original(tmp_path):
     first = portable_bundle()
     second = portable_bundle(suffix="-another-version")
     shelf = SharedSourceBundles(tmp_path, max_archive_bytes=max(len(first), len(second)),
-                                max_shelf_bytes=max(len(first), len(second)) + len(first) + 256)
+                                max_shelf_bytes=64 * 1024 + len(first) + len(second) // 2)
     saved = shelf.upload(first)
     with pytest.raises(VaultQuotaExceeded, match="full"):
         shelf.upload(second)
