@@ -82,7 +82,7 @@ def test_source_and_evidence_buckets_preserve_independent_state(tmp_path):
 
 @pytest.mark.parametrize("flags,message", [
     ({"bad_hash": True}, "SHA-256"),
-    ({"extra": True}, "index is malformed"),
+    ({"extra": True}, "undeclared"),
     ({"traversal": True}, "name"),
     ({"symlink": True}, "Unsafe"),
 ])
