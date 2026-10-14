@@ -14,7 +14,7 @@ CSS = """
 .report-preview-retry { font:inherit; min-height:36px; padding:4px 10px; background:white; color:#18382b; border:1px solid #557f7f; border-radius:4px; }
 .report-preview-retry[hidden] { display:none; }
 .report-preview-retry:focus-visible, .report-preview-scroll:focus-visible { outline:3px solid #557f7f; outline-offset:2px; }
-.report-preview-scroll { flex:1; min-height:0; overflow:auto; background:#edf1ef; padding:12px; box-sizing:border-box; overscroll-behavior:contain; }
+.report-preview-scroll { flex:1; min-height:0; overflow:auto; background:#edf1ef; padding:12px; box-sizing:border-box; }
 .report-preview figure { margin:0 0 16px; }
 .report-preview-page { width:100%; background:white; position:relative; box-shadow:0 1px 6px #18382b26; }
 .report-preview-page img { position:absolute; inset:0; display:block; width:100%; height:100%; }
