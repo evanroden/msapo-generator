@@ -289,6 +289,7 @@ def _render_ordered_preview(section_key, prefix, title):
             # failed conversion, without automatically looping expensive work.
             if stale:
                 _discard(state, state['last_good'].pop(section_key, {}))
+                stale = False  # An evicted prior image is no longer on screen.
                 status = _preview_status(pending=pending)
             else:
                 _discard(state, state['cache'].pop(section_key, {}))
@@ -308,6 +309,7 @@ def _render_ordered_preview(section_key, prefix, title):
                 # label above blank placeholders until some unrelated rerun.
                 if stale:
                     _discard(state, state['last_good'].pop(section_key, {}))
+                    stale = False  # Missing bytes cannot be called an older image.
                 else:
                     _discard(state, state['cache'].pop(section_key, {}))
                     _enqueue_visible(state, section_key)
