@@ -211,6 +211,41 @@ def _activity_identity(line, source, event_date):
     return " · ".join(parts) + " — " + line if parts else line
 
 
+_DOC_DATE_TOKEN = re.compile(
+    r"(?<!\\d)(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}/\\d{1,2}/\\d{2,4})(?!\\d)")
+_DOC_VENDOR_LABEL = re.compile(
+    r"(?im)^\\s*(?:vendor|contractor|service company)\\s*[:=]\\s*(\\S[^\\r\\n]*)")
+
+
+def _non_table_activity_identity(source):
+    """A first-found DOC/PDF/email label is not a per-event attribution.
+
+    Keep the source's canonical metadata untouched. Only suppress a blanket
+    output prefix when multiple independently source-authored dates or vendors
+    appear in the same original. An operator may then review and add exact
+    per-event context; the native pass must never guess it.
+    """
+    if source.suffix not in {".docx", ".pdf", ".eml", ".msg"}:
+        return source
+    from datetime import datetime
+    dated, vendors = set(), set()
+    for original in source.page_texts:
+        for match in _DOC_DATE_TOKEN.finditer(original):
+            value = match.group(0)
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+                try:
+                    dated.add(datetime.strptime(value, fmt).date().isoformat())
+                    break
+                except ValueError:
+                    continue
+        for match in _DOC_VENDOR_LABEL.finditer(original):
+            vendors.add(" ".join(match.group(1).casefold().split()))
+    if len(dated) <= 1 and len(vendors) <= 1:
+        return source
+    return replace(source, service_date="" if len(dated) > 1 else source.service_date,
+                   vendor="" if len(vendors) > 1 else source.vendor)
+
+
 def _csv_has_site_scope_column(content):
     """A row-specific site/client needs target mapping before auto-Activity."""
     site_tokens = {"facility", "site", "client", "customer",
