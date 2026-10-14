@@ -6,6 +6,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 # Documentation index
 
+[External-agent Render archive retrieval](EXTERNAL_RENDER_ARCHIVE_ACCESS_2026-10-14.md) — anonymous six-source and synthetic-evidence shelves on the existing Render persistent disk; exact-download checksum tool for external agents, plus explicit owner upload and two-served-build acceptance boundaries. Code availability is not confirmation that an archive has been uploaded.
+
 [Shared authentic-report testing and read-only persistence witness](SHARED_FIXTURE_TESTING_2026-10-13.md) — merged shared no-login DOCX testing and the manual-only PR #214 hash verifier. Its tool is ready, but no specific existing original has been compared before and after two served Render builds. The fixture route is discoverable/not confidential; actual owner reports and Word/PDF acceptance remain open.
 
 [Fixture boundary history and source corrections](PRIVATE_FIXTURE_BOUNDARY_2026-10-13.md) — superseded owner-only proposal, retained storage/integrity evidence and canonical source correction checks. The owner declined authentication; no authentication approval is pending.
