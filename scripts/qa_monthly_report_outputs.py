@@ -51,6 +51,8 @@ def main() -> None:
             "note": "Inspect every page before use. Does not certify Microsoft Word or original-client layout."
         }
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        from scripts.qa_monthly_contact_outputs import export_contact_outputs
+        export_contact_outputs(output / "contact-headers")
 
 
 if __name__ == "__main__":
