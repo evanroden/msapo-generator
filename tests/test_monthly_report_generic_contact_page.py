@@ -45,6 +45,14 @@ def test_generic_chart_and_contacts_have_explicit_page_boundary_and_heading():
     assert heading.paragraph_format.page_break_before is True
     assert any("Synthetic Contact North" in cell.text
                for table in doc.tables for row in table.rows for cell in row.cells)
+    table = doc.tables[0]
+    assert tuple(c.text for c in table.rows[0].cells) == ("Facility", "Role", "Name", "Phone", "Email")
+    assert len(table.rows) == 3
+    assert table.rows[0]._tr.xpath("./w:trPr/w:tblHeader")
+    assert table.rows[1].cells[2].text == "Synthetic Contact North"
+    assert table.rows[2].cells[2].text == "Synthetic Contact South"
+    assert not table.rows[1]._tr.xpath("./w:trPr/w:tblHeader")
+    assert all(run.bold is not True for run in table.rows[1].cells[2].paragraphs[0].runs)
     assert len(doc.inline_shapes) == 1
     # No duplicate chart, arbitrary inserted photo, or fabricated attribution.
     assert sum(p.text == "Facility contacts" for p in doc.paragraphs) == 1
@@ -78,6 +86,8 @@ def test_real_generic_pdf_keeps_contact_table_off_chart_page(tmp_path, monkeypat
             assert contacts, "Actual contact row was omitted from PDF."
             assert contacts[0] > chart_pages[0], "Facility contacts were squeezed beneath the chart."
             assert "Facility contacts" in pdf[contacts[0]].get_text()
+            for label in ("Facility", "Role", "Name", "Phone", "Email"):
+                assert label in pdf[contacts[0]].get_text()
             assert "555-0100" not in pdf[chart_pages[0]].get_text()
             assert "555-0200" in pdf[contacts[0]].get_text()
     finally:
