@@ -131,9 +131,21 @@ def preview_diagnostics(page):
     }""")
 
 
+def scroll_preview_to_page(pair, index):
+    """Move through actual source/output pages using natural scrolling."""
+    pair.locator('.report-preview-scroll').evaluate("""(scroll,index)=>{
+        const figure=scroll.querySelector('figure[data-index="'+index+'"]');
+        if (!figure) throw Error('Expected real preview page not present');
+        scroll.scrollTop=figure.offsetTop-scroll.offsetTop+12;
+        scroll.dispatchEvent(new Event('scroll',{bubbles:true}));
+    }""",index)
+    expect(pair.locator('.report-preview-position')).to_have_text(
+        re.compile(r'^'+str(index+1)+r' /'),timeout=30000)
+
+
 def preview_position(pair):
     return pair.locator('.report-preview').evaluate("""panel=>({
-        page:panel._previewState.page,zoom:panel.querySelector('select').value,
+        page:panel._previewState.page,
         offset:panel._previewState.offset,scope:panel._previewState.scope,
         scrollTop:panel.querySelector('.report-preview-scroll').scrollTop,
         label:panel.querySelector('.report-preview-position').textContent
@@ -204,8 +216,7 @@ def packet_journey(page, first, name):
     packet.locator('img[alt="Generated expense packet — page 1"]').wait_for(timeout=30000)
     loaded_page(packet,0)
     inspect_downloads(page,packet,name)
-    packet.get_by_label('Preview zoom',exact=True).select_option('1.25')
-    packet.get_by_role('button',name='Next preview page',exact=True).click()
+    scroll_preview_to_page(packet,1)
     expect(packet.locator('.report-preview-position')).to_have_text('2 / 5')
     expect(packet.locator('[data-qa-preview-ack]')).to_have_attribute('data-request-pages',re.compile(r'(^|,)1(,|$)'))
     loaded_page(packet,1)
@@ -221,14 +232,13 @@ def packet_journey(page, first, name):
     active_section(page,first)
     tabletop_reference(page,first,'Receipt 1',name+' temporary receipt inspection')
     loaded_page(first,1)
-    first.get_by_label('Preview zoom',exact=True).select_option('1.5')
     active_section(page,packet)
     tabletop_reference(page,packet,'Generated expense packet',name+' packet return')
     loaded_page(packet,1)
     inject(page,None);mode(page,'wide')
     after=preview_position(packet)
     check(name+' temporary source inspection restores exact generated packet view',
-          all(before[key]==after[key] for key in ('page','zoom','scope','label'))
+          all(before[key]==after[key] for key in ('page','scope','label'))
           and abs(before['offset']-after['offset'])<=3
           and abs(before['scrollTop']-after['scrollTop'])<=3,{'before':before,'after':after})
     check(name+' packet and receipt view changes cause no full rerun or generation',
@@ -277,34 +287,33 @@ def run(browser_type,name):
         editor=first.locator('.epc-workspace-editor')
         bounds={'editor':editor.bounding_box(),'source':source.bounding_box()}
         check(name+' expense fields left of original source',bounds['editor']['x']<bounds['source']['x'],bounds)
-        first.get_by_role('button',name='Next preview page',exact=True).click()
+        check(name+' no report-preview toolbar in receipt pane',
+              first.locator('.report-preview-tools, [data-action="previous"], '
+                            '[data-action="next"], [data-action="enlarge"], '
+                            'select[aria-label="Preview zoom"]').count()==0)
+        scroll_preview_to_page(first,1)
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
-        first.get_by_label('Preview zoom',exact=True).select_option('1.5')
         loaded_page(first,1)
         acknowledgement=first.locator('[data-qa-preview-ack]')
         expect(acknowledgement).to_have_attribute('data-request-pages','1')
-        # A page/zoom change is a fragment-only view event, not a whole app rerun.
+        # Scrolling pages changes only bounded raster fragments.
         counter=page.get_by_text(re.compile(r'^Synthetic full app runs:')).text_content()
         fragment_count=acknowledgement.get_attribute('data-count')
-        first.get_by_role('button',name='Previous preview page',exact=True).click()
-        expect(first.locator('.report-preview-position')).to_have_text('1 / 2')
+        scroll_preview_to_page(first,0)
         expect(acknowledgement).not_to_have_attribute('data-count',fragment_count)
         expect(acknowledgement).to_have_attribute('data-request-pages','0')
         loaded_page(first,0)
-        check(name+' preview-only navigation does not rerun whole app',counter==page.get_by_text(re.compile(r'^Synthetic full app runs:')).text_content())
-        first.get_by_role('button',name='Next preview page',exact=True).click()
-        expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
+        check(name+' normal preview scroll avoids full-app rerun',
+              counter==page.get_by_text(re.compile(r'^Synthetic full app runs:')).text_content())
+        scroll_preview_to_page(first,1)
         expect(acknowledgement).to_have_attribute('data-request-pages','1')
         loaded_page(first,1)
-        first.get_by_label('Preview zoom',exact=True).select_option('page')
-        expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
         inject(page,[{'x':0,'y':0,'width':640,'height':1000},{'x':672,'y':0,'width':768,'height':1000}]);mode(page,'book')
-        first.get_by_role('button',name='Enlarge',exact=True).click()
-        enlarged=first.locator('.report-preview').bounding_box()
-        check(name+' enlargement stays clear of book crease',enlarged['x']>=678 and enlarged['x']+enlarged['width']<=1440 and enlarged['y']+enlarged['height']<=1000,enlarged)
-        page.keyboard.press('Escape')
+        pane=first.locator('.report-preview').bounding_box()
+        check(name+' natural book preview stays clear of fold',
+              pane['x']>=678 and pane['x']+pane['width']<=1440 and
+              pane['y']+pane['height']<=1000,pane)
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
-        expect(first.get_by_label('Preview zoom',exact=True)).to_have_value('page')
         description=first.get_by_label('Description / business purpose *',exact=True).first
         description.fill('Unblurred synthetic expense correction')
         description.evaluate('(node)=>node.setSelectionRange(4,9)')
@@ -314,16 +323,13 @@ def run(browser_type,name):
         check(name+' unblurred expense text and selection preserved',current==description.evaluate('(node)=>({value:node.value,start:node.selectionStart,end:node.selectionEnd})'))
         check(name+' expense focus preserved',description.evaluate('(node)=>document.activeElement===node'))
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
-        expect(first.get_by_label('Preview zoom',exact=True)).to_have_value('page')
         tabletop_reference(page,first,'Receipt 1',name)
         loaded_page(first,1)
         page.screenshot(path=str(OUT/f'{name}-expense-tabletop.png'))
-        first.get_by_role('button',name='Enlarge',exact=True).click()
-        enlarged=first.locator('.report-preview').bounding_box()
-        check(name+' enlargement stays in upper tabletop segment',enlarged['y']>=0 and enlarged['y']+enlarged['height']<=414+2,enlarged)
-        page.keyboard.press('Escape')
+        pane=first.locator('.report-preview').bounding_box()
+        check(name+' natural tabletop preview stays in upper segment',
+              pane['y']>=0 and pane['y']+pane['height']<=414+2,pane)
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
-        expect(first.get_by_label('Preview zoom',exact=True)).to_have_value('page')
         page.locator('.epc-workspace').evaluate("root=>{const n=root.querySelectorAll('.epc-workspace-pair')[1];root.scrollTop+=n.getBoundingClientRect().top-root.getBoundingClientRect().top+80;}")
         expect(second).to_have_attribute('data-epc-active','true')
         tabletop_reference(page,second,'Receipt 2',name)
