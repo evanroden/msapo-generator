@@ -354,3 +354,49 @@ def test_ordinary_and_shared_fixture_edits_do_not_emit_synthetic_diagnostics(mon
     guided._mark_explicit_rich_text_edit("receipt", "editor", block, "current-scope")
     assert state["receipt"]["text"] == "Current wording"
     assert "monthly_qa_activity_callbacks" not in state
+
+
+def test_interrupted_edit_conflict_is_visible_inline_with_both_explicit_choices():
+    # A warning cannot be hidden behind an unopened disclosure: the operator
+    # must see the currently retained text and the uncommitted old replacement
+    # beside the affected Activity editor after a normal rerun.
+    from dataclasses import replace
+    old_edit = "Synthetic earlier interrupted work."
+    current = "Synthetic newer reviewed Activity description."
+    app = _interrupted_edit(old_edit)
+    app.session_state["canonical_block"] = replace(
+        app.session_state["canonical_block"], text=current)
+    app.run()
+    assert not app.exception
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == current
+    marker = app.session_state["editor_key"] + "_explicitly_edited_recovery"
+    assert app.session_state[marker]["text"] == old_edit
+    assert not any(e.label == "Review interrupted edit" for e in app.expander)
+    assert any("Current wording (kept in this report)" in e.value for e in app.markdown)
+    assert any("Interrupted wording (not applied)" in e.value for e in app.markdown)
+    assert any("nothing has been overwritten" in e.value for e in app.warning)
+    assert {b.label for b in app.button} >= {"Apply interrupted edit", "Keep current wording"}
+    app.run()
+    assert app.session_state[marker]["text"] == old_edit
+    assert app.session_state["canonical_block"].text == current
+    # The explicit current-version choice dismisses only this pending conflict.
+    next(b for b in app.button if b.label == "Keep current wording").click().run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == current
+    assert not any(b.label == "Apply interrupted edit" for b in app.button)
+
+
+def test_interrupted_clear_displays_intent_inline_without_autoapplying():
+    from dataclasses import replace
+    app = _interrupted_edit("")
+    app.session_state["canonical_block"] = replace(
+        app.session_state["canonical_block"],
+        text="Newer synthetic Activity that must remain.")
+    app.run()
+    assert not app.exception
+    assert not any(e.label == "Review interrupted edit" for e in app.expander)
+    assert any("interrupted edit cleared this section" in e.value for e in app.caption)
+    assert app.session_state["canonical_block"].text == "Newer synthetic Activity that must remain."
+    next(b for b in app.button if b.label == "Apply interrupted edit").click().run()
+    assert not app.exception
+    assert app.session_state["canonical_block"].text == ""
