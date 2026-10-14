@@ -130,3 +130,18 @@ def test_dated_multi_event_txt_still_uses_each_header_and_not_one_global_date():
     result = structured.native_update((SourceContent(source),), "activity_summary")
     assert "2026-09-04 · Trane — Inspected fan motor" in result.text
     assert "2026-09-18 · Trane — Calibrated controller" in result.text
+
+
+def test_completed_date_is_metadata_but_completed_work_still_prints():
+    source = ReportSource("a" * 64, "synthetic.docx", "a" * 64, ".docx",
+                          service_date="2026-09-12",
+                          page_texts=("Service date: 2026-09-12",
+                                      "Completed date: 09/12/2026",
+                                      "Completed synthetic pump inspection.",
+                                      "Completed valve repair on 2026-09-12."))
+    result = structured.native_update((SourceContent(source),), "activity_summary")
+    assert "Completed date:" not in result.text
+    assert "Service date:" not in result.text
+    assert "2026-09-12 — Completed synthetic pump inspection." in result.text
+    assert "Completed valve repair on 2026-09-12." in result.text
+    assert len(result.references) == 2
