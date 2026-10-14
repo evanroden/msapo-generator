@@ -211,6 +211,49 @@ def _activity_identity(line, source, event_date):
     return " · ".join(parts) + " — " + line if parts else line
 
 
+_DOC_DATE_TOKEN = re.compile(
+    r"(?<!\d)(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4})(?!\d)")
+_DOC_VENDOR_LABEL = re.compile(
+    r"(?im)^\s*(?:vendor|contractor|service company)\s*[:=]\s*(\S[^\r\n]*)")
+
+
+def _date_only_source_label(text):
+    """A completed/report/service *date* label is not completed field work."""
+    match = re.fullmatch(
+        r"(?i)\s*(?:(?:service|completed|report|inspection|work)\s+)?"
+        r"date\s*[:=]\s*(.+?)\s*", text)
+    return bool(match and _DOC_DATE_TOKEN.fullmatch(match.group(1).rstrip(".")))
+
+
+def _non_table_activity_identity(source):
+    """A first-found DOC/PDF/email label is not a per-event attribution.
+
+    Keep the source's canonical metadata untouched. Only suppress a blanket
+    output prefix when multiple independently source-authored dates or vendors
+    appear in the same original. An operator may then review and add exact
+    per-event context; the native pass must never guess it.
+    """
+    if source.suffix not in {".docx", ".pdf", ".eml", ".msg"}:
+        return source
+    from datetime import datetime
+    dated, vendors = set(), set()
+    for original in source.page_texts:
+        for match in _DOC_DATE_TOKEN.finditer(original):
+            value = match.group(0)
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+                try:
+                    dated.add(datetime.strptime(value, fmt).date().isoformat())
+                    break
+                except ValueError:
+                    continue
+        for match in _DOC_VENDOR_LABEL.finditer(original):
+            vendors.add(" ".join(match.group(1).casefold().split()))
+    if len(dated) <= 1 and len(vendors) <= 1:
+        return source
+    return replace(source, service_date="" if len(dated) > 1 else source.service_date,
+                   vendor="" if len(vendors) > 1 else source.vendor)
+
+
 def _csv_has_site_scope_column(content):
     """A row-specific site/client needs target mapping before auto-Activity."""
     site_tokens = {"facility", "site", "client", "customer",
@@ -251,7 +294,7 @@ def _csv_activity_entries(content):
             def cell(index):
                 return str(row[index]).strip() if index is not None and index < len(row) else ""
             narrative = cell(action)
-            if not useful_activity(narrative) or contains_price(narrative):
+            if _date_only_source_label(narrative) or not useful_activity(narrative) or contains_price(narrative):
                 continue
             status_text = cell(status)
             if status_text and not contains_price(status_text):
@@ -286,6 +329,7 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                     paragraphs.append(line)
                     references.append(sources.source_reference(content.source, number))
                 continue
+            output_identity = _non_table_activity_identity(content.source)
             for number, text in enumerate(content.source.page_texts, 1):
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
@@ -309,9 +353,11 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 for line, header_date in _activity_lines(
                         text, content.source.suffix, with_dates=True):
                     line = line.strip()
+                    if _date_only_source_label(line):
+                        continue
                     if useful_activity(line) and not contains_price(line):
-                        dated = header_date if tagged_txt else content.source.service_date
-                        grounded = _activity_identity(line, content.source, dated)
+                        dated = header_date if tagged_txt else output_identity.service_date
+                        grounded = _activity_identity(line, output_identity, dated)
                         if not contains_price(grounded):
                             paragraphs.append(grounded)
                             references.append(reference)
