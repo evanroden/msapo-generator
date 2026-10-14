@@ -35,6 +35,18 @@ SOURCE_TEXT = "Inspected the synthetic pump in October 2026; follow-up is open."
 MANUAL_TEXT = "My manually corrected synthetic Activity; follow-up remains open."
 REENTRY_TEXT = "Synthetic re-entry after deliberate clearing; follow-up remains open."
 EXPECTATION_ONLY = "EXPECTATION_ONLY_CANARY_NOT_SOURCE_CONTENT"
+def _navigation_decode_cancel(engine, role, stage, reloading, message):
+    """Only an image decode aborted by OUR deliberate primary-page reload.
+
+    WebKit can reject an image that the previous page was decoding while that
+    document unloads. Record it as a navigation cancellation, never as a
+    successful/current preview. Any other stage, browser or error still fails.
+    """
+    return (engine == "playwright-webkit" and role == "primary"
+            and reloading and stage.endswith(": browser reload")
+            and message == "EncodingError: Loading was canceled.")
+
+
 REPORT = {"synthetic_only": True, "actual_entrypoint": "run_web.py",
           "route": "?workflow=monthly&monthly_qa=fixtures",
           "browser_evidence": "Chromium and Playwright WebKit, not shipping Safari",
@@ -177,8 +189,10 @@ def exercise(browser_type, name, base):
     from playwright.sync_api import expect
     browser = browser_type.launch(headless=True)
     contexts, attempts, errors = [], [], []
-    error_details = []
+    error_details, canceled_on_reload = [], []
     phase = {"name": "initial navigation"}
+    navigation = {"primary": False, "coworker": False}
+    reload_count = 0
 
     def session():
         cookie = secrets.token_hex(16)
@@ -203,12 +217,22 @@ def exercise(browser_type, name, base):
         role = "primary" if len(contexts) == 1 else "coworker"
         page.set_default_timeout(20000)
         def browser_exception(error):
-            # Metadata only; synthetic browser harness. Retain every error as
-            # a hard failure, but identify which operator action canceled it.
-            errors.append(str(error))
-            error_details.append({"browser": role, "stage": phase["name"],
-                                  "message": str(error)[:500],
-                                  "stack": str(getattr(error, "stack", ""))[:1600]})
+            # Keep the entire first browser error receipt. A browser image
+            # decode canceled by a deliberately initiated page unload has no
+            # live document to display it on. It is a *recorded cancellation*,
+            # not a current-page success or a license to ignore other errors.
+            message = str(error)
+            expected = _navigation_decode_cancel(name, role, phase["name"],
+                                                   navigation[role], message)
+            detail = {"browser": role, "stage": phase["name"],
+                      "message": message[:500],
+                      "stack": str(getattr(error, "stack", ""))[:1600],
+                      "classification": "intentional_navigation_cancel" if expected else "app_error"}
+            error_details.append(detail)
+            if expected:
+                canceled_on_reload.append(detail)
+            else:
+                errors.append(message)
         page.on("pageerror", browser_exception)
         page.goto(URL, wait_until="domcontentloaded")
         expect(page.get_by_role("heading", name="Shared report testing", exact=True)).to_be_visible(timeout=60000)
@@ -364,13 +388,18 @@ def exercise(browser_type, name, base):
             receipt = durable_activity(page, root, wording)
             idle(page)
             phase["name"] = label + ": browser reload"
-            page.reload(wait_until="domcontentloaded")
-            expect(activity).to_be_visible(timeout=60000)
-            expect(activity).to_have_value(wording, timeout=30000)
-            # Value visibility is not a guarantee that Streamlit has finished
-            # hydrating the next editor action after reload. Require the app's
-            # completed rerun before taking a new operator action.
-            idle(page)
+            reload_count += 1
+            navigation["primary"] = True
+            try:
+                page.reload(wait_until="domcontentloaded")
+                expect(activity).to_be_visible(timeout=60000)
+                expect(activity).to_have_value(wording, timeout=30000)
+                # The first page is gone; an old image decode may reject in
+                # WebKit during unload. The new page MUST still hydrate and
+                # acknowledge the precise current Activity before continuing.
+                idle(page)
+            finally:
+                navigation["primary"] = False
             phase["name"] = label + ": loaded and idle"
             check(name, label + " survives ordinary refresh with exact canonical draft", True, receipt)
             check(name, label + " does not reopen Starting report or duplicate editor",
@@ -398,7 +427,10 @@ def exercise(browser_type, name, base):
         download_original("after-reset")
         capture(page, name, "reset-original-retained")
         check(name, "zero external browser requests", not attempts, attempts)
-        check(name, "no browser errors", not errors, errors)
+        check(name, "no browser errors outside explicit navigation unload", not errors, errors)
+        check(name, "canceled image decode receipts are bounded by actual reloads",
+              len(canceled_on_reload) <= reload_count,
+              {"canceled": len(canceled_on_reload), "actual_reloads": reload_count})
         check(name, "no sharing action", all(not p.evaluate("window.__sharedFixtureShareAttempts")
                                              for c in contexts for p in c.pages))
     except Exception:
@@ -412,7 +444,8 @@ def exercise(browser_type, name, base):
     finally:
         REPORT["browsers"].setdefault(name, {}).update({
             "external_attempts": attempts, "browser_errors": errors,
-            "page_error_details": error_details})
+            "page_error_details": error_details,
+            "navigation_cancellations": canceled_on_reload})
         for context in contexts:
             context.close()
         browser.close()
