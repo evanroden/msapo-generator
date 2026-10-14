@@ -82,13 +82,18 @@ def test_explicit_activity_clear_is_report_scoped_and_supports_reentry(monkeypat
     assert original.text == "Synthetic initial activity."
     clear = next(b for b in app.button if b.label == "Clear Activity for this report")
     assert not clear.disabled
+    original_button_key = clear.key
     clear.click().run()
     assert not app.exception
     editor = next(w for w in app.text_area if w.label == "Activity summary")
     assert editor.value == ""
     app.run()
     assert next(w for w in app.text_area if w.label == "Activity summary").value == ""
-    assert next(b for b in app.button if b.label == "Clear Activity for this report").disabled
+    cleared = next(b for b in app.button if b.label == "Clear Activity for this report")
+    assert cleared.disabled
+    assert cleared.key != original_button_key, "An acknowledged new Activity block needs a new native Clear action ID"
+    app.run()
+    assert next(b for b in app.button if b.label == "Clear Activity for this report").key == cleared.key
 
     # The old standing reference and original report history are not deleted.
     assert library.load_profile(RRH_CONTRACT, saved.key).block("activity_summary") == original
@@ -97,7 +102,9 @@ def test_explicit_activity_clear_is_report_scoped_and_supports_reentry(monkeypat
     app.run()
     assert next(w for w in app.text_area if w.label == "Activity summary").value == (
         "Restored current-month report wording.")
-    assert not next(b for b in app.button if b.label == "Clear Activity for this report").disabled
+    new_button = next(b for b in app.button if b.label == "Clear Activity for this report")
+    assert not new_button.disabled
+    assert new_button.key not in {original_button_key, cleared.key}
     assert not app.exception
 
 

@@ -133,7 +133,26 @@ def durable_activity(page, root, expected):
                 return {"revision": current["revision"], "generation": current["generation"],
                         "activity_sha256": sha256(text.encode()).hexdigest()}
         page.wait_for_timeout(100)
-    raise AssertionError("The exact Activity edit did not reach its isolated durable journal")
+    # Failure must retain the precise last persisted source of truth and a
+    # bounded browser-action receipt. Visible textarea state alone is not a
+    # server commit, and retrying the operator click would conceal this bug.
+    summary = []
+    for current in journal(root)[:2]:
+        last_text = next((b.get("text", "") for b in current.get("draft", {}).get("blocks", ())
+                          if b.get("key") == "activity_summary"), "")
+        summary.append({"revision": current.get("revision"),
+                        "generation": current.get("generation"),
+                        "activity_sha256": sha256(last_text.encode()).hexdigest()})
+    try:
+        client = page.evaluate("""() => ({
+          native_clear_events: window.__qaNativeClearEvents || [],
+          script_state: document.querySelector('[data-testid="stApp"]')
+            ?.getAttribute("data-test-script-state") || "missing",
+        })""")
+    except Exception as exc:
+        client = {"browser_diagnostic_error": type(exc).__name__}
+    raise AssertionError("The exact Activity edit did not reach its isolated durable journal; "
+                         + json.dumps({"last_committed": summary, "browser": client}, sort_keys=True)[:1000])
 
 
 def idle(page):
@@ -322,6 +341,18 @@ def exercise(browser_type, name, base):
                 idle(page)
                 clear = page.get_by_role("button", name="Clear Activity for this report", exact=True)
                 expect(clear).to_be_enabled()
+                # Observe one trusted native browser click without altering
+                # event dispatch or retrying an unacknowledged business action.
+                clear.evaluate("""element => {
+                  window.__qaNativeClearEvents = [];
+                  for (const name of ["pointerdown", "click"]) {
+                    element.addEventListener(name, event => {
+                      window.__qaNativeClearEvents.push({
+                        name, trusted: event.isTrusted
+                      });
+                    }, {capture: true, once: true});
+                  }
+                }""")
                 clear.click()
             else:
                 activity.fill(wording)

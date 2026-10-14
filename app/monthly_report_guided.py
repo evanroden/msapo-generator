@@ -449,7 +449,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         if spec.key == "activity_summary":
             st.button(
                 "Clear Activity for this report",
-                key=prefix + "_clear_activity_report_" + _signature(scope),
+                # A reused native button ID can retain an obsolete widget
+                # action after multiple edit/clear/re-entry reruns. Bind the
+                # control to the exact current block as well as report epoch,
+                # just as shared fixture actions bind their original SHA.
+                key=prefix + "_clear_activity_report_" + _signature((scope, block.fingerprint)),
                 disabled=(not block.text and not displayed),
                 help="Clears only this working report's Activity wording, not source files, older report versions or standing information.",
                 on_click=_clear_rich_text_for_this_report,
