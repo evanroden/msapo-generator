@@ -24,7 +24,7 @@ from app.monthly_report_start import report_key
 
 
 _PREFIX = "_shared_fixture_"
-_LIMIT = 25 * 1024 * 1024
+_LIMIT = 32 * 1024 * 1024
 
 
 def _queue_upload():
@@ -210,7 +210,7 @@ def _process_pending(library, browser_token, live_storage_root):
             if upload is None:
                 raise ValueError("Choose a native Word report to upload.")
             if upload.size > _LIMIT:
-                raise ValueError("The report exceeds the 25 MB fixture limit.")
+                raise ValueError("The report exceeds the 32 MiB fixture limit.")
             metadata = _upload_metadata()
             receipt = library.upload(upload.getvalue(), metadata)
             st.session_state[_PREFIX + "upload_receipt"] = receipt.fixture_id
@@ -298,7 +298,7 @@ def _render_upload():
     with st.expander("Upload an actual report"):
         st.caption("One immutable original, shared with anyone who reaches this area. Confirm the identities below; filenames are not evidence.")
         with st.form(_PREFIX + "upload_form"):
-            st.file_uploader("Original Word report", type=["docx"], max_upload_size=25, key=_PREFIX + "upload_file")
+            st.file_uploader("Original Word report", type=["docx"], max_upload_size=32, key=_PREFIX + "upload_file")
             st.text_input("Fixture name", key=_PREFIX + "upload_name")
             st.selectbox("Scenario", ("AUTH01", "AUTH02", "AUTH03"), key=_PREFIX + "upload_scenario",
                          format_func=lambda value: {"AUTH01": "Same sites, previous month", "AUTH02": "Different sites, same contract", "AUTH03": "Half-finished report, correct month"}[value])
