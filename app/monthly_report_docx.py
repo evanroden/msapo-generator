@@ -429,10 +429,10 @@ def _build_docx(draft, *, asset_loader=None):
                     if len(values) > width:
                         raise ValueError(f"Too many table columns in {spec.key}.")
                     for cell, value in zip(table.add_row().cells, values):
-                        cell.text = value
+                        cell.text = "" if value is None else str(value)
                 _format_table(table, bool(spec.columns))
             for imported in block.extra_tables:
-                if not imported.columns or not any(c.strip() for row in imported.rows for c in row):
+                if not imported.columns or not any(c is not None and str(c).strip() for row in imported.rows for c in row):
                     continue
                 table = document.add_table(rows=1, cols=len(imported.columns))
                 table.style = "Light Shading Accent 1"
@@ -442,7 +442,7 @@ def _build_docx(draft, *, asset_loader=None):
                     if len(values) > len(imported.columns):
                         raise ValueError("An imported table has more cells than columns.")
                     for cell, value in zip(table.add_row().cells, values):
-                        cell.text = value
+                        cell.text = "" if value is None else str(value)
                 _format_table(table, True)
         carried = [item for item in draft.follow_ups if item.included and ("issues" if item.category == "issue" else "proposals") == section.key]
         if carried:
