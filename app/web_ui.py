@@ -1216,7 +1216,8 @@ def _load_test_into_state() -> None:
     analysis = _build_test_analysis()
     quote_text = analysis.scope_of_work
     token = hashlib.sha256(quote_text.encode("utf-8")).hexdigest()[:12]
-    quote_bytes = b"(synthetic sample quote placeholder)"
+    # The locally generated sample has real reviewable text, not inert placeholder bytes.
+    quote_bytes = quote_text.encode("utf-8")
     st.session_state["analysis"] = analysis
     st.session_state["analysis_token"] = token
     st.session_state["quote_text"] = quote_text
@@ -1771,7 +1772,8 @@ def _render_purchase_quote_reference(identity, *, key, quote_text, quote_source,
     """Inspect the active unchanged quote, or the active pasted-text snapshot."""
     from app.reference_preview import render_reference
     if uploaded or quote_source in ("upload", "synthetic"):
-        render_reference(key=key, owner_scope=identity, title="Original quote",
+        title = "Synthetic sample quote" if quote_source == "synthetic" else "Original quote"
+        render_reference(key=key, owner_scope=identity, title=title,
                          raw=st.session_state.get("uploaded_file_bytes", b""),
                          filename=st.session_state.get("uploaded_file_name", "quote.txt"))
     elif quote_source == "paste" and quote_text:
