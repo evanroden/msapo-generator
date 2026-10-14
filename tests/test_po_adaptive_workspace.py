@@ -113,10 +113,12 @@ def test_adaptive_pairs_show_exact_source_then_only_current_generated_form(
     assert shown[-1]["raw"] == generated_bytes
     before = {p.relative_to(isolated): sha256(p.read_bytes()).hexdigest()
               for p in isolated.rglob("*") if p.is_file()}
-    next(w for w in app.toggle if w.label == "Compare original quote").set_value(True).run()
-    assert shown[-1]["key"] == "purchase_package_quote"
-    assert shown[-1]["raw"] == original
-    next(w for w in app.toggle if w.label == "Compare original quote").set_value(False).run()
+    # No compare toggle duplicates the source in the generated package.
+    # The original remains visible in the preceding authoritative editor.
+    assert not any(w.label == "Compare original quote" for w in app.toggle)
+    assert any(item["key"] == "purchase_quote" and item["raw"] == original
+               and item["owner_scope"] == identity for item in shown)
+    app.run()
     assert shown[-1]["key"] == "purchase_msapo"
     assert shown[-1]["raw"] == generated_bytes
     assert shown[-1]["owner_scope"] == identity
