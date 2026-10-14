@@ -151,7 +151,7 @@ def _render_rich_text_recovery(marker, widget_key, block, scope):
         if recovered["text"]:
             st.code(recovered["text"], language=None, wrap_lines=True)
         else:
-            st.caption("Your interrupted edit cleared the section.")
+            st.caption("Your interrupted edit cleared this section.")
         st.button("Apply interrupted edit", key=marker + "_apply_recovery",
                   on_click=_recover_rich_text_edit,
                   args=(marker, widget_key, block, scope))
