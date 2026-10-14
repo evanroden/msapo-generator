@@ -298,7 +298,7 @@ def _render_upload():
     with st.expander("Upload an actual report"):
         st.caption("One immutable original, shared with anyone who reaches this area. Confirm the identities below; filenames are not evidence.")
         with st.form(_PREFIX + "upload_form"):
-            st.file_uploader("Original Word report", type=["docx"], max_upload_size=25, key=_PREFIX + "upload_file")
+            st.file_uploader("Original Word report", type=["docx"], max_upload_size=32, key=_PREFIX + "upload_file")
             st.text_input("Fixture name", key=_PREFIX + "upload_name")
             st.selectbox("Scenario", ("AUTH01", "AUTH02", "AUTH03"), key=_PREFIX + "upload_scenario",
                          format_func=lambda value: {"AUTH01": "Same sites, previous month", "AUTH02": "Different sites, same contract", "AUTH03": "Half-finished report, correct month"}[value])
