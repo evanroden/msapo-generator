@@ -9,6 +9,31 @@ A companion **Synthetic QA evidence archive** expander reuses the same descripto
 Access remains intentionally **without login**. Anyone discovering the shared QA link can download an uploaded archive, so do not confuse a hidden URL with confidentiality. Browser-based outside agents can navigate the route; a stable unauthenticated `curl` binary-download API is **not** yet established. Render disks survive ordinary restarts/deploys, not deletion of the service/disk. ChatGPT Library holds independent owner backup copies. Verify an actual uploaded archive's digest and availability after a distinct served Render build before promising lasting cross-agent access. No credentials, billing, disk size or authentication setting has been changed.
 
 
+## Read-only original/evidence archive acceptance — October 14
+
+New [Render archive verifier](../scripts/qa_render_archive_redeploy_readonly.py) and manually dispatched [Shared Archive Redeploy Read-only workflow](../.github/workflows/shared-archive-redeploy-readonly.yml) can prove full-byte SHA-256 and exact archive length for either **already uploaded** immutable archive. This is a separate verifier from the existing 25 MiB DOCX fixture witness: `--archive-kind originals` checks the six-source ZIP; `--archive-kind synthetic` checks the synthetic QA-evidence ZIP. Both select by visible 12-character bundle prefix, verify the full 32-character native download action identity and the independently supplied 64-character archive digest, then bracket the *actual downloaded bytes* with the same full served Render commit. The script allows only this application's origin and never prints, uploads, extracts, or retains source/evidence content.
+
+The browser test route is `https://msapo-generator.onrender.com/?workflow=monthly&monthly_qa=fixtures`. Uploading an archive remains a separate, deliberate owner action. Record the **actual** bundle prefix, original full SHA-256 and exact archive bytes from the independently retained local copy, plus the full `Running code:` commit, before manually dispatching the workflow or using the CLI:
+
+```bash
+python -m scripts.qa_render_archive_redeploy_readonly verify \
+  --archive-kind originals \
+  --bundle-prefix <12-HEX-PREFIX> \
+  --archive-sha256 <KNOWN-64-HEX-ARCHIVE-SHA> \
+  --archive-size <KNOWN-EXACT-BYTES> \
+  --expected-commit <FULL-40-HEX-SERVED-SHA> \
+  --phase before --output before.json
+```
+
+After a **different independently observed served production code revision**, repeat with `--phase after --output after.json` and that new commit, then run:
+
+```bash
+python -m scripts.qa_render_archive_redeploy_readonly compare \
+  --before before.json --after after.json --output comparison.json
+```
+
+A valid comparison requires identical opaque bundle ID, SHA-256, length and a later timestamp across **distinct** served builds. Hash-only GitHub Actions receipts are short-lived; preserve their hashes and copies in the persistent owner Library or another approved independent store. The verified evidence states only archive retention/identity, **not** AUTH01–03 accuracy, real report/output fidelity, client confidentiality, Safari/foldable behavior, or the word processing layout. Neither the source ZIP nor synthetic archive had been uploaded and downloaded in two served Render builds when this verifier was added; that operation remains open. Never run this workflow as an automatic upload/redeploy trigger or attach client bytes to CI.
+
 ## Current tested-main and storage boundary — October 14, after 05:05 UTC
 
 The new code main `ad55fb6b9e043f10812224f00c9c17b78845ff8e` passed [Required 38513548917](https://github.com/evanroden/msapo-generator/actions/runs/38513548917), [Chromium/WebKit adaptive 38513548892](https://github.com/evanroden/msapo-generator/actions/runs/38513548892), and [actual served two-session live 38513993073](https://github.com/evanroden/msapo-generator/actions/runs/38513993073). All three used synthetic exercises, and none executed an already-uploaded shared original before/after *two different* served Render deployments. **Render fixture persistence remains NOT VERIFIED**, notwithstanding successful independent source ingestion and generated Word/PDF. Do not upload a genuine client DOCX for this test; preserve the owner-selected AUTH01–03, physical Safari and native Word/Adobe acceptance gates.
