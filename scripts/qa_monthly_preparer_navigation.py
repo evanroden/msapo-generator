@@ -56,7 +56,10 @@ def exercise(browser, engine, width, method):
         original = activity.input_value()
         field.fill("")
         field.press("Tab")
-        links = page.get_by_role("link", name="Enter Prepared by", exact=True)
+        # Compact reference panes intentionally start hidden. Count committed
+        # DOM captions here, then open the actual pane and require its semantic
+        # link to be visible/actionable below. Hidden controls are not a pass.
+        links = page.locator('a[href="#report-prepared-by"]')
         expect(links).to_have_count(3, timeout=45000)
         expect(field).to_have_value("")
         organization = page.locator(".st-key-epc_pair_monthly_organization")
@@ -79,6 +82,7 @@ def exercise(browser, engine, width, method):
             page.keyboard.press("Enter")
         record["phase"] = "actual input focused and unobscured"
         expect(field).to_be_focused(timeout=5000)
+        assert urlparse(page.url).fragment == "report-prepared-by"
         record["target"] = field.evaluate("""node => {
             const r=node.getBoundingClientRect(), h=document.querySelector('[data-testid="stHeader"]')?.getBoundingClientRect();
             const hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
@@ -88,6 +92,7 @@ def exercise(browser, engine, width, method):
         target = record["target"]
         assert target["centerOwned"] and target["rect"]["top"] >= target["headerBottom"], target
         assert target["rect"]["bottom"] <= target["viewportHeight"], target
+        page.screenshot(path=str(OUT / (label + "-focused.png")))
         # This types into the browser's current focus, not a locator injection.
         page.keyboard.type("Synthetic Navigation Reviewer")
         expect(field).to_have_value("Synthetic Navigation Reviewer")
