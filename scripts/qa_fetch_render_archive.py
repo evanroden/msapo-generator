@@ -163,6 +163,8 @@ def fetch_archive(*, kind: str, expected_sha: str, expected_size: int,
             full_id = audit._native_archive_id(
                 classes, settings["key_prefix"], prefix, expected_sha
             )
+            if requested_prefix and len(requested_prefix) == 32 and full_id != requested_prefix:
+                raise AssertionError("Full requested archive ID differs from the download action.")
             expect(page.locator(
                 ".st-key-" + settings["key_prefix"] + full_id + "_" + expected_sha[:16]
             )).to_be_visible(timeout=45000)
