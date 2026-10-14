@@ -32,6 +32,12 @@ def _queue_upload():
         st.session_state[_PREFIX + "pending"] = {"action": "upload", "id": uuid4().hex}
 
 
+def _queue_source_bundle_upload():
+    """A source archive does not create or reset a report run."""
+    if not st.session_state.get(_PREFIX + "pending"):
+        st.session_state[_PREFIX + "pending"] = {"action": "source_bundle", "id": uuid4().hex}
+
+
 def _queue_run(fixture_id, generation):
     if not st.session_state.get(_PREFIX + "pending"):
         st.session_state[_PREFIX + "pending"] = {
@@ -162,6 +168,21 @@ def _process_pending(library, browser_token, live_storage_root):
     pending = st.session_state.get(_PREFIX + "pending")
     if not pending:
         return
+    if pending["action"] == "source_bundle":
+        try:
+            upload = st.session_state.get(_PREFIX + "source_bundle_file")
+            if upload is None:
+                raise ValueError("Choose the original six-source ZIP archive.")
+            if upload.size > 96 * 1024 * 1024:
+                raise ValueError("This reference archive exceeds the 96 MiB upload limit.")
+            from app.monthly_report_shared_source_bundles import SharedSourceBundles
+            receipt = SharedSourceBundles(Path(live_storage_root)).upload(upload.getvalue())
+            st.session_state[_PREFIX + "source_bundle_receipt"] = receipt.bundle_id
+        except (ValueError, OSError) as exc:
+            st.session_state[_PREFIX + "error"] = "The immutable source bundle was not saved: " + str(exc)
+        finally:
+            st.session_state.pop(_PREFIX + "pending", None)
+        return
     if pending["action"] == "upload":
         try:
             upload = st.session_state.get(_PREFIX + "upload_file")
@@ -273,6 +294,55 @@ def _render_upload():
             st.form_submit_button("Save shared fixture", on_click=_queue_upload)
 
 
+def _render_reference_bundle_shelf(live_storage_root):
+    """Read-only availability for external browser agents; not an AUTH importer."""
+    from app.monthly_report_shared_source_bundles import SharedSourceBundles
+    with st.expander("Immutable six-source reference archive for external testers"):
+        st.warning("No login: anyone who finds this hidden test area can download the complete source archive. Do not upload unrelated files.")
+        st.caption("This portable archive is independent of AUTH01–03 assignment, report drafts, or live standing data. Its original bytes and hashes must match the included manifest.")
+        st.file_uploader("Original six-source ZIP archive", type=["zip"],
+                         max_upload_size=96, key=_PREFIX + "source_bundle_file")
+        st.button("Store verified original source archive",
+                  key=_PREFIX + "source_bundle_save", on_click=_queue_source_bundle_upload)
+        shelf = SharedSourceBundles(Path(live_storage_root))
+        try:
+            saved = shelf.list()
+        except (ValueError, OSError):
+            st.error("Shared source archive storage needs recovery. Existing files were not reset.")
+            return
+        if not saved:
+            st.info("No external-agent source archive is stored on Render yet.")
+            return
+        entries = {bundle.bundle_id: bundle for bundle in saved}
+        chosen = st.selectbox("Verified source archive", tuple(entries),
+                              key=_PREFIX + "source_bundle_select",
+                              format_func=lambda entry: "Original sources · " + entry[:12])
+        receipt = entries[chosen]
+        st.caption(f"Six originals · {receipt.archive_size:,} ZIP bytes · SHA-256: {receipt.archive_sha256}")
+        with st.expander("Source file names and original hashes"):
+            for source in receipt.source_files:
+                st.write(source.filename + " · " + source.sha256 + " · " + str(source.size_bytes) + " bytes")
+        # An 88 MB archived ZIP must not be read from disk on every editor
+        # fragment or normal full rerun. Only an explicit action materializes
+        # the verified download response, and only for that exact source.
+        action_scope = receipt.bundle_id + "_" + receipt.archive_sha256[:16]
+        if st.button("Prepare verified ZIP download", key=_PREFIX + "source_bundle_prepare_" + action_scope):
+            st.session_state[_PREFIX + "prepared_bundle"] = action_scope
+        if st.session_state.get(_PREFIX + "prepared_bundle") == action_scope:
+            try:
+                data = shelf.download(receipt.bundle_id)
+            except (OSError, ValueError):
+                st.error("Archive verification failed; original download is unavailable.")
+                st.session_state.pop(_PREFIX + "prepared_bundle", None)
+            else:
+                st.download_button("Download unchanged source archive", data,
+                                   file_name="ENFRA_MSAPO_Owner_Originals_2026-10-14_PORTABLE.zip",
+                                   mime="application/zip",
+                                   key=_PREFIX + "source_bundle_download_" + action_scope,
+                                   on_click="ignore")
+                st.caption("Download is hash-verified on this request. Test-run Reset never deletes the reference archive.")
+
+
 def render(browser_token, browser_timezone, field, move, live_storage_root):
     # The entry route owns initial binding; this validates its exact distinct
     # run token before touching either shared fixtures or ordinary report UI.
@@ -284,6 +354,7 @@ def render(browser_token, browser_timezone, field, move, live_storage_root):
     if error := st.session_state.pop(_PREFIX + "error", None):
         st.error(error)
     _render_upload()
+    _render_reference_bundle_shelf(live_storage_root)
     try:
         listing = library.list()
     except (ValueError, OSError):

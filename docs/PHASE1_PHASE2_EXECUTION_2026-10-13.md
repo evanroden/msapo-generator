@@ -1,5 +1,14 @@
 # ENFRA Phase 1 and Phase 2 execution and evidence ledger
 
+## October 14 external-agent reference shelf — upload pending
+
+The owner supplied six original documents for future testing. Their private originals, source SHA-256 manifest and one portable ZIP are retained in a persistent **ChatGPT Library** folder, which is *not* a generic external-agent download service. No document bytes, document names, source digests, extracted images or pricing data are to be committed to public Git, CI or logs. Deleting this chat must not be confused with proof of independent third-party hosting.
+
+`app/monthly_report_shared_source_bundles.py` adds a **bounded immutable reference ZIP shelf to the existing hidden, no-login shared QA area**. It uses the same explicitly rooted Render-mounted test storage and no-follow/marked-directory/atomic-transaction primitives as existing shared fixture storage, but never treats a reference ZIP as an AUTH01/02/03 report or working import. It validates six manifest-declared DOCX/PDF originals by length and full SHA-256 without extraction, rejects undeclared members, traversal, symlinks and oversized archives; retains previous originals on failed admission; and exposes read-only metadata plus an explicit hash-verified download. Each browser downloads only on deliberate Prepare/Download, not on every editor fragment. There is no deletion action, reset coupling, standing-data write, external reader, private service, hosting-plan change, or second report importer.
+
+**State boundary:** Source-bundle code/tests on `feat/shared-external-source-bundle-20261014` are not proof the Render disk contains the user files. An external-agent availability claim requires the one-time real ZIP upload into the served hidden testing UI, browser download SHA-256 comparison, and a second-browser **and redeploy/restart** read. The portable ZIP is 88,159,285 bytes, inside the 96 MiB admission cap; the existing authentic DOCX scenario importer remains separately capped at 25 MiB and cannot directly take the largest source. No AUTH scenario labels, target sites, owner expectations or half-finished status have been inferred. The hidden test area has **no login**: anyone who discovers its link can view/download the source ZIP; this is not confidentiality.
+
+
 ## Persistent cross-chat test evidence — October 14 (Library, not public Git)
 
 The owner requested test artifacts be retrievable by later agents instead of relying on short-lived Actions downloads or ephemeral container files. The eight archived artifacts and manifests were uploaded and their existence re-read through Files Library at:
