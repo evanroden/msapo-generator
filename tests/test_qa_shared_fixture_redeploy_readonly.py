@@ -8,8 +8,9 @@ import json
 import pytest
 
 from scripts.qa_shared_fixture_redeploy_readonly import (
-    KIND, ORIGIN, _browser_route, _save_new, _valid_commit, _valid_hash,
-    _valid_id, _selector_id, _validate_manifest, compare, verify_one,
+    KIND, ORIGIN, _browser_route, _native_fixture_id, _save_new,
+    _valid_commit, _valid_hash, _valid_id, _selector_id,
+    _validate_manifest, compare, verify_one,
 )
 
 
@@ -111,6 +112,29 @@ def test_visible_eight_character_fixture_prefix_is_supported_without_guessing_fu
     assert _selector_id(ID) == ID
     with pytest.raises(ValueError):
         _valid_id(ID[:8])  # Evidence must still contain the resolved full ID.
+
+
+def test_full_native_widget_identity_is_validated_against_selected_prefix_and_sha():
+    css = "stElementContainer st-key-_shared_fixture_download_" + ID + "_" + SHA[:16]
+    assert _native_fixture_id([css], ID[:8], SHA) == ID
+    assert _native_fixture_id([css], ID, SHA) == ID
+
+    with pytest.raises(AssertionError, match="unique"):
+        _native_fixture_id([], ID[:8], SHA)
+    with pytest.raises(AssertionError, match="unique"):
+        _native_fixture_id([css], ID[:8], "c" * 64)
+    with pytest.raises(AssertionError, match="wrong shared"):
+        _native_fixture_id([css], "b" * 8, SHA)
+    with pytest.raises(AssertionError, match="wrong shared"):
+        _native_fixture_id([css], ID[:8] + "c" * 24, SHA)
+
+    # An eight-character prefix collision fails closed, never picks the first.
+    other = ID[:8] + "c" * 24
+    other_css = "st-key-_shared_fixture_download_" + other + "_" + SHA[:16]
+    with pytest.raises(AssertionError, match="unique"):
+        _native_fixture_id([css, other_css], ID[:8], SHA)
+    with pytest.raises(AssertionError, match="unique"):
+        _native_fixture_id(["fake-prefix" + css], ID[:8], SHA)
 
 
 def test_unknown_served_revision_and_hash_are_rejected_before_browser():
