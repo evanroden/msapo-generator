@@ -220,7 +220,7 @@ def _check_native_package(original):
     # Validate central-directory bounds before ZipFile allocates member objects.
     # The shared AUTH route needs to ingest a real 28.5 MB original, but may
     # never trade the native parser's expanded/XML safety budgets for size.
-    offset = original.rfind(b"PK\\x05\\x06", max(0, len(original) - 65557))
+    offset = original.rfind(b"PK\x05\x06", max(0, len(original) - 65557))
     if offset < 0 or len(original) - offset < 22:
         raise ValueError("Fixture must be a native Starting report DOCX.")
     _, disk, central_disk, on_disk, count, central_size, central_offset, comment = struct.unpack_from("<4s4H2LH", original, offset)
@@ -235,7 +235,7 @@ def _check_native_package(original):
             if (len(info) > 4000 or len(set(names)) != len(names)
                     or not {"[Content_Types].xml", "word/document.xml"}.issubset(names)):
                 raise ValueError("Fixture must be a native Starting report DOCX with unique package members.")
-            if any(name.startswith("/") or "\\\\" in name or ".." in name.split("/") for name in names):
+            if any(name.startswith("/") or "\\" in name or ".." in name.split("/") for name in names):
                 raise ValueError("Fixture contains an unsafe package path.")
             if (sum(member.file_size for member in info) > 256 * 1024 * 1024
                     or any(member.file_size > 64 * 1024 * 1024 or member.flag_bits & 1
