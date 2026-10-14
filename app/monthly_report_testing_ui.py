@@ -103,8 +103,24 @@ def _generation_parts(draft):
                          "address_line", "synthetic", "follow_ups")}
     # Knowing that 'blocks' changed was insufficient for the prior failures:
     # Activity was unchanged, while another field could have been normalized.
-    parts.update({"block:" + block.key: _hash_generation_part(block)
-                  for block in draft.blocks})
+    from dataclasses import fields
+    for block in draft.blocks:
+        prefix = "block:" + block.key
+        parts[prefix] = _hash_generation_part(block)
+        # The real live failure changed only subcontractor_matrix while Activity
+        # stayed identical. Identify the specific field and cell, without ever
+        # emitting customer/vendor names or values. Only isolated synthetic QA
+        # invokes this routine; per-cell work is bounded by the fixture budget.
+        if block.key in {"subcontractor_matrix", "contact_matrix"}:
+            for attr in fields(block):
+                field_name = attr.name
+                parts[prefix + "." + field_name] = _hash_generation_part(getattr(block, field_name))
+            for t, table in enumerate(block.extra_tables[:16]):
+                table_prefix = prefix + ".extra_tables[" + str(t) + "]"
+                parts[table_prefix + ".columns"] = _hash_generation_part(table.columns)
+                for row_index, row in enumerate(table.rows[:100]):
+                    for col_index, cell in enumerate(row[:32]):
+                        parts[f"{table_prefix}.row[{row_index}].cell[{col_index}]"] = _hash_generation_part(cell)
     parts.update({"source:" + str(index): _hash_generation_part(source)
                   for index, source in enumerate(draft.sources)})
     parts["block-count"] = _hash_generation_part(len(draft.blocks))

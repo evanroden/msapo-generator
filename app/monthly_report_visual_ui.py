@@ -244,12 +244,26 @@ def _contact_rows(columns, rows, p, field, *, vendor=False):
     return tuple(edited), remove_index
 
 
+def _contact_widget_prefix(prefix, block_key):
+    """Mount report fields under the current report incarnation, not an old one.
+
+    Source import and QA reset can replace a report while keeping the same
+    contract, site and month. Reusing the old native text_input IDs lets a
+    delayed browser widget echo an earlier contact into the new immutable
+    draft during an unrelated Generate rerun. Reuse the established, stable
+    per-incarnation scope already used by Activity; ordinary edits and preview
+    fragments retain their IDs, while import/reset changes them.
+    """
+    from app.monthly_report_guided import _rich_text_scope
+    return prefix + "_contacts_" + block_key + "_" + _rich_text_scope(prefix)
+
+
 def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=True):
     if not draft.prepared_by.strip():
         st.info("Enter your name above to view or edit saved contacts.")
         return block
     block = preserve_asset_reviews(block, block)
-    p = prefix + "_contacts_" + block.key
+    p = _contact_widget_prefix(prefix, block.key)
     tables = list(block.extra_tables)
     has_primary = bool(block.rows or (spec.columns and not tables))
     if has_primary:
