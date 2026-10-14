@@ -65,6 +65,8 @@ def test_purchase_storage_and_external_actions_are_isolated_before_adaptive_chan
     isolated, generated = isolated_purchase
     app = sample_app()
     original = app.session_state["uploaded_file_bytes"]
+    assert original == app.session_state["quote_text"].encode("utf-8")
+    assert app.session_state["quote_source"] == "synthetic"
     assert memory._data_dir() == isolated
     next(w for w in app.text_input if w.label == "Your name (Requester / Asset Manager) *").set_value(
         "Synthetic Isolated Reviewer").run()
@@ -98,6 +100,7 @@ def test_adaptive_pairs_show_exact_source_then_only_current_generated_form(
     original = app.session_state["uploaded_file_bytes"]
     assert shown[-1]["raw"] == original
     assert shown[-1]["key"] == "purchase_quote"
+    assert shown[-1]["title"] == "Synthetic sample quote"
     assert not any(item["key"] == "purchase_msapo" for item in shown)
     markers = [node.value for node in app.markdown if "data-epc-pair=" in node.value]
     assert sum('data-epc-pair="purchase_review"' in node for node in markers) == 1
@@ -113,10 +116,12 @@ def test_adaptive_pairs_show_exact_source_then_only_current_generated_form(
     assert shown[-1]["raw"] == generated_bytes
     before = {p.relative_to(isolated): sha256(p.read_bytes()).hexdigest()
               for p in isolated.rglob("*") if p.is_file()}
-    next(w for w in app.toggle if w.label == "Compare original quote").set_value(True).run()
-    assert shown[-1]["key"] == "purchase_package_quote"
-    assert shown[-1]["raw"] == original
-    next(w for w in app.toggle if w.label == "Compare original quote").set_value(False).run()
+    # No compare toggle duplicates the source in the generated package.
+    # The original remains visible in the preceding authoritative editor.
+    assert not any(w.label == "Compare original quote" for w in app.toggle)
+    assert any(item["key"] == "purchase_quote" and item["raw"] == original
+               and item["owner_scope"] == identity for item in shown)
+    app.run()
     assert shown[-1]["key"] == "purchase_msapo"
     assert shown[-1]["raw"] == generated_bytes
     assert shown[-1]["owner_scope"] == identity
