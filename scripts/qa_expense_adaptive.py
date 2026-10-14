@@ -310,9 +310,14 @@ def run(browser_type,name):
         loaded_page(first,1)
         inject(page,[{'x':0,'y':0,'width':640,'height':1000},{'x':672,'y':0,'width':768,'height':1000}]);mode(page,'book')
         pane=first.locator('.report-preview').bounding_box()
-        check(name+' natural book preview stays clear of fold',
+        scroll_accessible=first.locator('.report-preview-scroll').evaluate(
+            'node=>node.clientHeight>0 && node.scrollHeight>node.clientHeight')
+        # A normally scrolling document may extend below the fold; unlike the
+        # removed enlargement modal, it need not fit its full height onscreen.
+        check(name+' book preview clears fold and all pages remain scroll-reachable',
               pane['x']>=678 and pane['x']+pane['width']<=1440 and
-              pane['y']+pane['height']<=1000,pane)
+              pane['y']>=0 and pane['y']<1000 and scroll_accessible,
+              {'pane':pane,'scroll_accessible':scroll_accessible})
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
         description=first.get_by_label('Description / business purpose *',exact=True).first
         description.fill('Unblurred synthetic expense correction')
@@ -327,8 +332,13 @@ def run(browser_type,name):
         loaded_page(first,1)
         page.screenshot(path=str(OUT/f'{name}-expense-tabletop.png'))
         pane=first.locator('.report-preview').bounding_box()
-        check(name+' natural tabletop preview stays in upper segment',
-              pane['y']>=0 and pane['y']+pane['height']<=414+2,pane)
+        clip=first.locator('.epc-workspace-reference').bounding_box()
+        # The upper segment clips a potentially long scrollable preview; the
+        # visible reference boundary, not the entire inner document, must fit.
+        check(name+' visible tabletop preview stays in upper segment',
+              clip['y']>=0 and clip['y']+clip['height']<=414+2 and
+              pane['x']>=clip['x']-2 and pane['y']>=clip['y']-2,
+              {'pane':pane,'visible_clip':clip})
         expect(first.locator('.report-preview-position')).to_have_text('2 / 2')
         page.locator('.epc-workspace').evaluate("root=>{const n=root.querySelectorAll('.epc-workspace-pair')[1];root.scrollTop+=n.getBoundingClientRect().top-root.getBoundingClientRect().top+80;}")
         expect(second).to_have_attribute('data-epc-active','true')
