@@ -210,7 +210,7 @@ def _process_pending(library, browser_token, live_storage_root):
             if upload is None:
                 raise ValueError("Choose a native Word report to upload.")
             if upload.size > _LIMIT:
-                raise ValueError("The report exceeds the 25 MB fixture limit.")
+                raise ValueError("The report exceeds the 32 MiB fixture limit.")
             metadata = _upload_metadata()
             receipt = library.upload(upload.getvalue(), metadata)
             st.session_state[_PREFIX + "upload_receipt"] = receipt.fixture_id
