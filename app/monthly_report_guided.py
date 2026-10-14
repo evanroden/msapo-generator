@@ -135,13 +135,23 @@ def _render_rich_text_recovery(marker, widget_key, block, scope):
     if recovered.get("scope") != scope:
         st.session_state.pop(recovery_key, None)
         return
-    with st.expander("Review interrupted edit"):
-        st.caption("This section changed before your earlier edit finished. "
-                   "The current wording is unchanged; your interrupted edit is kept here for this session.")
+    # A stale full-render or import can leave a genuine interrupted draft
+    # edit. Put the conflict beside its actual editor, never inside a collapsed
+    # disclosure where a busy operator would miss a refused replacement.
+    # Both values are read-only until an explicit revision-bound choice.
+    with st.container(border=True):
+        st.warning("Your earlier edit was interrupted by a newer version of this section. "
+                   "Both versions are available here; nothing has been overwritten.")
+        st.markdown("**Current wording (kept in this report)**")
+        if block.text:
+            st.code(block.text, language=None, wrap_lines=True)
+        else:
+            st.caption("The current section is empty.")
+        st.markdown("**Interrupted wording (not applied)**")
         if recovered["text"]:
             st.code(recovered["text"], language=None, wrap_lines=True)
         else:
-            st.caption("The interrupted edit cleared this section.")
+            st.caption("Your interrupted edit cleared the section.")
         st.button("Apply interrupted edit", key=marker + "_apply_recovery",
                   on_click=_recover_rich_text_edit,
                   args=(marker, widget_key, block, scope))
