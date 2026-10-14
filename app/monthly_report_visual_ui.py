@@ -265,7 +265,10 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
     block = preserve_asset_reviews(block, block)
     p = _contact_widget_prefix(prefix, block.key)
     tables = list(block.extra_tables)
-    has_primary = bool(block.rows or (spec.columns and not tables))
+    # Output headings do not make an image-capable block an editable table.
+    # Preserve its explicit image replacement/conversion path until rows exist;
+    # true table blocks still expose an initially empty editable table.
+    has_primary = bool(block.rows or (spec.type == "table" and spec.columns and not tables))
     if has_primary:
         tables.insert(0, ReportTable(tuple(c.title for c in spec.columns), block.rows))
     if tables and block.asset_hashes:
