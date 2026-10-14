@@ -428,7 +428,7 @@ def _table(element, columns, rows, *, physical_indices=(), continuation=False, k
                     size.set(qn("w:w"), str(widths[column] if widths else cell_width))
                     size.set(qn("w:type"), "dxa")
             _clear_images(cell)
-            _set_text(cell, str(value))
+            _set_text(cell, "" if value is None else str(value))
             row.append(cell)
         # Source fixed row heights cannot clip the user's longer current text.
         for height in list(row.iter(qn("w:trHeight"))):
