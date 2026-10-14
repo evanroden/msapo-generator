@@ -108,6 +108,13 @@ def test_invalid_fixture_ids_fail_before_any_browser_request(bad):
         verify_one(bad, SHA, BEFORE, "before")
 
 
+def test_visible_eight_character_fixture_prefix_is_supported_without_guessing_full_id():
+    assert _selector_id(ID[:8]) == ID[:8]
+    assert _selector_id(ID) == ID
+    with pytest.raises(ValueError):
+        _valid_id(ID[:8])  # Evidence must still contain the resolved full ID.
+
+
 def test_unknown_served_revision_and_hash_are_rejected_before_browser():
     with pytest.raises(ValueError):
         _valid_commit(BEFORE[:10])
