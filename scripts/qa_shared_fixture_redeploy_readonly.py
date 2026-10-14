@@ -66,7 +66,7 @@ def _validate_manifest(value: dict, phase: str) -> dict:
     size = value.get("original_size")
     if type(size) is not int or not 1 <= size <= MAX_ORIGINAL:
         raise ValueError("Original length is outside the shared fixture limit.")
-    if value.get("read_only_checks") != ["exact_served_commit", "selected_original_identity", "original_download_sha256"]:
+    if value.get("read_only_checks") != ["exact_served_commit", "selected_original_identity", "original_download_sha256", "served_commit_after_download"]:
         raise ValueError("The three mandatory read-only checks did not complete.")
     try:
         moment = datetime.fromisoformat(value["verified_at_utc"].replace("Z", "+00:00"))
@@ -154,6 +154,14 @@ def _served_commit(page, expected: str) -> None:
     raise AssertionError("Expected commit not yet served (last observation: " + last[:120] + ").")
 
 
+def _served_once_after_download(page, expected: str) -> None:
+    """Reject deployment cutover between initial build check and download."""
+    from playwright.sync_api import expect
+    page.goto(ORIGIN + BUILD_ROUTE, wait_until="domcontentloaded", timeout=65000)
+    status = page.get_by_text(re.compile(r"^Running code: [0-9a-f]{40}$")).first
+    expect(status).to_have_text("Running code: " + expected, timeout=16000)
+
+
 def verify_one(fixture_id: str, original_hash: str, served_commit: str,
                phase: str) -> dict:
     """Read only one explicitly specified original; never enumerate its contents."""
@@ -227,6 +235,10 @@ def verify_one(fixture_id: str, original_hash: str, served_commit: str,
                     digest.update(chunk)
             if digest.hexdigest() != original_hash or not 1 <= size <= MAX_ORIGINAL:
                 raise AssertionError("The downloaded original bytes do not match the known hash.")
+            # Bracket the immutable download with the same served build. If
+            # Render switched revisions mid-request, do not issue a falsely
+            # attributed before/after receipt for an unknown server revision.
+            _served_once_after_download(page, served_commit)
             if rejected or errors:
                 raise AssertionError("Browser blocked external requests or raised a script error.")
         finally:
@@ -238,6 +250,7 @@ def verify_one(fixture_id: str, original_hash: str, served_commit: str,
         "verified_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "read_only_checks": [
             "exact_served_commit", "selected_original_identity", "original_download_sha256",
+            "served_commit_after_download",
         ],
     }
 
