@@ -294,7 +294,7 @@ def _csv_activity_entries(content):
             def cell(index):
                 return str(row[index]).strip() if index is not None and index < len(row) else ""
             narrative = cell(action)
-            if not useful_activity(narrative) or contains_price(narrative):
+            if _date_only_source_label(narrative) or not useful_activity(narrative) or contains_price(narrative):
                 continue
             status_text = cell(status)
             if status_text and not contains_price(status_text):
@@ -353,6 +353,8 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 for line, header_date in _activity_lines(
                         text, content.source.suffix, with_dates=True):
                     line = line.strip()
+                    if _date_only_source_label(line):
+                        continue
                     if useful_activity(line) and not contains_price(line):
                         dated = header_date if tagged_txt else output_identity.service_date
                         grounded = _activity_identity(line, output_identity, dated)
