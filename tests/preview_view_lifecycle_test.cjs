@@ -27,10 +27,19 @@ class Element {
 function dom() {
     const root=new Element(), panel=new Element();panel.className='report-preview';root.append(panel);
     for(const name of ['status','scroll','position']) {const e=new Element();e.className='report-preview-'+name;panel.append(e);}
-    panel.append(new Element('select'));
-    for(const action of ['previous','next','enlarge','retry-request']) {const e=new Element('button');e.dataset.action=action;panel.append(e);}
+    const retry=new Element('button');retry.dataset.action='retry-request';panel.append(retry);
     return {root,panel};
 }
+
+test('viewer presents a scroll-only document without page, fit, zoom or enlarge controls',()=>{
+    const file=fs.readFileSync('app/monthly_report_preview_view.py','utf8');
+    const html=file.split('\n').find(line=>line.startsWith('HTML = '));
+    assert.ok(html && html.includes('report-preview-scroll'));
+    assert.ok(html.includes('tabindex="0"'),'native keyboard scrolling remains available');
+    assert.ok(html.includes('retry-request') && html.includes(' hidden>'),'only failure retry is present');
+    assert.ok(!/<select|data-action="(?:previous|next|enlarge)"|Fit width|Fit page|125%|150%/.test(html),
+        'no disabled, hidden, or focusable legacy navigation/zoom widgets remain');
+});
 
 test('new page data disposes prior observers and late callbacks cannot size or request old data',()=>{
     const {root,panel}=dom(), timers=new Map(), sent=[], observers=[];
@@ -49,7 +58,7 @@ test('new page data disposes prior observers and late callbacks cannot size or r
     const newCleanup=invoke({generation:'current',sizes:[[612,792],[612,792]],ready:true});
     assert.equal(panel.querySelectorAll('figure').length,2);
     assert.equal(observers.filter(observer=>observer.active).length,3);
-    assert.equal(document.listeners.get('keydown').size,1);
+    assert.equal(document.listeners.has('keydown'),false,'preview has no enlargement Escape handler');
     // Already queued work can run even after disconnect. It must be a no-op.
     assert.doesNotThrow(()=>oldResize.callback());
     oldIntersection.callback([{isIntersecting:false}]);
@@ -73,7 +82,7 @@ test('new page data disposes prior observers and late callbacks cannot size or r
     newCleanup();newCleanup();
     assert.equal(context.window.__enfraPreviewViews.get('draft-a|activity').offset,137);
     assert.equal(observers.filter(observer=>observer.active).length,0);
-    assert.equal(document.listeners.get('keydown').size,0);
+    assert.equal(document.listeners.has('keydown'),false);
 });
 
 test('delayed workspace cleanup cannot release a newer tabletop scroll owner',()=>{
@@ -144,10 +153,21 @@ test('hidden remount and cache reload preserve a page anchor until real paginati
     const invoke=sizes=>render({parentElement:root,data:{generation:'same-content',viewScope:'one|activity',pages:[],sizes,ready:Boolean(sizes.length)},setStateValue:()=>{}});
     const sizes=[[612,792],[612,792],[612,792]];
     invoke(sizes);
-    panel.querySelector('[data-action="next"]').onclick();
-    panel.querySelector('[data-action="next"]').onclick();
     const scroll=panel.querySelector('.report-preview-scroll');
-    scroll.scrollTop=73;
+    const figures=scroll.querySelectorAll('figure');
+    // A normal scrolling action moves the third page into view. No internal
+    // navigation controls or direct preview-state injection are involved.
+    figures.forEach((figure,index)=>{
+        figure.offsetTop=index*600;
+        figure.getBoundingClientRect=()=>({
+            top:index*600-scroll.scrollTop,bottom:(index+1)*600-scroll.scrollTop
+        });
+    });
+    assert.equal(figures[0].style.width,'376px','native pages fit the available 400px pane');
+    scroll.scrollTop=1273;
+    for(const listener of scroll.listeners.get('scroll'))listener();
+    for(const callback of [...timers.values()])callback();timers.clear();
+    assert.equal(panel._previewState.page,2,'scrolling selects page three');
     // Hide before cleanup, as compact/tabletop may do before a fragment update.
     panel._previewCleanup();
     scroll.clientWidth=0;scroll.clientHeight=0;scroll.scrollTop=0;

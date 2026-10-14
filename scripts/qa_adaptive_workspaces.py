@@ -79,6 +79,18 @@ def capture(page, browser, label):
     return observed
 
 
+def scroll_preview_to_page(preview, index):
+    """Navigate actual stacked document pages with the user's scrollport."""
+    preview.locator('.report-preview-scroll').evaluate("""(scroll, index) => {
+        const page=scroll.querySelector('figure[data-index="'+index+'"]');
+        if (!page) throw Error('Requested real preview page is absent');
+        scroll.scrollTop=page.offsetTop-scroll.offsetTop+12;
+        scroll.dispatchEvent(new Event('scroll',{bubbles:true}));
+    }""", index)
+    expect(preview.locator('.report-preview-position')).to_have_text(
+        re.compile(r'^'+str(index+1)+r' /'), timeout=30000)
+
+
 def loaded_page(preview,index,name):
     image=preview.locator(f'figure[data-index="{index}"] img')
     expect(image).to_be_visible(timeout=30000)
@@ -119,9 +131,11 @@ def exercise(browser_type, name):
         loaded_page(preview,0,name+' reverse')
         reverse=capture(page,name,'reverse-boundary')
         check(name+' reverse scroll restores same preview',abs(reverse['pairs'][0]['preview']['top']-reverse['pairs'][0]['stickyTop'])<=3)
-        preview.get_by_role('button',name='Next preview page').click()
-        preview.get_by_label('Preview zoom').select_option('page')
-        page.wait_for_function("() => Array.from(document.querySelector('.st-key-epc_pair_monthly_activity').querySelectorAll('*')).some(n=>n.shadowRoot?.querySelector('.report-preview-position')?.textContent==='2 / 2')")
+        check(name+' preview has no application navigation or zoom toolbar',
+              preview.locator('.report-preview-tools, [data-action="previous"], '
+                              '[data-action="next"], [data-action="enlarge"], '
+                              'select[aria-label="Preview zoom"]').count()==0)
+        scroll_preview_to_page(preview,1)
         loaded_page(preview,1,name+' before transitions')
         field=page.get_by_label('Work summary activity',exact=True)
         field.click(); field.fill('Typed without blur; preserved through geometry transitions')
@@ -131,14 +145,12 @@ def exercise(browser_type, name):
         settled(page,'book')
         loaded_page(preview,1,name+' book')
         expect(preview.locator('.report-preview-position')).to_have_text('2 / 2')
-        expect(preview.get_by_label('Preview zoom')).to_have_value('page')
         book=capture(page,name,'asymmetric-book')
         check(name+' asymmetric crease clearance',book['pairs'][0]['preview']['left']>=696-3,book['pairs'][0])
         inject(page,[{'x':0,'y':0,'width':1440,'height':380},{'x':0,'y':410,'width':1440,'height':490}])
         settled(page,'tabletop')
         loaded_page(preview,1,name+' tabletop')
         expect(preview.locator('.report-preview-position')).to_have_text('2 / 2')
-        expect(preview.get_by_label('Preview zoom')).to_have_value('page')
         table=capture(page,name,'tabletop')
         active=[p for p in table['pairs'] if p['active']=='true']
         check(name+' one upper preview',len(active)==1 and active[0]['preview']['bottom']<=380 and active[0]['preview']['top']>=0,active)
@@ -146,7 +158,8 @@ def exercise(browser_type, name):
         after=field.evaluate('(node)=>({value:node.value,start:node.selectionStart,end:node.selectionEnd})')
         check(name+' unblurred input and selection survive',before==after,after)
         check(name+' input node retained and focus preserved',field.evaluate('(node)=>node===document.activeElement'))
-        check(name+' page and zoom retained through book and tabletop',preview.locator('.report-preview-position').inner_text()=='2 / 2' and preview.get_by_label('Preview zoom').input_value()=='page')
+        check(name+' selected reading page retained through book and tabletop',
+              preview.locator('.report-preview-position').inner_text()=='2 / 2')
         page.locator('.epc-workspace').evaluate('''root=>{
            const next=root.querySelector('.st-key-epc_pair_monthly_scorecards');
            root.scrollTop+=next.getBoundingClientRect().top-root.getBoundingClientRect().top+80;

@@ -57,9 +57,9 @@ def capture(page, browser, name):
 
 
 def preview_position(reference):
-    """Read the mounted user's controls plus their retained numeric view state."""
+    """Read the current stacked page and retained reading position."""
     return reference.locator(".report-preview").evaluate("""panel => ({
-        page:panel._previewState.page,zoom:panel.querySelector('select').value,
+        page:panel._previewState.page,
         offset:panel._previewState.offset,
         label:panel.querySelector('.report-preview-position').textContent,
         scrollTop:panel.querySelector('.report-preview-scroll').scrollTop,
@@ -71,7 +71,19 @@ def full_app_runs(page):
     return int(page.get_by_text(re.compile(r"^Synthetic full-app run count: ")).inner_text().rsplit(": ",1)[1])
 
 
-def wait_preview_ack(reference, *, image, page_number, zoom):
+def scroll_preview_to_page(reference, index):
+    """Scroll genuine source/result pages; dispatch the normal passive event."""
+    reference.locator('.report-preview-scroll').evaluate("""(scroll, index) => {
+        const figure=scroll.querySelector('figure[data-index="'+index+'"]');
+        if (!figure) throw Error('The expected generated/source page is missing');
+        scroll.scrollTop=figure.offsetTop-scroll.offsetTop+12;
+        scroll.dispatchEvent(new Event('scroll',{bubbles:true}));
+    }""", index)
+    expect(reference.locator('.report-preview-position')).to_have_text(
+        re.compile(r'^'+str(index+1)+r' /'), timeout=20000)
+
+
+def wait_preview_ack(reference, *, image, page_number):
     loaded = reference.locator(f'img[alt="{image} — page {page_number + 1}"]')
     expect(loaded).to_be_visible()
     expect(loaded).to_have_js_property("complete", True)
@@ -85,12 +97,12 @@ def wait_preview_ack(reference, *, image, page_number, zoom):
         const deadline=performance.now()+15000;
         while (performance.now()<deadline) {
             const state=panel._previewState;
-            if (state.page===expected.page && state.zoom===expected.zoom &&
+            if (state.page===expected.page &&
                 JSON.parse(state.sent||'{}').pages?.includes(expected.page)) return;
             await new Promise(resolve=>requestAnimationFrame(resolve));
         }
-        throw new Error('Preview operation never acknowledged requested page/zoom');
-    }""", {"page":page_number,"zoom":zoom})
+        throw new Error('Preview scroll never acknowledged requested page');
+    }""", {"page":page_number})
 
 
 def exercise(engine, name):
@@ -163,18 +175,21 @@ def exercise_page(page, name, errors):
     page.get_by_role("button", name="Generate both files and Smartsheet link", exact=True).click()
     page.get_by_text("Synthetic generation count: 1", exact=True).wait_for(timeout=150000)
     package.locator('img[alt^="Generated MSAPO — page "]').first.wait_for()
-    package.get_by_label("Preview zoom", exact=True).select_option("1.25")
-    package.get_by_role("button", name="Next preview page", exact=True).click()
-    wait_preview_ack(package,image="Generated MSAPO",page_number=1,zoom="1.25")
+    check(name + " package viewer has no navigation/zoom/enlarge toolbar",
+          package.locator('.report-preview-tools, [data-action="previous"], '
+                          '[data-action="next"], [data-action="enlarge"], '
+                          'select[aria-label="Preview zoom"]').count() == 0)
+    scroll_preview_to_page(package,1)
+    wait_preview_ack(package,image="Generated MSAPO",page_number=1)
     output_view = preview_position(package)
-    # This navigation requires a bounded raster update; it must stay a fragment
-    # action rather than replaying the PO workflow or rebuilding the document.
+    # Normal scrolling requests a bounded raster in its fragment, never
+    # replaying a PO business mutation or generating another form.
     app_runs = full_app_runs(page)
-    package.get_by_role("button", name="Previous preview page", exact=True).click()
-    wait_preview_ack(package,image="Generated MSAPO",page_number=0,zoom="1.25")
-    package.get_by_role("button", name="Next preview page", exact=True).click()
-    wait_preview_ack(package,image="Generated MSAPO",page_number=1,zoom="1.25")
-    check(name + " preview page actions avoid full-app reruns",full_app_runs(page)==app_runs,
+    scroll_preview_to_page(package,0)
+    wait_preview_ack(package,image="Generated MSAPO",page_number=0)
+    scroll_preview_to_page(package,1)
+    wait_preview_ack(package,image="Generated MSAPO",page_number=1)
+    check(name + " preview scrolling avoids full-app reruns",full_app_runs(page)==app_runs,
           {"before":app_runs,"after":full_app_runs(page)})
     compare = package.get_by_label("Compare original quote", exact=True)
     # Locked Streamlit uses a visually hidden React Aria input. Click its
@@ -182,15 +197,14 @@ def exercise_page(page, name, errors):
     compare.locator("xpath=ancestor::label[1]").click()
     expect(compare).to_be_checked()
     package.locator('img[alt^="Original quote — page "]').first.wait_for()
-    package.get_by_label("Preview zoom", exact=True).select_option("page")
-    package.get_by_role("button", name="Next preview page", exact=True).click()
-    wait_preview_ack(package,image="Original quote",page_number=1,zoom="page")
+    scroll_preview_to_page(package,1)
+    wait_preview_ack(package,image="Original quote",page_number=1)
     compare.locator("xpath=ancestor::label[1]").click()
     expect(compare).not_to_be_checked()
-    wait_preview_ack(package,image="Generated MSAPO",page_number=1,zoom="1.25")
+    wait_preview_ack(package,image="Generated MSAPO",page_number=1)
     returned_view = preview_position(package)
-    check(name + " comparison restores exact output page zoom and scope",
-          all(returned_view[key]==output_view[key] for key in ("page","zoom","scope","label")),
+    check(name + " comparison restores exact output reading page and scope",
+          all(returned_view[key]==output_view[key] for key in ("page","scope","label")),
           {"before":output_view,"after":returned_view})
     check(name + " comparison restores output reading offset",
           abs(returned_view["offset"]-output_view["offset"])<=3 and
