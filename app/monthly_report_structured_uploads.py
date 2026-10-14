@@ -157,33 +157,113 @@ def mapped_rows(content, destination, table_columns=None):
     return tuple(dict.fromkeys(rows))
 
 
-_EVENT_START = re.compile(r"^\s*\d{4}-\d{2}-\d{2}\s*\|")
+_EVENT_START = re.compile(r"^\s*(\d{4}-\d{2}-\d{2})\s*\|")
 
 
-def _activity_lines(text, suffix):
-    """Extract only activity-labelled passages from a multi-section TXT export.
+def _activity_lines(text, suffix, *, with_dates=False):
+    """Select Activity passages; optionally retain their exact event header date.
 
-    Never classify Training, RFI, water or scorecard statements as completed
-    onsite work merely because the same text file includes them. Historical
-    vendor service labels still belong in Activity. Non-sectioned texts retain
-    their existing conservative extraction.
+    The default string-only result remains compatible with existing callers.
+    Source dates are evidence, not proof that work is complete or current.
     """
     if suffix != ".txt" or not any(_EVENT_START.match(line) for line in text.splitlines()):
-        return tuple(text.splitlines())
+        lines = tuple(text.splitlines())
+        return tuple((line, "") for line in lines) if with_dates else lines
+    from datetime import date
     current_is_activity = False
+    event_date = ""
     result = []
     excluded = ("training summary", "water treatment", "rfi matrix",
                 "monthly scorecards", "equipment performance issues")
     for line in text.splitlines():
         match = _EVENT_START.match(line)
         if match:
+            try:
+                event_date = date.fromisoformat(match.group(1)).isoformat()
+            except ValueError:
+                event_date = ""  # Invalid dates stay unresolved.
             label = line.rsplit("|", 1)[-1].casefold().strip()
             current_is_activity = not any(term in label for term in excluded)
-            # The event header is source context; never infer completion or
-            # the employer solely from its classification label.
             continue
         if current_is_activity:
-            result.append(line)
+            result.append((line, event_date) if with_dates else line)
+    return tuple(result)
+
+
+def _activity_identity(line, source, event_date):
+    """Prefix only verified source-authored vendor/date, never file/report dates."""
+    from datetime import date
+    parts = []
+    try:
+        dated = date.fromisoformat(event_date).isoformat() if event_date else ""
+    except ValueError:
+        dated = ""
+    if dated and dated not in line:
+        parts.append(dated)
+    vendor = source.vendor.strip()
+    # A source's vendor label can contain a person's email or telephone
+    # instead of a company identity. Do not introduce that contact detail
+    # merely by enriching otherwise client-safe Activity wording.
+    unsafe_contact = "@" in vendor or sum(ch.isdigit() for ch in vendor) >= 10
+    if vendor and not unsafe_contact and len(vendor) <= 160 and not contains_price(vendor):
+        if vendor.casefold() not in line.casefold():
+            parts.append(vendor)
+    return " · ".join(parts) + " — " + line if parts else line
+
+
+def _csv_has_site_scope_column(content):
+    """A row-specific site/client needs target mapping before auto-Activity."""
+    site_tokens = {"facility", "site", "client", "customer",
+                   "hospital", "building", "location"}
+    return content.source.suffix == ".csv" and any(
+        site_tokens.intersection(re.findall(r"[a-z0-9]+", title.casefold()))
+        for table in content.tables for title in table.columns)
+
+
+def _csv_activity_entries(content):
+    """Recognized vendor-work CSV columns only; never guess site or date scope.
+
+    None means this table has no unambiguous native Activity schema. An empty
+    tuple means it was recognized but no safe rows may be auto-included.
+    Existing work-order/status counting has its own separate reviewed path.
+    """
+    if content.source.suffix != ".csv" or not content.tables:
+        return None
+    result = []
+    for number, table in enumerate(content.tables, 1):
+        names = tuple(re.sub(r"[^a-z0-9]", "", name.casefold()) for name in table.columns)
+        if _csv_has_site_scope_column(content):
+            # The source may mix target and foreign sites. Without target
+            # profile mapping, show the file for manual review instead.
+            return ()
+        def column(accepted):
+            found = [index for index, name in enumerate(names) if name in accepted]
+            return found[0] if len(found) == 1 else None
+        action = column({"activity", "workperformed", "workdescription",
+                         "servicenotes", "servicedetails", "actions", "findings"})
+        if action is None:
+            return None
+        vendor = column({"vendor", "contractor", "servicecompany"})
+        dated = column({"servicedate", "eventdate", "workdate",
+                        "inspectiondate", "date"})
+        status = column({"status", "workstatus", "completionstatus"})
+        for row in table.rows:
+            def cell(index):
+                return str(row[index]).strip() if index is not None and index < len(row) else ""
+            narrative = cell(action)
+            if not useful_activity(narrative) or contains_price(narrative):
+                continue
+            status_text = cell(status)
+            if status_text and not contains_price(status_text):
+                narrative += " (Status: " + status_text + ")"
+            date_text = cell(dated) if dated is not None else content.source.service_date
+            # Numeric and locale-ambiguous dates must not become reported facts.
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
+                date_text = ""
+            source = replace(content.source, vendor=cell(vendor) or content.source.vendor)
+            rendered = _activity_identity(narrative, source, date_text)
+            if not contains_price(rendered):
+                result.append((number, rendered))
     return tuple(result)
 
 
@@ -195,15 +275,27 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
         from app.monthly_report_work_order_csv import is_work_order_source
         for content in contents:
             if is_work_order_source(content):
-                # CSV table headers and rows are source evidence, not Activity
-                # prose. Offer the independently calculated work-order facts
-                # alongside the editor for explicit review instead.
+                # CMMS/counting sources use their own reviewed metrics path.
+                continue
+            csv_rows = _csv_activity_entries(content)
+            if csv_rows is not None:
+                for number, line in csv_rows:
+                    origin = f"{content.source.id}:{number}:"
+                    if any(ref.startswith(origin) for ref in existing.references):
+                        continue
+                    paragraphs.append(line)
+                    references.append(sources.source_reference(content.source, number))
                 continue
             for number, text in enumerate(content.source.page_texts, 1):
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
                 # must not be reinserted when the same file is read again.
-                if reference in existing.references:
+                # Date/site corrections alter a source fingerprint without
+                # changing its original bytes or page identity. A prior manual
+                # correction/deletion on that page must not be duplicated merely
+                # because the source metadata was corrected and reviewed again.
+                origin = f"{content.source.id}:{number}:"
+                if any(ref.startswith(origin) for ref in existing.references):
                     continue
                 tagged_txt = (content.source.suffix == ".txt"
                               and any(_EVENT_START.match(line) for line in text.splitlines()))
@@ -214,11 +306,15 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                for line in _activity_lines(text, content.source.suffix):
+                for line, header_date in _activity_lines(
+                        text, content.source.suffix, with_dates=True):
                     line = line.strip()
                     if useful_activity(line) and not contains_price(line):
-                        paragraphs.append(line)
-                        references.append(reference)
+                        dated = header_date if tagged_txt else content.source.service_date
+                        grounded = _activity_identity(line, content.source, dated)
+                        if not contains_price(grounded):
+                            paragraphs.append(grounded)
+                            references.append(reference)
         text = "\n\n".join(dict.fromkeys(filter(None, (*existing.text.split("\n\n"), *paragraphs))))
         return replace(existing, text=text, references=tuple(dict.fromkeys(references)), reviewed_fingerprint="")
     rows = list(existing.rows)
@@ -308,10 +404,28 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                 continue
         if number not in source.needs_vision and any(normal(c) not in normal(source.page_texts[number - 1]) for c in cells if c.strip()):
             raise ValueError("Suggested wording was not present on the cited source page.")
+        if (destination == "activity_summary"
+                and _csv_has_site_scope_column(by_id[source.id])):
+            raise ValueError(
+                "This CSV contains site-specific rows. Check the target facility "
+                "and explicitly select the relevant work before adding Activity.")
         refs.append(sources.source_reference(source, number))
         if destination == "activity_summary":
             if text.strip() and useful_activity(text):
-                texts.append(text.strip())
+                proposed = text.strip()
+                # The native extractive pass may have already inserted this
+                # verbatim source passage with its reviewed event-date/vendor
+                # prefix. A later cached/network reader must not append a
+                # second copy merely because the rendered prefix differs.
+                # Require the SAME source/page reference: unrelated matching
+                # wording in a different source is not an acceptance receipt.
+                origin = f"{source.id}:{number}:"
+                already_present = (
+                    any(ref.startswith(origin) for ref in block.references)
+                    and (not block.text.strip()
+                         or normal(proposed) in normal(block.text)))
+                if not already_present:
+                    texts.append(proposed)
             if item.get("include_page") is True and [source.id, number] in value.get("visual_pages", []) and page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)[0] not in {"pricing", "legal", "signature"}:
                 pages.setdefault(source.id, set()).add(number)
         elif any(row):
