@@ -1,5 +1,9 @@
 # Shared authentic-report testing
 
+## Current tested-main and storage boundary — October 14, after 05:05 UTC
+
+The new code main `ad55fb6b9e043f10812224f00c9c17b78845ff8e` passed [Required 38513548917](https://github.com/evanroden/msapo-generator/actions/runs/38513548917), [Chromium/WebKit adaptive 38513548892](https://github.com/evanroden/msapo-generator/actions/runs/38513548892), and [actual served two-session live 38513993073](https://github.com/evanroden/msapo-generator/actions/runs/38513993073). All three used synthetic exercises, and none executed an already-uploaded shared original before/after *two different* served Render deployments. **Render fixture persistence remains NOT VERIFIED**, notwithstanding successful independent source ingestion and generated Word/PDF. Do not upload a genuine client DOCX for this test; preserve the owner-selected AUTH01–03, physical Safari and native Word/Adobe acceptance gates.
+
 ## Opt-in production original-hash verification across served builds — October 14
 
 The separate [shared fixture persistence verifier](../scripts/qa_shared_fixture_redeploy_readonly.py) and manually dispatched GitHub Actions workflow `Shared Fixture Redeploy Read-only` check **one explicitly selected already-uploaded DOCX**. They never upload, replace, reset, invoke AI, modify Render service/disk settings or attach the original bytes to an artifact. Prefer a clearly labelled **synthetic** test fixture; never select a real owner's confidential document without their explicit approval. The existing URL is anonymous, discoverable and **not confidential**.
