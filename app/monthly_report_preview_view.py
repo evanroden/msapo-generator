@@ -105,12 +105,27 @@ export default function(component) {
                 if (label?.querySelector('input[type="checkbox"], input[type="radio"]'))
                     awaitNativeEdit();
             };
+            // Multiline text remains unacknowledged while the operator types.
+            // A geometry change can otherwise dispatch view fragments before
+            // blur/on_change commits the native text area. Capture only its
+            // input EVENT (not any text) and defer disposable view updates
+            // until the distinct completed editor render acknowledges it.
+            // Ordinary focus, viewer controls and non-editor fields do not
+            // open this gate; it does not submit or alter business data.
+            const nativeEditorInput = event => {
+                const target = event.target;
+                if (!target?.matches?.('textarea') || target.closest?.('.report-preview')) return;
+                if (!target.closest?.('[class*="st-key-epc_edit_"]') &&
+                        !target.closest?.('.epc-workspace-editor')) return;
+                awaitNativeEdit();
+            };
+            app.addEventListener('input', nativeEditorInput, true);
             app.addEventListener('change', nativeChange, true);
             app.addEventListener('click', nativeChoiceClick, true);
             const observer = new MutationObserver(releaseAfterFullRender);
             observer.observe(workspace, {attributes:true,attributeFilter:['data-epc-full-render']});
             observer.observe(app, {attributes:true,attributeFilter:['data-test-script-state']});
-            gate.dispose = () => {app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);observer.disconnect();};
+            gate.dispose = () => {app.removeEventListener('input',nativeEditorInput,true);app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);observer.disconnect();};
             editGate = gate;
             gates.set(app, gate);
         }
