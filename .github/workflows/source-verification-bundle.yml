@@ -83,7 +83,8 @@ jobs:
         with:
           python-version: '3.13'
       - name: Download locked binary runtime packages without executing app code
-        run: python -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/offline-runtime-wheels" -r requirements.lock
+        run: |
+          python -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/offline-runtime-wheels" -r requirements.lock
       - name: Record dependency byte identities and interpreter boundary
         run: |
           python - <<'PY'
