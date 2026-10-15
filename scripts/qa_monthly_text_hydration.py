@@ -71,11 +71,42 @@ def commit_text(page, label, text):
     live.event("text_edit_requested", label=label, before_sha256=sha256(before.encode()).hexdigest(),
                requested_sha256=sha256(text.encode()).hexdigest())
     assert before != text, "This edit must change the existing field, not silently pass a no-op."
-    identity = field.get_attribute('id')
+    initial_id = field.get_attribute('id')
+    # A locator sampled before its actionability wait may still refer to a
+    # previous hydration mount. Capture the DOM node receiving the FIRST real
+    # input event and require that exact object to survive acknowledgment.
+    # This observes native events only: no value writes, event injection, input
+    # cloning or focus intervention. Keep the earlier ID for diagnosis too.
+    page.evaluate("""label => {
+        window.__enfraTextEditCleanup?.();
+        const state={node:null,events:[]};
+        window.__enfraTextEdit=state;
+        const observe=event=>{
+            const target=event.target;
+            if(target?.tagName!=='TEXTAREA' || target.getAttribute('aria-label')!==label) return;
+            if(event.type==='input' && state.node===null) state.node=target;
+            if(state.events.length<16) state.events.push({kind:event.type,id:target.id,
+                trusted:event.isTrusted,sameInputNode:state.node===target});
+        };
+        for(const kind of ['input','change','blur']) document.addEventListener(kind,observe,true);
+        window.__enfraTextEditCleanup=()=>{
+            for(const kind of ['input','change','blur']) document.removeEventListener(kind,observe,true);
+        };
+    }""", label)
     field.fill(text)
     field.press("Tab")
     await_text(page, label, text)
-    assert field.get_attribute('id') == identity, "A native edit must not remount its field."
+    continuity = field.evaluate("""current => {
+        const state=window.__enfraTextEdit;
+        return {inputObserved:Boolean(state?.node),sameNode:state?.node===current,
+            inputNodeConnected:Boolean(state?.node?.isConnected),currentId:current.id,
+            inputNodeId:state?.node?.id||null,events:state?.events||[]};
+    }""")
+    continuity.update(label=label, phase=live.EVIDENCE["phase"], pre_action_id=initial_id)
+    live.EVIDENCE.setdefault('node_continuity', []).append(continuity)
+    page.evaluate("window.__enfraTextEditCleanup?.()")
+    assert continuity['inputObserved'], "The editor test must observe an actual native input event."
+    assert continuity['sameNode'] and continuity['inputNodeConnected'], "The input-event node was replaced before acknowledgment."
 
 
 def export_and_check(page, stage):
@@ -134,8 +165,6 @@ def exercise(browser_type, name):
             commit_text(page, label, "")
             phase(label + ' clear reload')
             page.reload(wait_until="domcontentloaded")
-            # Verify the persisted and canonical values AFTER completed reload,
-            # not a transient empty mount or an unrelated display-only stamp.
             await_text(page, label, "")
             live.checkpoint(label + " deliberate clear survives reload", True)
             phase(label + ' reentry and save')
@@ -156,6 +185,7 @@ def exercise(browser_type, name):
             live.EVIDENCE["visible_text_hashes"] = {
                 label: sha256(page.get_by_role('textbox', name=label, exact=True).input_value().encode()).hexdigest()
                 for label in EXPECTED}
+            live.EVIDENCE["native_events"] = page.evaluate("window.__enfraTextEdit?.events||[]")
             live.EVIDENCE["script_state"] = page.locator('[data-testid="stApp"]').get_attribute('data-test-script-state')
             live.EVIDENCE["structural_changes"] = page.get_by_text("QA structural change since accepted click", exact=False).all_text_contents()
             live.screenshot(page, "first-failure")
