@@ -26,7 +26,7 @@ from app.monthly_report_sections import (
     section_reviews,
     table_without_prices,
 )
-from app.monthly_report_setup import design_profile, item_findings, merge_drafts
+from app.monthly_report_setup import design_profile, item_findings
 
 
 def plan_signature(plan):
@@ -697,6 +697,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 profile = replace(profile, excluded_sections=())
                 draft = imported_draft(profile, period, actor, mapped)
                 draft = replace(draft, sections=tuple(replace(s, included=True) for s in draft.sections))
+                source_draft = draft
+                previous, verified = library.starting_contribution(
+                    contract, profile.key, period, inspection.sha256) if state else (None, False)
                 current = library.load_snapshot(contract, profile.key, period) if state else None
                 prior_import = library.load_imported_draft(contract, profile.key) if state else None
                 base = current.draft if current else None
@@ -707,8 +710,12 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                         raise ValueError("Another version was saved while you were working. Compare and accept that version using Save progress before adding this report. Your open draft and upload are preserved.")
                     base = working_draft
                 elif prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
-                    base = merge_drafts(base, prior_import)
-                draft = merge_drafts(base, draft)
+                    # Bootstrap already includes this exact snapshot plus the
+                    # last acknowledged import. Appending the snapshot again
+                    # can resurrect its older text or duplicate edited tables.
+                    base = prior_import
+                from app.monthly_report_start_replay import merge_starting_drafts
+                draft = merge_starting_drafts(base, draft, previous, verified=verified)
                 # Existing reviewed logos belong to the selected sites/contract.
                 # A starting report must not replace them with older artwork.
                 assets = dict((*working_assets, *mapped.assets))
@@ -730,7 +737,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 review["section_plans"] = [dict(plan, tables={k: asdict(v) for k, v in plan.get("tables", {}).items()}) for plan in review["section_plans"]]
                 library.save_report_setup(profile, draft, path, review, assets=tuple(assets.items()),
                                           expected_revision=state.revision if state else 0, actor=actor, confirmed=True,
-                                          snapshot_revision=current.revision if current else 0)
+                                          snapshot_revision=current.revision if current else 0, source_draft=source_draft)
                 st.session_state["report_resume_import"] = (contract, profile.key, period.key)
                 st.session_state["report_setup_done"] = profile.key
             st.rerun()

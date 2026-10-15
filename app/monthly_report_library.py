@@ -367,7 +367,8 @@ def save_profile(profile: ReportProfile, *, expected_revision: int, actor: str, 
 
 def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, review: dict, *,
                       assets: tuple[tuple[str, bytes], ...], expected_revision: int,
-                      actor: str, confirmed: bool, snapshot_revision: int = 0) -> LibraryState:
+                      actor: str, confirmed: bool, snapshot_revision: int = 0,
+                      source_draft: ReportDraft | None = None) -> LibraryState:
     """Publish design, original, review decisions and working seed in one manifest.
 
     New profiles become visible only after every immutable asset and the original
@@ -378,6 +379,10 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
     _validate_profile(profile)
     if (draft.profile.contract, draft.profile.key) != (profile.contract, profile.key):
         raise LibraryError("Imported draft identity does not match the profile.")
+    if source_draft is not None and (
+            source_draft.profile.contract, source_draft.profile.key, source_draft.period
+    ) != (profile.contract, profile.key, draft.period):
+        raise LibraryError("Starting contribution does not match the report sites or month.")
     if source.stat().st_size > 128 * 1024 * 1024:
         raise LibraryError("Original DOCX exceeds the import limit.")
     with source.open("rb") as stream:
@@ -420,6 +425,14 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
                                                               replace(block, source="Library"), actor, at)))
                 current[block.key] = identity
             value["current"] = sorted(current.items())
+        if source_draft is not None:
+            # Publish this immutable contribution only through the same atomic
+            # manifest as the import. An interrupted write cannot acknowledge
+            # content that was never saved. No artwork bytes are duplicated.
+            contribution = _json({"schema": 1, "draft": asdict(source_draft)})
+            reference = hashlib.sha256(contribution).hexdigest()
+            _atomic_write(path / "imports" / (reference + ".contribution.json"), contribution)
+            value.setdefault("starting_contributions", {})[draft.period.key + ":" + digest] = reference
         value["profile"] = asdict(profile)
         value["bootstrap"] = asdict(draft)
         value["bootstrap_snapshot_revision"] = snapshot_revision
@@ -431,6 +444,49 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
         _atomic_write(path / "history" / f'{value["revision"]:08d}.json', raw)
         _atomic_write(manifest, raw)
         return _state(value)
+
+
+def starting_contribution(contract: str, key: str, period: ReportPeriod,
+                          digest: str) -> tuple[ReportDraft | None, bool]:
+    """Read only an acknowledged contribution for these source bytes and month.
+
+    Older installations may have only a merged bootstrap. It can prove an
+    unchanged replay but cannot authorize changed source-review replacements.
+    """
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise LibraryError("Invalid Starting report source identity.")
+    path = _profile_path(contract, key)
+    value = _read(path / "manifest.json")
+    index = value.get("starting_contributions", {})
+    if not isinstance(index, dict):
+        raise LibraryError("Starting report replay index is invalid; your current report is unchanged.")
+    reference = index.get(period.key + ":" + digest)
+    if period.key + ":" + digest in index:
+        if not isinstance(reference, str) or not re.fullmatch(r"[0-9a-f]{64}", reference):
+            raise LibraryError("Starting report replay record has an invalid identity.")
+        payload = _read(path / "imports" / (reference + ".contribution.json"))
+        if hashlib.sha256(_json(payload)).hexdigest() != reference:
+            raise LibraryError("Starting report replay record changed; your current report is unchanged.")
+        if not isinstance(payload.get("draft"), dict):
+            raise LibraryError("Starting report replay record has no valid draft.")
+        result = draft_from_dict(payload["draft"])
+        verified = True
+    elif value.get("import_review") == digest and value.get("bootstrap"):
+        result = draft_from_dict(value["bootstrap"])
+        if result.period != period:
+            return None, False
+        verified = False
+    elif any(a.get("action") == "report_import" and a.get("source") == digest
+             and a.get("period") == period.key for a in value.get("audit", ())):
+        raise LibraryError(
+            "This earlier Starting import has no separate replay record. Your report is unchanged. "
+            "Make any remaining corrections in the report editor instead of reimporting this source."
+        )
+    else:
+        return None, False
+    if (result.profile.contract, result.profile.key, result.period) != (contract, key, period):
+        raise LibraryError("Starting report replay record belongs to different sites or a different month.")
+    return result, verified
 
 
 def load_imported_draft(contract: str, key: str) -> ReportDraft | None:
