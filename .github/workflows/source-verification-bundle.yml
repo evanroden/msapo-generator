@@ -72,3 +72,41 @@ jobs:
           path: ${{ runner.temp }}/source-verification/
           retention-days: 7
           if-no-files-found: error
+  offline-runtime-wheels:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download locked binary runtime packages without executing app code
+        run: python -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/offline-runtime-wheels" -r requirements.lock
+      - name: Record dependency byte identities and interpreter boundary
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import subprocess
+          target = Path(os.environ['RUNNER_TEMP']) / 'offline-runtime-wheels'
+          manifest = {
+              'schema_version': 1,
+              'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'python_version': platform.python_version(),
+              'requirements_sha256': hashlib.sha256(Path('requirements.lock').read_bytes()).hexdigest(),
+              'scope': 'Offline Linux Python 3.13 verification dependencies; production and existing CI use Python 3.12. Download identity is not execution or renderer acceptance.',
+              'wheels': [{'name': p.name, 'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(target.glob('*.whl'))],
+          }
+          (target / 'WHEELS_MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-runtime-wheels-python313
+          path: ${{ runner.temp }}/offline-runtime-wheels/
+          retention-days: 7
+          if-no-files-found: error
