@@ -1,8 +1,8 @@
 """Actual Training/issue text and generation in the guarded synthetic app.
 
 Local disposable storage only, no customer data or external readers. Reuses
-existing strict generation receipts, not retries or a relaxed fingerprint gate.
-Chromium and WebKit run independently; every first failure is retained.
+strict generation receipts. Each edit must reach both the canonical report and
+the disk journal before reload; a layout stamp is not a save acknowledgment.
 """
 from __future__ import annotations
 
@@ -29,26 +29,57 @@ OUT = ROOT / "test-artifacts" / "monthly-text-hydration"
 PORT = 8530
 URL = f"http://127.0.0.1:{PORT}"
 from scripts import qa_monthly_live as live
+from scripts.workspace_wire_observations import WireObservations
 
 EXPECTED = {"Training notes": "Hospital staff completed a synthetic training exercise.",
             "Issue description": "Synthetic actuator feedback follow-up."}
 READY = """() => Boolean(document.querySelector('.epc-workspace')?.dataset.epcFullRender) &&
  document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning'"""
+RECEIPT = '[data-enfra-text-receipt]'
 
 
-def commit_text(page, field, text):
-    before = page.locator('.epc-workspace').get_attribute('data-epc-full-render')
+def phase(name):
+    live.EVIDENCE["phase"] = name
+    live.event("text_stage", name=name)
+
+
+def receipt(page):
+    values = page.locator(RECEIPT)
+    return json.loads(values.last.get_attribute('data-enfra-text-receipt')) if values.count() else None
+
+
+def await_text(page, label, text):
+    expected = sha256(text.encode()).hexdigest()
+    page.wait_for_function("""expected => {
+        const nodes=document.querySelectorAll('[data-enfra-text-receipt]');
+        if(!nodes.length) return false;
+        const state=JSON.parse(nodes[nodes.length-1].dataset.enfraTextReceipt);
+        const matches = part => part && (expected.label==='Training notes'
+            ? part.training===expected.sha : part.issues.length===1 && part.issues[0]===expected.sha);
+        return matches(state.working) && matches(state.durable) &&
+            state.working_fingerprint===state.durable_fingerprint &&
+            document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
+    }""", arg={"label": label, "sha": expected}, timeout=25000)
+    expect(page.get_by_role("textbox", name=label, exact=True)).to_have_value(text)
+    current = receipt(page)
+    live.EVIDENCE.setdefault('text_receipts', []).append({"phase": live.EVIDENCE["phase"], **current})
+
+
+def commit_text(page, label, text):
+    field = page.get_by_role("textbox", name=label, exact=True)
+    before = field.input_value()
+    live.event("text_edit_requested", label=label, before_sha256=sha256(before.encode()).hexdigest(),
+               requested_sha256=sha256(text.encode()).hexdigest())
+    assert before != text, "This edit must change the existing field, not silently pass a no-op."
+    identity = field.get_attribute('id')
     field.fill(text)
     field.press("Tab")
-    page.wait_for_function("""before => {
-        const stamp=document.querySelector('.epc-workspace')?.dataset.epcFullRender;
-        return stamp && stamp!==before && document.querySelector('[data-testid="stApp"]')
-            ?.getAttribute('data-test-script-state')==='notRunning';
-    }""", arg=before, timeout=25000)
-    expect(field).to_have_value(text)
+    await_text(page, label, text)
+    assert field.get_attribute('id') == identity, "A native edit must not remount its field."
 
 
 def export_and_check(page, stage):
+    phase(stage)
     live.request_qa_generation(page, stage)
     word = live.download(page, "Download isolated QA DOCX", stage + ".docx")
     pdf = live.download(page, "Download isolated QA PDF", stage + ".pdf")
@@ -63,16 +94,15 @@ def export_and_check(page, stage):
 
 
 def exercise(browser_type, name):
-    # Only harness evidence routing changes here; no production function or
-    # renderer is patched. The imported helpers act solely on the passed page.
     live.ROOT = OUT / name
     live.ROOT.mkdir(parents=True, exist_ok=True)
     live.EVIDENCE = {"synthetic_only": True, "public_url": URL, "browser": name,
-                     "checks": {}, "events": [], "artifacts": {}}
+                     "checks": {}, "events": [], "artifacts": {},
+                     "tested_checkout": subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()}
     browser = browser_type.launch(headless=True)
     context = browser.new_context(viewport={"width": 1365, "height": 900})
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
-    attempts = []
+    attempts, errors = [], []
 
     def route(request):
         parsed = urlparse(request.request.url)
@@ -85,7 +115,11 @@ def exercise(browser_type, name):
     context.route("**/*", route)
     page = context.new_page()
     page.set_default_timeout(20000)
+    page.on('pageerror', lambda error: errors.append(str(error)[:500]))
+    wire = WireObservations(PORT)
+    wire.attach(page)
     try:
+        phase('initial native values')
         page.goto(URL, wait_until="domcontentloaded")
         live.load_fixture(page, "prefill")
         for label, wording in EXPECTED.items():
@@ -96,22 +130,20 @@ def exercise(browser_type, name):
         export_and_check(page, "first-native-hydration")
         activity = page.get_by_role("textbox", name="Activity summary", exact=True).input_value()
         for label, wording in EXPECTED.items():
-            field = page.get_by_role("textbox", name=label, exact=True)
-            identity = field.get_attribute("id")
-            commit_text(page, field, "")
+            phase(label + ' clear and save')
+            commit_text(page, label, "")
+            phase(label + ' clear reload')
             page.reload(wait_until="domcontentloaded")
-            expect(field).to_have_value("", timeout=45000)
-            page.wait_for_function(READY, timeout=20000)
+            # Verify the persisted and canonical values AFTER completed reload,
+            # not a transient empty mount or an unrelated display-only stamp.
+            await_text(page, label, "")
             live.checkpoint(label + " deliberate clear survives reload", True)
-            commit_text(page, field, wording)
+            phase(label + ' reentry and save')
+            commit_text(page, label, wording)
+            phase(label + ' reentry reload')
             page.reload(wait_until="domcontentloaded")
-            expect(field).to_have_value(wording, timeout=45000)
-            page.wait_for_function(READY, timeout=20000)
+            await_text(page, label, wording)
             live.checkpoint(label + " reentry survives reload", True)
-            # A full browser reload is a fresh native mount; stability within
-            # an edit is asserted separately by the protobuf AppTest regression.
-            live.event("native_text_restored", field=label, text_sha256=sha256(wording.encode()).hexdigest(),
-                       initial_dom_id_present=bool(identity))
         expect(page.get_by_role("textbox", name="Activity summary", exact=True)).to_have_value(activity)
         export_and_check(page, "restored-native-text")
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
@@ -120,13 +152,20 @@ def exercise(browser_type, name):
     except Exception as exc:
         live.EVIDENCE["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
         try:
+            live.EVIDENCE["last_text_receipt"] = receipt(page)
+            live.EVIDENCE["visible_text_hashes"] = {
+                label: sha256(page.get_by_role('textbox', name=label, exact=True).input_value().encode()).hexdigest()
+                for label in EXPECTED}
+            live.EVIDENCE["script_state"] = page.locator('[data-testid="stApp"]').get_attribute('data-test-script-state')
             live.EVIDENCE["structural_changes"] = page.get_by_text("QA structural change since accepted click", exact=False).all_text_contents()
             live.screenshot(page, "first-failure")
         except Exception:
             pass
         raise
     finally:
+        live.EVIDENCE['browser_errors'] = errors
         (live.ROOT / "results.json").write_text(json.dumps(live.EVIDENCE, indent=2) + "\n")
+        (live.ROOT / "wire.json").write_text(json.dumps(wire.snapshot(), indent=2) + "\n")
         context.close()
         browser.close()
 
@@ -172,7 +211,7 @@ def main():
                     process.wait(timeout=5)
     if failures:
         raise AssertionError("Native text hydration failures: " + "; ".join(failures))
-    print("PASS native Training/issue hydration, real generation and deliberate clear/reentry/reload in both engines")
+    print("PASS native Training/issue hydration, real generation and durable clear/reentry/reload in both engines")
 
 
 if __name__ == "__main__":
