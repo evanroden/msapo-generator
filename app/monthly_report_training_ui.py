@@ -110,7 +110,12 @@ def render_training(draft, blocks, prefix, field):
         except ValueError as exc:
             st.error(str(exc))
     block = apply_tables(block, matrix, events)
-    notes = st.text_area("Training notes", key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
+    # Match the native protocol default to the canonical notes, as Activity
+    # already does. A one-shot session-state set_value is not the first-mount
+    # default and can otherwise be echoed back as an unintended empty edit.
+    # The pinned keyed textarea retains its ID and accepts deliberate clears.
+    notes = st.text_area("Training notes", value=block.text,
+                         key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
     if notes != block.text:
         block = replace(block, text=notes, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
     if block != original_block or block.key in blocks:
