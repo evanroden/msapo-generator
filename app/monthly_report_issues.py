@@ -68,6 +68,7 @@ def canonical_issues(draft):
         keys.add(key)
         seen.add(text.strip())
         # Report-period tags describe the old document, not supporting pages.
+        # A source-linked draft remains in its evidence editor until reviewed.
         references = tuple(dict.fromkeys(ref for ref in references
                             if not ref.startswith(("report-period:", "report-origin:", "docx:", _REMOVED_STATEMENT))))
         items.append(ReportFollowUp(key, "issue", text, draft.period.key,
@@ -133,6 +134,11 @@ def _issue_control(widget, label, key, value, field, **kwargs):
                  and receipt.get("value") == st.session_state.get(key))
     if st.session_state.get(key, value) != value and not submitted:
         st.session_state[key] = value
+    if widget == st.text_area:
+        # The first native mount needs the same wording as the canonical
+        # issue, not the textarea's implicit empty default. Keep the existing
+        # receipt guard and honor an explicitly submitted clear/update.
+        kwargs["value"] = receipt["value"] if submitted else value
     result = widget(label, key=field(key, value), on_change=_issue_changed,
                     args=(key, value), **kwargs)
     if submitted and result != value:

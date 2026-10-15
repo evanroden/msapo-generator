@@ -804,6 +804,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     prior_draft = latest_saved_draft(contract, selected, period, before=True)
     draft_key = prefix + "_draft"
     resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
+    # Keep this status slot on every render. Removing a one-shot root element
+    # after recovery shifts the workspace's delta path and replaces its native
+    # editors on the first edit, even when their widget keys and text agree.
+    recovery_notice = st.empty()
     if draft_key not in st.session_state or resume:
         # A replacement import/restart must not inherit unacknowledged text
         # callbacks even when the same sites, month and widget key are reused.
@@ -884,7 +888,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.session_state[prefix + "_active_sequence"] = active_sequence
         st.session_state[prefix + "_active_generation"] = active_generation
         if recovered_work:
-            st.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
+            recovery_notice.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
     from app.monthly_report_setup import normalize_mbcx
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:

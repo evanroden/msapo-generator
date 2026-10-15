@@ -13,6 +13,8 @@ on:
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
+      - 'scripts/qa_monthly_text_hydration.py'
+      - 'scripts/workspace_text_observations.py'
       - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
       - '.github/workflows/adaptive-workspaces.yml'
@@ -29,6 +31,8 @@ on:
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
+      - 'scripts/qa_monthly_text_hydration.py'
+      - 'scripts/workspace_text_observations.py'
       - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
       - '.github/workflows/adaptive-workspaces.yml'
@@ -81,6 +85,9 @@ jobs:
       - name: Prepared-by correction link reaches the native field by pointer and keyboard
         if: ${{ !cancelled() }}
         run: python scripts/qa_monthly_preparer_navigation.py
+      - name: Native Training and issue text with real exports and deliberate clear/reentry
+        if: ${{ !cancelled() }}
+        run: python scripts/qa_monthly_text_hydration.py
       - name: Shared fixture upload and actual Starting report workflow
         if: ${{ !cancelled() }}
         run: python scripts/qa_shared_fixture_testing.py
@@ -96,6 +103,7 @@ jobs:
             test-artifacts/monthly-adaptive/
             test-artifacts/monthly-first-site/
             test-artifacts/monthly-preparer-navigation/
+            test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
           retention-days: 7
           if-no-files-found: warn
