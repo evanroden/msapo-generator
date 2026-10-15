@@ -384,6 +384,26 @@ def render_pending_cover_selection(draft, assets, contract, period, state):
     return replace(draft, blocks=blocks), updated
 
 
+def _starting_review_sections(sections, plans, diagram_failures):
+    """Keep unresolved cards reachable unless a dedicated recovery is shown.
+
+    Cover/proposal drawings deliberately skip automatic preservation. Filtering
+    every drawing question hid their only review controls. A card can also stay
+    blocked after rebuilding its plan without the original seed questions.
+    """
+    pending = []
+    for section in sections:
+        plan = plans.get(section.key, {})
+        questions = plan.get("questions", ())
+        if plan.get("approved") and not questions:
+            continue
+        if (section.key in diagram_failures and questions
+                and all(q.startswith("A Word diagram or image") for q in questions)):
+            continue
+        pending.append(section)
+    return tuple(pending)
+
+
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
                          working_draft=None, working_assets=(), working_revision=None):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else identity.key if identity else "new", period.key))
@@ -601,7 +621,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                                          existing, updated)
                     # No blanket approval button: the selected source photo
                     # still flows through the image/package safety checks.
-                    updated["approved"] = True
+                    # A photograph selection cannot resolve unread Word art
+                    # or a previous blocking review in this same cover.
+                    updated["approved"] = bool(existing.get("approved")
+                                               and not updated.get("questions"))
                     plans["cover"] = updated
     questions = [section for section in sections if plans.get(section.key, {}).get("questions")]
     if diagram_failures:
@@ -647,11 +670,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     # A recoverable diagram has its own exact-section retry/upload directly
     # above. Do not show a second generic Keep/Edit/Leave-out radio for that
     # same unresolved object.
-    questions = [
-        section for section in sections
-        if any(not message.startswith("A Word diagram or image")
-               for message in plans.get(section.key, {}).get("questions", ()))
-    ]
+    questions = _starting_review_sections(sections, plans, diagram_failures)
     if questions:
         st.subheader("A few details need a check")
         for index, section in enumerate(questions):
