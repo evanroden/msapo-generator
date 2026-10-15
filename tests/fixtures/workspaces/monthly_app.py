@@ -76,11 +76,13 @@ if not token:
     st.stop()
 
 from scripts.workspace_browser_observations import install_synthetic_observations, emit_snapshot
+from scripts.workspace_text_observations import emit_text_snapshot
 install_synthetic_observations(base)
 
 st.title("Synthetic actual Monthly workspace QA")
 with isolated(token):
     render(token, "America/New_York", _field, _move, base)
     emit_snapshot()
+    emit_text_snapshot(base, token)
     st.caption("Monthly DOM isolated scope: " + str(scope()))
     st.caption("Monthly DOM blocked external attempts: " + str(len(sys._monthly_dom_attempts)))
