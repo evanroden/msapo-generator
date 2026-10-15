@@ -1,0 +1,113 @@
+name: Source verification bundle
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [main]
+    paths: ['.github/workflows/source-verification-bundle.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  source-bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Archive exact committed source without credentials or runtime files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/source-verification"
+          git archive --format=zip --prefix=source/ --output="$RUNNER_TEMP/source-verification/source.zip" HEAD
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          from zipfile import ZipFile
+
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+
+          target = Path(os.environ['RUNNER_TEMP']) / 'source-verification'
+          archive = target / 'source.zip'
+          entries = []
+          for record in git('ls-tree', '-rz', 'HEAD').split(b'\0'):
+              if not record:
+                  continue
+              metadata, path = record.split(b'\t', 1)
+              mode, kind, oid = metadata.decode().split()
+              if kind != 'blob' or mode not in {'100644', '100755'}:
+                  raise SystemExit('Unsupported tracked entry; no incomplete bundle published')
+              entries.append({'path': path.decode(), 'mode': mode, 'blob_sha': oid})
+          with ZipFile(archive) as package:
+              actual = {item.filename for item in package.infolist() if not item.is_dir()}
+              expected = {'source/' + item['path'] for item in entries}
+              if actual != expected:
+                  raise SystemExit('Archive and Git tree differ')
+              for item in entries:
+                  data = package.read('source/' + item['path'])
+                  blob = b'blob ' + str(len(data)).encode() + b'\0' + data
+                  if hashlib.sha1(blob).hexdigest() != item['blob_sha']:
+                      raise SystemExit('Archive bytes differ from tracked blob')
+          manifest = {
+              'schema_version': 1,
+              'commit': git('rev-parse', 'HEAD').decode().strip(),
+              'tree': git('rev-parse', 'HEAD^{tree}').decode().strip(),
+              'archive_bytes': archive.stat().st_size,
+              'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+              'entries': entries,
+              'scope': 'Tracked public repository source only; no .git, credentials, runtime data or owner originals. This bundle is not acceptance evidence or an external originals archive.',
+          }
+          (target / 'SOURCE_MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-verification-bundle
+          path: ${{ runner.temp }}/source-verification/
+          retention-days: 7
+          if-no-files-found: error
+  offline-runtime-wheels:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Download locked binary runtime packages without executing app code
+        run: |
+          python -m pip download --only-binary=:all: --dest "$RUNNER_TEMP/offline-runtime-wheels" -r requirements.lock
+      - name: Record dependency byte identities and interpreter boundary
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import subprocess
+          target = Path(os.environ['RUNNER_TEMP']) / 'offline-runtime-wheels'
+          manifest = {
+              'schema_version': 1,
+              'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'python_version': platform.python_version(),
+              'requirements_sha256': hashlib.sha256(Path('requirements.lock').read_bytes()).hexdigest(),
+              'scope': 'Offline Linux Python 3.13 verification dependencies; production and existing CI use Python 3.12. Download identity is not execution or renderer acceptance.',
+              'wheels': [{'name': p.name, 'bytes': p.stat().st_size, 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()} for p in sorted(target.glob('*.whl'))],
+          }
+          (target / 'WHEELS_MANIFEST.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-runtime-wheels-python313
+          path: ${{ runner.temp }}/offline-runtime-wheels/
+          retention-days: 7
+          if-no-files-found: error
