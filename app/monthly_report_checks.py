@@ -164,7 +164,7 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                     source = source_index.get(parts[0])
                     if source is None and reference in image_references and len(parts) == 3 and parts[1].isdigit():
                         checks.append(ReportCheck("client_source_missing", "The original source for an included picture is missing. Restore its source file or replace/remove the picture before generating.", True, block.key))
-                    if source and len(parts) == 3 and parts[1].isdigit():
+                    if source and reference in image_references and len(parts) == 3 and parts[1].isdigit():
                         page = int(parts[1])
                         if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):
                             checks.append(ReportCheck("client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))

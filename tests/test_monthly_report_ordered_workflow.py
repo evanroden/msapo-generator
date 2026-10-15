@@ -24,7 +24,8 @@ def test_report_order_all_editors_and_direct_previews(monkeypatch, tmp_path):
     assert not any(item.label == "Report steps" for item in app.radio)
     assert not any(item.label in ("Section to update", "Site information to update") for item in app.selectbox)
     assert not any(item.label == "Show writing help" for item in app.toggle)
-    assert next(item for item in app.checkbox if item.label == "Add work-order spreadsheets")
+    assert any(item.label == "Manage source files" for item in app.button)
+    assert not any(item.label == "Add work-order spreadsheets" for item in app.checkbox)
     assert next(item for item in app.text_area if item.label == "Activity summary")
     assert next(item for item in app.button if item.label == "Create Word and PDF")
 

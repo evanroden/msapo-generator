@@ -31,10 +31,14 @@ def included_pages(blocks):
     for key, block in blocks.items():
         if key not in sources.PAGE_DESTINATIONS or not block.asset_hashes:
             continue
-        for reference in block.references:
-            identity = page_identity(reference)
-            if identity:
-                result.setdefault(identity, set()).add(key)
+        # Narrative evidence may retain a removed page's reference. Only
+        # provenance on an actually included image establishes page ownership.
+        from app.monthly_report_asset_review import asset_context
+        for index in range(len(block.asset_hashes)):
+            for reference in asset_context(block, index):
+                identity = page_identity(reference)
+                if identity:
+                    result.setdefault(identity, set()).add(key)
     return result
 
 

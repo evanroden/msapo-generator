@@ -388,7 +388,7 @@ def _refresh_period_editors_after_commit(prefix):
         st.rerun()
 
 
-def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True):
+def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True, manage_saved_pictures=True):
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -496,7 +496,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                             if any(v is not None and v != "" for v in row.values()))
         if rows != seed and edited_rows != block.rows:
             block = replace(block, source="This month", rows=edited_rows, reviewed_fingerprint="", client_reviewed_fingerprint="")
-    if block.asset_hashes:
+    if block.asset_hashes and manage_saved_pictures:
         from app.monthly_report_saved_pictures_ui import edit_saved_pictures
         block = edit_saved_pictures(block, key, lambda ref: assets.get(ref) or library.read_asset(state.profile.contract, state.profile.key, ref), show_preview=False)
     if spec.type in ("rich_text", "stock_text", "table", "work_order_grid"):
@@ -518,8 +518,9 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         return block
     from app.monthly_report_sections import readable_label
     if spec.type == "pdf_pages":
-        with st.expander("Replace all report pages with one image (optional)"):
-            upload = st.file_uploader("Replacement image for all pages in this part", type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
+        with st.expander("Replace this section’s attached pages"):
+            st.caption(f"Replaces {len(block.asset_hashes)} attached pages in {readable_label(spec.key)} with one image. Other sections and saved originals stay unchanged.")
+            upload = st.file_uploader("Replacement image for " + readable_label(spec.key), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
     else:
         upload = st.file_uploader("Upload a new " + readable_label(spec.key).lower(), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
     if upload and st.button("Use this replacement in this report", key=key + "_replace"):
@@ -528,8 +529,19 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                                        line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"))
         reference = library.asset_reference(image.data, image.extension)
         assets[reference] = image.data
+        previous = block
         block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
+        if spec.type == "pdf_pages":
+            st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
         st.image(image.data, width="stretch", caption="Updated image in this report")
+    undo = st.session_state.get(key + "_replacement_undo") if spec.type == "pdf_pages" else None
+    if undo:
+        unchanged = block.fingerprint == undo[0]
+        if st.button("Undo attached-page replacement", key=key + "_undo_replacement_" + undo[0],
+                     disabled=not unchanged,
+                     help="Restores this section’s previous pages. Unavailable after another edit changes this section."):
+            block = undo[1]
+            st.session_state.pop(key + "_replacement_undo", None)
     return block
 
 
@@ -645,8 +657,13 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                 from app.monthly_report_upload_ui import acknowledge_autoincluded_water_pages
                 acknowledge_autoincluded_water_pages(prefix, blocks)
     if section.key == "activity":
-        if st.checkbox("Add work-order spreadsheets", key=field(prefix + "_batch_files_open", False)):
-            from app.monthly_report_upload_ui import render_uploads
+        from app.monthly_report_upload_ui import render_uploads, set_source_manager_open
+        manager_key = field(prefix + "_batch_files_open", False)
+        manager_open = st.session_state[manager_key]
+        st.button("Done with source files" if manager_open else "Manage source files",
+                  key=prefix + "_source_manager_" + str(manager_open),
+                  on_click=set_source_manager_open, args=(manager_key, not manager_open))
+        if manager_open:
             sources, additions, incoming_specs = render_uploads(profile, period, prefix, field)
             draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
             if additions and st.button("Add prepared pages and tables to this draft", key=prefix + "_apply_uploads"):
@@ -698,7 +715,11 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             # Keep genuine legacy content accessible; an empty compatibility
             # slot does not need its own explanatory monthly report caption.
             continue
-        st.markdown("**" + readable_label(spec.key) + "**")
+        from app.monthly_report_page_controls import source_managed_pages
+        page_managed = (spec.key == "water_reports" and source_managed_pages(
+            block, st.session_state.get(prefix + "_evidence", ())))
+        if not page_managed:
+            st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
             from app.monthly_report_capacity_ui import render_capacity
             before = block
@@ -711,7 +732,8 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             from app.monthly_report_visual_ui import edit_contacts
             block = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
         else:
-            block = _edit_content(spec, block, state, prefix, assets, field, draft)
+            block = _edit_content(spec, block, state, prefix, assets, field, draft,
+                                  manage_saved_pictures=not page_managed)
         if spec.key in MONTHLY_EDIT_KEYS:
             block = _review_carried_update(block, period, prefix)
         blocks[spec.key] = block

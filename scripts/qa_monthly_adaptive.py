@@ -311,8 +311,11 @@ def exercise(browser_type, name):
         expect(page.get_by_text("QA durable Activity SHA256: " + digest, exact=True)).to_be_visible(timeout=60000)
         # Genuine controls make a long editing section without synthetic padding,
         # alternate editors, forced preview height or eager rendering all sections.
-        for label in ("Add work-order spreadsheets", "Add reviewed vendor service pages"):
-            set_checkbox(page.locator(ACTIVITY), label, True, name)
+        manager = page.locator(ACTIVITY).get_by_role("button", name="Manage source files", exact=True)
+        manager.click()
+        expect(page.locator(ACTIVITY).get_by_text("Read source files, check their pages, or match spreadsheet columns.", exact=True)).to_be_visible()
+        check(name, "native source-manager button opens the broad file tools", True)
+        set_checkbox(page.locator(ACTIVITY), "Add reviewed vendor service pages", True, name)
         scroll_pair(page, ACTIVITY)
         actual = current_image(page, ACTIVITY)
         baseline = capture(page, name, "actual-activity-current")
