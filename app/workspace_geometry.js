@@ -86,7 +86,9 @@
     if (!Array.isArray(rawSegments)) return dimensionFallback("segments-malformed");
     if (rawSegments.length === 0) return dimensionFallback("segments-empty");
     if (rawSegments.length > 2) return dimensionFallback("segments-unsupported-count");
-    const segments = rawSegments.map(rect);
+    // Visit every bounded index: Array#map skips holes, allowing an empty
+    // measured segment to hide the editor or throw during pair classification.
+    const segments = Array.from({ length: rawSegments.length }, (_, index) => rect(rawSegments[index]));
     if (segments.some((segment) => !segment)) return dimensionFallback("segments-malformed");
     if (segments.length === 1) {
       return dimensionFallback("single-segment", intersect(bounds, segments[0]), { topology: "single" });
@@ -98,6 +100,9 @@
     const yGap = byY[1].y - (byY[0].y + byY[0].height);
     const overlapY = Math.min(byX[0].y + byX[0].height, byX[1].y + byX[1].height) - Math.max(byX[0].y, byX[1].y);
     const overlapX = Math.min(byY[0].x + byY[0].width, byY[1].x + byY[1].width) - Math.max(byY[0].x, byY[1].x);
+    // Finite endpoints can still overflow when subtracted. Do not publish an
+    // infinite gap/topology or pass it into display styles and observers.
+    if (![xGap, yGap, overlapY, overlapX].every(finite)) return dimensionFallback("segments-malformed");
     const book = xGap >= 0 && overlapY > 0;
     const tabletop = yGap >= 0 && overlapX > 0;
     if (!book && !tabletop) return dimensionFallback("segments-unsupported-topology");

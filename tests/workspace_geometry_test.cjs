@@ -192,3 +192,33 @@ test("selection ignores invalid/empty rectangles and accepts y/height measuremen
   assert.equal(select(null, "a", 0), null);
   assert.equal(select(sections, "a", 500, 0), "b");
 });
+
+// ADP-A07: malformed segment observations must not crash or remove a usable
+// ordinary workspace. These are API fault-injection cases, not physical-device
+// claims. Keep each case independent so a first failure cannot hide its tail.
+for (const [name, segments] of [
+  ["one hole", new Array(1)],
+  ["two holes", new Array(2)],
+  ["missing first segment", [, box(620, 0, 820, 1000)]],
+  ["missing second segment", [box(0, 0, 600, 1000), ,]],
+  ["overflowing horizontal gap", [box(-1e308, 0, 1e307, 1000), box(1e308, 0, 1e307, 1000)]],
+  ["overflowing vertical gap", [box(0, -1e308, 1440, 1e307), box(0, 1e308, 1440, 1e307)]],
+]) {
+  test(`malformed segment fallback: ${name}`, () => {
+    const snapshot = base({ segments });
+    const original = structuredClone(snapshot);
+    const result = resolve(snapshot);
+    assert.equal(result.reason, "segments-malformed");
+    assert.equal(result.mode, "wide");
+    assert.equal(result.topology, "unknown");
+    assert.equal(result.posture, "unknown");
+    assert.equal(result.measuredGap, null);
+    for (const key of ["bounds", "editor", "preview"]) {
+      assert.ok(result[key], key);
+      for (const value of Object.values(result[key])) assert.ok(Number.isFinite(value), key);
+      inside(result.bounds, result[key]);
+    }
+    assert.deepEqual(resolve(snapshot), result);
+    assert.deepEqual(snapshot, original);
+  });
+}
