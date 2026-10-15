@@ -14,7 +14,7 @@ export default function(component) {
         state.active = null;
         state.mode = null;
     }
-    let frame = null, disposed = false, pairs = [], lastGeometry = '';
+    let frame = null, focusFrame = null, disposed = false, pairs = [], lastGeometry = '';
     const subscriptions = [];
     root.classList.add('epc-workspace');
     // This stamp changes only on a real top-level Python workspace render.
@@ -23,6 +23,32 @@ export default function(component) {
     root.dataset.epcFullRender = data.fullRender || '';
     const nav = data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
     const chrome = document.querySelector('[data-testid="stHeader"]');
+    // An empty span can change the hash without giving a keyboard user the
+    // prerequisite field. Handle only this owned Monthly correction link and
+    // only when its unique native field exists. No value, input event, business
+    // state or framework node is changed; modifier-click keeps browser behavior.
+    function focusPreparedBy(event) {
+        if (data.workflow !== 'monthly' || event.defaultPrevented || event.button !== 0 ||
+            event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+        const link = event.target?.closest?.('a[href="#report-prepared-by"]');
+        if (!link || !root.contains(link) || !app.querySelector('#report-prepared-by')) return;
+        const fields = app.querySelectorAll('input[aria-label="Prepared by"]');
+        if (fields.length !== 1 || fields[0].disabled || !fields[0].getClientRects().length) return;
+        event.preventDefault();
+        const field = fields[0];
+        const url = new URL(window.location.href);
+        url.hash = 'report-prepared-by';
+        window.history.replaceState(window.history.state, '', url);
+        if (focusFrame !== null) cancelAnimationFrame(focusFrame);
+        focusFrame = requestAnimationFrame(() => {
+            focusFrame = null;
+            if (disposed || !field.isConnected) return;
+            field.focus({preventScroll:true});
+            field.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+        });
+    }
+    root.addEventListener('click', focusPreparedBy);
+    subscriptions.push(() => root.removeEventListener('click', focusPreparedBy));
     const safe = document.createElement('div');
     safe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
     root.append(safe);
@@ -221,6 +247,7 @@ export default function(component) {
         if (disposed) return;
         disposed = true;
         if (frame !== null) cancelAnimationFrame(frame);
+        if (focusFrame !== null) cancelAnimationFrame(focusFrame);
         resize.disconnect(); mutation.disconnect(); subscriptions.forEach(remove => remove());
         safe.remove(); scrollport.classList.remove('epc-workspace-scroll-owner');
     };

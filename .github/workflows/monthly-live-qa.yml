@@ -8,8 +8,8 @@ on:
 permissions:
   contents: read
 
-# Do not run two expensive Chromium/converter sessions against a 512 MiB
-# public service at once. Never cancel a QA job halfway through reset.
+# Serialize expensive browser/converter sessions on the shared public service.
+# Never cancel a QA job halfway through reset. CI's separate 512 MiB cap remains.
 concurrency:
   group: monthly-isolated-live-production
   cancel-in-progress: false
@@ -59,6 +59,13 @@ jobs:
           set -e
           MONTHLY_QA_RUN_LABEL=first python -m scripts.qa_monthly_live
           MONTHLY_QA_RUN_LABEL=second python -m scripts.qa_monthly_live
+      - name: Exact-served Prepared-by pointer and keyboard correction
+        if: steps.still-current.outputs.run == 'true'
+        env:
+          MONTHLY_QA_EXPECTED_COMMIT: ${{ github.event.workflow_run.head_sha }}
+          MONTHLY_QA_PUBLIC_URL: https://msapo-generator.onrender.com
+          MONTHLY_QA_RUN_LABEL: preparer
+        run: python -m scripts.qa_monthly_preparer_live
       - name: Preserve only synthetic browser/output evidence
         if: always() && steps.still-current.outputs.run == 'true'
         uses: actions/upload-artifact@v4

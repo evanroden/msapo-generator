@@ -67,3 +67,10 @@ def test_saved_original_uses_current_actor_and_hides_staged_content_when_name_cl
     assert next(w for w in app.button if w.label == 'Open the saved original for section review').disabled
     assert any('Enter Prepared by above to review the saved original' in w.value for w in app.info)
     assert not any('Synthetic saved private contact' in w.value for w in app.text)
+    assert any('id="report-prepared-by"' in w.value for w in app.markdown)
+    # Unentered attribution still gates saved contact pages, but their exact
+    # field is now one visible in-page jump away instead of a remote mystery.
+    assert any('[Enter Prepared by](#report-prepared-by)' in w.value for w in app.caption)
+    # The original entered-name gate remains an access boundary here: the
+    # inline hint must never print the hidden saved contact details itself.
+    assert not any('private@example.invalid' in str(w.value) for w in app.caption)
