@@ -36,7 +36,28 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
     previous_specs = {b.key: b for s in previous.sections for b in s.blocks}
     current_specs = {b.key: b for s in existing.sections for b in s.blocks}
     incoming_specs = {b.key: b for s in incoming.sections for b in s.blocks}
-    additions, replacements = [], {}
+    additions, replacements, removals = [], {}, set()
+    # A reviewed source may now contribute no block at all (Start blank).
+    # Process that side of the three-way delta before publishing its receipt.
+    # Keep report structure and retained originals; remove only content still
+    # equal to this verified source's last acknowledged contribution.
+    incoming_keys = {b.key for b in incoming.blocks}
+    for key in prior:
+        if key in incoming_keys:
+            continue
+        present = current.get(key)
+        if present is None:
+            continue
+        unchanged_report = (_content(present) == _content(prior[key])
+                            and current_specs.get(key) == previous_specs.get(key))
+        if not verified or not unchanged_report:
+            label = key.replace("_", " ").capitalize()
+            raise ValueError(
+                f"{label} differs between this report and the repeated Starting report review. "
+                "Your report and original are unchanged. Keep the earlier source selection, "
+                "or make this correction directly in the report editor before importing again."
+            )
+        removals.add(key)
     for block in incoming.blocks:
         old = prior.get(block.key)
         if old is None:
@@ -63,7 +84,8 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
         # unchanged contribution, never a block with intervening report edits.
         replacements[block.key] = block
 
-    revised = replace(existing, blocks=tuple(replacements.get(b.key, b) for b in existing.blocks),
+    revised = replace(existing, blocks=tuple(replacements.get(b.key, b) for b in existing.blocks
+                                             if b.key not in removals),
                       sections=tuple(replace(s, blocks=tuple(
                           incoming_specs[b.key] if b.key in replacements and b.key in incoming_specs else b
                           for b in s.blocks)) for s in existing.sections))
