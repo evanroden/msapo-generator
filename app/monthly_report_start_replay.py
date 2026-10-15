@@ -36,28 +36,30 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
     previous_specs = {b.key: b for s in previous.sections for b in s.blocks}
     current_specs = {b.key: b for s in existing.sections for b in s.blocks}
     incoming_specs = {b.key: b for s in incoming.sections for b in s.blocks}
-    additions, replacements, removals = [], {}, set()
-    # A reviewed source may now contribute no block at all (Start blank).
-    # Process that side of the three-way delta before publishing its receipt.
-    # Keep report structure and retained originals; remove only content still
-    # equal to this verified source's last acknowledged contribution.
+    additions, replacements = [], {}
+    # A receipt proves what the source contained, not sole ownership of equal
+    # report content: generic merging may have deduplicated earlier human text.
+    # Do not silently acknowledge a blank source review while retaining that
+    # content, or delete it by guessing ownership. Clear/omit it explicitly in
+    # the report editor first; an already blank/omitted block stays unchanged.
     incoming_keys = {b.key for b in incoming.blocks}
     for key in prior:
         if key in incoming_keys:
             continue
         present = current.get(key)
-        if present is None:
-            continue
-        unchanged_report = (_content(present) == _content(prior[key])
-                            and current_specs.get(key) == previous_specs.get(key))
-        if not verified or not unchanged_report:
+        populated = present is not None and present.source != "Omit" and bool(
+            present.text.strip() or present.rows or present.asset_hashes
+            or present.org_nodes or present.extra_tables or present.ai_paragraphs)
+        # Imported footer text also lives outside the block in address_line.
+        # Native generators use that value even when the block is absent.
+        footer_remaining = key == "footer_text" and bool(existing.address_line.strip())
+        if populated or footer_remaining:
             label = key.replace("_", " ").capitalize()
             raise ValueError(
-                f"{label} differs between this report and the repeated Starting report review. "
-                "Your report and original are unchanged. Keep the earlier source selection, "
-                "or make this correction directly in the report editor before importing again."
+                f"{label} is still in this report, but the repeated Starting review leaves it out. "
+                "Your report and original are unchanged. Clear or omit this content in the report editor "
+                "before importing again, or keep the earlier source selection."
             )
-        removals.add(key)
     for block in incoming.blocks:
         old = prior.get(block.key)
         if old is None:
@@ -84,8 +86,7 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
         # unchanged contribution, never a block with intervening report edits.
         replacements[block.key] = block
 
-    revised = replace(existing, blocks=tuple(replacements.get(b.key, b) for b in existing.blocks
-                                             if b.key not in removals),
+    revised = replace(existing, blocks=tuple(replacements.get(b.key, b) for b in existing.blocks),
                       sections=tuple(replace(s, blocks=tuple(
                           incoming_specs[b.key] if b.key in replacements and b.key in incoming_specs else b
                           for b in s.blocks)) for s in existing.sections))
