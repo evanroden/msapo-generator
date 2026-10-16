@@ -298,21 +298,26 @@ def test_free_inspection_failure_has_free_targeted_retry_not_automatic_read(prof
 def test_isolated_scope_rejects_even_a_matching_queued_read_without_preparation(profile, monkeypatch):
     app, calls, _, _ = setup_reader(monkeypatch, profile)
     from app import monthly_report_testing as testing
-    monkeypatch.setattr(testing, "scope", lambda: "synthetic-isolated-scope")
-    app.run()
-    assert not app.exception
-    assert not any(b.label == "Read capacity file" for b in app.button)
-    inspection = app.session_state["test_capacity_inspection"]
-    request = {"context": app.session_state["test_capacity_context"],
-               "digest": app.session_state["test_capacity_digest"],
-               "source": inspection.content.source.fingerprint,
-               "revision": app.session_state["test_capacity_revision"]}
-    app.session_state["test_capacity_read_request"] = request
-    app.run()
-    assert not app.exception
-    assert calls["provider"] == calls["reserve"] == calls["start"] == calls["prepare"] == 0
-    assert any("External reading is off in isolated testing" in n.value for n in app.warning)
-    assert capacity.load_capacity(profile.contract) is None
+    before = (testing.scope(), testing.generation())
+    # AppTest uses a separate context, so expose the real isolated identity to
+    # its reader while bounding the main-thread load's lease with its owner.
+    with testing.isolated("7" * 32) as identity, monkeypatch.context() as scoped:
+        scoped.setattr(testing, "scope", lambda: identity)
+        app.run()
+        assert not app.exception
+        assert not any(b.label == "Read capacity file" for b in app.button)
+        inspection = app.session_state["test_capacity_inspection"]
+        request = {"context": app.session_state["test_capacity_context"],
+                   "digest": app.session_state["test_capacity_digest"],
+                   "source": inspection.content.source.fingerprint,
+                   "revision": app.session_state["test_capacity_revision"]}
+        app.session_state["test_capacity_read_request"] = request
+        app.run()
+        assert not app.exception
+        assert calls["provider"] == calls["reserve"] == calls["start"] == calls["prepare"] == 0
+        assert any("External reading is off in isolated testing" in n.value for n in app.warning)
+        assert capacity.load_capacity(profile.contract) is None
+    assert (testing.scope(), testing.generation()) == before
 
 
 def test_displayed_capacity_approval_cannot_approve_another_cached_source(profile, monkeypatch):

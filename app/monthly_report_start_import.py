@@ -162,6 +162,10 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
 def cover_photo_candidates(items):
     """Only cover-page photographs, not logos, dividers or package leftovers."""
     from app.monthly_report_sections import small_artwork
+    items = tuple(items)
+    cover_sections = tuple(item.word_section for item in items
+                           if item.part == "word/document.xml"
+                           and item.section in ("", "cover") and item.position)
     possible = tuple(item for item in items
                      if item.kind == "image" and item.part == "word/document.xml"
                      and item.section in ("", "cover")
@@ -174,8 +178,31 @@ def cover_photo_candidates(items):
     # still get classified as 'cover' by the text inspector. The first actual
     # cover Word section is authoritative for choosing a photograph; later
     # Contents/other section artwork is not another cover-photo option.
-    earliest = min(item.word_section for item in possible)
+    # A cover with only small/unknown artwork still establishes the first
+    # physical Word section. Filtering those items first would promote a
+    # later Contents illustration into a newly invented cover-photo choice.
+    earliest = min(cover_sections, default=min(item.word_section for item in possible))
     return tuple(item for item in possible if item.word_section == earliest)
+
+
+def unresolved_cover_artwork(items):
+    """Visible cover rasters with neither a photo choice nor a known logo role.
+
+    Later Contents art stays in its original Word section. Small artwork and
+    non-logo header/footer graphics in the actual cover are not evidence of
+    an empty or decorative image; keep their specific recovery reachable.
+    """
+    items = tuple(items)
+    photo_ids = {item.id for item in cover_photo_candidates(items)}
+    cover_sections = tuple(item.word_section for item in items
+                           if item.part == "word/document.xml"
+                           and item.section in ("", "cover") and item.position)
+    earliest = min(cover_sections, default=None)
+    return tuple(item for item in items if item.kind == "image" and item.position
+                 and item.id not in photo_ids
+                 and item.suggested_slot not in ("brand_logo", "client_logo")
+                 and not item.suggested_slot.startswith("divider_")
+                 and (item.part != "word/document.xml" or item.word_section == earliest))
 
 
 def suggested_cover_photo(items):
@@ -213,9 +240,11 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
     result = {}
     for section in section_reviews(inspection):
         cover_default = suggested_cover_photo(section.items) if section.key == "cover" else None
+        cover_unknown = {item.id for item in unresolved_cover_artwork(section.items)} if section.key == "cover" else set()
         plan = {"key": section.key, "action": "Keep and review", "target": section.key,
                 "omit": False, "selected": [], "texts": {}, "tables": {}, "destinations": {},
-                "new_assets": [], "image_notes": {}, "automatic": True, "approved": True}
+                "new_assets": [], "image_notes": {}, "automatic": True, "approved": True,
+                "source_sha256": inspection.sha256, "source_site_relation": analysis.site_relation}
         if analysis.site_relation != "same":
             plan["unsupported_reviewed"] = True
         questions = []
@@ -233,6 +262,11 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                         plan["tables"][item.id] = replace(table, rows=())
                 continue
             if slot in preferred_logos:
+                # This is an automatic use of the report's current logo, not
+                # an operator deselecting a source contribution. A verified
+                # same-source receipt may retain only these exact image roles.
+                if item.kind == "image" and slot in ("brand_logo", "client_logo"):
+                    plan.setdefault("automatic_logo_skips", {}).setdefault(slot, []).append(item.id)
                 continue
             if item.id in analysis.older_items and item.kind != "image":
                 # Old prose is not current-month work. Its photos are still
@@ -258,6 +292,9 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 questions.append("Choose where the additional content belongs.")
                 continue
             if item.kind == "image":
+                if analysis.site_relation == "same" and item.id in cover_unknown:
+                    questions.append("Other cover artwork has no confirmed photograph or logo role.")
+                    continue
                 if section.key == "organization" and re.search(
                         r"(?:^|[_-])contact[_-]matrix(?:[_.-]|$)",
                         item.image_part.rsplit("/", 1)[-1].casefold()):
@@ -317,11 +354,14 @@ def build_starting_import(path, inspection, plans):
     plans = tuple(plans)
     if not all(p.get("approved") for p in plans):
         raise ValueError("Resolve the remaining starting-report questions before continuing.")
-    if not any(p.get("selected") or p.get("new_assets") or p.get("preserved_assets") for p in plans):
+    def contributes(plan):
+        return not plan.get("omit") and bool(plan.get("selected") or plan.get("new_assets")
+                                             or plan.get("preserved_assets") or plan.get("cover_photo_omitted"))
+    if not any(contributes(plan) for plan in plans):
         return MappedImport((), (), (), ()), ()
     # Unrelated/old sections intentionally carry no data. The original keeps
     # their unsupported objects, but they are not new target-site exceptions.
-    active = tuple(p for p in plans if p.get("selected") or p.get("new_assets") or p.get("preserved_assets"))
+    active = tuple(p for p in plans if contributes(p))
     mapped, mappings = build_section_import(path, inspection, active)
     automatic_refs = {f"docx:{inspection.sha256}:{identity}" for p in active if p.get("automatic")
                       for identity in p.get("selected", ())}

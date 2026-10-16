@@ -16,6 +16,8 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_water_fresh_page_journey.py'
+      - 'tests/test_water_fresh_browser_contract.py'
       - 'scripts/qa_water_widget_delivery.py'
       - 'tests/test_water_widget_delivery.py'
       - 'tests/test_water_journey_contract.py'
@@ -29,7 +31,12 @@ on:
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
+      - 'tests/test_qa_native_text_prerequisite.py'
       - 'scripts/workspace_text_observations.py'
+      - 'scripts/qa_monthly_history.py'
+      - 'scripts/qa_cover_photo_controls.py'
+      - 'scripts/workspace_history_observations.py'
+      - 'tests/test_workspace_history_observations.py'
       - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
       - '.github/workflows/adaptive-workspaces.yml'
@@ -49,6 +56,8 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_water_fresh_page_journey.py'
+      - 'tests/test_water_fresh_browser_contract.py'
       - 'scripts/qa_water_widget_delivery.py'
       - 'tests/test_water_widget_delivery.py'
       - 'tests/test_water_journey_contract.py'
@@ -62,7 +71,12 @@ on:
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
+      - 'tests/test_qa_native_text_prerequisite.py'
       - 'scripts/workspace_text_observations.py'
+      - 'scripts/qa_monthly_history.py'
+      - 'scripts/qa_cover_photo_controls.py'
+      - 'scripts/workspace_history_observations.py'
+      - 'tests/test_workspace_history_observations.py'
       - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
       - '.github/workflows/adaptive-workspaces.yml'
@@ -75,6 +89,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  synthetic-history:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and history browser harness
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Actual isolated shared-history saves and read-only inspection
+        run: python scripts/qa_monthly_history.py
+      - name: Upload synthetic history evidence, including first failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-history-browser-evidence
+          path: test-artifacts/monthly-history/
+          retention-days: 7
+          if-no-files-found: warn
   synthetic-dom:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -128,6 +170,9 @@ jobs:
         env:
           EPC_MONTHLY_WATER_TASK: '1'
         run: python scripts/qa_water_page_journey.py
+      - name: Fresh ordinary Water page review from empty omitted state
+        if: ${{ !cancelled() }}
+        run: python scripts/qa_water_fresh_page_journey.py
       - name: Upload synthetic screenshots and geometry
         if: always()
         uses: actions/upload-artifact@v4
@@ -143,5 +188,6 @@ jobs:
             test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
             test-artifacts/water-page-journey/
+            test-artifacts/water-fresh-page-journey/
           retention-days: 7
           if-no-files-found: warn

@@ -702,17 +702,9 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                 from app.monthly_report_upload_ui import acknowledge_autoincluded_water_pages
                 acknowledge_autoincluded_water_pages(prefix, blocks)
     if section.key == "activity":
-        from app.monthly_report_upload_ui import render_uploads, set_source_manager_open
-        manager_key = field(prefix + "_batch_files_open", False)
-        manager_open = st.session_state[manager_key]
-        st.button("Done with source files" if manager_open else "Manage source files",
-                  key=prefix + "_source_manager_" + str(manager_open),
-                  on_click=set_source_manager_open, args=(manager_key, not manager_open))
-        if manager_open:
-            sources, additions, incoming_specs = render_uploads(profile, period, prefix, field)
-            draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
-            if additions:
-                draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
+        from app.monthly_report_source_manager_ui import render_guided_source_manager
+        draft, blocks = render_guided_source_manager(
+            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources)
         from app.monthly_report_ai_ui import render_drafting
         # One shared evidence workspace: rendering this once avoids duplicated
         # source/job widget identities when every report section is visible.
@@ -1112,9 +1104,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
                 # Contract, period, sites and preparer were already chosen at Start.
-                # Do not repeat a "Cover and report details" step or a hidden
-                # appearance/settings form. The starting-report photo gallery below
-                # handles an imported cover image when its identity is uncertain.
+                # Keep report-only photo changes reachable independently from the
+                # starting-report gallery and shared design administration.
+                from app.monthly_report_cover_ui import render_cover_photograph
+                blocks = render_cover_photograph(
+                    blocks, prefix, assets,
+                    lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
+                    scope=_rich_text_scope(prefix),
+                )
                 from app.monthly_report_section_ui import render_section_setup
                 render_section_setup(contract, period, prepared, field, state=state,
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),

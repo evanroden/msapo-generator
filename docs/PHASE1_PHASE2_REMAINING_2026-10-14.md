@@ -6,20 +6,117 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
-Observed release scope 2026-10-16 17:16 UTC: merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf
-passed Tests38936148403 (independently2,711/0/0/0) and Adaptive38936148447. Automatic
-live38937063007 observed that FULL actually served SHA in two independent isolated sessions,
-each completing exactly three requested/accepted/completed first-attempt generations. All twelve
-actual DOCX/PDF sizes/digests were independently verified; live Prepared pointer/keyboard passed
-six checks. This supersedes historical0dca served evidence below for this stated synthetic scope.
-No control-plane selection was used, and this is not full phase/owner-source/native acceptance.
+Current finishing batch 2026-10-16 18:24 UTC (PR252, still unmerged): resolved source files now
+collapse to Included files and pictures with Change; unresolved/stale/ambiguous/retained/CMMS
+sources keep their recovery tools. Native captions delivered with Done and same-render reader
+completion remain atomic. The actual dated shared-history comparison and report-only Cover
+photo browser task are added to a separate15-minute job; the existing25-minute job is retained.
+Those new browser paths remain implemented-needs-verification until exact CI runs.
 
-PR249 integration9b passed Required2,779 and Adaptive, but its merge is now held on two
-new review findings beyond the prefilled Water fixture: an empty omitted first-report placeholder
-can disable first-page inclusion, and the no-routed-source early return can hide retained assetless
-Water re-inclusion. Dedicated actual-caller regressions and conservative Water-specific repairs
-are in progress; no merged/live Water release is claimed. The passing full journey remains valid
-for its stated prefilled fixture and does not erase these new conditional paths.
+The Cover photograph now has one reachable ordinary report-only Change path, explicit Use/No
+photograph, original retention and stale-source/incarnation/cycle guards. Its controls refresh
+only AFTER all report fields and recovery commit, preserving same-click Activity text. Explicit
+Starting No-photo intent is source/candidate-bound and persists as cover_photo Omit through native
+output; a populated current human photo requires a separate report-level decision. Existing
+unread/unknown cover art cannot be approved by a new photograph; existing saved-design recovery
+and safe foreign exact-source logo exclusions remain narrow. Same-source native DOCX and one-page
+LibreOfficeDev26.8alpha diagnostic confirm photo relationships/media are absent while logos and
+original source remain. This is synthetic exact-output proof, not approved-master/Word acceptance.
+
+An exact repeat-import exposed a separate logo receipt/default boundary. Automatic preferred-logo
+skips retain only verified old exact-source/profile/month/role contributions; current human art
+never becomes source receipt content. Normal three-way replay preserves edits, Omit, Clear and
+removed logos. Those exact consumed roles also bypass downstream default refill; all mandatory
+export checks remain.26 focused/165 affected and222 combined No-photo/replay checks passed on their
+recorded revisions. New source/cover/history integration:178 passed,1 local LibreOffice-filter skip
+in66.22s;8 native image-observation tests also pass. Scopes overlap, not summed. Original caller,
+order-drift, stale-control and invalid-harness observations are retained, not overwritten.
+
+Global release remains merged/live-synthetic4ca42c59fe647d4cf1f766bfb2d232092e48f7cf (PR248 only).
+PR249b34 Required38943191284 independently2,809/0/0/0; Adaptive38943191454 FAILED only new fresh
+Water WebKit native ResizeObserver error during September selection. BOTH engines completed all
+five fresh-task stages to exact one-page durable inclusion; every prior family/full Water/native
+clear-reentry/output passed. Overall browser gate remains failed. Original105,020,590-byte archive
+and exact first-failure trace are retained. No production data-loss or page-inclusion failure was
+shown by that task. PR251 currentc114f95 incorporatesb34 and has fresh Required38944314491 success;
+its Adaptive38944314371 still requires independent result/evidence review.
+
+Training currentca4101b separately includes distinct blank-status preservation and a corrected
+native-widget reference. Its reference reproduced ResizeObserver errors in BOTH engines with
+ZERO workspace/preview observers, matching native input/trigger geometry and one connected
+input/pointer/filter/option action; authoritative session/output tails also complete. This proves
+custom app observers are not necessary for these occurrences. The locked framework Zt positioner
+has synchronous resize/layout writes; a precise callback model and cache-safe pinned import-graph
+repair are in progress separately. No global ResizeObserver patch, error filter, timeouts or
+dependency change is justified here. Neither Training nor either phase is accepted.
+
+### Prior branch checkpoints (superseded by current finishing batch)
+
+PR251 reconciliation 2026-10-16 17:59 UTC: this local normal merge incorporates exact PR249
+headb34b172cb3d7dd218e3534d3de26b7258e5a88cb into b5f57e060151e23bbee965bdcad6e9b41cef2e71.
+Both ordinary first-site browser checks now assert the exact full site name in the stable
+identity strip, where the removed selected-sites prose moved. Their zero-site baseline, one
+native selection, month/date/source/page decisions, staging and canonical/durable assertions
+remain. The new fresh Water task keeps the existing full prefilled Water/output task intact.
+The workflow retains the exact33-path parent union for PR/main events, every earlier journey,
+one fresh Water step/artifact and the unchanged25-minute job limit. No history browser task is
+added on this branch.119 focused composed Water/identity/history/admin/source/native-prerequisite
+tests pass in the locked Python3.12.14 runtime; exact new integration CI is still required.
+PR251b5's earlier green Required38937329814 and Adaptive38937329670 are historical evidence,
+not verification of this merged candidate. No publication, deployment, browser rerun, live write
+or source transfer occurred in this local reconciliation. PR251 stays stacked behind249; after
+249 integrates normally, retarget to main and inspect/run its exact workspace-only delta.
+
+### PR249 prerequisite verification checkpoint
+
+Current verification batch 2026-10-16 17:55 UTC: PR249 head98111bb passed Required38940688734
+and Adaptive38940688764 on integration6ae137951dd8dfc1cbd16af73ecbe8c28ad3ae12 against main4ca.
+Its17 new Water regressions repair two independently reproduced recovery cases; the full prefilled
+Water browser task remains intact. Required artifacts independently recount2,796 tests with zero failures/errors/skips.
+Adaptive original86,757,831-byte ZIP is retained under its own verified digest; full task review
+remains scoped to that exact revision.
+
+The next exact candidate adds a separate ordinary native browser task for the freshly empty Omit
+case: one zero-site action, October template bootstrap, then unsaved September with no snapshot,
+real two-page PDF upload, first-page approval without premature inclusion, explicit second-page
+exclusion, and exactly one durable canonical page. The October bootstrap itself correctly starts
+Water as This month; it is not the empty-Omit prerequisite. The guarded disposable server has no
+live-root fallback or outgoing services. This task is browser-unrun until the new exact CI;
+it does not replace the existing caption/order/omission/compact-preview/generation/output journey.
+31 affected checks pass locally; independent helper review is clean. Four helper contracts
+also retain missing-prerequisite, anti-no-op and replaced-input-node rejection.
+
+The same batch repairs a demonstrated native-text QA prerequisite from PR252 Adaptive38938669161:
+the issue clear was attempted while its controlled DOM value was briefly empty after reload, so
+the anti-no-op assertion correctly stopped before any clear. The canonical/durable issue remained
+populated and later captured DOM matched it. Awaiting the exact expected existing value on the
+same locator now precedes the action. Anti-no-op, actual input-event-node continuity, durable
+acknowledgment, clear/reentry/reload and actual output assertions remain. No rescue gesture,
+synthetic blur, business retry, timeout increase or application-state injection is added.
+
+Earlier Water review recovery findings reproduced five actual-caller failures despite the
+prefilled journey passing. Empty optional Omit slots now accept explicitly reviewed pages;
+omitted wording, tables/custom schemas, captions, graphics and other writer content retain a
+separate whole-section choice, including when no source files are routed.17 new and71 affected
+cases passed locally. Stale source/reset/price/image/zero/NR/qualified guards remain. The original
+failures and two identified intermediate test-prerequisite mistakes are preserved.
+
+Merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf independently passed Tests38936148403
+(2,711/0/0/0), Adaptive38936148447 and automatic live38937063007. Both independent live sessions
+observed that FULL served SHA and completed3 first-attempt requested/accepted/completed generations
+each, with12 actual files' sizes/digests verified across the sessions. Live Prepared pointer/
+keyboard passed6 checks. No Render workspace selection or owner conflict change occurred. This
+is exact synthetic release proof for PR248 only, not owner AUTH, native master or phase acceptance.
+
+PR250 now87aebb9 retains single-date/native keyboard/partial/minmax/session/output assertions;
+its prior3c run stopped at an unnecessary one-second frame prerequisite on an EMPTY initial date,
+before repaired paths. Actual40-case vendor model proves empty0..0 cannot be changed by its queued
+cursor0, so only nonempty replacements need the unchanged frame barrier.60 targeted checks pass;
+new exact browser verification remains required. Priorace WebKit full tail and54 individually
+reviewed PDF pages stay scoped; earlier Chromium filter-only and ResizeObserver causes remain
+unclassified. PR251b5f57e0 exact Required38937329814 and Adaptive38937329670 passed; it remains
+unmerged. PR25257b6eee contains deliberate external reading, scoped Issue Evidence/Undo, quiet
+Scorecards and strengthened real DOCX page-order/caption checks, still unmerged behind PR251.
 
 The current follow-up also strengthens Water DOCX output assertions: actual embedded relationship
 occurrence/order and adjacent per-page caption hashes must match the ordered working receipt.
@@ -27,6 +124,7 @@ Both retained c3eb outputs pass; swapping their real image relationships passes 
 check but is now rejected.23 targeted cases pass. This verifies native package identity/order,
 not independent Word pagination, PDF image order, all-page legibility or graphic/privacy acceptance.
 
+### Prior integration checkpoint (superseded by current repair above)
 
 Updated 2026-10-16 17:07 UTC. PR248 is merged normally into main
 `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`, with reviewed parent head
@@ -84,6 +182,20 @@ output/source/Water tests passed with zero failures/errors/skips. The workflow u
 All application/test/workflow blobs are unchanged from fc157f0; only this ledger differs. The
 local receipt is retained privately as pr251-parent-merge-focused.xml. This is scoped local
 verification, not the new exact integration CI or merged/live acceptance.
+
+An unpublished Shared report history browser task starts from published PR251b5f57e0.
+It uses the existing marked fixture and actual browser cookie, normal known-value load,
+photo upload and explicit Save shared version actions. The new separate15-minute CI job
+keeps the existing25-minute adaptive job byte-identical. It checks real dated/author/version
+grid rows, read-only wording/picture comparison, unchanged working/durable drafts, memory
+assets and fresh monthly_reports history/asset/standing/journal byte+mtime inventories across
+open/close/resize/reload, plus an empty second-cookie namespace. No live route, generation,
+owner recovery choice or expected-value report injection is used.
+The browser path is implemented-needs-verification; it has not run locally or in CI yet.
+46 affected local checks passed. Independent review reproduced a linked durable-root escape
+in the new test observer; its original failing receipt is retained. Both observer entry paths
+now reject that root before library reads, and the final10 observer/acknowledgment tests pass.
+These are test-harness checks, not browser, authentic-source or native-output acceptance.
 
 ### Superseded implementation checkpoints (history)
 
@@ -236,10 +348,133 @@ cannot spend or replace current edits; completed readings survive reuse-cache fa
 another paid request. Pending suggestions keep explicit source-bound approval. The affected
 111-case suite passed with zero failures/errors/skips; no actual paid reader was called in QA.
 These changes need exact integrated/browser verification and are not merged or live merely by
-publication. A separate source-manager observation still finds fully resolved pages left open
-with repeated Include/Add controls; that remaining UX consolidation is not claimed finished here.
+publication. The separate source-manager observation below was reproduced against that earlier
+candidate; its bounded resolution is implemented locally and still requires integrated gates.
+
+### Resolved source disclosure follow-up — 2026-10-16 17:33 UTC
+
+Actual guided synthetic utility-file review and atomic Add reproduced a fully included image
+source left open with repeated Include/Add controls. Local `c82e4ae` (integrated as `f72b99c`)
+now closes that exact successful Add to Included files and pictures with one Change route.
+Unresolved sources get one review card and the original source/page/reuse/remove/metadata tools.
+Only current, unambiguous, reviewed image attachments with valid source scope resolve; missing,
+priced, stale, omitted, deliberately removed, reference-only, text and CMMS sources remain open.
+This is a disclosure decision, not a replacement for existing export or source-review checks.
+
+Native regressions also preserved captions delivered with Done, including a separate reader
+finishing earlier in the same render; inherited absent captions follow actual attached captions
+without a display write. Failed Add retains its error and recovery controls. Original bytes,
+standing records and history are unchanged by open/close. Initial failures remain retained.
+The new47 targeted and188 affected local checks passed; exact local integration `d3810e6` passed
+151 combined source/gallery/issue/Scorecard/native-package checks. Independent read-only review
+found no lost current code or new blocker. Browser geometry, genuine source/master, native visual,
+exact final CI, merge and served acceptance remain separate; broad source unification is unfinished.
+
+Local integration then retained published PR252 `57b6eee`, reconciled Water prerequisite
+`98111bb` through merge `fc6d61d`, and added the separate history harness as `90502b3`.
+The Water/shared-source union passed159 affected local checks in97.30 seconds. The history job
+adds only its three trigger paths and separate15-minute job; removing those additions reproduces
+the original workflow exactly, including the unchanged25-minute synthetic job. Final code
+`39da8f4` passed109 local history/observer, QA isolation/image, retained Water and native source/
+gallery checks in68.52 seconds. The subsequent result update changes this ledger only. Independent
+union review found no lost Water, caption, scoped reading, history guard or workflow code.
+The new history browser task and exact CI remain unrun here; no code was published, merged to
+main or observed served by this local integration.
 
 ### Failures that must remain visible
+
+* Conditional cover gallery follow-up (2026-10-16 17:22 UTC), based on `be6cb02`:
+  actual synthetic same-site DOCX inspection with an unread VML drawing reproduced two independent
+  photo galleries. Selecting No cover photograph in the first was immediately reversed by the
+  lower unresolved-art card. The dedicated gallery now remains the only photo-selection owner;
+  the recovery card retains that exact choice without a second gallery, including after edit,
+  close/reopen and later Contents artwork. Unknown-art recovery and Continue blocking remain.
+  Source image selection does not grant client-export review, and No cover photograph stays valid
+  when no unread art blocks import. Original bytes and standing records stay unchanged on display.
+  Two original failures are retained; 49 focused source/AppTest checks pass. This is not browser
+  geometry, genuine cover/master or native visual acceptance. A separately reproduced existing
+  defect was separately reproduced: an ordinary New cover photograph upload could mark unrelated
+  unread cover art preserved. The next checkpoint repairs that bounded safety/recovery path.
+
+* Conditional cover-art recovery follow-up (2026-10-16 17:51 UTC), based on `867fed5`:
+  four actual-source/AppTest negatives reproduced optional-photo approval of unrelated VML,
+  fresh-cover omission still allowing the unread DOCX to become its native design, silent omission
+  of small unassigned cover artwork, and promotion of a later Contents image when the earliest
+  cover contained only small art. A separate repeated-choice check reproduced an omitted source
+  photo still appearing in the transient preview. These failures remain in their first receipts.
+  New cover photograph now changes only that photograph and cannot certify another drawing.
+  Unread/unassigned cover art has source-specific original-Word repair/re-upload guidance; up to
+  four actual unknown rasters display within a bounded recovery card. A saved report offers
+  Use this report’s cover design with explicit scope: keep its current pin, logos, photo and
+  footer; add none of this upload’s cover content, retain the unchanged original. The decision
+  stays reversible; its gallery and proposed preview cannot republish the excluded source photo.
+  Fresh reports cannot use a cover-contribution omission to certify their raw uploaded design.
+  Different-site source exclusion remains valid only for exact-source automatic analysis and
+  recognized-logo-only contribution; foreign facts/photos/drawings stay excluded and any newly
+  included logo still requires client-image review. A fresh foreign source with zero active Cover
+  contribution is also blocked when its native cover artwork is unread. No generic boolean,
+  unrelated photo, stale source receipt or changed source can waive these gates. Fixed recognized
+  logos and later Contents handling remain distinct. No standing/display write or canonical
+  artwork/master installation is introduced. The two older photo-as-drawing completion assertions
+  are corrected to the user’s safety contract; real Proposals replacement/save assertions remain.
+  Exact locked Python3.12.14 / Streamlit1.61.1: 204 affected checks passed, including 19 new cases.
+  Peer held-old-Continue/new-source delivery also preserved the draft/profile/pin and published no
+  new original. Evidence is source/AppTest scope only: no new browser, genuine source/master,
+  native-output visual/privacy, Microsoft Word or physical-device acceptance. Ordinary cover-photo
+  editing has a separately assigned reachable-control follow-up; no unimplemented destination is
+  promised here. Gallery No cover photograph native-output omission was still unverified at that checkpoint; the next checkpoint records its exact reproduction and repair.
+
+* Explicit No cover photograph native-output repair (2026-10-16 18:15 UTC), based on
+  `15f7481`: normal gallery action and import save left no photo block, while the raw uploaded
+  native design still included that exact source photo in visible DOCX relationships and package
+  media. The same invented 38,600-byte DOCX was reused before/after; source SHA and original bytes
+  match. Explicit report Omit removed it; a current replacement preserved the header logo.
+  No-photo now records a deliberate exact-source/candidate-bound intent, not absence, default
+  uncertainty or an empty gallery. Its mapped cover_photo Omit survives imported_draft narrowly
+  for that slot and prevents raw-source art from returning. Source originals/design pins and
+  known logos remain. Whole-cover/current-design or foreign-source exclusion never becomes a
+  report-photo Clear. New omission cannot delete populated human or even prior-equal source
+  photos: a named ordinary report No cover photograph action is required first. Already omitted
+  photos keep retained hashes for recovery; genuinely cleared photos remain blank; a verified
+  unchanged source omission preserves a later manual photo. A retained new upload stays excluded
+  until explicitly used with its exact image digest; a stale choice cannot approve changed bytes
+  or waive source pricing/art gates. Native callback delivery makes gallery choices immediately
+  reversible without a second event; preview keeps current independent photos truthful.
+  Exact locked Python3.12.14 / Streamlit1.61.1: 224 affected checks passed, including 20 new cases.
+  Actual repaired DOCX has no omitted-photo relationship or media. Its single-page PDF was
+  inspected using LibreOfficeDev26.8.0.0.alpha0 (build2c87e51e…), preserving logo/title/activity
+  while omitting the photo. These are invented internal-layout outputs below final report
+  preflight, not accepted full generation, genuine master/cover, Microsoft Word or physical QA.
+  Same-byte reimport exposed a separate existing preferred-logo source-receipt omission blocker;
+  the following local follow-up repairs and tests that exact-source boundary before integration.
+  First native bytes/renders and first model/control failures remain retained. A caption probe
+  initially used the protocol name imgs instead of Streamlit’s typed AppTest image/captions API;
+  that was corrected as an observation error without changing the image assertion.
+  Correction to the earlier cover-only experiment: existing reports legitimately accept an empty
+  source contribution. Exact15f AppTest now proves Cover-only current-design recovery keeps the
+  draft/original; the earlier minimum-section error was an interaction symptom repaired with the
+  gallery ownership path, not a reason to require source Activity content.
+
+* Preferred-logo same-byte replay follow-up (2026-10-16 18:20 UTC), local code `a4a1e62`
+  based on `15f7481`: the actual No-photo gallery/save/fresh-AppTest/reimport path rejected a
+  recognized header logo because automatic use of the saved logo looked like explicit source
+  deselection. Automatic setup now records only its exact recognized image-role skips. A verified
+  prior contribution for the same bytes/profile/month/role remains consumed, while ordinary
+  three-way replay preserves current human replacement, Omit, Clear or removal. It copies the
+  prior source contribution, never the current standing/human block, and preserves receipt order.
+  Missing/unverified/changed-source receipts, wrong scope/role, manual review and explicit
+  deselection retain conservative recovery. Peer review then reproduced two actual caller
+  failures: saved-logo/default-branding fallback refilled cleared/removed report slots after
+  replay. Only these verified consumed roles now bypass those fallbacks; ordinary defaults and
+  required output checks are unchanged. Display/review choice writes no manifest, and repeat
+  import leaves standing versions, branding, snapshot history, originals and source contribution
+  separate from current human content. First failures and the intermediate receipt-order failure
+  remain retained. Exact locked Python3.12.14 / Streamlit1.61.1: 165 affected checks passed before
+  integration; 26 new cases passed after the final independent-source-receipt assertion. Combined
+  local head `368f2a16e543981dae49781c55d7d5f304ebe7df` includes No-photo `560d121` with
+  222 affected checks passing in30.04s, including the actual fresh-session replay and ownership
+  negatives. These are source/AppTest checks, not a new browser run, full generation/native visual,
+  genuine import, merged/main CI or served-revision acceptance. Publication/integrated gates remain.
 
 * PR248 head6046650 Required38774586215 passed 2,641 tests, but Adaptive38774586190 failed:
   WebKit did not produce the expected durable Activity receipt after transitions, and the shared
@@ -284,7 +519,7 @@ not an application change, dependency upgrade or passing browser evidence.
 | Section/editor cleanup | Browser-observed, partly conditional | Remove duplicate headings/prose, not functions. Keep one canonical Activity editor, optional grounded writing help, evidence/price gates, CMMS coverage, scoped organization/contact editors, correct ENFRA onsite versus vendor distinction, issue recovery, proposals and RFI meaning. |
 | Scorecards/thermal intake | Implemented in separate follow-up; 135 affected checks pass; browser/actual-source mapping open | Verify one Utility analysis field, report-only versus shared capacity scope, primary missing-data intake and secondary replacement, deliberate source-bound external Read/retry, current-only standing approval and zero display-driven writes. |
 | Administration/design controls | Implemented in PR251 with scoped pin/concurrency regressions; specific expanded paths remain | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
-| Imported cover/artwork/conflicts | Source-only conditional states not fully reached | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |
+| Imported cover/artwork/conflicts | Gallery and bounded cover-art recovery implemented in synthetic source/AppTest scope; broader conditional/native acceptance open | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |
 | AUTH01/02/03 | Blocked on exact approved source/target expectations and supported access | Same-site prior month; different site same contract; owner-identified genuinely half-finished current month. Inventory is not scenario selection; filenames do not establish partial status. |
 | Genuine native conversion | Diagnostic incomplete, not production timeout | Investigate the retained same-site preflight with bounded worker, stage timings, first-failure trace and reliable process cleanup before retry. Do not raise limits or discard drawings. |
 | Native outputs/privacy | Open authentic acceptance | Inspect every actual PDF page and every DOCX page with named renderer; retain Microsoft Word check separately. Check package/graphics/hidden channels, real masters/assets and actual source values. |

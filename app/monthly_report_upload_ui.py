@@ -23,12 +23,26 @@ def _undecided_pages(content, source):
             and exclusions.get(n) != page_fingerprint(source, n)]
 
 
-def _sync_source_fields(source, prefix, field):
+def _sync_source_fields(source, prefix, field, *, caption_defaults=None):
     """Refresh stale widgets when another section edited the canonical source.
 
     Only external changes are copied. A widget's pending input on this rerun is
     preserved when the canonical source still matches this view's last render.
     """
+    if caption_defaults is not None:
+        defaults_key = prefix + "_inherited_caption_view"
+        previous_defaults = st.session_state.get(defaults_key, {})
+        explicit_captions = dict(source.captions)
+        for number, caption in caption_defaults.items():
+            if (number not in explicit_captions and number in previous_defaults
+                    and previous_defaults[number] != caption):
+                key = field(prefix + f"_caption_{number}", caption)
+                # An unchanged displayed default follows the actual attached
+                # page. A different native value is a delivered operator edit,
+                # including a deliberate blank, and must be consumed normally.
+                if st.session_state.get(key) == previous_defaults[number]:
+                    st.session_state[key] = caption
+        st.session_state[defaults_key] = dict(caption_defaults)
     previous = st.session_state.get(prefix + "_canonical_view")
     if previous is None or previous == source:
         return
@@ -46,7 +60,7 @@ def _sync_source_fields(source, prefix, field):
     before, after = dict(previous.captions), dict(source.captions)
     for number in set(before) | set(after):
         if before.get(number) != after.get(number):
-            value = after.get(number, f"{source.filename} · page/item {number}")
+            value = after.get(number, (caption_defaults or {}).get(number, f"{source.filename} · page/item {number}"))
             st.session_state[field(prefix + f"_caption_{number}", value)] = value
 
 def render_source_details(source, profile, prefix, field, *, applied_caption="Corrected details applied to this draft."):
@@ -192,7 +206,8 @@ def _cmms(content, profile, period, prefix, field):
     return (signature, result[1]) if result else (signature, None)
 
 
-def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False):
+def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False,
+                   attached_blocks=None):
     st.caption("Read source files, check their pages, or match spreadsheet columns.")
     st.caption("PDF, Word, Excel, photos and email files. Uploaded emails are read, not sent.")
     with st.expander("File formats and limits"):
@@ -241,7 +256,21 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         selected = st.selectbox("File to review", list(by_id), format_func=lambda v: by_id[v].source.filename, key=selection_key)
     content, source = by_id[selected], by_id[selected].source
     p = key + "_" + selected
-    _sync_source_fields(source, p, field)
+    # An absent source caption inherits the already attached page's caption.
+    # Opening Change must not materialize a new source caption or invalidate
+    # its existing page review merely to display an editable default.
+    caption_defaults = {}
+    if attached_blocks is not None:
+        from app.monthly_report_page_controls import page_asset_index
+        for number in sources.image_numbers(content):
+            candidates = []
+            for block in attached_blocks.values():
+                index = page_asset_index(block, source.id, number) if block.source != "Omit" else None
+                if index is not None:
+                    candidates.append(block.asset_captions[index] if index < len(block.asset_captions) else "")
+            if len(candidates) == 1:
+                caption_defaults[number] = candidates[0]
+    _sync_source_fields(source, p, field, caption_defaults=caption_defaults)
     source = render_source_details(source, profile, p, field,
         applied_caption=("Corrected details are kept in this file selection. Add the selection below to update the report."
                          if retain_accepted else "Corrected details applied to this draft."))
@@ -283,7 +312,10 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                     preview_ok = True
                 except (ValueError, OSError) as exc:
                     st.error(str(exc))
-                captions[page] = st.text_input("Page caption", key=field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}")))
+                default_caption = captions.get(page, caption_defaults.get(page, f"{source.filename} · page/item {page}"))
+                caption = st.text_input("Page caption", key=field(p + f"_caption_{page}", default_caption))
+                if page in captions or page not in caption_defaults or caption != default_caption:
+                    captions[page] = caption
         changes["captions"] = tuple(sorted(captions.items()))
         source = replace(source, **changes)
         if pages and page in sources.image_numbers(content):
@@ -329,6 +361,9 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 by_id[selected] = replace(content, source=source)
                 st.session_state[key] = tuple(by_id.values())
                 st.session_state[p + "_canonical_view"] = source
+                forms = st.session_state.get("_monthly_source_detail_forms")
+                if isinstance(forms, dict):
+                    forms[source.id] = source
                 # Apply widget changes before instantiation on the next rerun.
                 st.session_state[p + "_page_action"] = (list(source.selected_pages), next_page)
                 st.rerun()
@@ -339,6 +374,12 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         contents = tuple(by_id.values())
         st.session_state[key] = contents
         st.session_state[p + "_canonical_view"] = source
+        # Later section views reuse this render's one metadata form. They must
+        # receive the source after native captions/selections were captured,
+        # rather than restore the form's earlier pre-edit source snapshot.
+        forms = st.session_state.get("_monthly_source_detail_forms")
+        if isinstance(forms, dict):
+            forms[source.id] = source
         if st.button("Remove source from this selection" if retain_accepted else "Remove source from this draft", key=p + "_remove"):
             st.session_state[key] = tuple(c for c in contents if c.source.id != selected)
             st.rerun()
@@ -439,7 +480,7 @@ def _queue_section_inclusion(key, request):
 def _omitted_water_recovery(contents, blocks, local_key, prefix):
     from app.monthly_report_guided import _rich_text_scope
     from app.monthly_report_page_controls import (
-        apply_omitted_section_request, omitted_section_ready, omitted_section_request,
+        apply_omitted_section_request, omitted_section_ready, omitted_section_request, retained_water_omission,
     )
     scope = _rich_text_scope(prefix)
     request_key = local_key + "_reinclude_omitted"
@@ -455,8 +496,7 @@ def _omitted_water_recovery(contents, blocks, local_key, prefix):
             # and attempts durable recovery, just like automatic page inclusion.
             st.session_state[prefix + "_period_editor_refresh"] = True
     block = blocks.get("water_reports")
-    if block is None or block.source != "Omit" or not (
-            block.asset_hashes or block.text.strip() or block.rows or block.extra_tables or block.ai_paragraphs or block.org_nodes):
+    if not retained_water_omission(block):
         return
     st.info("Water treatment is left out of this report. Its retained content is unchanged.")
     page_label = "page" if len(block.asset_hashes) == 1 else "pages"
@@ -519,10 +559,10 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
 def _render_section_page_review(profile, content, prefix, field, blocks, *, auto_include=False, contents=()):
     """Review pages once; completed Water reviews can add pages automatically."""
     from app.monthly_report_section_uploads import included_pages
+    from app.monthly_report_page_controls import retained_water_omission
 
     source = content.source
-    section_omitted = (auto_include and blocks.get("water_reports") is not None
-                       and blocks["water_reports"].source == "Omit")
+    section_omitted = auto_include and retained_water_omission(blocks.get("water_reports"))
     p = prefix + "_" + source.id
     _sync_source_fields(source, p, field)
     source = render_source_details(source, profile, p, field)
@@ -674,6 +714,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     from app.monthly_report_section_uploads import (
         SECTION_UPLOADS, pending_pages, prepare_section_pages, section_contents, source_destinations,
     )
+    from app.monthly_report_page_controls import retained_water_omission
     if destination not in SECTION_UPLOADS:
         raise ValueError("Unknown report section for uploaded pages.")
     blocks = {} if blocks is None else blocks
@@ -682,8 +723,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
-    if (destination == "water_reports" and blocks.get(destination) is not None
-            and blocks[destination].source == "Omit"
+    if (destination == "water_reports" and retained_water_omission(blocks.get(destination))
             and st.session_state.pop(local_key + "_auto_include", None) is not None):
         # Retire a completion from before omission even when a distinct
         # section-inclusion action is delivered in this same native run.
@@ -749,7 +789,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                 choice_key = field(local_key + "_saved_choice", next(iter(choices)))
                 if st.session_state[choice_key] not in choices:
                     st.session_state[choice_key] = next(iter(choices))
-                chosen = st.selectbox("Saved file", list(choices), format_func=lambda v: choices[v].source.filename, key=choice_key)
+                # The native serializer retains this formatter after the
+                # function reuses `choices` for the section's own files.
+                filenames = {identity: item.source.filename for identity, item in choices.items()}
+                chosen = st.selectbox("Saved file", list(choices), format_func=filenames.get, key=choice_key)
                 if st.button("Use in " + title, key=local_key + "_use_saved"):
                     bindings[chosen] = destination
                     st.session_state[key + "_section_routes"] = bindings
@@ -757,6 +800,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.warning(message)
     scoped = section_contents(contents, destination, bindings, blocks)
     if not scoped:
+        # Retained native wording/tables can outlive their source workspace.
+        # Their explicit section choice must remain reachable without a file.
+        if destination == "water_reports":
+            _omitted_water_recovery(contents, blocks, local_key, prefix)
         return tuple(c.source for c in contents), {}, {}
     if destination == "water_reports":
         included = (len(blocks["water_reports"].asset_hashes)
@@ -840,7 +887,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         if included:
             st.caption(f"{included} {'page' if included == 1 else 'pages'} included in this draft.")
         if (pending and not additions and not st.session_state.get(request_key)
-                and not (blocks.get(destination) is not None and blocks[destination].source == "Omit")):
+                and not retained_water_omission(blocks.get(destination))):
             st.caption("Finish reviewing the remaining pages to include your selected pages automatically.")
         return tuple(c.source for c in contents), additions, {}
 
