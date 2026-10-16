@@ -47,9 +47,13 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
         if key in incoming_keys:
             continue
         present = current.get(key)
+        # Retaining table headings is not retaining monthly rows. The normal
+        # editor keeps the schema after deleting every row; it must not make
+        # the named Clear recovery impossible. Populated rows still block.
         populated = present is not None and present.source != "Omit" and bool(
             present.text.strip() or present.rows or present.asset_hashes
-            or present.org_nodes or present.extra_tables or present.ai_paragraphs)
+            or present.org_nodes or any(table.rows for table in present.extra_tables)
+            or present.ai_paragraphs)
         # Imported footer text also lives outside the block in address_line.
         # Native generators use that value even when the block is absent.
         footer_remaining = key == "footer_text" and bool(existing.address_line.strip())
