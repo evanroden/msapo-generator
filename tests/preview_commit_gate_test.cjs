@@ -106,6 +106,28 @@ test('Prepared-by typing holds all identity-dependent previews before deferred n
     h.cleanup();
 });
 
+for(const shiftKey of [false,true])
+test((shiftKey?'Shift+Tab':'Tab')+' promotes a pending native textarea edit before focus geometry can queue a fragment',()=>{
+    const batch=new LockedWidgetBatch();
+    const h=pendingEditorWithSibling({onPreview:fragment=>batch.schedule(fragment)});
+    // A browser moves focus/scroll after this keydown and before its native
+    // change/blur handlers. An adjacent preview must not claim that batch.
+    h.dispatch('keydown',{target:h.target,key:'Tab',shiftKey,isComposing:false});
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();
+    h.dispatch('change',{target:h.target});
+    batch.schedule(undefined,{preparer:true});
+    assert.deepEqual(batch.flush(),{fragment:undefined,hasPreparer:true},
+        'the native textarea commit needs a full editor run even when Tab changes preview geometry');
+    h.cleanup();
+});
+
+test('Tab without a pending native edit does not claim a full editor rerun',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('keydown',{target:h.target,key:'Tab',isComposing:false});
+    assert.equal(h.gate.pending,false);assert.equal(h.gate.blockAll,false);
+    h.cleanup();
+});
+
 for(const modifier of ['ctrlKey','metaKey'])test(modifier+' Enter commits cannot coalesce with another preview fragment',()=>{
     const h=pendingEditorWithSibling();
     h.dispatch('keydown',{target:h.target,key:'Enter',[modifier]:true,isComposing:false});
@@ -144,7 +166,9 @@ test('fragment Retry preview does not await an impossible full rerun: '+referenc
 
 test('ordinary Enter, composition, focus, disabled buttons and file pickers do not claim a full rerun',()=>{
     const h=pendingEditorWithSibling();
-    for(const event of [{key:'Enter'},{key:'Enter',ctrlKey:true,isComposing:true},{key:'Tab'},{key:'a',ctrlKey:true}])
+    for(const event of [{key:'Enter'},{key:'Enter',ctrlKey:true,isComposing:true},
+        {key:'Tab',isComposing:true},{key:'Tab',ctrlKey:true},{key:'Tab',altKey:true},
+        {key:'Tab',metaKey:true},{key:'a',ctrlKey:true}])
         h.dispatch('keydown',{target:h.target,...event});
     h.dispatch('click',{target:{closest:s=>'[data-testid="stButton"] button'===s?{disabled:true}:null}});
     h.dispatch('click',{target:{closest:s=>s==='input[type="file"]'?{}:null}});

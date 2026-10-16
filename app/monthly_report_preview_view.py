@@ -126,14 +126,16 @@ export default function(component) {
                 if (label?.querySelector('input[type="checkbox"], input[type="radio"]') ||
                         (button && !button.disabled)) awaitNativeEdit();
             };
-            // Ctrl/Command+Enter commits a native textarea without a blur/change
-            // event. Keep its full-editor request out of the same framework
-            // batch as a neighboring preview fragment. Only an existing edit
-            // opens this hold; ordinary Enter/IME/focus are still local input.
+            // Ctrl/Command+Enter commits without blur/change. Tab/Shift+Tab
+            // moves focus/scroll before its change/blur handlers can protect
+            // the deferred commit. Hold neighboring fragments at keydown for
+            // these native apply gestures. Only an existing edit opens this
+            // hold; ordinary Enter/IME/focus are still local input.
             const nativeEditorCommit = event => {
                 const target = event.target;
-                if (!gate.pending || event.isComposing || event.key !== 'Enter' ||
-                        !(event.ctrlKey || event.metaKey) ||
+                const applyKey = (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) ||
+                    (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey);
+                if (!gate.pending || event.isComposing || !applyKey ||
                         !target?.matches?.('textarea') || target.closest?.('.report-preview')) return;
                 const withinPair = target.closest?.('[class*="st-key-epc_pair_"]') ||
                     target.closest?.('.epc-workspace-pair');
