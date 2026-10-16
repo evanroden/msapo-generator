@@ -51,9 +51,10 @@ def wait_pages(page, order, *, pending=None):
       return JSON.stringify(numbers(s.working))===JSON.stringify(wanted.order) &&
         JSON.stringify(s.working)===JSON.stringify(s.durable) &&
         s.working_fingerprint===s.durable_fingerprint &&
-        (wanted.pending===null||JSON.stringify(s.working.pending)===JSON.stringify(wanted.pending)) &&
+        (!wanted.check_pending||JSON.stringify(s.working.pending)===JSON.stringify(wanted.pending)) &&
         document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
-    }""", arg={"order": order, "pending": pending}, timeout=45000)
+    }""", arg={"order": order, "check_pending": pending is not None,
+            "pending": pending if pending is not None else []}, timeout=45000)
     return receipt(page)
 
 
@@ -62,7 +63,7 @@ def choose_page(page, number):
     control = water.get_by_role("combobox", name="Page to review", exact=True)
     control.click()
     page.get_by_role("option", name=re.compile(r"^Page " + str(number) + r"(?: ·|$)")).click()
-    expect(control).to_contain_text("Page " + str(number))
+    expect(control).to_have_value(re.compile(r"^Page " + str(number) + r"(?: ·|$)"))
 
 
 def upload(page, raw):
@@ -107,7 +108,7 @@ def exercise(page, name, qa):
         upload(page, raw)
         expect(water.get_by_role("button", name="Include page and continue", exact=True)).to_be_enabled()
         water.get_by_role("button", name="Include page and continue", exact=True).click()
-        expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_contain_text("Page 2")
+        expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_value(re.compile(r"^Page 2(?: ·|$)"))
         state = wait_pages(page, [])
         unchanged(state)
         water.get_by_role("button", name="Include page and continue", exact=True).click()
