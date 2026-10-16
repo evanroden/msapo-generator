@@ -117,8 +117,22 @@ export default function(component) {
                 const target = event.target;
                 if (!target?.closest || target.closest('.report-preview')) return;
                 const label = target.closest('label');
-                if (label?.querySelector('input[type="checkbox"], input[type="radio"]'))
-                    awaitNativeEdit();
+                const button = target.closest('[data-testid="stButton"] button');
+                if (label?.querySelector('input[type="checkbox"], input[type="radio"]') ||
+                        (button && !button.disabled)) awaitNativeEdit();
+            };
+            // Ctrl/Command+Enter commits a native textarea without a blur/change
+            // event. Keep its full-editor request out of the same framework
+            // batch as a neighboring preview fragment. Only an existing edit
+            // opens this hold; ordinary Enter/IME/focus are still local input.
+            const nativeEditorCommit = event => {
+                const target = event.target;
+                if (!gate.pending || event.isComposing || event.key !== 'Enter' ||
+                        !(event.ctrlKey || event.metaKey) ||
+                        !target?.matches?.('textarea') || target.closest?.('.report-preview')) return;
+                const withinPair = target.closest?.('[class*="st-key-epc_pair_"]') ||
+                    target.closest?.('.epc-workspace-pair');
+                if (withinPair && (gate.blockAll || gate.scopePair === withinPair)) awaitNativeEdit();
             };
             // Multiline text remains unacknowledged while the operator types.
             // A geometry change can otherwise dispatch view fragments before
@@ -137,10 +151,11 @@ export default function(component) {
             app.addEventListener('input', nativeEditorInput, true);
             app.addEventListener('change', nativeChange, true);
             app.addEventListener('click', nativeChoiceClick, true);
+            app.addEventListener('keydown', nativeEditorCommit, true);
             const observer = new MutationObserver(releaseAfterFullRender);
             observer.observe(workspace, {attributes:true,attributeFilter:['data-epc-full-render']});
             observer.observe(app, {attributes:true,attributeFilter:['data-test-script-state']});
-            gate.dispose = () => {app.removeEventListener('input',nativeEditorInput,true);app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);observer.disconnect();};
+            gate.dispose = () => {app.removeEventListener('input',nativeEditorInput,true);app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);app.removeEventListener('keydown',nativeEditorCommit,true);observer.disconnect();};
             editGate = gate;
             gates.set(app, gate);
         }

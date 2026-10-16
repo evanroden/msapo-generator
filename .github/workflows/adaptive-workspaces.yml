@@ -7,6 +7,7 @@ on:
       - 'tests/fixtures/workspaces/**'
       - 'tests/workspace_geometry_test.cjs'
       - 'tests/preview_view_lifecycle_test.cjs'
+      - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
@@ -14,6 +15,9 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_water_widget_delivery.py'
+      - 'tests/test_water_widget_delivery.py'
+      - 'tests/test_water_journey_contract.py'
       - 'scripts/workspace_water_observations.py'
       - 'tests/test_workspace_water_observations.py'
       - 'tests/test_qa_browser_diagnostics.py'
@@ -32,6 +36,7 @@ on:
       - 'tests/fixtures/workspaces/**'
       - 'tests/workspace_geometry_test.cjs'
       - 'tests/preview_view_lifecycle_test.cjs'
+      - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
@@ -39,6 +44,9 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_water_widget_delivery.py'
+      - 'tests/test_water_widget_delivery.py'
+      - 'tests/test_water_journey_contract.py'
       - 'scripts/workspace_water_observations.py'
       - 'tests/test_workspace_water_observations.py'
       - 'tests/test_qa_browser_diagnostics.py'
@@ -83,6 +91,7 @@ jobs:
         run: |
           node --test tests/workspace_geometry_test.cjs
           node --test tests/preview_view_lifecycle_test.cjs
+          node --test tests/preview_commit_gate_test.cjs
           python scripts/qa_adaptive_workspaces.py
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}

@@ -96,7 +96,7 @@ def observe(output: Path, browser_class, context_class):
         engine = browser.browser_type.name
         label = f"{engine}-{sequence}"
         log = (output / (label + '-events.jsonl')).open('w', encoding='utf-8')
-        states[context] = {'log': log, 'label': label, 'count': 0}
+        states[context] = {'log': log, 'label': label, 'count': 0, 'tracing': False}
         state = states[context]
 
         def record(kind, detail):
@@ -106,6 +106,8 @@ def observe(output: Path, browser_class, context_class):
             log.write(json.dumps({'kind': kind, 'time': time.time(), 'detail': detail},
                                  ensure_ascii=False) + '\n')
             log.flush()
+
+        state['record'] = record
 
         def on_page(page):
             from scripts.qa_widget_delivery import WidgetDelivery
@@ -121,7 +123,13 @@ def observe(output: Path, browser_class, context_class):
                 if response.request.resource_type == 'image' else None)
         context.add_init_script(CLIENT)
         context.on('page', on_page)
-        context.tracing.start(screenshots=True, snapshots=True, sources=True)
+        try:
+            context.tracing.start(screenshots=True, snapshots=True, sources=True)
+        except Exception as exc:
+            record('diagnostic-error', {'stage': 'start',
+                   'error': type(exc).__name__ + ': ' + str(exc)})
+        else:
+            state['tracing'] = True
         record('started', {'engine': engine})
         return context
 
@@ -129,8 +137,12 @@ def observe(output: Path, browser_class, context_class):
     def close_context(context, *args, **kwargs):
         state = states.pop(context, None)
         try:
-            if state:
-                context.tracing.stop(path=str(output / (state['label'] + '-trace.zip')))
+            if state and state['tracing']:
+                try:
+                    context.tracing.stop(path=str(output / (state['label'] + '-trace.zip')))
+                except Exception as exc:
+                    state['record']('diagnostic-error', {'stage': 'stop',
+                        'error': type(exc).__name__ + ': ' + str(exc)})
         finally:
             if state:
                 state['log'].close()

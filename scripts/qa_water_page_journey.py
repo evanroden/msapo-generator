@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 from zipfile import ZipFile
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -42,7 +43,7 @@ def receipt(page):
     return json.loads(node.get_attribute("data-enfra-water-receipt"))
 
 
-def wait_pages(page, order, *, pending=None):
+def wait_pages(page, order, *, pending=None, reviewed=None):
     page.wait_for_function("""wanted => {
       const nodes=document.querySelectorAll('[data-enfra-water-receipt]');
       if(!nodes.length)return false;
@@ -52,10 +53,22 @@ def wait_pages(page, order, *, pending=None):
         JSON.stringify(s.working)===JSON.stringify(s.durable) &&
         s.working_fingerprint===s.durable_fingerprint &&
         (!wanted.check_pending||JSON.stringify(s.working.pending)===JSON.stringify(wanted.pending)) &&
+        (!wanted.check_reviewed||(s.working.sources.length===1 &&
+          JSON.stringify(s.working.sources[0].reviewed)===JSON.stringify(wanted.reviewed))) &&
         document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
     }""", arg={"order": order, "check_pending": pending is not None,
-            "pending": pending if pending is not None else []}, timeout=45000)
+            "pending": pending if pending is not None else [],
+            "check_reviewed": reviewed is not None,
+            "reviewed": reviewed if reviewed is not None else []}, timeout=45000)
     return receipt(page)
+
+
+def current_water_preview(page, qa, *, inset=130):
+    # Completing review collapses the source editor, which can move the viewport
+    # into the next section. Request useful output only with Water visible;
+    # the production viewer must retain its visibility-driven work boundary.
+    qa.scroll_pair(page, WATER, inset=inset)
+    qa.current_image(page, WATER)
 
 
 def choose_page(page, number):
@@ -109,15 +122,16 @@ def exercise(page, name, qa):
         expect(water.get_by_role("button", name="Include page and continue", exact=True)).to_be_enabled()
         water.get_by_role("button", name="Include page and continue", exact=True).click()
         expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_value(re.compile(r"^Page 2(?: ·|$)"))
-        state = wait_pages(page, [])
+        state = wait_pages(page, [], reviewed=[1])
         unchanged(state)
+        record("desktop-first-page-reviewed", state)
         water.get_by_role("button", name="Include page and continue", exact=True).click()
         state = wait_pages(page, [1, 2], pending=[])
         unchanged(state)
         assert len(state["working"]["sources"]) == 1
         expect(water.get_by_role("button", name="Add reviewed pages", exact=True)).to_have_count(0)
         expect(water.get_by_role("button", name="View or change pictures", exact=True)).to_have_count(0)
-        qa.current_image(page, WATER)
+        current_water_preview(page, qa)
         record("desktop-included", state)
 
         water.get_by_role("button", name="Edit pages", exact=True).click()
@@ -165,7 +179,7 @@ def exercise(page, name, qa):
         unchanged(state)
         qa.scroll_pair(page, WATER, inset=90)
         water.get_by_role("button", name="View preview", exact=True).click()
-        qa.current_image(page, WATER)
+        current_water_preview(page, qa, inset=90)
         record("narrow-current-preview", state)
         water.get_by_role("button", name="Back to editing", exact=True).click()
 
@@ -226,9 +240,11 @@ def browser_task(browser_type, name):
     page = context.new_page()
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: errors.append(str(error)))
+    from scripts.qa_water_widget_delivery import WaterWidgetDelivery
+    delivery = []
+    WaterWidgetDelivery(lambda row: delivery.append({"at": time.monotonic(), **row})).attach(page)
     out = qa.OUT / (name + "-water")
     out.mkdir(parents=True, exist_ok=True)
-    context.tracing.start(screenshots=True, snapshots=True, sources=True)
     try:
         page.goto(qa.URL, wait_until="domcontentloaded")
         page.get_by_role("button", name="Load known-value report", exact=True).click()
@@ -240,8 +256,8 @@ def browser_task(browser_type, name):
                  {"external": attempts, "errors": errors})
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
     finally:
+        (out / "widget-delivery.json").write_text(json.dumps(delivery, indent=2))
         (out / "browser.json").write_text(json.dumps({"external": attempts, "errors": errors}, indent=2))
-        context.tracing.stop(path=str(out / "browser-trace.zip"))
         context.close()
         browser.close()
 
@@ -255,7 +271,12 @@ def main():
     qa.REPORT = {"synthetic_only": True, "actual_workflow": "production guided Water editor",
                  "browsers": {}, "checks": [], "physical_device": False}
     qa.exercise = browser_task
-    qa.main()
+    # The same observer used by the existing Monthly tasks records optional
+    # tracing failures without masking the actual Water journey result.
+    from playwright.sync_api import Browser, BrowserContext
+    from scripts.qa_browser_diagnostics import observe
+    with observe(qa.OUT / "diagnostics", Browser, BrowserContext):
+        qa.main()
 
 
 if __name__ == "__main__":

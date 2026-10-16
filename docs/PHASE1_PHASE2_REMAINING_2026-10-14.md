@@ -1,63 +1,178 @@
-# ENFRA report builder: remaining work
+# ENFRA Phase 1 / Phase 2 — remaining work
 
-Checkpoint: October 15, 2026. This is the single remaining-work ledger. The [historical execution record](PHASE1_PHASE2_EXECUTION_2026-10-13.md), Git history and retained acceptance evidence preserve earlier failures and the original 113 checks, 97 simplification records and SRC/CONT/VIS/UX/AUTH coverage. These are coverage references, not defect counts. No UX20 exists. Both phases remain unaccepted.
+This is the single current remaining-work ledger. Historical evidence and failures stay in
+`PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
+Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current integration gate
+## Current branch and evidence boundary
 
-Main remains `0dca61194d1769d7871ba46d222289dadef0e8d1` (tree `6a38b442dd7d0fd4b994807c452e66e807434cdc`). PR247 is merged; Required38766472782, Adaptive38766472776 and exact-served38767655079 passed. Its [terminal record](https://github.com/evanroden/msapo-generator/pull/247#issuecomment-6196963277) supersedes old pending rows. Preserve the immutable source-contribution receipt, atomic manifest publication, deliberate report-only omissions and stale-revision guards. Its proof covers unchanged-byte ordinary Starting replay, not every importer or changed-byte revision.
+Main and the last independently verified served revision remain
+`0dca61194d1769d7871ba46d222289dadef0e8d1` (PR247). Its terminal evidence is
+https://github.com/evanroden/msapo-generator/pull/247#issuecomment-6196963277 .
+No new main merge, Render workspace selection or served revision is claimed here.
 
-PR248 branch `fix/starting-review-deselection-20261015` is held, not deployed. It conservatively rejects a newly deselected source block while report content remains populated, including the separately rendered footer address. Matching source text is not proof of sole ownership because a merge can deduplicate earlier human text/rows. Its initial automatic-deletion proposal was superseded before merge. Keep report-level Clear/Omit recovery and both versions; never guess ownership.
+PR248, `fix/starting-review-deselection-20261015`, is open at
+`9bab48f90e0b038d5d3aa3e57880d2455029ebe0`. It extends the existing display-only preview
+hold to an already-pending textarea Ctrl/Command+Enter commit and enabled native action buttons.
+Exact2912 wire evidence showed an empty Activity value sent with a preview-fragment request, not
+followed by a full editor run. The pinned frontend's batching can retain a preview fragment ID.
+The new model tests reproduced three failures/one pass; repaired four, existing ten lifecycle and
+23 geometry tests pass. No widget values are read, inputs cloned, business actions retried or
+ordinary Enter/IME/focus/file-picker actions intercepted. This is a narrow race mitigation; exact
+browser proof remains required. Earlier ae67 optional tracing repair passed Required38838978125
+and Adaptive38838978113; those passes do not prove this newer code or explain every historic error.
+Preserve conservative source-deselection and explicitly cleared-table recovery contracts.
 
-The original head6046650 had Required38774586215 PASS (independently verified 2,641 JUnit cases) and Adaptive38774586190 FAIL: missing durable Activity receipt after Tab following layout transitions, plus a shared-fixture WebKit `EncodingError: Loading error.` during reload. Keep [the original failure record](https://github.com/evanroden/msapo-generator/pull/248#issuecomment-6198349513).
+PR249, `fix/monthly-source-page-workspace-20261015`, is open and stacked on PR248.
+The cleanup is published, not merely parked in a Library ZIP. Caption repair
+`2912e1e4d1ac2dca5351782a3405df2bd25df1b4` captures a caption submitted with an included-page
+action, checks the original source/block revisions, then applies caption and action atomically.
+Absent source captions inherit the attached caption; explicit blanks remain blank. Mere display
+performs no write. The two review findings reproduced as eight failures/four passes; the repaired
+38-case affected suite passes. Exact-head Required38838186086 passes: independently downloaded
+JUnit contains 2,692 tests, zero failures/errors/skips, including all 12 new caption cases.
+This is not browser or native-output acceptance.
 
-Diagnostic head `ba22c088cfb36953638adf44ca31ed69088578fa`, tree `83ebf24c3a6b88e8620f3f308df6a20dea15d588`, changes only CI observation: native events, image-decode callers and Playwright snapshots/traces. It preserves existing actions, route restrictions, timeouts and assertions. Required38789241822 PASS; Adaptive38789241788 FAIL. In this instrumented run Monthly transitions passed, but shared-fixture WebKit re-entry after explicit Clear and reload did not reach its durable journal. Trusted input/Tab/blur were recorded while the app was idle; the journal remained deliberately blank at revision5. Earlier edits, clear, reload and initial re-entry passed. No browser image error recurred in this run. This narrows the observation, not the root cause. Do not waive the prior error or interpret a different passing path as its repair.
+This branch also returns to the actual Water section before demanding current preview output,
+adds a specific durable first-page-review assertion, and records bounded hashed native button/
+caption delivery. These are test-harness changes, not a claim that production rendering or click
+submission is repaired. No timeout, real export assertion, route restriction or error gate is
+relaxed; no failed action is retried. Optional tracing uses the parent observer; this branch incorporates the parent commit guard without dropping any Water assertions. Ten Water
+observer/predicate tests and eight parent observer tests pass locally (18 total).
 
-Instrumented artifact11999842366: 61,057,202 bytes; SHA256 `2b809e689ac34d5440057427c934fe5e2f3b0a16db959699a2172dcab1abfaf3`. Local observer tests: 3 PASS. Continue with message/callback evidence to distinguish native event delivery, browser submission and canonical/durable save; do not add a second editor, retry each keystroke, force a fallback gesture or weaken assertions.
+### Failures that must remain visible
 
-## Cleanup under review; not release acceptance
+* PR248 head6046650 Required38774586215 passed 2,641 tests, but Adaptive38774586190 failed:
+  WebKit did not produce the expected durable Activity receipt after transitions, and the shared
+  fixture journey recorded an image EncodingError. Passing later runs do not explain these.
+  The rejected first automatic-deletion proposal was never merged/deployed.
+* The PR249 20af Water run included both source pages durably but left pre-merge controls visible.
+  Head148e4a9 adds one refresh only after canonical inclusion/acknowledgment; failed merges do not
+  acknowledge pages. Preserve the final guided `_refresh_period_editors_after_commit(prefix)`.
+* Head148e4a9 Required38835526698 passed; Adaptive38835526737 failed. Hash-verified artifact
+  12019408150 is 66,312,471 bytes, SHA256
+  `fae64b41d1a7c32a5a31bc1c059401f831954073356e5555ca36f10db2ce0c2b`.
+  Chromium stopped awaiting the second page decision; only page 1 was durably reviewed.
+  WebKit included both pages, then waited for Water output while the screenshot viewport was
+  on Equipment Issues. That offscreen wait does not reproduce an indefinitely blank visible pane.
+* Head2912e1e4 Adaptive38838186070 failed. Its unchanged artifact12020477877 is
+  58,457,194 bytes, SHA256
+  `15ac10f5f341eedf1882692c7ab16b0000ef00dc926f0ae3c2b905e3c801c20f`.
+  Monthly WebKit stopped at a disabled vendor-page checkbox after source-manager opening;
+  it did not reach the later layout-transition receipt check. Shared WebKit's intentional
+  keyboard clear remained uncommitted: exact wire carried the empty Activity in a preview-fragment
+  request without the needed full editor run. Water in both engines durably included two pages,
+  then waited for an offscreen current preview; caption/order/removal/export tails were not reached.
+  Preserve each failure independently; do not call a trace-start fix a business-input repair.
+* An exploratory local assertion about reused page-button keys failed, but a delayed-action probe
+  did not reproduce unintended approval. No production key change was made from that conjecture.
 
-The Water/source-manager implementation is recovered from the verified 549-file source archive and is being published as a separate dependent PR. The eleven application/test/script files match that archive; this ledger is refreshed with current evidence. Fresh local affected suite: **40 PASS in31.20s** on Python3.13 with locked runtime; Required CI uses Python3.12. Local tests are not real-browser, authentic-output or Microsoft Word acceptance.
+Local tests use Python3.13 plus the locked runtime, not CI's Python3.12. Only the affected modules
+were restored/verified against exact remote blobs; an older full local source reconstruction is
+not represented as the complete current remote tree. Published changes must use the latest remote
+tree and a branch-head lease, preserving all other paths.
 
-Necessary actions now have these destinations: Water page review/caption/order/omit/reinclude are together in Report pages; unknown or ambiguous artwork retains its existing picture recovery editor. Manage source files replaces the misleading work-order-only entry, with Done with source files. Add files contains section upload and eligible source reuse. Match spreadsheet columns retains worksheet/facility/date/finish-date and complete-coverage requirements. Section-page replacement names its section/count and offers revision-bound undo. Included-image provenance, not a retained narrative reference alone, determines attached-page ownership and page-review preflight.
+## Ordered implementation and acceptance still required
 
-Remaining verification for this batch: exact complete-head CI, reviewer findings, real desktop/narrow task evidence, page removal/reload/reimport and stale callbacks with PR247/248, actual previews/outputs, then exact merged and actually served revisions. Do not install before the dependent gate clears. Verify useful full-row/native controls and focus/caret/IME; fewer labels alone do not prove simpler completion.
-
-## Ordered remaining implementation and acceptance
-
-| Work | Evidence state | Next requirement |
+| Area | Evidence state | Next operation |
 | --- | --- | --- |
-| Source/page management | Implemented subset; browser/output verification outstanding | Verify one canonical source/page path, captions/order/exclusion and explicit re-inclusion, original-byte retention, no duplicate commits or resurrected removals. Preserve reference-only material, failed-page blocks, dependency checks and exact limits. Consolidate non-Water/batch preparation and placement; deliberate batch placement may retain one outcome-labelled action. Do not silently trigger costly processing or waive artwork review. |
-| Identity, saving and recovery | Browser-audited; cleanup outstanding | One contract/sites/month strip with Change, one Help and truthful replacing save status; keep native searchable full-name sites, memberships/aliases, group scope and meaningful design choices. Prepared by appears once with real links/focus. One actionable date/site card per unresolved source; resolved cards collapse. Quiet Jump links must reopen workflow/section without sensitive URL data. Show actual shared history or rename a save-only panel. Put scoped reset in Report actions; never auto-resolve a recovered/newer-version conflict. |
-| Administration and diagnostics | Browser-audited; cleanup outstanding | Move broad storage/directory/master administration out of ordinary reporting, not just into competing sidebar controls. Preserve normal scoped contact corrections, master pins/history and permissions. Internal run-web/Smartsheet navigation must be checked before removal. Technical build/hash data belongs behind accessible About/diagnostics. No display-driven shared writes. |
-| Training | Observed single-date announcement; repair outstanding | Separate standing Staff training requirements from Training completed this month. Consolidate Add requirement and Add training session; retain participant/method/date/known hours/status, row removal, identity, old snapshots, rollover and notes during matrix conflicts. Scalar date currently announces selecting a second date. Reproduce opening, one-date selection, clear/partial input, keyboard/focus and announcement; do not convert to range or hide the warning. |
-| Section cleanup | Browser-audited and source-only conditionals mixed | Preserve one authoritative Activity editor and grounded optional writing help; keep Add/Replace/Dismiss and stale-source protection. Remove redundant headings/prose without deleting evidence. Organization stays edit-gated with scoped chart/contact modes; progress photos have one edit mode. Keep thermal standing data distinct from monthly utilities. MBCx recovery must be reachable. ENFRA onsite service calls remain distinct from vendor Activity. Preserve vendor fields, report-only issue omission/Clear with recovery, capital dates/NR, current-month proposal confirmation and RFI structure. Never invent N/A, work, savings or completion. |
-| Conditional import/artwork conflicts | Source-only unless reproduced | Inspect before deleting duplicate cover galleries or imported-section action gates. Keep one cover selection but separate unread-artwork recovery; optional no-photo stays meaningful. Preserve SmartArt/VML/OLE/drawing retry/replacement/full-original-page recovery and source roles. Explain when Continue saves a shared report/design. Accept current revision acknowledges a base, not a save; keep optimistic concurrency and both versions. |
-| Authentic imports | Exact AUTH selection and full journeys outstanding | AUTH01 genuine prior-month same sites, AUTH02 different sites on same contract, AUTH03 owner-identified half-finished correct-month source. Six-file inventory is not scenario approval; never infer partial status from filename. Record independently specified source-target facts, period, pins, expected exclusions/retentions, blanks/NR/corrections and pictures. Inspect/classify/import/merge/repeat/Clear/remove/reload/export; synthetic or injected-uploader diagnostics do not close AUTH. Changed-byte and advanced per-item replay need separate acceptance. |
-| Same-site native conversion | Incomplete bounded local diagnostic | Prior genuine same-site Starting preflight did not return: requested150s, outer254.651s, cleanup completed with unchanged source/no profile publication. An exited LibreOffice launcher does not identify a root cause. Preserve private script/log/receipt; use explicit worker/stage timing and first-failure trace, reliable process cleanup, no blind timeout/resource increase or diagram deletion. Earlier bounded inspection/different-site generation successes remain component evidence, not universal native approval. |
-| Standing data | Implemented; real-source/deployed breadth outstanding | Verify contract schema/art versus facility/service/system/unit capacity and contacts; upload-once reuse, unrelated scope exclusion, multiline/merged headings, units, missing versus zero/NR/qualified values, provenance/history, concurrency/failure/retry/manual overrides and same-name identities. Automatic unambiguous first-fill remains; report-only omit/order/Clear must not delete shared history. Actual Scorecard/Subcontractor mapping and retained-picture placement need genuine source evidence. |
-| Native outputs and privacy | Approved-master/asset and genuine all-page gates outstanding | Preserve true Facility/Role/Name/Phone/Email headers, first data row and all contacts, including0/1/many/long/overflow with repeated headers/intact rows. Chart alone, contacts next page, correct orientation and no blank-page artifacts. Confirm actual approved logo/office photo below stripe, aspect/attribution, section10, applicable AppendixG/page references, footers, photo-only grayscale/brand accents and intentional watermark. Remove genuine template artifacts, not narrative. Inspect every PDF and every DOCX-rendered page with named renderer; LibreOffice is not Microsoft Word. Check native tables, units, merged cells, captions/order/images/links/RFI continuations plus graphic/hidden package channels, metadata/comments/objects/WordArt. Text scans cannot clear graphic leaks. Never discard unreadable art to pass. Preserve legitimate operational and PO/Expense prices. |
-| Combined outage artwork | Exact owner approval outstanding | Individual wording/diagrams are approved, not the later single stacked composition. Retrieve the existing PNG/PDF reference from private Library, review at printed size, obtain that layout approval, then include once. Do not redraw, change time windows or install duplicate component copies. |
+| PR248/249 integration | Implemented; current browser gate not cleared | Diagnose retained failures, finish current exact-head Required/Adaptive, review both diffs, merge parent to main only when justified, retarget cleanup to main, verify integrated and actually served revisions. |
+| One Water/source-page workspace | Implemented; browser task incomplete | Complete desktop then narrow upload, one review/caption/order/omit/reinclude path, repeated unchanged upload, durable reload, explicit blank/price rejection, real preview and DOCX/PDF. Preserve source identity, dependency gates and omitted-page guards. |
+| Identity/help/navigation | Browser-observed cleanup remains | One stable contract/sites/month strip and useful Change path; combined quiet Help; one Prepared by with actual focus links; More report details for aliases/group/region; meaningful workflow-preserving deep links only. |
+| Saving/history/recovery | Browser-observed and conditional | One truthful status; actual history rows or correctly named checkpoint action; report actions for confirmed scoped discard. Preserve conflict choices, both versions, unsent versus acknowledged edits, original/history/standing scope. |
+| Training | Observed single-date AX issue remains | Separate standing staff requirements from monthly sessions. Retain statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and stable input incarnation. Reproduce and correct the single-date second-date announcement without changing to a range or hiding the warning. |
+| Section/editor cleanup | Browser-observed, partly conditional | Remove duplicate headings/prose, not functions. Keep one canonical Activity editor, optional grounded writing help, evidence/price gates, CMMS coverage, scoped organization/contact editors, correct ENFRA onsite versus vendor distinction, issue recovery, proposals and RFI meaning. |
+| Administration/design controls | Navigation cleanup remains | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
+| Imported cover/artwork/conflicts | Source-only conditional states not fully reached | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |
+| AUTH01/02/03 | Blocked on exact approved source/target expectations and supported access | Same-site prior month; different site same contract; owner-identified genuinely half-finished current month. Inventory is not scenario selection; filenames do not establish partial status. |
+| Genuine native conversion | Diagnostic incomplete, not production timeout | Investigate the retained same-site preflight with bounded worker, stage timings, first-failure trace and reliable process cleanup before retry. Do not raise limits or discard drawings. |
+| Native outputs/privacy | Open authentic acceptance | Inspect every actual PDF page and every DOCX page with named renderer; retain Microsoft Word check separately. Check package/graphics/hidden channels, real masters/assets and actual source values. |
+| Standing data | Scope/reuse acceptance incomplete | Verify contract versus facility/service/system/unit scope, safe first-fill, contacts, capacity/NR, Training, concurrent writes, failed-save recovery, history and deployment retention. Display/resize must write nothing. |
+| Adaptive/accessibility | Coverage partial, physical checks open | Finish all six journeys and retained ADP-A01–A20 IDs; actual pointer/touch, keyboard/AX, IME/caret, zoom, preview latency/eviction and durability distinctions. |
 
-## External originals and supported access
+For removed/combined controls, record where each necessary action lives. Capture task steps and
+representative before/after screens, not just label counts. Conditional branches not reached remain
+unverified, not proven defects. Source reuse is distinct from embedding a complete source page;
+never include an entire file merely because one page was reviewed. Ready files collapse at export;
+wrong-site, missing evidence, prices and unpreserved artwork remain targeted blockers.
 
-Private originals and manifests remain available in `/ENFRA/MSAPO/Acceptance-Evidence/2026-10-14/`. The unchanged original archive is88,159,285bytes; the distinct SAFE synthetic archive is13,199,548bytes. Do not request these as missing or replace them with generated/source-code bundles. Keep private source filenames/full hashes/content out of public Git/CI. Archive admission96MiB, AUTH32MiB and ordinary Starting128MiB are separate; preserve expanded-package/image/memory/queue/path-traversal limits.
+## Source access, durability and genuine journeys
 
-The supported deployed shared-fixture upload was explicitly denied with `ERR_BLOCKED_BY_ADMINISTRATOR`. That exact transfer remains blocked; no alternate route/tool/session/proxy/encoding/policy workaround. After legitimate supported resolution, upload unchanged originals and distinct synthetic evidence, verify independent full-byte download digest/size/manifest, then repeat after a normal authorized deployment with a different observed served SHA. Empty shelves before successful upload are not proof of data loss. Library storage, local copies, temporary media links and seven-day CI artifacts are not non-OpenAI external retention. Follow the [external archive procedure](EXTERNAL_RENDER_ARCHIVE_ACCESS_2026-10-14.md) only with supported access.
+Approved originals are available in the owner's private acceptance Library; they are not missing.
+The unchanged six-source archive is 88,159,285 bytes. Private manifests and original filenames/full
+hashes stay out of public Git/CI. The synthetic evidence archive is separate. Library persistence,
+local copies, source-code ZIPs, temporary media URLs and seven-day CI artifacts do not establish
+independent non-OpenAI access or Render retention.
 
-The local managed browser also denied localhost/all URLs. It was not bypassed. Existing repository CI runs use their independently permitted synthetic harnesses; they are not an alternate transfer path for originals. Render workspace remains unconfirmed; no selection or fresh control-plane deployment identity is claimed.
+The supported shared-fixture/archive page previously returned Access Denied /
+ERR_BLOCKED_BY_ADMINISTRATOR. The denied transfer must not be retried or bypassed using another
+route/tool/session/proxy/encoding or a security/infrastructure change. Obtain the smallest supported
+owner/admin resolution for that exact operation. The local managed browser also blocked localhost;
+continue permitted code/AppTest work and the existing independent CI harness, not a policy bypass.
+No unconfirmed Render workspace selection.
 
-## Preview, recovery and adaptive gates
+After legitimate resolution: upload unchanged originals through the supported flow; independently
+retrieve full bytes/manifest and verify SHA256/size; repeat after a normal authorized deployment
+with a different actually served revision. Do not create deployment churn for a retention claim.
+Admission limits differ: archive96MiB, AUTH32MiB, ordinary Starting128MiB. Preserve expanded-package,
+image/memory/queue/malformed-input bounds. Structural ZIP checks do not prove import or rendering.
 
-Keep ADP-J01 through ADP-J06 and ADP-A01 through ADP-A20 unchanged. Monthly wide/book has an editor-left/preview-right pair per ordered section, sticky only inside it and yielding both directions. Tabletop uses the same lower ordered editor and one working scroll root. PO shows exact source during correction and real package at review; Expense follows receipt/splits or real mileage trips and deliberate packet review. No cloned/reparented input, artificial padding, guessed physical iPhone Duo hinge, global overflow fix or display-triggered business/AI/standing operation.
+For each authentic journey record exact original identity, target sites/month, pinned design,
+independent retained/excluded expectations, warnings, preview and final bytes. Repeat import,
+report-only clear/removal, save/reload and a fresh session. Preserve deliberate blanks, NR,
+corrections, unresolved items and eligible pictures; exclude foreign facility facts. Changed-byte
+and advanced per-item replay remain separate from PR247's unchanged-byte ordinary Starting fix.
+The successful local different-site 20-block/12-asset diagnostic is not owner AUTH approval.
 
-Retain coverage for sticky pin/release and reverse reading position, short/empty/expanded sections/tables/validation, actual fit/enlarged text, unequal segments/offsets/gaps, tabletop/keyboard fallback, malformed or absent APIs/hidden return/rapid transitions, unblurred IME/caret, workflow/source return, reload/reconnect/failure/two-tab conflicts, scoped standing values/NR/history, slow/error/late/evicted previews/pagination, bounded visibility/raster resources, PO and Expense full input/output identities, Monthly new/resumed/multisite/Training/preflight, pointer/touch/keyboard/screen-reader/zoom/dialogs, native schema/price policy, unchanged resource/dependency gates and exact integrated/served proof. Physical Safari/touch/fold and Microsoft Word acceptance remain distinct from emulation.
+The incomplete same-site native-drawing preflight had a150s requested AppTest bound and254.651s
+outer cleanup observation. No profile was published, no Continue/save clicked, original unchanged;
+root cause remains unassigned. Keep its private script/receipt/log and distinguish launcher,
+monitoring-driver and environment failures from production behavior.
 
-Measure event-to-useful-page and typing latency on small/image-heavy fixtures. Visible previews must become current, honestly outdated, empty or a specific recoverable error; screenshots do not establish freeze duration. Keep export priority and generation leases. Acknowledged durable input differs from unblurred/unsent text; reload, reconnect, outage and deployment are separate tests. Never cause a live outage or discard the owner's real recovered conflict as test setup.
+## Native output, scope and device gates
 
-## Execution and restart
+Use actual approved masters/assets, not generic templates or guessed web images. Preserve editable
+native tables, merged cells, units, source order, image aspect, captions, RFI continuation and links.
+Contact headers must be true Facility/Role/Name/Phone/Email rows; test zero/one/many/long entries,
+repeated headers and intact rows. The chart/matrix belongs alone; contacts start on the next page
+without blank-page artifacts. Test portrait/landscape transitions on actual Word-compatible output.
+LibreOffice rendering is not Microsoft Word acceptance.
 
-Use only disposable server-isolated browser/run namespaces and generation leases: `?workflow=monthly&monthly_qa=isolated` for fictional fixtures; the owner-approved shared-fixture route remains subject to the explicit access restriction above. Hidden shared access deliberately has no login and is not private. Reset preserves shared originals/other runs/live roots. PO/Expense need their own isolation. No paid readers or outward business sends in QA. Ordinary root defaults to PO; a missing QA banner on a production route is not a defect.
+Verify the corporate-office cover photo below the stripe (not the client logo), ENFRA assets,
+photo-only grayscale, divider artifacts, section10, contents/AppendixG/page references, footers,
+watermark intent, seams/crops and actual-scale legibility. Individual outage wording was approved;
+the later stacked one-image/one-page composition still needs its own approval before canonical
+installation. No redraw, changed time windows or duplicate individual-plus-combined insertion.
 
-Review coherent commits/PRs and exact files before integration. Required tests include pytest/JUnit, real synthetic DOCX/PDF, Docker health and the unchanged512MiB/0.5CPU CI resource gate, plus geometry/lifecycle and actual browser journeys. The last verified production host was1CPU/2GiB with1GiB `/test1` disk, not the CI cap; do not upgrade it to pass tests. After merge independently match the full served SHA before live acceptance. Preserve first failed traces, not only later passes.
+Privacy checks cover visible prose/tables and captions, graphic/OCR/EMF/VML/WordArt, headers/footers,
+watermarks, comments, objects, metadata and retained package parts as applicable. Text scanning
+alone cannot clear graphic/hidden channels. Preserve legitimate operational values and PO/Expense
+prices; do not silently drop unreadable art to pass. One honest inclusion summary, no invented work.
 
-At each useful milestone retain branch/main/served identities, exact tests/artifacts, committed versus uncommitted files, private source integrity and next concrete action. Use this ledger with implementation changes and PR comments/one TXT between deployments; no docs-only churn. Preserve #242-247 and historical Main9b/#244 failures without reviving #240/#221 or unrelated169. No model-effort selection can be inferred from tests. No Azure migration, spending, new access/auth, business communications/submissions or irreversible cleanup is authorized. Rollback uses a code revert, not data reset.
+Maintain one ordered Monthly editor, section-owned sticky preview pairs and the SAME tabletop
+editor/scroll root. Keep toolbar-free continuous multipage scrolling. Measure responsiveness and
+event-to-useful-preview time; visible content must become current, explicitly outdated, honestly
+empty or specifically recoverable. Bounded visibility/raster work, generation leases, stale-result
+rejection and export priority remain; no eager all-section rendering or hardware upgrade shortcut.
+
+ADP-J01/J04 are Monthly book/tabletop; J02/J05 PO; J03/J06 Expense. Retain all ADP-A01–A20 coverage
+IDs, SRC/CONT/VIS/UX/AUTH references and historical failures; no UX20 exists. Exercise asymmetric
+segments/offsets, short sections, reverse scroll, keyboard-open fallback, missing APIs, rapid
+transitions and source return. A screenshot is not mobile typing/upload/generation or physical
+Safari/fold-device proof; iPhone Duo is only a prospective form-factor label.
+
+Preserve PO exact source, original/change-order identity, leading zeros, totals and reviewed MSAPO
+plus original two-file package; Expense receipt/split/trip identity, allocations/rates/rounding,
+workbook/PDF mapping, signatures and intended recipient roles. No QA business sends. Layout/focus/
+scroll cause zero AI calls, report assemblies, business submissions or standing writes. Keep the
+unchanged512MiB/0.5CPU CI gate distinct from the previously observed Render1CPU/2GiB host.
+
+## Restart and release rule
+
+Refresh main, both PR heads and exact workflow results first. Read retained failed artifacts before
+retrying an action. Keep code commits separate from acceptance claims and preserve unpublished
+patches with exact base/blob identities. Save one useful TXT continuation plus necessary evidence in
+the existing owner acceptance folder; never publish private client material. Rollback code by
+revert, not data reset. No paid reviewer, migration, credentials, spending, security change,
+business send or irreversible cleanup is authorized. Finish independent safe work when a particular
+access, renderer, hardware or artwork-approval gate remains blocked.

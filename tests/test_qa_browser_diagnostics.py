@@ -1,5 +1,6 @@
 """The observer must never change browser launch settings or swallow QA failures."""
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -59,3 +60,47 @@ def test_original_assertion_is_not_swallowed_and_context_is_cleaned(tmp_path):
             ctx = browser.new_context()
             raise AssertionError('original failed gate')
     assert ctx.events[-1][0] == 'close'
+
+
+@pytest.mark.parametrize("stage", ["start", "stop"])
+@pytest.mark.parametrize("journey_fails", [False, True])
+def test_trace_failure_is_recorded_without_changing_journey_result(tmp_path, stage, journey_fails):
+    context = Context()
+    def fail(**kwargs):
+        raise RuntimeError("Synthetic tracing unavailable")
+    setattr(context.tracing, stage, fail)
+    class Browser:
+        browser_type=SimpleNamespace(name="webkit")
+        def new_context(self, **kwargs):
+            return context
+    def journey():
+        with observe(tmp_path, Browser, Context):
+            opened=Browser().new_context(viewport={"width":390,"height":844})
+            assert opened is context
+            try:
+                if journey_fails:
+                    raise AssertionError("Original journey failure")
+            finally:
+                opened.close(reason="journey completed")
+    if journey_fails:
+        with pytest.raises(AssertionError,match="Original journey failure"):
+            journey()
+    else:
+        journey()
+    assert context.events[-1]==("close",{"reason":"journey completed"})
+    rows=[json.loads(line) for line in next(tmp_path.glob("*-events.jsonl")).read_text().splitlines()]
+    errors=[row for row in rows if row["kind"]=="diagnostic-error"]
+    assert len(errors)==1
+    assert errors[0]["detail"]["stage"]==stage
+    assert "Synthetic tracing unavailable" in errors[0]["detail"]["error"]
+    if stage=="start":
+        assert not any(name=="trace-stop" for name,_ in context.events)
+
+
+def test_actual_context_creation_failure_is_not_suppressed(tmp_path):
+    class Browser:
+        def new_context(self,**kwargs):
+            raise RuntimeError("Actual browser context failure")
+    with pytest.raises(RuntimeError,match="Actual browser context failure"):
+        with observe(tmp_path,Browser,Context):
+            Browser().new_context()

@@ -56,3 +56,15 @@ def test_order_and_page_identity_are_exact():
     assert not run_predicate(data,{"order":[1,2],"check_pending":True,"pending":[]})
     data["working"]["pages"][0]["source_pages"].append(["other",2])
     assert not run_predicate(data,{"order":[2,1],"check_pending":True,"pending":[]})
+
+
+def test_first_page_decision_requires_its_own_durable_acknowledgment():
+    data=state()
+    wanted={"order":[],"check_pending":False,"check_reviewed":True,"reviewed":[1]}
+    assert not run_predicate(data,wanted)
+    data["working"]["sources"]=[{"reviewed":[]}]
+    assert not run_predicate(data,wanted)
+    data["working"]["sources"][0]["reviewed"]=[1]
+    assert run_predicate(data,wanted)
+    data["durable"]={**data["working"],"sources":[{"reviewed":[]}]}
+    assert not run_predicate(data,wanted)
