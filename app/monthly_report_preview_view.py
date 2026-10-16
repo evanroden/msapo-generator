@@ -115,12 +115,33 @@ export default function(component) {
             // preview Retry, file pickers, or browser-native zoom.
             const nativeChoiceClick = event => {
                 const target = event.target;
-                if (!target?.closest || target.closest('.report-preview')) return;
+                // The reference pane's Streamlit Retry button belongs to its
+                // preview fragment. No full-editor receipt follows that action,
+                // so treating it as an editor commit would strand every viewer.
+                if (!target?.closest || target.closest('.report-preview') ||
+                        target.closest('[class*="st-key-epc_reference_"]') ||
+                        target.closest('.epc-workspace-reference')) return;
                 const label = target.closest('label');
-                if (label?.querySelector('input[type="checkbox"], input[type="radio"]'))
-                    awaitNativeEdit();
+                const button = target.closest('[data-testid="stButton"] button');
+                if (label?.querySelector('input[type="checkbox"], input[type="radio"]') ||
+                        (button && !button.disabled)) awaitNativeEdit();
             };
-            // Multiline text remains unacknowledged while the operator types.
+            // Ctrl/Command+Enter commits without blur/change. Tab/Shift+Tab
+            // moves focus/scroll before its change/blur handlers can protect
+            // the deferred commit. Hold neighboring fragments at keydown for
+            // these native apply gestures. Only an existing edit opens this
+            // hold; ordinary Enter/IME/focus are still local input.
+            const nativeEditorCommit = event => {
+                const target = event.target;
+                const applyKey = (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) ||
+                    (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey);
+                if (!gate.pending || event.isComposing || !applyKey ||
+                        !target?.matches?.('textarea') || target.closest?.('.report-preview')) return;
+                const withinPair = target.closest?.('[class*="st-key-epc_pair_"]') ||
+                    target.closest?.('.epc-workspace-pair');
+                if (withinPair && (gate.blockAll || gate.scopePair === withinPair)) awaitNativeEdit();
+            };
+            // Text remains unacknowledged while the operator types.
             // A geometry change can otherwise dispatch view fragments before
             // blur/on_change commits the native text area. Capture only its
             // input EVENT (not any text) and defer disposable view updates
@@ -129,18 +150,24 @@ export default function(component) {
             // open this gate; it does not submit or alter business data.
             const nativeEditorInput = event => {
                 const target = event.target;
-                if (!target?.matches?.('textarea') || target.closest?.('.report-preview')) return;
-                if (!target.closest?.('[class*="st-key-epc_edit_"]') &&
+                const preparer = target?.matches?.('input[aria-label="Prepared by"]');
+                if ((!preparer && !target?.matches?.('textarea')) || target.closest?.('.report-preview')) return;
+                if (!preparer && !target.closest?.('[class*="st-key-epc_edit_"]') &&
                         !target.closest?.('.epc-workspace-editor')) return;
-                awaitNativeEdit(target);
+                // Attribution is outside the section pairs and controls saved
+                // contact/artwork access throughout the report. Its delayed
+                // native blur commit needs a full render, just like a section
+                // text edit; a queued preview fragment must not absorb it.
+                awaitNativeEdit(preparer ? null : target);
             };
             app.addEventListener('input', nativeEditorInput, true);
             app.addEventListener('change', nativeChange, true);
             app.addEventListener('click', nativeChoiceClick, true);
+            app.addEventListener('keydown', nativeEditorCommit, true);
             const observer = new MutationObserver(releaseAfterFullRender);
             observer.observe(workspace, {attributes:true,attributeFilter:['data-epc-full-render']});
             observer.observe(app, {attributes:true,attributeFilter:['data-test-script-state']});
-            gate.dispose = () => {app.removeEventListener('input',nativeEditorInput,true);app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);observer.disconnect();};
+            gate.dispose = () => {app.removeEventListener('input',nativeEditorInput,true);app.removeEventListener('change',nativeChange,true);app.removeEventListener('click',nativeChoiceClick,true);app.removeEventListener('keydown',nativeEditorCommit,true);observer.disconnect();};
             editGate = gate;
             gates.set(app, gate);
         }

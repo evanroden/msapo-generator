@@ -7,10 +7,18 @@ on:
       - 'tests/fixtures/workspaces/**'
       - 'tests/workspace_geometry_test.cjs'
       - 'tests/preview_view_lifecycle_test.cjs'
+      - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
+      - 'scripts/qa_browser_diagnostics.py'
+      - 'scripts/qa_widget_delivery.py'
+      - 'scripts/patch_streamlit_frontend.py'
+      - 'scripts/patch_streamlit_date_input.py'
+      - 'tests/test_streamlit_frontend_compat.py'
+      - 'tests/test_qa_browser_diagnostics.py'
+      - 'tests/test_qa_widget_delivery.py'
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
@@ -25,10 +33,18 @@ on:
       - 'tests/fixtures/workspaces/**'
       - 'tests/workspace_geometry_test.cjs'
       - 'tests/preview_view_lifecycle_test.cjs'
+      - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
+      - 'scripts/qa_browser_diagnostics.py'
+      - 'scripts/qa_widget_delivery.py'
+      - 'scripts/patch_streamlit_frontend.py'
+      - 'scripts/patch_streamlit_date_input.py'
+      - 'tests/test_streamlit_frontend_compat.py'
+      - 'tests/test_qa_browser_diagnostics.py'
+      - 'tests/test_qa_widget_delivery.py'
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
@@ -63,12 +79,14 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc
           python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
       - name: Pure geometry and real Streamlit DOM
         run: |
           node --test tests/workspace_geometry_test.cjs
           node --test tests/preview_view_lifecycle_test.cjs
+          node --test tests/preview_commit_gate_test.cjs
           python scripts/qa_adaptive_workspaces.py
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
@@ -78,7 +96,7 @@ jobs:
         run: python scripts/qa_po_adaptive.py
       - name: Actual Monthly workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
-        run: python scripts/qa_monthly_adaptive.py
+        run: python scripts/qa_browser_diagnostics.py qa_monthly_adaptive.py
       - name: Fresh ordinary Monthly site pointer and keyboard from zero
         if: ${{ !cancelled() }}
         run: python scripts/qa_monthly_site_pointer.py
@@ -90,7 +108,7 @@ jobs:
         run: python scripts/qa_monthly_text_hydration.py
       - name: Shared fixture upload and actual Starting report workflow
         if: ${{ !cancelled() }}
-        run: python scripts/qa_shared_fixture_testing.py
+        run: python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py
       - name: Upload synthetic screenshots and geometry
         if: always()
         uses: actions/upload-artifact@v4
