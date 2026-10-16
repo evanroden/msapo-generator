@@ -397,6 +397,46 @@ def _queue_page_action(key, source, block, number, action, caption_key=None):
         st.session_state[key]["caption"] = st.session_state[caption_key]
 
 
+def _queue_section_inclusion(key, request):
+    st.session_state[key] = request
+
+
+def _omitted_water_recovery(contents, blocks, local_key, prefix):
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_page_controls import (
+        apply_omitted_section_request, omitted_section_ready, omitted_section_request,
+    )
+    scope = _rich_text_scope(prefix)
+    request_key = local_key + "_reinclude_omitted"
+    request = st.session_state.pop(request_key, None)
+    if request is not None:
+        try:
+            changes = apply_omitted_section_request(contents, blocks, request, scope=scope)
+        except ValueError as exc:
+            st.warning(str(exc))
+        else:
+            blocks.update(changes)
+            # Refresh controls only after the caller commits the complete draft
+            # and attempts durable recovery, just like automatic page inclusion.
+            st.session_state[prefix + "_period_editor_refresh"] = True
+    block = blocks.get("water_reports")
+    if block is None or block.source != "Omit" or not (
+            block.asset_hashes or block.text.strip() or block.rows or block.extra_tables or block.ai_paragraphs or block.org_nodes):
+        return
+    st.info("Water treatment is left out of this report. Its retained content is unchanged.")
+    page_label = "page" if len(block.asset_hashes) == 1 else "pages"
+    scope_copy = (f"all {len(block.asset_hashes)} retained {page_label} and any retained wording or tables"
+                  if block.asset_hashes else "the retained wording and tables")
+    st.caption(f"This action includes {scope_copy} in Water treatment. Other sections and original files stay unchanged.")
+    ready = omitted_section_ready(block, contents)
+    if not ready:
+        st.caption("Review every retained page before including this section. For unmapped artwork, use the attached-page replacement below to provide a clear included copy.")
+    request = omitted_section_request(block, contents, scope=scope)
+    stamp = _signature(request)[:16]
+    st.button("Include Water treatment section in this report", key=local_key + "_include_section_" + stamp,
+              disabled=not ready, on_click=_queue_section_inclusion, args=(request_key, request))
+
+
 def _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents):
     """Edit the attached page beside its source, not in a second picture panel."""
     from app.monthly_report_page_controls import included_page_caption, page_asset_index, revise_included_page
@@ -413,7 +453,11 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
                                             all_sources=tuple(c.source for c in contents))
         blocks[block.key] = block
     if not page_allowed(source, page):
-        st.warning("This included page changed since its review. Check the page and caption, then include it again or leave it out.")
+        st.warning("This retained page changed since its review. Check the page and caption before including the section."
+                   if block.source == "Omit" else
+                   "This included page changed since its review. Check the page and caption, then include it again or leave it out.")
+    elif block.source == "Omit":
+        st.caption("Retained page — left out of this report. Reviewing it does not include the section.")
     else:
         st.caption("Included in this report. Changes here do not alter the original file.")
     kind, reason = page_status(source.page_texts[page - 1], unreadable=page in source.needs_vision)
@@ -423,10 +467,10 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
     stamp = _signature((block.fingerprint, source.fingerprint, page))[:16]
     request_key = prefix + "_page_edit"
     keep, omit = st.columns(2)
-    keep.button("Include page and continue", key=p + "_included_keep_" + stamp,
+    keep.button("Review retained page and continue" if block.source == "Omit" else "Include page and continue", key=p + "_included_keep_" + stamp,
                 disabled=blocked or not preview_ok, on_click=_queue_page_action,
                 args=(request_key, source, block, page, "review", caption_key))
-    omit.button("Leave page out and continue", key=p + "_included_omit_" + stamp,
+    omit.button("Remove retained page from this section" if block.source == "Omit" else "Leave page out and continue", key=p + "_included_omit_" + stamp,
                 on_click=_queue_page_action, args=(request_key, source, block, page, "omit", caption_key))
     if len(block.asset_hashes) > 1:
         earlier, later = st.columns(2)
@@ -442,6 +486,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
     from app.monthly_report_section_uploads import included_pages
 
     source = content.source
+    section_omitted = (auto_include and blocks.get("water_reports") is not None
+                       and blocks["water_reports"].source == "Omit")
     p = prefix + "_" + source.id
     _sync_source_fields(source, p, field)
     source = render_source_details(source, profile, p, field)
@@ -489,7 +535,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
         st.session_state[page_key] = pending
     if st.session_state[page_key] not in image_pages:
         st.session_state[page_key] = image_pages[0]
-    page_labels = {n: f"Page {n}" + (" · already in report" if (source.id, n) in existing
+    page_labels = {n: f"Page {n}" + (" · retained, left out" if section_omitted and (source.id, n) in existing
+                  else " · already in report" if (source.id, n) in existing
                   else " · reviewed, not in report" if n in source.selected_pages and page_allowed(source, n)
                   else " · left out" if dict(source.client_page_exclusions).get(n) == page_fingerprint(source, n)
                   else " · needs review") for n in image_pages}
@@ -524,9 +571,11 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
             reason = "Remove pricing from the caption before including this page."
         (st.warning if blocked else st.caption)(reason)
         st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content.")
+        if section_omitted:
+            st.caption("Water treatment is left out. Include its retained section below before adding pages; its other retained content will stay unchanged.")
         keep, omit = st.columns(2)
         action = None
-        if keep.button("Include page and continue", key=p + "_keep_page", disabled=blocked or not preview_ok):
+        if keep.button("Include page and continue", key=p + "_keep_page", disabled=blocked or not preview_ok or section_omitted):
             action = "keep"
         if omit.button("Leave page out and continue", key=p + "_omit_page"):
             action = "omit"
@@ -598,6 +647,13 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
+    if (destination == "water_reports" and blocks.get(destination) is not None
+            and blocks[destination].source == "Omit"
+            and st.session_state.pop(local_key + "_auto_include", None) is not None):
+        # Retire a completion from before omission even when a distinct
+        # section-inclusion action is delivered in this same native run.
+        st.session_state.pop(local_key + "_auto_include_failure", None)
+        st.warning("Water treatment is left out. Include its retained section before adding more pages.")
     pending_edit = st.session_state.pop(local_key + "_page_edit", None)
     if pending_edit:
         from app.monthly_report_page_controls import apply_page_request
@@ -668,7 +724,8 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     if not scoped:
         return tuple(c.source for c in contents), {}, {}
     if destination == "water_reports":
-        included = len(blocks["water_reports"].asset_hashes) if "water_reports" in blocks else 0
+        included = (len(blocks["water_reports"].asset_hashes)
+                    if "water_reports" in blocks and blocks["water_reports"].source != "Omit" else 0)
         st.markdown(f"**Report pages ({included})**")
     choices = {c.source.id: c for c in scoped}
     selected_key = field(local_key + "_selected", next(iter(choices)))
@@ -690,6 +747,8 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         forms[selected] = revised.source
     if st.session_state.pop(local_key + "_review_rerun", False):
         st.rerun()
+    if destination == "water_reports":
+        _omitted_water_recovery(contents, blocks, local_key, prefix)
     scoped = section_contents(contents, destination, bindings, blocks)
     pending = pending_pages(scoped, destination, blocks)
     by_id = {c.source.id: c for c in scoped}
@@ -741,10 +800,12 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                             st.error(message)
                         else:
                             st.session_state.pop(failure_key, None)
-        included = sum(destination in owners for owners in owned.values())
+        included = (sum(destination in owners for owners in owned.values())
+                    if blocks.get(destination) is not None and blocks[destination].source != "Omit" else 0)
         if included:
             st.caption(f"{included} {'page' if included == 1 else 'pages'} included in this draft.")
-        if pending and not additions and not st.session_state.get(request_key):
+        if (pending and not additions and not st.session_state.get(request_key)
+                and not (blocks.get(destination) is not None and blocks[destination].source == "Omit")):
             st.caption("Finish reviewing the remaining pages to include your selected pages automatically.")
         return tuple(c.source for c in contents), additions, {}
 

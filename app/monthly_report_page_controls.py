@@ -2,7 +2,7 @@
 from dataclasses import replace
 
 from app.monthly_report_asset_review import (
-    approve_asset, asset_context, preserve_asset_reviews, refresh_asset_source_context,
+    approve_asset, asset_context, pending_asset_indexes, preserve_asset_reviews, refresh_asset_source_context,
 )
 from app.monthly_report_content_policy import page_allowed, page_fingerprint
 from app.monthly_report_saved_pictures_ui import remove_saved_picture
@@ -47,6 +47,51 @@ def included_page_caption(block, source, number):
     index = page_asset_index(block, source.id, number)
     return (block.asset_captions[index] if index is not None
             and index < len(block.asset_captions) else "")
+
+
+def omitted_section_request(block, contents, *, scope=""):
+    """Bind a whole-section inclusion choice to its retained pages and sources."""
+    references = (*block.references, *(ref for index in range(len(block.asset_hashes))
+                                      for ref in asset_context(block, index)))
+    identities = {pair[0] for ref in references
+                  if (pair := page_identity(ref)) is not None}
+    return {"scope": scope, "block_key": block.key, "block_fingerprint": block.fingerprint,
+            "sources": tuple(sorted((content.source.id, content.source.fingerprint)
+                                    for content in contents if content.source.id in identities))}
+
+
+def omitted_section_ready(block, contents):
+    """Reviewing one retained page never approves its omitted companions."""
+    if block is None or block.source != "Omit":
+        return False
+    if not block.asset_hashes:
+        return bool(block.text.strip() or block.rows or block.extra_tables or block.ai_paragraphs or block.org_nodes)
+    if not source_managed_pages(block, contents):
+        return False
+    sources = {content.source.id: content.source for content in contents}
+    for index in range(len(block.asset_hashes)):
+        for reference in asset_context(block, index):
+            pair = page_identity(reference)
+            if pair is not None:
+                identity, number = pair
+                source = sources.get(identity)
+                if (source is None or number not in source.selected_pages
+                        or not 1 <= number <= len(source.page_texts) or not page_allowed(source, number)):
+                    return False
+    return not pending_asset_indexes(block, tuple(sources.values()))
+
+
+def apply_omitted_section_request(contents, blocks, request, *, scope=""):
+    """Include all retained section content only after a distinct scoped choice."""
+    key = request.get("block_key") if isinstance(request, dict) else None
+    block = blocks.get(key) if isinstance(key, str) else None
+    if (block is None or block.source != "Omit"
+            or request != omitted_section_request(block, contents, scope=scope)):
+        raise ValueError("This section changed after the inclusion action was opened. Your report is unchanged; review the retained pages again.")
+    if not omitted_section_ready(block, contents):
+        raise ValueError("Review every retained page before including this section. It remains left out of this report.")
+    included = replace(block, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
+    return {block.key: preserve_asset_reviews(block, included)}
 
 
 def revise_included_page(block, source, number, action, *, caption=None, all_sources=()):
