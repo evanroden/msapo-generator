@@ -6,6 +6,65 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+Updated 2026-10-16 17:07 UTC. PR248 is merged normally into main
+`4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`, with reviewed parent head
+`ceaba0a20115608a9e93d4b74ad2ece96cbe2dce`. Exact pre-merge integration
+`f3335240573a89e05f9904a24ceb291de1f98528` passed Required38934057257:
+2,711 tests, zero failures/errors/skips, independently recounted. Adaptive38934056915
+passed every workflow family, including native Prepared-by and Shared clear/re-entry/reload.
+Both engines verified the actual primary response bytes against the pinned client repair.
+Merged-head CI and normal auto-deployment/live verification remain separate and pending.
+The last independently observed served full SHA remains historical PR247
+`0dca61194d1769d7871ba46d222289dadef0e8d1`.
+
+The locked client defect is now reproduced through its actual protobuf decoder and widget
+caller chain: a full editor has fragmentId `""`, as well as undefined. The earlier scheduler
+repair covered only undefined, so Shared failed again in38930995952. Current code normalizes
+only that known empty-string full scope and retains full-request priority across deferred
+preview batching. Original/intermediate failures remain retained; no browser error is ignored.
+
+PR249 head `9b1c350e100cf309125c7c23eebd612705fd09dd` is reconciled onto main at
+`4ca42c59fe647d4cf1f766bfb2d232092e48f7cf` and retargeted to main. Its merge parents are
+c3eb2eb and4ca42c5; every Water and parent workflow trigger is retained. The prior exact
+c3eb2eb run Required38927678105 passed
+2,738 tests; Adaptive38927678096 failed Shared, but BOTH Water engines completed real browser
+PDF upload, page review/caption/order/omit/repeat/reload/reinclude, a visible compact Current
+preview, generation and actual DOCX/PDF downloads. Working and durable receipts agreed on
+page order [2,1], retained original hash/size and included image/caption order. These are synthetic
+journey results, not owner AUTH, manual all-page/native Word or physical-device acceptance.
+Fresh exact integration gates are required before this PR merges to main.
+
+PR250 Training head ace1d3b includes the corrected parent. Its earlier Chromium path completed
+add/reload and downloaded actual files; the PDF checker now accepts normal whitespace wrapping
+while preserving exact words/date/person/row/inclusion assertions. The native mask's deferred
+focus frame is observed before one keyboard replacement. WebKit's separate ResizeObserver error
+remains terminal and unclassified; a bounded native diagnostic records its owner/delivery without
+suppressing errors. Adaptive38935820687 on checkout bf14e623 failed Chromium at the participant
+option before its date/session/output tail; browser errors and external requests were empty.
+That same run's WebKit path reached session add/reload/removal and two accepted/completed
+DOCX/PDF generations. This later error-free WebKit run does not explain the older ResizeObserver
+failure. Complete two-engine Training acceptance remains open; Required38935820543 is not
+independently re-read in this merge task.
+
+PR251's prior head `fc157f0b333814512a4ca9fb7f9fc4514837d1c2` passed Required38934310568:
+2,891 tests, zero failures/errors/skips, independently recounted. Adaptive38934310637 and all its
+workflow steps passed on exact integration `b63d5d7846ab35ee05e43e2a5304dcfe21232148` against
+base c3eb2eb. Its exact Adaptive archive was not newly downloaded/reviewed for this merge.
+Those gates are historical evidence for that revision, not the new candidate. The current local
+merge reconciles fc157f0 with PR249 head9b1c350 and requires fresh exact Required/Adaptive before
+integration. PR251 remains a separate unmerged identity/history/admin/source/editor follow-up.
+Every PR251 implementation detail and the recovered full-JUnit correction below is retained.
+No new deployment or served revision is established by this local merge.
+
+Local merge verification used locked Python3.12.14:181 focused frontend/identity/history/admin/
+output/source/Water tests passed with zero failures/errors/skips. The workflow union retains all
+30 path triggers for both pull requests and main pushes, plus every existing workflow family.
+All application/test/workflow blobs are unchanged from fc157f0; only this ledger differs. The
+local receipt is retained privately as pr251-parent-merge-focused.xml. This is scoped local
+verification, not the new exact integration CI or merged/live acceptance.
+
+### Superseded implementation checkpoints (history)
+
 Main and the last independently verified served revision remain
 `0dca61194d1769d7871ba46d222289dadef0e8d1` (PR247). Its terminal evidence is
 https://github.com/evanroden/msapo-generator/pull/247#issuecomment-6196963277 .
@@ -139,13 +198,13 @@ not an application change, dependency upgrade or passing browser evidence.
 
 | Area | Evidence state | Next operation |
 | --- | --- | --- |
-| PR248/249 integration | Implemented; current publisher needs exact CI | Diagnose retained failures, finish current exact-head Required/Adaptive, review both diffs, merge parent to main only when justified, retarget cleanup to main, verify integrated and actually served revisions. |
-| One Water/source-page workspace | Both-engine synthetic actual preview/output verified on c3eb; integration open | Complete desktop then narrow upload, one review/caption/order/omit/reinclude path, repeated unchanged upload, durable reload, explicit blank/price rejection, real preview and DOCX/PDF. Preserve source identity, dependency gates and omitted-page guards. |
-| Identity/help/navigation | Implemented in PR251; browser task comparison pending | One stable contract/sites/month strip and useful Change path; combined quiet Help; one Prepared by with actual focus links; More report details for aliases/group/region; meaningful workflow-preserving deep links only. |
-| Saving/history/recovery | History/status/retries implemented in PR251; exact browser/conflict tails pending | One truthful status; actual history rows or correctly named checkpoint action; report actions for confirmed scoped discard. Preserve conflict choices, both versions, unsent versus acknowledged edits, original/history/standing scope. |
-| Training | Implemented in separatePR250; partial actual browser proof, session/output tail open | Separate standing staff requirements from monthly sessions. Retain statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and stable input incarnation. Reproduce and correct the single-date second-date announcement without changing to a range or hiding the warning. |
+| PR248/249 integration | PR248 merged after exact green gates; PR249 head9b1c350 now based on main | Verify merged-head and served parent independently; run exact PR249 integration gates before merge. PR251's local merge of9b1c350 into fc157f0 also needs fresh exact Required/Adaptive. |
+| One Water/source-page workspace | Both-engine synthetic browser/output tail verified on c3eb2eb; new integration pending | Preserve desktop/narrow upload, review/caption/order/omit/reinclude, unchanged repeat, durable reload, visible Current preview and DOCX/PDF assertions. Actual-source, all-page manual/native Word and physical-device acceptance remain open. |
+| Identity/help/navigation | Implemented in unmerged PR251; historical fc157f0/b63 integrated browser gate passed | One stable contract/sites/month strip and useful Change path; combined quiet Help; one Prepared by with actual focus links; More report details for aliases/group/region; meaningful workflow-preserving deep links only. Reverify the newly merged candidate. |
+| Saving/history/recovery | History/status/retries implemented in PR251; historical integrated gate passed, conflict tails still scoped | One truthful status; actual history rows or correctly named checkpoint action; report actions for confirmed scoped discard. Preserve conflict choices, both versions, unsent versus acknowledged edits, original/history/standing scope. |
+| Training | Implemented in separatePR250; partial actual browser proof, complete two-engine journey open | Separate standing staff requirements from monthly sessions. Retain statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and stable input incarnation. Preserve the observed scalar-date repair and exact date/session/output assertions; diagnose Chromium's participant prerequisite separately. |
 | Section/editor cleanup | Browser-observed, partly conditional | Remove duplicate headings/prose, not functions. Keep one canonical Activity editor, optional grounded writing help, evidence/price gates, CMMS coverage, scoped organization/contact editors, correct ENFRA onsite versus vendor distinction, issue recovery, proposals and RFI meaning. |
-| Administration/design controls | Implemented in PR251 with scoped pin/concurrency regressions; browser pending | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
+| Administration/design controls | Implemented in PR251 with scoped pin/concurrency regressions; specific expanded paths remain | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
 | Imported cover/artwork/conflicts | Source-only conditional states not fully reached | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |
 | AUTH01/02/03 | Blocked on exact approved source/target expectations and supported access | Same-site prior month; different site same contract; owner-identified genuinely half-finished current month. Inventory is not scenario selection; filenames do not establish partial status. |
 | Genuine native conversion | Diagnostic incomplete, not production timeout | Investigate the retained same-site preflight with bounded worker, stage timings, first-failure trace and reliable process cleanup before retry. Do not raise limits or discard drawings. |
