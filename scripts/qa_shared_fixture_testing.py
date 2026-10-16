@@ -42,7 +42,7 @@ def _expected_frontend(static_dir=None):
     import streamlit
     from scripts import patch_streamlit_frontend as compat
     root = static_dir or Path(streamlit.__file__).parent / "static"
-    # This read-only API reconstructs all81 expected assets from STATIC pins,
+    # This read-only API reconstructs all expected assets from STATIC pins,
     # exact known repairs/config and edges, then compares every selected blob.
     # A selected filename or a digest of unvalidated installed bytes is not proof.
     selected = compat.selected_frontend(root)
@@ -74,6 +74,29 @@ def _expected_virtualizer(static_dir=None):
     if sha256(raw).hexdigest() != selected["virtualizer_sha256"]:
         raise RuntimeError("Pinned virtual-list frontend changed after validation.")
     return selected["virtualizer_bundle"], raw
+
+
+def _expected_floating(static_dir=None):
+    import streamlit
+    from scripts import patch_streamlit_frontend as compat
+    root = static_dir or Path(streamlit.__file__).parent / "static"
+    selected = compat.selected_frontend(root)
+    if not selected["floating_resize"]:
+        raise RuntimeError("The pinned frontend lacks Floating UI resize compatibility.")
+    raw = (root / "static/js" / selected["floating_bundle"]).read_bytes()
+    if sha256(raw).hexdigest() != selected["floating_sha256"]:
+        raise RuntimeError("Pinned Floating UI frontend changed after validation.")
+    return selected["floating_bundle"], raw
+
+
+def _floating_response_receipt(response, expected):
+    from scripts.streamlit_floating_resize import FLOATING_END, FLOATING_END_REPAIRED
+    receipt, raw = _asset_response_receipt(response, expected)
+    receipt.update({"resize_hold_count": raw.count(FLOATING_END_REPAIRED),
+                    "original_resize_hook_count": raw.count(FLOATING_END)})
+    receipt["matches"] = bool(receipt.get("matches") and receipt["resize_hold_count"] == 1
+                              and receipt["original_resize_hook_count"] == 0)
+    return receipt
 
 
 def _asset_response_receipt(response, expected):

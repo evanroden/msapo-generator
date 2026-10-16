@@ -17,7 +17,8 @@ def bundle(tmp_path):
     installed = Path(streamlit.__file__).parent / "static"
     scripts = tmp_path / "static" / "js"
     scripts.mkdir(parents=True)
-    for name in json.loads(compat.MANIFEST_PATH.read_bytes())["members"]:
+    for name in {**json.loads(compat.MANIFEST_PATH.read_bytes())["members"],
+                 **json.loads(compat.FLOATING_MANIFEST_PATH.read_bytes())["members"]}:
         (scripts / name).write_bytes((installed / "static" / "js" / name).read_bytes())
     (tmp_path / "index.html").write_bytes((installed / "index.html").read_bytes())
     return tmp_path, scripts
@@ -27,17 +28,19 @@ def files(root):
     return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
-def previous_overlay(bundle, scalar_date):
+def previous_overlay(bundle, scalar_date, virtualizer=False):
     """Install an exact former 81-member generation from pinned originals."""
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
-    publication = compat._publication(sources, members, scalar_date, virtualizer_resize=False)
+    publication = compat._publication(sources, members, scalar_date, virtualizer_resize=virtualizer, floating_resize=False)
     # These are independently retained published identities, not names inferred
     # from the selected files or supplied by the current implementation.
     assert publication.names[compat.INDEX_BUNDLE] == {
-        False: "index.enfra-frontend-82ffaa997d27.js",
-        True: "index.enfra-frontend-9dafff8ac486.js",
-    }[scalar_date]
+        (False, False): "index.enfra-frontend-82ffaa997d27.js",
+        (False, True): "index.enfra-frontend-9dafff8ac486.js",
+        (True, False): "index.enfra-frontend-8b4db936843b.js",
+        (True, True): "index.enfra-frontend-e78baf101bbc.js",
+    }[virtualizer, scalar_date]
     for native, raw in publication.payloads.items():
         (scripts / publication.names[native]).write_bytes(raw)
     (root / "index.html").write_bytes(compat._publication_html(
@@ -145,7 +148,8 @@ def test_content_named_scheduler_entry_preserves_originals_and_is_idempotent(bun
     receipt = compat.patch_bundle(root, installed_version="1.61.1")
     assert not receipt["already_patched"] and not receipt["scalar_date"]
     members = json.loads(compat.MANIFEST_PATH.read_bytes())["members"]
-    assert receipt["closure_count"] == len(members) == 81
+    assert receipt["closure_count"] == len(members) + 2 == 83
+    assert receipt["floating_resize"] is True
     assert receipt["virtualizer_resize"] is True
     for name in members:
         assert (scripts / name).read_bytes() == before["static/js/" + name]
@@ -261,13 +265,13 @@ def test_frontend_observer_does_not_read_unbounded_or_ineligible_response(bundle
     assert not _frontend_response_receipt(response, expected)["matches"]
 
 
-@pytest.mark.parametrize("mutation", ["version", "entry", "date", "virtualizer", "missing", "html", "duplicate", "destination", "selected"])
+@pytest.mark.parametrize("mutation", ["version", "entry", "date", "virtualizer", "floating", "json", "missing", "html", "duplicate", "destination", "selected"])
 def test_unknown_or_tampered_assets_fail_before_any_write(bundle, mutation):
     root, scripts = bundle
     installed_version = "1.61.2" if mutation == "version" else "1.61.1"
-    if mutation in {"entry", "date", "virtualizer"}:
+    if mutation in {"entry", "date", "virtualizer", "floating", "json"}:
         path = scripts / {"entry": compat.INDEX_BUNDLE, "date": compat.DATE_BUNDLE,
-                          "virtualizer": compat.VIRTUALIZER_BUNDLE}[mutation]
+                          "virtualizer": compat.VIRTUALIZER_BUNDLE, "floating": compat.FLOATING_BUNDLE, "json": "Json.C9LKsaSO.js"}[mutation]
         path.write_bytes(path.read_bytes() + b" ")
     elif mutation == "missing":
         (scripts / compat.INDEX_BUNDLE).unlink()
@@ -288,14 +292,15 @@ def test_unknown_or_tampered_assets_fail_before_any_write(bundle, mutation):
     assert files(root) == before
 
 
-@pytest.mark.parametrize("target", ["overlay", "virtualizer", "cyclic", "entry", "date", "missing"])
+@pytest.mark.parametrize("target", ["overlay", "virtualizer", "floating", "json", "cyclic", "entry", "date", "missing"])
 def test_read_only_expected_receipt_rejects_corrupt_selected_generation(bundle, target):
     root, scripts = bundle
     receipt = compat.patch_bundle(root, installed_version="1.61.1", scalar_date=True)
     sources, members = compat._locked_sources(scripts)
     publication = compat._publication(sources, members, True)
     name = {"overlay": receipt["overlay_bundle"], "cyclic": publication.names["MermaidChart.Bk0sk5TL.js"],
-            "virtualizer": receipt["virtualizer_bundle"],
+            "virtualizer": receipt["virtualizer_bundle"], "floating": receipt["floating_bundle"],
+            "json": publication.names["Json.C9LKsaSO.js"],
             "entry": receipt["entry"], "date": receipt["bundle"],
             "missing": publication.names["Toolbar.DumIAbTb.js"]}[target]
     path = scripts / name
@@ -314,12 +319,14 @@ def test_read_only_expected_receipt_rejects_corrupt_selected_generation(bundle, 
 
 @pytest.mark.parametrize("previous_date", [False, True])
 @pytest.mark.parametrize("requested_date", [False, True])
-def test_both_previous_overlay_generations_upgrade_without_losing_date_or_history(bundle, previous_date, requested_date):
+@pytest.mark.parametrize("virtualizer", [False, True])
+def test_previous_overlay_generations_upgrade_without_losing_date_or_history(bundle, previous_date, requested_date, virtualizer):
     root, scripts = bundle
-    old = previous_overlay(bundle, previous_date)
+    old = previous_overlay(bundle, previous_date, virtualizer)
     before = files(root)
     prior_receipt = compat.selected_frontend(root)
-    assert prior_receipt["virtualizer_resize"] is False
+    assert prior_receipt["virtualizer_resize"] is virtualizer
+    assert prior_receipt["floating_resize"] is False
     assert prior_receipt["scalar_date"] is previous_date
     assert prior_receipt["virtualizer_bundle"] == old.names[compat.VIRTUALIZER_BUNDLE]
     assert prior_receipt["virtualizer_sha256"] == sha256(old.payloads[compat.VIRTUALIZER_BUNDLE]).hexdigest()
@@ -390,9 +397,10 @@ def test_interrupted_previous_overlay_upgrade_keeps_old_complete_selection(bundl
     assert upgraded["virtualizer_resize"] is True and upgraded["scalar_date"] is previous_date
 
 
-def test_unknown_incoming_native_importer_fails_before_any_write(bundle):
+@pytest.mark.parametrize("root_bundle", [compat.OVERLAY_BUNDLE, compat.FLOATING_BUNDLE])
+def test_unknown_incoming_native_importer_fails_before_any_write(bundle, root_bundle):
     root, scripts = bundle
-    (scripts / "UnknownNative.js").write_bytes(b'import"./' + compat.OVERLAY_BUNDLE.encode() + b'";')
+    (scripts / "UnknownNative.js").write_bytes(b'import"./' + root_bundle.encode() + b'";')
     before = files(root)
     with pytest.raises(RuntimeError, match="Unpinned frontend importer"):
         compat.patch_bundle(root, installed_version="1.61.1")
@@ -440,7 +448,7 @@ def test_interrupted_html_publication_leaves_previous_client_and_retry_is_safe(b
     def interrupted(path, raw, *, immutable=False):
         writes.append(path.name)
         if path.name == "index.html":
-            assert len(writes) == 82  # Every immutable asset is complete first.
+            assert len(writes) == 84  # Every immutable asset is complete first.
             raise OSError("Synthetic HTML publication interruption")
         return original_publish(path, raw, immutable=immutable)
     monkeypatch.setattr(compat, "_publish", interrupted)
@@ -449,7 +457,7 @@ def test_interrupted_html_publication_leaves_previous_client_and_retry_is_safe(b
     assert (root / "index.html").read_bytes() == html_before
     for name, raw in originals.items():
         assert (root / name).read_bytes() == raw
-    assert len(list(scripts.glob("*.enfra-overlay-*.js"))) == 80
+    assert len(list(scripts.glob("*.enfra-overlay-*.js"))) == 82
     monkeypatch.setattr(compat, "_publish", original_publish)
     receipt = compat.patch_bundle(root, installed_version="1.61.1", scalar_date=with_date)
     assert not receipt["already_patched"] and receipt["scalar_date"] == with_date
