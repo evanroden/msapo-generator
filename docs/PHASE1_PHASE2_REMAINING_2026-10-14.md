@@ -6,17 +6,37 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
-Current repair milestone 2026-10-16 17:28 UTC: PR249's new review findings reproduced in five
-actual-caller failures despite its prefilled browser journey passing. A Water-only predicate now
-lets the genuinely empty optional Omit slot accept explicitly reviewed first pages while retaining
-omitted wording, tables/custom schemas, captions, graphics and other writer content behind its
-separate whole-section choice. That choice also renders before the empty-source early return.
-The normal fresh guided path now reviews page1, leaves page2 out, and atomically includes only1;
-other blocks remain unchanged. Stale reset/source/image/price/zero/NR/qualified guards remain.
-17 new regressions and71 affected cases pass locally. Two intermediate test-prerequisite failures
-(Boolean draft-key lookup and wrong synthetic Water spec) are preserved with their exact causes;
-no business assertion was relaxed. Independent review and NEW exact Required/Adaptive are required
-before merge. Green9b gates remain historical proof of the prefilled scenario, not these new cases.
+Current verification batch 2026-10-16 17:55 UTC: PR249 head98111bb passed Required38940688734
+and Adaptive38940688764 on integration6ae137951dd8dfc1cbd16af73ecbe8c28ad3ae12 against main4ca.
+Its17 new Water regressions repair two independently reproduced recovery cases; the full prefilled
+Water browser task remains intact. Required artifacts independently recount2,796 tests with zero failures/errors/skips.
+Adaptive original86,757,831-byte ZIP is retained under its own verified digest; full task review
+remains scoped to that exact revision.
+
+The next exact candidate adds a separate ordinary native browser task for the freshly empty Omit
+case: one zero-site action, October template bootstrap, then unsaved September with no snapshot,
+real two-page PDF upload, first-page approval without premature inclusion, explicit second-page
+exclusion, and exactly one durable canonical page. The October bootstrap itself correctly starts
+Water as This month; it is not the empty-Omit prerequisite. The guarded disposable server has no
+live-root fallback or outgoing services. This task is browser-unrun until the new exact CI;
+it does not replace the existing caption/order/omission/compact-preview/generation/output journey.
+31 affected checks pass locally; independent helper review is clean. Four helper contracts
+also retain missing-prerequisite, anti-no-op and replaced-input-node rejection.
+
+The same batch repairs a demonstrated native-text QA prerequisite from PR252 Adaptive38938669161:
+the issue clear was attempted while its controlled DOM value was briefly empty after reload, so
+the anti-no-op assertion correctly stopped before any clear. The canonical/durable issue remained
+populated and later captured DOM matched it. Awaiting the exact expected existing value on the
+same locator now precedes the action. Anti-no-op, actual input-event-node continuity, durable
+acknowledgment, clear/reentry/reload and actual output assertions remain. No rescue gesture,
+synthetic blur, business retry, timeout increase or application-state injection is added.
+
+Earlier Water review recovery findings reproduced five actual-caller failures despite the
+prefilled journey passing. Empty optional Omit slots now accept explicitly reviewed pages;
+omitted wording, tables/custom schemas, captions, graphics and other writer content retain a
+separate whole-section choice, including when no source files are routed.17 new and71 affected
+cases passed locally. Stale source/reset/price/image/zero/NR/qualified guards remain. The original
+failures and two identified intermediate test-prerequisite mistakes are preserved.
 
 Merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf independently passed Tests38936148403
 (2,711/0/0/0), Adaptive38936148447 and automatic live38937063007. Both independent live sessions
