@@ -39,6 +39,16 @@ def source_managed_pages(block, contents):
     return True
 
 
+def included_page_caption(block, source, number):
+    """An absent source caption inherits the report value; explicit blank does not."""
+    captions = dict(source.captions)
+    if number in captions:
+        return captions[number]
+    index = page_asset_index(block, source.id, number)
+    return (block.asset_captions[index] if index is not None
+            and index < len(block.asset_captions) else "")
+
+
 def revise_included_page(block, source, number, action, *, caption=None, all_sources=()):
     """Return an atomic draft/source change without changing the original bytes."""
     index = page_asset_index(block, source.id, number)
@@ -46,6 +56,12 @@ def revise_included_page(block, source, number, action, *, caption=None, all_sou
         raise ValueError("This artwork is not mapped to one source page. Use its included-picture editor; no pages were changed.")
     if not 1 <= number <= len(source.page_texts):
         raise ValueError("The source page is unavailable. No pages were changed.")
+    # A button click can submit an unblurred caption in the same native event.
+    # Apply it within this guarded operation, before review/omit/reorder. The
+    # receipt baseline is checked by apply_page_request before either change.
+    if caption is not None and action != "caption":
+        block, source = revise_included_page(block, source, number, "caption",
+                                             caption=caption, all_sources=all_sources)
     if action == "omit":
         reviews, exclusions = dict(source.client_page_reviews), dict(source.client_page_exclusions)
         reviews.pop(number, None)
@@ -66,11 +82,10 @@ def revise_included_page(block, source, number, action, *, caption=None, all_sou
         return preserve_asset_reviews(block, updated), source
     if action not in {"caption", "review"}:
         raise ValueError("Unknown report-page action. No pages were changed.")
-    if caption is not None:
-        captions = dict(source.captions)
-        captions[number] = caption
-        source = replace(source, captions=tuple(sorted(captions.items())))
-    page_caption = dict(source.captions).get(number, "")
+    page_caption = caption if caption is not None else included_page_caption(block, source, number)
+    captions = dict(source.captions)
+    captions[number] = page_caption
+    source = replace(source, captions=tuple(sorted(captions.items())))
     captions = list(block.asset_captions) + [""] * max(0, len(block.asset_hashes) - len(block.asset_captions))
     captions[index] = page_caption
     updated = preserve_asset_reviews(block, replace(block, asset_captions=tuple(captions),
@@ -96,6 +111,7 @@ def apply_page_request(contents, blocks, request):
     fields = ("source_id", "source_fingerprint", "block_key", "block_fingerprint", "action")
     if (not isinstance(request, dict) or any(not isinstance(request.get(k), str) for k in fields)
             or type(request.get("number")) is not int
+            or ("caption" in request and not isinstance(request["caption"], str))
             or request["action"] not in {"omit", "review", "earlier", "later"}):
         raise ValueError("This page action could not be recovered. Your report is unchanged; choose the page action again.")
     source_id, key, number = request["source_id"], request["block_key"], request["number"]
@@ -106,6 +122,7 @@ def apply_page_request(contents, blocks, request):
             or content.source.fingerprint != request["source_fingerprint"]):
         raise ValueError("This page changed after the action was opened. Your current report is unchanged; review the page again.")
     revised, source = revise_included_page(block, content.source, number, request["action"],
+                                           caption=request.get("caption"),
                                            all_sources=tuple(c.source for c in contents))
     return (tuple(replace(c, source=source) if c.source.id == source_id else c for c in contents),
             {key: revised})

@@ -384,24 +384,30 @@ def set_source_manager_open(key, opened):
     st.session_state[key] = opened
 
 
-def _queue_page_action(key, source, block, number, action):
+def _queue_page_action(key, source, block, number, action, caption_key=None):
     st.session_state[key] = {
         "source_id": source.id, "source_fingerprint": source.fingerprint,
         "block_key": block.key, "block_fingerprint": block.fingerprint,
         "number": number, "action": action,
     }
+    # Streamlit installs submitted widget values before invoking callbacks.
+    # Capture the delivered caption, not the prior render's source object.
+    # Absence is not an intentional clear; invalid payloads fail validation.
+    if caption_key is not None and caption_key in st.session_state:
+        st.session_state[key]["caption"] = st.session_state[caption_key]
 
 
 def _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents):
     """Edit the attached page beside its source, not in a second picture panel."""
-    from app.monthly_report_page_controls import page_asset_index, revise_included_page
+    from app.monthly_report_page_controls import included_page_caption, page_asset_index, revise_included_page
     block = blocks.get("water_reports")
     index = page_asset_index(block, source.id, page)
     if index is None:
         return source, False
     p = prefix + "_" + source.id
-    current_caption = dict(source.captions).get(page, "")
-    caption = st.text_input("Page caption", key=field(p + f"_caption_{page}", current_caption))
+    current_caption = included_page_caption(block, source, page)
+    caption_key = field(p + f"_caption_{page}", current_caption)
+    caption = st.text_input("Page caption", key=caption_key)
     if caption != current_caption:
         block, source = revise_included_page(block, source, page, "caption", caption=caption,
                                             all_sources=tuple(c.source for c in contents))
@@ -419,15 +425,15 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
     keep, omit = st.columns(2)
     keep.button("Include page and continue", key=p + "_included_keep_" + stamp,
                 disabled=blocked or not preview_ok, on_click=_queue_page_action,
-                args=(request_key, source, block, page, "review"))
+                args=(request_key, source, block, page, "review", caption_key))
     omit.button("Leave page out and continue", key=p + "_included_omit_" + stamp,
-                on_click=_queue_page_action, args=(request_key, source, block, page, "omit"))
+                on_click=_queue_page_action, args=(request_key, source, block, page, "omit", caption_key))
     if len(block.asset_hashes) > 1:
         earlier, later = st.columns(2)
         earlier.button("Move page earlier", key=p + "_earlier_" + stamp, disabled=index == 0,
-                       on_click=_queue_page_action, args=(request_key, source, block, page, "earlier"))
+                       on_click=_queue_page_action, args=(request_key, source, block, page, "earlier", caption_key))
         later.button("Move page later", key=p + "_later_" + stamp, disabled=index == len(block.asset_hashes) - 1,
-                     on_click=_queue_page_action, args=(request_key, source, block, page, "later"))
+                     on_click=_queue_page_action, args=(request_key, source, block, page, "later", caption_key))
     return source, True
 
 
