@@ -71,6 +71,16 @@ def test_preparer_input_receipt_distinguishes_delivered_text_from_fragment_only_
     assert 'synthetic-preparer' not in json.dumps(events)
 
 
+def test_unrelated_single_line_input_is_not_recorded():
+    events = []
+    observer = WidgetDelivery(lambda kind, item: events.append(item))
+    msg = ForwardMsg()
+    msg.delta.new_element.text_input.label = 'Other input'
+    msg.delta.new_element.text_input.default = 'unrelated value'
+    observer.message('received', msg.SerializeToString(), 1)
+    assert not events
+
+
 def test_external_socket_cannot_be_observed():
     class Page:
         def on(self, event, listener):

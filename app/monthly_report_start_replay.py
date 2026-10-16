@@ -36,7 +36,7 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
     previous_specs = {b.key: b for s in previous.sections for b in s.blocks}
     current_specs = {b.key: b for s in existing.sections for b in s.blocks}
     incoming_specs = {b.key: b for s in incoming.sections for b in s.blocks}
-    additions, replacements = [], {}
+    additions, replacements, reselected_tables = [], {}, {}
     # A receipt proves what the source contained, not sole ownership of equal
     # report content: generic merging may have deduplicated earlier human text.
     # Do not silently acknowledge a blank source review while retaining that
@@ -67,6 +67,19 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
     for block in incoming.blocks:
         old = prior.get(block.key)
         if old is None:
+            present = current.get(block.key)
+            if present is not None and present.source != "Omit":
+                # A deselected receipt has no block, while the report editor
+                # retains empty table schemas after Clear. Explicitly selecting
+                # that same source table again fills its empty slot, rather
+                # than appending a second table beside the stale schema. Only
+                # exact nonempty source identities qualify: other empty tables
+                # and every populated table remain normal additive content.
+                selected = {table.reference for table in block.extra_tables if table.reference}
+                tables = tuple(table for table in present.extra_tables
+                               if table.rows or not table.reference or table.reference not in selected)
+                if tables != present.extra_tables:
+                    reselected_tables[block.key] = replace(present, extra_tables=tables)
             additions.append(block)
             continue
         same_source = (_content(block) == _content(old)
@@ -90,7 +103,8 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
         # unchanged contribution, never a block with intervening report edits.
         replacements[block.key] = block
 
-    revised = replace(existing, blocks=tuple(replacements.get(b.key, b) for b in existing.blocks),
+    revised = replace(existing, blocks=tuple(replacements.get(b.key, reselected_tables.get(b.key, b))
+                                             for b in existing.blocks),
                       sections=tuple(replace(s, blocks=tuple(
                           incoming_specs[b.key] if b.key in replacements and b.key in incoming_specs else b
                           for b in s.blocks)) for s in existing.sections))

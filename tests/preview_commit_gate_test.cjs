@@ -31,7 +31,7 @@ function dom() {
     return {root,panel};
 }
 
-function pendingEditorWithSibling() {
+function pendingEditorWithSibling({preparer=false,onPreview=null}={}) {
     const app=new Element(),workspace=new Element(),editPair=new Element(),otherPair=new Element();
     const document=new Element(),window={devicePixelRatio:1},timers=new Map(),sent=[];
     const intersections=[],mutations=[];let sequence=0;
@@ -52,18 +52,59 @@ function pendingEditorWithSibling() {
             selector==='[class*="st-key-epc_workspace_"]'?workspace:
             selector==='[class*="st-key-epc_pair_"]'?pair:null;
         return render({parentElement:root,data:{generation:'same',viewScope:pair===editPair?'one|activity':'one|other',
-            pages:[],sizes:[],ready:false},setStateValue:(name,value)=>sent.push({name,value})});};
+            pages:[],sizes:[],ready:false},setStateValue:(name,value)=>{
+                sent.push({name,value});onPreview?.(pair===editPair?'preview-one':'preview-two');
+            }});};
     const first=mount(editPair),second=mount(otherPair);
     const fire=()=>{for(const [id,item] of [...timers])if(item.delay===120){timers.delete(id);item.callback();}};
-    const target={matches:s=>s==='textarea',closest:s=>s.includes('st-key-epc_edit_')?{}:
-        s.includes('st-key-epc_pair_')?editPair:null};
+    const target={matches:s=>s==='input,textarea,select' ||
+        (preparer?s==='input[aria-label="Prepared by"]':s==='textarea'),
+        closest:s=>preparer?null:s.includes('st-key-epc_edit_')?{}:
+            s.includes('st-key-epc_pair_')?editPair:null};
     const dispatch=(name,event)=>{for(const fn of app.listeners.get(name)||[])fn(event);};
     dispatch('input',{target});
     const gate=window.__enfraPreviewNativeEditGates.get(app);
-    assert.equal(gate.blockAll,false,'unsubmitted typing remains section-scoped');
+    if(!preparer)assert.equal(gate.blockAll,false,'unsubmitted textarea typing remains section-scoped');
     return {app,workspace,target,dispatch,fire,gate,sent,intersections,mutations,
         cleanup:()=>{second();first();}};
 }
+
+// Streamlit 1.61.1 WidgetStateManager.scheduleFlush (requirements.lock): the
+// first queued fragment survives a later undefined/full request in the same
+// zero-ms batch. TextInput's blur commit reaches it through a deferred effect.
+// This models that upstream scheduler, independently of the app's preview gate.
+class LockedWidgetBatch {
+    constructor(){this.scheduledFragmentId=undefined;this.flushScheduled=false;this.hasPreparer=false;}
+    schedule(fragmentId,{preparer=false}={}){
+        if(this.scheduledFragmentId===undefined)this.scheduledFragmentId=fragmentId;
+        this.flushScheduled=true;this.hasPreparer ||= preparer;
+    }
+    flush(){return {fragment:this.scheduledFragmentId,hasPreparer:this.hasPreparer};}
+}
+
+test('locked upstream scheduler can carry a native commit only in an earlier preview fragment',()=>{
+    const batch=new LockedWidgetBatch();
+    batch.schedule('preview-one');
+    batch.schedule(undefined,{preparer:true});
+    assert.deepEqual(batch.flush(),{fragment:'preview-one',hasPreparer:true});
+});
+
+test('Prepared-by typing holds all identity-dependent previews before deferred native Tab commit',()=>{
+    const batch=new LockedWidgetBatch();
+    const h=pendingEditorWithSibling({preparer:true,onPreview:fragment=>batch.schedule(fragment)});
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();
+    // Native change capture happens before React's deferred onBlur effect.
+    // It cannot retract a fragment that the viewer already queued while typing.
+    h.dispatch('change',{target:h.target});
+    batch.schedule(undefined,{preparer:true});
+    assert.deepEqual(batch.flush(),{fragment:undefined,hasPreparer:true},
+        'corrected attribution must request a full editor run, not ride only in a preview fragment');
+    assert.equal(h.gate.blockAll,true);
+    h.workspace.dataset.epcFullRender='after-preparer';
+    h.mutations[0].callback();h.fire();
+    assert.equal(h.sent.length,2,'distinct completed full receipt releases both reference viewers');
+    h.cleanup();
+});
 
 for(const modifier of ['ctrlKey','metaKey'])test(modifier+' Enter commits cannot coalesce with another preview fragment',()=>{
     const h=pendingEditorWithSibling();
