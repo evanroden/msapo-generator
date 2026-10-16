@@ -6,7 +6,75 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
-Updated 2026-10-16 17:07 UTC. PR248 is merged normally into main
+PR251 reconciliation 2026-10-16 17:59 UTC: this local normal merge incorporates exact PR249
+headb34b172cb3d7dd218e3534d3de26b7258e5a88cb into b5f57e060151e23bbee965bdcad6e9b41cef2e71.
+Both ordinary first-site browser checks now assert the exact full site name in the stable
+identity strip, where the removed selected-sites prose moved. Their zero-site baseline, one
+native selection, month/date/source/page decisions, staging and canonical/durable assertions
+remain. The new fresh Water task keeps the existing full prefilled Water/output task intact.
+The workflow retains the exact33-path parent union for PR/main events, every earlier journey,
+one fresh Water step/artifact and the unchanged25-minute job limit. No history browser task is
+added on this branch.119 focused composed Water/identity/history/admin/source/native-prerequisite
+tests pass in the locked Python3.12.14 runtime; exact new integration CI is still required.
+PR251b5's earlier green Required38937329814 and Adaptive38937329670 are historical evidence,
+not verification of this merged candidate. No publication, deployment, browser rerun, live write
+or source transfer occurred in this local reconciliation. PR251 stays stacked behind249; after
+249 integrates normally, retarget to main and inspect/run its exact workspace-only delta.
+
+### PR249 prerequisite verification checkpoint
+
+Current verification batch 2026-10-16 17:55 UTC: PR249 head98111bb passed Required38940688734
+and Adaptive38940688764 on integration6ae137951dd8dfc1cbd16af73ecbe8c28ad3ae12 against main4ca.
+Its17 new Water regressions repair two independently reproduced recovery cases; the full prefilled
+Water browser task remains intact. Required artifacts independently recount2,796 tests with zero failures/errors/skips.
+Adaptive original86,757,831-byte ZIP is retained under its own verified digest; full task review
+remains scoped to that exact revision.
+
+The next exact candidate adds a separate ordinary native browser task for the freshly empty Omit
+case: one zero-site action, October template bootstrap, then unsaved September with no snapshot,
+real two-page PDF upload, first-page approval without premature inclusion, explicit second-page
+exclusion, and exactly one durable canonical page. The October bootstrap itself correctly starts
+Water as This month; it is not the empty-Omit prerequisite. The guarded disposable server has no
+live-root fallback or outgoing services. This task is browser-unrun until the new exact CI;
+it does not replace the existing caption/order/omission/compact-preview/generation/output journey.
+31 affected checks pass locally; independent helper review is clean. Four helper contracts
+also retain missing-prerequisite, anti-no-op and replaced-input-node rejection.
+
+The same batch repairs a demonstrated native-text QA prerequisite from PR252 Adaptive38938669161:
+the issue clear was attempted while its controlled DOM value was briefly empty after reload, so
+the anti-no-op assertion correctly stopped before any clear. The canonical/durable issue remained
+populated and later captured DOM matched it. Awaiting the exact expected existing value on the
+same locator now precedes the action. Anti-no-op, actual input-event-node continuity, durable
+acknowledgment, clear/reentry/reload and actual output assertions remain. No rescue gesture,
+synthetic blur, business retry, timeout increase or application-state injection is added.
+
+Earlier Water review recovery findings reproduced five actual-caller failures despite the
+prefilled journey passing. Empty optional Omit slots now accept explicitly reviewed pages;
+omitted wording, tables/custom schemas, captions, graphics and other writer content retain a
+separate whole-section choice, including when no source files are routed.17 new and71 affected
+cases passed locally. Stale source/reset/price/image/zero/NR/qualified guards remain. The original
+failures and two identified intermediate test-prerequisite mistakes are preserved.
+
+Merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf independently passed Tests38936148403
+(2,711/0/0/0), Adaptive38936148447 and automatic live38937063007. Both independent live sessions
+observed that FULL served SHA and completed3 first-attempt requested/accepted/completed generations
+each, with12 actual files' sizes/digests verified across the sessions. Live Prepared pointer/
+keyboard passed6 checks. No Render workspace selection or owner conflict change occurred. This
+is exact synthetic release proof for PR248 only, not owner AUTH, native master or phase acceptance.
+
+PR250 now87aebb9 retains single-date/native keyboard/partial/minmax/session/output assertions;
+its prior3c run stopped at an unnecessary one-second frame prerequisite on an EMPTY initial date,
+before repaired paths. Actual40-case vendor model proves empty0..0 cannot be changed by its queued
+cursor0, so only nonempty replacements need the unchanged frame barrier.60 targeted checks pass;
+new exact browser verification remains required. Priorace WebKit full tail and54 individually
+reviewed PDF pages stay scoped; earlier Chromium filter-only and ResizeObserver causes remain
+unclassified. PR251b5f57e0 exact Required38937329814 and Adaptive38937329670 passed; it remains
+unmerged. PR25257b6eee contains deliberate external reading, scoped Issue Evidence/Undo, quiet
+Scorecards and strengthened real DOCX page-order/caption checks, still unmerged behind PR251.
+
+### Prior integration checkpoint (superseded by current repair above)
+
+Updated 2026-10-16 17:02 UTC. PR248 is merged normally into main
 `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`, with reviewed parent head
 `ceaba0a20115608a9e93d4b74ad2ece96cbe2dce`. Exact pre-merge integration
 `f3335240573a89e05f9904a24ceb291de1f98528` passed Required38934057257:

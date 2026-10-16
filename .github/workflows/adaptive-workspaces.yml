@@ -16,6 +16,8 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_water_fresh_page_journey.py'
+      - 'tests/test_water_fresh_browser_contract.py'
       - 'scripts/qa_water_widget_delivery.py'
       - 'tests/test_water_widget_delivery.py'
       - 'tests/test_water_journey_contract.py'
@@ -29,6 +31,7 @@ on:
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
+      - 'tests/test_qa_native_text_prerequisite.py'
       - 'scripts/workspace_text_observations.py'
       - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
@@ -49,6 +52,8 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_water_fresh_page_journey.py'
+      - 'tests/test_water_fresh_browser_contract.py'
       - 'scripts/qa_water_widget_delivery.py'
       - 'tests/test_water_widget_delivery.py'
       - 'tests/test_water_journey_contract.py'
@@ -62,6 +67,7 @@ on:
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
+      - 'tests/test_qa_native_text_prerequisite.py'
       - 'scripts/workspace_text_observations.py'
       - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
@@ -128,6 +134,9 @@ jobs:
         env:
           EPC_MONTHLY_WATER_TASK: '1'
         run: python scripts/qa_water_page_journey.py
+      - name: Fresh ordinary Water page review from empty omitted state
+        if: ${{ !cancelled() }}
+        run: python scripts/qa_water_fresh_page_journey.py
       - name: Upload synthetic screenshots and geometry
         if: always()
         uses: actions/upload-artifact@v4
@@ -143,5 +152,6 @@ jobs:
             test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
             test-artifacts/water-page-journey/
+            test-artifacts/water-fresh-page-journey/
           retention-days: 7
           if-no-files-found: warn

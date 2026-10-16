@@ -91,7 +91,7 @@ def visit(browser, engine, method):
             raise AssertionError("Unknown input mode")
         record["phase"] = "verify one native site selected and work enabled"
         expect(box).to_be_checked(timeout=45000)
-        expect(page.locator(".st-key-monthly_report_identity_sites")).to_contain_text("Site: " + FIRST, timeout=45000)
+        expect(page.locator(".st-key-monthly_report_identity_sites")).to_have_text("Site: " + FIRST, timeout=45000)
         expect(page.get_by_text("Select at least one site to continue.", exact=True)).to_have_count(0)
         expect(page.get_by_text("Starting report", exact=True)).to_be_visible(timeout=45000)
         record["phase"] = "second site and return to zero"

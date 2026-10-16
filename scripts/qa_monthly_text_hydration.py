@@ -65,9 +65,14 @@ def await_text(page, label, text):
     live.EVIDENCE.setdefault('text_receipts', []).append({"phase": live.EVIDENCE["phase"], **current})
 
 
-def commit_text(page, label, text):
+def commit_text(page, label, text, *, expected_before):
     field = page.get_by_role("textbox", name=label, exact=True)
+    # Reload can expose an offscreen native field before its controlled value
+    # hydrates. Establish this edit's exact prerequisite on the same locator;
+    # a missing/wrong value must fail before the deliberate clear or reentry.
+    expect(field).to_have_value(expected_before)
     before = field.input_value()
+    assert before == expected_before, "The field changed after its expected value was observed."
     live.event("text_edit_requested", label=label, before_sha256=sha256(before.encode()).hexdigest(),
                requested_sha256=sha256(text.encode()).hexdigest())
     assert before != text, "This edit must change the existing field, not silently pass a no-op."
@@ -162,13 +167,13 @@ def exercise(browser_type, name):
         activity = page.get_by_role("textbox", name="Activity summary", exact=True).input_value()
         for label, wording in EXPECTED.items():
             phase(label + ' clear and save')
-            commit_text(page, label, "")
+            commit_text(page, label, "", expected_before=wording)
             phase(label + ' clear reload')
             page.reload(wait_until="domcontentloaded")
             await_text(page, label, "")
             live.checkpoint(label + " deliberate clear survives reload", True)
             phase(label + ' reentry and save')
-            commit_text(page, label, wording)
+            commit_text(page, label, wording, expected_before="")
             phase(label + ' reentry reload')
             page.reload(wait_until="domcontentloaded")
             await_text(page, label, wording)
