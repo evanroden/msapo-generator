@@ -6,6 +6,79 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+Current local integration — 2026-10-16 19:04 UTC: Organization notes repair and bounded first-site
+observation are now composed with the normal published PR251d071 merge and the history harness
+repair. The exact affected set passed201 checks in62.34s, including all22 new Organization cases
+and the unchanged30 first-site actions/predicates. These scopes overlap previous counts. No new
+browser run, remote publication, merge to main or served revision is claimed by this local result.
+The first-site observation is a diagnostic, not an application fix; original native failures remain.
+
+Organization notes repair, 2026-10-16 19:00 UTC (local follow-up from PR252 b2c, unmerged):
+actual native editors reproduced replacement wording being overwritten by an older widget value,
+and a cleared notes field disappearing before reentry. The editor now keeps blank notes editable,
+uses the existing source/incarnation-bound native commit and explicit recovery rules, and preserves
+same-action contact/position/Done work. A separate native Add contact test exposed an early sibling
+rerun; delivered notes are now carried before that action without acknowledging a new canonical
+version prematurely. Notes-only receipts leave independent contact/chart fields intact; source-linked
+wording keeps its evidence editor. Twenty-two new AppTests cover stable IDs, clear/reentry, source/
+epoch replacement, stale native callbacks, explicit recovery, same-action Done/Add/contact edits,
+selected-site shared-save success/failure/concurrency, report-only rows, and saved-version reopening.
+The exact local affected set passed 116 checks in 40.47s, including all 22 new cases; a separate
+read-only peer review found no blocker. These are Python 3.12 / Streamlit 1.61.1 AppTests.
+First failures remain private under `organization-notes-*-first-failure*.xml`; exact integrated CI,
+served browser/native-input and output acceptance are still required. No live standing data,
+customer original, local browser, or deployment was used for this implementation.
+
+Current PR252 reconciliation — 2026-10-16 18:56 UTC: retain all source/cover/history changes
+from publishedb2c75bd and the focused history harness repair, then normally incorporate published
+PR251d0714850581d6c02781e73e6f8395138b5b92d7c, including PR2491649's reviewed dropdown repair.
+Main/actually served proof remains4ca42c59fe647d4cf1f766bfb2d232092e48f7cf. This local candidate
+is unmerged; exact integrated CI and actual history/cover browser behavior remain required.
+
+The b2c Adaptive38947283726 first-site task passed its initial zero-site keyboard selection;
+its later UMMC deselection after adding RGH failed in one WebKit path (nine of ten paths passed).
+Native checked state had been observed, but no event/wire/trace record exists for that last action.
+The screenshot alone cannot distinguish missed click from stale state overwrite; no checkbox
+production repair is justified by that evidence. Both fresh Water engines completed all five
+business stages/durable decisions; WebKit's sole native ResizeObserver error began during
+September selection before upload. The new parent callback repair was absent from that revision.
+Those original failures remain visible; neither this merge nor later green can erase them.
+
+Composed history/cover/Water/native-prerequisite integration:133 passed in39.01s under locked
+Python3.12.14. An initial command named an absent test path and collected zero cases; the corrected
+actual-path command produced this receipt, not an application failure or a skipped case.
+
+Exact PR2491649 Required38949313065 independently2,828/0/0/0; Adaptive38949313042 failed
+only the fresh WebKit native ResizeObserver gate. Both fresh engines completed all five business
+stages and every earlier family/full Water/Shared/native-output passed. The original108,297,687-byte
+archive12069130703 is retained under its own verified digest. This new failure remains under focused
+callback/delivery investigation and is not a browser pass or merge authorization by itself.
+
+### Retained history harness repair and prior source/cover batch
+
+History harness repair 2026-10-16 18:49 UTC: PR252 headb2c75bd passed
+Required38947283779 on integrationae0ed8d208adfd525b8e8d7a52be10652a0eb35a;
+the original JUnit independently contains3,140 cases with zero failures/errors/skips.
+Adaptive38947283726 failed. Its new history job failed in BOTH engines at the initial
+cookie-bound empty state, before any fixture/history/cover action or native output. Actual
+Actions stderr identifies the first cause: the passive widget diagnostic rejected this new
+fixture's localhost8542 socket, then subsequent Route.continue_ calls inherited that exception.
+Final retained DOM was connected/notRunning but Buttons/HTML receipts remained skeletons.
+The original8,401,191-byte history artifact12066847133 is retained with SHA256
+4658ae7d9af557cd952bce62e4cbf7a8dd2802b33f545e018059baddaf6c0c98 and passed ZIP integrity.
+
+The diagnostic now accepts an explicitly supplied fixture port; history opts into only8542,
+while existing callers retain their prior ports and all sockets still require127.0.0.1.
+The exact retained trace also proves Python None optional predicate keys were omitted by
+Playwright. Their checks now accept null or undefined without relaxing supplied scope,
+revision, author/activity hashes, photo count, fresh sequence, durable equality or completed
+script state.52 focused Python/actual-JavaScript contract checks pass, including both socket
+listeners receiving a real protobuf and rejection of wrong ports/host and wrong supplied values.
+Original failures remain retained; no browser/server rerun, timeout increase, rescue gesture,
+business action, merge or deployment was performed for this repair. New exact integrated browser
+verification is required. The separate b2c first-site tail and fresh-Water WebKit browser-error
+failures remain open and are not explained or waived by this history harness repair.
+
 Current finishing batch 2026-10-16 18:24 UTC (PR252, still unmerged): resolved source files now
 collapse to Included files and pictures with Change; unresolved/stale/ambiguous/retained/CMMS
 sources keep their recovery tools. Native captions delivered with Done and same-render reader
@@ -50,7 +123,50 @@ has synchronous resize/layout writes; a precise callback model and cache-safe pi
 repair are in progress separately. No global ResizeObserver patch, error filter, timeouts or
 dependency change is justified here. Neither Training nor either phase is accepted.
 
+### First-site tail evidence (local, browser verification not run)
+
+PR252b2c first-site had nine successful paths; WebKit's keyboard-labelled path passed its
+initial Space selection, then failed the later UMMC deselection after adding RGH. Its retained
+capture cannot establish native event delivery, remount, stale overwrite or a ResizeObserver
+cause. The same revision's fresh Water WebKit completed all five stages and canonical durable
+one-page inclusion; its terminal browser-error gate retained one native ResizeObserver error
+during September selection before upload. These remain failed browser gates, not new passes.
+
+The bounded follow-up observes only the existing two-checkbox tail with trusted native events,
+same-node identity, script/identity/full-run receipts, exact-port8526 boolean widget delivery and
+an optional trace. Every original gesture, predicate and timeout is retained, with no added
+intergesture wait or evaluation. Native/Playwright errors are unfiltered; diagnostic cleanup
+cannot replace the primary assertion. Eight focused protocol/passivity/cleanup checks pass.
+This is evidence infrastructure only, not an application repair or a successful browser rerun.
+
 ### Prior branch checkpoints (superseded by current finishing batch)
+### Retained workspace reconciliation
+
+Current PR251 reconciliation — 2026-10-16 18:45 UTC: incorporated exact published PR249
+head1649aeab52ca401f5c9b601518570ba7077a6f80 normally after currentc114f95 and a QA-only Month
+activation observation. Main/actually served proof remains4ca42c59fe647d4cf1f766bfb2d232092e48f7cf;
+this candidate is unmerged and needs exact Required/Adaptive verification. The client repair and
+all original workspace/history/source/save contracts below are preserved.
+
+The c114 Adaptive38944314371 first failure is not erased: Chromium's first September input click
+focused the same connected native input under the same idle full-render token, but no popup was
+observed; exact option selection timed out. That activation cause remains unresolved. WebKit
+completed every fresh page decision and durable one-page inclusion, but a native ResizeObserver
+error began during September selection, before upload. Every existing family/full Water export
+passed. The separate parent repair addresses a demonstrated native overlay feedback class; it
+does not establish the cause of Chromium's missing activation.
+
+The QA-only probe preserves exactly one input click, one exact option click and the value
+assertion, adding bounded passive trusted events, aria-expanded mutation oldValue chains and
+same-node/render snapshots. No wait, rescue, synthetic event or value write is added. Cleanup
+cannot mask the primary failure.14 affected tests passed7.86s; independent read-only peer review
+found no blocker. Its extra bounded observation can affect timing, so a later green run alone
+cannot explain the original activation failure. No new browser run is claimed here.
+
+Final composed workspace/native-prerequisite/response gate:85 passed in57.10s under locked
+Python3.12.14. Exact integrated CI and native browser delivery remain required.
+
+### Earlier PR251 prerequisite reconciliation
 
 PR251 reconciliation 2026-10-16 17:59 UTC: this local normal merge incorporates exact PR249
 headb34b172cb3d7dd218e3534d3de26b7258e5a88cb into b5f57e060151e23bbee965bdcad6e9b41cef2e71.
@@ -67,7 +183,61 @@ not verification of this merged candidate. No publication, deployment, browser r
 or source transfer occurred in this local reconciliation. PR251 stays stacked behind249; after
 249 integrates normally, retarget to main and inspect/run its exact workspace-only delta.
 
-### PR249 prerequisite verification checkpoint
+### Parent repair retained in this reconciliation
+Overlay repair batch 2026-10-16 18:33 UTC is based on PR249 head
+`b34b172cb3d7dd218e3534d3de26b7258e5a88cb`; main and actually served proof remain
+`4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`. This is an implemented-needs-browser-verification
+candidate, not a native-error resolution or a release.
+
+PR249 b34 Adaptive38943191454 completed both fresh Water business tasks, then failed on a WebKit
+native ResizeObserver error; no Training form was used. PR250 ca4101b Adaptive38945377473 tested
+integration `dd04f9125561f2feedcd78bf16708f7de65c6f2a` against b34. Its corrected native Training
+reference matched the actual input width and selected the participant on the same connected field
+in both engines, without custom workspace/preview observers; both reference documents still
+reported the native ResizeObserver error. Tooltip callbacks immediately preceded those errors
+(Chromium3190.4/3190.5ms before3193.2ms; WebKit3038ms before3042ms). Constructor origins also serve
+the framework Virtualizer, so those records alone do not identify one callback or prove every
+historical native error has the same cause. The authoritative Training task independently completed
+date/minmax/add/reload/remove and all8 real output checks in each engine. Chromium's native error
+remained terminal; WebKit had none in that run. Business completion is separate from acceptance.
+The original Training artifact12065197641 is retained with verified size1,379,230bytes, CRC and
+SHA256 `f2ce4f9d38fe91664ae9e4649bf3c4d680d843f3e342a8bf0fc9b30dfa7b7d03`.
+
+The actual locked Tooltip Zt/Xt positioner model reproduces synchronous layout writes inside its
+two ResizeObserver callbacks: a finite target resize changes the observed overlay's maximum height
+from73px to51px during delivery. The narrow repair coalesces only those two position callbacks
+onto one animation frame and cancels pending work on lifecycle cleanup. Original position math,
+initial/window/scroll positioning and thrown errors remain. Actual extracted source tests cover
+both flip choices, frame ID0, duplicate delivery, exact resulting geometry, cancellation and late
+delivery. A controlled DOM model is not a browser ResizeObserver timing proof. Other observer
+implementations, including the Virtualizer, are unchanged; no native error is suppressed.
+
+Publication now reconstructs an immutable81-JavaScript import closure from a static full-hash and
+edge manifest (7,439,383 original bytes), preserving originals and its five-member import cycle.
+One generation identifies the closed configuration; the primary entry retains a hash of its final
+bytes. All generated bodies and edges validate before HTML changes. Scalar-date and full-editor
+scheduler repairs compose with this overlay repair without new dependencies or copied fonts.
+Shared browser QA compares naturally requested primary and Tooltip response bytes with an
+independently reconstructed, fully validated publication, rather than trusting served filenames
+or self-reported hashes. No eager browser loading of the whole closure is added.35 focused checks
+passed before an independent review then reproduced a concurrent nondate/scalar installer HTML
+lease race on a disposable bundle; that first failure is retained. A lock on the existing static
+directory now spans validation and fresh scalar-state reading through final HTML replacement,
+creating no lockfile.13 focused checks passed, including actual two-process installations in both
+flag orderings, blocked validation while the other installer holds the lock, preserved scalar
+compatibility, invalid-input no-writes and interrupted publication. The final composed model,
+publication and requested-response gate passed37 checks in92.82s; independent lock/interruption
+review passed5 checks. Exact integrated Required/Adaptive, corrected native reference and fresh
+Water browser evidence are still required.
+
+A second independent review reproduced a QA expected-byte race after full pinned validation:
+the helper could reread a same-length changed file and adopt it as its expected response. Both
+primary and Tooltip helpers now compare that reread with the independently reconstructed SHA256
+before returning it. Four focused response checks pass, including both post-validation mutation
+regressions; the original failure receipt is retained. This observation repair does not change
+published client payloads or establish a browser pass.
+
+### Prior verification checkpoint (superseded by current overlay batch)
 
 Current verification batch 2026-10-16 17:55 UTC: PR249 head98111bb passed Required38940688734
 and Adaptive38940688764 on integration6ae137951dd8dfc1cbd16af73ecbe8c28ad3ae12 against main4ca.

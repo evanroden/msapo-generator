@@ -102,23 +102,71 @@ def _preview_page(prefix, key, count, title):
     )) - 1
 
 
-def _edit_notes(block, prefix, field):
-    """Specialized chart/contact editors must also retain their imported notes."""
-    if not block.text.strip():
+def _notes_baseline(block):
+    return ResolvedBlock(block.key, "Omit" if block.source == "Omit" else "This month",
+                         text=block.text, references=block.references)
+
+
+def _delivered_notes(block, prefix):
+    """Include a delivered note before a sibling Add/Remove/Done can rerun."""
+    if block.ai_paragraphs:
         return block
+    from app.monthly_report_guided import _edited_rich_text, _rich_text_editor_key, _rich_text_scope
+    key = _rich_text_editor_key(prefix, block)
+    receipt = st.session_state.get(key + "_explicitly_edited")
+    if (isinstance(receipt, dict) and receipt.get("scope") == _rich_text_scope(prefix)
+            and receipt.get("baseline") == _notes_baseline(block).fingerprint
+            and isinstance(receipt.get("text"), str)
+            and receipt["text"] == st.session_state.get(key)):
+        return _edited_rich_text(block, receipt["text"])
+    return block
+
+
+def _edit_notes(block, prefix, field, *, canonical_before):
+    """Specialized chart/contact editors must also retain their imported notes."""
     if block.ai_paragraphs:
         st.caption("Source-linked notes can be changed in the wording and sources editor.")
         st.text(block.text)
         return block
+    from app.monthly_report_guided import (
+        _edited_rich_text, _mark_explicit_rich_text_edit, _rich_text_editor_key,
+        _rich_text_scope, _render_rich_text_recovery,
+    )
+    # A contact row or chart position can change in the same native submission.
+    # Bind the note receipt to its own wording/source/incarnation, so those
+    # independent edits cannot invalidate an accepted note or be overwritten.
+    baseline = _notes_baseline(canonical_before)
+    key = _rich_text_editor_key(prefix, block)
+    marker = key + "_explicitly_edited"
+    scope = _rich_text_scope(prefix)
+    displayed = st.session_state.get(key, block.text)
+    receipt = st.session_state.get(marker)
+    valid = (isinstance(receipt, dict) and isinstance(receipt.get("text"), str)
+             and receipt.get("scope") == scope)
+    if valid and receipt.get("result") == baseline.fingerprint:
+        st.session_state.pop(marker, None)
+        valid = False
+    submitted = (valid and receipt.get("baseline") == baseline.fingerprint
+                 and receipt["text"] == displayed)
+    if valid and not submitted:
+        st.session_state[marker + "_recovery"] = receipt
+    if displayed != block.text and not submitted:
+        st.session_state[key] = block.text
     text = st.text_area(
         "Notes included with this part",
-        key=field(prefix + "_organization_notes_" + block.key, block.text),
+        value=receipt["text"] if submitted else block.text,
+        key=field(key, block.text),
         height=120,
+        on_change=_mark_explicit_rich_text_edit,
+        args=(marker, key, baseline, scope),
     )
-    if text == block.text:
-        return block
-    return replace(block, text=text, source="This month", reviewed_fingerprint="",
-                   client_reviewed_fingerprint="")
+    if submitted:
+        if text != block.text:
+            block = _edited_rich_text(block, text)
+    else:
+        st.session_state.pop(marker, None)
+    _render_rich_text_recovery(marker, key, baseline, scope)
+    return block
 
 
 def render_organization(draft, blocks, specs, prefix, assets, field, edit_content, *, show_preview=True):
@@ -140,7 +188,10 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         if key not in specs:
             return
         spec = specs[key]
-        block = updated.get(key, ResolvedBlock(key, "This month" if spec.required else "Omit"))
+        canonical_before = updated.get(key, ResolvedBlock(key, "This month" if spec.required else "Omit"))
+        block = _delivered_notes(canonical_before, prefix) if key in ("contact_matrix", "org_chart") else canonical_before
+        if block != canonical_before:
+            updated[key] = block
         st.markdown("#### " + title)
         current_draft = replace(draft, blocks=tuple(updated.values()))
         _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=show_preview)
@@ -158,12 +209,12 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                   on_click=st.session_state.__setitem__, args=(active_key, ""))
         if key == "contact_matrix":
             changed = edit_contacts(current_draft, spec, block, prefix, assets, field, show_preview=show_preview)
-            changed = _edit_notes(changed, prefix, field)
-            if changed != block:
+            changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
+            if changed != canonical_before:
                 from app import monthly_report_directory as directory
                 try:
                     shared = directory.automatically_keep_directory_contact_edits(
-                        draft.profile, block, changed, draft.prepared_by)
+                        draft.profile, canonical_before, changed, draft.prepared_by)
                     if shared is not None:
                         changed = shared
                         st.caption("Updated site contacts are kept for future reports. Earlier completed reports are unchanged.")
@@ -173,7 +224,7 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         elif key == "org_chart":
             if block.org_nodes:
                 changed = edit_org_chart(current_draft, block, prefix, assets, field, show_preview=show_preview)
-                changed = _edit_notes(changed, prefix, field)
+                changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
             else:
                 changed = edit_content(spec, block)
                 with st.expander("Build an editable team chart (optional)"):

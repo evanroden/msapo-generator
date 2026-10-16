@@ -44,15 +44,17 @@ def receipt(page):
 
 
 def await_state(page, identity, *, revision=None, author=None, activity=None, photos=None, after=0):
+    # Playwright can omit Python None keys. Unrequested fields accept null or
+    # undefined; every supplied revision/value and durable receipt stays exact.
     page.wait_for_function("""wanted => {
       const nodes=document.querySelectorAll('[data-enfra-history-receipt]');
       if(!nodes.length)return false;
       const s=JSON.parse(nodes[nodes.length-1].dataset.enfraHistoryReceipt);
       return s.scope===wanted.scope && s.sequence>wanted.after &&
-        (wanted.revision===null||s.saved_revision===wanted.revision) &&
-        (wanted.author===null||s.working?.author===wanted.author) &&
-        (wanted.activity===null||s.working?.activity===wanted.activity) &&
-        (wanted.photos===null||s.working?.photos.length===wanted.photos) &&
+        (wanted.revision==null||s.saved_revision===wanted.revision) &&
+        (wanted.author==null||s.working?.author===wanted.author) &&
+        (wanted.activity==null||s.working?.activity===wanted.activity) &&
+        (wanted.photos==null||s.working?.photos.length===wanted.photos) &&
         (!s.working||JSON.stringify(s.working)===JSON.stringify(s.durable)) &&
         document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
     }""", arg={"scope": identity, "revision": revision,
@@ -313,7 +315,7 @@ def main():
                         time.sleep(.1)
                 else:
                     raise RuntimeError("Guarded history fixture did not become healthy")
-                with observe(OUT / "diagnostics", Browser, BrowserContext), sync_playwright() as playwright:
+                with observe(OUT / "diagnostics", Browser, BrowserContext, widget_ports=(PORT,)), sync_playwright() as playwright:
                     for name, engine in (("chromium", playwright.chromium), ("playwright-webkit", playwright.webkit)):
                         try:
                             browser_task(engine, name, base)
