@@ -666,7 +666,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         if manager_open:
             sources, additions, incoming_specs = render_uploads(profile, period, prefix, field)
             draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
-            if additions and st.button("Add prepared pages and tables to this draft", key=prefix + "_apply_uploads"):
+            if additions:
                 draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
         from app.monthly_report_ai_ui import render_drafting
         # One shared evidence workspace: rendering this once avoids duplicated

@@ -20,8 +20,10 @@ def open_source_manager(app):
     assert not any(w.label == "Add work-order spreadsheets" for w in app.checkbox)
 
 
-def prepared(app):
-    return any(key.endswith("_prepared_pages") and value for key, value in app.session_state.filtered_state.items())
+def current_draft(app):
+    return next(value for key, value in app.session_state.filtered_state.items()
+                if key.startswith("report_guided_") and key.endswith("_draft")
+                and hasattr(value, "blocks"))
 
 
 def cmms_ready(app):
@@ -49,7 +51,7 @@ def upload(monkeypatch, name, data):
                         [stream] if label == "Monthly source files" else original(label, *args, **kwargs))
 
 
-def test_upload_selection_invalidation_and_workflow_retention(monkeypatch, tmp_path):
+def test_one_batch_action_adds_reviewed_pages_once_and_preserves_them_on_neutral_reruns(monkeypatch, tmp_path):
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic.pdf", pdf_bytes(3))
     app.run()
@@ -60,21 +62,43 @@ def test_upload_selection_invalidation_and_workflow_retention(monkeypatch, tmp_p
     for page in (1, 2, 3):
         select(app, "Preview page / item").set_value(page).run()
         button(app, "Include page and continue").click().run()
-    button(app, "Prepare selected pages").click().run()
+    assert not any(w.label in ("Prepare selected pages", "Add prepared pages and tables to this draft") for w in app.button)
+    assert not any(b.key == "improvements" and b.asset_hashes for b in current_draft(app).blocks)
+    button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
-    assert prepared(app)
-    next(w for w in app.multiselect if w.label == "Included pages / extracted items").set_value([1, 3]).run()
-    assert not prepared(app)
-    button(app, "Prepare selected pages").click().run()
+    added = next(b for b in current_draft(app).blocks if b.key == "improvements")
+    assert len(added.asset_hashes) == len(set(added.asset_hashes)) == 3
+    original = current_draft(app).fingerprint
+    app.run()
+    assert current_draft(app).fingerprint == original
+    button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
+    assert current_draft(app).fingerprint == original
     app.segmented_control[0].set_value("Expense reimbursement").run()
     app.segmented_control[0].set_value("Monthly report").run()
     assert not app.exception
-    assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 3]
-    assert prepared(app)
-    button(app, "Remove source from this draft").click().run()
+    assert next(b for b in current_draft(app).blocks if b.key == "improvements") == added
+    assert reviewed_source(app).selected_pages == (1, 2, 3)
+
+
+def test_changed_caption_cannot_reuse_a_prepared_batch_or_partially_change_report(monkeypatch, tmp_path):
+    app, _ = app_with_library(monkeypatch, tmp_path)
+    upload(monkeypatch, "synthetic.pdf", pdf_bytes(1))
+    app.run()
+    button(app, "Read monthly files").click().run()
+    select(app, "Classification").set_value("Vendor service").run()
+    button(app, "Include page and continue").click().run()
+    before = current_draft(app)
+    next(w for w in app.text_input if w.label == "Page caption").set_value("Changed review caption").run()
+    button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
-    assert not any(w.label == "Review source" for w in app.selectbox)
+    assert any("Check page 1" in w.value for w in app.error)
+    assert current_draft(app).blocks == before.blocks
+    assert not any(key.endswith("_prepared_pages") for key in app.session_state.filtered_state)
+    button(app, "Include page and continue").click().run()
+    button(app, "Add selected pages and tables to report").click().run()
+    assert not app.exception
+    assert next(b for b in current_draft(app).blocks if b.key == "improvements").asset_captions == ("Changed review caption",)
 
 
 def test_cmms_mapping_applies_real_schema_and_invalidates_on_change(monkeypatch, tmp_path):

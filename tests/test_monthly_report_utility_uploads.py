@@ -81,10 +81,11 @@ def test_utility_upload_has_readable_destination_and_prepared_pages(monkeypatch,
     button(app, "Read monthly files").click().run()
     assert not app.exception
     assert select(app, "Classification").value == "Utility results"
-    destination = select(app, "Add synthetic-utility.pdf to")
+    destination = select(app, "Report section for synthetic-utility.pdf")
     assert destination.value == "utility_analysis"
     assert "Monthly scorecards — utility results and charts" in destination.options
     button(app, "Include page and continue").click().run()
-    button(app, "Prepare selected pages").click().run()
+    button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
-    assert any("Reviewed pages are ready" in w.value for w in app.success)
+    from test_monthly_report_upload_ui import current_draft
+    assert len(next(b for b in current_draft(app).blocks if b.key == "utility_analysis").asset_hashes) == 1
