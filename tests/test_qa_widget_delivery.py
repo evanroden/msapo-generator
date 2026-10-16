@@ -49,6 +49,28 @@ def test_malformed_or_unrelated_messages_are_not_recorded():
     assert not events
 
 
+def test_preparer_input_receipt_distinguishes_delivered_text_from_fragment_only_runs():
+    events = []
+    observer = WidgetDelivery(lambda kind, item: events.append(item))
+    msg = ForwardMsg()
+    widget = msg.delta.new_element.text_input
+    widget.id = 'synthetic-preparer'
+    widget.label = 'Prepared by'
+    widget.default = ''
+    observer.message('received', msg.SerializeToString(), 1)
+    sent = BackMsg()
+    sent.rerun_script.fragment_id = 'synthetic-fragment'
+    state = sent.rerun_script.widget_states.widgets.add(id=widget.id)
+    state.string_value = 'Synthetic Reviewer'
+    observer.message('sent', sent.SerializeToString(), 1)
+    assert events[0]['widget'] == 'Prepared by'
+    assert events[1]['fragment'] == 'synthetic-fragment'
+    assert events[0]['id_hash'] == events[1]['widgets'][0]['id_hash']
+    assert events[1]['widgets'][0]['sha256'] == _hash('Synthetic Reviewer')
+    assert 'Synthetic Reviewer' not in json.dumps(events)
+    assert 'synthetic-preparer' not in json.dumps(events)
+
+
 def test_external_socket_cannot_be_observed():
     class Page:
         def on(self, event, listener):

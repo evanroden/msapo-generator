@@ -71,7 +71,7 @@ def test_socket_scope_is_not_a_route_or_policy_workaround():
             handlers["websocket"](SimpleNamespace(url=url))
 
 
-def test_water_preview_returns_to_its_section_before_demanding_current_output():
+def test_water_preview_positions_its_actual_surface_before_demanding_current_output():
     path=Path(__file__).resolve().parents[1]/"scripts/qa_water_page_journey.py"
     tree=ast.parse(path.read_text())
     fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=="current_water_preview")
@@ -81,5 +81,5 @@ def test_water_preview_returns_to_its_section_before_demanding_current_output():
     qa=SimpleNamespace(scroll_pair=lambda *a,**kw:calls.append(("scroll",a,kw)),
                        current_image=lambda *a:calls.append(("current",a)))
     scope["current_water_preview"]("page",qa,inset=90)
-    assert calls==[("scroll",("page","actual-water-pair"),{"inset":90}),
+    assert calls==[("scroll",("page","actual-water-pair"),{"inset":90,"preview":True}),
                    ("current",("page","actual-water-pair"))]

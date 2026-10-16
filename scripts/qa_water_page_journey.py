@@ -65,9 +65,10 @@ def wait_pages(page, order, *, pending=None, reviewed=None):
 
 def current_water_preview(page, qa, *, inset=130):
     # Completing review collapses the source editor, which can move the viewport
-    # into the next section. Request useful output only with Water visible;
-    # the production viewer must retain its visibility-driven work boundary.
-    qa.scroll_pair(page, WATER, inset=inset)
+    # into the next section. On compact screens View preview opens a surface
+    # BELOW the editor. Scroll that actual open surface, not the section header;
+    # preserve the production viewer's visibility-driven work boundary.
+    qa.scroll_pair(page, WATER, inset=inset, preview=True)
     qa.current_image(page, WATER)
 
 

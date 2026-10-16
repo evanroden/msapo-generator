@@ -43,10 +43,13 @@ class WidgetDelivery:
                                    for w in list(run.widget_states.widgets)[:256]
                                    if w.WhichOneof('value') == 'string_value'])
         elif direction == 'received' and kind == 'delta':
-            if msg.delta.new_element.WhichOneof('type') != 'text_area':
+            element = msg.delta.new_element.WhichOneof('type')
+            if element not in {'text_area', 'text_input'}:
                 return
-            widget = msg.delta.new_element.text_area
-            if widget.label not in {'Activity summary', 'Training notes', 'Issue description'}:
+            widget = getattr(msg.delta.new_element, element)
+            if ((element == 'text_area' and widget.label not in {
+                    'Activity summary', 'Training notes', 'Issue description'}) or
+                    (element == 'text_input' and widget.label != 'Prepared by')):
                 return
             result.update(widget=widget.label, id_hash=_hash(widget.id),
                           default=_text(widget.default), value=_text(widget.value),
@@ -74,7 +77,7 @@ class WidgetDelivery:
     def attach(self, page):
         def connected(socket):
             parsed = urlparse(socket.url)
-            if parsed.hostname != '127.0.0.1' or parsed.port not in (8520, 8521):
+            if parsed.hostname != '127.0.0.1' or parsed.port not in (8520, 8521, 8528):
                 raise ValueError('Widget diagnostics require the synthetic localhost fixture')
             self.socket_sequence += 1
             socket_id = self.socket_sequence

@@ -11,34 +11,35 @@ Main and the last independently verified served revision remain
 https://github.com/evanroden/msapo-generator/pull/247#issuecomment-6196963277 .
 No new main merge, Render workspace selection or served revision is claimed here.
 
-PR248, `fix/starting-review-deselection-20261015`, is open at
-`9bab48f90e0b038d5d3aa3e57880d2455029ebe0`. It extends the existing display-only preview
-hold to an already-pending textarea Ctrl/Command+Enter commit and enabled native action buttons.
-Exact2912 wire evidence showed an empty Activity value sent with a preview-fragment request, not
-followed by a full editor run. The pinned frontend's batching can retain a preview fragment ID.
-The new model tests reproduced three failures/one pass; repaired four, existing ten lifecycle and
-23 geometry tests pass. No widget values are read, inputs cloned, business actions retried or
-ordinary Enter/IME/focus/file-picker actions intercepted. This is a narrow race mitigation; exact
-browser proof remains required. Earlier ae67 optional tracing repair passed Required38838978125
-and Adaptive38838978113; those passes do not prove this newer code or explain every historic error.
-Preserve conservative source-deselection and explicitly cleared-table recovery contracts.
+PR248, `fix/starting-review-deselection-20261015`, is open. The October16 continuation
+refreshed main/parent/cleanup refs and actual job steps; both handoff heads remained unchanged.
+The parent repair `580213c1f78515c3c279b0a299776e2bef129000` excludes fragment-local
+Retry preview controls from the full-editor hold. Its two negative regressions failed before
+repair; the affected observer/gate tests and existing geometry/lifecycle tests pass locally.
+Required38923741582 and Adaptive38923741814 are in progress at this milestone, not accepted.
+Prepared-by still needs exact browser commit evidence: its native correction link reached an
+unobscured field, but run38840535744 never satisfied correction-link disappearance. Bounded
+last128 native events and hash-only widget receipts replace the saturated first16 log without
+adding gestures, changing timeouts or weakening the original business assertion.
 
-PR249, `fix/monthly-source-page-workspace-20261015`, is open and stacked on PR248.
-The cleanup is published, not merely parked in a Library ZIP. Caption repair
-`2912e1e4d1ac2dca5351782a3405df2bd25df1b4` captures a caption submitted with an included-page
-action, checks the original source/block revisions, then applies caption and action atomically.
-Absent source captions inherit the attached caption; explicit blanks remain blank. Mere display
-performs no write. The two review findings reproduced as eight failures/four passes; the repaired
-38-case affected suite passes. Exact-head Required38838186086 passes: independently downloaded
-JUnit contains 2,692 tests, zero failures/errors/skips, including all 12 new caption cases.
-This is not browser or native-output acceptance.
+PR249 remains open and stacked on PR248. Preserve its canonical Water page model, caption/action
+atomicity, post-canonical-commit editor refresh, original retention and explicit omissions.
+Current harness repair follows the actual observed failures in run38840877629: after reload,
+Python's completed receipt can precede workspace enhancement; in compact mode, the old helper
+scrolled the section heading after View preview, moving its actual pane below the viewport.
+The repaired helper waits for a mounted root/mode/scroll owner and scrolls the normally opened
+compact preview surface, then requires actual viewport intersection before the unchanged
+Current/image assertion. Six readiness/geometry regressions and existing observer contracts
+pass (16 tests, locked Python3.12.14). No application rendering change, eager raster work,
+extra viewport event, retry gesture or longer wait is introduced. The entire browser tail,
+including generation/download/output, still requires exact integrated CI.
 
-This branch also returns to the actual Water section before demanding current preview output,
-adds a specific durable first-page-review assertion, and records bounded hashed native button/
-caption delivery. These are test-harness changes, not a claim that production rendering or click
-submission is repaired. No timeout, real export assertion, route restriction or error gate is
-relaxed; no failed action is retried. Optional tracing uses the parent observer; this branch incorporates the parent commit guard without dropping any Water assertions. Ten Water
-observer/predicate tests and eight parent observer tests pass locally (18 total).
+The caption repair2912e1e4 retains both finding families: eight failing/twelve initial cases
+became twelve passes, and the older affected38-case suite passed. Older Required38838186086
+had2692 tests with no failures/errors/skips; this count is not assigned to a newer run.
+Latest handoff Required38840535768(parent9bab48f) and38840877450(cleanup05206cb) succeeded;
+Adaptive38840535744 and38840877629 failed respectively on Prepared-by and Water. All other
+recorded step families passed in those runs. No merge or served acceptance follows from that.
 
 ### Failures that must remain visible
 
@@ -67,10 +68,11 @@ observer/predicate tests and eight parent observer tests pass locally (18 total)
 * An exploratory local assertion about reused page-button keys failed, but a delayed-action probe
   did not reproduce unintended approval. No production key change was made from that conjecture.
 
-Local tests use Python3.13 plus the locked runtime, not CI's Python3.12. Only the affected modules
-were restored/verified against exact remote blobs; an older full local source reconstruction is
-not represented as the complete current remote tree. Published changes must use the latest remote
-tree and a branch-head lease, preserving all other paths.
+The October16 runtime has a complete normal Git checkout and branch worktrees, not the older
+partial reconstruction. Dependencies use the unchanged requirements-dev.lock under Python3.12.14.
+A local native NumPy import SIGBUS was traced to a truncated installed OpenBLAS file; restoring
+byte-identical content from the same locked wheel restored import. This environment repair is
+not an application change, dependency upgrade or passing browser evidence.
 
 ## Ordered implementation and acceptance still required
 

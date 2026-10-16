@@ -231,14 +231,33 @@ def pair_state(observed, key):
     return next(p for p in observed["pairs"] if p["key"] == "monthly_" + key)
 
 
-def scroll_pair(page, selector, inset=130):
-    page.locator(selector).evaluate("""(pair,inset)=>{
-      const root=pair.closest('.epc-workspace');
-      const scroll=root.dataset.epcMode==='tabletop'?root:document.querySelector('[data-testid="stMain"]');
+def scroll_pair(page, selector, inset=130, *, preview=False):
+    # Python's notRunning receipt can precede the workspace component mounting
+    # its layout classes/mode after reload. Wait for that actual scroll owner,
+    # rather than dereferencing a missing enhancement root. In compact mode an
+    # open preview follows the editor; moving the SECTION top into view would
+    # move that preview back below the viewport.
+    page.wait_for_function("""wanted => {""" + DEEP + """
+      const pair=document.querySelector(wanted.selector);
+      const root=pair?.closest('.epc-workspace');
+      const mode=root?.dataset.epcMode;
+      if(!['wide','book','tabletop','compact'].includes(mode))return false;
+      const scroll=mode==='tabletop'||root.dataset.epcConfined==='true'
+        ?root:document.querySelector('[data-testid="stMain"]');
+      if(!scroll)return false;
+      let target=pair;
+      if(wanted.preview&&mode==='compact'){
+        if(pair.dataset.epcPreviewOpen!=='true')return false;
+        target=deep(pair,'.report-preview')[0];
+        if(!target||!target.getClientRects().length)return false;
+      }
       const top=scroll===root?root.getBoundingClientRect().top:0;
-      scroll.scrollTop+=pair.getBoundingClientRect().top-top-inset;
-    }""", inset)
+      scroll.scrollTop+=target.getBoundingClientRect().top-top-wanted.inset;
+      return true;
+    }""", arg={"selector": selector, "inset": inset, "preview": preview}, timeout=20000)
     frames(page)
+    if preview:
+        expect(page.locator(selector).locator('.report-preview')).to_be_in_viewport(ratio=0.5)
 
 
 def current_image(page, selector):
