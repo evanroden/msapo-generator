@@ -35,6 +35,49 @@ SOURCE_TEXT = "Inspected the synthetic pump in October 2026; follow-up is open."
 MANUAL_TEXT = "My manually corrected synthetic Activity; follow-up remains open."
 REENTRY_TEXT = "Synthetic re-entry after deliberate clearing; follow-up remains open."
 EXPECTATION_ONLY = "EXPECTATION_ONLY_CANARY_NOT_SOURCE_CONTENT"
+
+
+def _expected_frontend(static_dir=None):
+    """Read the exact pinned publisher output; this observer performs no writes."""
+    import streamlit
+    from scripts import patch_streamlit_frontend as compat
+    root = static_dir or Path(streamlit.__file__).parent / "static"
+    scripts = root / "static/js"
+    original = (scripts / compat.INDEX_BUNDLE).read_bytes()
+    date = (scripts / compat.DATE_BUNDLE).read_bytes()
+    if (sha256(original).hexdigest() != compat.INDEX_SHA256
+            or sha256(date).hexdigest() != compat.DATE_SHA256):
+        raise AssertionError("The frontend observer requires the exact locked original assets")
+    scheduler = original.replace(compat.ORIGINAL, compat.REPAIRED, 1)
+    date_name = "DateInput.enfra-scalar-" + sha256(date.replace(compat.DATE_ORIGINAL, compat.DATE_REPAIRED, 1)).hexdigest()[:12] + ".js"
+    choices = (scheduler, scheduler.replace(compat.DATE_BUNDLE.encode(), date_name.encode()))
+    html = (root / "index.html").read_bytes()
+    matches = [(compat._entry_name(raw), raw) for raw in choices
+               if html.count(compat._entry_name(raw).encode()) == 1]
+    if len(matches) != 1 or (scripts / matches[0][0]).read_bytes() != matches[0][1]:
+        raise AssertionError("The frontend observer did not find one verified current HTML entry")
+    return matches[0]
+
+
+def _frontend_response_receipt(response, expected):
+    """Hash one actual browser response, without another request or raw JS logs."""
+    from scripts import patch_streamlit_frontend as compat
+    entry, expected_bytes = expected
+    receipt = {"entry": Path(urlparse(response.url).path).name,
+               "status": response.status, "expected_sha256": sha256(expected_bytes).hexdigest()}
+    declared = int(response.headers.get("content-length", "0"))
+    if response.status != 200 or declared != len(expected_bytes) or declared > 1024 * 1024:
+        return {**receipt, "matches": False, "error": "unexpected response status or size"}
+    raw = response.body()
+    if len(raw) > 1024 * 1024:
+        return {**receipt, "matches": False, "error": "oversized frontend response"}
+    receipt.update({"size": len(raw), "sha256": sha256(raw).hexdigest(),
+                    "full_scope_predicate_count": raw.count(compat.REPAIRED),
+                    "original_predicate_count": raw.count(compat.ORIGINAL),
+                    "matches": receipt["entry"] == entry and raw == expected_bytes})
+    return receipt
+
+
 def _navigation_decode_cancel(engine, role, stage, reloading, message):
     """Only an image decode aborted by OUR deliberate primary-page reload.
 
@@ -187,9 +230,11 @@ def capture(page, name, label):
 
 def exercise(browser_type, name, base):
     from playwright.sync_api import expect
+    expected_frontend = _expected_frontend()
     browser = browser_type.launch(headless=True)
     contexts, attempts, errors = [], [], []
     error_details, canceled_on_reload = [], []
+    frontend_delivery = []
     phase = {"name": "initial navigation"}
     navigation = {"primary": False, "coworker": False}
     reload_count = 0
@@ -215,6 +260,19 @@ def exercise(browser_type, name, base):
         context.route("**/*", route)
         page = context.new_page()
         role = "primary" if len(contexts) == 1 else "coworker"
+        def observe_frontend(response):
+            if (role != "primary" or frontend_delivery
+                    or not re.fullmatch(r"/static/js/index\.(?:enfra-frontend-[0-9a-f]{12}|bE3scgDe)\.js",
+                                        urlparse(response.url).path)):
+                return
+            # Mark consumption before reading so nested Playwright dispatch
+            # cannot read the module twice. Failures stay visible in results.
+            frontend_delivery.append({"matches": False, "error": "response observation incomplete"})
+            try:
+                frontend_delivery[0] = _frontend_response_receipt(response, expected_frontend)
+            except Exception as exc:
+                frontend_delivery[0] = {"matches": False, "error": type(exc).__name__ + ": " + str(exc)[:300]}
+        page.on("response", observe_frontend)
         page.set_default_timeout(20000)
         def browser_exception(error):
             # Keep the entire first browser error receipt. A browser image
@@ -236,6 +294,9 @@ def exercise(browser_type, name, base):
         page.on("pageerror", browser_exception)
         page.goto(URL, wait_until="domcontentloaded")
         expect(page.get_by_role("heading", name="Shared report testing", exact=True)).to_be_visible(timeout=60000)
+        if role == "primary":
+            check(name, "browser received the exact current repaired Streamlit entry",
+                  len(frontend_delivery) == 1 and frontend_delivery[0].get("matches"), frontend_delivery)
         return page, cookie
 
     page = None
@@ -444,6 +505,7 @@ def exercise(browser_type, name, base):
     finally:
         REPORT["browsers"].setdefault(name, {}).update({
             "external_attempts": attempts, "browser_errors": errors,
+            "frontend_delivery": frontend_delivery,
             "page_error_details": error_details,
             "navigation_cancellations": canceled_on_reload})
         for context in contexts:

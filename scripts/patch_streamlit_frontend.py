@@ -16,7 +16,10 @@ STREAMLIT_VERSION = "1.61.1"
 INDEX_BUNDLE = "index.bE3scgDe.js"
 INDEX_SHA256 = "2ca8d2fdc237ec568ac10b8aae70c21e28c9e25ea1924378f068f7a81af6fe6e"
 ORIGINAL = b"this.scheduledFragmentId===void 0&&(this.scheduledFragmentId=e)"
-REPAIRED = b"(!this.flushScheduled||e===void 0)&&(this.scheduledFragmentId=e)"
+LEGACY_REPAIRED = b"(!this.flushScheduled||e===void 0)&&(this.scheduledFragmentId=e)"
+# Main-script Delta messages decode fragmentId to the protobuf empty string.
+# Normalize only that known full-run representation; undefined remains valid.
+REPAIRED = b"e===``&&(e=void 0),(!this.flushScheduled||e===void 0)&&(this.scheduledFragmentId=e)"
 DATE_BUNDLE = "DateInput.BXvTEfuB.js"
 DATE_SHA256 = "d152ac48cbaa8213d627e0207a45d0acc8b9c35494d07827a25ac7b02f791ccc"
 DATE_ORIGINAL = b"value:x,minDate:M,maxDate:N,range:t.isRange,clearable:F"
@@ -44,6 +47,7 @@ def patch_bundle(static_dir: Path, *, installed_version: str,
     repaired_date = date.replace(DATE_ORIGINAL, DATE_REPAIRED, 1)
     date_name = "DateInput.enfra-scalar-" + sha256(repaired_date).hexdigest()[:12] + ".js"
     scheduler_entry = entry.replace(ORIGINAL, REPAIRED, 1)
+    legacy_scheduler = entry.replace(ORIGINAL, LEGACY_REPAIRED, 1)
     date_entry = entry.replace(DATE_BUNDLE.encode(), date_name.encode())
     combined_entry = scheduler_entry.replace(DATE_BUNDLE.encode(), date_name.encode())
     # Accept the previous exact date installer as an input, as well as either
@@ -51,8 +55,11 @@ def patch_bundle(static_dir: Path, *, installed_version: str,
     variants = {
         INDEX_BUNDLE: (entry, False),
         _entry_name(scheduler_entry): (scheduler_entry, False),
+        _entry_name(legacy_scheduler): (legacy_scheduler, False),
         "index.enfra-date-" + sha256(date_entry).hexdigest()[:12] + ".js": (date_entry, True),
         _entry_name(combined_entry): (combined_entry, True),
+        _entry_name(legacy_scheduler.replace(DATE_BUNDLE.encode(), date_name.encode())):
+            (legacy_scheduler.replace(DATE_BUNDLE.encode(), date_name.encode()), True),
     }
     selected = [name for name in variants if name.encode() in html]
     if len(selected) != 1 or html.count(selected[0].encode()) != 1:

@@ -11,7 +11,7 @@ Main and the last independently verified served revision remain
 https://github.com/evanroden/msapo-generator/pull/247#issuecomment-6196963277 .
 No new main merge, Render workspace selection or served revision is claimed here.
 
-PR248 is open, current parent `ecd0d45eae783a8b445d3d3021d846741f5cc037`.
+PR248 is open, current parent `ceaba0a20115608a9e93d4b74ad2ece96cbe2dce`.
 Previous exact5e275b Required38929196560 passed2,691 tests (zero failures/errors/skips)
 and Adaptive38929196540 passed. Its final review repairs preserve omitted human corrections
 through source deselect/reselect and refuse changed footer replacements over independent address
@@ -19,6 +19,14 @@ corrections. The current parent additionally repairs a reproduced locked Streaml
 batcher: a full request could lose full-editor scope to a queued preview fragment. Actual locked
 method regressions failed4/8 before repair; all8 pass after it. Independent363-sequence review had
 296 wrong-scope outcomes before repair and zero after, with timer/send/trigger/resolver invariants.
+The earlier ecd0d45 passed Required38930996061 (independently2,704/0/0/0) but
+Adaptive38930995952 failed Shared again. Actual protobuf/caller-chain review found full widgets
+also pass empty-string scope, not just undefined; the first model missed that valid domain.
+The current publisher normalizes only that full-scope empty string before priority selection.
+Actual decoded-protobuf→widget→scheduler regression reproduced the gap; independent1,364
+mixed-scope sequences now preserve full scope with timer/trigger/resolver invariants. The next
+Shared journey verifies the actual primary client response bytes/SHA once, not its filename only.
+44 affected and13 date composition checks pass; the exact new browser gate is still required.
 The exact-version/hash publisher retains immutable assets and selects content-named client entries;
 optional Training date compatibility composes with it.28 targeted,12 existing date and33 lifecycle/
 geometry checks pass locally. New exact Required/Adaptive are required; old green runs do not
@@ -47,10 +55,13 @@ PR250 is the separate Training follow-up stacked on249, published62e85f5. Requir
 explicitdate/unknownhours/status/removal and cache-safe scalar-date compatibility are implemented.
 Actual browsers reproduce the old second-date announcement and verify repaired typed/calendar/
 keyboard one-date behavior, native accessibleClear, missingdate and partialsubmission preservation.
-The current test stops at replacing a partialdate with an out-of-month value: actualrawinput was
-correct but the lockedmask's RAF-cached selection changed it afterward. ActualonChange models
-reproduce the exactbadvalue; a normal keyboard replacement is being checked without weakening
-exactdate/minmax/durable/output assertions. No application date-clamping defect is established.
+The b599 composed test now passes exact out-of-month rejection and durable session add/reload
+in Chromium, then stops at a PDF text match: the complete title is visibly wrapped in its actual
+native table, so matching is corrected to exact words with normalized whitespace. WebKit's
+queued focus/mouse frame resets a later select-all before Backspace; actual vendor handlers
+reproduce that sequence. Read-only focus completion before the single replacement is implemented
+and awaits browser proof. The separate ResizeObserver error remains terminal while its origin
+is investigated. No application date-clamping defect or complete Training tail is established.
 OriginalTraining failures remain retained, including earlierWebKitResizeObserver error without a
 blanket exception. Native session/export tail and physical/assistive audio remain open.
 
@@ -75,9 +86,16 @@ resource bounds without assembly/sharedsave. Retry actions bind fullfile/draftid
 incarnation and revision; stale/same-event/reset/conflict regressions pass. Original two output-
 status failures and later stale-retry findings are retained.60 combined output/history/source/
 admin/MBCx cases and59 focused workspace cases passed locally; these are stated scopes, not a
-complete application gate. An earlier local fullsuite stopped after2,219 positions without final
-JUnit/summary; three observed failures were stale label expectations, reproduced then corrected
-while retaining business assertions. No full local-suite pass or cause for interruption is claimed.
+complete application gate. The full local JUnit was subsequently recovered:2,816 cases,
+four failures,47 skips,zero errors in486.102s. Its console stopped at2,219 positions, but the XML
+contains everycase; the suite completed. Three stale label expectations were reproduced and
+corrected with business assertions intact. The fourth cross-process quarantine case reproduced
+this managed runtime's Python PID versus /proc namespace mismatch, in components byte-identical
+to main0dca. No production patch, skip or sandbox change was made. Currentparent Required CI
+independently passed2,704 cases including all13 native lifecycle tests. PR251d6cc Required then
+ran2,884 cases:2,883 passed; only the retained PO quick-path test's stale two-expander expectation
+failed against the new quiet About disclosure. Its real-render/output assertions stay intact.
+The exact failure archive/JUnit remains retained. No full local pass is claimed.
 
 Unfinished implementation remains below: broader evidence/source-card consolidation, spreadsheet
 and conditional artwork/recovery branches require actual task comparison and verification, and
