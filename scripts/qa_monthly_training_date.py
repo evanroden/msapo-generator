@@ -262,6 +262,74 @@ def capture_observers(page, stage):
         records.pop(0)
 
 
+def enter_topic_and_participant(page):
+    """Use one native input and the widget's ordinary manual-menu opening.
+
+    The earlier fill-only failure has no participant event/node evidence and
+    remains unclassified. This is one initial pointer/filter/selection path;
+    no retry or replacement input may rescue a lost menu or filter.
+    """
+    observation = {"method": "one-native-input-pointer-open-filter-select"}
+    field = None
+    try:
+        participants = page.locator('[data-testid="stMultiSelect"]').filter(has=page.get_by_text("Participants", exact=True))
+        expect(participants).to_have_count(1)
+        locator = participants.get_by_role("combobox")
+        expect(locator).to_have_count(1)
+        field = locator.element_handle()
+        assert field is not None
+        observation["before_topic"] = field.evaluate("""input=>{
+          const events=[], workspace=input.closest('.epc-workspace'), app=input.closest('[data-testid="stApp"]');
+          const read=()=>({connected:input.isConnected,focused:input===document.activeElement,
+            value:input.value.slice(0,160),expanded:input.getAttribute('aria-expanded'),
+            fullRender:workspace?.dataset.epcFullRender||null,
+            scriptState:app?.getAttribute('data-test-script-state')||null});
+          const record=(type,event)=>{events.push({at:performance.now(),type,...read(),
+            trusted:event?.isTrusted??null,inputType:event?.inputType||null,
+            data:typeof event?.data==='string'?event.data.slice(0,160):null});
+            if(events.length>60)events.shift();};
+          const handlers=['focus','beforeinput','input','change','blur'].map(type=>{
+            const handler=event=>record(type,event);input.addEventListener(type,handler,{capture:true,passive:true});
+            return [type,handler];
+          });
+          const mutations=new MutationObserver(records=>record('attributes:'+Array.from(new Set(records.map(r=>r.attributeName))).join(',')));
+          mutations.observe(input,{attributes:true,attributeFilter:['aria-expanded','aria-controls']});
+          if(workspace)mutations.observe(workspace,{attributes:true,attributeFilter:['data-epc-full-render']});
+          if(app)mutations.observe(app,{attributes:true,attributeFilter:['data-test-script-state']});
+          window.__enfraTrainingParticipantEvidence={events};
+          window.__enfraTrainingParticipantDispose=()=>{mutations.disconnect();
+            for(const [type,handler] of handlers)input.removeEventListener(type,handler,{capture:true});};
+          record('bound-original-input');return read();
+        }""")
+        assert observation["before_topic"]["connected"]
+        page.get_by_role("textbox", name="Training topic", exact=True).fill(TITLE)
+        assert field.evaluate("input=>input.isConnected"), "Participants input must survive topic entry."
+        field.click()
+        page.wait_for_function("""input=>input.isConnected&&input===document.activeElement&&
+          input.getAttribute('aria-expanded')==='true'""", arg=field, timeout=5000)
+        observation["opened"] = field.evaluate("input=>({connected:input.isConnected,focused:input===document.activeElement,value:input.value,expanded:input.getAttribute('aria-expanded')})")
+        field.fill(PARTICIPANT)
+        page.wait_for_function("""({input,value})=>input.isConnected&&input===document.activeElement&&
+          input.getAttribute('aria-expanded')==='true'&&input.value===value""", arg={"input": field, "value": PARTICIPANT}, timeout=5000)
+        observation["filtered"] = field.evaluate("input=>({connected:input.isConnected,focused:input===document.activeElement,value:input.value,expanded:input.getAttribute('aria-expanded')})")
+        option = page.get_by_role("option", name=PARTICIPANT, exact=True)
+        expect(option).to_have_count(1)
+        expect(option).to_be_visible()
+        option.click()
+        expect(participants.locator('[data-tag]')).to_have_text([PARTICIPANT])
+        assert field.evaluate("input=>input.isConnected"), "Participants input must survive option selection."
+    finally:
+        try:
+            if field is not None:
+                observation["final"] = field.evaluate("input=>({connected:input.isConnected,focused:input===document.activeElement,value:input.value,expanded:input.getAttribute('aria-expanded')})")
+            observation["native"] = page.evaluate("""()=>{const result=window.__enfraTrainingParticipantEvidence||null;
+              window.__enfraTrainingParticipantDispose?.();delete window.__enfraTrainingParticipantDispose;
+              delete window.__enfraTrainingParticipantEvidence;return result;}""")
+        except Exception as exc:
+            observation["observation_error"] = str(exc)[:300]
+        live.EVIDENCE.setdefault("participant_selection", []).append(observation)
+
+
 def exercise(browser_type, engine, *, patched):
     scope = "repaired" if patched else "unpatched-baseline"
     live.ROOT = OUT / scope / engine
@@ -311,10 +379,7 @@ def exercise(browser_type, engine, *, patched):
             # pointer/keyboard sequence, keeping the later clear assertion
             # independent of the other widget's open-popup state.
             # No extra dismissal gesture or hidden-control click is added.
-            page.get_by_role("textbox", name="Training topic", exact=True).fill(TITLE)
-            participants = page.locator('[data-testid="stMultiSelect"]').filter(has=page.get_by_text("Participants", exact=True))
-            participants.get_by_role("combobox").fill(PARTICIPANT)
-            page.get_by_role("option", name=PARTICIPANT, exact=True).click()
+            enter_topic_and_participant(page)
         replace_date(page, field, "2026/09/14", "typed-single-date")
         expect(field).to_have_value("2026/09/14")
         assert len(date_responses) == 1

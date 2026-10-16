@@ -6,6 +6,68 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+Release observation 2026-10-16 17:14 UTC: merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf
+passed Tests38936148403 (independently2,711 cases, zero failures/errors/skips) and Adaptive38936148447.
+Automatic live38937063007 independently observed that FULL served SHA in two isolated sessions,
+each with exactly three requested/accepted/completed first-attempt generations and six downloads.
+Prepared pointer/keyboard correction passed all six live checks. This supersedes the older served
+0dca marker below for this stated synthetic scope, not owner AUTH, native master or phase acceptance.
+All twelve actual live output sizes/digests were independently verified; page count is not manual
+all-page visual review. No Render workspace/control-plane selection was used for this observation.
+
+
+Updated 2026-10-16 17:10 UTC. PR248 is merged normally into main
+`4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`, with reviewed parent head
+`ceaba0a20115608a9e93d4b74ad2ece96cbe2dce`. Exact pre-merge integration
+`f3335240573a89e05f9904a24ceb291de1f98528` passed Required38934057257:
+2,711 tests, zero failures/errors/skips, independently recounted. Adaptive38934056915
+passed every workflow family, including native Prepared-by and Shared clear/re-entry/reload.
+Both engines verified the actual primary response bytes against the pinned client repair.
+Merged-head CI and normal auto-deployment/live verification remain separate and pending.
+The last independently observed served full SHA is still historical PR247 `0dca611...`.
+
+The locked client defect is now reproduced through its actual protobuf decoder and widget
+caller chain: a full editor has fragmentId `""`, as well as undefined. The earlier scheduler
+repair covered only undefined, so Shared failed again in38930995952. Current code normalizes
+only that known empty-string full scope and retains full-request priority across deferred
+preview batching. Original/intermediate failures remain retained; no browser error is ignored.
+
+PR249 is being reconciled and retargeted to main after the parent merge, preserving every
+Water and parent workflow trigger. The prior exact c3eb2eb run Required38927678105 passed
+2,738 tests; Adaptive38927678096 failed Shared, but BOTH Water engines completed real browser
+PDF upload, page review/caption/order/omit/repeat/reload/reinclude, a visible compact Current
+preview, generation and actual DOCX/PDF downloads. Working and durable receipts agreed on
+page order [2,1], retained original hash/size and included image/caption order. These are synthetic
+journey results, not owner AUTH, manual all-page/native Word or physical-device acceptance.
+Fresh exact integration gates are required before this PR merges to main.
+
+PR250 Training head ace1d3b was tested as integration
+`bf14e62341b280edb88c465b83cef59e2ea53fe1` in Adaptive38935820687. WebKit completed native
+single-date typing/calendar/keyboard/clear, missing/partial/out-of-month rejection, durable
+session add/reload/removal and actual inclusion/omission DOCX/PDF downloads. Its three document
+observations recorded no browser or native-observer error. The earlier ResizeObserver failure
+remains unexplained: diagnostic bookkeeping can affect timing, so this pass is not its repair.
+Chromium failed before date entry while an expected Participants option was absent after its
+fill-only search; the final input was empty. No participant events/node history were captured,
+so neither a remount nor a full-rerun/filter-loss cause is established. The fields share one
+native form with stable keys; topic blur is not evidence of a full editor rerun.
+
+The local follow-up merges reconciled PR249 head9b1c350 without losing the thin client/date
+publisher or workflow gates. It binds one actual Participants input before topic entry, uses one
+normal pointer opening, requires that same connected input/menu to be ready before one filter,
+and retains exact option/chip/date/durable/output assertions. Bounded native/open/full-render
+observations distinguish a future close/reset/disconnection. This is an implemented-needs-CI
+pointer journey, not a proved explanation or repair for the earlier fill-only failure. The actual
+locked React Aria callbacks also prove filter-only opening is supported when its controller is
+ready; a missing controller alone does not explain an empty filter. No retries/rescue/re-finding
+of the input or browser-error whitelist is added. Required38935820543 and the next integrated
+both-engine gates remain separately scoped; no whole-Training acceptance is claimed.
+PR251 head fc157f0 passed Required38934310568 (2,891 tests, zero
+failures/errors/skips) and Adaptive38934310637 on integration b63d5d7846ab35ee05e43e2a5304dcfe21232148;
+it remains a separate unmerged identity/history/admin/source/editor follow-up.
+
+### Superseded implementation checkpoints (history)
+
 Main and the last independently verified served revision remain
 `0dca61194d1769d7871ba46d222289dadef0e8d1` (PR247). Its terminal evidence is
 https://github.com/evanroden/msapo-generator/pull/247#issuecomment-6196963277 .
@@ -109,13 +171,13 @@ not an application change, dependency upgrade or passing browser evidence.
 
 | Area | Evidence state | Next operation |
 | --- | --- | --- |
-| PR248/249 integration | Implemented; current browser gate not cleared | Diagnose retained failures, finish current exact-head Required/Adaptive, review both diffs, merge parent to main only when justified, retarget cleanup to main, verify integrated and actually served revisions. |
-| One Water/source-page workspace | Actual compact Current preview verified; output tail repair awaits exact CI | Complete desktop then narrow upload, one review/caption/order/omit/reinclude path, repeated unchanged upload, durable reload, explicit blank/price rejection, real preview and DOCX/PDF. Preserve source identity, dependency gates and omitted-page guards. |
-| Identity/help/navigation | Browser-observed cleanup remains | One stable contract/sites/month strip and useful Change path; combined quiet Help; one Prepared by with actual focus links; More report details for aliases/group/region; meaningful workflow-preserving deep links only. |
+| PR248/249 integration | PR248 merged after exact green gates; PR249 reconciliation underway | Verify merged-head and live parent independently; retarget cleanup to main, inspect cleanup-only delta and run exact integration gates before merge. |
+| One Water/source-page workspace | Both-engine synthetic browser/output tail verified on c3eb2eb; new integration pending | Complete desktop then narrow upload, one review/caption/order/omit/reinclude path, repeated unchanged upload, durable reload, explicit blank/price rejection, real preview and DOCX/PDF. Preserve source identity, dependency gates and omitted-page guards. |
+| Identity/help/navigation | Implemented in unmerged PR251; current integrated browser gate passed | One stable contract/sites/month strip and useful Change path; combined quiet Help; one Prepared by with actual focus links; More report details for aliases/group/region; meaningful workflow-preserving deep links only. |
 | Saving/history/recovery | Browser-observed and conditional | One truthful status; actual history rows or correctly named checkpoint action; report actions for confirmed scoped discard. Preserve conflict choices, both versions, unsent versus acknowledged edits, original/history/standing scope. |
-| Training | Implemented in separatePR250; partial actual browser proof, session/output tail open | Separate standing staff requirements from monthly sessions. Retain statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and stable input incarnation. Reproduce and correct the single-date second-date announcement without changing to a range or hiding the warning. |
+| Training | Implemented in separatePR250; WebKit synthetic date/session/output tail verified on ace1d3b; Chromium participant entry and new pointer path need exact CI | Retain standing/monthly separation, statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history, one native input and single-date announcements. Finish both-engine participant/date/durable/output gates; preserve the unexplained historical ResizeObserver error. |
 | Section/editor cleanup | Browser-observed, partly conditional | Remove duplicate headings/prose, not functions. Keep one canonical Activity editor, optional grounded writing help, evidence/price gates, CMMS coverage, scoped organization/contact editors, correct ENFRA onsite versus vendor distinction, issue recovery, proposals and RFI meaning. |
-| Administration/design controls | Navigation cleanup remains | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
+| Administration/design controls | Implemented in unmerged PR251; specific expanded browser paths remain | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
 | Imported cover/artwork/conflicts | Source-only conditional states not fully reached | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |
 | AUTH01/02/03 | Blocked on exact approved source/target expectations and supported access | Same-site prior month; different site same contract; owner-identified genuinely half-finished current month. Inventory is not scenario selection; filenames do not establish partial status. |
 | Genuine native conversion | Diagnostic incomplete, not production timeout | Investigate the retained same-site preflight with bounded worker, stage timings, first-failure trace and reliable process cleanup before retry. Do not raise limits or discard drawings. |
