@@ -6,6 +6,61 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+Current overlay repair batch 2026-10-16 18:33 UTC is based on PR249 head
+`b34b172cb3d7dd218e3534d3de26b7258e5a88cb`; main and actually served proof remain
+`4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`. This is an implemented-needs-browser-verification
+candidate, not a native-error resolution or a release.
+
+PR249 b34 Adaptive38943191454 completed both fresh Water business tasks, then failed on a WebKit
+native ResizeObserver error; no Training form was used. PR250 ca4101b Adaptive38945377473 tested
+integration `dd04f9125561f2feedcd78bf16708f7de65c6f2a` against b34. Its corrected native Training
+reference matched the actual input width and selected the participant on the same connected field
+in both engines, without custom workspace/preview observers; both reference documents still
+reported the native ResizeObserver error. Tooltip callbacks immediately preceded those errors
+(Chromium3190.4/3190.5ms before3193.2ms; WebKit3038ms before3042ms). Constructor origins also serve
+the framework Virtualizer, so those records alone do not identify one callback or prove every
+historical native error has the same cause. The authoritative Training task independently completed
+date/minmax/add/reload/remove and all8 real output checks in each engine. Chromium's native error
+remained terminal; WebKit had none in that run. Business completion is separate from acceptance.
+The original Training artifact12065197641 is retained with verified size1,379,230bytes, CRC and
+SHA256 `f2ce4f9d38fe91664ae9e4649bf3c4d680d843f3e342a8bf0fc9b30dfa7b7d03`.
+
+The actual locked Tooltip Zt/Xt positioner model reproduces synchronous layout writes inside its
+two ResizeObserver callbacks: a finite target resize changes the observed overlay's maximum height
+from73px to51px during delivery. The narrow repair coalesces only those two position callbacks
+onto one animation frame and cancels pending work on lifecycle cleanup. Original position math,
+initial/window/scroll positioning and thrown errors remain. Actual extracted source tests cover
+both flip choices, frame ID0, duplicate delivery, exact resulting geometry, cancellation and late
+delivery. A controlled DOM model is not a browser ResizeObserver timing proof. Other observer
+implementations, including the Virtualizer, are unchanged; no native error is suppressed.
+
+Publication now reconstructs an immutable81-JavaScript import closure from a static full-hash and
+edge manifest (7,439,383 original bytes), preserving originals and its five-member import cycle.
+One generation identifies the closed configuration; the primary entry retains a hash of its final
+bytes. All generated bodies and edges validate before HTML changes. Scalar-date and full-editor
+scheduler repairs compose with this overlay repair without new dependencies or copied fonts.
+Shared browser QA compares naturally requested primary and Tooltip response bytes with an
+independently reconstructed, fully validated publication, rather than trusting served filenames
+or self-reported hashes. No eager browser loading of the whole closure is added.35 focused checks
+passed before an independent review then reproduced a concurrent nondate/scalar installer HTML
+lease race on a disposable bundle; that first failure is retained. A lock on the existing static
+directory now spans validation and fresh scalar-state reading through final HTML replacement,
+creating no lockfile.13 focused checks passed, including actual two-process installations in both
+flag orderings, blocked validation while the other installer holds the lock, preserved scalar
+compatibility, invalid-input no-writes and interrupted publication. The final composed model,
+publication and requested-response gate passed37 checks in92.82s; independent lock/interruption
+review passed5 checks. Exact integrated Required/Adaptive, corrected native reference and fresh
+Water browser evidence are still required.
+
+A second independent review reproduced a QA expected-byte race after full pinned validation:
+the helper could reread a same-length changed file and adopt it as its expected response. Both
+primary and Tooltip helpers now compare that reread with the independently reconstructed SHA256
+before returning it. Four focused response checks pass, including both post-validation mutation
+regressions; the original failure receipt is retained. This observation repair does not change
+published client payloads or establish a browser pass.
+
+### Prior verification checkpoint (superseded by current overlay batch)
+
 Current verification batch 2026-10-16 17:55 UTC: PR249 head98111bb passed Required38940688734
 and Adaptive38940688764 on integration6ae137951dd8dfc1cbd16af73ecbe8c28ad3ae12 against main4ca.
 Its17 new Water regressions repair two independently reproduced recovery cases; the full prefilled
