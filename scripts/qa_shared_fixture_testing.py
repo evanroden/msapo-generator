@@ -63,6 +63,19 @@ def _expected_overlay(static_dir=None):
     return selected["overlay_bundle"], raw
 
 
+def _expected_virtualizer(static_dir=None):
+    import streamlit
+    from scripts import patch_streamlit_frontend as compat
+    root = static_dir or Path(streamlit.__file__).parent / "static"
+    selected = compat.selected_frontend(root)
+    if not selected["virtualizer_resize"]:
+        raise RuntimeError("The pinned frontend lacks virtual-list resize compatibility.")
+    raw = (root / "static/js" / selected["virtualizer_bundle"]).read_bytes()
+    if sha256(raw).hexdigest() != selected["virtualizer_sha256"]:
+        raise RuntimeError("Pinned virtual-list frontend changed after validation.")
+    return selected["virtualizer_bundle"], raw
+
+
 def _asset_response_receipt(response, expected):
     """Hash one actual browser response, without another request or raw JS logs."""
     entry, expected_bytes = expected
@@ -94,6 +107,16 @@ def _overlay_response_receipt(response, expected):
     receipt, raw = _asset_response_receipt(response, expected)
     receipt.update({"resize_hold_count": raw.count(OVERLAY_REPAIRED),
                     "original_resize_hook_count": raw.count(OVERLAY_ORIGINAL)})
+    receipt["matches"] = bool(receipt.get("matches") and receipt["resize_hold_count"] == 1
+                              and receipt["original_resize_hook_count"] == 0)
+    return receipt
+
+
+def _virtualizer_response_receipt(response, expected):
+    from scripts.streamlit_virtualizer_resize import VIRTUALIZER_ORIGINAL, VIRTUALIZER_REPAIRED
+    receipt, raw = _asset_response_receipt(response, expected)
+    receipt.update({"resize_hold_count": raw.count(VIRTUALIZER_REPAIRED),
+                    "original_resize_hook_count": raw.count(VIRTUALIZER_ORIGINAL)})
     receipt["matches"] = bool(receipt.get("matches") and receipt["resize_hold_count"] == 1
                               and receipt["original_resize_hook_count"] == 0)
     return receipt
