@@ -1,0 +1,135 @@
+"""Exact locked-asset boundary and real BaseWeb announcement-branch regression."""
+from hashlib import sha256
+from pathlib import Path
+import json
+import subprocess
+
+import pytest
+import streamlit
+
+from scripts import patch_streamlit_date_input as compat
+
+
+@pytest.fixture
+def bundle(tmp_path):
+    installed = Path(streamlit.__file__).parent / "static"
+    target = tmp_path / "static" / "js" / compat.BUNDLE_NAME
+    target.parent.mkdir(parents=True)
+    raw = (installed / "static" / "js" / compat.BUNDLE_NAME).read_bytes()
+    # The shared runtime may already have received the same idempotent patch.
+    target.write_bytes(raw)
+    (target.parent / compat.INDEX_BUNDLE).write_bytes((installed / "static" / "js" / compat.INDEX_BUNDLE).read_bytes())
+    (tmp_path / "index.html").write_bytes(b'<script src="./static/js/' + compat.INDEX_BUNDLE.encode() + b'"></script>')
+    return tmp_path, target
+
+
+def test_exact_patch_changes_only_scalar_boundary_and_is_idempotent(bundle):
+    root, target = bundle
+    before = target.read_bytes()
+    receipt = compat.patch_bundle(root, installed_version="1.61.1")
+    assert receipt["original_sha256"] == sha256(before).hexdigest()
+    assert not receipt["already_patched"]
+    assert target.read_bytes() == before
+    repaired = target.parent / receipt["bundle"]
+    assert repaired.read_bytes() == before.replace(compat.ORIGINAL, compat.REPAIRED, 1)
+    entry = target.parent / receipt["entry"]
+    assert compat.BUNDLE_NAME.encode() not in entry.read_bytes()
+    assert entry.read_bytes().count(receipt["bundle"].encode()) == 2
+    assert receipt["entry"].encode() in (root / "index.html").read_bytes()
+    assert compat.INDEX_BUNDLE.encode() not in (root / "index.html").read_bytes()
+    snapshot = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
+    assert {path: path.read_bytes() for path in root.rglob("*") if path.is_file()} == snapshot
+
+
+@pytest.mark.parametrize("mutation", ["version", "content", "missing", "duplicate", "entry", "html", "destination"])
+def test_unknown_asset_fails_without_changes(bundle, mutation):
+    root, target = bundle
+    installed_version = "1.61.2" if mutation == "version" else "1.61.1"
+    if mutation == "content":
+        target.write_bytes(target.read_bytes() + b" ")
+    elif mutation == "missing":
+        target.unlink()
+    elif mutation == "duplicate":
+        target.write_bytes(target.read_bytes() + compat.ORIGINAL)
+    elif mutation == "entry":
+        path = target.parent / compat.INDEX_BUNDLE
+        path.write_bytes(path.read_bytes() + b" ")
+    elif mutation == "html":
+        (root / "index.html").write_bytes(b"Unknown entry")
+    elif mutation == "destination":
+        repaired = target.read_bytes().replace(compat.ORIGINAL, compat.REPAIRED, 1)
+        name = "DateInput.enfra-scalar-" + sha256(repaired).hexdigest()[:12] + ".js"
+        (target.parent / name).write_bytes(b"Unexpected existing content")
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    with pytest.raises((RuntimeError, FileNotFoundError)):
+        compat.patch_bundle(root, installed_version=installed_version)
+    assert {path: path.read_bytes() for path in root.rglob("*") if path.is_file()} == before
+
+
+def test_real_baseweb_announcement_distinguishes_scalar_and_unfinished_range(bundle):
+    root, target = bundle
+    installed = Path(streamlit.__file__).parent / "static" / "static" / "js"
+    candidates = [path for path in installed.glob("*.js")
+                  if b"t.datepicker.selectSecondDatePrompt" in path.read_bytes()]
+    assert len(candidates) == 1
+    baseweb = candidates[0].read_text()
+    start = baseweb.index("!e.props.value||Array.isArray(e.props.value)")
+    end_token = ':Jv(t.datepicker.selectedDate,{date:e.state.inputValue||``})'
+    end = baseweb.index(end_token, start) + len(end_token)
+    expression = baseweb[start:end]
+    original_boundary = compat.ORIGINAL.decode().split(",minDate:")[0].split("value:")[1]
+    compat.patch_bundle(root, installed_version="1.61.1")
+    repaired_boundary = compat.REPAIRED.decode().split(",minDate:")[0].split("value:")[1]
+    code = r'''
+const {expression,original,repaired}=JSON.parse(process.argv[1]);
+const assert=require('node:assert/strict');
+const boundary=code=>new Function('t','x','return '+code);
+const before=boundary(original),after=boundary(repaired);
+const announce=new Function('e','t','Jv','return '+expression);
+const locale={datepicker:{selectedDate:'Selected date is ${date}.',
+ selectedDateRange:'Selected range is ${startDate} to ${endDate}.',
+ selectSecondDatePrompt:'Select the second date.'}};
+const interpolate=(text,args)=>text.replace(/\$\{(\w+)\}/g,(_,key)=>args[key]);
+const message=value=>announce({props:{value},state:{inputValue:'2026/09/15'},
+ formatDisplayValue:date=>date.toISOString().slice(0,10)},locale,interpolate);
+const a=new Date(2026,8,15),b=new Date(2026,8,16),one=[a],two=[a,b];
+assert.match(message(before({isRange:false},one)),/Select the second date/);
+assert.equal(after({isRange:false},one),a);
+assert.doesNotMatch(message(after({isRange:false},one)),/second date/);
+assert.match(message(after({isRange:false},one)),/Selected date is/);
+assert.equal(after({isRange:false},[]),null);
+assert.equal(message(after({isRange:false},[])),'');
+assert.equal(after({isRange:true},one),one);
+assert.match(message(after({isRange:true},one)),/Select the second date/);
+assert.equal(after({isRange:true},two),two);
+assert.match(message(after({isRange:true},two)),/Selected range is/);
+console.log(JSON.stringify({unpatched:message(before({isRange:false},one)),
+ scalar:message(after({isRange:false},one)),range:message(after({isRange:true},one))}));
+'''
+    result = subprocess.run(["node", "-e", code, json.dumps({"expression": expression,
+                            "original": original_boundary, "repaired": repaired_boundary})],
+                            check=True, capture_output=True, text=True)
+    observed = json.loads(result.stdout)
+    assert "second date" in observed["unpatched"]
+    assert "second date" not in observed["scalar"]
+    assert "second date" in observed["range"]
+
+
+def test_real_metadata_then_date_install_sequence_preserves_entry_and_branding(bundle):
+    from scripts import patch_streamlit_metadata as metadata
+    root, target = bundle
+    installed_html = Path(streamlit.__file__).parent / "static" / "index.html"
+    (root / "index.html").write_bytes(installed_html.read_bytes())
+    branding = Path(__file__).resolve().parents[1] / "branding"
+    before_entry = (target.parent / compat.INDEX_BUNDLE).read_bytes()
+    metadata.install_branding(root, branding_dir=branding)
+    receipt = compat.patch_bundle(root, installed_version="1.61.1")
+    assert (target.parent / compat.INDEX_BUNDLE).read_bytes() == before_entry
+    assert sha256(before_entry).hexdigest() == compat.INDEX_SHA256
+    assert b"<title>Process Control</title>" in (root / "index.html").read_bytes()
+    assert receipt["entry"].encode() in (root / "index.html").read_bytes()
+    snapshot = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    metadata.install_branding(root, branding_dir=branding)
+    assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
+    assert {path: path.read_bytes() for path in root.rglob("*") if path.is_file()} == snapshot

@@ -41,15 +41,14 @@ def render_training(draft, blocks, prefix, field):
         if matrix != previous:
             st.session_state[matrix_key] = matrix
             st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
-        st.write("Hospital/client staff training")
-        st.caption("Client staff only. ENFRA and vendor contacts are excluded from automatic training records.")
-        st.caption("Blank = Not recorded; no completion is assumed.")
+        st.subheader("Staff training requirements")
+        st.caption("Client/hospital staff only. Requirement changes are saved for these sites and reused in future reports; sessions and notes stay in this report.")
         if st.session_state.get(key + "_stale_standing"):
             st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
                        "Monthly notes and the saved report version are unchanged.")
         with st.expander("Add requirement", expanded=False):
-            new_training = st.text_input("Add a training requirement", key=key + "_new_requirement")
-            if st.button("Add training column", key=key + "_add_requirement", disabled=not new_training.strip()):
+            new_training = st.text_input("Requirement name", key=key + "_new_requirement")
+            if st.button("Add requirement", key=key + "_add_requirement", disabled=not new_training.strip()):
                 title = new_training.strip()
                 if title.casefold() in {c.casefold() for c in matrix.columns}:
                     st.error("That training already has a column.")
@@ -89,26 +88,41 @@ def render_training(draft, blocks, prefix, field):
     # Always render monthly fields. A rejected matrix/event must not let
     # Streamlit discard a sibling widget or its in-flight value.
     events = events_for_period(block, draft.period)
-    st.write("Training completed this month")
-    if events:
-        st.dataframe([dict(zip(events.columns, row)) for row in events.rows], hide_index=True)
-        with st.expander("Remove training entries", expanded=False):
-            remove = st.multiselect("Remove a training entry", range(len(events.rows)), format_func=lambda n: f"{events.rows[n][1]} · {events.rows[n][0]}", key=key + "_remove_events_" + _signature(events.rows))
-            if st.button("Remove selected entries", key=key + "_remove_button", disabled=not remove):
-                events = replace(events, rows=tuple(row for i, row in enumerate(events.rows) if i not in remove))
-    with st.expander("Add training", expanded=False):
+    st.subheader("Training completed this month")
+    with st.expander("Add training session", expanded=False):
         with st.form(key + "_event_form", clear_on_submit=False):
             title = st.text_input("Training topic", key=key + "_event_topic")
-            when = st.date_input("Training date", value=draft.period.start, min_value=draft.period.start, max_value=draft.period.end, key=key + "_event_date")
+            when = st.date_input("Training date", value=None, min_value=draft.period.start, max_value=draft.period.end, key=key + "_event_date")
             mode = st.selectbox("Method", FORMATS, key=key + "_event_format")
             participants = st.multiselect("Participants", list(dict.fromkeys(r[0] for r in (matrix.rows if matrix is not None else ()))), accept_new_options=True, key=key + "_event_participants")
             hours = st.text_input("Hours (optional)", key=key + "_event_hours")
-            submit = st.form_submit_button("Add completed training")
+            submit = st.form_submit_button("Add training session")
     if submit:
         try:
             events = add_event(events, title=title, when=when, mode=mode, participants=participants, hours=hours, period=draft.period)
         except ValueError as exc:
             st.error(str(exc))
+    if events and events.rows:
+        removed = set()
+        # Binding every row action to this collection prevents a delayed click
+        # from removing a different row after another session was added/removed.
+        event_revision = _signature(events.rows)
+        for index, row in enumerate(events.rows):
+            title, when, mode, participants, hours = row
+            slot = st.empty()
+            with slot.container(border=True):
+                st.text(title)
+                st.caption(" · ".join((when, mode, participants, *([f"{hours} hours"] if hours else []))))
+                if st.button(f"Remove session: {title} · {when}",
+                             key=key + f"_remove_session_{event_revision}_{index}"):
+                    removed.add(index)
+                    slot.empty()
+        if removed:
+            events = replace(events, rows=tuple(row for index, row in enumerate(events.rows) if index not in removed))
+            if not events.rows:
+                st.caption("No training sessions added this month.")
+    else:
+        st.caption("No training sessions added this month.")
     block = apply_tables(block, matrix, events)
     # Match the native protocol default to the canonical notes, as Activity
     # already does. A one-shot session-state set_value is not the first-mount

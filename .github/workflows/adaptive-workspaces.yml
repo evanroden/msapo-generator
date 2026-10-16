@@ -25,6 +25,11 @@ on:
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
+      - 'scripts/qa_monthly_training_date.py'
+      - 'scripts/patch_streamlit_date_input.py'
+      - 'scripts/workspace_training_observations.py'
+      - 'tests/test_streamlit_date_input_compat.py'
+      - 'tests/test_workspace_training_observations.py'
       - 'scripts/workspace_text_observations.py'
       - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
@@ -54,6 +59,11 @@ on:
       - 'scripts/qa_monthly_site_pointer.py'
       - 'scripts/qa_monthly_preparer_navigation.py'
       - 'scripts/qa_monthly_text_hydration.py'
+      - 'scripts/qa_monthly_training_date.py'
+      - 'scripts/patch_streamlit_date_input.py'
+      - 'scripts/workspace_training_observations.py'
+      - 'tests/test_streamlit_date_input_compat.py'
+      - 'tests/test_workspace_training_observations.py'
       - 'scripts/workspace_text_observations.py'
       - 'scripts/qa_shared_fixture_testing.py'
       - 'requirements*.lock'
@@ -87,6 +97,8 @@ jobs:
           python -m pip install -r requirements-dev.lock
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
+      - name: Apply exact locked scalar date compatibility repair
+        run: python scripts/patch_streamlit_date_input.py
       - name: Pure geometry and real Streamlit DOM
         run: |
           node --test tests/workspace_geometry_test.cjs
@@ -134,5 +146,36 @@ jobs:
             test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
             test-artifacts/water-page-journey/
+          retention-days: 7
+          if-no-files-found: warn
+
+  training-date:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked app and browser harness
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc
+          python -m pip install -r requirements-dev.lock
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Native Training single date baseline, repair, session add/remove and actual output
+        run: python scripts/qa_monthly_training_date.py
+      - name: Upload synthetic Training date evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: training-date-synthetic-browser-evidence
+          path: test-artifacts/monthly-training-date/
           retention-days: 7
           if-no-files-found: warn

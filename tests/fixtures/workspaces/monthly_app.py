@@ -78,6 +78,7 @@ if not token:
 from scripts.workspace_browser_observations import install_synthetic_observations, emit_snapshot
 from scripts.workspace_text_observations import emit_text_snapshot
 from scripts.workspace_water_observations import emit_water_snapshot
+from scripts.workspace_training_observations import emit_training_snapshot
 install_synthetic_observations(base)
 
 st.title("Synthetic actual Monthly workspace QA")
@@ -85,6 +86,8 @@ with isolated(token):
     render(token, "America/New_York", _field, _move, base)
     emit_snapshot()
     emit_text_snapshot(base, token)
+    if os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1":
+        emit_training_snapshot(base, token)
     if os.environ.get("EPC_MONTHLY_WATER_TASK") == "1":
         emit_water_snapshot(base, token)
     st.caption("Monthly DOM isolated scope: " + str(scope()))

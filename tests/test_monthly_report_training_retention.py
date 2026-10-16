@@ -56,12 +56,12 @@ def assert_work(app, note=NOTE):
     assert current(app).text == note
     assert widget(app, 'text_area', 'Training notes').value == note
     assert widget(app, 'text_input', 'Training topic') is not None
-    assert widget(app, 'button', 'Add completed training') is not None
+    assert widget(app, 'button', 'Add training session') is not None
 
 
 def test_invalid_event_keeps_notes_visible_and_saved_history_unchanged(training):
     app, draft, matrix, event, stored, saved = training
-    widget(app, 'button', 'Add completed training').click().run()
+    widget(app, 'button', 'Add training session').click().run()
     assert app.error
     assert_work(app)
     assert current(app).extra_tables == (matrix, event)
@@ -73,7 +73,7 @@ def test_invalid_event_keeps_notes_visible_and_saved_history_unchanged(training)
 def test_note_edit_in_same_event_as_validation_is_not_lost(training, new_note):
     app, *_ = training
     widget(app, 'text_area', 'Training notes').set_value(new_note)
-    widget(app, 'button', 'Add completed training').click().run()
+    widget(app, 'button', 'Add training session').click().run()
     assert app.error
     assert_work(app, new_note)
     app.run()
@@ -83,16 +83,17 @@ def test_note_edit_in_same_event_as_validation_is_not_lost(training, new_note):
 def test_invalid_event_inputs_survive_until_corrected(training):
     app, draft, matrix, event, *_ = training
     widget(app, 'text_input', 'Training topic').set_value('New safety topic')
+    widget(app, 'date_input', 'Training date').set_value(date(2026, 9, 1))
     widget(app, 'multiselect', 'Participants').set_value(['Synthetic Hospital Tech'])
     widget(app, 'text_input', 'Hours (optional)').set_value('invalid')
-    widget(app, 'button', 'Add completed training').click().run()
+    widget(app, 'button', 'Add training session').click().run()
     assert app.error
     assert_work(app)
     app.run()
     assert widget(app, 'text_input', 'Training topic').value == 'New safety topic'
     assert widget(app, 'multiselect', 'Participants').value == ['Synthetic Hospital Tech']
     widget(app, 'text_input', 'Hours (optional)').set_value('0.75')
-    widget(app, 'button', 'Add completed training').click().run()
+    widget(app, 'button', 'Add training session').click().run()
     assert not app.error
     assert_work(app)
     rows = next(t.rows for t in current(app).extra_tables if t.reference == EVENT_REF)
@@ -119,11 +120,11 @@ def test_missing_site_error_does_not_hide_notes_or_events(training, monkeypatch)
 
 def test_invalid_event_then_first_and_later_columns_preserves_notes(training):
     app, draft, matrix, event, *_ = training
-    widget(app, 'button', 'Add completed training').click().run()
+    widget(app, 'button', 'Add training session').click().run()
     assert_work(app)
     for title in ('TEST lockout', 'TEST additional requirement'):
-        widget(app, 'text_input', 'Add a training requirement').set_value(title).run()
-        widget(app, 'button', 'Add training column').click().run()
+        widget(app, 'text_input', 'Requirement name').set_value(title).run()
+        widget(app, 'button', 'Add requirement').click().run()
         assert not app.exception and not app.error
         assert_work(app)
         assert event in current(app).extra_tables
@@ -137,9 +138,9 @@ def test_column_storage_error_preserves_pending_note_and_event_form(training, mo
     def fail(*args, **kwargs):
         raise OSError('Synthetic storage failure')
     monkeypatch.setattr(ui, 'save_training', fail)
-    widget(app, 'text_input', 'Add a training requirement').set_value('Unsaved requirement').run()
+    widget(app, 'text_input', 'Requirement name').set_value('Unsaved requirement').run()
     widget(app, 'text_area', 'Training notes').set_value('Retain despite a failed standing write.')
-    widget(app, 'button', 'Add training column').click().run()
+    widget(app, 'button', 'Add requirement').click().run()
     assert app.error
     assert_work(app, 'Retain despite a failed standing write.')
     assert not app.success
@@ -167,10 +168,10 @@ def test_conflict_reload_preserves_current_note_not_just_older_block(training, m
 
 def test_empty_event_error_does_not_discard_successful_matrix_write(training):
     app, draft, matrix, event, *_ = training
-    widget(app, 'text_input', 'Add a training requirement').set_value('TEST next').run()
-    widget(app, 'button', 'Add training column').click().run()
+    widget(app, 'text_input', 'Requirement name').set_value('TEST next').run()
+    widget(app, 'button', 'Add requirement').click().run()
     accepted = current(app)
-    widget(app, 'button', 'Add completed training').click().run()
+    widget(app, 'button', 'Add training session').click().run()
     assert app.error
     assert_work(app)
     assert current(app) == accepted
@@ -179,8 +180,8 @@ def test_empty_event_error_does_not_discard_successful_matrix_write(training):
 def test_valid_note_clear_is_not_repopulated_by_column_change(training):
     app, *_ = training
     widget(app, 'text_area', 'Training notes').set_value('').run()
-    widget(app, 'text_input', 'Add a training requirement').set_value('TEST next').run()
-    widget(app, 'button', 'Add training column').click().run()
+    widget(app, 'text_input', 'Requirement name').set_value('TEST next').run()
+    widget(app, 'button', 'Add requirement').click().run()
     assert_work(app, '')
 
 
@@ -205,19 +206,18 @@ def test_failed_column_write_does_not_publish_a_false_new_requirement(training, 
     def fail(*args, **kwargs):
         raise OSError('Synthetic write failure')
     monkeypatch.setattr(ui, 'save_training', fail)
-    widget(app, 'text_input', 'Add a training requirement').set_value('Must not appear saved').run()
-    widget(app, 'button', 'Add training column').click().run()
+    widget(app, 'text_input', 'Requirement name').set_value('Must not appear saved').run()
+    widget(app, 'button', 'Add requirement').click().run()
     assert app.error
     assert_work(app)
     assert current(app).extra_tables == (matrix, event)
     assert load_training(draft.profile.contract) == stored
-    assert widget(app, 'text_input', 'Add a training requirement').value == 'Must not appear saved'
+    assert widget(app, 'text_input', 'Requirement name').value == 'Must not appear saved'
 
 
 def test_remove_event_remains_deliberate_and_does_not_change_matrix_status(training):
     app, _, matrix, event, *_ = training
-    widget(app, 'multiselect', 'Remove a training entry').set_value([0])
-    widget(app, 'button', 'Remove selected entries').click().run()
+    widget(app, 'button', 'Remove session: Accepted safety event · 2026-09-01').click().run()
     assert not app.error
     assert_work(app)
     assert current(app).extra_tables == (matrix,)
@@ -228,7 +228,7 @@ def test_source_assets_and_provenance_survive_error_recovery(training):
     original = replace(current(app), asset_hashes=('synthetic-picture',), asset_captions=('Keep this caption',))
     app.session_state['blocks'] = {original.key: original}
     app.run()
-    widget(app, 'button', 'Add completed training').click().run()
+    widget(app, 'button', 'Add training session').click().run()
     assert app.error
     assert_work(app)
     assert current(app).asset_hashes == original.asset_hashes
@@ -248,14 +248,14 @@ def test_ordered_report_validation_save_and_reopen_preserve_both_sections(monkey
     historical_path = {p: p.read_bytes() for p in library._root().rglob('*.json')}
     correction = 'Training corrected in the same action as an invalid event.'
     widget(app, 'text_area', 'Training notes').set_value(correction)
-    widget(app, 'button', 'Add completed training').click().run()
+    widget(app, 'button', 'Add training session').click().run()
     assert not app.exception and app.error
     assert widget(app, 'text_area', 'Training notes').value == correction
     assert widget(app, 'text_area', 'Activity summary').value == 'Independent Activity stays unchanged.'
     assert library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', ReportPeriod(2026, 9)) == historical
     assert all(p.read_bytes() == raw for p, raw in historical_path.items())
-    widget(app, 'text_input', 'Add a training requirement').set_value('TEST fire safety').run()
-    widget(app, 'button', 'Add training column').click().run()
+    widget(app, 'text_input', 'Requirement name').set_value('TEST fire safety').run()
+    widget(app, 'button', 'Add requirement').click().run()
     assert not app.exception and not app.error
     assert widget(app, 'text_area', 'Training notes').value == correction
     widget(app, 'button', 'Save shared version').click().run()
@@ -275,7 +275,8 @@ def test_ordered_report_validation_save_and_reopen_preserve_both_sections(monkey
 def test_training_matrix_stays_visible_with_infrequent_forms_collapsed(training):
     app, *_ = training
     labels = {expander.label for expander in app.expander}
-    assert {"Add requirement", "Add training", "Remove training entries"} <= labels
+    assert {"Add requirement", "Add training session"} <= labels
+    assert "Remove training entries" not in labels
     assert widget(app, "text_input", "Training topic") is not None
     assert widget(app, "text_input", "Hours (optional)") is not None
     assert widget(app, "selectbox", "Method") is not None
@@ -290,11 +291,57 @@ def test_training_matrix_stays_visible_with_infrequent_forms_collapsed(training)
 def test_unknown_training_hours_remain_empty_in_compact_form(training):
     app, *_ = training
     widget(app, "text_input", "Training topic").set_value("Synthetic staff refresher")
+    widget(app, "date_input", "Training date").set_value(date(2026, 9, 1))
     widget(app, "multiselect", "Participants").set_value(["Synthetic Hospital Tech"])
     assert widget(app, "text_input", "Hours (optional)").value == ""
-    widget(app, "button", "Add completed training").click().run()
+    widget(app, "button", "Add training session").click().run()
     assert not app.exception and not app.error
     from app.monthly_report_training import EVENT_REF
     rows = next(x.rows for x in current(app).extra_tables if x.reference == EVENT_REF)
     assert rows[-1][0] == "Synthetic staff refresher"
     assert rows[-1][-1] == ""
+
+
+def test_session_remove_targets_its_row_and_preserves_other_work(training):
+    app, draft, matrix, event, stored, saved = training
+    second = add_event(event, title='Accepted safety event', when=date(2026, 9, 1),
+                       mode='Virtual', participants=['Other Hospital Tech'], hours='', period=draft.period)
+    block = replace(current(app), extra_tables=(matrix, second))
+    app.session_state['blocks'] = {block.key: block}
+    app.run()
+    buttons = [button for button in app.button if button.label.startswith('Remove session:')]
+    assert len(buttons) == 2
+    assert buttons[0].key != buttons[1].key
+    widget(app, 'text_area', 'Training notes').set_value('Retain the concurrent monthly note.')
+    buttons[1].click().run()
+    assert not app.exception and not app.error
+    assert current(app).extra_tables == (matrix, event)
+    assert_work(app, 'Retain the concurrent monthly note.')
+    assert load_training(draft.profile.contract) == stored
+    assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period) == saved
+    assert len([button for button in app.button if button.label.startswith('Remove session:')]) == 1
+
+
+def test_training_date_is_one_explicit_date_with_month_bounds(training):
+    app, draft, matrix, event, stored, _ = training
+    when = widget(app, 'date_input', 'Training date')
+    assert when.value is None
+    assert not when.proto.is_range
+    assert when.proto.min == draft.period.start.isoformat()
+    assert when.proto.max == draft.period.end.isoformat()
+    widget(app, 'text_input', 'Training topic').set_value('A session needs its actual date')
+    widget(app, 'multiselect', 'Participants').set_value(['Synthetic Hospital Tech'])
+    widget(app, 'button', 'Add training session').click().run()
+    assert any('Choose a training date' in message.value for message in app.error)
+    assert current(app).extra_tables == (matrix, event)
+    widget(app, 'date_input', 'Training date').set_value(date(2026, 9, 30))
+    widget(app, 'button', 'Add training session').click().run()
+    assert not app.error
+    rows = next(table.rows for table in current(app).extra_tables if table.reference == EVENT_REF)
+    assert rows[-1][1] == '2026-09-30' and rows[-1][-1] == ''
+    widget(app, 'date_input', 'Training date').set_value(None)
+    widget(app, 'text_input', 'Training topic').set_value('A cleared date must stay unknown')
+    widget(app, 'button', 'Add training session').click().run()
+    assert app.error and widget(app, 'date_input', 'Training date').value is None
+    assert next(table.rows for table in current(app).extra_tables if table.reference == EVENT_REF) == rows
+    assert load_training(draft.profile.contract) == stored

@@ -99,15 +99,16 @@ st.session_state['blocks'] = render_training(st.session_state['draft'], st.sessi
     app.run()
     assert not app.exception
     assert load_training(profile.contract)['revision'] == 0
-    next(w for w in app.text_input if w.label == 'Add a training requirement').set_value('Safety')
-    next(w for w in app.button if w.label == 'Add training column').click().run()
+    next(w for w in app.text_input if w.label == 'Requirement name').set_value('Safety')
+    next(w for w in app.button if w.label == 'Add requirement').click().run()
     assert not app.exception
     assert load_training(profile.contract)['revision'] == 1
     app.run()
     assert load_training(profile.contract)['revision'] == 1
     next(w for w in app.text_input if w.label == 'Training topic').set_value('Site safety')
+    app.date_input[0].set_value(date(2026, 9, 1))
     next(w for w in app.multiselect if w.label == 'Participants').set_value(['Sam'])
-    next(w for w in app.button if w.label == 'Add completed training').click().run()
+    next(w for w in app.button if w.label == 'Add training session').click().run()
     assert not app.exception
     result = app.session_state['blocks']['training_summary']
     assert result.extra_tables[-1].reference == EVENT_REF
