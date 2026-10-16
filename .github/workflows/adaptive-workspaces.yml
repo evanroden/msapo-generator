@@ -7,6 +7,7 @@ on:
       - 'tests/fixtures/workspaces/**'
       - 'tests/workspace_geometry_test.cjs'
       - 'tests/preview_view_lifecycle_test.cjs'
+      - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
@@ -29,6 +30,7 @@ on:
       - 'tests/fixtures/workspaces/**'
       - 'tests/workspace_geometry_test.cjs'
       - 'tests/preview_view_lifecycle_test.cjs'
+      - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
@@ -77,6 +79,7 @@ jobs:
         run: |
           node --test tests/workspace_geometry_test.cjs
           node --test tests/preview_view_lifecycle_test.cjs
+          node --test tests/preview_commit_gate_test.cjs
           python scripts/qa_adaptive_workspaces.py
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
