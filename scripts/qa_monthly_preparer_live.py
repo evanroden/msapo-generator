@@ -82,7 +82,8 @@ def exercise(browser, method):
         expect(field).to_have_value("Synthetic Live Navigation Reviewer", timeout=45000)
         expect(activity).to_have_value(original, timeout=45000)
         assert_isolated_route(page)
-        expect(page.get_by_text("Running code: " + live.EXPECTED, exact=True)).to_be_visible()
+        from scripts.qa_public_build import running_code_marker
+        expect(running_code_marker(page)).to_have_text("Running code: " + live.EXPECTED)
         live.checkpoint(method + " corrected name and Activity survive reload", True)
         live.reset_fixture(page, state, "preparer-" + method)
     except Exception as exc:

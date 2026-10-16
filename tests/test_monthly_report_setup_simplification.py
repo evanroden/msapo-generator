@@ -10,8 +10,9 @@ def test_short_help_and_admin_storage_remain_accessible(monkeypatch, tmp_path):
     assert not app.exception
 
     labels = {expander.label for expander in app.expander}
-    assert "How to use this page" in labels
-    assert "Saving and recovery" in labels
+    assert "Help" in labels
+    assert "How to use this page" not in labels
+    assert "Saving and recovery" not in labels
     assert "First time here? How to finish a monthly report" not in labels
     assert "What will be remembered?" not in labels
 

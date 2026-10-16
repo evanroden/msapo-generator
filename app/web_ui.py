@@ -1611,7 +1611,8 @@ def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
         unsafe_allow_html=True,
     )
     commit = runtime_commit()
-    st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
+    with st.expander("About"):
+        st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
 
 
 _WORKFLOW_QUERY_CHOICES = {

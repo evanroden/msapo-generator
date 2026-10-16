@@ -28,6 +28,8 @@ _render_footer(EXPENSE_WORKFLOW)
     assert "expense reimbursement preparation" in markup
     assert "purchase-order prep" not in markup
     assert sum(SHA in item.value for item in app.caption) == 2
+    assert [item.label for item in app.expander] == ["About", "About"]
+    assert all(not item.proto.expanded for item in app.expander)
 
 
 def test_unavailable_build_is_not_misrepresented_as_master_version(monkeypatch):

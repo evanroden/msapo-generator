@@ -142,7 +142,7 @@ st.session_state["result"] = result
     assert app.date_input[0].value is None  # Filename is deliberately not date evidence.
     app.date_input[0].set_value(date(2026, 9, 10))
     next(w for w in app.selectbox if w.label == "Source facility").set_value(profile.facilities[0].key)
-    next(w for w in app.button if w.label == "Save corrected details").click().run()
+    next(w for w in app.button if w.label == "Use these source details").click().run()
     assert not app.exception
     revised = app.session_state["result"][0]
     assert revised.service_date == "2026-09-10"
@@ -191,7 +191,7 @@ st.session_state["result"] = records
     assert "Keep my manual correction." in initial_text
     app.date_input[0].set_value(date(2026, 9, 12))
     next(w for w in app.selectbox if w.label == "Source facility").set_value(profile.facilities[0].key)
-    next(w for w in app.button if w.label == "Save corrected details").click().run()
+    next(w for w in app.button if w.label == "Use these source details").click().run()
     assert not app.exception
     revised = app.session_state["result"][0]
     assert revised.service_date == "2026-09-12"

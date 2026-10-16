@@ -157,22 +157,28 @@ def compare_drafts(working, saved):
     return tuple(changes)
 
 
-def _show_images(references, loader):
+def _show_images(references, loader, *, page_key=None, label="Pictures/pages"):
     if not references:
         return
     if loader is None:
         st.caption("Open the report preview to compare these pictures/pages.")
         return
-    for n, reference in enumerate(references[:4]):
+    start = 0
+    if page_key is not None and len(references) > 4:
+        start = st.selectbox(label, tuple(range(0, len(references), 4)),
+                             format_func=lambda n: f"{n + 1}–{min(n + 4, len(references))} of {len(references)}",
+                             key=page_key)
+    for n, reference in enumerate(references[start:start + 4], start=start):
         try:
             st.image(loader(reference), caption=f"Picture/page {n + 1}", width="stretch")
         except (OSError, ValueError):
             st.warning(f"Picture/page {n + 1} could not be displayed. Your saved content has not been changed.")
-    if len(references) > 4:
+    if len(references) > 4 and page_key is None:
         st.caption(f"Showing the first 4 of {len(references)} pictures/pages. Use the full report preview to check the rest.")
 
 
-def render_conflict_comparison(working, snapshot, *, working_asset_loader=None, saved_asset_loader=None):
+def render_conflict_comparison(working, snapshot, *, working_asset_loader=None, saved_asset_loader=None,
+                               can_accept=True, image_key=None):
     """Display differences only. The caller owns revision acceptance and saving."""
     st.write(f"Saved version {snapshot.revision} · entered editor: {snapshot.entered_editor or snapshot.draft.prepared_by or 'Not recorded'}")
     if snapshot.generated_at:
@@ -180,16 +186,21 @@ def render_conflict_comparison(working, snapshot, *, working_asset_loader=None, 
     st.caption("Compare the saved version on the left with your current work on the right. Nothing is merged or saved here.")
     changes = compare_drafts(working, snapshot.draft)
     if not changes:
-        st.info("The report content matches the saved version. You can accept that version below.")
-    for change in changes:
+        st.info("The report content matches the saved version." +
+                (" You can accept that version below." if can_accept else ""))
+    for index, change in enumerate(changes):
         with st.expander(change.title):
             left, right = st.columns(2)
             with left:
                 st.markdown("**Saved report**")
                 st.text(change.saved)
-                _show_images(change.saved_images, saved_asset_loader)
+                _show_images(change.saved_images, saved_asset_loader,
+                             page_key=f"{image_key}_{index}_saved" if image_key else None,
+                             label="Saved report pictures/pages")
             with right:
                 st.markdown("**Your current work**")
                 st.text(change.working)
-                _show_images(change.working_images, working_asset_loader)
+                _show_images(change.working_images, working_asset_loader,
+                             page_key=f"{image_key}_{index}_working" if image_key else None,
+                             label="Your current work pictures/pages")
     return changes

@@ -117,3 +117,30 @@ def test_comparison_does_not_show_migration_as_a_change_or_text_edit_as_picture_
     caption_edit = replace(edited, asset_captions=("A changed caption", "Two"))
     change, = compare_drafts(replace(saved, blocks=(caption_edit,)), saved)
     assert "1 of 2 pictures/pages need review" in change.working
+
+
+def test_history_inspection_can_reach_every_saved_picture_without_loading_them_all(monkeypatch):
+    from app import monthly_report_compare_ui as ui
+    from app.monthly_report_library import SavedReport
+    saved = example()
+    saved = replace(saved, blocks=(*saved.blocks, ResolvedBlock(
+        "vendor_reports", "This month", asset_hashes=tuple(f"page-{n}.png" for n in range(8)))))
+    working = replace(saved, blocks=tuple(block for block in saved.blocks if block.key != "vendor_reports"))
+    calls = []
+
+    def loader(reference):
+        calls.append(reference)
+        raise OSError("Synthetic missing old picture")
+
+    monkeypatch.setattr(ui, "_test_inputs", (working, SavedReport(saved, "", 2)), raising=False)
+    monkeypatch.setattr(ui, "_test_loader", loader, raising=False)
+    app = AppTest.from_string("""
+from app import monthly_report_compare_ui as ui
+ui.render_conflict_comparison(*ui._test_inputs, saved_asset_loader=ui._test_loader,
+                             can_accept=False, image_key='history_version_2')
+""").run()
+    assert not app.exception and calls == [f"page-{n}.png" for n in range(4)]
+    calls.clear()
+    next(item for item in app.selectbox if item.label == "Saved report pictures/pages").set_value(4).run()
+    assert not app.exception and calls == [f"page-{n}.png" for n in range(4, 8)]
+    assert not any("Use the full report preview" in item.value for item in app.caption)

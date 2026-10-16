@@ -22,7 +22,7 @@ def test_monthly_cover_has_read_only_design_and_sidebar_admin(monkeypatch, tmp_p
     app = monthly(monkeypatch, tmp_path)
     assert not app.exception
     labels = [e.label for e in app.expander]
-    assert "Report design and version" in labels
+    assert "About this report" in labels
     assert "Master design administration — all contracts" in [e.label for e in app.sidebar.expander]
     assert any("This report uses:" in c.value for c in app.caption)
     assert any("separate administrative sidebar" in c.value for c in app.caption)

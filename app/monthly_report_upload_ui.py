@@ -108,7 +108,7 @@ def render_source_details(source, profile, prefix, field):
                                         format="YYYY-MM-DD")
             chosen_facility = st.selectbox("Source facility", options, key=site_key,
                                           format_func=labels.get)
-            submitted = st.form_submit_button("Save corrected details")
+            submitted = st.form_submit_button("Use these source details")
         if submitted and not changed_elsewhere:
             try:
                 source = correct_source_details(source, profile, chosen_date, chosen_facility)
@@ -316,7 +316,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 st.session_state[p + "_page_action"] = (list(source.selected_pages), next_page)
                 st.rerun()
             if not left:
-                st.success("Every page has been checked. Prepare the included pages below." if checked else "Every page has been checked and left out. The original file is still saved.")
+                st.success("Every page has been checked. Choose its destination below, then add it to the report." if checked else "Every page has been checked and left out. The original file is still saved.")
             st.caption("Leaving a page out keeps the original file. Use the page selector to revisit any page.")
         by_id[selected] = replace(content, source=source)
         contents = tuple(by_id.values())
@@ -328,8 +328,8 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     st.caption(f"{len(contents)} sources. {sum(len(c.source.selected_pages) for c in contents)} selected pages/items. "
                f"{sum(len(set(c.source.needs_vision) & set(c.source.selected_pages)) for c in contents)} selected pages need OCR/vision; no paid extraction runs automatically.")
     blocks, specs = {}, {}
-    with st.expander("Embed selected report pages and photographs"):
-        destinations = []
+    destinations = []
+    with st.expander("Add reviewed pages to report sections"):
         defaults = {"Vendor service": "improvements", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Utility results": "utility_analysis", "Improvement / training photo": "improvements"}
         for item in contents:
             if not sources.image_numbers(item):
@@ -338,28 +338,11 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                       "water_reports": "Water treatment — chemical/service pages", "mbcx_report": "MBCx — commissioning report pages",
                       "utility_analysis": "Monthly scorecards — utility results and charts",
                       "improvements": "Monthly activity — reviewed service pages and photos"}
-            slot = st.selectbox("Add " + item.source.filename + " to", ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
+            slot = st.selectbox("Report section for " + item.source.filename, ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
                                 key=field(key + "_destination_" + item.source.id + "_" + item.source.classification,
                                           defaults.get(item.source.classification, "Do not embed")))
             if slot != "Do not embed":
                 destinations.append((item.source.id, slot))
-        signature = _signature(([c.source.fingerprint for c in contents], destinations))
-        prepared_key = key + "_prepared_pages"
-        prepared = st.session_state.get(prepared_key)
-        if prepared and prepared[0] != signature:
-            st.session_state.pop(prepared_key, None)
-            prepared = None
-            st.info("Source details or selections changed. Prepare pages again to use this version.")
-        if st.button("Prepare selected pages", disabled=not destinations, key=key + "_prepare_pages"):
-            try:
-                with st.spinner("Preparing selected pages one at a time…"):
-                    prepared = (signature, sources.prepare_pages(profile, contents, tuple(destinations)))
-                st.session_state[prepared_key] = prepared
-            except (ValueError, OSError) as exc:
-                st.error(str(exc))
-        if prepared:
-            blocks.update((b.key, b) for b in prepared[1])
-            st.success("Reviewed pages are ready. Add them to the draft below.")
     cmms_contents = [c for c in contents if c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
     if cmms_contents:
@@ -376,8 +359,21 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             if mapped:
                 blocks.update((b.key, b) for b in mapped.blocks)
                 specs.update((s.key, s) for s in mapped.specs)
-                st.caption("Use Add prepared pages and tables to this draft below to include these work-order totals and service calls.")
-    return tuple(c.source for c in contents), blocks, specs
+                st.caption("The selected spreadsheet totals and service calls will be added with the reviewed pages below.")
+    # One explicit outcome commits a current reviewed selection. Do not retain
+    # a separately prepared image payload that can outlive a source/caption or
+    # mapping edit. A failed page preparation returns no table additions either.
+    if st.button("Add selected pages and tables to report", key=key + "_add_selection",
+                 disabled=not destinations and not blocks):
+        try:
+            with st.spinner("Adding reviewed pages and tables…"):
+                prepared = sources.prepare_pages(profile, contents, tuple(destinations)) if destinations else ()
+            blocks.update((block.key, block) for block in prepared)
+            return tuple(c.source for c in contents), blocks, specs
+        except (ValueError, OSError) as exc:
+            st.error(str(exc))
+            st.caption("Nothing was added. Correct the selected source pages and try again.")
+    return tuple(c.source for c in contents), {}, {}
 
 
 def set_source_manager_open(key, opened):

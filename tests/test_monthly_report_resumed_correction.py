@@ -38,7 +38,7 @@ def test_saved_source_date_site_correction_on_resumed_report(monkeypatch, tmp_pa
     site = next(w for w in app.selectbox if w.label == "Source facility")
     app.date_input[0].set_value(date(2026, 9, 20))
     site.set_value(profile.facilities[0].key)
-    next(w for w in app.button if w.label == "Save corrected details").click().run()
+    next(w for w in app.button if w.label == "Use these source details").click().run()
     assert not app.exception
     prefix = "report_guided_" + guided._signature((RRH_CONTRACT, profile.key, period.key))
     revised, = app.session_state[prefix + "_draft"].sources

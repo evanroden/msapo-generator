@@ -142,7 +142,8 @@ def _served_commit(page, expected: str) -> None:
     while time.monotonic() < deadline:
         try:
             page.goto(ORIGIN + BUILD_ROUTE, wait_until="domcontentloaded", timeout=65000)
-            marker = page.get_by_text(re.compile(r"^Running code: [0-9a-f]{40}$")).first
+            from scripts.qa_public_build import running_code_marker
+            marker = running_code_marker(page)
             expect(marker).to_be_visible(timeout=16000)
             last = (marker.text_content() or "").strip()
             if last == "Running code: " + expected:
@@ -158,7 +159,8 @@ def _served_once_after_download(page, expected: str) -> None:
     """Reject deployment cutover between initial build check and download."""
     from playwright.sync_api import expect
     page.goto(ORIGIN + BUILD_ROUTE, wait_until="domcontentloaded", timeout=65000)
-    status = page.get_by_text(re.compile(r"^Running code: [0-9a-f]{40}$")).first
+    from scripts.qa_public_build import running_code_marker
+    status = running_code_marker(page)
     expect(status).to_have_text("Running code: " + expected, timeout=16000)
 
 

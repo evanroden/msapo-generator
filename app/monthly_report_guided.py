@@ -666,7 +666,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         if manager_open:
             sources, additions, incoming_specs = render_uploads(profile, period, prefix, field)
             draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
-            if additions and st.button("Add prepared pages and tables to this draft", key=prefix + "_apply_uploads"):
+            if additions:
                 draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
         from app.monthly_report_ai_ui import render_drafting
         # One shared evidence workspace: rendering this once avoids duplicated
@@ -783,12 +783,11 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.session_state["_monthly_source_detail_forms"] = {}
     last_contract, last_profile = remembered_report_preferences(browser_token)
     recovery_available = active_work.enabled(browser_token)
-    with st.expander("How to use this page"):
+    with st.expander("Help"):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
         st.caption("Selecting several sites combines them in one report. For separate reports, select each site individually.")
-    with st.expander("Saving and recovery"):
         st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
-        st.caption("Draft recovery uses a browser cookie and acknowledged server working copies; it may not recover when cookies are disabled or edits have not reached the app. Saving or generating a version shares it. Prepared by records attribution, not verified identity.")
+        st.caption("Draft recovery keeps edits after they reach the app. Text still being typed may not be recoverable. Check the save status before leaving. Saving or creating files adds a shared version. Prepared by is report attribution, not a sign-in.")
     with st.sidebar.expander("Storage maintenance — all contracts", expanded=False):
         _render_storage_maintenance()
     from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
@@ -1045,7 +1044,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 render_section_setup(contract, period, prepared, field, state=state,
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),
                                      working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
-                with st.expander("Report design and version"):
+                with st.expander("About this report"):
                     from app.monthly_report_designs_ui import render_design_status
                     render_design_status(draft)
                 # Global design installation changes *future reports across all
@@ -1095,31 +1094,45 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 working_asset_loader=lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref),
                 saved_asset_loader=lambda ref: library.read_asset(contract, selected, ref))
         accept = st.checkbox("I compared the saved version and want to save my draft as the next version", key=prefix + f"_accept_{current_revision}")
-        if st.button("Accept current revision", key=prefix + "_accept_revision", disabled=not accept):
+        st.caption("Continuing keeps your draft and uses the newer shared version as its starting revision. It does not save; your next save creates another shared version.")
+        if st.button("Continue with my draft", key=prefix + "_accept_revision", disabled=not accept):
             st.session_state[prefix + "_revision"] = current_revision
             st.rerun()
-    with st.expander("Shared report history", expanded=False):
+    history = st.expander("Shared report history", expanded=False,
+                          key=prefix + "_history_open", on_change="rerun")
+    with history:
         st.caption("Saving a version adds it to shared report history. Browser draft recovery is separate.")
+        from app.monthly_report_history_ui import render_snapshot_history
+        if history.open:
+            render_snapshot_history(draft, prefix, assets, snapshot)
         if st.button("Save shared version", key=prefix + "_save", disabled=conflict or not prepared.strip()):
-            saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
-                                          open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
-                                          pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
-            st.session_state[prefix + "_revision"] = saved.revision
-            if recovery_available:
-                try:
-                    st.session_state[prefix + "_active_generation"] = active_work.discard(
-                        browser_token, contract, selected, period,
-                        expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
-                        expected_generation=st.session_state.get(prefix + "_active_generation", ""))
-                    st.session_state[prefix + "_active_sequence"] = 0
-                except (library.LibraryError, OSError):
-                    st.warning("The report version was saved, but its older browser copy still needs review.")
-            record_report_preferences(browser_token, contract, selected)
-            record_report_preparer(browser_token, contract, selected, prepared)
-            st.success("Report version saved in the shared history.")
-            st.rerun()
-    with st.expander("Start over on this browser"):
-        st.caption("Discard only this browser's unfinished changes for these sites and this month. Existing report versions, contract information and other browsers stay unchanged.")
+            try:
+                saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
+                                              open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
+                                              pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
+            except (ValueError, OSError) as exc:
+                st.error("Shared version could not be saved: " + str(exc))
+                st.caption("Your draft remains on this page. Check its recovery status before leaving, then retry saving.")
+            else:
+                st.session_state[prefix + "_revision"] = saved.revision
+                if recovery_available:
+                    try:
+                        st.session_state[prefix + "_active_generation"] = active_work.discard(
+                            browser_token, contract, selected, period,
+                            expected_revision=st.session_state.get(prefix + "_active_sequence", 0),
+                            expected_generation=st.session_state.get(prefix + "_active_generation", ""))
+                        st.session_state[prefix + "_active_sequence"] = 0
+                    except (library.LibraryError, OSError):
+                        st.warning("The report version was saved, but its older browser copy still needs review.")
+                record_report_preferences(browser_token, contract, selected)
+                record_report_preparer(browser_token, contract, selected, prepared)
+                st.success("Report version saved in the shared history.")
+                st.rerun()
+    with st.expander("Report actions"):
+        st.markdown("**Start over on this browser**")
+        st.caption(f"Discard this browser's unfinished changes for {profile.title} · {period.label}. "
+                   "Sites: " + "; ".join(site.title for site in profile.facilities) + ". "
+                   "Completed report versions, original files, standing site information and other browsers stay unchanged.")
         forget = st.checkbox("Discard my unfinished changes for this report", key=prefix + "_discard_work_confirm")
         if st.button("Start this report over", key=prefix + "_discard_work", disabled=not forget):
             try:
@@ -1230,7 +1243,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         empty_confirmation_key = prefix + "_empty_generation_confirmation"
         if st.session_state.get(empty_confirmation_key) not in (None, draft.fingerprint):
             st.session_state.pop(empty_confirmation_key, None)
-        st.caption("Creating files also saves a shared report version. Any save failure will be shown.")
+        st.caption("Creating files also saves a version in Shared report history.")
         pressed = st.button("Create Word and PDF", key=prefix + "_generate",
                             type="secondary" if blocked_reason else "primary", disabled=bool(blocked_reason))
         if pressed and not monthly_entry_sections:
