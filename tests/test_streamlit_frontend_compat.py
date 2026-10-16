@@ -27,6 +27,24 @@ def files(root):
     return {str(p.relative_to(root)): p.read_bytes() for p in root.rglob("*") if p.is_file()}
 
 
+def previous_overlay(bundle, scalar_date):
+    """Install an exact former 81-member generation from pinned originals."""
+    root, scripts = bundle
+    sources, members = compat._locked_sources(scripts)
+    publication = compat._publication(sources, members, scalar_date, virtualizer_resize=False)
+    # These are independently retained published identities, not names inferred
+    # from the selected files or supplied by the current implementation.
+    assert publication.names[compat.INDEX_BUNDLE] == {
+        False: "index.enfra-frontend-82ffaa997d27.js",
+        True: "index.enfra-frontend-9dafff8ac486.js",
+    }[scalar_date]
+    for native, raw in publication.payloads.items():
+        (scripts / publication.names[native]).write_bytes(raw)
+    (root / "index.html").write_bytes(compat._publication_html(
+        (root / "index.html").read_bytes(), compat.INDEX_BUNDLE, publication, (publication,)))
+    return publication
+
+
 def test_full_editor_request_dominates_fragments_in_actual_locked_scheduler(bundle):
     root, scripts = bundle
     original = (scripts / compat.INDEX_BUNDLE).read_text()
@@ -128,6 +146,7 @@ def test_content_named_scheduler_entry_preserves_originals_and_is_idempotent(bun
     assert not receipt["already_patched"] and not receipt["scalar_date"]
     members = json.loads(compat.MANIFEST_PATH.read_bytes())["members"]
     assert receipt["closure_count"] == len(members) == 81
+    assert receipt["virtualizer_resize"] is True
     for name in members:
         assert (scripts / name).read_bytes() == before["static/js/" + name]
     raw = (scripts / receipt["entry"]).read_bytes()
@@ -135,6 +154,9 @@ def test_content_named_scheduler_entry_preserves_originals_and_is_idempotent(bun
     assert sha256(raw).hexdigest() == receipt["patched_entry_sha256"]
     overlay = (scripts / receipt["overlay_bundle"]).read_bytes()
     assert sha256(overlay).hexdigest() == receipt["overlay_sha256"]
+    virtualizer = (scripts / receipt["virtualizer_bundle"]).read_bytes()
+    assert sha256(virtualizer).hexdigest() == receipt["virtualizer_sha256"]
+    assert receipt["original_virtualizer_sha256"] == members[compat.VIRTUALIZER_BUNDLE]["sha256"]
     assert receipt["overlay_bundle"].encode() in raw
     assert compat.OVERLAY_BUNDLE.encode() not in raw
     assert receipt["entry"].encode() in (root / "index.html").read_bytes()
@@ -239,12 +261,13 @@ def test_frontend_observer_does_not_read_unbounded_or_ineligible_response(bundle
     assert not _frontend_response_receipt(response, expected)["matches"]
 
 
-@pytest.mark.parametrize("mutation", ["version", "entry", "date", "missing", "html", "duplicate", "destination", "selected"])
+@pytest.mark.parametrize("mutation", ["version", "entry", "date", "virtualizer", "missing", "html", "duplicate", "destination", "selected"])
 def test_unknown_or_tampered_assets_fail_before_any_write(bundle, mutation):
     root, scripts = bundle
     installed_version = "1.61.2" if mutation == "version" else "1.61.1"
-    if mutation in {"entry", "date"}:
-        path = scripts / (compat.INDEX_BUNDLE if mutation == "entry" else compat.DATE_BUNDLE)
+    if mutation in {"entry", "date", "virtualizer"}:
+        path = scripts / {"entry": compat.INDEX_BUNDLE, "date": compat.DATE_BUNDLE,
+                          "virtualizer": compat.VIRTUALIZER_BUNDLE}[mutation]
         path.write_bytes(path.read_bytes() + b" ")
     elif mutation == "missing":
         (scripts / compat.INDEX_BUNDLE).unlink()
@@ -265,13 +288,14 @@ def test_unknown_or_tampered_assets_fail_before_any_write(bundle, mutation):
     assert files(root) == before
 
 
-@pytest.mark.parametrize("target", ["overlay", "cyclic", "entry", "date", "missing"])
+@pytest.mark.parametrize("target", ["overlay", "virtualizer", "cyclic", "entry", "date", "missing"])
 def test_read_only_expected_receipt_rejects_corrupt_selected_generation(bundle, target):
     root, scripts = bundle
     receipt = compat.patch_bundle(root, installed_version="1.61.1", scalar_date=True)
     sources, members = compat._locked_sources(scripts)
     publication = compat._publication(sources, members, True)
     name = {"overlay": receipt["overlay_bundle"], "cyclic": publication.names["MermaidChart.Bk0sk5TL.js"],
+            "virtualizer": receipt["virtualizer_bundle"],
             "entry": receipt["entry"], "date": receipt["bundle"],
             "missing": publication.names["Toolbar.DumIAbTb.js"]}[target]
     path = scripts / name
@@ -286,6 +310,84 @@ def test_read_only_expected_receipt_rejects_corrupt_selected_generation(bundle, 
     with pytest.raises(RuntimeError):
         compat.patch_bundle(root, installed_version="1.61.1")
     assert files(root) == before
+
+
+@pytest.mark.parametrize("previous_date", [False, True])
+@pytest.mark.parametrize("requested_date", [False, True])
+def test_both_previous_overlay_generations_upgrade_without_losing_date_or_history(bundle, previous_date, requested_date):
+    root, scripts = bundle
+    old = previous_overlay(bundle, previous_date)
+    before = files(root)
+    prior_receipt = compat.selected_frontend(root)
+    assert prior_receipt["virtualizer_resize"] is False
+    assert prior_receipt["scalar_date"] is previous_date
+    assert prior_receipt["virtualizer_bundle"] == old.names[compat.VIRTUALIZER_BUNDLE]
+    assert prior_receipt["virtualizer_sha256"] == sha256(old.payloads[compat.VIRTUALIZER_BUNDLE]).hexdigest()
+    assert files(root) == before, "Inspecting known prior output must perform no upgrade or write."
+    receipt = compat.patch_bundle(root, installed_version="1.61.1", scalar_date=requested_date)
+    assert receipt["virtualizer_resize"] is True and not receipt["already_patched"]
+    assert receipt["scalar_date"] is (previous_date or requested_date)
+    assert receipt["entry"] != old.names[compat.INDEX_BUNDLE]
+    for name, raw in before.items():
+        if name != "index.html":
+            assert (root / name).read_bytes() == raw, "Upgrade must retain every original and prior immutable chunk."
+    html = (root / "index.html").read_bytes()
+    assert all(name.encode() not in html for name in old.names.values())
+    selected = compat.selected_frontend(root)
+    assert selected["virtualizer_resize"] is True and selected["entry"] == receipt["entry"]
+    assert selected["virtualizer_sha256"] == sha256((scripts / selected["virtualizer_bundle"]).read_bytes()).hexdigest()
+    snapshot = files(root)
+    assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
+    assert compat.patch_bundle(root, installed_version="1.61.1", scalar_date=receipt["scalar_date"])["already_patched"]
+    assert files(root) == snapshot
+
+
+@pytest.mark.parametrize("previous_date", [False, True])
+@pytest.mark.parametrize("target", ["virtualizer", "cyclic", "missing", "preload"])
+def test_prior_selected_closure_corruption_cannot_be_hidden_by_upgrade(bundle, previous_date, target):
+    root, scripts = bundle
+    old = previous_overlay(bundle, previous_date)
+    name = old.names[compat.VIRTUALIZER_BUNDLE if target == "virtualizer" else "Toolbar.DumIAbTb.js"]
+    path = scripts / name
+    if target == "missing":
+        path.unlink()
+    elif target == "preload":
+        html = (root / "index.html").read_bytes()
+        assert name.encode() in html
+        (root / "index.html").write_bytes(html.replace(name.encode(), b"Toolbar.DumIAbTb.js"))
+    else:
+        raw = path.read_bytes()
+        path.write_bytes(b" " + raw[1:])
+    before = files(root)
+    with pytest.raises(RuntimeError):
+        compat.selected_frontend(root)
+    with pytest.raises(RuntimeError):
+        compat.patch_bundle(root, installed_version="1.61.1")
+    assert files(root) == before
+
+
+@pytest.mark.parametrize("previous_date", [False, True])
+def test_interrupted_previous_overlay_upgrade_keeps_old_complete_selection(bundle, monkeypatch, previous_date):
+    root, _ = bundle
+    old = previous_overlay(bundle, previous_date)
+    before = files(root)
+    publish = compat._publish
+
+    def interrupt_html(path, raw, **kwargs):
+        if path.name == "index.html":
+            raise OSError("Synthetic prior-generation HTML interruption")
+        return publish(path, raw, **kwargs)
+
+    monkeypatch.setattr(compat, "_publish", interrupt_html)
+    with pytest.raises(OSError, match="prior-generation HTML interruption"):
+        compat.patch_bundle(root, installed_version="1.61.1")
+    assert compat.selected_frontend(root)["virtualizer_resize"] is False
+    assert compat.selected_frontend(root)["entry"] == old.names[compat.INDEX_BUNDLE]
+    for name, raw in before.items():
+        assert (root / name).read_bytes() == raw
+    monkeypatch.setattr(compat, "_publish", publish)
+    upgraded = compat.patch_bundle(root, installed_version="1.61.1")
+    assert upgraded["virtualizer_resize"] is True and upgraded["scalar_date"] is previous_date
 
 
 def test_unknown_incoming_native_importer_fails_before_any_write(bundle):
