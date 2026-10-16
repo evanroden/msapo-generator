@@ -268,8 +268,8 @@ const build=new Function('n','oe','se','document',x.helpers+x.isFunction+x.ident
  ';n.saveSelectionLoop='+x.saveSelectionLoop+';n.runSaveSelectionLoop='+x.runSaveSelectionLoop+
  ';n.setCursorToEnd='+x.setCursorToEnd+';n.setCursorPosition='+x.setCursorPosition+
  ';n.onFocus='+x.onFocus+';n.onMouseDown='+x.onMouseDown+';return _;');
-function state(cached){
- const input={value:'2026/09/',selectionStart:0,selectionEnd:8,matches:()=>false};
+function state(cached,initial='2026/09/'){
+ const input={value:initial,selectionStart:0,selectionEnd:initial.length,matches:()=>false};
  // Only native DOM and the animation-frame clock are test adapters. The real
  // setSelection method performs both the DOM write and previousSelection update.
  const frames=new Map(),listeners=new Map();let frameId=0;
@@ -304,8 +304,8 @@ for(const entered of ['2026/08/31','2026/10/01','2026/09/','2026/09/15']){
 }
 // Reproduce the WebKit capture using actual focus/mouse/cache handlers. The
 // native input and frame clock are adapters; internal callback order is a model.
-function focusAndDelete(settleBeforeSelection){
- const n=state(stale);n.focused=false;n.previousSelection=null;
+function focusAndDelete(settleBeforeSelection,initial='2026/09/'){
+ const n=state(stale,initial);n.focused=false;n.previousSelection=null;
  n.input.selectionStart=n.input.selectionEnd=0;
  n.onMouseDown({clientX:0,clientY:0});n.onFocus({});
  n.listeners.get('mouseup')({clientX:0,clientY:0});
@@ -315,11 +315,13 @@ function focusAndDelete(settleBeforeSelection){
  if(!settleBeforeSelection)n.flushFrame();
  const beforeDelete=n.getSelection(),cached={...n.previousSelection};
  const start=beforeDelete.start===beforeDelete.end?Math.max(0,beforeDelete.start-1):beforeDelete.start;
+ const before=n.input.value;
  n.input.value=n.input.value.slice(0,start)+n.input.value.slice(beforeDelete.end);
  n.input.selectionStart=n.input.selectionEnd=start;
  const raw={value:n.input.value,selection:n.getSelection()};
- n.onChange({});
- return{selected,beforeDelete,cached,raw,value:n.input.value,selection:n.getSelection()};
+ // Backspace in an empty input has no native input/change delivery.
+ if(n.input.value!==before)n.onChange({});
+ return{selected,beforeDelete,cached,raw,value:n.input.value,selection:n.getSelection(),native:n};
 }
 const lateFrame=focusAndDelete(false),settled=focusAndDelete(true);
 assert.deepEqual(lateFrame.selected,{start:0,end:8,length:8});
@@ -330,6 +332,26 @@ assert.equal(lateFrame.value,'2026/09/');
 assert.deepEqual(lateFrame.selection,{start:8,end:8,length:0});
 assert.deepEqual(settled.beforeDelete,{start:0,end:8,length:8});
 assert.equal(settled.raw.value,'');assert.equal(settled.value,'');
+// Empty focus can defer only cursor0; it cannot invalidate its0..0 selection.
+// Full dates do not queue an end-cursor move. The partial negative above stays.
+// Exercise actual focus/cache/delete/type handlers with and without interleaved
+// frames. No empty-input change event is invented to make the model succeed.
+for(const initial of ['', '2026/09/14', '2026/09/'])
+ for(const settle of [false,true])
+  for(const framesWhileTyping of [false,true])
+   for(const entered of ['2026/09/14','2026/08/31','2026/10/01','2026/09/']){
+    if(initial==='2026/09/'&&!settle)continue; // Proved unsafe above, guard retained.
+    const result=focusAndDelete(settle,initial),n=result.native;
+    assert.equal(result.value,'');
+    if(initial==='')assert.deepEqual(result.beforeDelete,{start:0,end:0,length:0});
+    for(const character of entered){
+     if(framesWhileTyping)n.flushFrame();
+     const selection=n.getSelection(),end=selection.start+1;
+     n.input.value=n.input.value.slice(0,selection.start)+character+n.input.value.slice(selection.end);
+     n.input.selectionStart=n.input.selectionEnd=end;n.onChange({});
+    }
+    assert.equal(n.input.value,entered);
+   }
 '''
     subprocess.run(["node", "-e", code, json.dumps({"helpers": helpers,
                     "isFunction": is_function, "identity": identity,

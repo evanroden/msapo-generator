@@ -52,7 +52,7 @@ fill-only search; the final input was empty. No participant events/node history 
 so neither a remount nor a full-rerun/filter-loss cause is established. The fields share one
 native form with stable keys; topic blur is not evidence of a full editor rerun.
 
-The local follow-up merges reconciled PR249 head9b1c350 without losing the thin client/date
+The published follow-up3c96683 merges reconciled PR249 head9b1c350 without losing the thin client/date
 publisher or workflow gates. It binds one actual Participants input before topic entry, uses one
 normal pointer opening, requires that same connected input/menu to be ready before one filter,
 and retains exact option/chip/date/durable/output assertions. Bounded native/open/full-render
@@ -60,8 +60,20 @@ observations distinguish a future close/reset/disconnection. This is an implemen
 pointer journey, not a proved explanation or repair for the earlier fill-only failure. The actual
 locked React Aria callbacks also prove filter-only opening is supported when its controller is
 ready; a missing controller alone does not explain an empty filter. No retries/rescue/re-finding
-of the input or browser-error whitelist is added. Required38935820543 and the next integrated
-both-engine gates remain separately scoped; no whole-Training acceptance is claimed.
+of the input or browser-error whitelist is added. Adaptive38938106679 tested integration
+`965df8106d4a6d767dfb9d96fa38e49317707650`: Chromium reproduced the intended unpatched scalar-date
+announcement; WebKit failed before any typing on the one-second two-frame focus prerequisite for
+an empty input. It retained one focused native node at caret0 with no browser/observer error.
+Both repaired journeys, including the new participant path, were NOT RUN. Why those frames did
+not arrive is unproved; this is not an application/date-submission or ResizeObserver repair claim.
+
+At17:22UTC the actual locked focus/mouse/cache/delete/type model proves empty0..0 cannot be
+invalidated by its deferred cursor0, including40 typed interleavings without inventing an empty
+Backspace change event. The existing unsafe nonempty-partial negative remains. The local repair
+therefore removes the unnecessary frame prerequisite only for initially empty text; it preserves
+the one-second guard for nonempty replacements, exact input/identity/option/date/durable/output
+assertions and terminal browser-error handling. Required and new exact integrated both-engine
+gates remain separately scoped; no whole-Training acceptance is claimed.
 PR251 head fc157f0 passed Required38934310568 (2,891 tests, zero
 failures/errors/skips) and Adaptive38934310637 on integration b63d5d7846ab35ee05e43e2a5304dcfe21232148;
 it remains a separate unmerged identity/history/admin/source/editor follow-up.

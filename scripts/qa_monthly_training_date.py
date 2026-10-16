@@ -87,17 +87,22 @@ def replace_date(page, field, value, stage):
         field.click()
         observation["focused_before_replacement"] = _date_input_state(field)
         assert observation["focused_before_replacement"]["focused"]
-        observation["focus_frames"] = field.evaluate("""input=>new Promise((resolve,reject)=>{
-          const deadline=setTimeout(()=>reject(new Error('Native date focus did not finish two visible frames.')),1000);
-          const frames=[],read=()=>({value:input.value,start:input.selectionStart,
-            end:input.selectionEnd,focused:input===document.activeElement});
-          requestAnimationFrame(()=>{frames.push(read());
-            requestAnimationFrame(()=>{frames.push(read());clearTimeout(deadline);resolve(frames)});
-          });
-        })""")
-        assert observation["focus_frames"][0] == observation["focus_frames"][1], "Native date focus/caret must settle before replacement."
-        assert observation["focus_frames"][1]["focused"]
-        assert observation["focus_frames"][1]["value"] == observation["before"]["value"]
+        if observation["before"]["value"]:
+            observation["focus_frames"] = field.evaluate("""input=>new Promise((resolve,reject)=>{
+              const deadline=setTimeout(()=>reject(new Error('Native date focus did not finish two visible frames.')),1000);
+              const frames=[],read=()=>({value:input.value,start:input.selectionStart,
+                end:input.selectionEnd,focused:input===document.activeElement});
+              requestAnimationFrame(()=>{frames.push(read());
+                requestAnimationFrame(()=>{frames.push(read());clearTimeout(deadline);resolve(frames)});
+              });
+            })""")
+            assert observation["focus_frames"][0] == observation["focus_frames"][1], "Native date focus/caret must settle before replacement."
+            assert observation["focus_frames"][1]["focused"]
+            assert observation["focus_frames"][1]["value"] == observation["before"]["value"]
+        else:
+            # Empty focus can defer only cursor0. Its0..0 selection is already
+            # unchanged by that callback, so a frame budget is no prerequisite.
+            observation["focus_frames_not_required"] = "empty-input-selection-0-0"
         field.press("ControlOrMeta+A")
         observation["selected"] = _date_input_state(field)
         assert observation["selected"]["start"] == 0
