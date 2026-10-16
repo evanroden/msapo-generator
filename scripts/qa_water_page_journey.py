@@ -153,6 +153,82 @@ def current_water_preview(page, qa, *, inset=130):
     qa.current_image(page, WATER)
 
 
+def open_water_preview(page, water, qa, observations):
+    """Observe the one compact action without repairing it or changing its wait."""
+    control = water.get_by_role("button", name="View preview", exact=True)
+    probe = observations["compact_preview_activation"] = {}
+    try:
+        probe["before"] = control.evaluate("""(node, selector) => {
+            window.__enfraWaterPreviewActivation?.finish();
+            const pair=node.closest(selector), root=pair?.closest('.epc-workspace');
+            const reference=pair?.querySelector('.st-key-epc_reference_monthly_water');
+            const events=[],mutations=[];let droppedEvents=0,droppedMutations=0;
+            const brief=()=>{const currentPair=document.querySelector(selector);
+                const currentButton=currentPair?.querySelector('.epc-compact-open');
+                const currentReference=currentPair?.querySelector('.st-key-epc_reference_monthly_water');
+                const currentRoot=currentPair?.closest('.epc-workspace');
+                return {buttonConnected:node.isConnected,pairConnected:pair?.isConnected??false,
+                    referenceConnected:reference?.isConnected??false,
+                    currentPairIsOriginal:currentPair===pair,currentButtonIsOriginal:currentButton===node,
+                    currentReferenceIsOriginal:currentReference===reference,currentRootIsOriginal:currentRoot===root,
+                    onclickType:typeof node.onclick,
+                    expanded:node.getAttribute('aria-expanded'),pairOpen:pair?.getAttribute('data-epc-preview-open')??null,
+                    currentExpanded:currentButton?.getAttribute('aria-expanded')??null,
+                    currentPairOpen:currentPair?.getAttribute('data-epc-preview-open')??null,
+                    fullRender:root?.dataset.epcFullRender??null,mode:root?.dataset.epcMode??null,
+                    currentFullRender:currentRoot?.dataset.epcFullRender??null,currentMode:currentRoot?.dataset.epcMode??null,
+                    focused:document.activeElement===node,
+                    scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')??null};};
+            const snapshot=()=>{const r=node.getBoundingClientRect();return {...brief(),
+                rect:{x:r.x,y:r.y,width:r.width,height:r.height},
+                events:events.slice(),mutations:mutations.slice(),droppedEvents,droppedMutations};};
+            const observe=event=>{if(!event.isTrusted)return;
+                if(events.length<24)events.push({type:event.type,at:performance.now(),trusted:true,
+                    phase:event.eventPhase,x:Number.isFinite(event.clientX)?event.clientX:null,
+                    y:Number.isFinite(event.clientY)?event.clientY:null,targetIsOriginal:event.target===node,
+                    targetInOriginal:node.contains(event.target),targetTag:event.target?.tagName??null,...brief()});
+                else droppedEvents++;};
+            const collect=records=>{const changes=records.filter(r=>
+                r.target===node&&r.attributeName==='aria-expanded'||
+                r.target===pair&&r.attributeName==='data-epc-preview-open');
+                for(let i=0;i<changes.length;i++){const change=changes[i];
+                    const next=changes.slice(i+1).find(r=>r.target===change.target&&r.attributeName===change.attributeName);
+                    const after=next?next.oldValue:change.target.getAttribute(change.attributeName);
+                    if(mutations.length<24)mutations.push({at:performance.now(),
+                        target:change.target===node?'original-button':'original-pair',
+                        attribute:change.attributeName,before:change.oldValue,after,...brief()});
+                    else droppedMutations++;}};
+            const observer=new MutationObserver(collect);
+            observer.observe(pair,{attributes:true,subtree:true,
+                attributeFilter:['aria-expanded','data-epc-preview-open'],attributeOldValue:true});
+            const kinds=['pointerdown','pointerup','mousedown','mouseup','click','focusin','focusout'];
+            for(const kind of kinds){document.addEventListener(kind,observe,{capture:true,passive:true});
+                document.addEventListener(kind,observe,{capture:false,passive:true});}
+            window.__enfraWaterPreviewActivation={snapshot,finish:()=>{
+                try{collect(observer.takeRecords());return snapshot();}
+                finally{observer.disconnect();
+                    for(const kind of kinds){document.removeEventListener(kind,observe,true);
+                        document.removeEventListener(kind,observe,false);}
+                    delete window.__enfraWaterPreviewActivation;}}};
+            return snapshot();
+        }""", WATER)
+    except Exception as exc:
+        probe["setup_error"] = str(exc)[:500]
+    try:
+        control.click()
+        if "before" in probe:
+            try:
+                probe["after_click"] = page.evaluate("window.__enfraWaterPreviewActivation.snapshot()")
+            except Exception as exc:
+                probe["after_click_error"] = str(exc)[:500]
+        current_water_preview(page, qa, inset=90)
+    finally:
+        try:
+            probe["final"] = page.evaluate("window.__enfraWaterPreviewActivation?.finish()??null")
+        except Exception as exc:
+            probe["cleanup_error"] = str(exc)[:500]
+
+
 def choose_page(page, number):
     water = page.locator(WATER)
     control = water.get_by_role("combobox", name="Page to review", exact=True)
@@ -260,8 +336,7 @@ def exercise(page, name, qa):
         state = wait_pages(page, [2, 1], pending=[])
         unchanged(state)
         qa.scroll_pair(page, WATER, inset=90)
-        water.get_by_role("button", name="View preview", exact=True).click()
-        current_water_preview(page, qa, inset=90)
+        open_water_preview(page, water, qa, observations)
         record("narrow-current-preview", state)
         water.get_by_role("button", name="Back to editing", exact=True).click()
 

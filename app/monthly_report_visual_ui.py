@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from pathlib import Path
+from uuid import uuid4
 
 import streamlit as st
 
@@ -410,132 +411,187 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
     return preserve_asset_reviews(block, replace(changed, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint=""))
 
 
+def _queue_photo_action(key, request):
+    # The native callback carries only the revision displayed with the action.
+    # Widget values are consumed by their ordinary fields in the full editor.
+    st.session_state[key] = request
+
+
 def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_photo_controls import photo_caption_identity, photo_order_identity, photo_move_request, move_photo, remove_photo
     block = preserve_asset_reviews(block, block)
     p = prefix + "_photos_" + block.key
+    scope = _rich_text_scope(prefix)
+    cycle_key, request_key = p + "_order_cycle", p + "_action"
+    cycle = st.session_state.get(cycle_key)
+    if (not isinstance(cycle, dict) or cycle.get("scope") != scope
+            or not isinstance(cycle.get("token"), str) or not cycle["token"]):
+        cycle = {"scope": scope, "token": uuid4().hex}
+        st.session_state[cycle_key] = cycle
+    baseline = photo_order_identity(draft, block, scope=scope, cycle=cycle["token"])
+    request = st.session_state.pop(request_key, None)
+    if request and (not isinstance(request, dict) or request.get("identity") != baseline
+                    or request.get("kind") not in {"add", "done", "move", "remove"}):
+        st.warning("The photos changed after this action was opened. Your photos are unchanged. Review the current photos and choose the action again.")
+        request = None
+    kind = request.get("kind") if request else None
+    editing_key = p + "_editing"
+    editing = bool(st.session_state.get(editing_key))
+    if kind in {"done", "move"} and not editing:
+        request, kind = None, None
+
+    def clear_photo_fields():
+        starts = (p + "_caption_", p + "_count_")
+        st.session_state["report_draft_mirror"] = {
+            key: value for key, value in st.session_state.get("report_draft_mirror", {}).items()
+            if not key.startswith(starts)}
+        for key in list(st.session_state):
+            if key.startswith(starts):
+                del st.session_state[key]
+
+    def refresh_after_commit():
+        st.session_state[cycle_key] = {"scope": scope, "token": uuid4().hex}
+        st.session_state[prefix + "_period_editor_refresh"] = True
+
     with st.expander("Add photos", expanded=False):
         uploads = st.file_uploader(
-            "Progress photos",
-            label_visibility="collapsed",
+            "Progress photos", label_visibility="collapsed",
             type=["jpg", "jpeg", "png", "heic", "heif", "webp"],
-            accept_multiple_files=True,
-            max_upload_size=30,
-            key=p + "_files",
-        )
-    if uploads and st.button("Add these photos", key=p + "_add"):
-        if (
-            len(uploads) + len(block.asset_hashes) > 60
-            or sum(u.size for u in uploads) > 120 * 1024 * 1024
-        ):
+            accept_multiple_files=True, max_upload_size=30, key=p + "_files")
+    add_slot = st.empty()
+    additions = {}
+    if uploads and kind == "add":
+        if len(uploads) + len(block.asset_hashes) > 60 or sum(u.size for u in uploads) > 120 * 1024 * 1024:
             st.error("Add at most 60 photos per section and 120 MB in one batch.")
         else:
-            refs, captions = list(block.asset_hashes), list(block.asset_captions)
-            pending_assets = {}
-            provenance = dict(block.asset_provenance)
-            captions.extend("" for _ in range(len(refs) - len(captions)))
+            pending = {}
             try:
                 for upload in uploads:
-                    normalized = normalize_report_image(
-                        upload.getvalue(), Path(upload.name).suffix
-                    )
-                    ref = library.asset_reference(normalized.data, normalized.extension)
-                    if ref not in refs:
-                        refs.append(ref)
-                        provenance[ref] = ()
-                        captions.append("")
-                        pending_assets[ref] = normalized.data
-                assets.update(pending_assets)
-                _install(
-                    draft,
-                    prefix,
-                    replace(
-                        block,
-                        source="This month",
-                        asset_hashes=tuple(refs),
-                        asset_provenance=tuple(provenance.items()),
-                        asset_captions=tuple(captions),
-                    ),
-                )
+                    normalized = normalize_report_image(upload.getvalue(), Path(upload.name).suffix)
+                    reference = library.asset_reference(normalized.data, normalized.extension)
+                    if reference not in block.asset_hashes:
+                        pending[reference] = normalized.data
+                additions = pending
             except (ValueError, OSError) as exc:
                 st.error(str(exc) if isinstance(exc, ValueError) else
                          "One of these photos could not be read. Choose another file; your existing photos and captions are unchanged.")
+
+    def render_add(current):
+        if uploads:
+            identity = photo_order_identity(draft, current, scope=scope, cycle=st.session_state[cycle_key]["token"])
+            add_slot.button("Add these photos", key=p + "_add_" + identity,
+                on_click=_queue_photo_action,
+                args=(request_key, {"kind": "add", "identity": identity}))
+
+    def append_delivered_photos(current):
+        if not additions:
+            return current
+        captions = tuple(current.asset_captions[n] if n < len(current.asset_captions) else ""
+                         for n in range(len(current.asset_hashes)))
+        provenance = dict(current.asset_provenance)
+        provenance.update((reference, ()) for reference in additions)
+        updated = preserve_asset_reviews(current, replace(
+            current, source="This month", asset_hashes=(*current.asset_hashes, *additions),
+            asset_captions=(*captions, *("" for _ in additions)), asset_provenance=tuple(provenance.items())))
+        assets.update(additions)
+        clear_photo_fields()
+        refresh_after_commit()
+        return updated
+
     if not block.asset_hashes:
+        block = append_delivered_photos(block)
+        render_add(block)
         return block
-    editing_key = p + "_editing"
     pending_indexes = pending_asset_indexes(block)
-    if not pending_indexes and not st.session_state.get(editing_key):
-        st.caption(f"{len(block.asset_hashes)} photos ready. Captions and reviews are saved.")
-        if st.button("Edit photos or captions", key=p + "_edit"):
-            st.session_state[editing_key] = True
-            st.rerun()
+    if not pending_indexes and not editing:
+        if additions:
+            block = append_delivered_photos(block)
+        else:
+            st.caption(f"{len(block.asset_hashes)} photos ready. Captions and reviews are saved.")
+            if st.button("Edit photos or captions", key=p + "_edit"):
+                st.session_state[editing_key] = True
+                st.session_state[prefix + "_period_editor_refresh"] = True
+        render_add(block)
         return block
-    if st.session_state.get(editing_key) and st.button("Done editing photos", key=p + "_done"):
-        st.session_state[editing_key] = False
-        st.rerun()
-    editing = st.session_state.get(editing_key, False)
+    done_slot = st.empty()
+    edit_all = False
     if not editing and len(pending_indexes) < len(block.asset_hashes):
         st.caption(f"{len(pending_indexes)} new or changed photos. Earlier photos keep their captions and reviews.")
-        if st.button("Edit all photos or captions", key=p + "_edit_all"):
-            st.session_state[editing_key] = True
-            st.rerun()
+        edit_all = st.button("Edit all photos or captions", key=p + "_edit_all")
     visible = tuple(range(len(block.asset_hashes))) if editing else pending_indexes
     left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
+    slots = []
+    original = block
     with left:
-        number = st.select_slider(
-            "Photos per page",
-            options=list(range(1, 7)),
-            key=field(p + "_count", block.photos_per_page),
-        )
-        existing_captions = tuple(block.asset_captions[n] if n < len(block.asset_captions) else "" for n in range(len(block.asset_hashes)))
+        field_identity = photo_caption_identity(draft, block, scope=scope)
+        number = st.select_slider("Photos per page", options=list(range(1, 7)),
+            key=field(p + "_count_" + field_identity, block.photos_per_page))
+        existing_captions = tuple(block.asset_captions[n] if n < len(block.asset_captions) else ""
+                                  for n in range(len(block.asset_hashes)))
         captions = list(existing_captions)
-        identity = _signature(block.asset_hashes)
         for n in visible:
-            with st.expander(
-                "Photo " + str(n + 1), expanded=len(block.asset_hashes) <= 2
-            ):
-                caption = st.text_area(
-                    "Caption",
-                    key=field(
-                        p + f"_caption_{identity}_{n}",
-                        block.asset_captions[n]
-                        if n < len(block.asset_captions)
-                        else "",
-                    ),
-                    max_chars=600,
-                    height=90,
-                )
-                captions[n] = caption
-                if st.button("Remove photo", key=p + f"_remove_{identity}_{n}"):
-                    indexes = tuple(i for i in range(len(block.asset_hashes)) if i != n)
-                    replacement = replace(
-                        block,
-                        source="This month",
-                        asset_hashes=tuple(block.asset_hashes[i] for i in indexes),
-                        asset_captions=tuple(captions[i] for i in indexes),
-                        photos_per_page=number,
-                    )
-                    _install(draft, prefix, preserve_asset_reviews(block, replacement), clear=p + "_caption_")
-        candidate = replace(block, asset_captions=block.asset_captions if tuple(captions) == existing_captions else tuple(captions), photos_per_page=number)
-        if candidate != block:
-            block = preserve_asset_reviews(block, replace(candidate, source="This month"))
-        candidate = block
+            with st.expander("Photo " + str(n + 1), expanded=len(block.asset_hashes) <= 2):
+                captions[n] = st.text_area("Caption", key=field(p + f"_caption_{field_identity}_{n}", existing_captions[n]),
+                                          max_chars=600, height=90)
+                earlier, later = (st.empty(), st.empty()) if editing and len(block.asset_hashes) > 1 else (None, None)
+                slots.append((n, earlier, later, st.empty()))
+        changed = None
+        if kind in {"move", "remove"}:
+            apply = remove_photo if kind == "remove" else move_photo
+            try:
+                changed = apply(draft, original, request.get("action"), tuple(captions), number,
+                                scope=scope, cycle=cycle["token"])
+            except ValueError as exc:
+                st.warning(str(exc))
+            else:
+                clear_photo_fields()
+                refresh_after_commit()
+        if changed is not None:
+            block = changed
+        else:
+            candidate = replace(block,
+                asset_captions=block.asset_captions if tuple(captions) == existing_captions else tuple(captions),
+                photos_per_page=number)
+            if candidate != block:
+                block = preserve_asset_reviews(block, replace(candidate,
+                    source="Omit" if block.source == "Omit" else "This month"))
+        block = append_delivered_photos(block)
+        if kind == "done" or edit_all:
+            st.session_state[editing_key] = bool(edit_all and kind != "done")
+            refresh_after_commit()
+        # Bind callbacks to the values actually delivered in this render. A
+        # later ordinary caption/density commit must not strand the next click.
+        # The callback runs before the next full editor, which validates this
+        # original revision before applying any newly delivered values.
+        identity = photo_order_identity(draft, block, scope=scope, cycle=st.session_state[cycle_key]["token"])
+        if changed is None and not additions and kind != "done" and not edit_all:
+            if editing:
+                done_slot.button("Done editing photos", key=p + "_done_" + identity,
+                    on_click=_queue_photo_action, args=(request_key, {"kind": "done", "identity": identity}))
+            for n, earlier, later, remove in slots:
+                if earlier is not None:
+                    for slot, label, offset in ((earlier, "Move earlier", -1), (later, "Move later", 1)):
+                        slot.button(label, key=p + f"_move_{identity}_{n}_{offset}",
+                            disabled=not 0 <= n + offset < len(block.asset_hashes),
+                            on_click=_queue_photo_action,
+                            args=(request_key, {"kind": "move", "identity": identity,
+                                "action": photo_move_request(identity, block, n, offset)}))
+                remove.button("Remove photo", key=p + f"_remove_{identity}_{n}",
+                    on_click=_queue_photo_action,
+                    args=(request_key, {"kind": "remove", "identity": identity,
+                        "action": {"identity": identity, "index": n, "asset": block.asset_hashes[n]}}))
+        render_add(block)
     if show_preview:
         with right:
             st.write("Photo page preview")
             try:
-                count = photo_count(candidate)
+                count = photo_count(block)
                 if count:
                     page = _page_number("Photo page", count, p, field)
-                    loader = lambda ref: (
-                        assets.get(ref)
-                        or library.read_asset(
-                            draft.profile.contract, draft.profile.key, ref
-                        )
-                    )
-                    st.image(photo_page(candidate, loader, page), width="stretch")
-                    st.caption(
-                        f"{count} photo pages. Images keep their original proportions."
-                    )
+                    loader = lambda ref: assets.get(ref) or library.read_asset(draft.profile.contract, draft.profile.key, ref)
+                    st.image(photo_page(block, loader, page), width="stretch")
+                    st.caption(f"{count} photo pages. Images keep their original proportions.")
                 else:
                     st.info("No photos are included.")
             except (ValueError, OSError, KeyError) as exc:

@@ -23,7 +23,7 @@ def photograph():
     return raw.getvalue()
 
 
-def unchanged_shared(before, after):
+def unchanged_shared(before, after, *, asset, storage_paths):
     assert after["scope"] == before["scope"] and after["generation"] == before["generation"]
     assert after["saved_revision"] == before["saved_revision"] == 3
     assert after["versions"] == before["versions"]
@@ -33,8 +33,26 @@ def unchanged_shared(before, after):
     assert all(new_assets.get(reference) == value for reference, value in old_assets.items()), "A photo action changed or dropped an existing in-memory asset."
     cover_refs = {item["reference"] for item in after["working"]["cover"]["assets"]}
     assert set(new_assets) - set(old_assets) <= cover_refs, "A photo action added unrelated assets."
-    for group in ("history", "standing", "assets"):
+    for group in ("history", "standing"):
         assert after["storage"]["groups"][group] == before["storage"]["groups"][group], "A report photo action changed shared " + group
+    old_files, new_files = before["storage"]["entries"], after["storage"]["entries"]
+    journal = storage_paths["journal"]
+    assert journal in old_files and journal in new_files, "The current browser journal must already exist."
+    assert old_files[journal]["group"] == new_files[journal]["group"] == "journal"
+    for path_hash, previous in old_files.items():
+        assert path_hash in new_files, "A report photo action removed an existing stored file."
+        if path_hash != journal:
+            assert new_files[path_hash] == previous, "A report photo action rewrote an existing stored file."
+    allowed = {storage_paths[role] for role in ("photo", "object", "object_lock")}
+    assert set(new_files) - set(old_files) <= allowed, "A report photo action added an unrelated stored file."
+    # Browser-recovery assets use the existing immutable object store. These
+    # exact bytes and their new bucket lock are report storage, not a new
+    # standing profile/master/version. Every older path/mtime stays unchanged.
+    for role, group in (("photo", "journal"), ("object", "assets")):
+        record = new_files[storage_paths[role]]
+        assert (record["group"], record["bytes"], record["sha256"]) == (group, asset["bytes"], asset["sha256"]), "The report photo storage does not match its acknowledged bytes."
+    lock = new_files[storage_paths["object_lock"]]
+    assert (lock["group"], lock["bytes"], lock["sha256"]) == ("assets", 0, sha256(b"").hexdigest()), "The report photo object lock must remain empty."
 
 
 def selected_asset(state):
@@ -62,11 +80,11 @@ def exercise_cover_photo(page, identity, base, token, evidence, *, receipt, awai
         current = await_state(page, identity, revision=3, author=author, activity=activity, photos=2, after=after)
         state = {key: current[key] for key in ("scope", "generation", "saved_revision", "working", "durable", "versions", "memory_assets")}
         state["storage"] = storage_state(base, token)
+        stages.append({"stage": stage, **state})
         assert state["storage"]["live_library_absent"]
         assert state["storage"]["scope"] == identity and state["storage"]["generation"] == current["generation"]
         if same is not None:
             assert state == same, "A display, upload-only or reload action changed the acknowledged report/storage."
-        stages.append({"stage": stage, **state})
         return state
 
     panel = page.locator(".st-key-epc_pair_monthly_cover").get_by_test_id("stExpander").filter(
@@ -89,10 +107,13 @@ def exercise_cover_photo(page, identity, base, token, evidence, *, receipt, awai
     sequence = receipt(page)["sequence"]
     panel.get_by_role("button", name="Use this photograph", exact=True).click()
     included = capture("used", after=sequence)
-    unchanged_shared(baseline, included)
+    asset = selected_asset(included)
+    from scripts.workspace_history_observations import photograph_storage_paths
+    storage_paths = photograph_storage_paths(base, token, asset["reference"])
+    evidence["cover_photograph"]["storage_paths"] = storage_paths
+    unchanged_shared(baseline, included, asset=asset, storage_paths=storage_paths)
     assert included["working"]["cover"]["source"] == "Replace once"
     assert included["working"]["cover"]["pending_review"] == [0], "A new photograph must not inherit review."
-    asset = selected_asset(included)
     evidence["cover_photograph"]["normalized_asset"] = asset
 
     def visible_photo():
@@ -127,7 +148,7 @@ def exercise_cover_photo(page, identity, base, token, evidence, *, receipt, awai
     sequence = receipt(page)["sequence"]
     panel.get_by_role("button", name="No cover photograph", exact=True).click()
     omitted = capture("left-out", after=sequence)
-    unchanged_shared(baseline, omitted)
+    unchanged_shared(baseline, omitted, asset=asset, storage_paths=storage_paths)
     assert omitted["working"]["cover"]["source"] == "Omit"
     assert selected_asset(omitted) == asset, "Omission must retain the exact photograph bytes."
     expect(panel.locator('[data-testid="stImage"] img')).to_have_count(0)

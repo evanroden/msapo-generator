@@ -23,8 +23,10 @@ import tempfile
 
 try:
     from scripts.streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
+    from scripts.streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
 except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
     from streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
+    from streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
 
 STREAMLIT_VERSION = "1.61.1"
 INDEX_BUNDLE = "index.bE3scgDe.js"
@@ -49,6 +51,7 @@ class Publication:
     names: dict[str, str]
     payloads: dict[str, bytes]
     scalar_date: bool
+    virtualizer_resize: bool
     generation: str
 
 
@@ -65,7 +68,8 @@ def _locked_sources(scripts):
     if (manifest["streamlit_version"] != STREAMLIT_VERSION or manifest["root"] != OVERLAY_BUNDLE
             or len(members) != 81 or members[INDEX_BUNDLE]["sha256"] != INDEX_SHA256
             or members[DATE_BUNDLE]["sha256"] != DATE_SHA256
-            or members[OVERLAY_BUNDLE]["sha256"] != OVERLAY_SHA256):
+            or members[OVERLAY_BUNDLE]["sha256"] != OVERLAY_SHA256
+            or members[VIRTUALIZER_BUNDLE]["sha256"] != VIRTUALIZER_SHA256):
         raise RuntimeError("Invalid locked frontend import manifest; no bytes were changed.")
     sources = {}
     for name, record in members.items():
@@ -98,10 +102,12 @@ def _locked_sources(scripts):
     return sources, members
 
 
-def _publication(sources, members, scalar_date):
+def _publication(sources, members, scalar_date, *, virtualizer_resize=True):
     repaired = dict(sources)
     repaired[INDEX_BUNDLE] = sources[INDEX_BUNDLE].replace(ORIGINAL, REPAIRED, 1)
     repaired[OVERLAY_BUNDLE] = repair_overlay(sources[OVERLAY_BUNDLE])
+    if virtualizer_resize:
+        repaired[VIRTUALIZER_BUNDLE] = repair_virtualizer(sources[VIRTUALIZER_BUNDLE])
     if scalar_date:
         repaired[DATE_BUNDLE] = sources[DATE_BUNDLE].replace(DATE_ORIGINAL, DATE_REPAIRED, 1)
     # This digest binds all original source pins, their graph, exact repair
@@ -125,7 +131,7 @@ def _publication(sources, members, scalar_date):
             raise RuntimeError("Generated frontend import edges did not match their manifest; no bytes were changed.")
         payloads[name] = rewritten
     names[INDEX_BUNDLE] = _entry_name(payloads[INDEX_BUNDLE])
-    return Publication(names, payloads, scalar_date, generation)
+    return Publication(names, payloads, scalar_date, virtualizer_resize, generation)
 
 
 def _legacy_variants(sources):
@@ -154,7 +160,11 @@ def _validated_publications(static_dir, installed_version):
     if (sources[INDEX_BUNDLE].count(ORIGINAL) != 1 or sources[DATE_BUNDLE].count(DATE_ORIGINAL) != 1
             or sources[INDEX_BUNDLE].count(DATE_BUNDLE.encode()) != 2):
         raise RuntimeError("Unexpected locked frontend repair boundary; no bytes were changed.")
-    publications = tuple(_publication(sources, members, flag) for flag in (False, True))
+    # The first two are current outputs. The exact previous overlay-only
+    # generations remain fully reconstructable upgrade inputs, including all
+    # immutable members and preloads. Preserve their original identity recipe.
+    publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard)
+                         for guard in (True, False) for flag in (False, True))
     legacy, legacy_date_name, legacy_date = _legacy_variants(sources)
     variants = {**legacy, **{p.names[INDEX_BUNDLE]: (p.payloads[INDEX_BUNDLE], p.scalar_date) for p in publications}}
     html = (static_dir / "index.html").read_bytes()
@@ -205,6 +215,10 @@ def _receipt(publication):
             "overlay_bundle": publication.names[OVERLAY_BUNDLE],
             "original_overlay_sha256": OVERLAY_SHA256,
             "overlay_sha256": sha256(publication.payloads[OVERLAY_BUNDLE]).hexdigest(),
+            "virtualizer_bundle": publication.names[VIRTUALIZER_BUNDLE],
+            "original_virtualizer_sha256": VIRTUALIZER_SHA256,
+            "virtualizer_sha256": sha256(publication.payloads[VIRTUALIZER_BUNDLE]).hexdigest(),
+            "virtualizer_resize": publication.virtualizer_resize,
             "scalar_date": publication.scalar_date,
             "bundle": publication.names[DATE_BUNDLE] if publication.scalar_date else "",
             "original_sha256": DATE_SHA256,
@@ -219,6 +233,8 @@ def selected_frontend(static_dir: Path, *, installed_version: str = STREAMLIT_VE
 
     Hashing whatever the selected files contain would certify their corruption.
     Only exact bytes derived from the pinned graph and known repairs qualify.
+    Prior overlay-only generations return virtualizer_resize=False, never an
+    assertion that their virtualizer callback includes the current repair.
     """
     *_, selected, _publications = _validated_publications(Path(static_dir), installed_version)
     if selected is None:

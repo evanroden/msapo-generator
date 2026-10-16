@@ -41,6 +41,7 @@ def storage_state(base, token):
     target, identity, generation = namespace(base, token)
     root = _durable_root(target)
     groups = {name: [] for name in ("history", "assets", "standing", "journal")}
+    entries = {}
     total = 0
     if root.exists():
         for n, path in enumerate(sorted(root.rglob("*"))):
@@ -59,13 +60,38 @@ def storage_state(base, token):
             with path.open("rb") as stream:
                 from hashlib import file_digest
                 digest = file_digest(stream, "sha256").hexdigest()
-            groups[group].append((sha256(str(relative).encode()).hexdigest(), info.st_size,
-                                  info.st_mtime_ns, digest))
+            path_hash = sha256(str(relative).encode()).hexdigest()
+            groups[group].append((path_hash, info.st_size, info.st_mtime_ns, digest))
+            entries[path_hash] = {"group": group, "bytes": info.st_size,
+                                  "mtime_ns": info.st_mtime_ns, "sha256": digest}
     return {"scope": identity, "generation": generation,
             "live_library_absent": not (Path(base) / "monthly_reports").exists(),
+            "entries": entries,
             "groups": {key: {"files": len(values),
                 "sha256": sha256(json.dumps(values, separators=(",", ":")).encode()).hexdigest()}
                 for key, values in groups.items()}}
+
+
+def photograph_storage_paths(base, token, reference):
+    """Exact expected paths for this fixture's current browser report photo.
+
+    This computes identifiers only: no directory creation, asset publication or
+    loader with a live-root fallback. Namespace validation precedes every path.
+    """
+    target, _, _ = namespace(base, token)
+    _durable_root(target)
+    from app import monthly_report_qa_fixture as fixture, monthly_report_library as library
+    if (not isinstance(reference, str) or not library._ASSET.fullmatch(reference)
+            or not reference.endswith('.jpg')):
+        raise ValueError("The synthetic photograph needs its exact normalized JPEG reference.")
+    digest = reference.split('.')[0]
+    journal = (Path("active_work") / sha256(token.encode("ascii")).hexdigest() /
+               library._contract_directory(fixture.CONTRACT) /
+               library._valid_key(fixture.profile().key) / fixture.PERIOD.key)
+    paths = {"journal": journal / "working.json", "photo": journal / "assets" / reference,
+             "object": Path("objects") / digest[:2] / digest,
+             "object_lock": Path("objects") / digest[:2] / ".write-lock"}
+    return {role: sha256(str(path).encode()).hexdigest() for role, path in paths.items()}
 
 
 def emit_history_snapshot(base, token):

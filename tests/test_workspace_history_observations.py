@@ -12,7 +12,7 @@ import subprocess
 import pytest
 
 from app import monthly_report_testing as testing
-from scripts.workspace_history_observations import namespace, storage_state, emit_history_snapshot
+from scripts.workspace_history_observations import namespace, storage_state, emit_history_snapshot, photograph_storage_paths
 
 
 TOKEN = "a" * 32
@@ -91,6 +91,28 @@ def test_linked_durable_root_is_rejected_before_reading_another_directory(monkey
         testing.data_dir(tmp_path)
         with pytest.raises(ValueError, match="root"):
             emit_history_snapshot(tmp_path, TOKEN)
+
+
+def test_expected_photo_paths_are_exact_namespace_bound_and_do_not_write(monkeypatch, tmp_path):
+    root = prepare_root(monkeypatch, tmp_path)
+    before = storage_state(tmp_path, TOKEN)
+    reference = '1' * 64 + '.jpg'
+    paths = photograph_storage_paths(tmp_path, TOKEN, reference)
+    assert set(paths) == {'journal', 'photo', 'object', 'object_lock'}
+    assert len(set(paths.values())) == 4 and all(re.fullmatch('[0-9a-f]{64}', value) for value in paths.values())
+    assert paths['object'] == sha256(('objects/11/' + '1' * 64).encode()).hexdigest()
+    assert storage_state(tmp_path, TOKEN) == before
+    with pytest.raises(ValueError, match='existing isolated'):
+        photograph_storage_paths(tmp_path, 'b' * 32, reference)
+    assert sorted(root.parent.iterdir()) == [root]
+    for invalid in ('../escape.jpg', '1' * 64 + '.png', '', None):
+        with pytest.raises(ValueError, match='exact normalized JPEG'):
+            photograph_storage_paths(tmp_path, TOKEN, invalid)
+    outside = tmp_path / 'outside-photo-library'
+    outside.mkdir()
+    (root / 'monthly_reports').symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match='root'):
+        photograph_storage_paths(tmp_path, TOKEN, reference)
 
 
 def test_receipt_requires_matching_server_cookie_and_current_generation_before_library_reads(monkeypatch, tmp_path):

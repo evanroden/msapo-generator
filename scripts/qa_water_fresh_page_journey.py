@@ -26,6 +26,10 @@ if str(ROOT) not in sys.path:
 
 import pymupdf
 from app.contracts import RRH_CONTRACT as CONTRACT
+from scripts.qa_shared_fixture_testing import (
+    _expected_frontend, _expected_overlay, _expected_virtualizer,
+    _frontend_response_receipt, _overlay_response_receipt, _virtualizer_response_receipt,
+)
 from scripts.workspace_water_observations import water_state
 
 OUT = ROOT / "test-artifacts" / "water-fresh-page-journey"
@@ -35,6 +39,37 @@ WATER = ".st-key-epc_pair_monthly_water"
 FIRST = "United Memorial Medical Center"
 ACTOR = "Synthetic Fresh Water Reviewer"
 NAME = "TEST ONLY invented fresh Water first-page review.pdf"
+
+
+def observe_frontend_delivery(page, record, *, static_dir=None):
+    """Read only naturally requested, independently pinned repaired assets."""
+    expected = {"primary": _expected_frontend(static_dir), "overlay": _expected_overlay(static_dir),
+                "virtualizer": _expected_virtualizer(static_dir)}
+    receipts = record["frontend_delivery"] = {kind: [] for kind in expected}
+    observers = {"primary": _frontend_response_receipt, "overlay": _overlay_response_receipt,
+                 "virtualizer": _virtualizer_response_receipt}
+    def observed(response):
+        path = urlparse(response.url).path
+        name = Path(path).name
+        kind = ("primary" if re.fullmatch(
+                    r"/static/js/index\.(?:enfra-(?:frontend|date)-[0-9a-f]{12}|bE3scgDe)\.js", path) else
+                "overlay" if name.startswith("Tooltip.DJg7muty") else
+                "virtualizer" if name.startswith("fuzzyFilterSelectOptions.Bf8rcmtM") else None)
+        if kind is None or receipts[kind]:
+            return
+        receipts[kind].append({"matches": False, "error": "response observation incomplete"})
+        try:
+            receipts[kind][0] = observers[kind](response, expected[kind])
+        except Exception as exc:
+            receipts[kind][0] = {"matches": False, "error": type(exc).__name__ + ": " + str(exc)[:300]}
+    page.on("response", observed)
+
+
+def require_frontend_delivery(record):
+    for kind in ("primary", "overlay", "virtualizer"):
+        rows = record.get("frontend_delivery", {}).get(kind, ())
+        assert len(rows) == 1 and rows[0].get("matches"), (
+            "Fresh Water browser must receive the exact pinned repaired " + kind + " asset", rows)
 
 
 def source_pdf():
@@ -194,6 +229,8 @@ def exercise(browser, name, base, record):
         (out / "task.json").write_text(json.dumps(record, indent=2))
 
     try:
+        record["phase"] = "validate pinned native frontend"
+        observe_frontend_delivery(page, record)
         record["phase"] = "zero selected sites"
         assert not list(Path(base).glob("monthly_reports/library/**/manifest.json"))
         page.goto(URL, wait_until="domcontentloaded")
@@ -210,6 +247,7 @@ def exercise(browser, name, base, record):
         record["phase"] = "ordinary empty design then unsaved earlier month"
         select(page, "Reporting month", "October", record=record)
         select(page, "Reporting year", "2026")
+        require_frontend_delivery(record)
         page.get_by_role("button", name="Use ENFRA template", exact=True).click()
         actor = page.get_by_role("textbox", name="Your name", exact=True)
         actor.fill(ACTOR)
