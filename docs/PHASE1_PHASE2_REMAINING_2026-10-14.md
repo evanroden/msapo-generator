@@ -11,35 +11,66 @@ Main and the last independently verified served revision remain
 https://github.com/evanroden/msapo-generator/pull/247#issuecomment-6196963277 .
 No new main merge, Render workspace selection or served revision is claimed here.
 
-PR248, `fix/starting-review-deselection-20261015`, is open. The October16 continuation
-refreshed main/parent/cleanup refs and actual job steps; both handoff heads remained unchanged.
-The parent repair `580213c1f78515c3c279b0a299776e2bef129000` excludes fragment-local
-Retry preview controls from the full-editor hold. Its two negative regressions failed before
-repair; the affected observer/gate tests and existing geometry/lifecycle tests pass locally.
-Required38923741582 and Adaptive38923741814 are in progress at this milestone, not accepted.
-Prepared-by still needs exact browser commit evidence: its native correction link reached an
-unobscured field, but run38840535744 never satisfied correction-link disappearance. Bounded
-last128 native events and hash-only widget receipts replace the saturated first16 log without
-adding gestures, changing timeouts or weakening the original business assertion.
+PR248 remains open on `fix/starting-review-deselection-20261015`; current parent
+`d9ab483bea475a8e86357d286a8f097b13d3008b` repairs conservative table re-selection,
+reference-only Retry gating, exact Prepared-by typing and pending textarea Tab/ShiftTab commits.
+The real DOCX re-selection defect reproduced three failures before82 affected cases passed.
+The pinned first-fragment scheduler model reproduced a deferred Prepared commit in a fragment;
+its bounded hold passed8 gate cases. Fresh WebKit Shared evidence in38924106205
+then showed trusted input/Tab/change/blur on one connected node and the corrected69-character
+hash delivered only through a preview fragment; the durable draft remained empty. Tab/ShiftTab
+keydown now promotes the existing pending hold before focus/scroll can queue that fragment.
+Two negative regressions failed before repair; all11 gate cases,15 observer cases and33 existing
+lifecycle/geometry cases pass. Exact internal scheduling order remains unrecorded; preserve that
+limitation rather than claiming every historical image/input error explained.
+Required38926528701 on currentd9ab483 succeeded; Adaptive38926528415 is still running.
+Earlier580213c Required38923741582 succeeded and Adaptive38923741814 was superseded. The
+9baa90de browser run38925992973 was superseded by the specific Tab repair, not rerun unchanged.
 
-PR249 remains open and stacked on PR248. Preserve its canonical Water page model, caption/action
-atomicity, post-canonical-commit editor refresh, original retention and explicit omissions.
-Current harness repair follows the actual observed failures in run38840877629: after reload,
-Python's completed receipt can precede workspace enhancement; in compact mode, the old helper
-scrolled the section heading after View preview, moving its actual pane below the viewport.
-The repaired helper waits for a mounted root/mode/scroll owner and scrolls the normally opened
-compact preview surface, then requires actual viewport intersection before the unchanged
-Current/image assertion. Six readiness/geometry regressions and existing observer contracts
-pass (16 tests, locked Python3.12.14). No application rendering change, eager raster work,
-extra viewport event, retry gesture or longer wait is introduced. The entire browser tail,
-including generation/download/output, still requires exact integrated CI.
+PR249 remains open and stacked on PR248. This candidate incorporates currentd9ab483 and keeps
+all prior Water caption/action/source/omission protections. Run38924106205 on b7b4304 now proves
+both engines reached narrow-current-preview with actual visible Current3-page content after
+reload. The previous missing-root/offscreen harness prerequisites are corrected; no eager raster,
+forced viewport event, longer wait or application-rendering change was required. That run failed
+later: QA generation rejected source-page artwork because its toolbar omitted asset_loader.
+The ordinary guided generator already supplies that resolver. Current QA repair captures the
+isolated namespace/generation, validates even memory hits against its lease, and resolves current
+memory assets or scoped library bytes in uncopied workers without any live fallback. Actual PDF
+page ingestion-to-DOCX media, missing-asset rejection and stale-reset/worker negative cases pass
+(38 affected tests). Local PDF conversion used an explicit stub; CI actual final output remains
+required. No production generation is used as QA.
 
-The caption repair2912e1e4 retains both finding families: eight failing/twelve initial cases
-became twelve passes, and the older affected38-case suite passed. Older Required38838186086
-had2692 tests with no failures/errors/skips; this count is not assigned to a newer run.
-Latest handoff Required38840535768(parent9bab48f) and38840877450(cleanup05206cb) succeeded;
-Adaptive38840535744 and38840877629 failed respectively on Prepared-by and Water. All other
-recorded step families passed in those runs. No merge or served acceptance follows from that.
+Independent review reproduced retained Water content marked source=Omit being falsely called
+included while Include page kept it omitted. Current repair reports zero included, distinguishes
+reviewing retained pages from inclusion, and offers a separate explicitly scoped whole-section
+recovery only after all retained image/source reviews. It retains native text/tables and original
+bytes, refuses stale/reset/caption-changing actions, and retires stale automatic-add receipts.
+One page review cannot restore its companions.61 affected cases and final13 omitted cases pass.
+
+The exact b7b4304 Required38924106259 succeeded. Its Adaptive38924106205 failed only Shared
+WebKit re-entry and the QA Water asset resolver tail; all other recorded step families passed.
+Its8 Prepared journeys used the corrected bounded event observer:98 events each, same native
+node throughout, with actual final change/blur. Those passes predate the newer input guards.
+Original artifact12056143035 and the separate Training artifact12056357103 are retained privately
+with their own byte-verified hashes; do not conflate a selected derivative with an original ZIP.
+
+PR250 is the separate Training follow-up stacked on249, published at6a201157. It separates
+requirements/sessions, requires an actual date and fixes the exact locked scalar-date boundary
+using cache-safe content-named assets, without changing dependency versions.88 affected cases
+passed. Its first actual browser job117055295271 reproduced the old announcement and verified
+repaired typed/calendar/keyboard single-date behavior in both engines, then failed before native
+Clear while the Participants popup was still open. A natural ordering correction uses the same
+gestures and retains the real accessible Clear assertion; DOM/AX evidence will distinguish any
+remaining cause. No physical/assistive audio, durable session tail or output pass is claimed yet.
+
+PR251 is the separate low-reading/history/source follow-up stacked on249, published at3b642e1.
+It includes real dated/author shared history and read-only comparison, one Help, Report actions,
+About diagnostics and a single explicit source inclusion action. Current further local batches
+consolidate identity/details/admin and section editors. Review caught two concrete follow-ups:
+accepted uploads must persist for the retained detailed editor's later Generate rerun (reproduced
+and repaired with actual caller/generation coverage); picture paging must bind canonical
+comparison identity and each ordered image collection (two reproduced failures,29 tests pass).
+These changes are not considered merged, served or complete solely because committed.
 
 ### Failures that must remain visible
 
@@ -79,10 +110,10 @@ not an application change, dependency upgrade or passing browser evidence.
 | Area | Evidence state | Next operation |
 | --- | --- | --- |
 | PR248/249 integration | Implemented; current browser gate not cleared | Diagnose retained failures, finish current exact-head Required/Adaptive, review both diffs, merge parent to main only when justified, retarget cleanup to main, verify integrated and actually served revisions. |
-| One Water/source-page workspace | Implemented; browser task incomplete | Complete desktop then narrow upload, one review/caption/order/omit/reinclude path, repeated unchanged upload, durable reload, explicit blank/price rejection, real preview and DOCX/PDF. Preserve source identity, dependency gates and omitted-page guards. |
+| One Water/source-page workspace | Actual compact Current preview verified; output tail repair awaits exact CI | Complete desktop then narrow upload, one review/caption/order/omit/reinclude path, repeated unchanged upload, durable reload, explicit blank/price rejection, real preview and DOCX/PDF. Preserve source identity, dependency gates and omitted-page guards. |
 | Identity/help/navigation | Browser-observed cleanup remains | One stable contract/sites/month strip and useful Change path; combined quiet Help; one Prepared by with actual focus links; More report details for aliases/group/region; meaningful workflow-preserving deep links only. |
 | Saving/history/recovery | Browser-observed and conditional | One truthful status; actual history rows or correctly named checkpoint action; report actions for confirmed scoped discard. Preserve conflict choices, both versions, unsent versus acknowledged edits, original/history/standing scope. |
-| Training | Observed single-date AX issue remains | Separate standing staff requirements from monthly sessions. Retain statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and stable input incarnation. Reproduce and correct the single-date second-date announcement without changing to a range or hiding the warning. |
+| Training | Implemented in separatePR250; partial actual browser proof, session/output tail open | Separate standing staff requirements from monthly sessions. Retain statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and stable input incarnation. Reproduce and correct the single-date second-date announcement without changing to a range or hiding the warning. |
 | Section/editor cleanup | Browser-observed, partly conditional | Remove duplicate headings/prose, not functions. Keep one canonical Activity editor, optional grounded writing help, evidence/price gates, CMMS coverage, scoped organization/contact editors, correct ENFRA onsite versus vendor distinction, issue recovery, proposals and RFI meaning. |
 | Administration/design controls | Navigation cleanup remains | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
 | Imported cover/artwork/conflicts | Source-only conditional states not fully reached | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |

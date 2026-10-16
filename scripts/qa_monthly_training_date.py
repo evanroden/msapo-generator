@@ -94,6 +94,37 @@ def record_date(page, date, stage):
     return values
 
 
+def record_date_control(page, date, stage):
+    """Observe the real clear control without bypassing its accessible state."""
+    observed = {"stage": stage}
+    try:
+        observed["accessibility"] = date.aria_snapshot(timeout=1000)
+    except Exception as exc:
+        observed["accessibility_error"] = str(exc)[:300]
+    try:
+        observed["dom"] = date.evaluate("""root => ({
+      controls: Array.from(root.querySelectorAll('[role="button"]')).slice(0,4).map(el=>({
+        tag:el.tagName, role:el.getAttribute('role'), name:el.getAttribute('aria-label'),
+        title:el.getAttribute('title'), tabIndex:el.tabIndex,
+        focused:el===document.activeElement,
+        hiddenAncestors:(()=>{const result=[];for(let n=el;n;n=n.parentElement){
+          const style=getComputedStyle(n);
+          if(n.hidden||n.inert||n.getAttribute('aria-hidden')==='true'||
+             style.display==='none'||style.visibility==='hidden')
+            result.push({tag:n.tagName, testid:n.dataset.testid||null,
+              ariaHidden:n.getAttribute('aria-hidden'), inert:Boolean(n.inert),
+              hidden:n.hidden, display:style.display, visibility:style.visibility});
+        }return result.slice(0,8)})()
+      })),
+      openListboxes:document.querySelectorAll('[role="listbox"]').length,
+      active:{tag:document.activeElement?.tagName,role:document.activeElement?.getAttribute('role')}
+    })""")
+    except Exception as exc:
+        observed["dom_error"] = str(exc)[:300]
+    live.EVIDENCE.setdefault("date_controls", []).append(observed)
+    return observed
+
+
 def no_second_date(date):
     expect(date.locator('[aria-live="assertive"]')).not_to_contain_text("second date")
 
@@ -167,6 +198,16 @@ def exercise(browser_type, engine, *, patched):
         page.wait_for_function(READY, timeout=25000)
         date, field = open_form(page)
         expect(field).to_have_value("")
+        if patched:
+            # A multiselect deliberately keeps its popup open after selection.
+            # Complete these existing entry actions before the date's normal
+            # pointer/keyboard sequence, keeping the later clear assertion
+            # independent of the other widget's open-popup state.
+            # No extra dismissal gesture or hidden-control click is added.
+            page.get_by_role("textbox", name="Training topic", exact=True).fill(TITLE)
+            participants = page.locator('[data-testid="stMultiSelect"]').filter(has=page.get_by_text("Participants", exact=True))
+            participants.get_by_role("combobox").fill(PARTICIPANT)
+            page.get_by_role("option", name=PARTICIPANT, exact=True).click()
         field.fill("2026/09/14")
         field.press("Tab")
         expect(field).to_have_value("2026/09/14")
@@ -200,11 +241,11 @@ def exercise(browser_type, engine, *, patched):
         record_date(page, date, "keyboard-single-selection")
         baseline = receipt(page)
         assert baseline and baseline["working"] == baseline["durable"]
-        page.get_by_role("textbox", name="Training topic", exact=True).fill(TITLE)
-        participants = page.locator('[data-testid="stMultiSelect"]').filter(has=page.get_by_text("Participants", exact=True))
-        participants.get_by_role("combobox").fill(PARTICIPANT)
-        page.get_by_role("option", name=PARTICIPANT, exact=True).click()
-        date.get_by_role("button", name="Clear value", exact=True).click()
+        record_date_control(page, date, "before-native-clear")
+        clear = date.get_by_role("button", name="Clear value", exact=True)
+        expect(clear).to_have_count(1)
+        expect(clear).to_be_visible()
+        clear.click()
         expect(field).to_have_value("")
         expect(date.locator('[aria-live="assertive"]')).to_have_text("")
         record_date(page, date, "cleared-date")
@@ -251,6 +292,8 @@ def exercise(browser_type, engine, *, patched):
         try:
             live.EVIDENCE["last_receipt"] = receipt(page)
             live.EVIDENCE["date_dom"] = page.locator('[data-testid="stDateInput"]').all_text_contents()
+            if date.count() == 1:
+                record_date_control(page, date, "first-failure")
             live.screenshot(page, "first-failure")
         except Exception:
             pass

@@ -64,6 +64,27 @@ def _working_report(saved):
     return draft
 
 
+def _qa_asset_loader(draft, live_storage_root):
+    """Resolve one accepted QA draft without a worker or reset escaping scope."""
+    if testing.scope() is None or testing.generation() is None:
+        raise ValueError("QA image resolution requires the current isolated test generation.")
+    activate = testing.capture_namespace()
+    prefix = "report_guided_" + _signature((draft.profile.contract, draft.profile.key, draft.period.key))
+    assets = dict(st.session_state.get(prefix + "_assets", {}))
+
+    def load(reference):
+        # A renderer may invoke its resolver in a thread without ContextVars.
+        # Restore only the captured QA identity/lease, never Streamlit context.
+        with activate():
+            # Validate even a memory hit against the on-disk generation marker.
+            # A reset cannot reuse these bytes or silently create a new lease.
+            testing.data_dir(live_storage_root)
+            return (assets[reference] if reference in assets else
+                    library.read_asset(draft.profile.contract, draft.profile.key, reference))
+
+    return load
+
+
 def _queue_compare_request() -> None:
     """Keep Compare through editor/preview reruns; do not mistake click styling for result."""
     if not st.session_state.get("monthly_qa_compare_pending"):
@@ -440,7 +461,8 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
                     try:
                         with st.spinner("Generating isolated Word and PDF files…"):
                             package = generate_report(
-                                working, acknowledged_fingerprint=working.fingerprint)
+                                working, acknowledged_fingerprint=working.fingerprint,
+                                asset_loader=_qa_asset_loader(working, live_storage_root))
                     except (ValueError, OSError) as exc:
                         _finish_generation(request, "rejected", str(exc))
                     else:

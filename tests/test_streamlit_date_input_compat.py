@@ -133,3 +133,47 @@ def test_real_metadata_then_date_install_sequence_preserves_entry_and_branding(b
     metadata.install_branding(root, branding_dir=branding)
     assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
     assert {path: path.read_bytes() for path in root.rglob("*") if path.is_file()} == snapshot
+
+
+def test_locked_native_clear_keeps_its_accessible_button_and_keyboard_contract():
+    """The native selector is valid; do not bypass it with a hidden SVG click.
+
+    Execute the actual locked BaseWeb render method, rather than constructing
+    a substitute clear control. This covers emitted props/handlers only; the
+    CI browser journey separately observes the mounted accessibility tree.
+    """
+    installed = Path(streamlit.__file__).parent / "static" / "static" / "js"
+    candidates = [path for path in installed.glob("*.js")
+                  if b"t.datepicker.selectSecondDatePrompt" in path.read_bytes()]
+    assert len(candidates) == 1
+    source = candidates[0].read_text()
+    start = source.index("value:function(){var e,t=this,n=this.props,r=n.clearable") + len("value:")
+    end = source.index("}},{key:`render`,", start) + 1
+    method = source[start:end]
+    code = r'''
+const assert=require('node:assert/strict');
+const method=JSON.parse(process.argv[1]);
+const k={createElement:(component,props,...children)=>({component,props,children})};
+const values={mini:'mini',compact:'compact',default:'default',large:'large'};
+const render=new Function('Fr','m','qn','Jn','Hn','j','Zr','k','Pr','ae','d','zn',
+  'return ('+method+')')(v=>v,(_override,component)=>[component,{}],
+    'container','svg',()=>({}),values,(obj,key,value)=>(obj[key]=value,obj),k,
+    Object.assign,(_props,handler)=>handler,(_props,handler)=>handler,{textarea:'textarea'});
+let cleared=0,prevented=0;
+const instance={props:{clearable:true,value:'2026/09/16',size:'default',type:'text'},
+ state:{isFocusVisibleForClear:false},onClearIconClick:()=>{cleared++}};
+const clear=render.call(instance).children[0];
+assert.equal(clear.component,'svg');
+assert.equal(clear.props.role,'button');
+assert.equal(clear.props['aria-label'],'Clear value');
+assert.equal(clear.props.title,'Clear value');
+assert.equal(clear.props.tabIndex,0);
+clear.props.onClick();
+for(const key of ['Enter',' '])clear.props.onKeyDown({key,preventDefault:()=>{prevented++}});
+clear.props.onKeyDown({key:'Escape',preventDefault:()=>{prevented++}});
+assert.equal(cleared,3);assert.equal(prevented,2);
+for(const changed of [{value:''},{value:null},{clearable:false},{disabled:true},{readOnly:true}])
+ assert.equal(render.call({...instance,props:{...instance.props,...changed}}),null);
+'''
+    subprocess.run(["node", "-e", code, json.dumps(method)], check=True,
+                   capture_output=True, text=True)
