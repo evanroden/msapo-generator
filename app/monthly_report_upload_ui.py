@@ -324,7 +324,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         if pages and page in sources.image_numbers(content):
             kind, reason = page_status(source.page_texts[page-1], unreadable=page in source.needs_vision)
             blocked_content = kind in ("pricing", "legal", "blank", "signature")
-            priced_caption = contains_price(captions.get(page, ""))
+            priced_caption = contains_price(caption)
             blocked = blocked_content or priced_caption
             if priced_caption:
                 reason = "Remove pricing from the caption before including this page."

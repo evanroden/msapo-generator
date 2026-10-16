@@ -1,0 +1,32 @@
+{
+  "members": {
+    "Json.C9LKsaSO.js": {
+      "references": [
+        "DynamicIcon.C4mhYDxF.js",
+        "ErrorElement.CD9rg9H1.js",
+        "ErrorHandling.H5STbbYb.js",
+        "dist.CETvsizV.js",
+        "emotion-is-prop-valid.esm.CygBv61C.js",
+        "emotion-styled.browser.esm.C7ab1lZK.js",
+        "getColors.DtAxY2Hd.js",
+        "reactJsonViewCompat.BUf9PyG0.js",
+        "rolldown-runtime.DAXXjFlN.js",
+        "useCopyToClipboard.31Hpj0n3.js",
+        "useEmotionTheme.BIIZ9T_O.js",
+        "useFloatingOverlay.NyFxHaQF.js"
+      ],
+      "sha256": "f456ef7e08558b1999e35be264c3e84f54bc1e7369d9125e5879d04ef8a6e05d"
+    },
+    "useFloatingOverlay.NyFxHaQF.js": {
+      "references": [
+        "emotion-is-prop-valid.esm.CygBv61C.js",
+        "emotion-styled.browser.esm.C7ab1lZK.js",
+        "react-dom.DZwq-Xzd.js",
+        "rolldown-runtime.DAXXjFlN.js"
+      ],
+      "sha256": "0bb3da6d472fd03e249c6c42e6cb3c1e6f4e9f57804278d94cda231638d06e80"
+    }
+  },
+  "root": "useFloatingOverlay.NyFxHaQF.js",
+  "streamlit_version": "1.61.1"
+}

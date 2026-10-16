@@ -118,12 +118,12 @@ def save_version(page, identity, revision, author, activity):
 
 
 def history_rows(page):
-    grid = history(page).get_by_test_id("stDataFrame")
+    grid = history(page).get_by_role("table", name="Saved report versions", exact=True)
     expect(grid).to_have_count(1)
     expect(grid).to_be_visible()
     expect(grid.get_by_role("columnheader", name="Version", exact=True)).to_have_count(1)
     rows = grid.get_by_role("row").evaluate_all("""rows => rows.map(row=>
-      [...row.querySelectorAll('[role="gridcell"]')].map(cell=>cell.textContent.trim())).filter(cells=>cells.length)""")
+      [...row.querySelectorAll('td')].map(cell=>cell.textContent.trim())).filter(cells=>cells.length)""")
     assert [row[0] for row in rows] == ["3", "2", "1"], rows
     assert [row[2] for row in rows] == [AUTHOR_TWO, AUTHOR_ONE, "Synthetic QA Operator"], rows
     assert all(re.fullmatch(r"[A-Z][a-z]{2} \d{2}, \d{4} · \d{2}:\d{2} UTC", row[1]) for row in rows), rows

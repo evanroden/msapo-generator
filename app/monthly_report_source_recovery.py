@@ -28,8 +28,12 @@ def retain_unavailable(available, missing):
 
 
 def used_missing_sources(draft, missing):
+    from app.monthly_report_section_uploads import source_route
     keys = used_block_keys(draft)
-    records = tuple(block for block in draft.blocks
+    # A removed page's remembered destination is not supporting evidence.
+    # Actual narrative/page/provenance references remain in this dependency scan.
+    records = tuple(replace(block, references=tuple(ref for ref in block.references if source_route(ref) is None))
+                    for block in draft.blocks
                     if block.key in keys and block.source != "Omit") + draft.follow_ups
     serialized = "\n".join(json.dumps(asdict(record), ensure_ascii=False) for record in records)
     return tuple(source for source in missing if source.id in serialized)

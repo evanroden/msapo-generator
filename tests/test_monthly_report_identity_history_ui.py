@@ -46,6 +46,16 @@ def save(app):
     assert not app.exception
 
 
+def history_tables(app):
+    from lxml import html
+    tables = []
+    for item in app.get('html'):
+        body = getattr(item.proto, 'body', '')
+        if 'aria-label="Saved report versions"' in body:
+            tables.extend(html.fromstring(body).xpath('.//table[@aria-label="Saved report versions"]'))
+    return tables
+
+
 def test_one_help_and_scoped_report_actions_keep_native_fields(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     labels = [item.label for item in app.expander]
@@ -61,9 +71,10 @@ def test_one_help_and_scoped_report_actions_keep_native_fields(monkeypatch, tmp_
     assert "original files" in scope and "standing site information" in scope
 
 
-def test_history_rows_and_old_version_inspection_keep_current_unsaved_draft(monkeypatch, tmp_path):
+@pytest.mark.parametrize('first_editor', ['First editor', 'Synthetic <North> [name](https://example.invalid) *Reviewer*'])
+def test_history_rows_and_old_version_inspection_keep_current_unsaved_draft(monkeypatch, tmp_path, first_editor):
     app = monthly(monkeypatch, tmp_path)
-    widget(app, "text_input", "Prepared by").set_value("First editor").run()
+    widget(app, "text_input", "Prepared by").set_value(first_editor).run()
     widget(app, "text_area", "Activity summary").set_value("First saved wording.").run()
     save(app)
     widget(app, "text_input", "Prepared by").set_value("Second editor").run()
@@ -72,9 +83,16 @@ def test_history_rows_and_old_version_inspection_keep_current_unsaved_draft(monk
     widget(app, "text_area", "Activity summary").set_value("Unpublished manual wording.").run()
     open_history(app)
     before = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", PERIOD)
-    rows = next(item.value for item in app.dataframe if "Saved" in item.value.columns)
-    assert list(rows["Version"]) == [2, 1]
-    assert list(rows["Saved by"]) == ["Second editor", "First editor"]
+    tables = history_tables(app)
+    assert len(tables) == 1
+    table = tables[0]
+    headings = table.xpath('./thead/tr/th[@scope="col"]/text()')
+    assert headings == ['Version', 'Saved', 'Saved by']
+    values = [[cell.text_content() for cell in row] for row in table.xpath('./tbody/tr')]
+    rows = {heading: [row[index] for row in values] for index, heading in enumerate(headings)}
+    assert rows["Version"] == ['2', '1']
+    assert rows["Saved by"] == ["Second editor", first_editor]
+    assert not table.xpath('.//a|.//img|.//script')
     assert all("UTC" in value for value in rows["Saved"])
     widget(app, "selectbox", "Inspect a saved version").set_value(1).run()
     assert not app.exception
@@ -95,7 +113,7 @@ def test_history_content_keeps_the_preparer_privacy_gate(monkeypatch, tmp_path):
     widget(app, "text_input", "Prepared by").set_value("").run()
     assert not app.exception
     assert not any(item.label == "Inspect a saved version" for item in app.selectbox)
-    assert not any("Saved" in item.value.columns for item in app.dataframe)
+    assert not history_tables(app)
     assert any("Enter Prepared by" in item.value and "shared report history" in item.value
                for item in app.caption)
 

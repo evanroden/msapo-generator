@@ -6,8 +6,9 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
-Refreshed 2026-10-16 20:22 UTC from GitHub refs/runs/jobs and independently downloaded artifacts.
-This candidate extends published529625b with published parent1e3516e and the reviewed history/photo QA changes.
+Refreshed 2026-10-16 21:09 UTC. This finishing candidate reconciles published parent358e97e
+with its own photo/history, inherited-caption and preferred-logo repairs. No new merge or live
+observation occurred. Remote child252 is still8c53fb0 until this coherent batch is published.
 Later gate changes require another read. Statuses are
 scoped: **Observed** = browser-observed; **Conditional** = source-only conditional; **Defect** =
 reproduced defect; **Implemented** = implemented-needs-verification; **Verified(scope)** =
@@ -24,14 +25,14 @@ first-attempt generations and12 actual files. This is PR248 synthetic release pr
 
 | Code | Exact head / reported base | Reported PR integration | Current gate evidence |
 | --- | --- | --- | --- |
-| [PR249](https://github.com/evanroden/msapo-generator/pull/249), open/unmerged | [1e3516e](https://github.com/evanroden/msapo-generator/commit/1e3516e5bfa52a4b27202b36418e3f272a4c0ef4) / main4ca | Current checkout proof pending | Tests38961181930 and Adaptive38961181932 running. Previous0959 integration06ff580 had independently2,851/0/0/0 plus container/resource; Adaptive38953590080 failed only Fresh WebKit native RO. New caption/Done and stricter QA are not covered by that earlier count. |
+| [PR249](https://github.com/evanroden/msapo-generator/pull/249), open/unmerged | [358e97e](https://github.com/evanroden/msapo-generator/commit/358e97e058c21107839d7f03d631f655f7ab9bab) / main4ca | Reported107c5195795d8fe0479bf1065e5de568a02113db; checkout verification pending | Tests38966735323 and Adaptive38966735321 running. Container/resource pass; local frontend/publication101, Water prerequisites48 and route/dependency45 checks pass, overlapping counts not summed. Earlier1e Required2916/1 fixture failure and Adaptive Water prerequisite/separate diagnostic failures retained. |
 | [PR250](https://github.com/evanroden/msapo-generator/pull/250), open/unmerged | [d7da87d](https://github.com/evanroden/msapo-generator/commit/d7da87daba5b83c00e0f566f0e1d6becd0d85664) /0959 | [a3a96dd](https://github.com/evanroden/msapo-generator/commit/a3a96dd714777843467c37cdd1195993a5984cc8) | Tests38954899047 SUCCESS, independently2,893/0/0/0 plus container/resource. Adaptive38954899153 FAILED only fresh Water WebKit native RO; native date job117155170545 independently passed its two-engine date/session/output scope and8 actual files. All108 actual PDF page instances and54 pages from two unique DOCX files are reviewed at readable scale; named LibreOffice renderers, synthetic scope only. |
 | [PR251](https://github.com/evanroden/msapo-generator/pull/251), open/unmerged | [4c3dac2](https://github.com/evanroden/msapo-generator/commit/4c3dac25cf596e4f6c1b1b2a2f4ad85ab20d9aa2) /0959 | [a5bb015](https://github.com/evanroden/msapo-generator/commit/a5bb0157bad8c4433962a03229c9ec128c05ddc9) | Tests38954899530 SUCCESS, independently2,968/0/0/0 plus container/resource. Adaptive38954899330 FAILED only fresh Water WebKit native RO; all other existing families/full Water passed. |
-| [PR252](https://github.com/evanroden/msapo-generator/pull/252), open/unmerged | [529625b](https://github.com/evanroden/msapo-generator/commit/529625b5e9315db86c511aaf1f8b0b7f0df2c49d) /4c3dac2 | [a9e8ac9](https://github.com/evanroden/msapo-generator/commit/a9e8ac9c039941daad815fe1702c26a71467ba7c) | Tests38957483665 SUCCESS, independently3,295/0/0/0 plus container/resource. Adaptive38957483651 FAILED Fresh and history; all pre-existing families/full Water/first-site passed. Exact first failures below. |
-| Current finishing candidate after529 | Published parent1e3516e reconciled normally; historycd15df0 and photoQA34fb3b7 applied | New exact integration/CI still required | Water Done collects captions and rejects stale incarnation/reset actions; history excludes only three guarded converter-runtime paths and uses actual comparison heading; new native photo journey checks durable edits, retained assets and actual outputs. This is not release proof. |
+| [PR252](https://github.com/evanroden/msapo-generator/pull/252), open/unmerged | [8c53fb0](https://github.com/evanroden/msapo-generator/commit/8c53fb0f356a054c76ec97b66ec0d87f6ab35ec3) /2514c | df5888e7089a2a72b60642a85b9b794e0cc34af7 | Required38961654234:3,390 cases,1 standalone Water fixture failure,0 errors/skips; container/resource passed. Adaptive38961654160: full Water prerequisite, Fresh WebKit native RO, photo stale controls, Chromium history headers fail; WebKit history passes its complete tail. Local photo/history114 checks pass, browser repair verification pending. |
+| Current finishing candidate after8c | Published parent358e97e reconciled normally; local32e3b14 photo/history/logo/caption repairs preserved | New exact integration/CI still required | Post-review photo controls refresh only after complete draft/recovery attempt; history index has real escaped table headers; inherited caption price is checked; automatic preferred-logo skips survive the real cover card. Exact reconciled local gate:216 tests passed, zero failures/errors/skips,115.20s on locked Python3.12.14. Browser verification remains required. |
 
-PR250/251 are based on PR249; PR252 is based on the workspace branch at4c. PR252529 already
-incorporates published4c; this candidate also reconciles the separately published new parent1e3516e.
+PR250/251 are based on PR249; PR252 is based on the workspace branch at4c. PR2528c already
+incorporates published4c; this candidate also reconciles the separately published new parent358e97e.
 A reported integration SHA or mergeable value is not a merge. Merge the parent to main normally
 only after justified exact gates, reconcile/retarget each child to main and inspect its own delta;
 never merge a child into its feature parent. No docs-only deployment or CI dispatch is requested.
@@ -44,10 +45,10 @@ never merge a child into its feature parent. No docs-only deployment or CI dispa
 | Full Water compact activation; CONT09, SIM-W01–07, ADP-A12–13/A16/A20 | Observed | 19d/970c: WebKit durable order[2,1], but one View preview action left aria-expandedfalse/pairOpen absent for20s; no browser error. Chromium completed actual files. Later full Water0959/384 passed. Original cause remains unknown. | Use retained1085→cbb5bd9 original-button binding/trusted-click probe on the next coherent build; keep one action, Current/image/output and visibility bounds. |
 | Fresh Water/native dropdown; CONT09, SIM-W, ADP-A12/A16/A20 | Implemented | Exact0959 naturally delivered all three reconstructed primary/Tooltip/virtualizer bodies in both engines; both five-stage canonical tails complete. WebKit still has a native RO error. Zt/Cr source models do not identify its sole owner. | Inspect the exact native error onset/owner; preserve strict errors and source models' conditional-height limit. No whitelist, rescue, synthetic event or timeout change. |
 | Identity/Help/sites/navigation; audit A01–14, SIM-G/S/C, UX01, ADP-A16–17 | Implemented | PR251 code and synthetic/AppTest scopes; current Required2,968 passes but overall Adaptive fails separate Fresh Water native RO. b2c initial keyboard selection passed but one later deselection failed without delivery evidence. | Verify exact native actions/focus and deep-link workflow/section recovery; retain one full-name site input and all Change/More details functions. |
-| Save/recovery/history/admin; audit D/E/F, CONT01–03, SRC03, ADP-A10–11 | Implemented | PR251 status/history/admin exists;529 WebKit completes all nine cover stages then reaches three versions. Its next comparison-heading failure and Chromium exact converter-marker failure are corrected in this candidate, with later browser tail still open. | Run the next coherent exact history/cover path; preserve dated author/version rows, read-only inspection/reload, both-version conflict choice, partial-output/shared-save errors and zero display-driven writes. |
+| Save/recovery/history/admin; audit D/E/F, CONT01–03, SRC03, ADP-A10–11 | Implemented | PR251 status/history/admin exists;529 WebKit completes all nine cover stages then reaches three versions. Those older test prerequisites were corrected. Current8c WebKit completes its history tail; Chromium exposes a real header-accessibility gap now repaired locally with a semantic table. | Run the next coherent exact history/cover path; preserve dated author/version rows, read-only inspection/reload, both-version conflict choice, partial-output/shared-save errors and zero display-driven writes. |
 | Training matrix/sessions/date; SIM-T01–07, ORIG-T01–05, ADP-A08/A11/A16–17, UX21 | Verified(scope) | Prior19d/970c date job117138939790 independently completed both baselines/repaired references/session/output tails and8 actual files. Currentd7da/a3a96dd independently repeats both-engine date/session/output success and8 verified files; overall Adaptive still fails fresh Water native RO. | All108 current PDF page instances and54 pages from two unique DOCX files are reviewed: CI PDF producer LibreOffice24.2; DOCX renderer LibreOfficeDev26.8alpha. Resolve the separate integrated native error; retain raw blank/Not recorded/Pending/Completed/Not required, unknown hours, one date, participants, stale-incarnation and standing/monthly separation. Physical/assistive audio remains open. |
 | Organization notes/contacts; SIM-O01–08, SRC01–02, CONT07, ADP-A08/A11 | Implemented | Reproduced native overwrite/disappearing cleared notes/Add-contact early rerun;22 new AppTests and116 affected checks on recorded revisions. Published529 includes the repair. | Verify exact integrated native notes/reentry/Done/Add/source/recovery paths and scoped shared-save concurrency; retain true contacts schema/chart alternative/page-separation acceptance. |
-| Progress photos; SIM-V01–03, CONT07, ADP-A08/A18 | Implemented | Reviewed5918438 application is published in529 with33 new native/source cases and81 affected passes. Exact529 Required3,295 passes. This candidate adds the real uploader/action/reload/output browser journey; its first exact browser run is pending, with a separate local setup failure retained. | Complete the new exact composed source gate and real-browser upload/order/caption/Add/Remove/Done/reload/output journey; retain originals, reviews, density and unrelated text through the durable commit. |
+| Progress photos; SIM-V01–03, CONT07, ADP-A08/A18 | Implemented | Reviewed5918438 application is published in529 with33 new native/source cases and81 affected passes. Exact529 Required3,295 passes. This candidate adds the real uploader/action/reload/output browser journey; its8c browser first run reproduces stale review controls in both engines. The new refresh and same-packet Activity/durable regression pass locally; a separate earlier setup failure is retained. | Complete the new exact composed source gate and real-browser upload/order/caption/Add/Remove/Done/reload/output journey; retain originals, reviews, density and unrelated text through the durable commit. |
 | Sources/pages/CMMS/writing; audit B/C/D, SRC01/SRC04–06, CONT04/06/08/09, SIM-A/W | Implemented | Water model/broad source manager, non-Water atomic outcome and resolved-card/caption/read commits exist in separate scopes; not every conditional or authentic route accepted. | Trace each combined action to reachable Add files/reuse, Report pages, source manager, mappings/totals/help. Keep per-page decisions, reference-only distinction, missing/price/site blockers, unknown coverage/NR and grounded Add/Replace/Dismiss. |
 | Scorecards/thermal/standing; SIM-SC01–05, CONT07, ADP-A11/A16 | Implemented | Synthetic source/UI/failure/concurrency checks do not establish authentic mapping, reuse or deployment retention. | Verify units/NR/qualified/missing values, contract/facility/service/system scope, safe first-fill/manual overrides, failed-save/retry/history and zero display writes. |
 | Other sections/conditional artwork; audit C/D/F, SIM-M/MC/I/CR/P/R, SRC02/SRC05 | Conditional | Specific MBCx/RFI/proposals/issue-evidence/section-copy slices implemented with scoped tests; complete audit mapping and every conditional caller remain incomplete. | Reproduce the next actual gap before edits; preserve MBCx/onsite-vendor meaning, proposals decisions, RFI headers/continuations/Add, capital unknown dates, Subcontractor scope and safe unread-art recovery. Finish available code work independently. |
@@ -58,6 +59,64 @@ never merge a child into its feature parent. No docs-only deployment or CI dispa
 | Six adaptive journeys; ADP-J01–06/A01–20, UX04/22/23, CONT10 | Verified(scope) | Isolated emulated Monthly/PO/Expense book/tabletop/compact scopes only; active failures and physical/assistive/IME/latency/eviction/durability breadth remain open. | Preserve every coverage ID and one authoritative editor, asymmetric/reverse/keyboard/source return, scoped writes, PO two-file and Expense receipt/split/share-cancel integrity; no business sends. |
 
 ## Active first failures and discriminators
+
+- **Current automatic review, checked without starting another reviewer:** the older empty-Omit
+  and no-source retained-content comments are already covered by current code and dedicated
+  tests, including the actual Fresh journey. The restored Vendor-service-as-Water last-page
+  route defect reproduces and is repaired in this parent candidate: one exact source-byte/
+  section route marker survives report serialization, without representing an included image,
+  approving a page, changing source classification or adding a source-schema field. Actual
+  attachments retain precedence; wrong source ID/bytes/section/malformed markers cannot reroute.
+  A new section session can deliberately re-include the excluded page once. Route-only metadata
+  is excluded from the missing-support dependency scan; real narrative/page references still
+  block missing-source output. Forty-five route/source/review checks pass. A95-case earlier
+  affected run had94 pass and one new dependency-test setup failure: the synthetic template used
+  demo_water, not the production water_reports block. Both setup failures are retained; correcting
+  that schema makes the intended missing-source negative meaningful.
+- **Finishing-source review fixes (local,37 checks pass):** source-manager Include now validates
+  the displayed inherited caption before review, preserving deliberate absent/blank metadata
+  and legitimate0/NR. Its first regression used Change even though priced material correctly
+  opened under Review source files; the corrected native entry reproduces the enabled button.
+  Reopening an actual Starting cover card now retains automatic_logo_skips and cannot silently
+  reselect an exact preferred-logo skip. Existing exact-source/profile/month/role and explicit
+  deselection recovery gates remain. First failing receipts remain separate from corrected tests.
+
+
+- **Current1e/8c Water prerequisites (implemented):** both browser engines retain the
+  clear caption with Done in working/durable state and complete its required review. Done closes
+  the editor, so the next intentional edit must use ordinary Edit pages before Page to review.
+  The standalone Required fixture also omitted the production caller's post-commit refresh;
+  it now consumes that refresh only after its own returned source/block commit. No rescue
+  gesture, timeout, native-error filter or business/output assertion was added or removed.
+  The exact48 affected local checks pass; first CI failures remain preserved.
+- **Current8c Progress photos (reproduced/implemented):** both browsers save both page reviews
+  but earlier section controls remain stale. A full production-fixture AppTest reproduces this.
+  The finishing patch requests one existing refresh after all image decisions, complete draft
+  and recovery attempt. Same-packet Activity, both review decisions, matching journal and a
+  no-change display rerun are checked; photo/history114 affected local tests pass.
+- **Current8c history (observed/implemented):** Chromium paints the three real version rows,
+  but the canvas fallback header is not exposed by the accessible-role locator. WebKit completes
+  all nine cover and seven history stages including reload and another context. The finishing
+  patch uses a real escaped, read-only HTML table for this immutable version index only, keeping
+  native editable report grids, all dated authors/versions, inspection and conflict choices.
+  Real header/row semantics and literal markup-like author text are locally tested; current
+  Chromium/browser and physical assistive verification remain pending.
+- **Floating UI resize feedback (conditional defect class, repair candidate):** original
+  diagnostic12072454773 is6,154,563 bytes, SHA256
+  `67c21b951bd22a82b064853349c2a4a86f623fc32d693faa49a2eb2156070801`.
+  Exact native rn/vr and Aria callbacks reproduce a current-cycle width write at trigger depth19
+  leaving independent popup/list observers at depths4/5 skipped. Five negative controls avoid
+  it. The retained trace does not measure the width setter/microtask checkpoint or prove sole
+  cause of the8218ms native error. This candidate defers only rn's RO-driven update into one
+  cancelled/coalesced lifetime-owned frame. Initial, scroll, window resize, layout shift,
+  animation-frame paths and native errors remain. Its own unobserve/reobserve is preserved;
+  no global observer wrapper or eager render is introduced. Actual source model/lifecycle3
+  checks pass; exact integrated source/publication and strict native browser gates remain.
+  Two initial lifecycle test failures were model prerequisites: duplicate removeEventListener
+  must be idempotent, and Node lacks a default IntersectionObserver. Their records remain.
+  The archived one-shot derivative refuses the new generation and is not rerun. Ordinary Fresh
+  now requires all four naturally delivered repaired body hashes, including Floating UI.
+
 
 - **Water Done / same-packet caption:** two actual caller cases reproduced loss of nonempty/blank
   captions, and two held Leave-out cases reproduced stale incarnation/reset actions. Published1e3516e
@@ -223,9 +282,10 @@ unchanged512MiB/0.5CPU CI gate distinct from the previously observed Render1CPU/
 
 ## Next integration, restart and release rule
 
-1. Diagnose the exact0959 first failure and finish the specific justified repair/experiment before
-   another parent publication. Preserve all first-failure artifacts; do not rerun unchanged gates.
-2. Integrate the pending coherent photo and scoped history/Water evidence batches, refresh main
+1. Verify published358e97e exact Required/Adaptive and its preserved first failures; then publish
+   the reconciled photo/history/logo/caption candidate after
+   exact source/publication tests. Preserve first failures; no repeat owner diagnostic or unchanged gate retry.
+2. The actually published parent is reconciled in this photo/history repair batch. Refresh main
    and all four PR refs, reported/tested integration SHAs and exact Required/Adaptive results.
    Reconcile dependent ancestry and inspect each own delta. No child merges into a feature parent.
 3. After justified normal integration, verify exact merged-head CI independently, then full

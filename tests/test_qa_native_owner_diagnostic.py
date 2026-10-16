@@ -16,12 +16,21 @@ from scripts import qa_fresh_native_owner_diagnostic as diagnostic
 from test_streamlit_frontend_compat import bundle, files
 
 
+def historical_client(root, scripts):
+    sources, members = compat._locked_sources(scripts)
+    previous = compat._publication(sources, members, False, floating_resize=False)
+    for native, raw in previous.payloads.items():
+        (scripts / previous.names[native]).write_bytes(raw)
+    html = (root / "index.html").read_bytes()
+    (root / "index.html").write_bytes(compat._publication_html(html, compat.INDEX_BUNDLE, previous, (previous,)))
+
+
 @pytest.fixture
 def client(bundle, tmp_path_factory):
     root, scripts = bundle
     native = Path(streamlit.__file__).parent / "static/static/js" / assets.FLOATING
     shutil.copyfile(native, scripts / assets.FLOATING)
-    compat.patch_bundle(root, installed_version="1.61.1")
+    historical_client(root, scripts)
     owner = tmp_path_factory.mktemp("native-owner")
     copy = owner / "static"
     before = files(root)
@@ -53,10 +62,19 @@ def test_exact_copy_changes_only_three_observed_sources_and_retains_native_impor
 
 def test_mutated_native_source_refuses_before_creating_copy(bundle, tmp_path_factory):
     root, scripts = bundle
-    compat.patch_bundle(root, installed_version="1.61.1")
+    historical_client(root, scripts)
     (scripts / assets.FLOATING).write_bytes(b"unexpected native dependency")
     destination = tmp_path_factory.mktemp("refused") / "static"
     with pytest.raises(RuntimeError, match="locked Floating"):
+        assets.build_copy(root, destination)
+    assert not destination.exists()
+
+
+def test_archived_diagnostic_refuses_new_repair_generation(bundle, tmp_path_factory):
+    root, _ = bundle
+    compat.patch_bundle(root, installed_version="1.61.1")
+    destination = tmp_path_factory.mktemp("new-generation") / "static"
+    with pytest.raises(RuntimeError, match="archived one-shot"):
         assets.build_copy(root, destination)
     assert not destination.exists()
 

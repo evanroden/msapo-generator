@@ -1860,3 +1860,48 @@ Omit, a deliberately single-section output was renumbered, and native PDF JPEG p
 satisfy exact PNG hashes. Populated Progress Omit remains conditional AppTest scope, not a new
 browser claim. No local browser, paid processing, business send or production write occurred.
 
+
+
+## Superseded PR249 publication note at1e3516e
+
+# ENFRA Phase 1 / Phase 2 — remaining work
+
+This is the single current remaining-work ledger. Historical evidence and failures stay in
+`PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
+Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
+
+## Current branch and evidence boundary
+
+2026-10-16 20:15 UTC publication candidate, based on published0959bb2. Main and last actual
+served proof remain4ca42c5; no new release is claimed. Required38953590067 on the preceding
+integration independently passed2,851 tests, container and resource gates. Adaptive38953590080
+failed only Fresh Water's WebKit native ResizeObserver gate; both five-stage business tails and
+the full Water upload/order/omission/preview/export journey passed. Those are preceding-build
+results, not the new caption/Done repair's browser proof.
+
+This batch adds the reviewed Water repair below, keeps the stricter unfiltered native error gate,
+and extends the existing full browser journey with one native clear-caption/Done operation. It
+requires the deliberately blank caption in working AND durable state, still pending review,
+before continuing the original caption/order/omission/reload/Current/Word/PDF assertions.
+
+One explicitly marked PR249 head also runs a separate diagnostic WebKit process against an
+isolated copy of three exact locked frontend modules. Inline registration/callback markers seek
+to distinguish native observer owners; there is no global observer wrapper, callback proxy,
+timing workaround, extra UI gesture, error filter or production asset mutation. The copied
+import graph and first naturally delivered body hashes must match an independently reconstructed
+manifest. Registration/target/callback bounds and the first unfiltered native error are retained.
+This diagnostic has its own artifact, runs only on attempt1 of the exact marked PR249 head,
+and cannot make the ordinary failed journey pass. Multiple owners, missing delivery, overflow,
+non-reproduction or an uninstrumented owner remain inconclusive; the last callback alone is not
+causal proof. Its own exact25 source/model checks passed; no local browser was run.
+
+The separately published529625b finishing branch now has independent Required3,295/0/0/0 plus
+container/resource success. Its Adaptive also retains a distinct Chromium Month popup that opens
+then closes about38ms after one native click, and a WebKit native resize error. The responsible
+close trigger is unassigned. Its history failures have narrower proved test causes: an exact
+temporary conversion marker was mistaken for durable storage, and the comparison locator used
+an obsolete heading. Corrections remain separately reviewable; no retry erases these failures.
+Current Trainingd7's separate two-engine native date/session/output job passed. All108 actual
+PDF page instances and54 pages from the two unique DOCX files were reviewed with named
+LibreOffice-compatible renderers; this is synthetic scope, not Microsoft Word, genuine master,
+physical-device or assistive-audio acceptance. Both phases and all children remain unaccepted.

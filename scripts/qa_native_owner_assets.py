@@ -70,6 +70,8 @@ def expected_assets(source):
     """Derive bytes from the pinned ordinary client, never from served output."""
     source = Path(source)
     selected = compat.selected_frontend(source)
+    if selected["floating_resize"]:
+        raise RuntimeError("The archived one-shot owner diagnostic supports only the pre-Floating-repair client")
     if selected["virtualizer_resize"] is not True:
         raise RuntimeError("The diagnostic requires the current repaired virtualizer client")
     scripts = source / "static/js"

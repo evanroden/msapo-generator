@@ -142,6 +142,33 @@ def source_context(tmp_path):
     return source, inspection, previous, incoming, plans
 
 
+def test_opening_actual_cover_card_preserves_preferred_logo_receipt_and_skip(tmp_path):
+    from app.monthly_report_sections import section_reviews
+    path, inspection, previous, incoming, plans = source_context(tmp_path)
+    cover = next(section for section in section_reviews(inspection) if section.key == 'cover')
+    old_skip = plans['cover']['automatic_logo_skips']
+    app = AppTest.from_string('''
+import streamlit as st
+from app.monthly_report_section_ui import _section_card
+from app.monthly_report_model import ReportPeriod
+from app.monthly_report_ui import _field
+if 'plans' in st.session_state:
+ _section_card(st.session_state['section'], st.session_state['path'], st.session_state['inspection'],
+               ReportPeriod(2026,9), 'synthetic_logo', _field, st.session_state['plans'], True)
+''').run()
+    for key,value in {'plans':plans,'section':cover,'path':path,'inspection':inspection}.items():
+        app.session_state[key]=value
+    app.run()
+    assert not app.exception
+    revised = app.session_state['plans']
+    assert revised['cover'].get('automatic_logo_skips') == old_skip
+    assert not set(old_skip['brand_logo']) & set(revised['cover']['selected'])
+    retained = retain_automatic_logo_contributions(incoming, previous, verified=True,
+        inspection=inspection, plans=revised.values(), preferred_logos=('brand_logo',))
+    assert retained == previous
+    assert merge_starting_drafts(previous, retained, previous) == previous
+
+
 @pytest.mark.parametrize("change", ["human", "omitted", "cleared", "removed"])
 def test_consumed_logo_receipt_preserves_current_report_changes(tmp_path, change):
     _, inspection, previous, incoming, plans = source_context(tmp_path)

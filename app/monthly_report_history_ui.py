@@ -1,6 +1,7 @@
 """Read-only shared versions, separate from the operator's browser draft."""
 
 from datetime import datetime, timezone
+from html import escape
 
 import streamlit as st
 
@@ -37,11 +38,24 @@ def render_snapshot_history(draft, prefix, assets, snapshot):
             st.caption("No shared versions saved for " + period.label + ".")
         else:
             st.caption(period.label + " · newest first. Inspecting a version keeps your current draft.")
-            st.dataframe([
-                {"Version": version.revision, "Saved": _saved_at(version.generated_at),
-                 "Saved by": version.entered_editor or "Not recorded"}
-                for version in versions
-            ], hide_index=True, width="stretch")
+            # This immutable index needs real table semantics, not canvas
+            # fallback headers whose accessibility differs between engines.
+            # Escape entered names as text; no Markdown or external images.
+            rows = "".join("<tr>" + "".join(
+                "<td>" + escape(str(value)) + "</td>" for value in (
+                    version.revision, _saved_at(version.generated_at),
+                    version.entered_editor or "Not recorded")) + "</tr>"
+                for version in versions)
+            st.html('<style>.enfra-history-versions{overflow-x:auto}'
+                    '.enfra-history-versions table{width:100%;border-collapse:collapse}'
+                    '.enfra-history-versions th,.enfra-history-versions td{'
+                    'padding:.5rem;text-align:left;vertical-align:top;'
+                    'border-bottom:1px solid #a5b5b1;overflow-wrap:anywhere}'
+                    '</style><div class="enfra-history-versions">'
+                    '<table aria-label="Saved report versions"><thead><tr>'
+                    '<th scope="col">Version</th><th scope="col">Saved</th>'
+                    '<th scope="col">Saved by</th></tr></thead><tbody>'
+                    + rows + '</tbody></table></div>')
             by_revision = {version.revision: version for version in versions}
             revision = st.selectbox(
                 "Inspect a saved version", (None, *by_revision),

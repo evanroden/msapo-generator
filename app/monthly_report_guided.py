@@ -1238,7 +1238,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.subheader("Review and download", anchor="report-review")
         from app.monthly_report_editor import review_client_images
         if prepared.strip():
+            from app.monthly_report_asset_review import pending_asset_indexes
+            before_review = tuple((block.key, block.asset_hashes, pending_asset_indexes(block))
+                                  for block in draft.blocks)
             draft = review_client_images(draft, assets, prefix, field)
+            after_review = tuple((block.key, block.asset_hashes, pending_asset_indexes(block))
+                                 for block in draft.blocks)
+            if after_review != before_review:
+                # Ordered section controls were rendered before these image
+                # decisions. Refresh them only after the complete draft and
+                # its recovery attempt below, never before delivered edits.
+                st.session_state[prefix + "_period_editor_refresh"] = True
         st.session_state[draft_key] = draft
         if recovery_available and snapshot and snapshot.draft.fingerprint == draft.fingerprint:
             # The complete current version already exists in immutable history;

@@ -132,6 +132,30 @@ def test_native_done_saves_all_edited_pages_metadata_and_same_packet_activity(mo
     app.run();assert assert_durable(app)==saved
 
 
+def test_done_then_review_returns_to_summary_before_next_explicit_edit(monkeypatch,tmp_path):
+    from app.monthly_report_asset_review import pending_asset_indexes
+    app=loaded_water(monkeypatch,tmp_path)
+    button(app,'Edit pages').click().run()
+    # Match the browser's actual reviewed, nonempty source caption. This
+    # fixture otherwise begins with an inherited caption absent on the source.
+    next(w for w in app.text_input if w.label=='Page caption').set_value('Synthetic reviewed source caption.').run()
+    button(app,'Include page and continue').click().run()
+    next(w for w in app.selectbox if w.label=='Page to review').set_value(1).run()
+    next(w for w in app.text_input if w.label=='Page caption').set_value('')
+    button(app,'Done reviewing pages').click().run()
+    assert not app.exception
+    assert pending_asset_indexes(next(b for b in current(app).blocks if b.key=='water_reports'),current(app).sources)==(0,)
+    assert_durable(app)
+    button(app,'Include page and continue').click().run()
+    assert not app.exception
+    assert not any(w.label=='Page to review' for w in app.selectbox)
+    saved=assert_durable(app)
+    button(app,'Edit pages').click().run()
+    assert not app.exception and any(w.label=='Page to review' for w in app.selectbox)
+    assert assert_durable(app)==saved
+    assert next(w for w in app.text_input if w.label=='Page caption').value==''
+
+
 def test_done_save_failure_keeps_current_edit_and_honest_error_without_earlier_rerun(monkeypatch,tmp_path):
     from app import monthly_report_active_work as active
     app=loaded_water(monkeypatch,tmp_path)

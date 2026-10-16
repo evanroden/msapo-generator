@@ -1,5 +1,6 @@
 """Only genuinely resolved guided sources move behind one Change route."""
 from dataclasses import replace
+import pytest
 
 from app import monthly_report_library as library, monthly_report_ai as ai, monthly_report_upload_ui as upload_ui
 from app import monthly_report_sources as sources
@@ -77,7 +78,8 @@ def test_report_only_removed_page_stays_actionable_without_automatic_reinclusion
     assert not next(b for b in current_draft(app).blocks if b.key=='utility_analysis').asset_hashes
 
 
-def test_change_does_not_materialize_absent_source_caption_or_replace_inherited_caption(monkeypatch,tmp_path):
+@pytest.mark.parametrize("inherited, blocked", [("Approved utility chart", False), ("Cost $125", True), ("0 · NR", False)])
+def test_change_does_not_materialize_absent_source_caption_or_replace_inherited_caption(monkeypatch,tmp_path,inherited,blocked):
     from app.monthly_report_content_policy import page_fingerprint
     from app.monthly_report_asset_review import approve_all_assets
     app=resolved_app(monkeypatch,tmp_path)
@@ -90,18 +92,19 @@ def test_change_does_not_materialize_absent_source_caption_or_replace_inherited_
     content=replace(app.session_state[evidence_key][0],source=source)
     app.session_state[evidence_key]=(content,)
     block,=sources.prepare_pages(before.profile,(content,),((source.id,'utility_analysis'),))
-    block=approve_all_assets(replace(block,asset_captions=('Approved utility chart',)))
+    block=approve_all_assets(replace(block,asset_captions=(inherited,)))
     app.session_state[key]=replace(before,sources=(source,),blocks=tuple(
         block if b.key=='utility_analysis' else b for b in before.blocks))
     app.run()
     assert not app.exception
     before=current_draft(app)
     assert not before.sources[0].captions
-    button(app,'Change').click().run()
+    button(app,'Review source files' if blocked else 'Change').click().run()
     assert not app.exception
     assert current_draft(app)==before
     assert not current_draft(app).sources[0].captions
-    assert next(w for w in app.text_input if w.label=='Page caption').value=='Approved utility chart'
+    assert next(w for w in app.text_input if w.label=='Page caption').value==inherited
+    assert button(app,'Include page and continue').disabled is blocked
 
 
 def test_done_consumes_delivered_caption_before_retiring_its_native_control(monkeypatch,tmp_path):

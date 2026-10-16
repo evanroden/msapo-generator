@@ -228,6 +228,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "image_notes": dict(old.get("image_notes", {})), "automatic": old.get("automatic", False),
                 "source_sha256": old.get("source_sha256", ""),
                 "source_site_relation": old.get("source_site_relation", ""),
+                "automatic_logo_skips": {role:list(ids) for role,ids in old.get("automatic_logo_skips", {}).items()},
                 "cover_photo_omitted": old.get("cover_photo_omitted", False),
                 "cover_photo_source_ids": tuple(old.get("cover_photo_source_ids", ())),
                 # A separate price/text question cannot erase an already
@@ -336,6 +337,14 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 fixed_logos = [i for i in pictures if old.get("destinations", {}).get(i.id, i.suggested_slot)
                                in {"brand_logo", "client_logo"}]
                 for item in fixed_logos:
+                    role = old.get("destinations", {}).get(item.id, item.suggested_slot)
+                    if (old.get("automatic") and inspection is not None
+                            and old.get("source_sha256") == inspection.sha256
+                            and item.id in old.get("automatic_logo_skips", {}).get(role, ())
+                            and item.id not in old.get("selected", ())):
+                        # An unrelated review card cannot silently select a
+                        # source logo already replaced by preferred artwork.
+                        continue
                     plan["selected"].append(item.id)
                     plan["destinations"][item.id] = old.get("destinations", {}).get(item.id, item.suggested_slot)
                 pictures = [i for i in pictures if i not in fixed_logos]
