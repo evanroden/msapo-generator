@@ -177,3 +177,54 @@ for(const changed of [{value:''},{value:null},{clearable:false},{disabled:true},
 '''
     subprocess.run(["node", "-e", code, json.dumps(method)], check=True,
                    capture_output=True, text=True)
+
+
+def test_native_partial_date_mask_requires_focus_before_replacement_selection():
+    """Reproduce the exact wrong date under the observed fill precondition.
+
+    Playwright 1.58 selects an input before focusing it for ``fill``. The locked
+    mask's native focus handler moves a partial date's cursor to its end. This
+    executes that handler and the vendor's actual mask transform; it is not a
+    browser event-timing claim. The CI journey captures the actual input/caret.
+    """
+    installed = Path(streamlit.__file__).parent / "static" / "static" / "js"
+    candidates = [path for path in installed.glob("*.js")
+                  if b"t.datepicker.selectSecondDatePrompt" in path.read_bytes()]
+    assert len(candidates) == 1
+    source = candidates[0].read_text()
+    start = source.index('var h={9:`[0-9]`')
+    end = source.index('function ne(){var e=RegExp(`windows`', start)
+    helpers = source[start:end]
+    start = source.index("n.onFocus=function(e){", end) + len("n.onFocus=")
+    on_focus = source[start:source.index("},n.onBlur=function(e){", start) + 1]
+    start = source.index("n.setCursorToEnd=function(){", end) + len("n.setCursorToEnd=")
+    cursor_to_end = source[start:source.index("},n.setSelection=function", start) + 1]
+    start = source.index("function re(e){", end)
+    is_function = source[start:source.index("function ie(){", start)]
+    code = r'''
+const assert=require('node:assert/strict');
+const {helpers,onFocus,cursorToEnd,isFunction}=JSON.parse(process.argv[1]);
+const build=new Function('n',helpers+isFunction+
+ ';n.onFocus='+onFocus+';n.setCursorToEnd='+cursorToEnd+';return {parseMask:_,apply:te};');
+function replaceDate(focusFirst){
+ const n={props:{},value:'2026/09/',selection:{start:0,end:0,length:0},
+   runSaveSelectionLoop:()=>{},
+   setCursorPosition(position){this.selection={start:position,end:position,length:0};}};
+ const {parseMask,apply}=build(n);n.maskOptions=parseMask('9999/99/99',null);
+ const selectAll=()=>{n.selection={start:0,end:n.value.length,length:n.value.length};};
+ if(focusFirst){n.onFocus({});selectAll();}else{selectAll();n.onFocus({});}
+ const before={...n.selection},entered='2026/08/31';
+ const raw=n.value.slice(0,before.start)+entered+n.value.slice(before.end);
+ const end=before.start+entered.length;
+ return {before,raw,result:apply(n.maskOptions,raw,{start:end,end,length:0},n.value,before)};
+}
+const selectedBeforeFocus=replaceDate(false),focusedBeforeSelect=replaceDate(true);
+assert.deepEqual(selectedBeforeFocus.before,{start:8,end:8,length:0});
+assert.equal(selectedBeforeFocus.raw,'2026/09/2026/08/31');
+assert.equal(selectedBeforeFocus.result.value,'2026/09/20');
+assert.deepEqual(focusedBeforeSelect.before,{start:0,end:8,length:8});
+assert.equal(focusedBeforeSelect.result.value,'2026/08/31');
+'''
+    subprocess.run(["node", "-e", code, json.dumps({"helpers": helpers,
+                    "onFocus": on_focus, "cursorToEnd": cursor_to_end,
+                    "isFunction": is_function})], check=True, capture_output=True, text=True)

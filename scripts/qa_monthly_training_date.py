@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts import patch_streamlit_date_input as compat
 from scripts import qa_monthly_live as live
+from scripts.qa_training_date_delivery import TrainingDateDelivery
 
 OUT = ROOT / "test-artifacts" / "monthly-training-date"
 PORT = 8535
@@ -43,6 +44,55 @@ ROW = [TITLE, "2026-09-15", "In person", PARTICIPANT, ""]
 RECEIPT = '[data-enfra-training-receipt]'
 READY = """() => Boolean(document.querySelector('.epc-workspace')?.dataset.epcFullRender) &&
  document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning'"""
+DATE_EVENTS = """(() => {
+  const events = [], nodes = new WeakMap(); let sequence = 0;
+  window.__enfraTrainingDateEvents = events;
+  for (const type of ['focus','beforeinput','input','change','blur','keydown']) {
+    document.addEventListener(type, event => {
+      const target = event.target;
+      if (!target?.matches?.('[data-testid="stDateInputField"]')) return;
+      if (!nodes.has(target)) nodes.set(target, ++sequence);
+      events.push({type, trusted:event.isTrusted, node:nodes.get(target),
+        value:target.value.slice(0,20), start:target.selectionStart, end:target.selectionEnd,
+        focused:target===document.activeElement, inputType:event.inputType||null,
+        data:typeof event.data==='string'?event.data.slice(0,16):null,
+        key:type==='keydown'?event.key:null});
+      if (events.length > 80) events.shift();
+    }, {capture:true,passive:true});
+  }
+})();"""
+
+
+def _date_input_state(field):
+    return field.evaluate("""input=>({value:input.value,start:input.selectionStart,
+      end:input.selectionEnd,focused:input===document.activeElement})""")
+
+
+def replace_date(page, field, value, stage):
+    """Focus the actual input before Playwright selects text for replacement.
+
+    Playwright 1.58 selects before focusing. Input-mask's onFocus moves a
+    partial date's cursor to its end, so that ordering can append instead.
+    This is one normal focused replacement, never a rescue after submission.
+    """
+    observation = {"stage": stage, "requested": value}
+    try:
+        observation["before"] = _date_input_state(field)
+        field.click()
+        observation["focused_before_fill"] = _date_input_state(field)
+        assert observation["focused_before_fill"]["focused"]
+        field.fill(value)
+        observation["after_fill"] = _date_input_state(field)
+        expect(field).to_have_value(value)
+        field.press("Tab")
+        observation["after_tab"] = _date_input_state(field)
+        expect(field).to_have_value(value)
+    finally:
+        try:
+            observation["events"] = page.evaluate("()=>(window.__enfraTrainingDateEvents||[]).splice(0)")
+        except Exception as exc:
+            observation["observation_error"] = str(exc)[:300]
+        live.EVIDENCE.setdefault("date_replacements", []).append(observation)
 
 
 def receipt(page):
@@ -189,6 +239,8 @@ def exercise(browser_type, engine, *, patched):
             request.abort()
     context.route("**/*", route)
     page = context.new_page()
+    page.add_init_script(DATE_EVENTS)
+    TrainingDateDelivery(lambda row: live.EVIDENCE.setdefault("date_wire", []).append(row)).attach(page)
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: errors.append(str(error)[:500]))
     page.on("response", lambda response: date_responses.append(response) if "/DateInput." in response.url and response.url.endswith(".js") else None)
@@ -208,8 +260,7 @@ def exercise(browser_type, engine, *, patched):
             participants = page.locator('[data-testid="stMultiSelect"]').filter(has=page.get_by_text("Participants", exact=True))
             participants.get_by_role("combobox").fill(PARTICIPANT)
             page.get_by_role("option", name=PARTICIPANT, exact=True).click()
-        field.fill("2026/09/14")
-        field.press("Tab")
+        replace_date(page, field, "2026/09/14", "typed-single-date")
         expect(field).to_have_value("2026/09/14")
         assert len(date_responses) == 1
         asset = date_responses[0]
@@ -255,16 +306,14 @@ def exercise(browser_type, engine, *, patched):
         await_events(page, baseline["working"]["events"], baseline)
         for value, stage in (("2026/09/", "partial-date"), ("2026/08/31", "before-month"), ("2026/10/01", "after-month")):
             date, field = open_form(page)
-            field.fill(value)
-            field.press("Tab")
+            replace_date(page, field, value, stage)
             record_date(page, date, stage)
             no_second_date(date)
             submit_form(page, submit)
             expect(page.get_by_text("Choose a training date within this reporting month.", exact=True)).to_be_visible()
             await_events(page, baseline["working"]["events"], baseline)
         date, field = open_form(page)
-        field.fill("2026/09/14")
-        field.press("Tab")
+        replace_date(page, field, "2026/09/14", "valid-date-before-calendar")
         select_day(page, field, 15)
         no_second_date(date)
         submit_form(page, submit)
