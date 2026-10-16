@@ -150,6 +150,10 @@ def exercise(page, name, qa):
         # before continuing the existing caption/Tab, ordering and omission task.
         water.get_by_role("button", name="Include page and continue", exact=True).click()
         wait_pages(page, [1, 2], pending=[])
+        # Done closed editing; completing the outstanding review now returns
+        # to the normal summary. Open the real editor for the next edit.
+        expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_count(0)
+        water.get_by_role("button", name="Edit pages", exact=True).click()
         choose_page(page, 1)
         caption.fill(CAPTION)
         caption.press("Tab")

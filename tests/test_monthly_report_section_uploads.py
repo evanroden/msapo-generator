@@ -75,6 +75,7 @@ import streamlit as st
 from app.monthly_report_upload_ui import render_section_uploads
 from app.monthly_report_model import ReportPeriod, synthetic_profiles
 from app.monthly_report_setup import merge_blocks
+from app.monthly_report_guided import _refresh_period_editors_after_commit
 def field(key, value):
     if key not in st.session_state:
         st.session_state[key] = value
@@ -89,6 +90,9 @@ if additions:
     st.session_state["test_apply_count"] = st.session_state.get("test_apply_count", 0) + 1
     for key, block in additions.items():
         blocks[key] = merge_blocks(blocks.get(key), block)
+# Match the production caller: consume a requested control refresh only after
+# this fixture has committed all returned sources and block additions.
+_refresh_period_editors_after_commit("synthetic")
 '''
 
 
