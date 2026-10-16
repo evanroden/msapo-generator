@@ -14,6 +14,9 @@ on:
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
+      - 'scripts/patch_streamlit_frontend.py'
+      - 'scripts/patch_streamlit_date_input.py'
+      - 'tests/test_streamlit_frontend_compat.py'
       - 'tests/test_qa_browser_diagnostics.py'
       - 'tests/test_qa_widget_delivery.py'
       - 'scripts/qa_monthly_site_pointer.py'
@@ -37,6 +40,9 @@ on:
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
+      - 'scripts/patch_streamlit_frontend.py'
+      - 'scripts/patch_streamlit_date_input.py'
+      - 'tests/test_streamlit_frontend_compat.py'
       - 'tests/test_qa_browser_diagnostics.py'
       - 'tests/test_qa_widget_delivery.py'
       - 'scripts/qa_monthly_site_pointer.py'
@@ -73,6 +79,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc
           python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
       - name: Pure geometry and real Streamlit DOM
