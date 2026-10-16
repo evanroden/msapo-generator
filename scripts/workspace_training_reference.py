@@ -9,6 +9,20 @@ from app.monthly_report_testing import scope
 from scripts.workspace_browser_observations import require_synthetic_root
 
 
+# Original87 native INPUT content widths, not the wider trigger/dropdown widths.
+# The locked Multiselect input adds 4px padding on each side and has no border.
+OBSERVED_INPUT_CONTENT_WIDTH = {"chromium": 358.765625, "playwright-webkit": 355.59375}
+NATIVE_INPUT_HORIZONTAL_PADDING = 8
+REFERENCE_COLUMNS_CSS = '''<style>
+  .st-key-native_training_reference_columns [data-testid="stHorizontalBlock"] {
+    display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);column-gap:12px;
+  }
+  .st-key-native_training_reference_columns [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
+    width:auto;min-width:0;
+  }
+</style>'''
+
+
 def render_reference(base, field):
     require_synthetic_root(base)
     if os.environ.get("EPC_MONTHLY_TRAINING_TASK") != "1" or scope() is None:
@@ -28,14 +42,7 @@ def render_reference(base, field):
     st.sidebar.caption("Synthetic native Training reference only. No client records are available.")
     # Match the observed desktop editor width using the ordinary two-column
     # ratio and 12px gutter. This fixed fixture CSS has no layout observers.
-    st.html('''<style>
-      .st-key-native_training_reference_columns > [data-testid="stHorizontalBlock"] {
-        display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);column-gap:12px;
-      }
-      .st-key-native_training_reference_columns > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
-        width:auto;min-width:0;
-      }
-    </style>''')
+    st.html(REFERENCE_COLUMNS_CSS)
     with st.container(key="native_training_reference_columns"):
         editor, unused = st.columns([1.12, 1], gap=None)
         with editor:

@@ -9,7 +9,9 @@ from app.monthly_report_model import ReportTable, ResolvedBlock
 
 MATRIX_REF = "training:matrix:v1"
 EVENT_REF = "training:events:v1"
-STATUSES = ("Not recorded", "Completed", "Pending", "Not required")
+# A retained blank is a distinct historical value, not an inferred status.
+# New requirements still explicitly default to "Not recorded" in the editor.
+STATUSES = ("", "Not recorded", "Completed", "Pending", "Not required")
 EVENT_COLUMNS = ("Training", "Date", "Format", "Participants", "Hours")
 FORMATS = ("In person", "Virtual", "Asynchronous")
 

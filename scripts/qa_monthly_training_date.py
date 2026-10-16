@@ -35,6 +35,7 @@ from scripts import patch_streamlit_date_input as compat
 from scripts import qa_monthly_live as live
 from scripts.qa_training_date_delivery import TrainingDateDelivery
 from scripts.qa_training_observer_checks import require_no_native_window_errors
+from scripts.workspace_training_reference import OBSERVED_INPUT_CONTENT_WIDTH, NATIVE_INPUT_HORIZONTAL_PADDING
 
 OUT = ROOT / "test-artifacts" / "monthly-training-date"
 PORT = 8535
@@ -373,8 +374,8 @@ def exercise_participant_reference(browser_type, engine):
         assert original_input is not None
         before = field.bounding_box()
         assert before is not None
-        # One normal scroll matches the field in the same run's later Training
-        # screenshot (top~780, width403.77 in the 1365x900 viewport). Geometry
+        # One normal scroll uses the same run's later Training screenshot
+        # (top~780 in the 1365x900 viewport). Geometry
         # at the native error itself was not independently recorded.
         # No spacer, viewport event, refinding after typing or rescue gesture.
         page.mouse.move(before["x"] + before["width"] / 2, 400)
@@ -382,9 +383,12 @@ def exercise_participant_reference(browser_type, engine):
         page.wait_for_function("""input=>Math.abs(input.getBoundingClientRect().top-780)<=1""",
                                arg=original_input, timeout=5000)
         positioned = original_input.bounding_box()
+        expected_input_width = OBSERVED_INPUT_CONTENT_WIDTH[engine] + NATIVE_INPUT_HORIZONTAL_PADDING
         live.EVIDENCE["reference_geometry"] = {"before_scroll": before, "positioned": positioned,
-            "same_run_later_screenshot_field_width": 403.765625, "same_run_later_screenshot_field_top": 780}
-        assert positioned is not None and abs(positioned["width"] - 403.765625) <= 2
+            "original_87_input_content_width": OBSERVED_INPUT_CONTENT_WIDTH[engine],
+            "native_input_horizontal_padding": NATIVE_INPUT_HORIZONTAL_PADDING,
+            "expected_input_border_width": expected_input_width, "target_input_top": 780}
+        assert positioned is not None and abs(positioned["width"] - expected_input_width) <= 1
         live.EVIDENCE["phase"] = "reference-one-native-participant-pointer-selection"
         enter_topic_and_participant(page, original_input=original_input)
         live.screenshot(page, "native-participant-reference-selected")

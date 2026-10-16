@@ -62,11 +62,14 @@ def render_training(draft, blocks, prefix, field):
                     st.session_state[matrix_key] = matrix
         sites = [facility.title for facility in draft.profile.facilities]
         config = {"Site": st.column_config.SelectboxColumn("Site", options=sites, required=True)}
-        labels = {"Completed": "🟢 Completed", "Pending": "🟠 Pending", "Not required": "⚪ Not required", "Not recorded": "— Not recorded"}
+        labels = {"": "— Not recorded (blank)", "Completed": "🟢 Completed", "Pending": "🟠 Pending", "Not required": "⚪ Not required", "Not recorded": "— Not recorded"}
         config.update({name: st.column_config.SelectboxColumn(name, options=STATUSES, format_func=labels.get, required=True, default="Not recorded") for name in matrix.columns[2:]})
         rows = _grid(key + "_grid_" + str(st.session_state.get(key + "_generation", 0)) + "_" + _signature(matrix.columns), [dict(zip(matrix.columns, row)) for row in matrix.rows] or [dict.fromkeys(matrix.columns, "")],
                      num_rows="dynamic", hide_index=True, column_config=config)
-        edited = ReportTable(matrix.columns, tuple(tuple(str(row.get(c) or ("Not recorded" if i > 1 else "")).strip()
+        # Defaults apply to absent new cells; an existing/explicit blank remains
+        # distinct from the recorded "Not recorded" option and is never saved
+        # merely because the matrix was displayed.
+        edited = ReportTable(matrix.columns, tuple(tuple(str(row.get(c, "Not recorded" if i > 1 else "") or "").strip()
                               for i, c in enumerate(matrix.columns)) for row in rows if row.get("Team member")), MATRIX_REF)
         if hospital_matrix(draft.profile, edited, directory) != edited:
             raise ValueError("This matrix is for hospital staff. Remove the identified ENFRA, asset-management or vendor person before saving.")

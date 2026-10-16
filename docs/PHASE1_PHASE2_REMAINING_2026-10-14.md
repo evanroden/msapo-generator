@@ -6,6 +6,56 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+Current local integration batch 2026-10-16 18:08 UTC: Trainingac62dfc was merged normally with
+PR249b34b172cb3d7dd218e3534d3de26b7258e5a88cb in local merge7709339, then the reviewed blank-status
+repair was cherry-picked as7f78241. All fresh-Water/strong native text QA and Training workflow
+paths are retained, including the thin composed frontend/date installer. This combined candidate
+needs its own exact Required/Adaptive; no source commit is a release.
+
+Trainingac62 Adaptive38942878255 tested checkout9d7bd8bc5aeccb5a3823e5009d96041e4d5c841f against
+OLD parent98111bb, beforeb34 existed. Both authoritative engines completed the same native field,
+participant/date/minmax, add/reload/narrow-remove/reload and inclusion/omission output tails; all
+8 actual output byte sizes/digests and working/durable receipts were independently rechecked.
+Both now record real native ResizeObserver errors: Chromium5442.6ms (pageerror empty, strict native
+gate fails), WebKit6022ms (also pageerror). These remain terminal and unresolved; complete business
+tails do not make the run green or prove a framework-only cause.
+
+Both separate references stopped BEFORE their first pointer/filter/option action at a wrong width
+prerequisite. Original87 RO403.765625/400.59375 are wider trigger content boxes; the corresponding
+INPUT content boxes are358.765625/355.59375. Ac62 incorrectly compared the INPUT border box against
+a trigger width. Its direct-child CSS also missed the actual locked stLayoutWrapper, leaving the
+reference column6.34375px too wide. A source-executed locked renderer regression reproduces that
+wrapper; the corrected scoped descendant rule reaches the intended horizontal row. The same native
+input now compares to the original engine's INPUT content width plus its independently observed
+8px horizontal padding. The12px-gutter model predicts the original width within0.02px. Top780,
+one original handle, one normal scroll/pointer/filter/option, strict native errors and every
+business/output assertion remain. Corrected browser geometry and framework-only reference outcome
+are still CONDITIONAL until exact CI; no new instrumentation, timeout, timer, filter or global
+client patch was added. A clean reference would remain inconclusive.
+
+Original artifact12063304448 is1,314,655 bytes, SHA256
+`b9af6e946ac1bedc616000962606638ea3b04056af1cb7351d54e4b8cfabd558`; ZIP integrity independently
+passed. Original and scoped analysis are retained under evidence/current-pr250-ac62. Eight targeted
+reference/geometry/native-error checks pass locally; source/model tests are not a browser result.
+The composed frontend/date/Training/geometry/native-error/Water/fresh-browser/native-text guards
+passed128 cases in50.16s on locked Python3.12.14; Python compilation,26 browser-expression syntax
+checks and diff checks pass. Evidence: training-b34-reference-geometry-composed-checks.xml.
+
+A substantive Training repair now preserves an imported/saved literal blank requirement status
+separately from explicit Not recorded. Reproduction initially failed3 actual-caller cases; merely
+allowing blank in the model still failed2 and passed1 because display rewrote the blank and saved
+standing data. The native editor now offers the retained blank as Not recorded (blank), preserves
+its raw value on display/partial edits, and defaults only absent NEW cells/requirements to explicit
+Not recorded. Pending/Completed/Not required, selected-site concurrency, unrelated standing rows,
+monthly notes/events, and participant choices remain. Eight new actual AppTest/native-grid-delta
+regressions and54 affected cases passed on the isolated repair; original failures/receipt stay
+under evidence/Training_Blank_Status_Repair_Receipt.json. After cherry-pick,95 composed Training/
+blank-status/reference/geometry/date/frontend/error checks passed16.20s on the integrated source
+(`evidence/training-b34-blank-reference-final-checks.xml`). No standing record was touched outside
+disposable tests. This source/state repair does not resolve either native ResizeObserver failure.
+
+### Prior Training verification and native-error checkpoint (superseded above)
+
 Current local integration milestone 2026-10-16 17:38 UTC: Training head
 `87aebb9af4b52fb263a61efbf8da5e202e603447` is being merged with PR249 parent
 `98111bb6b85e01b3e0a37ea6b36444256cdaf57e` locally. The incoming source delta is only the
@@ -83,6 +133,40 @@ page1, leaves page2 out, and atomically includes only1; other blocks remain unch
 reset/source/image/price/zero/NR/qualified guards remain.17 new regressions and71 affected cases
 passed on its parent branch. Two intermediate test-prerequisite failures (Boolean draft-key lookup
 and wrong synthetic Water spec) retain their exact causes; no business assertion was relaxed.
+
+### Parent fresh-Water/native-text checkpoint
+
+Current verification batch 2026-10-16 17:55 UTC: PR249 head98111bb passed Required38940688734
+and Adaptive38940688764 on integration6ae137951dd8dfc1cbd16af73ecbe8c28ad3ae12 against main4ca.
+Its17 new Water regressions repair two independently reproduced recovery cases; the full prefilled
+Water browser task remains intact. Required artifacts independently recount2,796 tests with zero failures/errors/skips.
+Adaptive original86,757,831-byte ZIP is retained under its own verified digest; full task review
+remains scoped to that exact revision.
+
+The next exact candidate adds a separate ordinary native browser task for the freshly empty Omit
+case: one zero-site action, October template bootstrap, then unsaved September with no snapshot,
+real two-page PDF upload, first-page approval without premature inclusion, explicit second-page
+exclusion, and exactly one durable canonical page. The October bootstrap itself correctly starts
+Water as This month; it is not the empty-Omit prerequisite. The guarded disposable server has no
+live-root fallback or outgoing services. This task is browser-unrun until the new exact CI;
+it does not replace the existing caption/order/omission/compact-preview/generation/output journey.
+31 affected checks pass locally; independent helper review is clean. Four helper contracts
+also retain missing-prerequisite, anti-no-op and replaced-input-node rejection.
+
+The same batch repairs a demonstrated native-text QA prerequisite from PR252 Adaptive38938669161:
+the issue clear was attempted while its controlled DOM value was briefly empty after reload, so
+the anti-no-op assertion correctly stopped before any clear. The canonical/durable issue remained
+populated and later captured DOM matched it. Awaiting the exact expected existing value on the
+same locator now precedes the action. Anti-no-op, actual input-event-node continuity, durable
+acknowledgment, clear/reentry/reload and actual output assertions remain. No rescue gesture,
+synthetic blur, business retry, timeout increase or application-state injection is added.
+
+Earlier Water review recovery findings reproduced five actual-caller failures despite the
+prefilled journey passing. Empty optional Omit slots now accept explicitly reviewed pages;
+omitted wording, tables/custom schemas, captions, graphics and other writer content retain a
+separate whole-section choice, including when no source files are routed.17 new and71 affected
+cases passed locally. Stale source/reset/price/image/zero/NR/qualified guards remain. The original
+failures and two identified intermediate test-prerequisite mistakes are preserved.
 
 Merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf independently passed Tests38936148403
 (2,711/0/0/0), Adaptive38936148447 and automatic live38937063007. Both independent live sessions
@@ -268,7 +352,7 @@ not an application change, dependency upgrade or passing browser evidence.
 | One Water/source-page workspace | Both-engine synthetic browser/output tail verified on c3eb2eb; new integration pending | Complete desktop then narrow upload, one review/caption/order/omit/reinclude path, repeated unchanged upload, durable reload, explicit blank/price rejection, real preview and DOCX/PDF. Preserve source identity, dependency gates and omitted-page guards. |
 | Identity/help/navigation | Implemented in unmerged PR251; current integrated browser gate passed | One stable contract/sites/month strip and useful Change path; combined quiet Help; one Prepared by with actual focus links; More report details for aliases/group/region; meaningful workflow-preserving deep links only. |
 | Saving/history/recovery | Browser-observed and conditional | One truthful status; actual history rows or correctly named checkpoint action; report actions for confirmed scoped discard. Preserve conflict choices, both versions, unsent versus acknowledged edits, original/history/standing scope. |
-| Training | Both engines completed synthetic native participant/date/durable/output tails on87aebb9/old parent9b; Chromium native ResizeObserver error remains; new parent integration needs exact CI | Retain standing/monthly separation, statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and one native input. Repair the native-error gate/cause without suppressing errors, then verify the exact combined tree. |
+| Training | Both engines completed synthetic native participant/date/durable/output tails onac62/old parent981; BOTH native ResizeObserver errors remain; corrected reference and new parent integration need exact CI | Retain standing/monthly separation, statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and one native input. Repair the native-error gate/cause without suppressing errors, then verify the exact combined tree. |
 | Section/editor cleanup | Browser-observed, partly conditional | Remove duplicate headings/prose, not functions. Keep one canonical Activity editor, optional grounded writing help, evidence/price gates, CMMS coverage, scoped organization/contact editors, correct ENFRA onsite versus vendor distinction, issue recovery, proposals and RFI meaning. |
 | Administration/design controls | Implemented in unmerged PR251; specific expanded browser paths remain | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
 | Imported cover/artwork/conflicts | Source-only conditional states not fully reached | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |
