@@ -75,6 +75,51 @@ assert.equal(h.sent[1].widgets.native,'next edit');assert.equal(h.resolved,1);
                    check=True, capture_output=True, text=True, timeout=15)
 
 
+def test_decoded_full_widget_scope_dominates_fragments_in_actual_caller_chain(bundle):
+    root, scripts = bundle
+    receipt = compat.patch_bundle(root, installed_version="1.61.1")
+    source = (scripts / receipt["entry"]).read_text()
+    def method(start, end):
+        offset = source.index(start)
+        return source[offset:source.index(end, offset)]
+    protobuf = Path(streamlit.__file__).parent / "static/static/js/protobuf.CBn3jIav.js"
+    code = r'''
+const assert=require('node:assert/strict');
+const {pathToFileURL}=require('node:url');
+const {methods,protobuf}=JSON.parse(process.argv[1]);
+(async()=>{
+ globalThis.window={};
+ const p=await import(pathToFileURL(protobuf));
+ // Decode a real ForwardMsg.delta with the absent optional fragment field.
+ // Its generated default, not a guessed harness sentinel, reaches widgets.
+ const full=p.v.decode(Uint8Array.of(42,0)).delta.fragmentId;
+ assert.equal(full,'');
+ for(const sequence of [['preview',full],[full,'preview'],
+   ['preview',full,'another'],[undefined,'preview',full],
+   ['preview',undefined,'another'],[full,'preview',undefined]]){
+  const timers=[],sent=[],cleared=[];let resolved=0;
+  const h=new Function('qg','setTimeout','A','return ({'+methods+'})')(
+   {warn:()=>{}},fn=>timers.push(fn),form=>Boolean(form));
+  Object.assign(h,{flushScheduled:false,scheduledFragmentId:undefined,hasFragmentIdConflict:false,
+   pendingTriggerIds:new Set(['action']),triggerFlushResolvers:[()=>resolved++],
+   createWidgetState(){return this.widget||(this.widget={})},maybeSyncValueToUrl(){},
+   sendUpdateWidgetsMessage(fragment){sent.push({fragment,value:this.widget.stringValue})},
+   deleteWidgetState:id=>cleared.push(id)});
+  for(const scope of sequence)h.setStringValue({id:'native',formId:''},'exact native edit',{fromUi:true},scope);
+  assert.equal(timers.length,1);timers.shift()();
+  assert.equal(sent.length,1);assert.ok(sent[0].fragment===undefined||sent[0].fragment==='');
+  assert.equal(sent[0].value,'exact native edit');assert.deepEqual(cleared,['action']);
+  assert.equal(resolved,1);assert.equal(h.flushScheduled,false);assert.equal(h.scheduledFragmentId,undefined);
+ }
+})().catch(error=>{console.error(error);process.exitCode=1});
+'''
+    methods = method("scheduleFlush(e){", "registerQueryParamBinding(")
+    methods += "," + method("onWidgetValueChanged(e,t,n){", "syncFormsWithPendingChanges(){")
+    methods += "," + method("setStringValue(e,t,n,r){", "setStringArrayValue(")
+    subprocess.run(["node", "-e", code, json.dumps({"methods": methods, "protobuf": str(protobuf)})],
+                   check=True, capture_output=True, text=True, timeout=15)
+
+
 def test_content_named_scheduler_entry_preserves_originals_and_is_idempotent(bundle):
     root, scripts = bundle
     before = files(root)
@@ -88,6 +133,27 @@ def test_content_named_scheduler_entry_preserves_originals_and_is_idempotent(bun
     snapshot = files(root)
     assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
     assert files(root) == snapshot
+
+
+@pytest.mark.parametrize("with_date", [False, True])
+def test_exact_previous_scheduler_entry_upgrades_without_discarding_date(bundle, with_date):
+    root, scripts = bundle
+    original = (scripts / compat.INDEX_BUNDLE).read_bytes()
+    old = original.replace(compat.ORIGINAL, compat.LEGACY_REPAIRED, 1)
+    if with_date:
+        date = (scripts / compat.DATE_BUNDLE).read_bytes().replace(compat.DATE_ORIGINAL, compat.DATE_REPAIRED, 1)
+        name = "DateInput.enfra-scalar-" + sha256(date).hexdigest()[:12] + ".js"
+        (scripts / name).write_bytes(date)
+        old = old.replace(compat.DATE_BUNDLE.encode(), name.encode())
+    name = compat._entry_name(old)
+    (scripts / name).write_bytes(old)
+    (root / "index.html").write_bytes(b'<script src="./static/js/' + name.encode() + b'"></script>')
+    receipt = compat.patch_bundle(root, installed_version="1.61.1")
+    assert receipt["scalar_date"] == with_date and not receipt["already_patched"]
+    assert receipt["entry"] != name and (scripts / name).read_bytes() == old
+    repaired = (scripts / receipt["entry"]).read_bytes()
+    assert repaired.count(compat.REPAIRED) == 1
+    assert sha256(repaired).hexdigest() == receipt["patched_entry_sha256"]
 
 
 @pytest.mark.parametrize("first_date", [False, True])
@@ -126,6 +192,40 @@ def test_actual_date_installer_entrypoint_composes_with_scheduler_installer(bund
     before = files(root)
     assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
     assert files(root) == before
+
+
+def test_browser_frontend_receipt_hashes_the_delivered_bytes_without_writes(bundle):
+    from scripts.qa_shared_fixture_testing import _expected_frontend, _frontend_response_receipt
+    from types import SimpleNamespace
+    root, _ = bundle
+    compat.patch_bundle(root, installed_version="1.61.1")
+    before = files(root)
+    expected = _expected_frontend(root)
+    assert files(root) == before
+    entry, raw = expected
+    response = SimpleNamespace(url="http://127.0.0.1:8521/static/js/" + entry,
+                               status=200, headers={"content-length": str(len(raw))}, body=lambda: raw)
+    receipt = _frontend_response_receipt(response, expected)
+    assert receipt["matches"] and receipt["sha256"] == sha256(raw).hexdigest()
+    assert receipt["full_scope_predicate_count"] == 1 and receipt["original_predicate_count"] == 0
+    assert all(not isinstance(value, bytes) for value in receipt.values())
+    # A correct filename and length cannot certify different JavaScript bytes.
+    response.body = lambda: b" " + raw[1:]
+    assert not _frontend_response_receipt(response, expected)["matches"]
+
+
+@pytest.mark.parametrize("status,size", [(404, 0), (200, 2 * 1024 * 1024), (200, 0)])
+def test_frontend_observer_does_not_read_unbounded_or_ineligible_response(bundle, status, size):
+    from scripts.qa_shared_fixture_testing import _expected_frontend, _frontend_response_receipt
+    from types import SimpleNamespace
+    root, _ = bundle
+    compat.patch_bundle(root, installed_version="1.61.1")
+    expected = _expected_frontend(root)
+    def forbidden_body():
+        pytest.fail("The observer must reject this response before reading its body")
+    response = SimpleNamespace(url="http://127.0.0.1:8521/static/js/" + expected[0],
+                               status=status, headers={"content-length": str(size)}, body=forbidden_body)
+    assert not _frontend_response_receipt(response, expected)["matches"]
 
 
 @pytest.mark.parametrize("mutation", ["version", "entry", "date", "missing", "html", "duplicate", "destination", "selected"])

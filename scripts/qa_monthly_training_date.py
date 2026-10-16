@@ -52,7 +52,7 @@ DATE_EVENTS = """(() => {
       const target = event.target;
       if (!target?.matches?.('[data-testid="stDateInputField"]')) return;
       if (!nodes.has(target)) nodes.set(target, ++sequence);
-      events.push({type, trusted:event.isTrusted, node:nodes.get(target),
+      events.push({type, at:performance.now(), trusted:event.isTrusted, node:nodes.get(target),
         value:target.value.slice(0,20), start:target.selectionStart, end:target.selectionEnd,
         focused:target===document.activeElement, inputType:event.inputType||null,
         data:typeof event.data==='string'?event.data.slice(0,16):null,
@@ -75,15 +75,29 @@ def replace_date(page, field, value, stage):
     animation-frame selection cache. A partial date can therefore keep its old
     month even when beforeinput has the correct selected range. Deletion and
     each typed character run the native change handler, which synchronously
-    updates that cache. This is the initial edit, never a rescue after submit.
+    updates that cache. The pointer focus/mouseup handlers also defer a cursor
+    restore to the next frame, so observe their completion before selecting.
+    This is the initial edit, never a rescue after submit.
     """
     observation = {"stage": stage, "requested": value,
                    "method": "keyboard-select-all-delete-type"}
+    live.EVIDENCE["phase"] = "date-replacement:" + stage
     try:
         observation["before"] = _date_input_state(field)
         field.click()
         observation["focused_before_replacement"] = _date_input_state(field)
         assert observation["focused_before_replacement"]["focused"]
+        observation["focus_frames"] = field.evaluate("""input=>new Promise((resolve,reject)=>{
+          const deadline=setTimeout(()=>reject(new Error('Native date focus did not finish two visible frames.')),1000);
+          const frames=[],read=()=>({value:input.value,start:input.selectionStart,
+            end:input.selectionEnd,focused:input===document.activeElement});
+          requestAnimationFrame(()=>{frames.push(read());
+            requestAnimationFrame(()=>{frames.push(read());clearTimeout(deadline);resolve(frames)});
+          });
+        })""")
+        assert observation["focus_frames"][0] == observation["focus_frames"][1], "Native date focus/caret must settle before replacement."
+        assert observation["focus_frames"][1]["focused"]
+        assert observation["focus_frames"][1]["value"] == observation["before"]["value"]
         field.press("ControlOrMeta+A")
         observation["selected"] = _date_input_state(field)
         assert observation["selected"]["start"] == 0
@@ -125,6 +139,7 @@ def await_events(page, rows, baseline):
 
 
 def open_form(page):
+    live.EVIDENCE["phase"] = "open-training-form"
     summary = page.locator('[data-testid="stExpander"] summary').filter(has=page.get_by_text("Add training session", exact=True))
     expect(summary).to_have_count(1)
     if not summary.evaluate("el => el.closest('details')?.open ?? el.getAttribute('aria-expanded')==='true'"):
@@ -136,7 +151,8 @@ def open_form(page):
     return date, field
 
 
-def submit_form(page, submit):
+def submit_form(page, submit, stage):
+    live.EVIDENCE["phase"] = "submit-training:" + stage
     before = page.locator(".epc-workspace").get_attribute("data-epc-full-render")
     assert before, "A native full-editor receipt must precede the submission."
     submit.click()
@@ -195,6 +211,7 @@ def selected_date(date, expected):
 
 
 def select_day(page, field, day):
+    live.EVIDENCE["phase"] = f"calendar-day:{day}"
     field.click()
     cell = page.get_by_role("gridcell", name=re.compile(rf"September {day}(?:st|nd|rd|th) 2026"))
     expect(cell).to_have_count(1)
@@ -204,6 +221,7 @@ def select_day(page, field, day):
 
 
 def export_and_check(page, stage, included):
+    live.EVIDENCE["phase"] = "output:" + stage
     live.request_qa_generation(page, stage)
     word = live.download(page, "Download isolated QA DOCX", stage + ".docx")
     pdf = live.download(page, "Download isolated QA PDF", stage + ".pdf")
@@ -220,13 +238,28 @@ def export_and_check(page, stage, included):
         assert session_rows == [ROW] if included else not session_rows
     with pymupdf.open(stream=pdf, filetype="pdf") as document:
         printed = "\n".join(page.get_text() for page in document)
-    for label, text in (("DOCX", words), ("PDF", printed)):
+    # Native table cells wrap at their normal width. Preserve the exact word
+    # sequence while allowing PDF extraction's typographic line breaks.
+    for label, text in (("DOCX", words), ("PDF", " ".join(printed.split()))):
         assert (TITLE in text) == included, f"{label} must reflect the deliberate monthly session inclusion."
         if included:
             assert "2026-09-15" in text and PARTICIPANT in text
     live.EVIDENCE.setdefault("outputs", []).append({"stage": stage, "included": included,
         "docx_bytes": len(word), "docx_sha256": sha256(word).hexdigest(),
         "pdf_bytes": len(pdf), "pdf_sha256": sha256(pdf).hexdigest()})
+
+
+def capture_observers(page, stage):
+    """Retain each document before reload without masking its primary result."""
+    observation = {"stage": stage}
+    try:
+        observation["evidence"] = page.evaluate("() => window.__enfraTrainingObserverEvidence || null")
+    except Exception as exc:
+        observation["diagnostic_error"] = str(exc)[:300]
+    records = live.EVIDENCE.setdefault("observer_documents", [])
+    records.append(observation)
+    if len(records) > 4:
+        records.pop(0)
 
 
 def exercise(browser_type, engine, *, patched):
@@ -249,18 +282,30 @@ def exercise(browser_type, engine, *, patched):
             request.abort()
     context.route("**/*", route)
     page = context.new_page()
-    page.add_init_script(DATE_EVENTS)
+    page.add_init_script(DATE_EVENTS + "\n" + (ROOT / "scripts/qa_training_observer_diagnostics.js").read_text())
     TrainingDateDelivery(lambda row: live.EVIDENCE.setdefault("date_wire", []).append(row)).attach(page)
     page.set_default_timeout(20000)
-    page.on("pageerror", lambda error: errors.append(str(error)[:500]))
+    started = time.monotonic()
+    def page_error(error):
+        message = str(error)[:500]
+        errors.append(message)
+        records = live.EVIDENCE.setdefault("browser_error_events", [])
+        records.append({"message": message, "phase": live.EVIDENCE.get("phase"),
+                        "elapsed_seconds": time.monotonic() - started})
+        if len(records) > 8:
+            records.pop(0)
+    page.on("pageerror", page_error)
     page.on("response", lambda response: date_responses.append(response) if "/DateInput." in response.url and response.url.endswith(".js") else None)
     try:
+        live.EVIDENCE["phase"] = "open-synthetic-server"
         page.goto(URL, wait_until="domcontentloaded")
+        live.EVIDENCE["phase"] = "load-synthetic-fixture"
         live.load_fixture(page, "prefill")
         page.wait_for_function(READY, timeout=25000)
         date, field = open_form(page)
         expect(field).to_have_value("")
         if patched:
+            live.EVIDENCE["phase"] = "enter-topic-and-participant"
             # A multiselect deliberately keeps its popup open after selection.
             # Complete these existing entry actions before the date's normal
             # pointer/keyboard sequence, keeping the later clear assertion
@@ -292,6 +337,7 @@ def exercise(browser_type, engine, *, patched):
         selected_date(date, "2026/09/15")
         record_date(page, date, "one-calendar-selection-closes")
         live.screenshot(page, "correct-single-date-announcement")
+        live.EVIDENCE["phase"] = "keyboard-calendar-selection"
         field.click()
         field.press("ArrowDown")
         page.wait_for_function("() => document.activeElement?.getAttribute('role')==='gridcell'")
@@ -306,12 +352,13 @@ def exercise(browser_type, engine, *, patched):
         clear = date.get_by_role("button", name="Clear value", exact=True)
         expect(clear).to_have_count(1)
         expect(clear).to_be_visible()
+        live.EVIDENCE["phase"] = "native-clear-date"
         clear.click()
         expect(field).to_have_value("")
         expect(date.locator('[aria-live="assertive"]')).to_have_text("")
         record_date(page, date, "cleared-date")
         submit = page.get_by_role("button", name="Add training session", exact=True)
-        submit_form(page, submit)
+        submit_form(page, submit, "missing-date")
         expect(page.get_by_text("Choose a training date within this reporting month.", exact=True)).to_be_visible()
         await_events(page, baseline["working"]["events"], baseline)
         for value, stage in (("2026/09/", "partial-date"), ("2026/08/31", "before-month"), ("2026/10/01", "after-month")):
@@ -319,28 +366,34 @@ def exercise(browser_type, engine, *, patched):
             replace_date(page, field, value, stage)
             record_date(page, date, stage)
             no_second_date(date)
-            submit_form(page, submit)
+            submit_form(page, submit, stage)
             expect(page.get_by_text("Choose a training date within this reporting month.", exact=True)).to_be_visible()
             await_events(page, baseline["working"]["events"], baseline)
         date, field = open_form(page)
         replace_date(page, field, "2026/09/14", "valid-date-before-calendar")
         select_day(page, field, 15)
         no_second_date(date)
-        submit_form(page, submit)
+        submit_form(page, submit, "valid-date")
         await_events(page, [*baseline["working"]["events"], ROW], baseline)
+        capture_observers(page, "before-added-session-reload")
+        live.EVIDENCE["phase"] = "reload-added-session"
         page.reload(wait_until="domcontentloaded")
         await_events(page, [*baseline["working"]["events"], ROW], baseline)
         added = page.get_by_role("button", name=f"Remove session: {TITLE} · 2026-09-15", exact=True)
         added.scroll_into_view_if_needed()
         live.screenshot(page, "desktop-session-card")
         export_and_check(page, "session-added", True)
+        live.EVIDENCE["phase"] = "narrow-session-card"
         page.set_viewport_size({"width": 390, "height": 844})
         added.scroll_into_view_if_needed()
         expect(added).to_be_visible()
         assert page.evaluate("() => document.documentElement.scrollWidth<=innerWidth+1"), "Training must not cause whole-page narrow overflow."
         live.screenshot(page, "narrow-session-card")
+        live.EVIDENCE["phase"] = "remove-monthly-session"
         added.click()
         await_events(page, baseline["working"]["events"], baseline)
+        capture_observers(page, "before-removed-session-reload")
+        live.EVIDENCE["phase"] = "reload-removed-session"
         page.reload(wait_until="domcontentloaded")
         await_events(page, baseline["working"]["events"], baseline)
         export_and_check(page, "session-removed", False)
@@ -358,6 +411,7 @@ def exercise(browser_type, engine, *, patched):
             pass
         raise
     finally:
+        capture_observers(page, "final")
         live.EVIDENCE["browser_errors"] = errors
         live.EVIDENCE["external_requests"] = attempts
         (live.ROOT / "results.json").write_text(json.dumps(live.EVIDENCE, indent=2) + "\n")

@@ -261,20 +261,27 @@ def test_native_date_change_uses_cached_selection_and_keyboard_clear_refreshes_i
     code = r'''
 const assert=require('node:assert/strict');
 const x=JSON.parse(process.argv[1]);
-const build=new Function('n','oe','se',x.helpers+x.isFunction+x.identity+
+const build=new Function('n','oe','se','document',x.helpers+x.isFunction+x.identity+
  ';n.getInputValue='+x.getInputValue+';n.setInputValue='+x.setInputValue+
  ';n.getSelection='+x.getSelection+';n.setSelection='+x.setSelection+';n.isFocused='+x.isFocused+
- ';n.isInputAutofilled='+x.autofilled+';n.onChange='+x.onChange+';n.onPaste='+x.onPaste+';return _;');
+ ';n.isInputAutofilled='+x.autofilled+';n.onChange='+x.onChange+';n.onPaste='+x.onPaste+
+ ';n.saveSelectionLoop='+x.saveSelectionLoop+';n.runSaveSelectionLoop='+x.runSaveSelectionLoop+
+ ';n.setCursorToEnd='+x.setCursorToEnd+';n.setCursorPosition='+x.setCursorPosition+
+ ';n.onFocus='+x.onFocus+';n.onMouseDown='+x.onMouseDown+';return _;');
 function state(cached){
  const input={value:'2026/09/',selectionStart:0,selectionEnd:8,matches:()=>false};
  // Only native DOM and the animation-frame clock are test adapters. The real
  // setSelection method performs both the DOM write and previousSelection update.
- const frames=new Map();let frameId=0;
+ const frames=new Map(),listeners=new Map();let frameId=0;
+ const document={addEventListener:(name,fn)=>listeners.set(name,fn),
+  removeEventListener:name=>listeners.delete(name)};
  const n={props:{},value:input.value,focused:true,previousSelection:{...cached},
-  selectionDeferId:null,getInputDOMNode:()=>input};
+  mounted:true,selectionDeferId:null,saveSelectionLoopDeferId:null,getInputDOMNode:()=>input};
  const parseMask=build(n,callback=>{frames.set(++frameId,callback);return frameId;},
-  id=>frames.delete(id));
- n.maskOptions=parseMask('9999/99/99',null);n.input=input;n.frames=frames;return n;
+  id=>frames.delete(id),document);
+ n.maskOptions=parseMask('9999/99/99',null);n.input=input;n.frames=frames;n.listeners=listeners;
+ n.flushFrame=()=>{for(const[id,fn]of [...frames.entries()])if(frames.has(id)){frames.delete(id);fn();}};
+ return n;
 }
 function deliver(n,raw,selection){
  n.input.value=raw;n.input.selectionStart=selection.start;n.input.selectionEnd=selection.end;
@@ -295,6 +302,34 @@ for(const entered of ['2026/08/31','2026/10/01','2026/09/','2026/09/15']){
  }
  assert.equal(n.value,entered);
 }
+// Reproduce the WebKit capture using actual focus/mouse/cache handlers. The
+// native input and frame clock are adapters; internal callback order is a model.
+function focusAndDelete(settleBeforeSelection){
+ const n=state(stale);n.focused=false;n.previousSelection=null;
+ n.input.selectionStart=n.input.selectionEnd=0;
+ n.onMouseDown({clientX:0,clientY:0});n.onFocus({});
+ n.listeners.get('mouseup')({clientX:0,clientY:0});
+ if(settleBeforeSelection){n.flushFrame();n.flushFrame();}
+ n.input.selectionStart=0;n.input.selectionEnd=n.input.value.length;
+ const selected=n.getSelection();
+ if(!settleBeforeSelection)n.flushFrame();
+ const beforeDelete=n.getSelection(),cached={...n.previousSelection};
+ const start=beforeDelete.start===beforeDelete.end?Math.max(0,beforeDelete.start-1):beforeDelete.start;
+ n.input.value=n.input.value.slice(0,start)+n.input.value.slice(beforeDelete.end);
+ n.input.selectionStart=n.input.selectionEnd=start;
+ const raw={value:n.input.value,selection:n.getSelection()};
+ n.onChange({});
+ return{selected,beforeDelete,cached,raw,value:n.input.value,selection:n.getSelection()};
+}
+const lateFrame=focusAndDelete(false),settled=focusAndDelete(true);
+assert.deepEqual(lateFrame.selected,{start:0,end:8,length:8});
+assert.deepEqual(lateFrame.beforeDelete,{start:8,end:8,length:0});
+assert.deepEqual(lateFrame.cached,{start:0,end:8,length:8});
+assert.deepEqual(lateFrame.raw,{value:'2026/09',selection:{start:7,end:7,length:0}});
+assert.equal(lateFrame.value,'2026/09/');
+assert.deepEqual(lateFrame.selection,{start:8,end:8,length:0});
+assert.deepEqual(settled.beforeDelete,{start:0,end:8,length:8});
+assert.equal(settled.raw.value,'');assert.equal(settled.value,'');
 '''
     subprocess.run(["node", "-e", code, json.dumps({"helpers": helpers,
                     "isFunction": is_function, "identity": identity,
@@ -305,5 +340,11 @@ for(const entered of ['2026/08/31','2026/10/01','2026/09/','2026/09/15']){
                     "isFocused": method("isFocused", "getBeforeMaskedValueChangeConfig"),
                     "autofilled": method("isInputAutofilled", "onChange"),
                     "onChange": method("onChange", "onFocus"),
-                    "onPaste": method("onPaste", "handleRef")})],
+                    "onPaste": method("onPaste", "handleRef"),
+                    "saveSelectionLoop": method("saveSelectionLoop", "runSaveSelectionLoop"),
+                    "runSaveSelectionLoop": method("runSaveSelectionLoop", "stopSaveSelectionLoop"),
+                    "setCursorToEnd": method("setCursorToEnd", "setSelection"),
+                    "setCursorPosition": method("setCursorPosition", "isFocused"),
+                    "onFocus": method("onFocus", "onBlur"),
+                    "onMouseDown": method("onMouseDown", "onPaste")})],
                    check=True, capture_output=True, text=True)
