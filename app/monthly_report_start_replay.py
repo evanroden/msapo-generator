@@ -68,6 +68,11 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
         old = prior.get(block.key)
         if old is None:
             present = current.get(block.key)
+            if present is not None and present.source == "Omit":
+                # A deselected receipt has no block, but the report may retain
+                # omitted human work. Consume this source selection without
+                # letting generic merging replace or re-include that work.
+                continue
             if present is not None and present.source != "Omit":
                 # A deselected receipt has no block, while the report editor
                 # retains empty table schemas after Clear. Explicitly selecting
@@ -87,11 +92,18 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
         if same_source:
             continue
         present = current.get(block.key)
+        # Native output also consumes address_line. A footer block matching
+        # the prior source does not prove that independently edited value is
+        # unchanged; the guided editor would copy a replacement block over it.
+        address_compatible = (block.key != "footer_text" or existing.address_line in (
+            previous.address_line, "" if block.source == "Omit" else block.text))
         if (_content(present) == _content(block)
-                and current_specs.get(block.key) == incoming_specs.get(block.key)):
+                and current_specs.get(block.key) == incoming_specs.get(block.key)
+                and address_compatible):
             continue
         unchanged_report = (_content(present) == _content(old)
-                            and current_specs.get(block.key) == previous_specs.get(block.key))
+                            and current_specs.get(block.key) == previous_specs.get(block.key)
+                            and address_compatible)
         if not verified or not unchanged_report:
             label = block.key.replace("_", " ").capitalize()
             raise ValueError(

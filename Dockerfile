@@ -61,6 +61,7 @@ ENV FONTCONFIG_FILE=/app/runtime/fonts.conf
 RUN python runtime/check_renderer.py
 
 RUN python scripts/patch_streamlit_metadata.py
+RUN python scripts/patch_streamlit_frontend.py
 
 RUN mkdir -p output
 
