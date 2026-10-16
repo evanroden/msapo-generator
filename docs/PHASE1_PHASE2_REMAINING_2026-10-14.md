@@ -6,6 +6,56 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+Current virtual-list repair batch 2026-10-16 19:07 UTC starts from the actually published PR249
+`1649aeab52ca401f5c9b601518570ba7077a6f80` (tree07b2f2). Its Required run independently counted
+2,828 tests with zero failures/errors/skips. Adaptive38949313042 passed every older family and
+both fresh Water business tails, but failed the fresh WebKit terminal native ResizeObserver gate.
+The original108,297,687-byte artifact12069130703 passed CRC and independent SHA256
+`70d6c490a70815b8639d2b56b943f3caafe1911a6099d544bdb0736353ef811e`.
+That trace places the native error at35,128.77ms during Reporting month→September option scrolling,
+after virtual-list pointer interceptions. PR25019d Adaptive38950074630 repeats that fresh error at
+35,893.265ms in the same month selection. Both reach the five canonical business stages. Their
+fresh traces record the expected repaired primary/Tooltip request names but omit JS response
+bodies; exact bytes from a different passing Shared context are not fresh-route byte proof.
+
+The same PR250 run's separate native Training date job117138939790 passed on tested integration
+`970c5730ef4dba4b03387cd3b7deb03f0f4420c0`. Both original-wheel baselines reproduced the old
+announcement; both repaired references and authoritative journeys received the exact reconstructed
+primary/Tooltip bytes and completed the full date/minmax/add/reload/remove/output assertions with
+no page errors, external requests or native window errors across their captured documents.
+All8 real output byte sizes/digests were independently rechecked. Artifact12068246399 is1,327,663
+bytes, CRC passed, SHA256 `2d84974d52cd96b47d0bc54ab6a67dc242a945808f3fb2d43816faf0669c637b`.
+This scoped job success does not make the overall Adaptive run green: its full Water compact
+preview timeout is a separate current failure under investigation. No all-page visual, physical,
+assistive-audio or Microsoft Word acceptance is claimed.
+
+The original Zt position repair remains. A distinct unpatched owner, the actual locked Cr
+virtualizer callback, synchronously flushes visible-rectangle/size changes and may flush a second
+dimension correction inside native resize delivery. An actual Cr/xr/X/Z/Q source model reproduces
+that feedback class using trace widths468→648, content height480 and max-height418. Its assumed
+React commit changes the root height480→418; that browser client-height transition was not directly
+measured, so the model does not establish the captured error's sole origin. The new narrow repair
+queues only this Cr resize owner through one frame, reuses its existing latest-render callback,
+and cancels/invalidates pending work at cleanup. Initial, normal scroll and window-resize paths,
+resulting geometry and thrown errors remain. Both window-scroll modes, active unchanged delivery,
+frame ID0, coalescing, finite correction and late/disposed work pass the source model.
+
+The unchanged static81-source hash/edge manifest now composes both narrow resize repairs with
+the existing scheduler and optional scalar-date repair. Both prior overlay generations retain
+their exact identities and complete-graph validation before upgrade; all four old/requested date
+combinations preserve the correct scalar state. Old/current corruption, no-write failure and
+interrupted upgrade/retry checks pass (29 focused publisher checks). Fresh Water now verifies
+the naturally requested primary, Tooltip AND repaired virtualizer response bodies against exact
+reconstructed pins before its later target month switch. It rejects a fully valid old unpatched
+virtualizer configuration and preserves the first bad response. No eager request, added gesture,
+browser error filter, dependency change or global ResizeObserver wrapper is introduced. Eleven
+focused model/response checks and nine unchanged fresh-task contracts pass. The final composed
+publisher/legacy/lock/upgrade/SCC/resize/response/fresh-contract gate passed71 checks in388.18s
+on locked Python3.12.14. Compilation, diff checks and independent source review pass. Exact
+integrated browser verification is still required; current main/served proof remains4ca.
+
+### Prior overlay-only implementation checkpoint
+
 Current overlay repair batch 2026-10-16 18:33 UTC is based on PR249 head
 `b34b172cb3d7dd218e3534d3de26b7258e5a88cb`; main and actually served proof remain
 `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`. This is an implemented-needs-browser-verification
