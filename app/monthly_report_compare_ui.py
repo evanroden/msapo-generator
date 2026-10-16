@@ -1,6 +1,8 @@
 """Read-only, human-readable comparison before accepting a newer saved revision."""
 
 from dataclasses import dataclass, replace
+from hashlib import sha256
+import json
 
 import streamlit as st
 
@@ -15,6 +17,7 @@ class Comparison:
     working: str
     saved_images: tuple[str, ...] = ()
     working_images: tuple[str, ...] = ()
+    identity: str = ""
 
 
 def _lines(values):
@@ -82,9 +85,10 @@ def compare_drafts(working, saved):
     """Return visible differences without exposing hashes, object IDs or JSON."""
     changes = []
 
-    def add(title, before, after, *, force=False, saved_images=(), working_images=()):
+    def add(title, before, after, *, force=False, saved_images=(), working_images=(), identity=""):
         if before != after or force:
-            changes.append(Comparison(title, str(before), str(after), saved_images, working_images))
+            changes.append(Comparison(title, str(before), str(after), saved_images, working_images,
+                                      identity or title))
 
     add("Contract", saved.profile.contract, working.profile.contract)
     add("Report name", saved.profile.title, working.profile.title)
@@ -114,7 +118,8 @@ def compare_drafts(working, saved):
                 add(label + " — divider photograph", "Saved photograph" if before.divider_asset else "No photograph",
                     "Your photograph" if after.divider_asset else "No photograph", force=True,
                     saved_images=(before.divider_asset,) if before.divider_asset else (),
-                    working_images=(after.divider_asset,) if after.divider_asset else ())
+                    working_images=(after.divider_asset,) if after.divider_asset else (),
+                    identity=f"section:{key}:divider")
     saved_specs = {b.key: b for s in saved.sections for b in s.blocks}
     working_specs = {b.key: b for s in working.sections for b in s.blocks}
     before_blocks = {b.key: b for b in saved.blocks}
@@ -131,7 +136,8 @@ def compare_drafts(working, saved):
             before_text += "\n\nThe pictures, table headings, linked evidence or review details differ."
             after_text += "\n\nThe pictures, table headings, linked evidence or review details differ."
         add(readable_label(key), before_text, after_text, force=True,
-            saved_images=before.asset_hashes if before else (), working_images=after.asset_hashes if after else ())
+            saved_images=before.asset_hashes if before else (), working_images=after.asset_hashes if after else (),
+            identity=f"block:{key}")
     if saved.follow_ups != working.follow_ups:
         before, after = _followups(saved.follow_ups), _followups(working.follow_ups)
         if before == after:
@@ -177,6 +183,15 @@ def _show_images(references, loader, *, page_key=None, label="Pictures/pages"):
         st.caption(f"Showing the first 4 of {len(references)} pictures/pages. Use the full report preview to check the rest.")
 
 
+def _image_page_key(scope, change, side, references):
+    # Comparison order changes as other fields are edited. Bind this display
+    # state to the actual block/section and ordered pictures on this side, so a
+    # different comparison cannot inherit its page and changed pictures restart
+    # at a valid first page. The unchanged saved side retains its reading place.
+    identity = json.dumps((change.identity, side, references), separators=(",", ":"))
+    return scope + "_" + sha256(identity.encode("utf-8")).hexdigest()
+
+
 def render_conflict_comparison(working, snapshot, *, working_asset_loader=None, saved_asset_loader=None,
                                can_accept=True, image_key=None):
     """Display differences only. The caller owns revision acceptance and saving."""
@@ -188,19 +203,19 @@ def render_conflict_comparison(working, snapshot, *, working_asset_loader=None, 
     if not changes:
         st.info("The report content matches the saved version." +
                 (" You can accept that version below." if can_accept else ""))
-    for index, change in enumerate(changes):
+    for change in changes:
         with st.expander(change.title):
             left, right = st.columns(2)
             with left:
                 st.markdown("**Saved report**")
                 st.text(change.saved)
                 _show_images(change.saved_images, saved_asset_loader,
-                             page_key=f"{image_key}_{index}_saved" if image_key else None,
+                             page_key=_image_page_key(image_key, change, "saved", change.saved_images) if image_key else None,
                              label="Saved report pictures/pages")
             with right:
                 st.markdown("**Your current work**")
                 st.text(change.working)
                 _show_images(change.working_images, working_asset_loader,
-                             page_key=f"{image_key}_{index}_working" if image_key else None,
+                             page_key=_image_page_key(image_key, change, "working", change.working_images) if image_key else None,
                              label="Your current work pictures/pages")
     return changes

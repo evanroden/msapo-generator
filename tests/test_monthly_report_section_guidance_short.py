@@ -26,8 +26,7 @@ def test_actionable_section_intros_do_not_invent_monthly_work():
     assert "Leave unknown dates blank" in capital
 
     rfi = section_help("rfi").guidance
-    assert "RFI means Request for Information" in rfi
-    assert "site and status" in rfi
+    assert "facility and status" in rfi
     assert "only when confirmed" in rfi
 
 

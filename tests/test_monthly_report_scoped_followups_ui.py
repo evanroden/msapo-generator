@@ -69,6 +69,10 @@ def test_proposal_has_decisions_and_explicit_omission_preserving_issue_edits():
     original_issue = app.session_state["draft"].follow_ups[0]
     app.radio[0].set_value("proposal").run()
     assert not app.text_area
+    button(app, "Confirm unchanged").click().run()
+    confirmed = app.session_state["draft"].follow_ups[1]
+    assert confirmed.status == "declined" and not problems(confirmed, app.session_state["draft"])
+    assert app.session_state["draft"].follow_ups[0] == original_issue
     button(app, "Update proposal").click().run()
     decision = next(value for value in app.radio if value.label == "Proposal decision")
     assert decision.value == "declined" and "Resolved" not in decision.options

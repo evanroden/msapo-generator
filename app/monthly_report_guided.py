@@ -388,27 +388,65 @@ def _refresh_period_editors_after_commit(prefix):
         st.rerun()
 
 
+def _has_request_rows(block):
+    return any(value is not None and str(value).strip()
+               for rows in (block.rows, *(table.rows for table in block.extra_tables))
+               for row in rows for value in row)
+
+
 def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True, manage_saved_pictures=True):
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
     key = prefix + "_edit_" + spec.key
+    edit_tables = True
+    request_notice = None
+    if spec.key == "rfi_matrix" and (spec.type in ("table", "work_order_grid") or block.extra_tables):
+        # A fresh report shows an honest empty state. Add request opens the
+        # existing native grid; an empty editor slot is never report content.
+        # Reset/import/source replacement receives different native IDs while
+        # ordinary row edits keep the same mounted editor and input seed.
+        key += "_" + _signature((_rich_text_scope(prefix), block.references,
+                                 tuple(table.reference for table in block.extra_tables)))
+        request_notice = st.empty()
+        if not _has_request_rows(block):
+            open_key = key + "_request_editor_open"
+            edit_tables = bool(st.session_state.get(open_key))
+            if not edit_tables and st.button("Add request", key=key + "_add_request"):
+                st.session_state[open_key] = True
+                edit_tables = True
     # Source-linked text has its own evidence-aware editor above. Do not echo a
     # competing read-only copy below that editor or add a second text control.
     if spec.type not in ("rich_text", "stock_text") and block.text.strip() and not block.ai_paragraphs:
-        notes = st.text_area("Notes included in this section", key=field(key + "_notes_" + _signature(block.references), block.text), height=120)
+        retained_mbcx = spec.key == "mbcx_report"
+        notes_label = ("Retained page notes (left out)" if block.source == "Omit"
+                       else "Page notes included in this report") if retained_mbcx else "Notes included in this section"
+        notes_scope = (block.references, _rich_text_scope(prefix)) if retained_mbcx else block.references
+        notes = st.text_area(notes_label, key=field(key + "_notes_" + _signature(notes_scope), block.text),
+                             height=120, **({"value": block.text} if retained_mbcx else {}))
         if notes != block.text:
-            block = replace(block, source="This month", text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
-    if block.extra_tables:
+            source = "Omit" if retained_mbcx and block.source == "Omit" else "This month"
+            block = replace(block, source=source, text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
+    if block.extra_tables and edit_tables:
         from app.monthly_report_editor import _cell_text
         tables = []
         for n, table in enumerate(block.extra_tables):
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
-            st.write(f"Table {n+1}")
-            rows = _grid(key + f"_imported_{n}_" + _signature(table.columns), [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)], num_rows="dynamic", hide_index=True)
-            tables.append(replace(table, rows=tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows if any(v is not None and v != "" for v in r.values()))))
-        block = replace(block, extra_tables=tuple(tables))
+            if len(block.extra_tables) > 1:
+                st.write(f"Table {n+1}")
+            seed = [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)]
+            rows = _grid(key + f"_imported_{n}_" + _signature(table.columns), seed, num_rows="dynamic", hide_index=True)
+            # Opening a blank imported RFI frame must retain its original
+            # structure/reference without pretending its editor slot is data.
+            edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows if any(v is not None and v != "" for v in r.values()))
+            tables.append(table if spec.key == "rfi_matrix" and rows == seed
+                          else replace(table, rows=edited_rows))
+        if spec.key == "rfi_matrix" and tuple(tables) != block.extra_tables:
+            block = replace(block, source="This month", extra_tables=tuple(tables),
+                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+        else:
+            block = replace(block, extra_tables=tuple(tables))
     if spec.type in ("rich_text", "stock_text") and block.ai_paragraphs:
         # The authoritative source-linked text editor is rendered earlier.
         pass
@@ -487,7 +525,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             resolved = render_period_items(block, draft.period, draft.sources, prefix,
                 section_title=section_title, editor_anchor=editor_anchor)
             block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
-    elif spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
+    elif edit_tables and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
         from app.monthly_report_editor import _cell_text
@@ -496,6 +534,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                             if any(v is not None and v != "" for v in row.values()))
         if rows != seed and edited_rows != block.rows:
             block = replace(block, source="This month", rows=edited_rows, reviewed_fingerprint="", client_reviewed_fingerprint="")
+    if (request_notice is not None and not _has_request_rows(block)
+            and not (block.text.strip() or block.asset_hashes or block.org_nodes or block.ai_paragraphs)):
+        # Read the result of this native edit, not its pre-edit input; deleting
+        # the final request and entering the first one both update immediately.
+        request_notice.caption("No information requests added.")
     if block.asset_hashes and manage_saved_pictures:
         from app.monthly_report_saved_pictures_ui import edit_saved_pictures
         block = edit_saved_pictures(block, key, lambda ref: assets.get(ref) or library.read_asset(state.profile.contract, state.profile.key, ref), show_preview=False)
@@ -718,7 +761,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         from app.monthly_report_page_controls import source_managed_pages
         page_managed = (spec.key == "water_reports" and source_managed_pages(
             block, st.session_state.get(prefix + "_evidence", ())))
-        if not page_managed:
+        if not page_managed and spec.key not in {"proposals", "rfi_matrix"}:
             st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
             from app.monthly_report_capacity_ui import render_capacity
@@ -749,33 +792,54 @@ def _keep_missing_sources(prefix, sources):
     return retain_unavailable(sources, missing)
 
 
-def _render_storage_maintenance():
-    """Administrative tools kept out of ordinary monthly authoring."""
-    if st.button("Check available storage", key="report_storage_check"):
-        from app.monthly_report_storage import storage_summary
+def _render_report_details_action(candidate, existing, period, browser_token):
+    """An explicit scoped profile save beside the identity fields it changes."""
+    if existing is None:
+        return
+    contract, selected = existing.contract, existing.key
+    prefix = "report_guided_" + _signature((contract, selected, period.key))
+    prepared_key = prefix + "_prepared"
+    actor = (st.session_state[prepared_key] if prepared_key in st.session_state else
+             remembered_report_preparer(browser_token, contract, selected))
+    state = library.load_profile(contract, selected)
+    if state.profile != existing:
+        st.warning("These saved report details changed while you were editing. Reload the current details before saving; your report text has not been changed.")
+        return
+    baseline_key = prefix + "_identity_details_base"
+    baseline = st.session_state.setdefault(baseline_key, state.revision)
+    if candidate == existing:
+        st.session_state[baseline_key] = state.revision
+        return
+    st.caption("Saves this report group's name, site aliases and regional scope for future reports for these sites. Completed report versions keep their original details.")
+    if not actor.strip():
+        st.caption("[Enter Prepared by](#report-prepared-by) to save these report details.")
+    if baseline != state.revision:
+        st.warning("The saved report details changed while your changes were pending. Compare both versions before continuing. Nothing has been overwritten.")
+        def aliases(profile):
+            return "; ".join(site.title + ": " + (", ".join(site.aliases) or "None") for site in profile.facilities)
+        st.table([
+            {"Detail": "Group name", "Current saved": existing.title, "Your change": candidate.title},
+            {"Detail": "Report scope", "Current saved": existing.scope_type.replace("_", " "),
+             "Your change": candidate.scope_type.replace("_", " ")},
+            {"Detail": "Site aliases", "Current saved": aliases(existing), "Your change": aliases(candidate)},
+        ])
+        st.caption("Continuing keeps your proposed details against this newer version. Save report details applies them afterward.")
+        if st.button("Continue with these report details", disabled=not actor.strip(),
+                     key=prefix + f"_details_accept_{state.revision}"):
+            st.session_state[baseline_key] = state.revision
+            st.rerun()
+        return
+    if st.button("Save report details", disabled=not actor.strip(),
+                 key=prefix + f"_rename_save_{state.revision}"):
         try:
-            st.session_state["report_storage_summary"] = storage_summary()
-        except OSError:
-            st.session_state.pop("report_storage_summary", None)
-            st.warning("Storage could not be measured right now. Your saved reports were not changed.")
-    if storage := st.session_state.get("report_storage_summary"):
-        from app.monthly_report_storage import readable_bytes
-        st.write(f"Disk capacity: {readable_bytes(storage['total'])} · Available: {readable_bytes(storage['free'])} · Monthly report files: {'at least ' if not storage['complete'] else ''}{readable_bytes(storage['monthly'])}")
-        st.caption("Measured when you click Check available storage. The disk is also used by other app workflows. Originals are retained. Identical new assets and source files share one stored copy across all contracts and sites. Monthly history keeps references, so changing one site's selection does not change another report. Existing files can be consolidated below.")
-        if storage["free"] < max(512 * 1024 * 1024, storage["total"] * .05):
-            st.warning("Storage is running low. Keep space available before importing more large reports. This check does not delete anything.")
-    if st.button("Consolidate duplicate stored files", key="report_storage_consolidate"):
-        from app.monthly_report_objects import consolidate_existing
-        from app.monthly_report_storage import storage_summary, readable_bytes
-        try:
-            with st.spinner("Sharing identical stored files; originals and history remain available…"):
-                result = consolidate_existing()
-            st.session_state["report_storage_summary"] = storage_summary()
-            st.success(f"Consolidated {result['changed']} files; released {readable_bytes(result['reclaimed'])} from duplicate copies.")
-            if not result["complete"]:
-                st.info("This batch is complete. Run consolidation again to continue through the remaining files.")
-        except (ValueError, OSError):
-            st.warning("Consolidation stopped. Original paths and report history remain available; completed files can safely be reused when you retry.")
+            library.save_profile(candidate, expected_revision=state.revision, actor=actor, confirmed=True)
+            if prefix + "_draft" in st.session_state:
+                from app.monthly_report_start import refresh_profile_identity
+                st.session_state[prefix + "_draft"] = refresh_profile_identity(
+                    st.session_state[prefix + "_draft"], candidate)
+            st.rerun()
+        except (ValueError, OSError) as exc:
+            st.error("Report details could not be saved: " + str(exc))
 
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
@@ -788,30 +852,39 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.caption("Selecting several sites combines them in one report. For separate reports, select each site individually.")
         st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
         st.caption("Draft recovery keeps edits after they reach the app. Text still being typed may not be recoverable. Check the save status before leaving. Saving or creating files adds a shared version. Prepared by is report attribution, not a sign-in.")
-    with st.sidebar.expander("Storage maintenance — all contracts", expanded=False):
-        _render_storage_maintenance()
-    from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice
-    contract = choose_contract(last_contract, field)
+    from app.monthly_report_admin_ui import render_administration_links
+    render_administration_links()
+    from app.monthly_report_start_ui import choose_contract, select_sites, starting_choice, identity_summary
+    with st.container(key="monthly_report_identity"):
+        contract = choose_contract(last_contract, field)
+        if contract:
+            period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
+            identity_slot = st.empty()
     if not contract:
         return
-    period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
     profiles = library.list_profiles(contract)
     completed_setup = st.session_state.pop("report_setup_done", None)
     remembered = last_profile if last_contract == contract else ""
     returning = any(p.key == remembered for p in profiles) and not completed_setup
-    site_box = st.expander("Report sites — expand to change", expanded=False) if returning else st.container()
+    initial_sites_open = st.session_state.setdefault("report_sites_initially_open_" + _signature(contract), not returning)
+    # Always use the same container/label. Remembering this report after its
+    # first acknowledged edit must not move existing native editors.
+    site_box = st.expander("Change report sites", expanded=initial_sites_open)
     with site_box:
-        candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup)
+        candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
+            render_details_action=lambda candidate, existing: _render_report_details_action(
+                candidate, existing, period, browser_token))
     if not candidate:
         return
+    with identity_slot.container():
+        with st.container(key="monthly_report_identity_sites"):
+            st.caption(identity_summary(existing or candidate))
     if not existing:
         starting_choice(candidate, profiles, period, "", field)
         return
     selected = existing.key
     state = library.load_profile(contract, selected)
     profile = state.profile
-    st.subheader(profile.title)
-    st.caption(profile.scope_type.replace("_", " ").capitalize() + " · " + "; ".join(f.title for f in profile.facilities))
     prefix = "report_guided_" + _signature((contract, selected, period.key))
     assets = st.session_state.setdefault(prefix + "_assets", {})
     snapshot = library.load_snapshot(contract, selected, period)
@@ -895,7 +968,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                          prepared or (draft.prepared_by if completed_setup == selected or resume else ""))
         draft = complete_guided_sections(replace(draft, prepared_by=current_actor))
         from app.monthly_report_designs import pin
-        draft = replace(draft, profile=pin(draft.profile, latest_master=not bool(snapshot) and not recovered_work))
+        draft = replace(draft, profile=pin(draft.profile,
+            latest_master=not bool(snapshot) and not recovered_work,
+            preserve_legacy=bool(snapshot) or recovered_work))
         if not preserve_saved_defaults:
             from app.monthly_report_capacity import resolve_capacity
             from app.monthly_report_workflow_standards import apply_defaults as apply_workflow_defaults
@@ -914,12 +989,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
         st.info("Price columns were left out of this working report: " + ", ".join(removed_prices) + ". The saved original remains available. Check the remaining wording and images for prices before download.")
-    if snapshot:
-        st.info(f"{period.label} saved report loaded.")
-    elif prior_draft:
-        st.info(f"{period.label} started from the saved {prior_draft.period.label} report for these sites.")
-    else:
-        st.info("Site details are ready. Update this month’s work below.")
     # A missing preparer must never strand someone in a distant section with
     # only a generic instruction. This stable in-page anchor identifies the
     # actual native text input immediately below it (not a fake proxy field).
@@ -948,12 +1017,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         from app.monthly_report_directory_ui import _resume_contacts
         draft = apply_contacts(draft, updated_contacts)
         _resume_contacts(draft, prefix)
-    if candidate != profile:
-        st.caption("The updated group name/scope will be remembered after you save it.")
-        if st.button("Save group name", disabled=not prepared.strip(), key=prefix + "_rename_save"):
-            library.save_profile(candidate, expected_revision=state.revision, actor=prepared, confirmed=True)
-            st.session_state[draft_key] = replace(draft, profile=candidate)
-            st.rerun()
     save_status = st.empty()
     from app.monthly_report_asset_review import refresh_asset_source_context
     from app.monthly_report_section_preview_ui import render_section_preview
@@ -1022,8 +1085,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.workspace_layout import workspace, workspace_section, workspace_columns
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation"):
         with st.container(key="monthly_report_navigation"):
-            st.caption(f"{contract} · {period.label} · " +
-                       ", ".join(f.title for f in profile.facilities))
             links = [f"[{short_links.get(section.key, section.title)}](#report-section-{section.key})"
                      for section in included_sections(draft.sections)]
             st.markdown("**Jump to:** " + " · ".join((*links, "[Review & download](#report-review)")))
@@ -1045,23 +1106,21 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),
                                      working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
                 with st.expander("About this report"):
-                    from app.monthly_report_designs_ui import render_design_status
+                    from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)
-                # Global design installation changes *future reports across all
-                # contracts*. It is not a monthly report field or routine approval.
-                with st.sidebar.expander("Master design administration — all contracts", expanded=False):
-                    from app.monthly_report_designs_ui import render_design_settings
-                    render_design_settings(replace(draft, blocks=tuple(blocks.values())), prefix)
+                    render_apply_master_design(replace(draft, blocks=tuple(blocks.values())), prefix)
             with preview_column:
                 with st.container(key="monthly_cover_preview_sticky"):
                     from app.monthly_report_section_ui import render_pending_cover_selection
                     proposed_draft, proposed_assets = render_pending_cover_selection(
                         replace(draft, blocks=tuple(blocks.values())), assets, contract, period, state)
                     render_section_preview(proposed_draft, "cover", proposed_assets, prefix, deferred=True)
+        from app.monthly_report_section_help import editor_section_title
         for section in draft.sections:
-            with workspace_section("monthly_" + section.key, section.title):
+            title = editor_section_title(section)
+            with workspace_section("monthly_" + section.key, title):
                 st.divider()
-                st.subheader(section.title, anchor="report-section-" + section.key)
+                st.subheader(title, anchor="report-section-" + section.key)
                 st.caption(section_help(section.key).guidance)
                 editor_column, preview_column = workspace_columns("monthly_" + section.key)
                 with editor_column:
@@ -1098,6 +1157,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if st.button("Continue with my draft", key=prefix + "_accept_revision", disabled=not accept):
             st.session_state[prefix + "_revision"] = current_revision
             st.rerun()
+    st.markdown('<span id="shared-report-history"></span>', unsafe_allow_html=True)
     history = st.expander("Shared report history", expanded=False,
                           key=prefix + "_history_open", on_change="rerun")
     with history:
@@ -1129,6 +1189,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.success("Report version saved in the shared history.")
                 st.rerun()
     with st.expander("Report actions"):
+        if snapshot:
+            st.caption(f"Opened shared version {snapshot.revision} · {period.label}. Current edits use the save status above.")
+        elif prior_draft:
+            st.caption(f"Starting report: saved {prior_draft.period.label} for these sites. Monthly updates start fresh; site information carries forward.")
         st.markdown("**Start over on this browser**")
         st.caption(f"Discard this browser's unfinished changes for {profile.title} · {period.label}. "
                    "Sites: " + "; ".join(site.title for site in profile.facilities) + ". "
@@ -1150,6 +1214,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.rerun()
             except (library.LibraryError, OSError):
                 st.error("Unfinished work could not be discarded. Your current edits remain on this page.")
+    from app.monthly_report_output_ui import take_retries
+    output_retries = take_retries(prefix)
     package = st.session_state.get(prefix + "_package")
     if package and package.fingerprint != draft.fingerprint:
         st.session_state.pop(prefix + "_package", None)
@@ -1265,6 +1331,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.caption("Your edits and saved versions are unchanged. Retry generation when the service is ready.")
                 return
             st.session_state[prefix + "_package"] = package
+            from app.monthly_report_output_ui import record_shared_save
+            record_shared_save(prefix, package)
             try:
                 saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
                                               open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
@@ -1281,13 +1349,49 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                         st.warning("Your finished report was saved, but a browser working copy could not be cleared.")
                 record_report_preferences(browser_token, contract, selected)
                 record_report_preparer(browser_token, contract, selected, prepared)
+                record_shared_save(prefix, package, saved=saved)
+                save_status.success(f"Saved · version {saved.revision} · {period.label}")
             except (ValueError, OSError) as exc:
-                st.warning(f"Downloads are ready, but this version could not be saved: {exc}")
+                record_shared_save(prefix, package, error=str(exc))
         if package:
-            st.success("Ready to download")
-            sizes = f"DOCX {len(package.docx) / (1024 * 1024):.1f} MB"
+            from app.monthly_report_output_ui import render_output_status, record_shared_save, package_identity, queue_retry, matches_retry
+            needs_shared_save = render_output_status(package, draft, snapshot, prefix)
+            retry_identity = package_identity(package)
+            retry_scope = _rich_text_scope(prefix)
+            retry_revision = st.session_state[prefix + "_revision"]
+            retry_key = _signature((retry_identity, retry_scope, retry_revision))
+            if needs_shared_save:
+                if conflict:
+                    st.caption("Compare the newer shared version above and continue with your draft before retrying this save.")
+                st.button("Retry saving this version", key=prefix + "_retry_package_save_" + retry_key,
+                          disabled=conflict or not prepared.strip(), on_click=queue_retry,
+                          args=(prefix, "save", retry_identity, retry_scope, retry_revision))
+                if matches_retry(output_retries["save"], package, retry_scope, retry_revision) and not conflict and prepared.strip():
+                    try:
+                        saved = library.save_snapshot(draft, expected_revision=current_revision, assets=tuple(assets.items()), entered_editor=prepared,
+                            open_issues=snapshot.open_issues if snapshot else prior.open_issues if prior else (),
+                            pending_proposals=snapshot.pending_proposals if snapshot else prior.pending_proposals if prior else ())
+                        st.session_state[prefix + "_revision"] = saved.revision
+                        record_shared_save(prefix, package, saved=saved)
+                    except (ValueError, OSError) as exc:
+                        record_shared_save(prefix, package, error=str(exc))
+                    st.rerun()
+            if package.pdf is None and package.pdf_error:
+                st.button("Retry PDF", key=prefix + "_retry_pdf_" + retry_key, on_click=queue_retry,
+                          args=(prefix, "pdf", retry_identity, retry_scope, retry_revision))
+                if matches_retry(output_retries["pdf"], package, retry_scope, retry_revision):
+                    from app.monthly_report_docx import retry_report_pdf
+                    try:
+                        with st.spinner("Retrying PDF conversion…"):
+                            package = retry_report_pdf(draft, package)
+                        st.session_state[prefix + "_package"] = package
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+            from app.monthly_report_storage import readable_bytes
+            sizes = "DOCX " + readable_bytes(len(package.docx))
             if package.pdf:
-                sizes += f" · PDF {len(package.pdf) / (1024 * 1024):.1f} MB"
+                sizes += " · PDF " + readable_bytes(len(package.pdf))
             st.caption(sizes)
             if max(len(package.docx), len(package.pdf or b"")) > 15 * 1024 * 1024:
                 st.warning("The finished report exceeds the 15 MB target. You can reduce selected attachment pages or use denser photo layouts, then generate it again.")

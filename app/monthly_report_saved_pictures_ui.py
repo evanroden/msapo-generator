@@ -60,6 +60,8 @@ def edit_saved_pictures(block, key, loader, *, show_preview=True):
     if not count:
         st.caption("No pictures are included here. Add a picture below when you need one.")
         return block
+    if block.source == "Omit":
+        st.caption("These pictures are retained but left out of this report. Removing one changes this draft; saved originals remain available.")
     editing_key = key + "_editing"
     pending_indexes = pending_asset_indexes(block)
     ready = not pending_indexes
@@ -85,7 +87,8 @@ def edit_saved_pictures(block, key, loader, *, show_preview=True):
         status.caption(f"Pictures {page * 4 + 1}–{min(page * 4 + 4, len(visible))} of {len(visible)}")
         following.button("Next pictures", key=key + "_next", disabled=page == last,
                          on_click=_move_page, args=(page_key, 1, last))
-    st.caption("These pictures are included in this report. Removing one changes this draft; saved originals remain available.")
+    if block.source != "Omit":
+        st.caption("These pictures are included in this report. Removing one changes this draft; saved originals remain available.")
     version = hashlib.sha256(repr(block.asset_hashes).encode()).hexdigest()[:16]
     for index in visible[page * 4:page * 4 + 4]:
         with st.container():

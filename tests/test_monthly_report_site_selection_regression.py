@@ -41,11 +41,11 @@ def test_normal_catalog_single_combined_uncheck_all_and_reentry(monkeypatch, tmp
     _box(app, first).check().run()
     assert not app.exception
     assert _selected(app) == (first,)
-    assert any(item.value == "Sites selected (1): " + first for item in app.caption)
+    assert any("Site: " + first in item.value for item in app.caption)
     _box(app, second).check().run()
     assert not app.exception
     assert set(_selected(app)) == {first, second}
-    assert any(item.value.startswith("Sites selected (2):") for item in app.caption)
+    assert any("Sites: " + first + "; " + second in item.value for item in app.caption)
     _box(app, first).uncheck().run()
     assert not app.exception
     assert _selected(app) == (second,)
@@ -71,13 +71,13 @@ def test_normal_custom_site_add_remove_and_duplicate_recovery(monkeypatch, tmp_p
     custom = next(item for item in app.text_input if item.label == "Site name")
     custom.input("Synthetic Annex; Synthetic West Campus").run()
     assert not app.exception
-    assert any(item.value.startswith("Sites selected (3):") and "Synthetic Annex" in item.value
+    assert any("Sites: " in item.value and "Synthetic Annex" in item.value
                and "Synthetic West Campus" in item.value for item in app.caption)
     next(item for item in app.text_input if item.label == "Site name").input("Synthetic Annex").run()
-    assert any(item.value.startswith("Sites selected (2):") and "Synthetic Annex" in item.value for item in app.caption)
+    assert any("Sites: " in item.value and "Synthetic Annex" in item.value for item in app.caption)
     _box(app, catalog).uncheck().run()
     assert not app.exception
-    assert any(item.value == "Sites selected (1): Synthetic Annex" for item in app.caption)
+    assert any("Site: Synthetic Annex" in item.value for item in app.caption)
     next(item for item in app.text_input if item.label == "Site name").input("Synthetic Annex; Synthetic Annex").run()
     assert not app.exception
     assert any("included more than once" in item.value for item in app.warning)

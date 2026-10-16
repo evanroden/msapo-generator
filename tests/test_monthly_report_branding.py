@@ -112,7 +112,7 @@ def test_section_choices_are_specific_and_cover_every_section():
     assert {s.key for s in default_sections()} <= SECTION_HELP.keys()
     assert len({v.edit for v in SECTION_HELP.values()}) == len(SECTION_HELP)
     assert "readings" in section_help("water").guidance
-    assert "reporting lines" in section_help("organization").guidance
+    assert "team chart" in section_help("organization").guidance
     assert "price" in section_help("proposals").guidance
 
 

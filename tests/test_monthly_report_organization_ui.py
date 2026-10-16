@@ -60,7 +60,7 @@ def test_four_current_parts_need_no_keep_or_change_questions():
     assert at.session_state["editor_calls"] == []
     assert at.session_state["blocks"] == at.session_state["original"]
     assert any("1 table row · 1 page" in c.value for c in at.caption)
-    assert any(c.value == "1 table row" for c in at.caption)
+    assert any(c.value == "1 contact" for c in at.caption)
     assert not any("Current report content" in c.value for c in at.caption)
     # Duplicate or blank headings must not erase a custom imported cell.
     assert any("Keep this custom cell" in frame.value.to_string() for frame in at.dataframe)

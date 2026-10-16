@@ -7,7 +7,7 @@ it must never vanish silently from a finished report.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Callable
 from datetime import datetime, timezone
 from io import BytesIO
@@ -478,6 +478,25 @@ def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
 
 def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
     docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader)
+    pdf, error = _convert_report_pdf(draft, docx)
+    return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error)
+
+
+def retry_report_pdf(draft: ReportDraft, package: ReportPackage) -> ReportPackage:
+    """Retry only conversion of the same current native Word bytes. Never save."""
+    if package.fingerprint != draft.fingerprint:
+        raise ValueError("This Word file belongs to an earlier draft. Create files for the current report first.")
+    if package.pdf:
+        return package
+    try:
+        with monthly_render_jobs.work_slot():
+            pdf, error = _convert_report_pdf(draft, package.docx)
+    except monthly_render_jobs.RenderBusy as exc:
+        raise ValueError(str(exc)) from exc
+    return replace(package, pdf=pdf, pdf_error=error)
+
+
+def _convert_report_pdf(draft, docx):
     pdf = None
     error = ""
     # The converter writes into the shared OUTPUT_DIR. A random stem prevents
@@ -521,4 +540,4 @@ def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
             except OSError:
                 # A cleanup failure must not discard either finished download.
                 logging.getLogger(__name__).warning("Monthly-report temporary PDF cleanup failed")
-    return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error)
+    return pdf, error

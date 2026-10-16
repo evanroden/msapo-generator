@@ -95,3 +95,14 @@ def test_shared_fixture_link_opens_actual_testing_area_and_workflow_exit_removes
     assert not at.exception
     assert at.session_state["_monthly_report_storage_mode"] == "live"
     assert not any(heading.value == "Shared report testing" for heading in at.subheader)
+
+
+def test_leaving_monthly_administration_exits_its_route(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    at = AppTest.from_file(ROOT / "run_web.py", default_timeout=20)
+    at.query_params.update({"workflow": "monthly", "monthly_admin": "storage"})
+    at.run()
+    assert not at.exception
+    assert any(heading.value == "Monthly administration" for heading in at.title)
+    at.segmented_control[0].set_value(EXPENSE_WORKFLOW).run()
+    assert not at.exception and "monthly_admin" not in at.query_params

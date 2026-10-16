@@ -34,7 +34,7 @@ def test_scanned_pages_advance_through_initially_unselected_pages(monkeypatch, t
     assert next(x for x in app.multiselect if x.label == "Included pages / extracted items").value == []
     assert not button(app, "Next page needing review").disabled
     assert not any(x.label in ("Review source", "File to review", "Classification confidence") for x in app.selectbox)
-    destination = next(x for x in app.selectbox if x.label == "Add synthetic-scanned.pdf to")
+    destination = next(x for x in app.selectbox if x.label == "Report section for synthetic-scanned.pdf")
     assert "Maintenance — vendor service pages" in destination.options
     assert "vendor_reports" not in destination.options
     button(app, "Include page and continue").click().run()

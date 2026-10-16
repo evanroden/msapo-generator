@@ -126,20 +126,22 @@ export default function(component) {
                 if (label?.querySelector('input[type="checkbox"], input[type="radio"]') ||
                         (button && !button.disabled)) awaitNativeEdit();
             };
-            // Ctrl/Command+Enter commits a native textarea without a blur/change
-            // event. Keep its full-editor request out of the same framework
-            // batch as a neighboring preview fragment. Only an existing edit
-            // opens this hold; ordinary Enter/IME/focus are still local input.
+            // Ctrl/Command+Enter commits without blur/change. Tab/Shift+Tab
+            // moves focus/scroll before its change/blur handlers can protect
+            // the deferred commit. Hold neighboring fragments at keydown for
+            // these native apply gestures. Only an existing edit opens this
+            // hold; ordinary Enter/IME/focus are still local input.
             const nativeEditorCommit = event => {
                 const target = event.target;
-                if (!gate.pending || event.isComposing || event.key !== 'Enter' ||
-                        !(event.ctrlKey || event.metaKey) ||
+                const applyKey = (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) ||
+                    (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey);
+                if (!gate.pending || event.isComposing || !applyKey ||
                         !target?.matches?.('textarea') || target.closest?.('.report-preview')) return;
                 const withinPair = target.closest?.('[class*="st-key-epc_pair_"]') ||
                     target.closest?.('.epc-workspace-pair');
                 if (withinPair && (gate.blockAll || gate.scopePair === withinPair)) awaitNativeEdit();
             };
-            // Multiline text remains unacknowledged while the operator types.
+            // Text remains unacknowledged while the operator types.
             // A geometry change can otherwise dispatch view fragments before
             // blur/on_change commits the native text area. Capture only its
             // input EVENT (not any text) and defer disposable view updates
@@ -148,10 +150,15 @@ export default function(component) {
             // open this gate; it does not submit or alter business data.
             const nativeEditorInput = event => {
                 const target = event.target;
-                if (!target?.matches?.('textarea') || target.closest?.('.report-preview')) return;
-                if (!target.closest?.('[class*="st-key-epc_edit_"]') &&
+                const preparer = target?.matches?.('input[aria-label="Prepared by"]');
+                if ((!preparer && !target?.matches?.('textarea')) || target.closest?.('.report-preview')) return;
+                if (!preparer && !target.closest?.('[class*="st-key-epc_edit_"]') &&
                         !target.closest?.('.epc-workspace-editor')) return;
-                awaitNativeEdit(target);
+                // Attribution is outside the section pairs and controls saved
+                // contact/artwork access throughout the report. Its delayed
+                // native blur commit needs a full render, just like a section
+                // text edit; a queued preview fragment must not absorb it.
+                awaitNativeEdit(preparer ? null : target);
             };
             app.addEventListener('input', nativeEditorInput, true);
             app.addEventListener('change', nativeChange, true);

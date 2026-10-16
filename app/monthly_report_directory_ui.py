@@ -193,9 +193,6 @@ def render_directory(field):
 
 
 def _render_directory(field):
-    if st.button("Back to monthly reports", key="report_directory_back"):
-        st.session_state["report_directory_manage"] = False
-        st.rerun()
     st.subheader("Contract and site directory")
     st.write("Save suggested sites and contacts once. Each report still confirms its own single-site, multi-site or regional membership.")
     st.caption("This directory does not authenticate a returning manager, send messages, change purchase-order/expense routing, or update existing reports automatically.")

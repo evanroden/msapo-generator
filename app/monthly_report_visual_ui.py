@@ -55,6 +55,7 @@ def _page_number(label, count, prefix, field):
 
 def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
     p = prefix + "_org"
+    st.caption("Team chart for these report sites. Saved report versions keep it for future months.")
     if not block.org_nodes:
         if block.asset_hashes:
             st.caption(
@@ -65,7 +66,7 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
             expanded=not block.asset_hashes,
         ):
             st.write(
-                "Add each person or position, then choose who they report to. The preview updates as you type. Existing image charts remain in saved history."
+                "Add positions and choose their reporting lines. Existing image charts remain in saved history."
             )
             candidates = contact_positions(draft)
             nodes = (OrgChartNode("position-1", role="Asset manager"),)
@@ -172,7 +173,7 @@ def edit_org_chart(draft, block, prefix, assets, field, *, show_preview=True):
                     )
         block = replace(block, source="This month", org_nodes=tuple(nodes))
         if st.button(
-            "Add a person or position", key=p + "_add", disabled=len(nodes) >= 60
+            "Add position", key=p + "_add", disabled=len(nodes) >= 60
         ):
             number = 1
             while f"position-{number}" in {n.key for n in nodes}:
@@ -348,9 +349,9 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
     updated = []
     with left:
         st.caption(
-            "Vendor contacts in this report. Open a contact to edit."
+            "Vendor contacts for this report. Removing one leaves earlier report versions intact."
             if block.key == "subcontractor_matrix"
-            else "Click a contact to edit its fields. Unchanged contacts stay as they are."
+            else "Verified site-contact corrections are kept for future reports; unmatched entries stay in this report. Removing a contact here leaves the shared directory intact."
         )
         for n, table in enumerate(tables):
             if len(tables) > 1:
@@ -361,7 +362,8 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
             )
             changed = replace(table, rows=rows)
             updated.append(changed)
-            add = st.button("Add contact", key=p + f"_add_{n}")
+            add = st.button("Add vendor contact" if block.key == "subcontractor_matrix" else "Add contact",
+                            key=p + f"_add_{n}")
             if add or removed is not None:
                 updated[-1] = replace(
                     changed,
@@ -398,9 +400,6 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
                     hide_index=True,
                     width="stretch",
                 )
-            st.caption(
-                "These values appear in this report. Verified shared-contact corrections and fully identified new site contacts are kept automatically; unmatched report-only entries remain here for review."
-            )
     changed = replace(
         block,
         rows=updated[0].rows if has_primary else (),
@@ -414,7 +413,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
 def edit_photos(draft, block, prefix, assets, field, *, show_preview=True):
     block = preserve_asset_reviews(block, block)
     p = prefix + "_photos_" + block.key
-    with st.expander("Photos (optional)", expanded=not block.asset_hashes):
+    with st.expander("Add photos", expanded=False):
         uploads = st.file_uploader(
             "Progress photos",
             label_visibility="collapsed",

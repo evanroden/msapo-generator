@@ -14,6 +14,7 @@ from app import monthly_report_library as library
 
 PREFIX = "enfra_native:"
 MASTER_PREFIX = "enfra_master:"
+BUILTIN_PREFIX = "enfra_builtin:"
 
 
 def _directory(contract):
@@ -31,6 +32,8 @@ def master_state():
 
 
 def _digest(profile):
+    if profile.template.startswith(BUILTIN_PREFIX):
+        return ""
     prefix = MASTER_PREFIX if profile.template.startswith(MASTER_PREFIX) else PREFIX
     if profile.template.startswith(prefix):
         value = profile.template[len(prefix):]
@@ -46,20 +49,14 @@ def _digest(profile):
     # Keep the reference even if its file is missing so source_for fails clearly.
     if profile.imported_from:
         return profile.imported_from
-    master = master_state().get("default", "")
-    if master:
-        return master
+    # Selecting a company default belongs to pin(), never asset resolution:
+    # installing the first master must not re-style a saved generic snapshot.
     return saved.get("default", "")
 
 
 def is_master(profile):
-    if profile.template.startswith(MASTER_PREFIX):
-        return True
-    if profile.template.startswith(PREFIX):
-        return False
-    if profile.imported_from:
-        return False
-    return bool(master_state().get("default") and not state(profile.contract).get("profiles", {}).get(profile.key))
+    """Only an explicit company-master pin selects shared master assets."""
+    return profile.template.startswith(MASTER_PREFIX)
 
 
 def _metadata(profile, digest):
@@ -163,15 +160,31 @@ def master_section_order(profile):
     return order
 
 
-def pin(profile, *, latest_master=False):
+def pin(profile, *, latest_master=False, preserve_legacy=False):
     selected = profile
-    if latest_master and is_master(profile):
+    explicit = profile.template.startswith((PREFIX, MASTER_PREFIX, BUILTIN_PREFIX))
+    if not explicit and not profile.imported_from:
+        installed = state(profile.contract)
+        site_design = installed.get("profiles", {}).get(profile.key)
+        master = master_state().get("default", "")
+        if site_design:
+            selected = replace(profile, template=PREFIX + site_design)
+        elif master and not preserve_legacy:
+            # A fresh report opts into the company default once. The returned
+            # profile pins exact bytes rather than leaving a dynamic fallback.
+            selected = replace(profile, template=MASTER_PREFIX + master)
+        elif installed.get("default"):
+            selected = replace(profile, template=PREFIX + installed["default"])
+        else:
+            selected = replace(profile, template=BUILTIN_PREFIX + profile.template)
+    if latest_master and (is_master(selected) or selected.template.startswith(BUILTIN_PREFIX)):
         digest = master_state().get("default", "")
         if digest:
-            selected = replace(profile, template=MASTER_PREFIX + digest)
+            selected = replace(selected, template=MASTER_PREFIX + digest)
     digest = _digest(selected)
     prefix = MASTER_PREFIX if is_master(selected) else PREFIX
-    selected = replace(selected, template=prefix + digest) if digest else selected
+    if digest:
+        selected = replace(selected, template=prefix + digest)
     if digest and is_master(selected) and (not selected.section_order or latest_master):
         selected = replace(selected, section_order=master_section_order(selected))
     return selected

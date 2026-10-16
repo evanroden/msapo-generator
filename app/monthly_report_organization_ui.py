@@ -48,14 +48,18 @@ def _preview_part(draft, spec, block, prefix, assets, title, *, show_preview=Tru
         details = []
         if block.org_nodes:
             count = len(block.org_nodes)
-            details.append(f"{count} {'person' if count == 1 else 'people'}")
+            details.append(f"{count} {'position' if count == 1 else 'positions'}")
         if block.rows:
-            count = len(block.rows)
-            details.append(f"{count} {'row' if count == 1 else 'rows'}")
-        if block.extra_tables:
-            count = sum(len(table.rows) for table in block.extra_tables)
+            count = sum(any(value.strip() for value in row) for row in block.rows)
             if count:
-                details.append(f"{count} table {'row' if count == 1 else 'rows'}")
+                unit = ("contact" if count == 1 else "contacts") if block.key == "contact_matrix" else ("row" if count == 1 else "rows")
+                details.append(f"{count} {unit}")
+        if block.extra_tables:
+            count = sum(any(value.strip() for value in row)
+                        for table in block.extra_tables for row in table.rows)
+            if count:
+                unit = ("contact" if count == 1 else "contacts") if block.key == "contact_matrix" else ("table row" if count == 1 else "table rows")
+                details.append(f"{count} {unit}")
         if block.asset_hashes:
             count = len(block.asset_hashes)
             details.append(f"{count} {'page' if count == 1 else 'pages'}")
@@ -131,7 +135,6 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         return blocks
     updated = dict(blocks)
     active_key = prefix + "_organization_change"
-    st.caption("Saved people and contacts are shown below. Edit only what changed.")
 
     def render_part(key, title):
         if key not in specs:

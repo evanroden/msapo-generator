@@ -115,7 +115,7 @@ def test_saved_vendor_cards_start_collapsed_without_changing_report_fingerprint(
     assert not app.exception
     card = next(e for e in app.expander if e.label == "Example Contact · HVAC · Synthetic Site")
     assert card.proto.expanded is False
-    assert any("Vendor contacts in this report" in caption.value for caption in app.caption)
+    assert any("Vendor contacts for this report" in caption.value for caption in app.caption)
     before = vendor_block(app)
     app.run()
     assert not app.exception

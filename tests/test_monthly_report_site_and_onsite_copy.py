@@ -7,8 +7,9 @@ from test_monthly_report_ui import monthly
 def test_site_selection_copy_keeps_one_and_two_site_identities(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path, saved=False)
     assert not app.exception
-    assert any(node.value == "Sites in this report" for node in app.get("subheader"))
-    assert any(node.value == "Select one or more sites." for node in app.get("caption"))
+    assert any(node.label == "Change report sites" for node in app.expander)
+    assert not any(node.value == "Sites in this report" for node in app.get("subheader"))
+    assert not any(node.value == "Select one or more sites." for node in app.get("caption"))
     assert any("Selecting several sites combines them in one report." in node.value
                for node in app.get("caption"))
     site_boxes = [item for item in app.checkbox if item.key.startswith("report_sites_")]
@@ -17,12 +18,12 @@ def test_site_selection_copy_keeps_one_and_two_site_identities(monkeypatch, tmp_
 
     next(item for item in app.checkbox if item.label == first).check().run()
     assert not app.exception
-    assert any(node.value == f"Sites selected (1): {first}"
+    assert any(f"Site: {first}" in node.value
                for node in app.get("caption"))
 
     next(item for item in app.checkbox if item.label == second).check().run()
     assert not app.exception
-    assert any(node.value == f"Sites selected (2): {first}; {second}"
+    assert any(f"Sites: {first}; {second}" in node.value
                for node in app.get("caption"))
 
 

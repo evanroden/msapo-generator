@@ -176,6 +176,44 @@ def _start(prefix, draft, job, prepare, read=ai.request_json):
         st.warning(str(exc))
 
 
+def _approval_scope(draft, prefix):
+    return (draft.profile.contract, draft.profile.key, draft.period.key,
+            st.session_state.get(prefix + "_rich_text_epoch", ""),
+            st.session_state.get("_monthly_qa_generation", ""))
+
+
+def _fact_approval(draft, prefix, source, facts):
+    return ai.digest((_approval_scope(draft, prefix), source.id, source.fingerprint,
+                      tuple(asdict(fact) for fact in facts)))
+
+
+def _queue_fact_approval(prefix, identity):
+    st.session_state[prefix + "_pending_fact_approval"] = identity
+
+
+def _apply_pending_fact_approval(draft, prefix):
+    """A native click approves only the exact currently available proposal."""
+    expected = st.session_state.pop(prefix + "_pending_fact_approval", None)
+    if expected is None:
+        return
+    contents = st.session_state.get(prefix + "_evidence", ())
+    proposed = st.session_state.get(prefix + "_ai_facts")
+    current = next((content.source for content in contents
+                    if proposed and content.source.id == proposed[0]), None)
+    if (not proposed or not current or not proposed[2]
+            or proposed[1] != current.fingerprint
+            or st.session_state.get(prefix + "_ai_source", current.id) != current.id
+            or prefix + "_ai_job" in st.session_state
+            or _fact_approval(draft, prefix, current, proposed[2]) != expected):
+        st.warning("The source or facts changed before that choice reached the report. Review the current facts and choose Use these facts again.")
+        return
+    updated = replace(current, facts=tuple(proposed[2]))
+    st.session_state[prefix + "_evidence"] = tuple(
+        replace(content, source=updated) if content.source.id == current.id else content
+        for content in contents)
+    st.session_state.pop(prefix + "_ai_facts", None)
+
+
 def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
     facts = {f.id: (s, f) for s in draft.sources for f in s.facts}
     for block in tuple(blocks.values()):
@@ -260,6 +298,7 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
 def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
     """Return updated draft/blocks; caller still owns snapshot confirmation."""
     _finish_job(draft, prefix)
+    _apply_pending_fact_approval(draft, prefix)
     busy = prefix + "_ai_job" in st.session_state
     evidence_key = prefix + "_evidence"
     contents = st.session_state.get(evidence_key, ())
@@ -270,12 +309,13 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
     # Keep optional writing mechanics out of the primary Activity editor.
     # Everything still renders in the same section so a reviewed suggestion
     # can be accepted without navigating away or overwriting manual work.
-    with st.expander("Optional Copilot help — improve this section", expanded=False):
+    with st.expander("Help write this summary", expanded=False):
         st.caption(
-            "Optional. Write directly in Activity summary below, or use uploaded files "
-            "to suggest wording. Nothing replaces your text until you approve it."
+            "Use reviewed source facts to suggest wording. Check the proposal, "
+            "then choose Add or Replace."
         )
-        with st.expander("Reading limits"):
+        st.caption("Reading and drafting send selected text or page images to the external document reader and may use paid requests. Choose a reading or drafting action to start.")
+        with st.expander("Limits"):
             st.caption("No prices in suggestions. Maximum 80 reading/drafting requests per report/month; cached results are reused. Each source read is limited to 60,000 characters. Image reading shares the report's 20-image allowance.")
         if contents:
             by_id = {c.source.id: c for c in contents}
@@ -390,28 +430,14 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
                         st.write(f"Page {fact.page} · {fact.text}")
                         if fact.flags:
                             st.warning("; ".join(fact.flags))
-                    accept = st.checkbox(
-                        "Use these facts as evidence for suggestions",
-                        key=prefix
-                        + "_ai_accept_facts_"
-                        + ai.digest([asdict(f) for f in proposed[2]]),
-                    )
-                    if st.button(
-                        "Keep these facts",
-                        disabled=not accept,
-                        key=prefix + "_ai_keep_facts",
-                    ):
-                        updated = replace(source, facts=proposed[2])
-                        st.session_state[evidence_key] = tuple(
-                            replace(c, source=updated)
-                            if c.source.id == source.id
-                            else c
-                            for c in contents
-                        )
-                        st.session_state.pop(prefix + "_ai_facts", None)
-                        st.rerun()
-        with st.container():
-            st.markdown("**Use Copilot with a copied prompt (optional)**")
+                    st.caption("These facts support suggested wording. Original pages keep their own inclusion decisions.")
+                    # Equal fact text does not imply an unchanged source. Bind
+                    # the native action and its delivered receipt to both.
+                    identity = _fact_approval(draft, prefix, source, proposed[2])
+                    st.button("Use these facts", disabled=busy or not proposed[2],
+                              key=prefix + "_ai_use_facts_" + identity,
+                              on_click=_queue_fact_approval, args=(prefix, identity))
+        with st.expander("Use Copilot", expanded=False):
             st.caption("1. Copy the prompt. 2. Ask Copilot. 3. Paste its answer below.")
             prompt = copilot_prompt(
                 draft.profile,
@@ -448,8 +474,8 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
                     if st.button(
                         "Use these notes as evidence",
                         disabled=not candidate.facts,
-                        key=prefix + "_copilot_use",
-                    ):
+                        key=prefix + "_copilot_use_" + ai.digest((_approval_scope(draft, prefix), candidate.fingerprint)),
+                    ) and candidate.facts:
                         if candidate.id not in {c.source.id for c in contents}:
                             # Store text like other originals, without executing or uploading it.
                             from app.monthly_report_sources import (
@@ -587,9 +613,17 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
                 sources, suggestion.references
             )
             existing = blocks.get(suggestion.key)
+            # This help precedes the ordinary native editor. Its callback may
+            # already have delivered newer wording on the same request as an
+            # older Replace click; keep that input and show its current value.
+            from app.monthly_report_guided import _pending_rich_text_edit
+            pending_manual = _pending_rich_text_edit(prefix, existing) if existing else None
+            if pending_manual is not None:
+                st.info("Your latest wording is shown below. Check it before choosing Add or Replace.")
+            compared = pending_manual or existing
             st.text(
                 "Current wording:\n"
-                + (existing.text if existing else "Nothing entered yet.")
+                + (compared.text if compared else "Nothing entered yet.")
             )
             mode = st.radio(
                 "Use the checked suggestion",
@@ -606,8 +640,12 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
             if st.button(
                 "Use checked wording in this report",
                 disabled=not ready,
-                key=prefix + "_ai_apply",
-            ):
+                key=prefix + "_ai_apply_" + ai.digest((
+                    _approval_scope(draft, prefix), suggestion.fingerprint,
+                    compared.fingerprint if compared else "", mode,
+                    tuple(asdict(paragraph) for paragraph in paragraphs),
+                    ai.evidence_fingerprint(sources, suggestion.references))),
+            ) and ready and pending_manual is None:
                 revised = replace(
                     suggestion,
                     ai_paragraphs=tuple(paragraphs),

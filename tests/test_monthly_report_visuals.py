@@ -230,7 +230,7 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     next(w for w in app.text_input if w.label == "Name").set_value(
         "Synthetic Lead"
     ).run()
-    next(b for b in app.button if b.label == "Add a person or position").click().run()
+    next(b for b in app.button if b.label == "Add position").click().run()
     names = [w for w in app.text_input if w.label == "Name"]
     names[1].set_value("Synthetic Technician").run()
     roles = [w for w in app.text_input if w.label == "Role / position"]

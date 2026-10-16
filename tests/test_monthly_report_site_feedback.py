@@ -24,7 +24,7 @@ def test_each_site_checkbox_produces_a_visible_current_selection(monkeypatch, tm
     options[0].check().run()
     assert not app.exception
     assert next(w for w in _sites(app) if w.label == first).value
-    assert any(f"Sites selected (1): {first}" in note.value for note in app.caption)
+    assert any(f"Site: {first}" in note.value for note in app.caption)
     app.run()
     assert next(w for w in _sites(app) if w.label == first).value
     second = next(w for w in _sites(app) if w.label != first)
@@ -32,7 +32,7 @@ def test_each_site_checkbox_produces_a_visible_current_selection(monkeypatch, tm
     assert not app.exception
     assert next(w for w in _sites(app) if w.label == first).value
     assert next(w for w in _sites(app) if w.label == second.label).value
-    assert any("Sites selected (2):" in note.value for note in app.caption)
+    assert any("Sites: " in note.value and first in note.value and second.label in note.value for note in app.caption)
 
 
 def _new_report(app):

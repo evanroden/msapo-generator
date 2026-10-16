@@ -272,7 +272,7 @@ def test_all_sections_preserve_content_and_saved_status_across_new_sessions(monk
     new.segmented_control[0].set_value("Monthly report").run()
     choose_report(new, synthetic_profiles()[0].facilities[0].title)
     assert not any(w.label.startswith("Include ") for w in new.checkbox)
-    assert any("September 2026 saved report loaded." in w.value for w in new.info)
+    assert any("Opened shared version 1 · September 2026" in w.value for w in new.caption)
     new.run()
     assert next(w for w in new.text_area if w.label == "Activity summary").value == "Synthetic initial activity."
 
@@ -342,7 +342,7 @@ def test_shared_report_never_identifies_a_new_browser_as_its_previous_editor(mon
     device[0] = "synthetic-browser-first"
     returning.selectbox("report_month_number").set_value(10).run()
     assert next(w for w in returning.text_input if w.label == "Prepared by").value == "Synthetic First Editor"
-    assert any("saved September 2026" in w.value for w in returning.info)
+    assert any("Starting report: saved September 2026" in w.value for w in returning.caption)
     step(returning, 2)
     assert next(w for w in returning.text_area if w.label == "Activity summary").value == ""
 

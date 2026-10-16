@@ -120,3 +120,27 @@ def test_guided_saved_picture_editor_leaves_document_preview_to_the_right_pane()
     assert not app.get("image")
     assert len([button for button in app.button if button.label.startswith("Remove")]) == 2
     assert not app.exception
+
+
+def test_omitted_pictures_stay_retained_and_honestly_labelled_in_open_and_ready_views():
+    from dataclasses import replace
+    from app.monthly_report_asset_review import approve_all_assets
+
+    app = app_for(2, show_preview=False)
+    omitted = replace(app.session_state["draft"], source="Omit")
+    app.session_state["draft"] = omitted
+    app.run()
+    assert not app.exception and app.session_state["draft"] == omitted
+    assert any("retained but left out of this report" in caption.value for caption in app.caption)
+    assert not any("These pictures are included" in caption.value for caption in app.caption)
+    approved = approve_all_assets(omitted)
+    app.session_state["draft"] = approved
+    app.run()
+    assert app.session_state["draft"] == approved and not app.get("image")
+    assert [button.label for button in app.button] == ["View or change pictures"]
+    assert any("retained but left out of this report" in caption.value for caption in app.caption)
+    app.button[0].click().run()
+    assert app.session_state["draft"].source == "Omit"
+    assert app.session_state["draft"].asset_hashes == approved.asset_hashes
+    assert app.session_state["draft"].references == approved.references
+    assert not any("These pictures are included" in caption.value for caption in app.caption)

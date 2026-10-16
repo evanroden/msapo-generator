@@ -60,20 +60,21 @@ def choose_contract(last_contract, field):
     current_key = field("report_contract", last_contract if last_contract in names else "")
     current = st.session_state[current_key]
     if current and not st.session_state.get("report_change_contract", False):
-        with st.container(border=True):
-            selected_logo = find_logo(current, state=state) if state else None
-            selected_title = _contract_label(current, selected_logo)
-            st.subheader(selected_title)
+        selected_logo = find_logo(current, state=state) if state else None
+        selected_title = _contract_label(current, selected_logo)
+        logo = _logo(current, state, images)
+        if logo:
+            picture, identity, action = st.columns((1, 5, 2), vertical_alignment="center")
+            picture.image(logo, width=80)
+        else:
+            identity, action = st.columns((6, 2), vertical_alignment="center")
+        with identity:
+            st.subheader(selected_title, anchor=False)
             if selected_title.casefold() != current.casefold():
                 st.caption("Account code: " + current)
-            logo = _logo(current, state, images)
-            if logo:
-                st.image(logo, width=190)
-            else:
-                _contract_tile(selected_title)
-            if st.button("Change contract", key="report_change_contract_button"):
-                st.session_state["report_change_contract"] = True
-                st.rerun()
+        if action.button("Change contract", key="report_change_contract_button", width="stretch"):
+            st.session_state["report_change_contract"] = True
+            st.rerun()
         return current
     st.subheader("Choose your contract")
     query = st.text_input("Find a contract", key=field("report_contract_search", ""), placeholder="Type part of the contract name")
@@ -82,7 +83,9 @@ def choose_contract(last_contract, field):
     visible = [(code, title) for code, title in cards
                if query.casefold() in (code + " " + title).casefold()]
     if not visible:
-        st.info("No matching contract. You can add a contract through the site/contact directory below.")
+        st.info("No matching contract. Try another name or add one through the contract directory.")
+        from app.monthly_report_admin_ui import admin_url
+        st.link_button("Open contract directory", admin_url("directory"))
     for offset in range(0, len(visible), 3):
         for column, (name, title) in zip(st.columns(3), visible[offset:offset+3]):
             with column, st.container(border=True):
@@ -116,9 +119,18 @@ def site_choices(contract, profiles):
     return tuple(known.values())
 
 
-def select_sites(contract, profiles, remembered, field, completed=None):
-    st.subheader("Sites in this report")
-    st.caption("Select one or more sites.")
+def identity_summary(profile):
+    """One exact site/scope summary for the stable contract/month strip."""
+    facilities = profile.facilities
+    label = "Site: " if len(facilities) == 1 else "Sites: "
+    sites = label + "; ".join(site.title for site in facilities)
+    ordinary_title = facilities[0].title if len(facilities) == 1 else " / ".join(site.title for site in facilities)
+    name = profile.title + " · " if profile.title != ordinary_title else ""
+    scope = {"individual": "", "multi_site": "Combined report · ", "regional": "Regional report · "}[profile.scope_type]
+    return name + scope + sites
+
+
+def select_sites(contract, profiles, remembered, field, completed=None, *, render_details_action=None):
     options = site_choices(contract, profiles)
     prefix = "report_sites_" + _key(contract)
     if completed:
@@ -154,53 +166,52 @@ def select_sites(contract, profiles, remembered, field, completed=None):
             detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
             if st.checkbox(f.title, key=key, help=detail, width="stretch"):
                 selected.append(f)
-    with st.expander("Add a site that is not listed"):
+    selection_notice = st.empty()
+    with st.expander("More report details"):
         custom = st.text_input("Site name", key=field(prefix + "_new_site", ""), help="Use a semicolon between names when adding several actual sites.")
         for name in custom.split(";"):
             if name.strip():
                 try:
                     selected.append(Facility(_key(name.strip()), name.strip()))
                 except ValueError:
-                    st.warning("Give each new site a name containing letters or numbers.")
+                    selection_notice.warning("Give each new site a name containing letters or numbers.")
                     return None, None
-    facilities = tuple(selected)
-    if not facilities:
-        st.info("Select at least one site to continue.")
-        return None, None
-    st.caption(f"Sites selected ({len(facilities)}): " + "; ".join(f.title for f in facilities))
-    # Validate before creating per-site widgets. Duplicate keys previously
-    # crashed on the alias text inputs before ReportProfile could reject them,
-    # including on every rerun with the saved text still in the input.
-    try:
-        ReportProfile(contract, "selection", "Selected sites", facilities,
-                      "individual" if len(facilities) == 1 else "multi_site")
-    except ValueError:
-        st.warning("A site or alternate name was included more than once. Keep one checkbox/name per actual site. Remove any duplicate from Site name above to continue.")
-        return None, None
-    with st.expander("Other names for these sites (optional)"):
+        facilities = tuple(selected)
+        if not facilities:
+            selection_notice.info("Select at least one site to continue.")
+            return None, None
+        # Reject duplicate actual sites before per-site alias widgets exist.
+        try:
+            ReportProfile(contract, "selection", "Selected sites", facilities,
+                          "individual" if len(facilities) == 1 else "multi_site")
+        except ValueError:
+            selection_notice.warning("A site or alternate name was included more than once. Keep one checkbox/name per actual site. Remove any duplicate from Site name above to continue.")
+            return None, None
         amended = []
         for f in facilities:
             aliases = st.text_input("Other names for " + f.title, key=field(prefix + "_aliases_" + f.key, "; ".join(f.aliases)))
             amended.append(replace(f, aliases=tuple(v.strip() for v in aliases.split(";") if v.strip())))
         facilities = tuple(amended)
-    matches = matching_profiles(profiles, facilities)
-    existing = next((p for p in matches if p.key == remembered), matches[0] if matches else None)
-    if len(matches) > 1:
-        selected_key = st.radio("Saved designs for these same sites", [p.key for p in matches], format_func=lambda key: next(p.title for p in matches if p.key == key), key=prefix + "_matches_" + _signature(membership_key(facilities)))
-        existing = next(p for p in matches if p.key == selected_key)
-    identity = _signature(membership_key(facilities))
-    title = (existing.title if existing else facilities[0].title) if len(facilities) == 1 else " / ".join(f.title for f in facilities)
-    scope = "individual"
-    if len(facilities) > 1:
-        label = st.text_input("Name for this group (optional)", key=field(prefix + "_group_" + identity, existing.title if existing else ""), placeholder="For example: Western Region")
-        title = label.strip() or title
-        regional = st.checkbox("This is a regional report", key=field(prefix + "_region_" + identity, bool(existing and existing.scope_type == "regional")))
-        scope = "regional" if regional else "multi_site"
-    try:
-        candidate = replace(existing, title=title, facilities=facilities, scope_type=scope) if existing else ReportProfile(contract, report_key(facilities), title, facilities, scope)
-    except ValueError:
-        st.warning("A site or alternate name was included more than once. Keep one checkbox/name per actual site.")
-        return None, None
+        matches = matching_profiles(profiles, facilities)
+        existing = next((p for p in matches if p.key == remembered), matches[0] if matches else None)
+        if len(matches) > 1:
+            selected_key = st.radio("Saved designs for these same sites", [p.key for p in matches], format_func=lambda key: next(p.title for p in matches if p.key == key), key=prefix + "_matches_" + _signature(membership_key(facilities)))
+            existing = next(p for p in matches if p.key == selected_key)
+        identity = _signature(membership_key(facilities))
+        title = (existing.title if existing else facilities[0].title) if len(facilities) == 1 else " / ".join(f.title for f in facilities)
+        scope = "individual"
+        if len(facilities) > 1:
+            label = st.text_input("Name for this group (optional)", key=field(prefix + "_group_" + identity, existing.title if existing else ""), placeholder="For example: Western Region")
+            title = label.strip() or title
+            regional = st.checkbox("This is a regional report", key=field(prefix + "_region_" + identity, bool(existing and existing.scope_type == "regional")))
+            scope = "regional" if regional else "multi_site"
+        try:
+            candidate = replace(existing, title=title, facilities=facilities, scope_type=scope) if existing else ReportProfile(contract, report_key(facilities), title, facilities, scope)
+        except ValueError:
+            selection_notice.warning("A site or alternate name was included more than once. Keep one checkbox/name per actual site.")
+            return None, None
+        if render_details_action is not None:
+            render_details_action(candidate, existing)
     return candidate, existing
 
 

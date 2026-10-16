@@ -181,7 +181,7 @@ def render_issue_cards(draft, prefix, field):
             status = _issue_control(st.selectbox, "Issue status", p + "_status", item.status,
                                     field, options=ISSUE_STATUSES, format_func=_status_label)
             update, note, references = item.update, item.evidence_note, item.references
-            with st.expander("Details and evidence", expanded=status in ("updated", "resolved")):
+            with st.expander("Evidence", expanded=status in ("updated", "resolved")):
                 update = _issue_control(st.text_area, "Issue update", p + "_update", update,
                                         field, height=90, max_chars=4000)
                 if status in ("updated", "resolved") or note:

@@ -92,7 +92,7 @@ def exercise_site_selection(page, browser):
     south = page.get_by_role("checkbox", name="Demo South", exact=True)
     activity = page.get_by_role("textbox", name="Activity summary", exact=True)
     original = activity.input_value()
-    disclosure = page.get_by_text("Report sites — expand to change", exact=True)
+    disclosure = page.get_by_text("Change report sites", exact=True)
     label = south.locator("xpath=ancestor::label[1]")
     if not label.is_visible() and disclosure.count():
         disclosure.click()
@@ -129,7 +129,7 @@ def exercise_site_selection(page, browser):
         expect(label).to_be_visible()
         label.click()
         expect(south).not_to_be_checked()
-        expect(page.get_by_text("Sites selected (1): Demo North", exact=True)).to_be_visible(timeout=45000)
+        expect(page.locator(".st-key-monthly_report_identity_sites")).to_contain_text("Site: Demo North", timeout=45000)
         expect(activity).to_have_count(0)
         check(browser, "native mouse unchecks a site and the server opens its exact single-site selection", True)
         # Move to a genuine unselected widget state using normal browser
@@ -143,12 +143,12 @@ def exercise_site_selection(page, browser):
         label.click()
         expect(south).to_be_checked()
         expect(north).not_to_be_checked()
-        expect(page.get_by_text("Sites selected (1): Demo South", exact=True)).to_be_visible(timeout=45000)
+        expect(page.locator(".st-key-monthly_report_identity_sites")).to_contain_text("Site: Demo South", timeout=45000)
         check(browser, "one native label click starts from zero selected sites", True)
         north_label.click()
         expect(north).to_be_checked()
         expect(south).to_be_checked()
-        expect(page.get_by_text("Sites selected (2): Demo North; Demo South", exact=True)).to_be_visible(timeout=45000)
+        expect(page.locator(".st-key-monthly_report_identity_sites")).to_contain_text("Sites: Demo North; Demo South", timeout=45000)
         expect(activity).to_have_value(original, timeout=45000)
         # Deliberately exercise keyboard separately, not as a failed-click
         # fallback. Existing combined-report draft returns after restoration.
