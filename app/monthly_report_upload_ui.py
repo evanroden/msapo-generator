@@ -404,7 +404,7 @@ def _queue_section_inclusion(key, request):
 def _omitted_water_recovery(contents, blocks, local_key, prefix):
     from app.monthly_report_guided import _rich_text_scope
     from app.monthly_report_page_controls import (
-        apply_omitted_section_request, omitted_section_ready, omitted_section_request,
+        apply_omitted_section_request, omitted_section_ready, omitted_section_request, retained_water_omission,
     )
     scope = _rich_text_scope(prefix)
     request_key = local_key + "_reinclude_omitted"
@@ -420,8 +420,7 @@ def _omitted_water_recovery(contents, blocks, local_key, prefix):
             # and attempts durable recovery, just like automatic page inclusion.
             st.session_state[prefix + "_period_editor_refresh"] = True
     block = blocks.get("water_reports")
-    if block is None or block.source != "Omit" or not (
-            block.asset_hashes or block.text.strip() or block.rows or block.extra_tables or block.ai_paragraphs or block.org_nodes):
+    if not retained_water_omission(block):
         return
     st.info("Water treatment is left out of this report. Its retained content is unchanged.")
     page_label = "page" if len(block.asset_hashes) == 1 else "pages"
@@ -484,10 +483,10 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
 def _render_section_page_review(profile, content, prefix, field, blocks, *, auto_include=False, contents=()):
     """Review pages once; completed Water reviews can add pages automatically."""
     from app.monthly_report_section_uploads import included_pages
+    from app.monthly_report_page_controls import retained_water_omission
 
     source = content.source
-    section_omitted = (auto_include and blocks.get("water_reports") is not None
-                       and blocks["water_reports"].source == "Omit")
+    section_omitted = auto_include and retained_water_omission(blocks.get("water_reports"))
     p = prefix + "_" + source.id
     _sync_source_fields(source, p, field)
     source = render_source_details(source, profile, p, field)
@@ -639,6 +638,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     from app.monthly_report_section_uploads import (
         SECTION_UPLOADS, pending_pages, prepare_section_pages, section_contents, source_destinations,
     )
+    from app.monthly_report_page_controls import retained_water_omission
     if destination not in SECTION_UPLOADS:
         raise ValueError("Unknown report section for uploaded pages.")
     blocks = {} if blocks is None else blocks
@@ -647,8 +647,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
-    if (destination == "water_reports" and blocks.get(destination) is not None
-            and blocks[destination].source == "Omit"
+    if (destination == "water_reports" and retained_water_omission(blocks.get(destination))
             and st.session_state.pop(local_key + "_auto_include", None) is not None):
         # Retire a completion from before omission even when a distinct
         # section-inclusion action is delivered in this same native run.
@@ -722,6 +721,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.warning(message)
     scoped = section_contents(contents, destination, bindings, blocks)
     if not scoped:
+        # Retained native wording/tables can outlive their source workspace.
+        # Their explicit section choice must remain reachable without a file.
+        if destination == "water_reports":
+            _omitted_water_recovery(contents, blocks, local_key, prefix)
         return tuple(c.source for c in contents), {}, {}
     if destination == "water_reports":
         included = (len(blocks["water_reports"].asset_hashes)
@@ -805,7 +808,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         if included:
             st.caption(f"{included} {'page' if included == 1 else 'pages'} included in this draft.")
         if (pending and not additions and not st.session_state.get(request_key)
-                and not (blocks.get(destination) is not None and blocks[destination].source == "Omit")):
+                and not retained_water_omission(blocks.get(destination))):
             st.caption("Finish reviewing the remaining pages to include your selected pages automatically.")
         return tuple(c.source for c in contents), additions, {}
 

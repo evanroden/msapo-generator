@@ -6,6 +6,37 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+Current repair milestone 2026-10-16 17:28 UTC: PR249's new review findings reproduced in five
+actual-caller failures despite its prefilled browser journey passing. A Water-only predicate now
+lets the genuinely empty optional Omit slot accept explicitly reviewed first pages while retaining
+omitted wording, tables/custom schemas, captions, graphics and other writer content behind its
+separate whole-section choice. That choice also renders before the empty-source early return.
+The normal fresh guided path now reviews page1, leaves page2 out, and atomically includes only1;
+other blocks remain unchanged. Stale reset/source/image/price/zero/NR/qualified guards remain.
+17 new regressions and71 affected cases pass locally. Two intermediate test-prerequisite failures
+(Boolean draft-key lookup and wrong synthetic Water spec) are preserved with their exact causes;
+no business assertion was relaxed. Independent review and NEW exact Required/Adaptive are required
+before merge. Green9b gates remain historical proof of the prefilled scenario, not these new cases.
+
+Merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf independently passed Tests38936148403
+(2,711/0/0/0), Adaptive38936148447 and automatic live38937063007. Both independent live sessions
+observed that FULL served SHA and completed3 first-attempt requested/accepted/completed generations
+each, with12 actual files' sizes/digests verified across the sessions. Live Prepared pointer/
+keyboard passed6 checks. No Render workspace selection or owner conflict change occurred. This
+is exact synthetic release proof for PR248 only, not owner AUTH, native master or phase acceptance.
+
+PR250 now87aebb9 retains single-date/native keyboard/partial/minmax/session/output assertions;
+its prior3c run stopped at an unnecessary one-second frame prerequisite on an EMPTY initial date,
+before repaired paths. Actual40-case vendor model proves empty0..0 cannot be changed by its queued
+cursor0, so only nonempty replacements need the unchanged frame barrier.60 targeted checks pass;
+new exact browser verification remains required. Priorace WebKit full tail and54 individually
+reviewed PDF pages stay scoped; earlier Chromium filter-only and ResizeObserver causes remain
+unclassified. PR251b5f57e0 exact Required38937329814 and Adaptive38937329670 passed; it remains
+unmerged. PR25257b6eee contains deliberate external reading, scoped Issue Evidence/Undo, quiet
+Scorecards and strengthened real DOCX page-order/caption checks, still unmerged behind PR251.
+
+### Prior integration checkpoint (superseded by current repair above)
+
 Updated 2026-10-16 17:02 UTC. PR248 is merged normally into main
 `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`, with reviewed parent head
 `ceaba0a20115608a9e93d4b74ad2ece96cbe2dce`. Exact pre-merge integration
