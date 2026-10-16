@@ -7,6 +7,7 @@ from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
+import posixpath
 import re
 from zipfile import ZipFile
 import sys
@@ -22,6 +23,86 @@ from playwright.sync_api import expect
 WATER = ".st-key-epc_pair_monthly_water"
 CAPTION = "Synthetic conductivity check; follow-up remains pending."
 NAME = "Synthetic water treatment - long source name for the September review.pdf"
+
+
+def assert_docx_water_pages(word, expected_pages):
+    """Check real inline picture references and caption adjacency, not media alone.
+
+    This is the synthetic journey's OOXML order/content assertion. It does not
+    establish Microsoft Word pagination, rendered legibility or PDF image order.
+    """
+    from collections import Counter
+    from lxml import etree
+    from urllib.parse import unquote, urlsplit
+
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+          "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+          "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+          "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
+    expected = [item["asset"].split(".")[0] for item in expected_pages]
+    assert expected and len(set(expected)) == len(expected), "Water fixture needs distinct expected page images"
+
+    def text(paragraph):
+        parts = []
+        for node in paragraph.iter():
+            if node.tag == "{" + ns["w"] + "}t":
+                parts.append(node.text or "")
+            elif node.tag == "{" + ns["w"] + "}tab":
+                parts.append("\t")
+            elif node.tag == "{" + ns["w"] + "}cr" or (
+                    node.tag == "{" + ns["w"] + "}br"
+                    and node.get("{" + ns["w"] + "}type") not in ("page", "column")):
+                parts.append("\n")
+        return "".join(parts)
+
+    with ZipFile(BytesIO(word)) as package:
+        xml = etree.fromstring(package.read("word/document.xml"))
+        body = xml.find("w:body", ns)
+        assert body is not None, "DOCX has no document body"
+        relationships = etree.fromstring(package.read("word/_rels/document.xml.rels"))
+        links = {item.get("Id"): item for item in relationships}
+        occurrences = []
+        for blip in body.findall(".//a:blip", ns):
+            identity = blip.get("{" + ns["r"] + "}embed")
+            assert identity in links, "DOCX picture has no embedded image relationship"
+            link = links[identity]
+            assert (link.get("Type", "").endswith("/image")
+                    and link.get("TargetMode") != "External"), "DOCX picture is not an internal image"
+            target = urlsplit(link.get("Target", ""))
+            assert not target.scheme and not target.netloc, "DOCX picture target is external"
+            path = unquote(target.path)
+            part = posixpath.normpath(path.lstrip("/") if path.startswith("/") else posixpath.join("word", path))
+            assert not part.startswith("../") and part in package.namelist(), "DOCX picture target is missing"
+            digest = sha256(package.read(part)).hexdigest()
+            if digest not in expected:
+                continue
+            assert blip.xpath("ancestor::wp:inline", namespaces=ns), "Water page picture must be inline"
+            assert not blip.xpath("ancestor::wp:anchor", namespaces=ns), "Water page picture is floating"
+            paragraph = next((node for node in blip.iterancestors() if node.tag == "{" + ns["w"] + "}p"), None)
+            assert paragraph is not None, "Water page picture has no paragraph"
+            assert not any(item["paragraph"] is paragraph for item in occurrences), "Water pages share one picture paragraph"
+            following = paragraph.getnext()
+            caption = ""
+            if following is not None and following.tag == "{" + ns["w"] + "}p":
+                style = following.find("w:pPr/w:pStyle", ns)
+                style_name = style.get("{" + ns["w"] + "}val", "") if style is not None else ""
+                if (not following.findall(".//w:drawing", ns)
+                        and not following.findall(".//w:sectPr", ns)
+                        and not style_name.startswith(("Heading", "Title"))):
+                    caption = text(following)
+            occurrences.append({"asset_sha256": digest, "relationship": identity,
+                                "part": part, "caption_sha256": sha256(caption.encode()).hexdigest(),
+                                "paragraph": paragraph})
+        assert [item["asset_sha256"] for item in occurrences] == expected, "DOCX Water inline page order/count differs from the working report"
+        for actual, wanted in zip(occurrences, expected_pages):
+            assert actual["caption_sha256"] == wanted["caption_sha256"], "DOCX Water caption is missing, changed or attached to the wrong page"
+        # A moved/duplicated caption elsewhere cannot satisfy the adjacent
+        # check or hide behind one correct copy next to its intended image.
+        blank = sha256(b"").hexdigest()
+        wanted_captions = Counter(item["caption_sha256"] for item in expected_pages if item["caption_sha256"] != blank)
+        paragraph_captions = Counter(sha256(text(p).encode()).hexdigest() for p in body.findall(".//w:p", ns))
+        assert all(paragraph_captions[digest] == count for digest, count in wanted_captions.items()), "DOCX Water caption occurrence count differs from the working report"
+        return [{key: value for key, value in item.items() if key != "paragraph"} for item in occurrences]
 
 
 def source_pdf():
@@ -190,6 +271,7 @@ def exercise(page, name, qa):
         live.request_qa_generation(page, "water-page-journey")
         word = live.download(page, "Download isolated QA DOCX", "water-pages.docx")
         pdf = live.download(page, "Download isolated QA PDF", "water-pages.pdf")
+        observations["output_docx_water_pages"] = assert_docx_water_pages(word, state["working"]["pages"])
         with ZipFile(BytesIO(word)) as package:
             from lxml import etree
             xml = etree.fromstring(package.read("word/document.xml"))

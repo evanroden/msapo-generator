@@ -6,6 +6,28 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+Observed release scope 2026-10-16 17:16 UTC: merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf
+passed Tests38936148403 (independently2,711/0/0/0) and Adaptive38936148447. Automatic
+live38937063007 observed that FULL actually served SHA in two independent isolated sessions,
+each completing exactly three requested/accepted/completed first-attempt generations. All twelve
+actual DOCX/PDF sizes/digests were independently verified; live Prepared pointer/keyboard passed
+six checks. This supersedes historical0dca served evidence below for this stated synthetic scope.
+No control-plane selection was used, and this is not full phase/owner-source/native acceptance.
+
+PR249 integration9b passed Required2,779 and Adaptive, but its merge is now held on two
+new review findings beyond the prefilled Water fixture: an empty omitted first-report placeholder
+can disable first-page inclusion, and the no-routed-source early return can hide retained assetless
+Water re-inclusion. Dedicated actual-caller regressions and conservative Water-specific repairs
+are in progress; no merged/live Water release is claimed. The passing full journey remains valid
+for its stated prefilled fixture and does not erase these new conditional paths.
+
+The current follow-up also strengthens Water DOCX output assertions: actual embedded relationship
+occurrence/order and adjacent per-page caption hashes must match the ordered working receipt.
+Both retained c3eb outputs pass; swapping their real image relationships passes the older media-set
+check but is now rejected.23 targeted cases pass. This verifies native package identity/order,
+not independent Word pagination, PDF image order, all-page legibility or graphic/privacy acceptance.
+
+
 Updated 2026-10-16 17:07 UTC. PR248 is merged normally into main
 `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`, with reviewed parent head
 `ceaba0a20115608a9e93d4b74ad2ece96cbe2dce`. Exact pre-merge integration
