@@ -161,6 +161,62 @@ and conditional artwork/recovery branches require actual task comparison and ver
 some section-specific simplification remains. Do not relabel these as owner sign-off. Nothing in
 these feature PRs is merged, newly served or a completion claim for either phase.
 
+### Scorecards intake follow-up — 2026-10-16 16:39 UTC
+
+Separate candidate based on PR251 `d6cc858f8bbd89b89fb2d13bb42a6f6fef2ee887`;
+implemented, needs exact integrated/browser verification. Synthetic AppTest reproduced the
+duplicate Utility analysis heading/field, primary upload beside already populated report-only
+capacity, and an external reading started by upload alone. The native Utility analysis field
+remains authoritative with its existing key; its duplicate markdown is removed. Populated
+report-only capacity keeps its editable table and literal zero/NR/qualified values and units;
+its uploader now lives in collapsed Add capacity for future reports with the actual reuse scope.
+Missing capacity still offers primary upload. Existing saved-capacity replacement stays in
+Edit or replace shared capacity; no display/open/reopen promotes report values to standing data.
+
+Free inspection and source-bound cached results remain available on upload. A needed external
+reading now requires Read capacity file beside the external/cost disclosure. Upload/display/
+reopen reserve no allowance and call no provider. Delayed actions bind the displayed source bytes,
+filename/fingerprint, profile/month, editor incarnation/QA generation and shared revision. Pending
+reads start once; error retry remains deliberate. Replacement/clear/reset rejects late results
+before cache publication; isolated testing refuses external reading before preparation. A valid
+reading survives a failed reuse-cache write without another paid request. Existing reader result
+validation, source-page bounds, first-fill, schema conflict, optimistic shared save and manual-
+report override rules remain. The explicit standing-data Apply action also binds its displayed
+source/result and base: an independently reproduced old-source approval could otherwise publish
+a newly staged cached source. Human cell corrections delivered with the same click still save
+through the existing current-tables/mode/actor validator without an extra click.
+
+First failures are retained separately: five initial UI/automatic-reading cases, the stale
+standing-data approval, and the failed-cache recovery. An overbound approval ID was caught before
+publication and corrected to preserve ordinary same-event cell correction plus Apply. Final
+affected Python3.12.14/AppTest/model suite: 135 passed, zero failures/errors/skips; two existing
+synthetic sheet-title warnings.
+Independent read-only review passed 66 before the last cache ordering repair and both final
+cache/approval regressions afterward. All external readers/allowance calls were stubs, never
+paid requests. These are source/AppTest proofs, not browser screenshots, real owner Scorecard
+mapping, genuine import, native visual output, merged-head CI or a served release.
+
+### Evidence and deliberate reading follow-up — 2026-10-16 17:10 UTC
+
+The separate candidate on PR251 combines Equipment Issues into one optional Evidence disclosure,
+with native source/update/status fields and separate section-level photos/pages kept reachable.
+Bulk Clear is secondary under Issue actions and changes inclusion only. Revision/incarnation plus
+rotating native action-cycle guards prevent stale Clear/Undo from binding to a later identical
+report. Clear applies after all delivered section edits; Undo refuses intervening edits anywhere
+in the draft. Original wording, statuses, sources, assets, history and standing records remain.
+First stale-action failures are retained; final96 affected checks and43 combined checks passed.
+
+Actual guided Activity intake reproduced one external worker/allowance reservation from upload
+alone. Activity/Capital/Proposals now retain free native extraction and validated cache reuse,
+while one disclosed Read selected files action binds exact selected sources, profile/month,
+report incarnation, QA generation, shared revision and native attempt token. Late/stale requests
+cannot spend or replace current edits; completed readings survive reuse-cache failure without
+another paid request. Pending suggestions keep explicit source-bound approval. The affected
+111-case suite passed with zero failures/errors/skips; no actual paid reader was called in QA.
+These changes need exact integrated/browser verification and are not merged or live merely by
+publication. A separate source-manager observation still finds fully resolved pages left open
+with repeated Include/Add controls; that remaining UX consolidation is not claimed finished here.
+
 ### Failures that must remain visible
 
 * PR248 head6046650 Required38774586215 passed 2,641 tests, but Adaptive38774586190 failed:
@@ -204,6 +260,7 @@ not an application change, dependency upgrade or passing browser evidence.
 | Saving/history/recovery | History/status/retries implemented in PR251; historical integrated gate passed, conflict tails still scoped | One truthful status; actual history rows or correctly named checkpoint action; report actions for confirmed scoped discard. Preserve conflict choices, both versions, unsent versus acknowledged edits, original/history/standing scope. |
 | Training | Implemented in separatePR250; partial actual browser proof, complete two-engine journey open | Separate standing staff requirements from monthly sessions. Retain statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and stable input incarnation. Preserve the observed scalar-date repair and exact date/session/output assertions; diagnose Chromium's participant prerequisite separately. |
 | Section/editor cleanup | Browser-observed, partly conditional | Remove duplicate headings/prose, not functions. Keep one canonical Activity editor, optional grounded writing help, evidence/price gates, CMMS coverage, scoped organization/contact editors, correct ENFRA onsite versus vendor distinction, issue recovery, proposals and RFI meaning. |
+| Scorecards/thermal intake | Implemented in separate follow-up; 135 affected checks pass; browser/actual-source mapping open | Verify one Utility analysis field, report-only versus shared capacity scope, primary missing-data intake and secondary replacement, deliberate source-bound external Read/retry, current-only standing approval and zero display-driven writes. |
 | Administration/design controls | Implemented in PR251 with scoped pin/concurrency regressions; specific expanded paths remain | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
 | Imported cover/artwork/conflicts | Source-only conditional states not fully reached | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |
 | AUTH01/02/03 | Blocked on exact approved source/target expectations and supported access | Same-site prior month; different site same contract; owner-identified genuinely half-finished current month. Inventory is not scenario selection; filenames do not establish partial status. |

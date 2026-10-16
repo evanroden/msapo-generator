@@ -83,7 +83,7 @@ def test_existing_capacity_does_not_get_overwritten_by_repeated_upload(profile, 
     assert capacity.load_capacity(profile.contract).revision == 1
 
 
-def test_image_upload_reads_automatically_then_reviews_all_sites(profile, monkeypatch):
+def test_image_upload_requires_explicit_read_then_reviews_all_sites(profile, monkeypatch):
     upload = BytesIO()
     Image.new("RGB", (200, 100), "white").save(upload, "PNG")
     upload.name = "capacity.png"
@@ -100,6 +100,9 @@ def test_image_upload_reads_automatically_then_reviews_all_sites(profile, monkey
     app = AppTest.from_string(APP)
     app.session_state["test_draft"] = draft(profile)
     app.run()
+    assert not app.exception
+    assert requests == []
+    next(b for b in app.button if b.label == "Read capacity file").click().run()
     assert not app.exception
     assert len(requests) == 1 and any(part["type"] == "image" for part in requests[0])
     assert not any("Check reading" in b.label for b in app.button)

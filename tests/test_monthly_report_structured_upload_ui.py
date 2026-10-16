@@ -29,6 +29,8 @@ def test_first_pass_is_automatic_and_manual_edits_survive_reader(monkeypatch, tm
     editor = next(w for w in app.text_area if w.label == 'Activity summary')
     assert 'Inspected the motor.' in editor.value
     assert 'Replacement is scheduled for next month.' in editor.value
+    next(w for w in app.button if w.label == 'Read selected files').click().run()
+    editor = next(w for w in app.text_area if w.label == 'Activity summary')
     editor.set_value('AM edited the activity summary.').run()
     identity = hashlib.sha256(raw).hexdigest()
     future.set_result({'items': [{'source': identity, 'page': 1, 'text': 'Inspected the motor.', 'row': []}]})
@@ -59,6 +61,8 @@ def test_reader_completion_and_activity_callback_in_same_rerun_preserve_manual_i
     assert not app.exception
     editor = next(w for w in app.text_area if w.label == 'Activity summary')
     assert 'Inspected the motor.' in editor.value
+    next(w for w in app.button if w.label == 'Read selected files').click().run()
+    editor = next(w for w in app.text_area if w.label == 'Activity summary')
     identity = hashlib.sha256(raw).hexdigest()
     # Complete the old-baseline reader BEFORE the textarea change triggers a
     # full rerun. The callback is newer input even though guided.py has not
