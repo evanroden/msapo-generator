@@ -108,6 +108,8 @@ def observe(output: Path, browser_class, context_class):
             log.flush()
 
         def on_page(page):
+            from scripts.qa_widget_delivery import WidgetDelivery
+            WidgetDelivery(record).attach(page)
             page.on('console', lambda msg: record('client', msg.text)
                     if msg.text.startswith('ENFRA_QA_DIAGNOSTIC ') else None)
             page.on('pageerror', lambda error: record('pageerror', {
