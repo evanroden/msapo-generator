@@ -31,6 +31,7 @@ from scripts.qa_shared_fixture_testing import (
     _frontend_response_receipt, _overlay_response_receipt, _virtualizer_response_receipt,
 )
 from scripts.workspace_water_observations import water_state
+from scripts.qa_fresh_native_error_checks import capture_native_window_errors, require_no_native_window_errors
 
 OUT = ROOT / "test-artifacts" / "water-fresh-page-journey"
 PORT = 8529
@@ -229,6 +230,8 @@ def exercise(browser, name, base, record):
         (out / "task.json").write_text(json.dumps(record, indent=2))
 
     try:
+        record["phase"] = "install passive native error collector"
+        page.add_init_script((ROOT / "scripts/qa_fresh_native_errors.js").read_text())
         record["phase"] = "validate pinned native frontend"
         observe_frontend_delivery(page, record)
         record["phase"] = "zero selected sites"
@@ -310,19 +313,36 @@ def exercise(browser, name, base, record):
         record["result"] = "pass"
     except Exception as exc:
         record.update({"result": "fail", "error_type": type(exc).__name__, "error": str(exc)[:2000]})
+        capture_native_window_errors(page, record, "first-failure")
         try:
             page.screenshot(path=str(out / "first-failure.png"), full_page=False)
         except Exception:
             pass
         raise
     finally:
+        primary_error = sys.exc_info()[0] is not None
+        native_error_failure = None
         if tracing:
             try:
                 context.tracing.stop(path=str(out / "trace.zip"))
             except Exception as exc:
                 record["trace_stop_error"] = str(exc)[:500]
+        # This task has one primary-document navigation and no reload. Read
+        # its unfiltered native buffer last, independently of pageerror[];
+        # Chromium can omit a native ResizeObserver error from that API.
+        capture_native_window_errors(page, record, "final")
+        if not primary_error:
+            try:
+                require_no_native_window_errors(record.get("native_window_errors"))
+                assert not errors and not external
+            except AssertionError as exc:
+                native_error_failure = exc
+                record.update({"result": "fail", "error_type": type(exc).__name__,
+                               "error": str(exc)[:2000], "failure_stage": "terminal-native-and-browser-errors"})
         (out / "task.json").write_text(json.dumps(record, indent=2))
         context.close()
+        if native_error_failure is not None:
+            raise native_error_failure
 
 
 def stop_server(process, record):

@@ -9,6 +9,16 @@ import re
 from scripts.workspace_browser_observations import require_synthetic_root
 
 
+# These exact process-lifecycle paths are owned by office_process and
+# monthly_report_render_jobs. Their creation/removal is not a report, standing
+# record or shared version write. Do not exclude the rest of render-jobs: an
+# unexpected file there must remain visible to the durable equality check.
+CONVERSION_RUNTIME_PATHS = frozenset({
+    "render-jobs/.active-office.json", "render-jobs/.active-office.tmp",
+    "render-jobs/.conversion-lock",
+})
+
+
 def namespace(base, token):
     """Validate an EXISTING server namespace without creating storage."""
     require_synthetic_root(base)
@@ -34,7 +44,9 @@ def _durable_root(target):
 def storage_state(base, token):
     """Fresh controller-side byte/mtime inventory, including identical rewrites.
 
-    Preview raster caches live outside this durable library and are excluded.
+    Preview raster caches live outside this durable library. Only the exact
+    converter process-marker/temporary/lock paths above are excluded here;
+    this receipt does not claim zero transient conversion activity.
     No filenames, cookie values, report words or file contents leave the probe.
     Bounds fail explicitly; a partial inventory cannot report unchanged storage.
     """
@@ -50,10 +62,17 @@ def storage_state(base, token):
             if not path.is_file():
                 continue
             relative = path.relative_to(root)
-            info = path.stat()
+            try:
+                info = path.stat()
+            except FileNotFoundError:
+                if relative.as_posix() in CONVERSION_RUNTIME_PATHS:
+                    continue  # The owned converter may finish during inventory.
+                raise
             total += info.st_size
             if total > 64 * 1024 * 1024 or info.st_size > 32 * 1024 * 1024:
                 raise ValueError("History storage inventory exceeded its byte bound.")
+            if relative.as_posix() in CONVERSION_RUNTIME_PATHS:
+                continue
             group = ("history" if relative.parts[0] == "snapshots" else
                      "journal" if relative.parts[0] == "active_work" else
                      "assets" if relative.parts[0] == "objects" or "assets" in relative.parts else "standing")

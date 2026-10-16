@@ -142,7 +142,7 @@ def inspect(page, identity, expected_images):
     expect(panel.get_by_text("Saved version 2 · entered editor: " + AUTHOR_ONE, exact=True)).to_be_visible()
     expect(panel.get_by_role("button", name="Continue with my draft", exact=True)).to_have_count(0)
     comparison = panel.get_by_test_id("stExpander").filter(
-        has=page.locator("summary").get_by_text("Activity summary", exact=True))
+        has=page.locator("summary").get_by_text("Work completed this month", exact=True))
     comparison.locator("summary").first.click()
     expect(comparison.get_by_text(ACTIVITY_ONE, exact=False)).to_be_visible()
     expect(comparison.get_by_text(UNSAVED, exact=False)).to_be_visible()

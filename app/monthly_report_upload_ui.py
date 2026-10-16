@@ -62,6 +62,9 @@ def _sync_source_fields(source, prefix, field, *, caption_defaults=None):
         if before.get(number) != after.get(number):
             value = after.get(number, (caption_defaults or {}).get(number, f"{source.filename} · page/item {number}"))
             st.session_state[field(prefix + f"_caption_{number}", value)] = value
+            active = st.session_state.get(prefix + "_caption_widget_keys", {}).get(number)
+            if active is not None:
+                st.session_state[active] = value
 
 def render_source_details(source, profile, prefix, field, *, applied_caption="Corrected details applied to this draft."):
     """One explicit date/site correction form for native text and image sources.
@@ -460,11 +463,11 @@ def set_source_manager_open(key, opened):
     st.session_state[key] = opened
 
 
-def _queue_page_action(key, source, block, number, action, caption_key=None):
+def _queue_page_action(key, source, block, number, action, caption_key=None, scope=None):
     st.session_state[key] = {
         "source_id": source.id, "source_fingerprint": source.fingerprint,
         "block_key": block.key, "block_fingerprint": block.fingerprint,
-        "number": number, "action": action,
+        "number": number, "action": action, "scope": scope,
     }
     # Streamlit installs submitted widget values before invoking callbacks.
     # Capture the delivered caption, not the prior render's source object.
@@ -512,7 +515,8 @@ def _omitted_water_recovery(contents, blocks, local_key, prefix):
               disabled=not ready, on_click=_queue_section_inclusion, args=(request_key, request))
 
 
-def _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents):
+def _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents, *,
+                            scope="", caption_source=None):
     """Edit the attached page beside its source, not in a second picture panel."""
     from app.monthly_report_page_controls import included_page_caption, page_asset_index, revise_included_page
     block = blocks.get("water_reports")
@@ -521,7 +525,20 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
         return source, False
     p = prefix + "_" + source.id
     current_caption = included_page_caption(block, source, page)
-    caption_key = field(p + f"_caption_{page}", current_caption)
+    # Ordinary caption/review edits keep the native field. A replaced
+    # source, image set or report incarnation cannot receive an older packet.
+    context_source = replace(caption_source or source, captions=(), selected_pages=(),
+                             client_page_reviews=(), client_page_exclusions=())
+    from app.monthly_report_section_uploads import page_identity
+    identity = lambda ref: page_identity(ref) or ref
+    provenance = tuple((asset, tuple(identity(ref) for ref in refs
+                                    if not ref.startswith("asset-source-context:v1:")))
+                       for asset, refs in block.asset_provenance)
+    context = _signature((scope, context_source.fingerprint, block.asset_hashes,
+                          tuple(identity(ref) for ref in block.references), provenance,
+                          block.source == "Omit"))[:20]
+    caption_key = field(p + f"_caption_{page}_" + context, current_caption)
+    st.session_state.setdefault(p + "_caption_widget_keys", {})[page] = caption_key
     caption = st.text_input("Page caption", key=caption_key)
     if caption != current_caption:
         block, source = revise_included_page(block, source, page, "caption", caption=caption,
@@ -539,29 +556,44 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
     blocked = kind in ("pricing", "legal", "blank", "signature") or contains_price(caption)
     if blocked:
         st.warning("Remove pricing from the caption before including this page." if contains_price(caption) else reason)
-    stamp = _signature((block.fingerprint, source.fingerprint, page))[:16]
+    stamp = _signature((scope, block.fingerprint, source.fingerprint, page))[:16]
     request_key = prefix + "_page_edit"
     keep, omit = st.columns(2)
     keep.button("Review retained page and continue" if block.source == "Omit" else "Include page and continue", key=p + "_included_keep_" + stamp,
                 disabled=blocked or not preview_ok, on_click=_queue_page_action,
-                args=(request_key, source, block, page, "review", caption_key))
+                args=(request_key, source, block, page, "review", caption_key, scope))
     omit.button("Remove retained page from this section" if block.source == "Omit" else "Leave page out and continue", key=p + "_included_omit_" + stamp,
-                on_click=_queue_page_action, args=(request_key, source, block, page, "omit", caption_key))
+                on_click=_queue_page_action, args=(request_key, source, block, page, "omit", caption_key, scope))
     if len(block.asset_hashes) > 1:
         earlier, later = st.columns(2)
         earlier.button("Move page earlier", key=p + "_earlier_" + stamp, disabled=index == 0,
-                       on_click=_queue_page_action, args=(request_key, source, block, page, "earlier", caption_key))
+                       on_click=_queue_page_action, args=(request_key, source, block, page, "earlier", caption_key, scope))
         later.button("Move page later", key=p + "_later_" + stamp, disabled=index == len(block.asset_hashes) - 1,
-                     on_click=_queue_page_action, args=(request_key, source, block, page, "later", caption_key))
+                     on_click=_queue_page_action, args=(request_key, source, block, page, "later", caption_key, scope))
     return source, True
 
 
-def _render_section_page_review(profile, content, prefix, field, blocks, *, auto_include=False, contents=()):
+def _render_section_page_review(profile, content, prefix, field, blocks, *, auto_include=False, contents=(),
+                                editor_prefix=None):
     """Review pages once; completed Water reviews can add pages automatically."""
     from app.monthly_report_section_uploads import included_pages
     from app.monthly_report_page_controls import retained_water_omission
 
     source = content.source
+    canonical_source = source
+    close_reviews = False
+    refresh_prefix = editor_prefix or prefix
+    from app.monthly_report_guided import _rich_text_scope
+    scope = _rich_text_scope(refresh_prefix)
+
+    def finish(updated):
+        if close_reviews:
+            st.session_state[p + "_edit_page_reviews"] = False
+            # The caller must keep every delivered editor value and attempt
+            # durable recovery before the one-shot controls refresh.
+            st.session_state[refresh_prefix + "_period_editor_refresh"] = True
+        return updated
+
     section_omitted = auto_include and retained_water_omission(blocks.get("water_reports"))
     p = prefix + "_" + source.id
     _sync_source_fields(source, p, field)
@@ -601,9 +633,9 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
                     st.rerun()
                 st.session_state[p + "_canonical_view"] = source
                 return replace(content, source=source)
-            if st.button("Done reviewing pages", key=p + "_close_page_reviews"):
-                st.session_state[expanded_key] = False
-                st.rerun()
+            stamp = _signature((scope, canonical_source.fingerprint,
+                                blocks.get("water_reports")))[:20]
+            close_reviews = st.button("Done reviewing pages", key=p + "_close_page_reviews_" + stamp)
     page_key = field(p + "_page", undecided[0] if undecided else image_pages[0])
     pending = st.session_state.pop(p + "_next_page", None)
     if pending in image_pages:
@@ -627,10 +659,11 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
         st.text(source.page_texts[page - 1][:12000] or "No native text on this page. Review the image above.")
     if (source.id, page) in existing:
         if auto_include:
-            source, handled = _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents)
+            source, handled = _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents,
+                                                       scope=scope, caption_source=canonical_source)
             if handled:
                 st.session_state[p + "_canonical_view"] = source
-                return replace(content, source=source)
+                return finish(replace(content, source=source))
         if not page_allowed(source, page):
             st.warning("This included page changed since its review. Correct or remove it below, then review the current source before export.")
         else:
@@ -701,7 +734,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
             # other section's canonical evidence object unchanged.
             st.session_state[prefix + "_review_rerun"] = True
     st.session_state[p + "_canonical_view"] = source
-    return replace(content, source=source)
+    return finish(replace(content, source=source))
 
 
 def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field,
@@ -733,6 +766,9 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     if pending_edit:
         from app.monthly_report_page_controls import apply_page_request
         try:
+            from app.monthly_report_guided import _rich_text_scope
+            if not isinstance(pending_edit, dict) or pending_edit.get("scope") != _rich_text_scope(prefix):
+                raise ValueError("This report changed after the page action was opened. Your current report is unchanged; review the page again.")
             contents, changes = apply_page_request(contents, blocks, pending_edit)
         except ValueError as exc:
             st.warning(str(exc))
@@ -820,7 +856,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
-        auto_include=(destination == "water_reports"), contents=contents,
+        auto_include=(destination == "water_reports"), contents=contents, editor_prefix=prefix,
     )
     contents = tuple(revised if c.source.id == selected else c for c in contents)
     st.session_state[key] = contents

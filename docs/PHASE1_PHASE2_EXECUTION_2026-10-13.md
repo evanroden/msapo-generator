@@ -1732,3 +1732,131 @@ private in `progress-photo-*.xml/log` receipts. Exact integrated CI, served brow
 narrow ordering and native output review remain required. No browser, customer original, shared
 production store or deployment was used. The final peer review is separate from these test results.
 
+
+
+## Retained Water Done and native observer publication — 1e3516e
+
+2026-10-16 20:15 UTC publication candidate, based on published0959bb2. Main and last actual
+served proof remain4ca42c5; no new release is claimed. Required38953590067 on the preceding
+integration independently passed2,851 tests, container and resource gates. Adaptive38953590080
+failed only Fresh Water's WebKit native ResizeObserver gate; both five-stage business tails and
+the full Water upload/order/omission/preview/export journey passed. Those are preceding-build
+results, not the new caption/Done repair's browser proof.
+
+This batch adds the reviewed Water repair below, keeps the stricter unfiltered native error gate,
+and extends the existing full browser journey with one native clear-caption/Done operation. It
+requires the deliberately blank caption in working AND durable state, still pending review,
+before continuing the original caption/order/omission/reload/Current/Word/PDF assertions.
+
+One explicitly marked PR249 head also runs a separate diagnostic WebKit process against an
+isolated copy of three exact locked frontend modules. Inline registration/callback markers seek
+to distinguish native observer owners; there is no global observer wrapper, callback proxy,
+timing workaround, extra UI gesture, error filter or production asset mutation. The copied
+import graph and first naturally delivered body hashes must match an independently reconstructed
+manifest. Registration/target/callback bounds and the first unfiltered native error are retained.
+This diagnostic has its own artifact, runs only on attempt1 of the exact marked PR249 head,
+and cannot make the ordinary failed journey pass. Multiple owners, missing delivery, overflow,
+non-reproduction or an uninstrumented owner remain inconclusive; the last callback alone is not
+causal proof. Its own exact25 source/model checks passed; no local browser was run.
+
+The separately published529625b finishing branch now has independent Required3,295/0/0/0 plus
+container/resource success. Its Adaptive also retains a distinct Chromium Month popup that opens
+then closes about38ms after one native click, and a WebKit native resize error. The responsible
+close trigger is unassigned. Its history failures have narrower proved test causes: an exact
+temporary conversion marker was mistaken for durable storage, and the comparison locator used
+an obsolete heading. Corrections remain separately reviewable; no retry erases these failures.
+Current Trainingd7's separate two-engine native date/session/output job passed. All108 actual
+PDF page instances and54 pages from the two unique DOCX files were reviewed with named
+LibreOffice-compatible renderers; this is synthetic scope, not Microsoft Word, genuine master,
+physical-device or assistive-audio acceptance. Both phases and all children remain unaccepted.
+
+Water caption/Done repair, 2026-10-16 20:02 UTC (local from582a6bc, not published):
+two actual native AppTests reproduced nonempty and deliberately blank captions being bypassed by
+Done's early rerun. Done now collects the current caption/source first and requests only the existing
+post-canonical/recovery-attempt refresh; changed captions still need review and cannot gain approval
+from closing. The actual full run_web path preserves the same packet's Activity, both edited page
+captions and vendor correction in the durable journal. Injected recovery-write failure retains the
+browser's current edits, the earlier durable journal and an honest failure status. Same-packet
+Activity plus Edit pages passed without changing that Open action.
+
+A separate held native Leave-out packet reproduced removal after report-incarnation or isolated-QA
+reset with otherwise identical content. Included-page callbacks now retain and check the existing
+editor/QA scope before their unchanged source/block-fingerprint applier. Caption IDs bind source,
+image/provenance and editor context, while ordinary typing, clear/reentry and review keep the native
+field. Source-correction synchronization also updates its actual active caption key. First failures,
+including test-prerequisite and initial derivative-context model mistakes, remain private and distinct.
+The final affected set passes 85 tests (14 new), zero failures/errors/skips, in 95.57 seconds on
+locked Python3.12.14/Streamlit1.61.1. These local source/AppTest results do not resolve the retained native ResizeObserver or compact
+preview activation failures, replace required browser gates, or establish a release. No browser,
+customer original, live standing data, CI rerun, merge or deployment was used for this patch.
+
+Current Fresh native-error observation batch 2026-10-16 19:33 UTC starts from the actually
+published PR249 `0959bb2484a629b90f4ef1e619ff3df32711a61b` (tree d4642df). Its Adaptive38953590080
+still fails the fresh WebKit native ResizeObserver gate during Reporting month→September option
+selection at46,021.636ms, although both engines finish all five business stages and independently
+match the exact naturally requested primary, Tooltip and virtualizer response bodies. This is not
+an absent-patch-delivery explanation or a native-error resolution. The retained original
+108,495,040-byte ZIP was independently verified with CRC and SHA256 `96d3692f7414870d70d2d69c34031929a623fc1d7811c7fdd1bbe724219e22e3`.
+Main and actually served proof remain `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`.
+
+An earlier Training87 Chromium document had a real native window ResizeObserver error while
+Playwright's pageerror list stayed empty. Fresh previously used only pageerror, so its Chromium
+native-error absence was unproved. The new Fresh-only passive collector is installed before its
+single navigation, restricted to exact `http://127.0.0.1:8529`, and keeps the first16 unfiltered
+error/unhandledrejection records, total/overflow counts and an installed marker. It neither wraps
+observers nor schedules work, writes DOM, replaces handlers, prevents defaults, adds UI actions,
+waits or error exceptions. The final read is mandatory; missing/failed collection, any native error
+or overflow fails independently of the existing pageerror and external-request checks. A failed
+read cannot replace the primary task failure; first-failure and final evidence stay separate.
+This closes a demonstrated QA coverage gap, not the remaining native resize application defect.
+The composed gate passed37 checks in43.05s on locked Python3.12.14: actual collector JavaScript
+VM/default semantics, strict Python and primary-failure control flow, unchanged Fresh task
+contracts and first-response-only three-asset body verification. Compilation and diff checks pass.
+These are source/AppTest checks, with no local browser execution. The new collector and exact0959
+composition still require browser CI; no new live observation or acceptance is claimed.
+
+
+
+## Retained native Progress browser candidate — 34fb3b7
+
+Progress photos browser candidate, 2026-10-16 20:12 UTC: the QA-only delta starts from
+finishing94116f8, with local prerequisite merges of Fresh collectorc769b1d and reviewed photo
+source5918438. That photo application source is byte-identical to published PR252529625b;
+this new journey has not run in a browser or been published. Main/served proof remains4ca.
+
+The independent15-minute CI job reuses the marked monthly_app server on exact localhost8530,
+real cookie isolation, network guards, native uploader, production guided editor and first-attempt
+QA generation. One journey per engine covers two uploaded photos, captions/reviews, ordinary
+caption blur then Move later/reverse earlier, density6→1, Add while a caption is unblurred,
+narrow Remove retaining a later caption, Done retaining unblurred Activity, reload and actual
+Word/PDF. Read-only receipts bind exact order, captions, native-photo provenance/reviews and
+working/durable equality. Fresh controller inventories require unchanged standing/history
+bytes/mtimes and retain every acknowledged normalized photo/object/recovery-link through removal.
+Native uploaded photos have empty provenance; this is not source-linked-page review acceptance.
+Passive wire observations distinguish text in a prior blur packet from text in the action packet;
+neither is inferred from a final value. Fresh defaults stay exact8529; only this task opts into8530.
+Both captured primary documents must pass the unfiltered native window error gate as well as
+pageerror/external-request checks. Browser/server cleanup errors cannot replace the primary failure.
+
+Exact DOCX Activity photo-page media/order/caption rasters and the known PDF Activity photo-page
+aspect class are checked. Every candidate in that class must match exactly one expected image;
+extra/changed/missing/duplicate/reordered photo pages fail, while unrelated aspect classes are not
+claimed as inspected. PDF comparison permits demonstrated native JPEG noise but requires small
+full-image error, the intended photo color and bidirectional one-pixel caption-ink containment.
+A retained27-page local LibreOfficeDev26.8alpha conversion passes this bounded comparison on its
+existing bytes. It is not browser generation admission, manual all-page, native Microsoft Word,
+physical-device, assistive or authentic-master acceptance.
+
+Sixteen new Progress checks passed in the composed103-case local run:102 passed, one OLD
+photo test timed out20s during the initial run_web workflow-switch setup, before its photo actions.
+That setup failure remains unclassified and was not rerun unchanged; concurrent local suites are
+a confounder, not a proved cause. The final10 cleanup/PDF-negative targets passed in10.27s,
+including original-error preservation, extra unexpected PDF photo rejection and non-photo-aspect
+exclusion. These scopes overlap. Compilation/diff checks pass. UI/state read-only peer review found no
+blocker; its cleanup finding is covered by the final negative cases. Exact new CI
+Required/Adaptive remains necessary. Earlier probe mistakes are retained: an untyped
+_draft lookup selected a boolean, the actual known fixture starts empty This month rather than
+Omit, a deliberately single-section output was renumbered, and native PDF JPEG pixels cannot
+satisfy exact PNG hashes. Populated Progress Omit remains conditional AppTest scope, not a new
+browser claim. No local browser, paid processing, business send or production write occurred.
+

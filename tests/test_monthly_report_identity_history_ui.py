@@ -80,6 +80,9 @@ def test_history_rows_and_old_version_inspection_keep_current_unsaved_draft(monk
     assert not app.exception
     assert widget(app, "text_area", "Activity summary").value == "Unpublished manual wording."
     assert any("First saved wording." in item.value for item in app.text)
+    comparison = next(item for item in app.expander if item.label == "Work completed this month")
+    assert any("First saved wording." in item.value for item in comparison.text)
+    assert any("Unpublished manual wording." in item.value for item in comparison.text)
     assert library.load_snapshot(RRH_CONTRACT, "synthetic-guided", PERIOD) == before
 
 

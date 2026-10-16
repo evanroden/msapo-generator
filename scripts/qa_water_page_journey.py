@@ -295,6 +295,19 @@ def exercise(page, name, qa):
         water.get_by_role("button", name="Edit pages", exact=True).click()
         choose_page(page, 1)
         caption = water.get_by_role("textbox", name="Page caption", exact=True)
+        assert caption.input_value(), "The Done regression must clear an actual caption."
+        caption.fill("")
+        water.get_by_role("button", name="Done reviewing pages", exact=True).click()
+        state = wait_pages(page, [1, 2], pending=[0])
+        assert state["working"]["pages"][0]["caption_sha256"] == sha256(b"").hexdigest()
+        expect(caption).to_have_value("")
+        unchanged(state)
+        record("desktop-clear-caption-with-done", state)
+        # Closing does not approve changed wording. Use the normal page review
+        # before continuing the existing caption/Tab, ordering and omission task.
+        water.get_by_role("button", name="Include page and continue", exact=True).click()
+        wait_pages(page, [1, 2], pending=[])
+        choose_page(page, 1)
         caption.fill(CAPTION)
         caption.press("Tab")
         state = wait_pages(page, [1, 2], pending=[0])
