@@ -52,6 +52,9 @@ def exercise(browser, engine, width, method):
     from workspace_wire_observations import WireObservations
     wire = WireObservations(PORT)
     wire.attach(page)
+    from qa_widget_delivery import WidgetDelivery
+    delivery = []
+    WidgetDelivery(lambda kind, item: delivery.append(item) if len(delivery) < 500 else None).attach(page)
     record = {"engine": engine, "width": width, "activation": method}
     label = f"{engine}-{width}-{method}"
     try:
@@ -72,11 +75,25 @@ def exercise(browser, engine, width, method):
         assert original, "Initial Activity hydration is a prerequisite, not a blank oracle."
         record["before_clear"] = field.evaluate("""node => {
             window.__preparerEvents=[];
-            for(const kind of ['input','change','blur']) node.addEventListener(kind,event=>{
-                if(window.__preparerEvents.length<16) window.__preparerEvents.push({
-                    kind:event.type,trusted:event.isTrusted,empty:node.value==='',
-                    fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender});
-            });
+            window.__preparerNode=node;
+            // The earlier first-16 log stopped midway through every successful
+            // name as well as the failure. Retain a bounded tail so its normal
+            // Tab/change/blur and same-node identity actually remain observable.
+            for(const kind of ['input','change','blur','focus','keydown','keyup'])
+                document.addEventListener(kind,event=>{
+                    const target=event.target;
+                    if(!target?.matches?.('input[aria-label="Prepared by"]'))return;
+                    const events=window.__preparerEvents;
+                    events.push({kind:event.type,trusted:event.isTrusted,empty:target.value==='',
+                        length:target.value.length,sameNode:target===window.__preparerNode,
+                        connected:target.isConnected,at:performance.now(),
+                        key:['Tab','Enter'].includes(event.key)?event.key:'',
+                        activeTag:document.activeElement?.tagName,
+                        fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender,
+                        scriptState:document.querySelector('[data-testid="stApp"]')
+                            ?.getAttribute('data-test-script-state')});
+                    if(events.length>128)events.shift();
+                },{capture:true,passive:true});
             return {empty:node.value==='',fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender,
                     scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')};
         }""")
@@ -125,13 +142,17 @@ def exercise(browser, engine, width, method):
         assert target["centerOwned"] and target["rect"]["top"] >= target["headerBottom"], target
         assert target["rect"]["bottom"] <= target["viewportHeight"], target
         page.screenshot(path=str(OUT / (label + "-focused.png")))
+        record["phase"] = "one corrected name and native Tab submission"
+        record["before_corrected_input_wire"] = wire.sequence
         # This types into the browser's current focus, not a locator injection.
         page.keyboard.type("Synthetic Navigation Reviewer")
         expect(field).to_have_value("Synthetic Navigation Reviewer")
         page.keyboard.press("Tab")
+        record["after_corrected_tab_wire"] = wire.sequence
         expect(links).to_have_count(0, timeout=45000)
         expect(activity).to_have_value(original)
         record["events"] = page.evaluate("window.__preparerEvents||[]")
+        assert all(event["sameNode"] for event in record["events"]), "Prepared-by input was replaced during the native journey"
         record["phase"] = "ordinary reload preserves corrected field and Activity"
         page.reload(wait_until="domcontentloaded")
         expect(field).to_have_value("Synthetic Navigation Reviewer", timeout=45000)
@@ -158,6 +179,7 @@ def exercise(browser, engine, width, method):
     finally:
         record["browser_errors"] = browser_errors
         (OUT / (label + "-wire.json")).write_text(json.dumps(wire.snapshot(), indent=2))
+        (OUT / (label + "-widget-delivery.json")).write_text(json.dumps(delivery, indent=2))
         context.close()
 
 

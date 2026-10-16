@@ -115,7 +115,12 @@ export default function(component) {
             // preview Retry, file pickers, or browser-native zoom.
             const nativeChoiceClick = event => {
                 const target = event.target;
-                if (!target?.closest || target.closest('.report-preview')) return;
+                // The reference pane's Streamlit Retry button belongs to its
+                // preview fragment. No full-editor receipt follows that action,
+                // so treating it as an editor commit would strand every viewer.
+                if (!target?.closest || target.closest('.report-preview') ||
+                        target.closest('[class*="st-key-epc_reference_"]') ||
+                        target.closest('.epc-workspace-reference')) return;
                 const label = target.closest('label');
                 const button = target.closest('[data-testid="stButton"] button');
                 if (label?.querySelector('input[type="checkbox"], input[type="radio"]') ||

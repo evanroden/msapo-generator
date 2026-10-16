@@ -88,6 +88,19 @@ test('native Streamlit action click holds adjacent previews before the full reru
     assert.equal(h.gate.blockAll,true);h.cleanup();
 });
 
+for(const referenceSelector of ['[class*="st-key-epc_reference_"]','.epc-workspace-reference'])
+test('fragment Retry preview does not await an impossible full rerun: '+referenceSelector,()=>{
+    const h=pendingEditorWithSibling();
+    h.gate.pending=false;h.gate.scopePair=null;
+    const button={disabled:false},reference={};
+    h.dispatch('click',{target:{closest:s=>s===referenceSelector?reference:
+        s==='[data-testid="stButton"] button'?button:null}});
+    assert.equal(h.gate.pending,false,'reference-only fragment controls cannot open a full-editor hold');
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();
+    assert.equal(h.sent.length,2,'both eligible previews remain able to send after a fragment Retry action');
+    h.cleanup();
+});
+
 test('ordinary Enter, composition, focus, disabled buttons and file pickers do not claim a full rerun',()=>{
     const h=pendingEditorWithSibling();
     for(const event of [{key:'Enter'},{key:'Enter',ctrlKey:true,isComposing:true},{key:'Tab'},{key:'a',ctrlKey:true}])
