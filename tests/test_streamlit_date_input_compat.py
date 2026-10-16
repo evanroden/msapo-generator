@@ -2,12 +2,14 @@
 from hashlib import sha256
 from pathlib import Path
 import json
+import re
 import subprocess
 
 import pytest
 import streamlit
 
 from scripts import patch_streamlit_date_input as compat
+from scripts import patch_streamlit_frontend as frontend
 
 
 @pytest.fixture
@@ -15,28 +17,54 @@ def bundle(tmp_path):
     installed = Path(streamlit.__file__).parent / "static"
     target = tmp_path / "static" / "js" / compat.BUNDLE_NAME
     target.parent.mkdir(parents=True)
-    raw = (installed / "static" / "js" / compat.BUNDLE_NAME).read_bytes()
-    # The shared runtime may already have received the same idempotent patch.
-    target.write_bytes(raw)
-    (target.parent / compat.INDEX_BUNDLE).write_bytes((installed / "static" / "js" / compat.INDEX_BUNDLE).read_bytes())
-    (tmp_path / "index.html").write_bytes(b'<script src="./static/js/' + compat.INDEX_BUNDLE.encode() + b'"></script>')
+    manifest = json.loads(frontend.MANIFEST_PATH.read_bytes())
+    # The composed installer validates the whole immutable native import graph.
+    # Copy its pinned originals, never generated chunks from another fixture.
+    for name, record in manifest["members"].items():
+        raw = (installed / "static" / "js" / name).read_bytes()
+        assert sha256(raw).hexdigest() == record["sha256"]
+        (target.parent / name).write_bytes(raw)
+    (tmp_path / "index.html").write_bytes((installed / "index.html").read_bytes())
     return tmp_path, target
 
 
 def test_exact_patch_changes_only_scalar_boundary_and_is_idempotent(bundle):
     root, target = bundle
     before = target.read_bytes()
+    sources, members = frontend._locked_sources(target.parent)
+    expected = frontend._publication(sources, members, True)
     receipt = compat.patch_bundle(root, installed_version="1.61.1")
     assert receipt["original_sha256"] == sha256(before).hexdigest()
     assert not receipt["already_patched"]
     assert target.read_bytes() == before
     repaired = target.parent / receipt["bundle"]
-    assert repaired.read_bytes() == before.replace(compat.ORIGINAL, compat.REPAIRED, 1)
+    assert receipt["scalar_date"] is True
+    assert receipt["bundle"] == expected.names[compat.BUNDLE_NAME]
+    assert repaired.read_bytes() == expected.payloads[compat.BUNDLE_NAME]
+    assert receipt["patched_sha256"] == sha256(repaired.read_bytes()).hexdigest()
+    # Independently undo ONLY generated import names: the remaining native date
+    # body must have exactly the known scalar/range boundary replacement.
+    aliases = {name.encode(): native.encode() for native, name in expected.names.items()}
+    matcher = re.compile(b"|".join(re.escape(name) for name in aliases))
+    native_names = matcher.sub(lambda match: aliases[match[0]], repaired.read_bytes())
+    assert native_names == before.replace(compat.ORIGINAL, compat.REPAIRED, 1)
+    assert repaired.read_bytes().count(compat.REPAIRED) == 1
+    references = re.compile(rb'''["'`](?:\./|static/js/)([A-Za-z0-9_.-]+\.js)["'`]''')
+    for name, record in members.items():
+        assert (target.parent / name).read_bytes() == sources[name]
+        delivered = (target.parent / expected.names[name]).read_bytes()
+        assert delivered == expected.payloads[name]
+        assert {value.decode() for value in references.findall(delivered)} == {
+            expected.names.get(dependency, dependency) for dependency in record["references"]
+        }
     entry = target.parent / receipt["entry"]
     assert compat.BUNDLE_NAME.encode() not in entry.read_bytes()
     assert entry.read_bytes().count(receipt["bundle"].encode()) == 2
     assert receipt["entry"].encode() in (root / "index.html").read_bytes()
-    assert compat.INDEX_BUNDLE.encode() not in (root / "index.html").read_bytes()
+    html = (root / "index.html").read_bytes()
+    assert all(name.encode() not in html for name in members)
+    assert receipt["overlay_bundle"].encode() in html
+    assert frontend.selected_frontend(root)["patched_sha256"] == receipt["patched_sha256"]
     snapshot = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
     assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
     assert {path: path.read_bytes() for path in root.rglob("*") if path.is_file()} == snapshot
@@ -58,9 +86,9 @@ def test_unknown_asset_fails_without_changes(bundle, mutation):
     elif mutation == "html":
         (root / "index.html").write_bytes(b"Unknown entry")
     elif mutation == "destination":
-        repaired = target.read_bytes().replace(compat.ORIGINAL, compat.REPAIRED, 1)
-        name = "DateInput.enfra-scalar-" + sha256(repaired).hexdigest()[:12] + ".js"
-        (target.parent / name).write_bytes(b"Unexpected existing content")
+        sources, members = frontend._locked_sources(target.parent)
+        expected = frontend._publication(sources, members, True)
+        (target.parent / expected.names[compat.BUNDLE_NAME]).write_bytes(b"Unexpected existing content")
     before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
     with pytest.raises((RuntimeError, FileNotFoundError)):
         compat.patch_bundle(root, installed_version=installed_version)

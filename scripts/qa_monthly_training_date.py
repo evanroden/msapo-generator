@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 from scripts import patch_streamlit_date_input as compat
 from scripts import qa_monthly_live as live
 from scripts.qa_training_date_delivery import TrainingDateDelivery
+from scripts.qa_training_frontend_delivery import TrainingFrontendDelivery
 from scripts.qa_training_observer_checks import require_no_native_window_errors
 from scripts.workspace_training_reference import OBSERVED_INPUT_CONTENT_WIDTH, NATIVE_INPUT_HORIZONTAL_PADDING
 
@@ -362,6 +363,10 @@ def exercise_participant_reference(browser_type, engine):
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: errors.append(str(error)[:500]))
     try:
+        live.EVIDENCE["phase"] = "validate-pinned-native-reference-frontend"
+        frontend = TrainingFrontendDelivery()
+        frontend.attach(page)
+        live.EVIDENCE["frontend_delivery"] = frontend.receipts
         live.EVIDENCE["phase"] = "open-native-participant-reference"
         page.goto(URL + "/?training_reference=native", wait_until="domcontentloaded")
         expect(page.locator('[data-enfra-training-native-reference="native-editor-only"]')).to_have_count(1)
@@ -391,6 +396,7 @@ def exercise_participant_reference(browser_type, engine):
         assert positioned is not None and abs(positioned["width"] - expected_input_width) <= 1
         live.EVIDENCE["phase"] = "reference-one-native-participant-pointer-selection"
         enter_topic_and_participant(page, original_input=original_input)
+        frontend.require()
         live.screenshot(page, "native-participant-reference-selected")
         assert not errors and not attempts
     except Exception as exc:
@@ -458,6 +464,12 @@ def exercise(browser_type, engine, *, patched):
     page.on("pageerror", page_error)
     page.on("response", lambda response: date_responses.append(response) if "/DateInput." in response.url and response.url.endswith(".js") else None)
     try:
+        frontend = None
+        if patched:
+            live.EVIDENCE["phase"] = "validate-pinned-repaired-frontend"
+            frontend = TrainingFrontendDelivery()
+            frontend.attach(page)
+            live.EVIDENCE["frontend_delivery"] = frontend.receipts
         live.EVIDENCE["phase"] = "open-synthetic-server"
         page.goto(URL, wait_until="domcontentloaded")
         live.EVIDENCE["phase"] = "load-synthetic-fixture"
@@ -483,6 +495,7 @@ def exercise(browser_type, engine, *, patched):
         if patched:
             expected = json.loads((OUT / "compatibility-patch.json").read_text())
             assert asset_hash == expected["patched_sha256"] and expected["bundle"] in asset.url
+            frontend.require()
         if not patched:
             expect(date.locator('[aria-live="assertive"]')).to_contain_text("Select the second date.")
             record_date(page, date, "single-date-announced-as-range")
