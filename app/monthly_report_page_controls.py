@@ -49,6 +49,18 @@ def included_page_caption(block, source, number):
             and index < len(block.asset_captions) else "")
 
 
+def retained_water_omission(block):
+    """An empty optional slot is addable; an omitted writer's work is retained.
+
+    Keep even empty custom table schemas and caption metadata conservatively.
+    A new explicitly reviewed page must not replace those report decisions.
+    This distinction belongs to Water intake, not generic Starting replay.
+    """
+    return (block is not None and block.key == "water_reports" and block.source == "Omit"
+            and bool(block.asset_hashes or block.text.strip() or block.rows or block.extra_tables
+                     or block.ai_paragraphs or block.org_nodes or any(c.strip() for c in block.asset_captions)))
+
+
 def omitted_section_request(block, contents, *, scope=""):
     """Bind a whole-section inclusion choice to its retained pages and sources."""
     references = (*block.references, *(ref for index in range(len(block.asset_hashes))
@@ -65,7 +77,7 @@ def omitted_section_ready(block, contents):
     if block is None or block.source != "Omit":
         return False
     if not block.asset_hashes:
-        return bool(block.text.strip() or block.rows or block.extra_tables or block.ai_paragraphs or block.org_nodes)
+        return retained_water_omission(block)
     if not source_managed_pages(block, contents):
         return False
     sources = {content.source.id: content.source for content in contents}

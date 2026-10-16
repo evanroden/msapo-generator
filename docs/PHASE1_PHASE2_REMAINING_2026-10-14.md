@@ -6,15 +6,96 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
-Release observation 2026-10-16 17:14 UTC: merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf
-passed Tests38936148403 (independently2,711 cases, zero failures/errors/skips) and Adaptive38936148447.
-Automatic live38937063007 independently observed that FULL served SHA in two isolated sessions,
-each with exactly three requested/accepted/completed first-attempt generations and six downloads.
-Prepared pointer/keyboard correction passed all six live checks. This supersedes the older served
-0dca marker below for this stated synthetic scope, not owner AUTH, native master or phase acceptance.
-All twelve actual live output sizes/digests were independently verified; page count is not manual
-all-page visual review. No Render workspace/control-plane selection was used for this observation.
+Current local integration milestone 2026-10-16 17:38 UTC: Training head
+`87aebb9af4b52fb263a61efbf8da5e202e603447` is being merged with PR249 parent
+`98111bb6b85e01b3e0a37ea6b36444256cdaf57e` locally. The incoming source delta is only the
+Water retained-omission predicate/reachable recovery and its17 regressions; Training/native
+helpers, the thin composed frontend installer and both workflow jobs remain intact. This new
+combined tree needs its own exact Required/Adaptive before publication/integration approval.
+The composed locked Python3.12.14 frontend/date/Training/Water guard run passed107 cases locally
+(`evidence/training-981-water-composed-checks.xml`); no local browser run was performed.
 
+On the OLD parent9b1c350, Training87aebb9 passed first-attempt Tests38939666207 and
+Adaptive38939665767. Tested checkout was exactly
+`330fb5135dfdcef4def6c482ae562db68c4f63e8`. Both unpatched engines reproduced the scalar-date
+second-date announcement. Both repaired engines completed one initial native Participants
+pointer opening/filter/exact option selection on the same connected input and full-render stamp;
+typed/calendar/keyboard dates, native clear, missing/partial/before/after-month rejection,
+matching durable receipts, Sep15 add/reload, narrow removal/reload and actual inclusion/omission
+DOCX/PDF checks. All eight actual output sizes/digests and exact native session rows/omissions
+were independently rechecked. Unknown hours stayed blank; standing/matrix/notes/unrelated hashes
+were unchanged. This is scoped synthetic/emulated evidence, not whole-Training/phase acceptance.
+
+IMPORTANT native-error limitation: Playwright browser_errors/external_requests were empty in
+both repaired engines, but Chromium's passive window-error diagnostic captured one
+`ResizeObserver loop completed with undelivered notifications.` at6609.1ms. This diagnostic error
+was NOT included in the existing terminal pageerror assertion, so a native-error-clean gate was
+not established by green CI. The immediately preceding delivered callbacks at6605.4/6605.8ms
+are framework Tooltip/FloatingOverlay observers on stMultiSelectDropdown (heights120/67/120,
+then40 next delivery). Their temporal proximity localizes a candidate; it does not prove sole
+causation. WebKit's three documents have no native observer errors. Preserve this current native
+failure and the earlier unexplained ResizeObserver failure; no whitelist, error suppression or
+application repair is claimed. Diagnostic bookkeeping itself can change timing.
+
+At17:44UTC a local QA gate correction now checks native window errors from EVERY captured document
+only after the final capture, in addition to the unchanged pageerror/external-request assertions.
+It records and retains a terminal native error before closing the browser, while preserving any
+already-failing input/business/output result. An earlier dirty document followed by clean reloads
+is a regression; unrelated native error messages also fail without any whitelist. Four gate/API
+checks pass locally. This tightens observation and would reject the retained Chromium87 evidence;
+it is not a ResizeObserver repair. Training integration remains HELD despite the two green runs.
+
+A bounded reference experiment is implemented-needs-CI, not a substitute acceptance journey.
+The existing marked synthetic server has a task-only query branch rendering the SAME production
+Training editor and matrix in a matching native left column, without mounting any workspace or
+preview. Each engine gets one separate fresh cookie/context, one normal scroll to the approximate
+Participants position from the same run's later screenshot, and the same original native input
+through one pointer/filter/exact-option selection. Existing passive callback/error evidence and
+the strict native gate remain; the authoritative date/durable/output journeys still run even if
+this reference fails. A reference error with only framework origins shows custom app observers
+are not necessary for that occurrence. A clean reference remains inconclusive because geometry
+and instrumentation timing can differ. No global publisher/observer timer/filter patch is made.
+The Tooltip records use nearest testid context, so120/67 heights are NOT proof of identical target
+nodes. The first reference unit run failed only at a nonexistent test guard method name before
+app execution; its JUnit is retained, the guard now names actual render_view, and6 focused checks
+pass including actual native matrix/form rendering and zero standing saves/workspace/viewer mounts.
+Parent98111bb independently passed Required38940688734 and Adaptive38940688764; these do not
+verify this Training combined tree or its new native-error/reference gates.
+The composed frontend/date/Training/native-error/Water guard run passed112 cases in28.85s on
+locked Python3.12.14 (`evidence/training-native-reference-composed-checks.xml`). Python compilation,
+21 actual browser-expression syntax checks and diff checks pass. No local browser was used; the
+new native-error gate and reference experiment require exact integrated CI before any new claim.
+
+Original date artifact12063520042 is1,210,639 bytes, SHA256
+`b1fa1d7749183350c75883938d7d83cc6ccdf7082339c5c594f60b04a5efa147`; ZIP integrity passed25
+members. Private retained original/manifest/read-only analysis are under
+`evidence/current-38939665767`. Earlier Chromium fill-only lost-filter cause stays unclassified:
+the new pointer pass does not explain it. The3c empty-input one-second frame failure remains
+preserved; actual40-case vendor model proves its zero-selection frame prerequisite unnecessary,
+while the nonempty barrier and all exact field/date/business/output assertions remain unchanged.
+
+PR249's new review findings reproduced in five actual-caller failures despite its prefilled
+browser journey passing. A Water-only predicate now lets the genuinely empty optional Omit slot
+accept explicitly reviewed first pages while retaining omitted wording, tables/custom schemas,
+captions, graphics and other writer content behind its separate whole-section choice. That
+choice also renders before the empty-source early return. The normal fresh guided path reviews
+page1, leaves page2 out, and atomically includes only1; other blocks remain unchanged. Stale
+reset/source/image/price/zero/NR/qualified guards remain.17 new regressions and71 affected cases
+passed on its parent branch. Two intermediate test-prerequisite failures (Boolean draft-key lookup
+and wrong synthetic Water spec) retain their exact causes; no business assertion was relaxed.
+
+Merged main4ca42c59fe647d4cf1f766bfb2d232092e48f7cf independently passed Tests38936148403
+(2,711/0/0/0), Adaptive38936148447 and automatic live38937063007. Both independent live sessions
+observed that FULL served SHA and completed3 first-attempt requested/accepted/completed generations
+each, with12 actual files' sizes/digests verified across the sessions. Live Prepared pointer/
+keyboard passed6 checks. No Render workspace selection or owner conflict change occurred. This
+is exact synthetic release proof for PR248 only, not owner AUTH, native master or phase acceptance.
+
+PR251b5f57e0 exact Required38937329814 and Adaptive38937329670 passed; it remains unmerged.
+PR25257b6eee contains deliberate external reading, scoped Issue Evidence/Undo, quiet Scorecards
+and strengthened real DOCX page-order/caption checks, still unmerged behind PR251.
+
+### Prior integration checkpoint (superseded by current repair above)
 
 Updated 2026-10-16 17:10 UTC. PR248 is merged normally into main
 `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`, with reviewed parent head
@@ -187,7 +268,7 @@ not an application change, dependency upgrade or passing browser evidence.
 | One Water/source-page workspace | Both-engine synthetic browser/output tail verified on c3eb2eb; new integration pending | Complete desktop then narrow upload, one review/caption/order/omit/reinclude path, repeated unchanged upload, durable reload, explicit blank/price rejection, real preview and DOCX/PDF. Preserve source identity, dependency gates and omitted-page guards. |
 | Identity/help/navigation | Implemented in unmerged PR251; current integrated browser gate passed | One stable contract/sites/month strip and useful Change path; combined quiet Help; one Prepared by with actual focus links; More report details for aliases/group/region; meaningful workflow-preserving deep links only. |
 | Saving/history/recovery | Browser-observed and conditional | One truthful status; actual history rows or correctly named checkpoint action; report actions for confirmed scoped discard. Preserve conflict choices, both versions, unsent versus acknowledged edits, original/history/standing scope. |
-| Training | Implemented in separatePR250; WebKit synthetic date/session/output tail verified on ace1d3b; Chromium participant entry and new pointer path need exact CI | Retain standing/monthly separation, statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history, one native input and single-date announcements. Finish both-engine participant/date/durable/output gates; preserve the unexplained historical ResizeObserver error. |
+| Training | Both engines completed synthetic native participant/date/durable/output tails on87aebb9/old parent9b; Chromium native ResizeObserver error remains; new parent integration needs exact CI | Retain standing/monthly separation, statuses, unknown hours, explicit deletion, same-name/course identity, rollover/history and one native input. Repair the native-error gate/cause without suppressing errors, then verify the exact combined tree. |
 | Section/editor cleanup | Browser-observed, partly conditional | Remove duplicate headings/prose, not functions. Keep one canonical Activity editor, optional grounded writing help, evidence/price gates, CMMS coverage, scoped organization/contact editors, correct ENFRA onsite versus vendor distinction, issue recovery, proposals and RFI meaning. |
 | Administration/design controls | Implemented in unmerged PR251; specific expanded browser paths remain | Move storage, bulk directory and master administration out of ordinary reporting without changing permissions. Keep pins/history and explicit shared-write scope. Raw hashes belong in diagnostics. |
 | Imported cover/artwork/conflicts | Source-only conditional states not fully reached | Reproduce duplicate galleries/action gates before deleting them. Preserve original graphics, bounded recovery/retry, explicit uncertainty, scope/date correction and optimistic concurrency. No silent art drop or hidden shared save. |

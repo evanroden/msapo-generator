@@ -34,6 +34,7 @@ sys.path.insert(0, str(ROOT))
 from scripts import patch_streamlit_date_input as compat
 from scripts import qa_monthly_live as live
 from scripts.qa_training_date_delivery import TrainingDateDelivery
+from scripts.qa_training_observer_checks import require_no_native_window_errors
 
 OUT = ROOT / "test-artifacts" / "monthly-training-date"
 PORT = 8535
@@ -267,7 +268,7 @@ def capture_observers(page, stage):
         records.pop(0)
 
 
-def enter_topic_and_participant(page):
+def enter_topic_and_participant(page, *, original_input=None):
     """Use one native input and the widget's ordinary manual-menu opening.
 
     The earlier fill-only failure has no participant event/node evidence and
@@ -281,7 +282,7 @@ def enter_topic_and_participant(page):
         expect(participants).to_have_count(1)
         locator = participants.get_by_role("combobox")
         expect(locator).to_have_count(1)
-        field = locator.element_handle()
+        field = original_input if original_input is not None else locator.element_handle()
         assert field is not None
         observation["before_topic"] = field.evaluate("""input=>{
           const events=[], workspace=input.closest('.epc-workspace'), app=input.closest('[data-testid="stApp"]');
@@ -333,6 +334,89 @@ def enter_topic_and_participant(page):
         except Exception as exc:
             observation["observation_error"] = str(exc)[:300]
         live.EVIDENCE.setdefault("participant_selection", []).append(observation)
+
+
+def exercise_participant_reference(browser_type, engine):
+    """One independent production-widget reference, never an acceptance substitute."""
+    live.ROOT = OUT / "native-participant-reference" / engine
+    live.ROOT.mkdir(parents=True, exist_ok=True)
+    live.EVIDENCE = {"synthetic_only": True, "browser": engine,
+        "scope": "production Training editor without workspace/preview; diagnostic only",
+        "checks": {}, "events": [], "artifacts": {}, "tested_checkout":
+        subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()}
+    browser = browser_type.launch(headless=True)
+    context = browser.new_context(viewport={"width": 1365, "height": 900})
+    context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
+    attempts, errors = [], []
+    def route(request):
+        parsed = urlparse(request.request.url)
+        if parsed.scheme in {"data", "blob"} or parsed.hostname == "127.0.0.1" and parsed.port == PORT:
+            request.continue_()
+        else:
+            attempts.append(parsed.hostname)
+            request.abort()
+    context.route("**/*", route)
+    page = context.new_page()
+    page.add_init_script((ROOT / "scripts/qa_training_observer_diagnostics.js").read_text())
+    page.set_default_timeout(20000)
+    page.on("pageerror", lambda error: errors.append(str(error)[:500]))
+    try:
+        live.EVIDENCE["phase"] = "open-native-participant-reference"
+        page.goto(URL + "/?training_reference=native", wait_until="domcontentloaded")
+        expect(page.locator('[data-enfra-training-native-reference="native-editor-only"]')).to_have_count(1)
+        assert page.locator('.epc-workspace,.report-preview-surface').count() == 0
+        open_form(page)
+        participants = page.locator('[data-testid="stMultiSelect"]').filter(has=page.get_by_text("Participants", exact=True))
+        field = participants.get_by_role("combobox")
+        expect(field).to_have_count(1)
+        original_input = field.element_handle()
+        assert original_input is not None
+        before = field.bounding_box()
+        assert before is not None
+        # One normal scroll matches the field in the same run's later Training
+        # screenshot (top~780, width403.77 in the 1365x900 viewport). Geometry
+        # at the native error itself was not independently recorded.
+        # No spacer, viewport event, refinding after typing or rescue gesture.
+        page.mouse.move(before["x"] + before["width"] / 2, 400)
+        page.mouse.wheel(0, before["y"] - 780)
+        page.wait_for_function("""input=>Math.abs(input.getBoundingClientRect().top-780)<=1""",
+                               arg=original_input, timeout=5000)
+        positioned = original_input.bounding_box()
+        live.EVIDENCE["reference_geometry"] = {"before_scroll": before, "positioned": positioned,
+            "same_run_later_screenshot_field_width": 403.765625, "same_run_later_screenshot_field_top": 780}
+        assert positioned is not None and abs(positioned["width"] - 403.765625) <= 2
+        live.EVIDENCE["phase"] = "reference-one-native-participant-pointer-selection"
+        enter_topic_and_participant(page, original_input=original_input)
+        live.screenshot(page, "native-participant-reference-selected")
+        assert not errors and not attempts
+    except Exception as exc:
+        live.EVIDENCE["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
+        try:
+            live.screenshot(page, "native-participant-reference-first-failure")
+        except Exception:
+            pass
+        raise
+    finally:
+        capture_observers(page, "final-native-participant-reference")
+        native_error_failure = None
+        if sys.exc_info()[0] is None:
+            try:
+                documents = live.EVIDENCE.get("observer_documents", ())
+                origins = [origin for document in documents for origin in
+                           (document.get("evidence") or {}).get("origins", ())]
+                assert not any(origin["owner"] in {"workspace-layout", "report-preview"} for origin in origins), "Native reference must not mount app observers."
+                require_no_native_window_errors(documents)
+            except AssertionError as exc:
+                native_error_failure = exc
+                live.EVIDENCE["failure"] = {"type": type(exc).__name__,
+                    "stage": "terminal-native-window-errors", "message": str(exc)[:2000]}
+        live.EVIDENCE["browser_errors"] = errors
+        live.EVIDENCE["external_requests"] = attempts
+        (live.ROOT / "results.json").write_text(json.dumps(live.EVIDENCE, indent=2) + "\n")
+        context.close()
+        browser.close()
+        if native_error_failure is not None:
+            raise native_error_failure
 
 
 def exercise(browser_type, engine, *, patched):
@@ -482,11 +566,24 @@ def exercise(browser_type, engine, *, patched):
         raise
     finally:
         capture_observers(page, "final")
+        native_error_failure = None
+        # Do not mask an earlier input/business/output failure. On success the
+        # final snapshot must also check native window errors from every prior
+        # document: Chromium may not surface them as Playwright pageerror.
+        if sys.exc_info()[0] is None:
+            try:
+                require_no_native_window_errors(live.EVIDENCE.get("observer_documents", ()))
+            except AssertionError as exc:
+                native_error_failure = exc
+                live.EVIDENCE["failure"] = {"type": type(exc).__name__,
+                    "stage": "terminal-native-window-errors", "message": str(exc)[:2000]}
         live.EVIDENCE["browser_errors"] = errors
         live.EVIDENCE["external_requests"] = attempts
         (live.ROOT / "results.json").write_text(json.dumps(live.EVIDENCE, indent=2) + "\n")
         context.close()
         browser.close()
+        if native_error_failure is not None:
+            raise native_error_failure
 
 
 @contextmanager
@@ -544,6 +641,11 @@ def main():
         # Fresh server and browser contexts avoid reusing the original static
         # cache; the widget protocol/control itself remains the production one.
         with server("repaired"):
+            for name, engine in (("chromium", playwright.chromium), ("playwright-webkit", playwright.webkit)):
+                try:
+                    exercise_participant_reference(engine, name)
+                except Exception as exc:
+                    failures.append("native participant reference " + name + ": " + str(exc)[:300])
             for name, engine in (("chromium", playwright.chromium), ("playwright-webkit", playwright.webkit)):
                 try:
                     exercise(engine, name, patched=True)

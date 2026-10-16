@@ -75,6 +75,13 @@ if not token:
     st.error("A fresh synthetic browser cookie is required; no shared fallback exists.")
     st.stop()
 
+if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
+        and st.query_params.get("training_reference") == "native"):
+    from scripts.workspace_training_reference import render_reference
+    with isolated(token):
+        render_reference(base, _field)
+    st.stop()
+
 from scripts.workspace_browser_observations import install_synthetic_observations, emit_snapshot
 from scripts.workspace_text_observations import emit_text_snapshot
 from scripts.workspace_water_observations import emit_water_snapshot
