@@ -69,20 +69,30 @@ def _date_input_state(field):
 
 
 def replace_date(page, field, value, stage):
-    """Focus the actual input before Playwright selects text for replacement.
+    """Replace text through the actual input's normal keyboard edit sequence.
 
-    Playwright 1.58 selects before focusing. Input-mask's onFocus moves a
-    partial date's cursor to its end, so that ordering can append instead.
-    This is one normal focused replacement, never a rescue after submission.
+    Atomic ``fill`` selects and inserts before the locked mask refreshes its
+    animation-frame selection cache. A partial date can therefore keep its old
+    month even when beforeinput has the correct selected range. Deletion and
+    each typed character run the native change handler, which synchronously
+    updates that cache. This is the initial edit, never a rescue after submit.
     """
-    observation = {"stage": stage, "requested": value}
+    observation = {"stage": stage, "requested": value,
+                   "method": "keyboard-select-all-delete-type"}
     try:
         observation["before"] = _date_input_state(field)
         field.click()
-        observation["focused_before_fill"] = _date_input_state(field)
-        assert observation["focused_before_fill"]["focused"]
-        field.fill(value)
-        observation["after_fill"] = _date_input_state(field)
+        observation["focused_before_replacement"] = _date_input_state(field)
+        assert observation["focused_before_replacement"]["focused"]
+        field.press("ControlOrMeta+A")
+        observation["selected"] = _date_input_state(field)
+        assert observation["selected"]["start"] == 0
+        assert observation["selected"]["end"] == len(observation["selected"]["value"])
+        field.press("Backspace")
+        observation["after_delete"] = _date_input_state(field)
+        expect(field).to_have_value("")
+        field.press_sequentially(value)
+        observation["after_type"] = _date_input_state(field)
         expect(field).to_have_value(value)
         field.press("Tab")
         observation["after_tab"] = _date_input_state(field)

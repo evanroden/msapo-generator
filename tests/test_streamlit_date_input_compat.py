@@ -180,7 +180,7 @@ for(const changed of [{value:''},{value:null},{clearable:false},{disabled:true},
 
 
 def test_native_partial_date_mask_requires_focus_before_replacement_selection():
-    """Reproduce the exact wrong date under the observed fill precondition.
+    """Reproduce the historical wrong date under a focus-order precondition.
 
     Playwright 1.58 selects an input before focusing it for ``fill``. The locked
     mask's native focus handler moves a partial date's cursor to its end. This
@@ -228,3 +228,82 @@ assert.equal(focusedBeforeSelect.result.value,'2026/08/31');
     subprocess.run(["node", "-e", code, json.dumps({"helpers": helpers,
                     "onFocus": on_focus, "cursorToEnd": cursor_to_end,
                     "isFunction": is_function})], check=True, capture_output=True, text=True)
+
+
+def test_native_date_change_uses_cached_selection_and_keyboard_clear_refreshes_it():
+    """The actual mask can change correct raw replacement input after capture.
+
+    The mounted CI input received August 31 with the correct selection, then
+    displayed September 31. Execute the vendor's actual onChange/onPaste paths
+    to distinguish its cached selection from the current native input range.
+    This models the internal precondition; it does not inspect browser internals.
+    """
+    installed = Path(streamlit.__file__).parent / "static" / "static" / "js"
+    candidates = [path for path in installed.glob("*.js")
+                  if b"t.datepicker.selectSecondDatePrompt" in path.read_bytes()]
+    assert len(candidates) == 1
+    source = candidates[0].read_text()
+    start = source.index('var h={9:`[0-9]`')
+    end = source.index('function ne(){var e=RegExp(`windows`', start)
+    # Include actual native selection helpers, not a test implementation of
+    # the vendor's synchronous cached-selection update.
+    native_start = source.index('function p(e,t,n){', source.index('var Ei=t('))
+    helpers = source[native_start:end]
+
+    def method(name, next_name):
+        start = source.index("n." + name + "=function(", end) + len("n." + name + "=")
+        return source[start:source.index("},n." + next_name + "=function", start) + 1]
+
+    start = source.index("function re(e){", end)
+    is_function = source[start:source.index("function ie(){", start)]
+    start = source.index("function d(e){", source.index("var Ei=t("))
+    identity = source[start:source.index("var f=function(", start)]
+    code = r'''
+const assert=require('node:assert/strict');
+const x=JSON.parse(process.argv[1]);
+const build=new Function('n','oe','se',x.helpers+x.isFunction+x.identity+
+ ';n.getInputValue='+x.getInputValue+';n.setInputValue='+x.setInputValue+
+ ';n.getSelection='+x.getSelection+';n.setSelection='+x.setSelection+';n.isFocused='+x.isFocused+
+ ';n.isInputAutofilled='+x.autofilled+';n.onChange='+x.onChange+';n.onPaste='+x.onPaste+';return _;');
+function state(cached){
+ const input={value:'2026/09/',selectionStart:0,selectionEnd:8,matches:()=>false};
+ // Only native DOM and the animation-frame clock are test adapters. The real
+ // setSelection method performs both the DOM write and previousSelection update.
+ const frames=new Map();let frameId=0;
+ const n={props:{},value:input.value,focused:true,previousSelection:{...cached},
+  selectionDeferId:null,getInputDOMNode:()=>input};
+ const parseMask=build(n,callback=>{frames.set(++frameId,callback);return frameId;},
+  id=>frames.delete(id));
+ n.maskOptions=parseMask('9999/99/99',null);n.input=input;n.frames=frames;return n;
+}
+function deliver(n,raw,selection){
+ n.input.value=raw;n.input.selectionStart=selection.start;n.input.selectionEnd=selection.end;
+ n.onChange({});assert.equal(n.frames.size,1);return n.value;
+}
+const stale={start:8,end:8,length:0},current={start:0,end:8,length:8};
+assert.equal(deliver(state(stale),'2026/08/31',{start:10,end:10,length:0}),'2026/09/31');
+assert.equal(deliver(state(current),'2026/08/31',{start:10,end:10,length:0}),'2026/08/31');
+const pasted=state(stale);pasted.onPaste({defaultPrevented:false});
+assert.equal(deliver(pasted,'2026/08/31',{start:10,end:10,length:0}),'2026/08/31');
+for(const entered of ['2026/08/31','2026/10/01','2026/09/','2026/09/15']){
+ const n=state(stale);
+ assert.equal(deliver(n,'',{start:0,end:0,length:0}),'');
+ assert.deepEqual(n.previousSelection,{start:0,end:0,length:0});
+ for(const character of entered){
+  const s=n.getSelection(),raw=n.input.value.slice(0,s.start)+character+n.input.value.slice(s.end),end=s.start+1;
+  deliver(n,raw,{start:end,end,length:0});
+ }
+ assert.equal(n.value,entered);
+}
+'''
+    subprocess.run(["node", "-e", code, json.dumps({"helpers": helpers,
+                    "isFunction": is_function, "identity": identity,
+                    "getInputValue": method("getInputValue", "setInputValue"),
+                    "setInputValue": method("setInputValue", "setCursorToEnd"),
+                    "getSelection": method("getSelection", "getCursorPosition"),
+                    "setSelection": method("setSelection", "getSelection"),
+                    "isFocused": method("isFocused", "getBeforeMaskedValueChangeConfig"),
+                    "autofilled": method("isInputAutofilled", "onChange"),
+                    "onChange": method("onChange", "onFocus"),
+                    "onPaste": method("onPaste", "handleRef")})],
+                   check=True, capture_output=True, text=True)

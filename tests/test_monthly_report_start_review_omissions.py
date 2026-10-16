@@ -6,7 +6,7 @@ import pytest
 
 from app import monthly_report_library as library
 from app.monthly_report_import import inspect_docx, imported_draft
-from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_model import ReportTable, ResolvedBlock
 from app.monthly_report_start_import import build_starting_import
 from app.monthly_report_start_replay import _content, merge_starting_drafts
 from tests.test_monthly_report_start_replay import activity, draft
@@ -147,3 +147,128 @@ def test_explicit_clear_then_source_deselection_publishes_atomically(monkeypatch
     assert after.current == standing.current and after.versions == standing.versions
     assert library.load_snapshot(*args, PERIOD).draft == initial
     assert library.imported_original(*args).read_bytes() == raw == path.read_bytes()
+
+
+@pytest.mark.parametrize("source, correction", [
+    (activity("Original wording."), activity("Human corrected wording.")),
+    (ResolvedBlock("work_orders", "This month", rows=(("Pump", "Pending"),)),
+     ResolvedBlock("work_orders", "This month", rows=(("Pump", "NR"),))),
+    (ResolvedBlock("water_reports", "This month", asset_hashes=("a" * 64 + ".png",),
+                   asset_captions=("Original caption",)),
+     ResolvedBlock("water_reports", "This month", asset_hashes=("b" * 64 + ".png",),
+                   asset_captions=("Human corrected caption",))),
+    (ResolvedBlock("work_orders", "This month", extra_tables=(
+        ReportTable(("Item", "Status"), (("Pump", "Pending"),), "synthetic:table"),)),
+     ResolvedBlock("work_orders", "This month", extra_tables=(
+        ReportTable(("Item", "Status"), (("Pump", "NR"),), "synthetic:table"),))),
+    (ResolvedBlock("footer_text", "This month", text="Original office address"),
+     ResolvedBlock("footer_text", "This month", text="Human corrected office address")),
+    (activity("Original wording."), activity("")),
+], ids=["text", "rows", "image-caption", "extra-table", "footer", "empty-omission"])
+@pytest.mark.parametrize("verified", [True, False])
+def test_acknowledged_deselection_then_reselection_preserves_report_omission(source, correction, verified):
+    previous = draft(source)
+    # The footer's independently rendered address was deliberately cleared;
+    # the omitted block still retains its recoverable corrected wording.
+    current = replace(previous, blocks=(replace(correction, source="Omit"),), address_line="")
+    deselected = replace(previous, blocks=(), address_line="")
+    kept = merge_starting_drafts(current, deselected, previous, verified=verified)
+    assert kept == current
+    before = asdict(kept)
+    reselected = merge_starting_drafts(kept, previous, deselected, verified=verified)
+    assert reselected == kept
+    assert asdict(kept) == before
+    assert merge_starting_drafts(reselected, previous, previous, verified=verified) == kept
+    assert merge_starting_drafts(kept, deselected, deselected, verified=verified) == kept
+
+
+def test_omission_guard_does_not_change_genuinely_new_source_merging():
+    incoming = draft(activity("New source wording."))
+    current = replace(incoming, blocks=(replace(incoming.blocks[0], source="Omit",
+                                               text="Retained earlier wording."),))
+    assert merge_starting_drafts(current, incoming) == incoming
+
+
+def test_reselection_keeps_report_omission_while_adding_another_source_block():
+    incoming = draft(activity("Original source wording."),
+                     ResolvedBlock("training_summary", "This month", text="Synthetic client staff training."))
+    omitted = replace(draft(incoming.blocks[0]), blocks=(replace(incoming.blocks[0],
+                      source="Omit", text="Retained human correction."),))
+    result = merge_starting_drafts(omitted, incoming, draft())
+    blocks = {block.key: block for block in result.blocks}
+    assert blocks["activity_summary"] == omitted.blocks[0]
+    assert blocks["training_summary"] == incoming.blocks[1]
+    assert merge_starting_drafts(result, incoming, incoming) == result
+
+
+def test_source_reselection_receipt_keeps_saved_omitted_work(monkeypatch, tmp_path):
+    path = report_file(tmp_path, activity=("September 2026 source work.",))
+    initial = save_start(start_app(monkeypatch, tmp_path, path))
+    args = (initial.profile.contract, initial.profile.key)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    prior, verified = library.starting_contribution(*args, PERIOD, digest)
+    assert verified
+    current = replace(initial, blocks=tuple(
+        replace(block, source="Omit", text="Retained human correction.")
+        if block.key == "activity_summary" else block for block in initial.blocks))
+    deselected = replace(prior, blocks=tuple(block for block in prior.blocks
+                                            if block.key != "activity_summary"))
+    kept = merge_starting_drafts(current, deselected, prior)
+    state = library.load_profile(*args)
+    library.save_snapshot(kept, expected_revision=0, entered_editor="Synthetic Editor")
+    library.save_report_setup(initial.profile, kept, path,
+        {"sha256": digest, "period": PERIOD.key}, assets=(), expected_revision=state.revision,
+        actor="Synthetic Editor", confirmed=True, snapshot_revision=1, source_draft=deselected)
+    acknowledged, verified = library.starting_contribution(*args, PERIOD, digest)
+    assert verified and acknowledged == deselected
+    reselected = merge_starting_drafts(library.load_imported_draft(*args), prior, acknowledged)
+    assert reselected == kept
+    state = library.load_profile(*args)
+    library.save_report_setup(initial.profile, reselected, path,
+        {"sha256": digest, "period": PERIOD.key}, assets=(), expected_revision=state.revision,
+        actor="Synthetic Editor", confirmed=True, snapshot_revision=1, source_draft=prior)
+    assert library.starting_contribution(*args, PERIOD, digest) == (prior, True)
+    assert library.load_imported_draft(*args) == kept
+    assert library.load_snapshot(*args, PERIOD).draft == kept
+    assert library.imported_original(*args).read_bytes() == path.read_bytes()
+    assert library.load_profile(*args).current == state.current
+    assert library.load_profile(*args).versions == state.versions
+    assert merge_starting_drafts(kept, prior, prior) == kept
+
+
+def test_manual_editor_reinclusion_after_consumed_reselection_keeps_human_wording():
+    from app.monthly_report_guided import _edited_rich_text
+    source = draft(activity("Original source wording."))
+    omitted = replace(source, blocks=(replace(source.blocks[0], source="Omit",
+                                              text="Retained human correction."),))
+    reselected = merge_starting_drafts(omitted, source, draft())
+    assert reselected == omitted
+    edited = _edited_rich_text(reselected.blocks[0], "Human correction explicitly included.")
+    assert edited.source != "Omit"
+    included = replace(reselected, blocks=(edited,))
+    assert merge_starting_drafts(included, source, source) == included
+
+
+@pytest.mark.parametrize("address", ["Human corrected address", ""])
+@pytest.mark.parametrize("matching_reviewed_block", [True, False])
+def test_changed_source_footer_cannot_overwrite_independent_address_correction(address, matching_reviewed_block):
+    previous = replace(draft(ResolvedBlock("footer_text", "This month", text="Source address A")),
+                       address_line="Source address A")
+    incoming = replace(previous, blocks=(replace(previous.blocks[0], text="Reviewed address B"),),
+                       address_line="Reviewed address B")
+    current = replace(incoming if matching_reviewed_block else previous, address_line=address)
+    before = asdict(current)
+    with pytest.raises(ValueError, match="Footer text differs"):
+        merge_starting_drafts(current, incoming, previous)
+    assert asdict(current) == before
+
+
+def test_footer_correction_matching_reviewed_address_is_not_a_concurrent_change():
+    previous = replace(draft(ResolvedBlock("footer_text", "This month", text="Source address A")),
+                       address_line="Source address A")
+    incoming = replace(previous, blocks=(replace(previous.blocks[0], text="Reviewed address B"),),
+                       address_line="Reviewed address B")
+    # The manager already made that exact correction in the report's address.
+    current = replace(previous, address_line="Reviewed address B")
+    result = merge_starting_drafts(current, incoming, previous)
+    assert result.blocks[0].text == result.address_line == "Reviewed address B"
