@@ -126,7 +126,16 @@ def revise_included_page(block, source, number, action, *, caption=None, all_sou
         revised = replace(source, selected_pages=tuple(n for n in source.selected_pages if n != number),
                           client_page_reviews=tuple(sorted(reviews.items())),
                           client_page_exclusions=tuple(sorted(exclusions.items())))
-        return remove_saved_picture(block, index), revised
+        removed = remove_saved_picture(block, index)
+        if block.key == "water_reports":
+            from app.monthly_report_section_uploads import included_pages, SOURCE_ROUTE_PREFIX
+            if not any(identity == source.id for identity, _ in included_pages({block.key:removed})):
+                # The last page supplied the durable route after a reload.
+                # Retain only its placement; exclusions and ordinary review
+                # still decide whether any page may be added again.
+                route = SOURCE_ROUTE_PREFIX + ":".join((block.key, source.id, source.sha256))
+                removed = replace(removed, references=tuple(dict.fromkeys((*removed.references, route))))
+        return removed, revised
     if action in {"earlier", "later"}:
         other = index + (-1 if action == "earlier" else 1)
         if not 0 <= other < len(block.asset_hashes):

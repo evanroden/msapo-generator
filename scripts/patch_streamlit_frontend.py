@@ -24,9 +24,11 @@ import tempfile
 try:
     from scripts.streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
     from scripts.streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
+    from scripts.streamlit_floating_resize import FLOATING_BUNDLE, FLOATING_SHA256, repair_floating
 except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
     from streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
     from streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
+    from streamlit_floating_resize import FLOATING_BUNDLE, FLOATING_SHA256, repair_floating
 
 STREAMLIT_VERSION = "1.61.1"
 INDEX_BUNDLE = "index.bE3scgDe.js"
@@ -42,6 +44,8 @@ DATE_ORIGINAL = b"value:x,minDate:M,maxDate:N,range:t.isRange,clearable:F"
 DATE_REPAIRED = b"value:(t.isRange?x:(x?.[0]??null)),minDate:M,maxDate:N,range:t.isRange,clearable:F"
 MANIFEST_PATH = Path(__file__).with_name("streamlit_frontend_manifest.json")
 MANIFEST_SHA256 = "ebc8b75c6740806e3a23d16e38ec71750cbabf63b09af99dcb60612d07c682e3"
+FLOATING_MANIFEST_PATH = Path(__file__).with_name("streamlit_floating_manifest.json")
+FLOATING_MANIFEST_SHA256 = "f57691c472085c39b50ef33f29dc5aaf23464160fce86137a7db0180165c4636"
 _REFERENCES = re.compile(rb'''["'`](?:\./|static/js/)([A-Za-z0-9_.-]+\.js)["'`]''')
 _SCRIPT = re.compile(rb'''<script\b[^>]*\bsrc=["']\./static/js/([^/"']+)["'][^>]*>''', re.I)
 
@@ -52,6 +56,7 @@ class Publication:
     payloads: dict[str, bytes]
     scalar_date: bool
     virtualizer_resize: bool
+    floating_resize: bool
     generation: str
 
 
@@ -93,6 +98,31 @@ def _locked_sources(scripts):
             pending.extend(incoming[name])
     if closure != set(members) or incoming[INDEX_BUNDLE]:
         raise RuntimeError("The locked frontend import graph is not closed; no bytes were changed.")
+    # Preserve the former 81-member manifest and recipe exactly for upgrades.
+    # The new root adds only Floating UI and its otherwise unmodified Json
+    # importer; all other reverse importers are already in the original graph.
+    extra_raw = FLOATING_MANIFEST_PATH.read_bytes()
+    if sha256(extra_raw).hexdigest() != FLOATING_MANIFEST_SHA256:
+        raise RuntimeError("Unexpected locked Floating UI import manifest; no bytes were changed.")
+    extra = json.loads(extra_raw)
+    if (extra["streamlit_version"] != STREAMLIT_VERSION or extra["root"] != FLOATING_BUNDLE
+            or set(extra["members"]) != {FLOATING_BUNDLE, "Json.C9LKsaSO.js"}
+            or extra["members"][FLOATING_BUNDLE]["sha256"] != FLOATING_SHA256):
+        raise RuntimeError("Invalid locked Floating UI import manifest; no bytes were changed.")
+    members = {**members, **extra["members"]}
+    for name, record in extra["members"].items():
+        raw = (scripts / name).read_bytes()
+        if sha256(raw).hexdigest() != record["sha256"] or _references(raw) != set(record["references"]):
+            raise RuntimeError("Unexpected locked Floating UI asset: " + name + "; no bytes were changed.")
+        sources[name] = raw
+    pending = [FLOATING_BUNDLE]
+    while pending:
+        name = pending.pop()
+        if name not in closure:
+            closure.add(name)
+            pending.extend(n for n, record in members.items() if name in record["references"])
+    if closure != set(members):
+        raise RuntimeError("The combined frontend import graph is not closed; no bytes were changed.")
     # A new native importer would otherwise retain a second copy of React Aria
     # contexts. Generated variants are immutable outputs, not native inputs.
     for path in scripts.glob("*.js"):
@@ -102,12 +132,18 @@ def _locked_sources(scripts):
     return sources, members
 
 
-def _publication(sources, members, scalar_date, *, virtualizer_resize=True):
+def _publication(sources, members, scalar_date, *, virtualizer_resize=True, floating_resize=True):
+    if not floating_resize:
+        originals = json.loads(MANIFEST_PATH.read_bytes())["members"]
+        sources = {name: raw for name, raw in sources.items() if name in originals}
+        members = {name: record for name, record in members.items() if name in originals}
     repaired = dict(sources)
     repaired[INDEX_BUNDLE] = sources[INDEX_BUNDLE].replace(ORIGINAL, REPAIRED, 1)
     repaired[OVERLAY_BUNDLE] = repair_overlay(sources[OVERLAY_BUNDLE])
     if virtualizer_resize:
         repaired[VIRTUALIZER_BUNDLE] = repair_virtualizer(sources[VIRTUALIZER_BUNDLE])
+    if floating_resize:
+        repaired[FLOATING_BUNDLE] = repair_floating(sources[FLOATING_BUNDLE])
     if scalar_date:
         repaired[DATE_BUNDLE] = sources[DATE_BUNDLE].replace(DATE_ORIGINAL, DATE_REPAIRED, 1)
     # This digest binds all original source pins, their graph, exact repair
@@ -131,7 +167,7 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True):
             raise RuntimeError("Generated frontend import edges did not match their manifest; no bytes were changed.")
         payloads[name] = rewritten
     names[INDEX_BUNDLE] = _entry_name(payloads[INDEX_BUNDLE])
-    return Publication(names, payloads, scalar_date, virtualizer_resize, generation)
+    return Publication(names, payloads, scalar_date, virtualizer_resize, floating_resize, generation)
 
 
 def _legacy_variants(sources):
@@ -163,8 +199,9 @@ def _validated_publications(static_dir, installed_version):
     # The first two are current outputs. The exact previous overlay-only
     # generations remain fully reconstructable upgrade inputs, including all
     # immutable members and preloads. Preserve their original identity recipe.
-    publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard)
-                         for guard in (True, False) for flag in (False, True))
+    publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard, floating_resize=floating)
+                         for floating, guard in ((True, True), (False, True), (False, False))
+                         for flag in (False, True))
     legacy, legacy_date_name, legacy_date = _legacy_variants(sources)
     variants = {**legacy, **{p.names[INDEX_BUNDLE]: (p.payloads[INDEX_BUNDLE], p.scalar_date) for p in publications}}
     html = (static_dir / "index.html").read_bytes()
@@ -219,6 +256,11 @@ def _receipt(publication):
             "original_virtualizer_sha256": VIRTUALIZER_SHA256,
             "virtualizer_sha256": sha256(publication.payloads[VIRTUALIZER_BUNDLE]).hexdigest(),
             "virtualizer_resize": publication.virtualizer_resize,
+            "floating_resize": publication.floating_resize,
+            "floating_bundle": publication.names.get(FLOATING_BUNDLE, FLOATING_BUNDLE),
+            "original_floating_sha256": FLOATING_SHA256,
+            "floating_sha256": (sha256(publication.payloads[FLOATING_BUNDLE]).hexdigest()
+                                if publication.floating_resize else FLOATING_SHA256),
             "scalar_date": publication.scalar_date,
             "bundle": publication.names[DATE_BUNDLE] if publication.scalar_date else "",
             "original_sha256": DATE_SHA256,

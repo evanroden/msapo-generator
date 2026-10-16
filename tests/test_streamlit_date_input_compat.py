@@ -17,10 +17,11 @@ def bundle(tmp_path):
     installed = Path(streamlit.__file__).parent / "static"
     target = tmp_path / "static" / "js" / compat.BUNDLE_NAME
     target.parent.mkdir(parents=True)
-    manifest = json.loads(frontend.MANIFEST_PATH.read_bytes())
+    members = {**json.loads(frontend.MANIFEST_PATH.read_bytes())["members"],
+               **json.loads(frontend.FLOATING_MANIFEST_PATH.read_bytes())["members"]}
     # The composed installer validates the whole immutable native import graph.
     # Copy its pinned originals, never generated chunks from another fixture.
-    for name, record in manifest["members"].items():
+    for name, record in members.items():
         raw = (installed / "static" / "js" / name).read_bytes()
         assert sha256(raw).hexdigest() == record["sha256"]
         (target.parent / name).write_bytes(raw)
