@@ -103,12 +103,62 @@ def wait_durable(page, base, order, *, source=None, reviewed=None, excluded=None
     raise AssertionError("Fresh Water durable state did not match the explicit page decisions: " + json.dumps(last))
 
 
-def select(page, name, value):
+def select(page, name, value, *, record=None):
     from playwright.sync_api import expect
     control = page.get_by_role("combobox", name=name, exact=True)
-    control.click()
-    page.get_by_role("option", name=value, exact=True).click()
-    expect(control).to_have_value(value)
+    probe = None
+    if name == "Reporting month" and record is not None:
+        probe = {"requested_month": value}
+        record.setdefault("month_activation", []).append(probe)
+        try:
+            probe["before"] = control.evaluate("""node => {
+                window.__enfraFreshMonthActivation?.finish();
+                const events=[], mutations=[];
+                let droppedEvents=0, droppedMutations=0;
+                const brief=()=>({id:node.id,connected:node.isConnected,
+                    focused:document.activeElement===node,expanded:node.getAttribute('aria-expanded')});
+                const snapshot=()=>{const r=node.getBoundingClientRect();return {
+                    ...brief(),rect:{x:r.x,y:r.y,width:r.width,height:r.height},
+                    fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender??null,
+                    scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')??null,
+                    events:events.slice(),mutations:mutations.slice(),droppedEvents,droppedMutations};};
+                const observe=event=>{if(!event.isTrusted)return;
+                    if(events.length<24)events.push({type:event.type,at:performance.now(),trusted:true,...brief()});
+                    else droppedEvents++;};
+                const collect=records=>{const changes=records.filter(r=>r.target===node&&r.attributeName==='aria-expanded');
+                    for(let i=0;i<changes.length;i++){
+                        // MutationObserver may deliver open+close together. The
+                        // next oldValue retains an intermediate expanded state.
+                        const after=i+1<changes.length?changes[i+1].oldValue:node.getAttribute('aria-expanded');
+                        if(mutations.length<24)mutations.push({at:performance.now(),before:changes[i].oldValue,after,...brief()});
+                        else droppedMutations++;}};
+                const observer=new MutationObserver(collect);
+                observer.observe(node,{attributes:true,attributeFilter:['aria-expanded'],attributeOldValue:true});
+                const kinds=['pointerdown','pointerup','mousedown','mouseup','click','focus','blur'];
+                for(const kind of kinds)node.addEventListener(kind,observe,{capture:true,passive:true});
+                window.__enfraFreshMonthActivation={snapshot,finish:()=>{
+                    collect(observer.takeRecords());observer.disconnect();
+                    for(const kind of kinds)node.removeEventListener(kind,observe,true);
+                    const result=snapshot();delete window.__enfraFreshMonthActivation;return result;}};
+                return snapshot();
+            }""")
+        except Exception as exc:
+            probe["setup_error"] = str(exc)[:500]
+    try:
+        control.click()
+        if probe is not None and "before" in probe:
+            try:
+                probe["after_click"] = page.evaluate("window.__enfraFreshMonthActivation.snapshot()")
+            except Exception as exc:
+                probe["after_click_error"] = str(exc)[:500]
+        page.get_by_role("option", name=value, exact=True).click()
+        expect(control).to_have_value(value)
+    finally:
+        if probe is not None:
+            try:
+                probe["final"] = page.evaluate("window.__enfraFreshMonthActivation?.finish()??null")
+            except Exception as exc:
+                probe["cleanup_error"] = str(exc)[:500]
 
 
 def exercise(browser, name, base, record):
@@ -158,7 +208,7 @@ def exercise(browser, name, base, record):
         capture("one-native-site-action")
 
         record["phase"] = "ordinary empty design then unsaved earlier month"
-        select(page, "Reporting month", "October")
+        select(page, "Reporting month", "October", record=record)
         select(page, "Reporting year", "2026")
         page.get_by_role("button", name="Use ENFRA template", exact=True).click()
         actor = page.get_by_role("textbox", name="Your name", exact=True)
@@ -166,7 +216,7 @@ def exercise(browser, name, base, record):
         actor.press("Tab")
         page.get_by_role("button", name="Start this report", exact=True).click()
         expect(page.locator(WATER)).to_be_attached(timeout=45000)
-        select(page, "Reporting month", "September")
+        select(page, "Reporting month", "September", record=record)
         prepared = page.get_by_role("textbox", name="Prepared by", exact=True)
         prepared.fill(ACTOR)
         prepared.press("Tab")
