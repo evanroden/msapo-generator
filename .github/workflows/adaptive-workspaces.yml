@@ -16,6 +16,17 @@ on:
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
+      - 'scripts/qa_fresh_native_errors.js'
+      - 'scripts/qa_fresh_native_error_checks.py'
+      - 'scripts/qa_fresh_native_owner_diagnostic.py'
+      - 'scripts/qa_native_owner_assets.py'
+      - 'scripts/qa_native_owner_server.py'
+      - 'scripts/qa_native_owner_sink.js'
+      - 'tests/test_qa_native_owner_diagnostic.py'
+      - 'tests/qa_native_owner_callbacks_test.cjs'
+      - 'tests/qa_native_owner_sink_test.cjs'
+      - 'tests/test_qa_fresh_native_errors.py'
+      - 'tests/qa_fresh_native_errors_test.cjs'
       - 'tests/test_water_fresh_browser_contract.py'
       - 'scripts/qa_water_widget_delivery.py'
       - 'tests/test_water_widget_delivery.py'
@@ -60,6 +71,17 @@ on:
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
+      - 'scripts/qa_fresh_native_errors.js'
+      - 'scripts/qa_fresh_native_error_checks.py'
+      - 'scripts/qa_fresh_native_owner_diagnostic.py'
+      - 'scripts/qa_native_owner_assets.py'
+      - 'scripts/qa_native_owner_server.py'
+      - 'scripts/qa_native_owner_sink.js'
+      - 'tests/test_qa_native_owner_diagnostic.py'
+      - 'tests/qa_native_owner_callbacks_test.cjs'
+      - 'tests/qa_native_owner_sink_test.cjs'
+      - 'tests/test_qa_fresh_native_errors.py'
+      - 'tests/qa_fresh_native_errors_test.cjs'
       - 'tests/test_water_fresh_browser_contract.py'
       - 'scripts/qa_water_widget_delivery.py'
       - 'tests/test_water_widget_delivery.py'
@@ -102,6 +124,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -153,6 +177,13 @@ jobs:
       - name: Fresh ordinary Water page review from empty omitted state
         if: ${{ !cancelled() }}
         run: python scripts/qa_water_fresh_page_journey.py
+      - name: Select explicitly requested one-shot native owner diagnostic
+        id: native_owner_request
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.number == 249 && github.run_attempt == 1 }}
+        run: python scripts/qa_fresh_native_owner_diagnostic.py --emit-gate
+      - name: One separate diagnostic-only WebKit native observer owner capture
+        if: ${{ !cancelled() && steps.native_owner_request.outputs.enabled == 'true' }}
+        run: python scripts/qa_fresh_native_owner_diagnostic.py
       - name: Upload synthetic screenshots and geometry
         if: always()
         uses: actions/upload-artifact@v4
@@ -169,5 +200,13 @@ jobs:
             test-artifacts/shared-fixture-testing/
             test-artifacts/water-page-journey/
             test-artifacts/water-fresh-page-journey/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Upload separate native owner diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fresh-native-owner-diagnostic-evidence
+          path: test-artifacts/fresh-native-owner-diagnostic/
           retention-days: 7
           if-no-files-found: warn

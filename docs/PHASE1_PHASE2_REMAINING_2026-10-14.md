@@ -6,6 +6,85 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 
 ## Current branch and evidence boundary
 
+2026-10-16 20:15 UTC publication candidate, based on published0959bb2. Main and last actual
+served proof remain4ca42c5; no new release is claimed. Required38953590067 on the preceding
+integration independently passed2,851 tests, container and resource gates. Adaptive38953590080
+failed only Fresh Water's WebKit native ResizeObserver gate; both five-stage business tails and
+the full Water upload/order/omission/preview/export journey passed. Those are preceding-build
+results, not the new caption/Done repair's browser proof.
+
+This batch adds the reviewed Water repair below, keeps the stricter unfiltered native error gate,
+and extends the existing full browser journey with one native clear-caption/Done operation. It
+requires the deliberately blank caption in working AND durable state, still pending review,
+before continuing the original caption/order/omission/reload/Current/Word/PDF assertions.
+
+One explicitly marked PR249 head also runs a separate diagnostic WebKit process against an
+isolated copy of three exact locked frontend modules. Inline registration/callback markers seek
+to distinguish native observer owners; there is no global observer wrapper, callback proxy,
+timing workaround, extra UI gesture, error filter or production asset mutation. The copied
+import graph and first naturally delivered body hashes must match an independently reconstructed
+manifest. Registration/target/callback bounds and the first unfiltered native error are retained.
+This diagnostic has its own artifact, runs only on attempt1 of the exact marked PR249 head,
+and cannot make the ordinary failed journey pass. Multiple owners, missing delivery, overflow,
+non-reproduction or an uninstrumented owner remain inconclusive; the last callback alone is not
+causal proof. Its own exact25 source/model checks passed; no local browser was run.
+
+The separately published529625b finishing branch now has independent Required3,295/0/0/0 plus
+container/resource success. Its Adaptive also retains a distinct Chromium Month popup that opens
+then closes about38ms after one native click, and a WebKit native resize error. The responsible
+close trigger is unassigned. Its history failures have narrower proved test causes: an exact
+temporary conversion marker was mistaken for durable storage, and the comparison locator used
+an obsolete heading. Corrections remain separately reviewable; no retry erases these failures.
+Current Trainingd7's separate two-engine native date/session/output job passed. All108 actual
+PDF page instances and54 pages from the two unique DOCX files were reviewed with named
+LibreOffice-compatible renderers; this is synthetic scope, not Microsoft Word, genuine master,
+physical-device or assistive-audio acceptance. Both phases and all children remain unaccepted.
+
+Water caption/Done repair, 2026-10-16 20:02 UTC (local from582a6bc, not published):
+two actual native AppTests reproduced nonempty and deliberately blank captions being bypassed by
+Done's early rerun. Done now collects the current caption/source first and requests only the existing
+post-canonical/recovery-attempt refresh; changed captions still need review and cannot gain approval
+from closing. The actual full run_web path preserves the same packet's Activity, both edited page
+captions and vendor correction in the durable journal. Injected recovery-write failure retains the
+browser's current edits, the earlier durable journal and an honest failure status. Same-packet
+Activity plus Edit pages passed without changing that Open action.
+
+A separate held native Leave-out packet reproduced removal after report-incarnation or isolated-QA
+reset with otherwise identical content. Included-page callbacks now retain and check the existing
+editor/QA scope before their unchanged source/block-fingerprint applier. Caption IDs bind source,
+image/provenance and editor context, while ordinary typing, clear/reentry and review keep the native
+field. Source-correction synchronization also updates its actual active caption key. First failures,
+including test-prerequisite and initial derivative-context model mistakes, remain private and distinct.
+The final affected set passes 85 tests (14 new), zero failures/errors/skips, in 95.57 seconds on
+locked Python3.12.14/Streamlit1.61.1. These local source/AppTest results do not resolve the retained native ResizeObserver or compact
+preview activation failures, replace required browser gates, or establish a release. No browser,
+customer original, live standing data, CI rerun, merge or deployment was used for this patch.
+
+Current Fresh native-error observation batch 2026-10-16 19:33 UTC starts from the actually
+published PR249 `0959bb2484a629b90f4ef1e619ff3df32711a61b` (tree d4642df). Its Adaptive38953590080
+still fails the fresh WebKit native ResizeObserver gate during Reporting month→September option
+selection at46,021.636ms, although both engines finish all five business stages and independently
+match the exact naturally requested primary, Tooltip and virtualizer response bodies. This is not
+an absent-patch-delivery explanation or a native-error resolution. The retained original
+108,495,040-byte ZIP was independently verified with CRC and SHA256 `96d3692f7414870d70d2d69c34031929a623fc1d7811c7fdd1bbe724219e22e3`.
+Main and actually served proof remain `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`.
+
+An earlier Training87 Chromium document had a real native window ResizeObserver error while
+Playwright's pageerror list stayed empty. Fresh previously used only pageerror, so its Chromium
+native-error absence was unproved. The new Fresh-only passive collector is installed before its
+single navigation, restricted to exact `http://127.0.0.1:8529`, and keeps the first16 unfiltered
+error/unhandledrejection records, total/overflow counts and an installed marker. It neither wraps
+observers nor schedules work, writes DOM, replaces handlers, prevents defaults, adds UI actions,
+waits or error exceptions. The final read is mandatory; missing/failed collection, any native error
+or overflow fails independently of the existing pageerror and external-request checks. A failed
+read cannot replace the primary task failure; first-failure and final evidence stay separate.
+This closes a demonstrated QA coverage gap, not the remaining native resize application defect.
+The composed gate passed37 checks in43.05s on locked Python3.12.14: actual collector JavaScript
+VM/default semantics, strict Python and primary-failure control flow, unchanged Fresh task
+contracts and first-response-only three-asset body verification. Compilation and diff checks pass.
+These are source/AppTest checks, with no local browser execution. The new collector and exact0959
+composition still require browser CI; no new live observation or acceptance is claimed.
+
 Current virtual-list repair batch 2026-10-16 19:07 UTC starts from the actually published PR249
 `1649aeab52ca401f5c9b601518570ba7077a6f80` (tree07b2f2). Its Required run independently counted
 2,828 tests with zero failures/errors/skips. Adaptive38949313042 passed every older family and
