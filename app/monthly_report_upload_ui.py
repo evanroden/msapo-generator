@@ -768,6 +768,11 @@ def acknowledge_autoincluded_water_pages(prefix, blocks):
     if all("water_reports" in owners.get(identity, ()) for identity in expected):
         st.session_state.pop(key, None)
         st.session_state.pop(key + "_failure", None)
+        # Page controls were drawn before this batch became canonical. Reuse
+        # the guided editor's historically named, one-shot post-commit refresh
+        # (also used by dated-item decisions). Never rerun here: the caller
+        # must first finish the draft assignment and durable recovery attempt.
+        st.session_state[prefix + "_period_editor_refresh"] = True
 
 
 @st.fragment(run_every=1)
