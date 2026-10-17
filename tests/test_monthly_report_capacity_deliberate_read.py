@@ -140,6 +140,27 @@ def test_empty_imported_schema_keeps_first_capacity_upload_primary(profile, monk
     assert capacity.load_capacity(profile.contract) is None
 
 
+@pytest.mark.parametrize("state", ("empty", "report_only", "standing"))
+def test_capacity_native_picker_matches_supported_formats_and_upload_ceiling(profile, state):
+    block = ResolvedBlock("thermal_capacity", "Library")
+    if state == "report_only":
+        block = replace(block, source="This month", rows=(("NH", "Steam", "NR", "lb/hr"),))
+    if state == "standing":
+        saved(profile)
+    before = capacity.load_capacity(profile.contract)
+    app = AppTest.from_string(APP)
+    app.session_state["test_draft"] = draft(profile, block)
+    app.run()
+    assert not app.exception
+    picker, = app.get("file_uploader")
+    assert picker.proto.max_upload_size_mb == 128
+    assert {item.casefold() for item in picker.proto.type} == capacity.SUPPORTED
+    assert "DOCX: up to 128 MB" in picker.proto.help
+    assert "Other supported files: up to 30 MB" in picker.proto.help
+    assert app.session_state["test_block"] == block
+    assert capacity.load_capacity(profile.contract) == before
+
+
 def test_pending_read_is_started_once_and_failure_requires_another_explicit_action(profile, monkeypatch):
     app, calls, _, futures = setup_reader(monkeypatch, profile, pending=True)
     app.run()

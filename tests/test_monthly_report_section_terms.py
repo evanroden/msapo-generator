@@ -7,12 +7,14 @@ from app.monthly_report_model import default_sections
 
 
 def test_mbcx_and_enfra_connect_defined_where_section_is_edited():
-    guidance = section_help("mbcx").guidance
+    assert section_help("mbcx").guidance == "Add monitoring results or a brief status update."
+    guidance = _quiet_help_text()
     assert "MBCx means monitoring-based commissioning" in guidance
     assert "ENFRA Connect" in guidance
     assert "platform" in guidance
     assert "verified" in guidance
-    assert "without inventing" in guidance
+    assert "Include only verified findings and savings" in guidance
+    assert "otherwise record the current status" in guidance
 
 
 def test_rfi_acronym_expanded_with_clear_workflow():
@@ -28,6 +30,14 @@ def test_training_excludes_enfra_staff_without_mislabeling_external_events():
     # The full scope rule moved into the quiet Help disclosure. Check its
     # actual location and retained consequences, not the superseded paragraph
     # beside every valid training matrix.
+    guidance = _quiet_help_text()
+    assert "Training covers hospital/client staff" in guidance
+    assert "ENFRA employees, asset managers and vendor personnel are outside its scope" in guidance
+    assert "only confirmed completed training" in guidance
+    assert "hours only when known" in guidance
+
+
+def _quiet_help_text():
     source = Path(__file__).resolve().parents[1] / "app/monthly_report_guided.py"
     tree = ast.parse(source.read_text())
     help_panels = [node for node in ast.walk(tree) if isinstance(node, ast.With)
@@ -42,12 +52,8 @@ def test_training_excludes_enfra_staff_without_mislabeling_external_events():
     context = help_panels[0].items[0].context_expr
     assert not any(keyword.arg == "expanded" and ast.literal_eval(keyword.value)
                    for keyword in context.keywords)
-    guidance = " ".join(node.value for node in ast.walk(help_panels[0])
-                        if isinstance(node, ast.Constant) and isinstance(node.value, str))
-    assert "Training covers hospital/client staff" in guidance
-    assert "ENFRA employees, asset managers and vendor personnel are outside its scope" in guidance
-    assert "only confirmed completed training" in guidance
-    assert "hours only when known" in guidance
+    return " ".join(node.value for node in ast.walk(help_panels[0])
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str))
 
 
 def test_plain_help_is_defined_for_all_standard_report_sections():

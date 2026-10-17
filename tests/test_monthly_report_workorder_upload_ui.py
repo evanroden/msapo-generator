@@ -11,8 +11,8 @@ CSV = (b"Work Order,Date,Status,Facility,Asset\n"
        b"WO-TEST-1003,2026-09-24,Open,Demo North,VAV-TEST-03\n")
 
 
-def _upload(monkeypatch):
-    stream = BytesIO(CSV)
+def _upload(monkeypatch, raw=CSV):
+    stream = BytesIO(raw)
     stream.name = "work_orders.csv"
     original = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
@@ -26,12 +26,13 @@ def test_csv_shows_grounded_totals_before_user_acceptance(monkeypatch, tmp_path)
     _upload(monkeypatch)
     app.run()
     assert not app.exception
-    assert any("3 total, 2 completed, 1 open" in info.value for info in app.info)
+    assert any("3 work orders · 2 completed · 1 open" in info.value for info in app.info)
+    assert any("Uploaded rows only." in info.value for info in app.info)
     assert any("66.7%" in info.value for info in app.info)
-    assert sum(b.label == "Add these work-order totals to Activity" for b in app.button) == 1
+    assert sum(b.label == "Add totals to summary" for b in app.button) == 1
     before = next(w for w in app.text_area if w.label == "Activity summary").value
     assert "3 total" not in before  # reviewed proposal, not silent accepted work
-    next(b for b in app.button if b.label == "Add these work-order totals to Activity").click().run()
+    next(b for b in app.button if b.label == "Add totals to summary").click().run()
     assert not app.exception
     added = next(w for w in app.text_area if w.label == "Activity summary").value
     stored = [(key, value) for key, value in app.session_state.filtered_state.items()
@@ -50,7 +51,7 @@ def test_manual_deletion_is_not_reversed_by_reader_rerun(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     _upload(monkeypatch)
     app.run()
-    next(b for b in app.button if b.label == "Add these work-order totals to Activity").click().run()
+    next(b for b in app.button if b.label == "Add totals to summary").click().run()
     editor = next(w for w in app.text_area if w.label == "Activity summary")
     editor.set_value("My deliberate current-month wording.").run()
     app.run()
@@ -62,7 +63,7 @@ def test_workorder_accept_is_idempotent_and_does_not_insert_raw_csv(monkeypatch,
     app = monthly(monkeypatch, tmp_path)
     _upload(monkeypatch)
     app.run()
-    first = next(b for b in app.button if b.label == "Add these work-order totals to Activity")
+    first = next(b for b in app.button if b.label == "Add totals to summary")
     first.click().run()
     assert not app.exception
     editor = next(w for w in app.text_area if w.label == "Activity summary")
@@ -71,7 +72,27 @@ def test_workorder_accept_is_idempotent_and_does_not_insert_raw_csv(monkeypatch,
     app.run()
     editor = next(w for w in app.text_area if w.label == "Activity summary")
     assert editor.value.count("3 total, 2 completed, 1 open") == 1
-    assert not any(b.label == "Add these work-order totals to Activity" for b in app.button)
+    assert not any(b.label == "Add totals to summary" for b in app.button)
+
+
+def test_detail_disclosure_contains_every_counted_row_without_changing_the_summary(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    before = next(w for w in app.text_area if w.label == "Activity summary").value
+    raw = b"Work Order,Date,Status,Facility\n" + b"".join(
+        f"SYNTHETIC-{i:03},2026-09-15,{'Completed' if i <= 50 else 'Open'},Demo North\n".encode()
+        for i in range(1, 61))
+    _upload(monkeypatch, raw)
+    app.run()
+    assert not app.exception
+    assert any("60 work orders · 50 completed · 10 open (83.3% completed). Uploaded rows only."
+               in info.value for info in app.info)
+    details = [table.value for table in app.dataframe
+               if list(table.value.columns) == ["Work order", "Date", "Status"]
+               and len(table.value) == 60]
+    assert len(details) == 1
+    assert details[0].iloc[-1].tolist() == ["SYNTHETIC-060", "2026-09-15", "Open"]
+    assert any("all 60 counted work orders" in c.value for c in app.caption)
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == before
 
 
 @pytest.mark.parametrize("manual", ["Manual correction entered before accepting totals.", ""])
@@ -81,13 +102,13 @@ def test_totals_clicked_with_new_text_reject_stale_baseline_without_losing_edit(
     _upload(monkeypatch)
     app.run()
     next(w for w in app.text_area if w.label == "Activity summary").set_value(manual)
-    next(b for b in app.button if b.label == "Add these work-order totals to Activity").click().run()
+    next(b for b in app.button if b.label == "Add totals to summary").click().run()
     assert not app.exception
     assert next(w for w in app.text_area if w.label == "Activity summary").value == manual
     assert any("report changed after you reviewed" in w.value for w in app.warning)
     # Re-reviewing the unchanged evidence against the now-current wording
     # remains possible and adds the totals exactly once.
-    next(b for b in app.button if b.label == "Add these work-order totals to Activity").click().run()
+    next(b for b in app.button if b.label == "Add totals to summary").click().run()
     assert not app.exception
     text = next(w for w in app.text_area if w.label == "Activity summary").value
     assert manual in text

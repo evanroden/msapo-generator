@@ -1,7 +1,11 @@
 """The browser receipt predicate must not depend on optional/null serialization."""
 import json
+import hashlib
+import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def expression():
@@ -68,3 +72,78 @@ def test_first_page_decision_requires_its_own_durable_acknowledgment():
     assert run_predicate(data,wanted)
     data["durable"]={**data["working"],"sources":[{"reviewed":[]}]}
     assert not run_predicate(data,wanted)
+
+
+def cold_module_handler():
+    import ast
+    source = Path(__file__).resolve().parents[1] / "scripts/qa_water_page_journey.py"
+    tree = ast.parse(source.read_text())
+    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                    and n.name == "keep_table_module_uncached")
+    namespace = {"re": re, "sha256": hashlib.sha256}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), namespace)
+    return namespace[function.name]
+
+
+class ModuleRoute:
+    def __init__(self, url, status=200, response_url=None):
+        from types import SimpleNamespace
+        self.request = SimpleNamespace(url=url)
+        self.raw = b'/* unchanged native module */ export const identity = "native";'
+        self.response = SimpleNamespace(status=status, url=response_url or url,
+            headers={"cache-control": "public, immutable, max-age=31536000",
+                     "content-type": "application/javascript", "etag": '"original"'},
+            body=lambda: self.raw)
+        self.fetched, self.fulfilled = [], []
+
+    def fetch(self, **options):
+        self.fetched.append(options)
+        return self.response
+
+    def fulfill(self, **options):
+        self.fulfilled.append(options)
+
+
+def test_cold_reload_keeps_original_module_bytes_and_limits_only_its_test_cache():
+    origin = "http://127.0.0.1:8520"
+    name = "DataFrame.v-5GXvjU.enfra-overlay-732bfc01d57053d1e52f.js"
+    route = ModuleRoute(origin + "/static/js/" + name)
+    receipts = []
+    assert cold_module_handler()(route, origin, receipts)
+    assert route.fetched == [{"max_redirects": 0, "timeout": 20000}]
+    assert len(route.fulfilled) == 1
+    delivered = route.fulfilled[0]
+    assert delivered["response"] is route.response
+    assert delivered["body"] is route.raw
+    assert delivered["headers"] == {**route.response.headers, "cache-control": "no-store"}
+    assert route.response.headers["cache-control"] == "public, immutable, max-age=31536000"
+    assert receipts == [{"module": name, "bytes": len(route.raw),
+        "sha256": hashlib.sha256(route.raw).hexdigest(),
+        "original_cache_control": "public, immutable, max-age=31536000",
+        "synthetic_cache_control": "no-store"}]
+
+
+@pytest.mark.parametrize("url", [
+    "https://msapo-generator.onrender.com/static/js/DataFrame.test.js",
+    "http://127.0.0.1:8521/static/js/DataFrame.test.js",
+    "http://127.0.0.1:8520/static/js/index.test.js",
+    "http://127.0.0.1:8520/static/css/DataFrame.test.css",
+    "http://127.0.0.1:8520/static/js/DataFrame.test.js?other=1",
+    "data:text/javascript,unchanged",
+])
+def test_cold_reload_does_not_fetch_or_change_other_routes(url):
+    route = ModuleRoute(url)
+    receipts = []
+    assert not cold_module_handler()(route, "http://127.0.0.1:8520", receipts)
+    assert route.fetched == route.fulfilled == receipts == []
+
+
+@pytest.mark.parametrize("status,response_url", [(302, None), (500, None),
+    (200, "https://example.invalid/redirected.js")])
+def test_cold_reload_rejects_redirects_and_failed_responses(status, response_url):
+    route = ModuleRoute("http://127.0.0.1:8520/static/js/DataFrame.test.js", status, response_url)
+    receipts = []
+    with pytest.raises(AssertionError, match="Unexpected local DataFrame response"):
+        cold_module_handler()(route, "http://127.0.0.1:8520", receipts)
+    assert route.fetched == [{"max_redirects": 0, "timeout": 20000}]
+    assert route.fulfilled == receipts == []

@@ -191,7 +191,8 @@ def reload_water_with_cold_tables(page, qa, observations):
         state = wait_pages(page, [2, 1], pending=[])
         qa.scroll_pair(page, WATER, inset=90)
         before = result["before"] = page.evaluate(sample, {"water": WATER, "keys": None})
-        assert len(held) == 1, "The actual DataFrame module must be held, not already warm."
+        result["held_module_requests"] = len(held)
+        assert len(held) == 1, "Expected one held DataFrame module request: " + str(len(held))
         assert len(before["grids"]) == 3, "Observe all three imported editors preceding Water."
         keys = [item["key"] for item in before["grids"]]
         assert all(keys) and all(item["loading"] for item in before["grids"])
@@ -217,6 +218,30 @@ def reload_water_with_cold_tables(page, qa, observations):
         for route in held:
             route.continue_()
         page.unroute(pattern, hold)
+
+
+def keep_table_module_uncached(route, origin, receipts):
+    """Make this synthetic reload cold without changing one script byte.
+
+    WebKit reuses immutable module responses despite request interception.
+    The first-failure trace served the first response date on both reloads,
+    without running either route handler. Apply no-store from the first
+    request in this test context only, then the final page route can hold the
+    real request. All other app assets retain their actual cache behavior.
+    """
+    url = route.request.url
+    if not re.fullmatch(re.escape(origin) + r"/static/js/DataFrame\.[^/?]+\.js", url):
+        return False
+    response = route.fetch(max_redirects=0, timeout=20000)
+    assert response.status == 200 and response.url == url, "Unexpected local DataFrame response"
+    body = response.body()
+    headers = response.headers
+    receipts.append({"module": url.rsplit("/", 1)[-1], "bytes": len(body),
+                     "sha256": sha256(body).hexdigest(),
+                     "original_cache_control": headers.get("cache-control"),
+                     "synthetic_cache_control": "no-store"})
+    route.fulfill(response=response, body=body, headers={**headers, "cache-control": "no-store"})
+    return True
 
 
 def open_water_preview(page, water, qa, observations):
@@ -462,11 +487,12 @@ def browser_task(browser_type, name):
     browser = browser_type.launch(headless=True)
     context = browser.new_context(viewport={"width": 1365, "height": 900})
     context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": qa.URL}])
-    attempts, errors = [], []
+    attempts, errors, table_responses = [], [], []
     def route(request):
         address = urlparse(request.request.url)
         if address.scheme in {"data", "blob"} or (address.hostname == "127.0.0.1" and address.port == 8520):
-            request.continue_()
+            if not keep_table_module_uncached(request, qa.URL, table_responses):
+                request.continue_()
         else:
             attempts.append(address.hostname)
             request.abort()
@@ -497,6 +523,7 @@ def browser_task(browser_type, name):
     finally:
         (out / "widget-delivery.json").write_text(json.dumps(delivery, indent=2))
         (out / "browser.json").write_text(json.dumps({"external": attempts, "errors": errors}, indent=2))
+        (out / "cold-table-response-bytes.json").write_text(json.dumps(table_responses, indent=2))
         context.close()
         browser.close()
 

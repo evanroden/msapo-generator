@@ -677,16 +677,6 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             for key, block in additions.items():
                 blocks[key] = merge_blocks(blocks.get(key), block) if key == "improvements" else block
             _forget_block_widgets(prefix, additions)
-    if section.key == "activity" and st.checkbox(
-            "Add reviewed vendor service pages", key=field(prefix + "_vendor_pages_open", False)):
-        # Optional page-by-page inclusion after the primary upload-first text
-        # path. Avoid two simultaneous review widgets for the same source.
-        from app.monthly_report_upload_ui import render_section_uploads
-        sources, additions, incoming_specs = render_section_uploads(
-            profile, period, prefix, field, "improvements", blocks=blocks, assets=assets)
-        draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
-        if additions:
-            draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
     local_destination = {"water": "water_reports", "mbcx": "mbcx_report", "scorecards": "utility_analysis"}.get(section.key)
     if local_destination:
         from app.monthly_report_upload_ui import render_section_uploads
@@ -703,6 +693,10 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                 acknowledge_autoincluded_water_pages(prefix, blocks)
     if section.key == "activity":
         from app.monthly_report_source_manager_ui import render_guided_source_manager
+        # Vendor originals use this existing page-by-page manager. A second
+        # section-upload panel would expose competing controls for the same
+        # source and caption. The manager keeps the Activity destination and
+        # its atomic, repeat-safe preparation path.
         draft, blocks = render_guided_source_manager(
             draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources)
         from app.monthly_report_ai_ui import render_drafting
@@ -767,7 +761,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         from app.monthly_report_page_controls import source_managed_pages
         page_managed = (spec.key == "water_reports" and source_managed_pages(
             block, st.session_state.get(prefix + "_evidence", ())))
-        if not page_managed and spec.key not in {"proposals", "rfi_matrix", "utility_analysis"}:
+        if not page_managed and spec.key not in {"proposals", "rfi_matrix", "utility_analysis", "activity_summary"}:
             st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
             from app.monthly_report_capacity_ui import render_capacity
@@ -857,6 +851,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
         st.caption("Selecting several sites combines them in one report. For separate reports, select each site individually.")
         st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
+        st.caption("MBCx means monitoring-based commissioning: reviewing equipment performance for operating issues and improvements. ENFRA Connect refers to the monitoring platform. Include only verified findings and savings; otherwise record the current status.")
         st.caption("Training covers hospital/client staff. ENFRA employees, asset managers and vendor personnel are outside its scope. Record only confirmed completed training in the monthly list. Enter hours only when known.")
         st.caption("Draft recovery keeps edits after they reach the app. Text still being typed may not be recoverable. Check the save status before leaving. Saving or creating files adds a shared version. Prepared by is report attribution, not a sign-in.")
     from app.monthly_report_admin_ui import render_administration_links

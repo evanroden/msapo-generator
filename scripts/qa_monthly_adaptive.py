@@ -334,7 +334,8 @@ def exercise(browser_type, name):
         manager.click()
         expect(page.locator(ACTIVITY).get_by_text("Read source files, check their pages, or match spreadsheet columns.", exact=True)).to_be_visible()
         check(name, "native source-manager button opens the broad file tools", True)
-        set_checkbox(page.locator(ACTIVITY), "Add reviewed vendor service pages", True, name)
+        check(name, "vendor pages have no competing Activity checkbox",
+              page.locator(ACTIVITY).get_by_role("checkbox", name="Add reviewed vendor service pages", exact=True).count() == 0)
         scroll_pair(page, ACTIVITY)
         actual = current_image(page, ACTIVITY)
         baseline = capture(page, name, "actual-activity-current")

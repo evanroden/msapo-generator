@@ -4,7 +4,63 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current implementation checkpoint — 2026-10-17 18:08 UTC
+## Current implementation checkpoint — 2026-10-17 19:20 UTC
+
+Main and the last verified live build remain `de651cb1ed0bd3e2c1ea0484009754c86cb1495e`.
+PR252 is open against main at `1a701fa907b847fc782590a950a0fe455ff7751b`, tree
+`4da60cfc4b43b28e3a9742fd83a23152a9950384`. Both current review threads were reread
+resolved at19:20. The next focused delta below is local and not yet published. Neither phase is accepted.
+The first publication blob call at about19:02 returned `aborted by user`, with no success
+receipt or ref change. Publication stopped. The owner's19:16:58UTC `Continue.` renewed this
+specific publication; the existing252head was freshly checked unchanged before proceeding.
+No original-file, managed-localhost, Render-workspace or other denied operation was renewed.
+
+| Requirement / retained IDs | Implementation and current evidence | Served evidence | Next action / owner | Acceptance |
+| --- | --- | --- | --- | --- |
+| Parent integration; CONT01–03, SRC01/SRC04–06, ADP-A10/A20 | PR249,250,251 merged normally into main. PR251 merged Tests39051140826 / Adaptive39051140791 pass. PR252 preserves all parent/sibling work on main. | Full de651cb in isolated Chromium About; actual dated semantic history table and native selection retained the report fingerprint. Entry464115bytes/SHA2564cf97569e258c61ec3abbe6812abe7786de173b60ce6bd25786da43ad28fb0f9. | Keep normal main integration and fresh served verification. Engineer. | Parent delivery verified in named scope |
+| Current PR252 release; SIM-A14–15/SIM-T01, CONT07/09, ADP-A19/A20 | Exact Tests39058741428 SUCCESS:3533passed/2warnings/1497.09s; container117472083961 and resource117472083507 pass. Adaptive39058741444 fails only the new full WebKit Water loading precondition. Photos117472083638, Training117472083552, history117472083735 and other synthetic DOM steps pass, including both fresh Water paths. | PR252 is not deployed. | Finish corrected cold-module setup, exact new Required/Adaptive and current review; then merge to main. Engineer. | Held for exact browser gate |
+| Native loading/preview stability; ADP-A02/A08/A12/A13, SIM-G01 | Actual Chromium on1a holds the original DataFrame module, observes all3 prior grids, then mounts them at exactly unchanged184.59375/149.59375/114.59375px. Button y298.890625, scrollTop7013 and full-render identity remain unchanged; one native activation reaches current preview and actual Word/PDF. WebKit has no loading grids because its module response is reused without running the new handler; it never reaches the new geometry/output tail. | No served repair claim. | Local harness now applies no-store only to the same synthetic DataFrame response from its first request, records original byte hashes/headers and retains original content bytes, limits, redirect rejection, final held request, all3 height checks, fixed scroll/full-render checks and one-click/output assertions. Engineer. | Chromium repair evidence; WebKit precondition correction pending browser proof |
+| Activity/MBCx routine copy; SIM-A01/A02/A03/A14, SIM-M01/M02/M03 | Live de651cb reproduces the two Activity introductions, long metrics/source paragraphs, duplicate Activity label and lengthy MBCx definition/upload instructions. Local change keeps one introduction and native Activity label, compact source/period/count summary, Add totals to summary, one MBCx instruction and definition/scope in the existing quiet Help. Direct editors, source-page gates, deliberate quick-fill status and accepted report wording remain. | Before screenshot retained at1363x936; no after/live claim. | Publish and compare like-for-like served screenshots/action paths. Engineer. | Local implementation,104 affected tests pass |
+| Work-order totals must expose their detail; SIM-A02/A03/A10/A11, CONT06/08 | Independent actual60-row CSV reproduced60 counted/40 available rows on1a. Local repair retains all bounded counted rows. Native AppTest detail view exposes all60 (50 completed/10 open), exact last row and source/table identity without changing Activity. Existing idempotent acceptance, same-event manual/blank protection and source/period exclusions pass. | Synthetic local importer/UI scope only. | New branch gate then actual served selected-spreadsheet review. Engineer. | Failing-before/passing-after focused evidence |
+| Compact sources, saved dates and navigation; SRC01/04/06, SIM-G07/SIM-W, CONT04/08 |229/1a contain compact named unresolved-source disclosures, native saved-date default, scoped grid loading and heading placement, and removal of duplicate automatic sidebar navigation. Earlier source/date83-case gate and loading/navigation83-case gate remain distinct. Old PO bookmark notice and ordinary workflow selector retained. | Current main still shows the old source forms/sidebar and repeated copy. | Verify source-date correction/re-entry/reload, section heading/control placement, sidebar and bookmark on the delivered build. Engineer. | Implemented; remaining live acceptance pending |
+| One vendor-page entry; SIM-A04, SRC01/04/06 | The redundant Add reviewed vendor service pages checkbox and its competing panel are removed locally. Manage source files retains per-page inclusion/exclusion/caption review, Activity routing and atomic repeat-safe Add. The native adaptive journey keeps its real long-section/sticky/input/output assertions and now checks the duplicate is absent. | Duplicate reproduced on current main; after-delivery review pending. | Publish; verify the existing manager path, source bytes, omission and report placement on the served build. Engineer. | Local failing-before/passing-after; broad source consolidation remains open |
+| Capacity upload limits; SIM-G04/A06/SC04, ADP-A11/A19 | Current native picker falsely permits200MB in empty/report-only/standing states. Local picker now enforces128MB maximum and explains DOCX128MB/other30MB limits. Actual bounded source/directory readers remain unchanged. The three native protocol cases retain report values and standing revision. | Current main200MB reproduced; after-delivery128MB and format help pending. | Branch/served check. Actual authentic28.5MB extraction still requires its existing permitted replay boundary. Engineer/access owner. | Local4baseline failures→105affected passes/30.17s |
+| Actual output and remaining phase coverage; VIS, CONT07, ADP-A01–A20, AUTH01–03 | Earlier229 actual files and all87 named-renderer rasters are retained and exactly match previously inspected synthetic pixel groups. Current1a photo outputs pass their browser assertions but have no new all-page review claim. Original97/113/ADP20 IDs remain; original-file, named-renderer, standing/concurrency, privacy and physical/native limits remain as below. | Read-only public HTML plus all83 derivative assets match the pinned generation at19:13UTC (7504154 total JS bytes); full de651cb independently reread in browser About at19:13–19:14. No Render control-plane read; workspace selection remains unconfirmed. | Finish all independent interface/output/scope work, then smallest exact access/device/artwork/Render selection actions. Engineer/owner as scoped. | OPEN / NOT ACCEPTED |
+
+The1a first-failure artifact12111061764 (run39058741444) was independently downloaded:
+115400499bytes/SHA2568bab5e4b169d0ebe752a31ab3df74de6a754e5cd0084995d5e7d4842204aaaa7.
+Its original ZIP, screenshot, task receipt and trace remain private. The WebKit module response
+has the first response's date on both subsequent reloads and no continued-route marker; all3
+native grids are already mounted when the cold precondition runs. This is a test setup failure,
+not a demonstrated residual sizing defect or successful WebKit final output. The prior229
+327px native-click failure and its original artifact remain separate evidence below.
+
+Current focused command: `python -m pytest -q` with the review venv, these10files:
+`test_monthly_report_work_order_csv.py`, `test_monthly_report_workorder_upload_ui.py`,
+`test_monthly_report_mbcx.py`, `test_monthly_report_section_terms.py`,
+`test_monthly_report_structured_uploads.py`, `test_monthly_report_section_uploads.py`,
+`test_monthly_report_section_audit_fixes.py`, `test_water_journey_contract.py`,
+`test_water_preview_activation_probe.py`, `test_monthly_report_grid_loading.py`.
+Result104passed/10.05s; XML`pr252-cold-copy-detail-focused-20261017.xml`. The actual60-row
+baseline failed40!=60 with4other cases passing. The earlier cold-response33-case gate passes.
+The additional7-file source/capacity gate passed105cases/30.17s:
+`test_monthly_report_upload_ui.py`, `test_monthly_report_source_manager_compact.py`,
+`test_monthly_report_vendor_activity_routing.py`, `test_monthly_report_capacity_deliberate_read.py`,
+`test_monthly_report_capacity_ui.py`, `test_monthly_report_capacity.py`,
+`test_monthly_report_section_deliberate_read.py`.
+XML`source-path-capacity-limit-after-20261017.xml`; its4before failures are retained.
+Original single-click, page review, caption/density, reload and actual-output assertions remain.
+No local browser, customer-file transfer, genuine one-shot diagnostic, business send, production
+Create, paid reading, host change or authentication change occurred.
+
+Same restart TXT saved version6 (75575bytes/SHA2560599ed4b6197cab81ff08cd10a6b6985d77b021582db750e70024db723bbbacf).
+Same release evidence ZIP saved version1 (163members,229220242bytes/SHA2565850efb4598136483f226a30ce17d94c54de21b62fbb98469727140002bacdeb),
+preserving all39 earlier content members plus the229failure/output/83-case/publication receipts.
+The original owner prompt's41052-byte tail remains byte-identical. New1a evidence awaits the
+next in-place update; it has not been claimed durably saved yet.
+
+
+## Historical implementation checkpoint — 2026-10-17 18:08 UTC
 
 MAIN remains `de651cb1ed0bd3e2c1ea0484009754c86cb1495e`, with PR251 merged.
 PR252 is open against that main at `229e79d9fe8ab1aa28e56f0c4960e4bc00184b10`.

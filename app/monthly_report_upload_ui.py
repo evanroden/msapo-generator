@@ -804,10 +804,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             if request and request["source_id"] == pending_edit["source_id"]:
                 st.session_state.pop(local_key + "_auto_include", None)
                 st.session_state.pop(local_key + "_auto_include_failure", None)
-    if destination not in {"water_reports", "utility_analysis"}:
+    if destination not in {"water_reports", "utility_analysis", "mbcx_report"}:
         st.markdown("**" + title + "**")
         st.caption("Choose a file, check its useful pages, then add them here. Existing report content is kept.")
-    # Water and Scorecards already have section-level instructions. Keep one
+    # Water, Scorecards and MBCx already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
     with st.popover("Add files", key=local_key + "_add_files", help="Upload a file or reuse a file already saved in this draft."):
@@ -1031,7 +1031,6 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     labels = {"activity_summary": "Add activity files (optional)", "capital_renewal": "Add capital renewal file", "proposals": "Add proposal file"}
     context = _signature((asdict(profile), period.key, destination, tuple(table_columns or ()),
                           _rich_text_scope(prefix), testing.scope(), testing.generation()))
-    st.caption("Add files to help draft this section, or edit directly below. Detected pricing blocks page inclusion; review every client-facing page.")
     uploaded = st.file_uploader(labels[destination], type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128,
                                 key=local_key + "_upload_" + context)
@@ -1168,14 +1167,16 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             if original is not None and report.text in original.text:
                 st.caption("Work-order totals from " + report.filename + " are already in the Activity summary.")
                 continue
-            st.info(report.text)
-            st.caption("Source: " + report.filename + " · " + report.reference.split(":")[1] +
-                       " (table). These are only the rows in the uploaded file, not a claim of complete monthly coverage.")
+            st.info(f"{period.label} · {report.filename}: {report.total} work orders · "
+                    f"{report.completed} completed · {report.open} open "
+                    f"({report.completed / report.total:.1%} completed). Uploaded rows only.")
             if report.needs_site_confirmation:
                 st.warning("The work-order file has no site column. Check that these records belong to the selected report before adding them.")
             for notice in report.notices:
                 st.caption(notice)
             with st.expander("Review counted work-order rows"):
+                st.caption(f"{report.filename} · table {report.reference.split(':')[1]} · "
+                           f"all {report.total} counted work orders")
                 st.dataframe([{"Work order": row[0], "Date": row[1], "Status": row[2]}
                               for row in report.rows], hide_index=True)
             # Streamlit buttons run an on_click callback before the full-page
@@ -1201,7 +1202,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     "source_id": report.source_id, "reference": report.reference,
                     "text": report.text,
                 }
-            st.button("Add these work-order totals to Activity",
+            st.button("Add totals to summary",
                       key=local_key + "_accept_work_orders_" + report.source_id[:16],
                       on_click=accept_workorders, disabled=not confirmed)
 

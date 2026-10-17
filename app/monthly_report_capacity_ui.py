@@ -102,6 +102,17 @@ def _columns(columns):
     return names
 
 
+def _capacity_file(prefix):
+    return st.file_uploader(
+        "Thermal capacity file",
+        type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
+        max_upload_size=128,
+        key=prefix + "_capacity_upload",
+        help="DOCX: up to 128 MB. Other supported files: up to 30 MB. "
+             "Use capacity values for the relevant sites.",
+    )
+
+
 def render_capacity(draft, block, prefix, field):
     """Automatically persist safe first-fill rows, preserving historical pins.
 
@@ -129,30 +140,15 @@ def render_capacity(draft, block, prefix, field):
                 "Update existing capacity values",
                 key=field(prefix + "_capacity_change", False),
             )
-            uploaded = st.file_uploader(
-                "Thermal capacity file",
-                type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
-                key=prefix + "_capacity_upload",
-                help="PDF, Word, spreadsheet or image with chilled-water and steam values for the relevant sites.",
-            )
+            uploaded = _capacity_file(prefix)
     elif _has_values(block):
         st.caption("These capacity values are in this report only. Monthly utility results are separate.")
         with st.expander("Add capacity for future reports", expanded=False):
             st.caption("A reviewed file can supply matched sites' capacity to future reports. This report's edited values stay unchanged.")
-            uploaded = st.file_uploader(
-                "Thermal capacity file",
-                type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
-                key=prefix + "_capacity_upload",
-                help="PDF, Word, spreadsheet or image with chilled-water and steam values for the relevant sites.",
-            )
+            uploaded = _capacity_file(prefix)
     else:
         st.caption("Add capacity data once for these sites; future reports reuse it.")
-        uploaded = st.file_uploader(
-            "Thermal capacity file",
-            type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
-            key=prefix + "_capacity_upload",
-            help="PDF, Word, spreadsheet or image with chilled-water and steam values for the relevant sites.",
-        )
+        uploaded = _capacity_file(prefix)
     if uploaded is None:
         _cancel_reading(prefix)
         for suffix in ("digest", "upload_identity", "inspection", "error", "read_request"):
