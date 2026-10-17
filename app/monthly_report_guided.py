@@ -850,13 +850,21 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         if not page_managed and spec.key not in {"proposals", "rfi_matrix", "utility_analysis", "activity_summary"}:
             st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
-            from app.monthly_report_capacity_ui import render_capacity
+            from app.monthly_report_capacity_ui import render_capacity, render_capacity_scope
+            capacity_scope = st.container(key=prefix + "_capacity_scope")
+            # Capture the delivered report-table edit before any source action
+            # can refresh an unedited shared copy. Manual overrides stay local.
+            with st.container(key=prefix + "_capacity_report_table"):
+                block = _edit_content(spec, block, state, prefix, assets, field, draft)
             before = block
-            draft, block = render_capacity(draft, block, prefix, field)
+            draft, block = render_capacity(draft, block, prefix, field, show_scope=False)
             if block != before:
                 _forget_block_widgets(prefix, {spec.key})
-            spec = next((item for current in draft.sections for item in current.blocks if item.key == spec.key), spec)
-            specs[spec.key] = spec
+                st.session_state[prefix + "_period_editor_refresh"] = True
+            with capacity_scope:
+                render_capacity_scope(draft.profile, block)
+            blocks[spec.key] = block
+            continue
         if spec.key in ("contact_matrix", "subcontractor_matrix"):
             from app.monthly_report_visual_ui import edit_contacts
             block = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
