@@ -109,7 +109,7 @@ def test_populated_monthly_po_and_split_expenses_return_without_cross_workflow_l
     monthly_owner = monthly_preview["owner"]
 
     change_workflow(app, "Purchase order")
-    next(button for button in app.button if button.label == "Built by Evan Roden").click().run()
+    next(button for button in app.button if button.label == "Load synthetic quote").click().run()
     # The canned sample uses a TXT placeholder. Supply an actual invented PDF
     # so source-view identity and page retention exercise the real viewer.
     original_quote = pdf_bytes(2)
