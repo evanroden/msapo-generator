@@ -269,7 +269,9 @@ def review_message(check, draft):
     key = check.block_key
     source = next((source for source in draft.sources if source.id == key), None)
     if source is not None and check.code.startswith("source_"):
-        return check.message + f" [Correct source details](#source-details-{source.id})."
+        target = "site" if check.code == "source_facility" else "date"
+        label = "Correct site" if target == "site" else "Correct date"
+        return check.message + f" [{label}](#source-details-{source.id}--{target})."
     follow_up = next((item for item in draft.follow_ups if item.key == key), None)
     if follow_up:
         category = "proposals" if follow_up.category == "proposal" else "equipment issues"
@@ -442,9 +444,8 @@ def _refresh_period_editors_after_commit(prefix):
 
 
 def _has_request_rows(block):
-    return any(value is not None and str(value).strip()
-               for rows in (block.rows, *(table.rows for table in block.extra_tables))
-               for row in rows for value in row)
+    from app.monthly_report_table_entry_ui import has_rows
+    return has_rows(block)
 
 
 def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True,
@@ -455,20 +456,17 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     key = prefix + "_edit_" + spec.key
     edit_tables = True
     request_notice = None
-    if spec.key == "rfi_matrix" and (spec.type in ("table", "work_order_grid") or block.extra_tables):
-        # A fresh report shows an honest empty state. Add request opens the
+    from app.monthly_report_table_entry_ui import EMPTY_TABLES, empty_text_seed, entry_open, has_values
+    optional_table = spec.key in EMPTY_TABLES
+    if optional_table and (spec.type in ("table", "work_order_grid") or block.extra_tables):
+        # A fresh report shows an honest empty state. Add opens the
         # existing native grid; an empty editor slot is never report content.
         # Reset/import/source replacement receives different native IDs while
         # ordinary row edits keep the same mounted editor and input seed.
         key += "_" + _signature((_rich_text_scope(prefix), block.references,
                                  tuple(table.reference for table in block.extra_tables)))
         request_notice = st.empty()
-        if not _has_request_rows(block):
-            open_key = key + "_request_editor_open"
-            edit_tables = bool(st.session_state.get(open_key))
-            if not edit_tables and st.button("Add request", key=key + "_add_request"):
-                st.session_state[open_key] = True
-                edit_tables = True
+        edit_tables = entry_open(block, key)
     # Source-linked text has its own evidence-aware editor above. Do not echo a
     # competing read-only copy below that editor or add a second text control.
     if spec.type not in ("rich_text", "stock_text") and block.text.strip() and not block.ai_paragraphs:
@@ -481,7 +479,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         if notes != block.text:
             source = "Omit" if retained_mbcx and block.source == "Omit" else "This month"
             block = replace(block, source=source, text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
-    if block.extra_tables and edit_tables:
+    row_cards = spec.key in {"proposals", "service_calls"} and (spec.type in ("table", "work_order_grid") or block.extra_tables)
+    if row_cards:
+        from app.monthly_report_row_cards_ui import edit_row_cards
+        block = edit_row_cards(spec, block, prefix, field)
+    if block.extra_tables and edit_tables and not row_cards:
         from app.monthly_report_editor import _cell_text
         tables = []
         for n, table in enumerate(block.extra_tables):
@@ -490,13 +492,16 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             if len(block.extra_tables) > 1:
                 st.write(f"Table {n+1}")
             seed = [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)]
+            if optional_table:
+                seed = empty_text_seed(seed)
             rows = _grid(key + f"_imported_{n}_" + _signature(table.columns), seed, num_rows="dynamic", hide_index=True)
-            # Opening a blank imported RFI frame must retain its original
+            # Opening a blank imported frame must retain its original
             # structure/reference without pretending its editor slot is data.
-            edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows if any(v is not None and v != "" for v in r.values()))
-            tables.append(table if spec.key == "rfi_matrix" and rows == seed
+            edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows
+                                if any(v is not None and (str(v).strip() if optional_table else v != "") for v in r.values()))
+            tables.append(table if optional_table and (rows == seed or not edited_rows and not has_values(table.rows))
                           else replace(table, rows=edited_rows))
-        if spec.key == "rfi_matrix" and tuple(tables) != block.extra_tables:
+        if optional_table and tuple(tables) != block.extra_tables:
             block = replace(block, source="This month", extra_tables=tuple(tables),
                             reviewed_fingerprint="", client_reviewed_fingerprint="")
         else:
@@ -590,20 +595,23 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             resolved = render_period_items(block, draft.period, draft.sources, prefix,
                 section_title=section_title, editor_anchor=editor_anchor)
             block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
-    elif edit_tables and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
+    elif edit_tables and not row_cards and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
+        if optional_table:
+            seed = empty_text_seed(seed, spec)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
         from app.monthly_report_editor import _cell_text
         columns = [c.title for c in spec.columns] or ["Facility", "Item", "Status"]
         edited_rows = tuple(tuple(_cell_text(row.get(c)) for c in columns) for row in rows
-                            if any(v is not None and v != "" for v in row.values()))
-        if rows != seed and edited_rows != block.rows:
+                            if any(v is not None and (str(v).strip() if optional_table else v != "") for v in row.values()))
+        if (rows != seed and edited_rows != block.rows
+                and (not optional_table or edited_rows or has_values(block.rows))):
             block = replace(block, source="This month", rows=edited_rows, reviewed_fingerprint="", client_reviewed_fingerprint="")
-    if (request_notice is not None and not _has_request_rows(block)
+    if (request_notice is not None and not edit_tables and not _has_request_rows(block)
             and not (block.text.strip() or block.asset_hashes or block.org_nodes or block.ai_paragraphs)):
-        # Read the result of this native edit, not its pre-edit input; deleting
-        # the final request and entering the first one both update immediately.
-        request_notice.caption("No information requests added.")
+        # A deliberately opened draft slot replaces the empty-state sentence;
+        # its blank cells are still not report content.
+        request_notice.caption(EMPTY_TABLES[spec.key][0])
     if block.asset_hashes and manage_saved_pictures:
         from app.monthly_report_saved_pictures_ui import edit_saved_pictures
         block = edit_saved_pictures(block, key, lambda ref: assets.get(ref) or library.read_asset(state.profile.contract, state.profile.key, ref), show_preview=False)
@@ -626,12 +634,15 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         return block
     from app.monthly_report_sections import readable_label
     if spec.type == "pdf_pages":
-        with st.expander("Replace this section’s attached pages"):
-            st.caption(f"Replaces {len(block.asset_hashes)} attached pages in {readable_label(spec.key)} with one image. Other sections and saved originals stay unchanged.")
-            upload = st.file_uploader("Replacement image for " + readable_label(spec.key), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
+        replacing_pages = bool(block.asset_hashes)
+        with st.expander("Replace this section’s attached pages" if replacing_pages else "Add report pages"):
+            if replacing_pages:
+                st.caption(f"Replaces {len(block.asset_hashes)} attached {'page' if len(block.asset_hashes) == 1 else 'pages'} in {readable_label(spec.key)} with one image. Other sections and saved originals stay unchanged.")
+            upload = st.file_uploader(("Replacement image for " if replacing_pages else "Image page for ") + readable_label(spec.key), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
     else:
         upload = st.file_uploader("Upload a new " + readable_label(spec.key).lower(), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
-    if upload and st.button("Use this replacement in this report", key=key + "_replace"):
+    adding_page = spec.type == "pdf_pages" and not block.asset_hashes
+    if upload and st.button("Add page to this report" if adding_page else "Use this replacement in this report", key=key + "_replace"):
         from pathlib import Path
         image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix,
                                        line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"))
@@ -641,11 +652,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
         if spec.type == "pdf_pages":
             st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
-        st.image(image.data, width="stretch", caption="Updated image in this report")
+        st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")
     undo = st.session_state.get(key + "_replacement_undo") if spec.type == "pdf_pages" else None
     if undo:
         unchanged = block.fingerprint == undo[0]
-        if st.button("Undo attached-page replacement", key=key + "_undo_replacement_" + undo[0],
+        if st.button("Undo attached-page replacement" if undo[1].asset_hashes else "Undo added page", key=key + "_undo_replacement_" + undo[0],
                      disabled=not unchanged,
                      help="Restores this section’s previous pages. Unavailable after another edit changes this section."):
             block = undo[1]
@@ -710,13 +721,17 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             current = blocks.get("activity_summary", ResolvedBlock("activity_summary", "This month"))
             matches = (request["contract"] == draft.profile.contract
                        and request["profile"] == draft.profile.key
-                       and request["month"] == draft.period.key)
+                       and request["month"] == draft.period.key
+                       and any(source.id == request["source_id"]
+                               and request["reference"].split(":")[-1] == source.fingerprint
+                               for source in draft.sources))
             if (matches and request["expected"] == current.fingerprint
                     and not _pending_rich_text_edit(prefix, current)):
                 if request["text"] not in current.text:
                     updated = replace(current, source="This month",
                         text="\n\n".join(filter(None, (current.text.strip(), request["text"]))),
-                        references=tuple(dict.fromkeys((*current.references, request["reference"]))),
+                        references=tuple(dict.fromkeys((*current.references, request["reference"],
+                                                        *([request["scope_receipt"]] if request.get("scope_receipt") else [])))),
                         reviewed_fingerprint="", client_reviewed_fingerprint="")
                     blocks["activity_summary"] = updated
                     _forget_block_widgets(prefix, {"activity_summary"})
@@ -727,7 +742,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     draft = replace(draft, blocks=tuple(blocks.values()))
     profile, period = draft.profile, draft.period
     destination = {"activity": "activity_summary", "capital": "capital_renewal", "proposals": "proposals"}.get(section.key)
-    if destination:
+    if destination and section.key != "activity":
         from app.monthly_report_upload_ui import render_structured_uploads
         from app.monthly_report_structured_uploads import COLUMNS as STANDARD_COLUMNS
         native_spec = next((b for s in draft.sections for b in s.blocks if b.key == destination), None)
@@ -765,7 +780,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         # source and caption. The manager keeps the Activity destination and
         # its atomic, repeat-safe preparation path.
         draft, blocks = render_guided_source_manager(
-            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources)
+            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
         from app.monthly_report_ai_ui import render_drafting
         # One shared evidence workspace: rendering this once avoids duplicated
         # source/job widget identities when every report section is visible.
@@ -911,9 +926,24 @@ def _render_report_details_action(candidate, existing, period, browser_token):
             st.error("Report details could not be saved: " + str(exc))
 
 
+def _current_source_detail(source, contents):
+    """Use this report's delivered source changes before drawing its form.
+
+    Page actions commit evidence before requesting a full rerun; the report
+    snapshot may still be one render behind. An ambiguous or different
+    original is never substituted, and the form keeps its revision guard.
+    """
+    matches = tuple(content.source for content in contents if content.source.id == source.id)
+    if (len(matches) == 1 and matches[0].sha256 == source.sha256
+            and matches[0].suffix == source.suffix):
+        return matches[0]
+    return source
+
+
 def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.session_state["_monthly_source_detail_anchors"] = set()
     st.session_state["_monthly_source_detail_forms"] = {}
+    st.session_state["_monthly_source_details_managed"] = True
     last_contract, last_profile = remembered_report_preferences(browser_token)
     recovery_available = active_work.enabled(browser_token)
     with st.expander("Help"):
@@ -995,19 +1025,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     expected_revision=active.revision, expected_generation=active_generation)
                 active = None
                 active_sequence = 0
-            elif st.session_state.get(prefix + "_recover_previous") is not True:
-                st.warning("This browser has unfinished changes based on an older saved version. Nothing has been overwritten.")
-                if st.button("Review my unfinished work", key=prefix + "_restore_active"):
-                    st.session_state[prefix + "_recover_previous"] = True
-                    st.rerun()
-                if st.button("Use the current saved version instead", key=prefix + "_discard_stale_active"):
-                    try:
-                        active_work.discard(browser_token, contract, selected, period,
-                            expected_revision=active.revision, expected_generation=active_generation)
-                        st.rerun()
-                    except (library.LibraryError, OSError):
-                        st.error("Unfinished work could not be discarded. Your saved reports remain available.")
-                return
+            else:
+                from app.monthly_report_active_conflict_ui import render_older_draft_conflict
+                chosen = render_older_draft_conflict(active, snapshot, browser_token, prefix)
+                if chosen is None:
+                    return
+                # The explicit choice was durably kept. Re-enter through the
+                # normal loader so the resolved gate does not remain above the
+                # reopened editor or offer the same action a second time.
+                st.rerun()
         prepared = remembered_report_preparer(browser_token, contract, selected)
         using_import = False
         preserve_saved_defaults = False
@@ -1054,8 +1080,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             library.imported_snapshot_revision(contract, selected) if using_import else snapshot.revision if snapshot else 0)
         st.session_state[prefix + "_active_sequence"] = active_sequence
         st.session_state[prefix + "_active_generation"] = active_generation
+        st.session_state[prefix + "_active_updated_at"] = active.updated_at if active else ""
         if recovered_work:
-            recovery_notice.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
+            recovery_notice.success(st.session_state.pop(prefix + "_recovery_choice_notice",
+                "Recovered your unfinished changes from this browser. Completed report history is unchanged."))
     from app.monthly_report_setup import normalize_mbcx
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
@@ -1125,30 +1153,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     source for source in missing if source.id != selected_missing.id)
                 st.session_state[draft_key] = draft
                 st.rerun()
-    if draft.sources:
-        from app.monthly_report_source_details import detail_problems
-        from app.monthly_report_upload_ui import render_source_details
-        from app.monthly_report_model import used_source_ids
-        # A resumed report needs an exact-item correction path, not every
-        # source form expanded above the report. Valid or unused reference-only
-        # sources remain available through Manage source files. Keep each unresolved
-        # source's anchor outside its quiet disclosure so review links land on
-        # a visible, named action. Opening it does not approve or change facts.
-        corrections = {}
-        included_sources = used_source_ids(draft)
-        resumed = st.session_state.get(prefix + "_source_details_on_resume")
-        for source in draft.sources:
-            in_report = source.id in included_sources
-            problems = detail_problems(source, profile, period, in_report=in_report)
-            if problems and (resumed or in_report):
-                corrections[source.id] = render_source_details(
-                    source, profile, prefix + "_resumed_" + source.id, field,
-                    compact_problems=problems)
-        if any(corrections.get(source.id, source) != source for source in draft.sources):
-            draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
-            st.session_state[prefix + "_evidence"] = tuple(
-                replace(content, source=corrections.get(content.source.id, content.source))
-                for content in st.session_state.get(prefix + "_evidence", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
@@ -1211,6 +1215,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                    "[Enter Prepared by](#report-prepared-by) above to view them.")
                     else:
                         render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
+    if not any(section.key == "activity" for section in draft.sections):
+        from app.monthly_report_source_manager_ui import render_guided_source_manager
+        draft, blocks = render_guided_source_manager(
+            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
     draft = complete_guided_sections(replace(draft, blocks=tuple(blocks.values())))
     footer = blocks.get("footer_text")
@@ -1333,15 +1341,19 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     assets=assets)
                 st.session_state[prefix + "_active_sequence"] = recovered.revision
                 st.session_state[prefix + "_active_generation"] = recovered.generation
+                st.session_state[prefix + "_active_updated_at"] = recovered.updated_at
                 save_status.success("Current edits kept for this browser. Completed report versions remain unchanged.")
                 if recovered.revision != previous_sequence:
                     record_report_preferences(browser_token, contract, selected)
                     if prepared.strip():
                         record_report_preparer(browser_token, contract, selected, prepared)
             except active_work.ActiveWorkConflict:
-                save_status.error("Another tab or a new working copy has newer changes. "
-                                  "These edits are still on this page but were not kept for recovery. "
-                                  "Reload and compare before trying again.")
+                with save_status.container():
+                    st.error("Another tab or a new working copy has newer changes. "
+                             "These edits are still on this page but were not kept for recovery.")
+                    from app.monthly_report_active_conflict_ui import render_browser_conflict
+                    render_browser_conflict(draft, browser_token, prefix, assets,
+                                            st.session_state[prefix + "_revision"])
             except (library.LibraryError, OSError):
                 save_status.error("Automatic recovery could not keep these edits. "
                                   "Your current text remains on this page, but is not saved for a refresh. "
@@ -1389,7 +1401,20 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
         for check in checks:
-            (st.error if check.blocking else st.warning)(review_message(check, draft))
+            source = next((source for source in draft.sources if source.id == check.block_key), None)
+            if source is not None and check.code.startswith("source_"):
+                from html import escape
+                from app.monthly_report_source_manager_ui import open_source_review
+                target = "site" if check.code == "source_facility" else "date"
+                with st.container(key="monthly_source_warning_" + source.id + "_" + check.code):
+                    st.markdown('<span class="enfra-source-warning" data-source-id="' +
+                        escape(source.id, quote=True) + '"></span>', unsafe_allow_html=True)
+                    (st.error if check.blocking else st.warning)(check.message)
+                    st.button("Correct site" if target == "site" else "Correct date",
+                        key=prefix + "_correct_source_" + source.id + "_" + check.code,
+                        on_click=open_source_review, args=(prefix, source.id, target))
+            else:
+                (st.error if check.blocking else st.warning)(review_message(check, draft))
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)

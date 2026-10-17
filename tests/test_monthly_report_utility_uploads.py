@@ -78,7 +78,7 @@ def test_utility_upload_has_readable_destination_and_prepared_pages(monkeypatch,
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic-utility.pdf", utility_pdf())
     app.run()
-    button(app, "Read monthly files").click().run()
+    app.run()  # Upload performs the free native read.
     assert not app.exception
     assert select(app, "Classification").value == "Utility results"
     destination = select(app, "Report section for synthetic-utility.pdf")

@@ -145,7 +145,11 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     date_match = re.search(r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{2,4})\b", raw_date)
     facility = labeled("facility|site|building")
     if not facility:
-        matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", sample) for n in (f.title, *f.aliases))]
+        # Filenames can suggest a document type, but cannot establish which
+        # site's facts its contents describe. Scope needs native source text
+        # or the user's explicit item-specific correction.
+        scope_text = text[:30_000].casefold()
+        matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", scope_text) for n in (f.title, *f.aliases))]
         facility = matches[0] if len(matches) == 1 else ""
     def lines(term):
         return "\n".join(line.strip() for line in text.splitlines() if re.search(term, line, re.I))[:6000]
@@ -384,11 +388,17 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         inspected = inspect_docx(path)
         for number, item in enumerate(inspected.items, 1):
             page_texts.append(item.text or "\n".join("\t".join(r) for r in item.rows))
+            if item.kind == "unsupported":
+                notices.append(f"Item {number}: {item.note or 'This original item could not be read.'}")
+            elif item.note == "Unplaced package asset; confirm whether it belongs in this report.":
+                notices.append(f"Item {number}: {item.note}")
             if item.kind == "image":
                 image_items.append((number, item.id))
                 needs_vision.append(number)
         notices.extend(inspected.notices)
-        notices.append("DOCX selections are extracted items, not Word page numbers. Native vector objects remain in the original for review.")
+        # Only this new inspection route has retained every unsupported-item
+        # notice. Old cached records keep their broader artwork-review notice.
+        notices.append("DOCX selections are extracted items, not Word page numbers.")
     else:
         text, attachments, extra = _email(raw) if suffix == ".eml" else _msg(raw)
         page_texts = [text]

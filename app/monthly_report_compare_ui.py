@@ -1,6 +1,7 @@
 """Read-only, human-readable comparison before accepting a newer saved revision."""
 
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 
@@ -81,6 +82,19 @@ def _followups(items):
                   for item in items)
 
 
+def _source_scope(source, profile):
+    from app.monthly_report_source_scope import reviewed_scope
+    scope = reviewed_scope(source, profile)
+    if scope:
+        if scope["kind"] == "contract_artwork":
+            return "Shared contract artwork"
+        sites = set(scope["facilities"])
+        return ", ".join(site.title for site in profile.facilities if site.key in sites)
+    if source.scope_review:
+        return "Scope needs review" + (" · source facility: " + source.facility if source.facility else "")
+    return source.facility or "Site not established"
+
+
 def compare_drafts(working, saved):
     """Return visible differences without exposing hashes, object IDs or JSON."""
     changes = []
@@ -145,17 +159,17 @@ def compare_drafts(working, saved):
             after += "\n\nThe linked evidence or review record differs. Recheck the open issue against its sources."
         add("Open issues and proposals", before, after, force=True)
     if saved.sources != working.sources:
-        def source_summary(sources):
+        def source_summary(sources, profile):
             return _lines(s.filename + " · " + s.classification + "\nSelected pages: "
                           + (", ".join(str(p) for p in s.selected_pages) or "None")
                           + "\nVendor: " + (s.vendor or "Not entered")
                           + "\nService date: " + (s.service_date or "Not entered")
-                          + "\nFacility: " + (s.facility or "Not entered")
+                          + "\nSource scope: " + _source_scope(s, profile)
                           + ("\nWork: " + s.actions if s.actions else "")
                           + ("\nFindings: " + s.findings if s.findings else "")
                           + ("\nRecommendations: " + s.recommendations if s.recommendations else "")
                           + ("\nFollow-ups: " + s.follow_ups if s.follow_ups else "") for s in sources)
-        before, after = source_summary(saved.sources), source_summary(working.sources)
+        before, after = source_summary(saved.sources, saved.profile), source_summary(working.sources, working.profile)
         if before == after:
             before += "\n\nThe source file, extracted evidence, captions or page reviews differ."
             after += "\n\nThe source file, extracted evidence, captions or page reviews differ."
@@ -196,26 +210,51 @@ def render_conflict_comparison(working, snapshot, *, working_asset_loader=None, 
                                can_accept=True, image_key=None):
     """Display differences only. The caller owns revision acceptance and saving."""
     st.write(f"Saved version {snapshot.revision} · entered editor: {snapshot.entered_editor or snapshot.draft.prepared_by or 'Not recorded'}")
-    if snapshot.generated_at:
-        st.caption("Saved at " + snapshot.generated_at)
+    st.caption("Saved: " + recovery_time(snapshot.generated_at))
     st.caption("Compare the saved version on the left with your current work on the right. Nothing is merged or saved here.")
-    changes = compare_drafts(working, snapshot.draft)
+    return render_draft_comparison(working, snapshot.draft,
+        working_asset_loader=working_asset_loader, saved_asset_loader=saved_asset_loader,
+        image_key=image_key,
+        empty_message="The report content matches the saved version." +
+                      (" You can accept that version below." if can_accept else ""))
+
+
+def render_draft_comparison(working, saved, *, working_asset_loader=None, saved_asset_loader=None,
+                            image_key=None, saved_label="Saved report", working_label="Your current work",
+                            empty_message="No visible report-content differences were found."):
+    """Compare complete report fields and pageable pictures without accepting either copy."""
+    changes = compare_drafts(working, saved)
     if not changes:
-        st.info("The report content matches the saved version." +
-                (" You can accept that version below." if can_accept else ""))
+        st.info(empty_message)
     for change in changes:
         with st.expander(change.title):
             left, right = st.columns(2)
             with left:
-                st.markdown("**Saved report**")
+                st.markdown("**" + saved_label + "**")
                 st.text(change.saved)
                 _show_images(change.saved_images, saved_asset_loader,
                              page_key=_image_page_key(image_key, change, "saved", change.saved_images) if image_key else None,
-                             label="Saved report pictures/pages")
+                              label=saved_label + " pictures/pages")
             with right:
-                st.markdown("**Your current work**")
+                st.markdown("**" + working_label + "**")
                 st.text(change.working)
                 _show_images(change.working_images, working_asset_loader,
                              page_key=_image_page_key(image_key, change, "working", change.working_images) if image_key else None,
-                             label="Your current work pictures/pages")
+                              label=working_label + " pictures/pages")
     return changes
+
+
+def recovery_time(value):
+    """Use the recorded instant, never a guessed time for a legacy copy."""
+    try:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return "Time unavailable"
+        return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (TypeError, ValueError):
+        return "Time unavailable"
+
+
+def render_recovery_scope(draft):
+    st.caption(" · ".join((draft.profile.contract, draft.profile.title, draft.period.label)))
+    st.caption("Sites: " + (", ".join(site.title for site in draft.profile.facilities) or "Not recorded"))

@@ -253,6 +253,9 @@ class ReportSource:
     client_page_reviews: tuple[tuple[int, str], ...] = ()
     client_page_exclusions: tuple[tuple[int, str], ...] = ()
     facts: tuple[EvidenceFact, ...] = ()
+    # Explicit source/site correction, bound to the source revision. Empty
+    # preserves all legacy fingerprints; it never implies accepted scope.
+    scope_review: str = ""
 
     @property
     def fingerprint(self) -> str:
@@ -301,7 +304,16 @@ class ReportSnapshot:
 
 
 def _digest(value: object) -> str:
-    return hashlib.sha256(json.dumps(asdict(value), sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    record = asdict(value)
+    # Adding optional scope evidence must not invalidate unchanged historical
+    # source/page/report fingerprints merely because the schema acquired it.
+    if isinstance(value, ReportSource) and not value.scope_review:
+        record.pop("scope_review", None)
+    if isinstance(value, ReportDraft):
+        for source in record["sources"]:
+            if not source.get("scope_review"):
+                source.pop("scope_review", None)
+    return hashlib.sha256(json.dumps(record, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
 STOCK_TEXTS = {

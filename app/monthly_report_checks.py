@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 
 from app.monthly_report_content_policy import (
@@ -249,13 +249,32 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         checks.append(ReportCheck("size", "Tracked report content and artwork may exceed 15 MB. Check the actual DOCX and PDF sizes after generating.", False))
     names = {name.strip().casefold() for facility in draft.profile.facilities for name in (facility.key, facility.title, *facility.aliases)}
     included_sources = used_source_ids(draft)
+    missing_sources = included_sources - {source.id for source in draft.sources}
+    for source_id in sorted(missing_sources):
+        # Removing the intake record cannot authorize content that still cites
+        # that original. Keep the content recoverable and point to its editor.
+        block = next((block for block in draft.blocks if source_id in used_source_ids(
+            replace(draft, blocks=(block,), follow_ups=()))), None)
+        follow_up = next((item for item in draft.follow_ups if source_id in used_source_ids(
+            replace(draft, blocks=(), follow_ups=(item,)))), None)
+        key = block.key if block else follow_up.key if follow_up else ""
+        checks.append(ReportCheck("source_missing",
+            "An included item refers to a source file that is no longer in this draft. "
+            "Restore the original source file or remove its linked report content.", True, key))
     for source in draft.sources:
         facility = source.facility.strip().casefold()
         foreign_included = bool(facility and facility not in names and source.id in included_sources)
+        from app.monthly_report_source_scope import included_scope_valid
+        unknown_included = ((not facility or source.scope_review) and source.id in included_sources
+                            and not included_scope_valid(draft, source))
         if foreign_included:
             checks.append(ReportCheck("source_facility",
                 f"{source.filename} is marked for {source.facility}, outside this report's selected sites. "
                 "Correct its source details or remove the linked content.", True, source.id))
+        elif unknown_included:
+            checks.append(ReportCheck("source_facility",
+                f"Establish the site scope of {source.filename} before including its content. "
+                "Choose the exact sites in its source details, or remove the linked content.", True, source.id))
         # Classification and intake selections do not remove already-included
         # text/tables. They must not bypass the required foreign-site check.
         if source.classification == "Reference only" or not source.selected_pages:
@@ -270,7 +289,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                 checks.append(ReportCheck("source_period", f"Check uploaded source date: {source.filename} ({source.service_date}).", False, source.id))
         else:
             checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
-        if (not facility or facility not in names) and not foreign_included:
+        if ((not facility or facility not in names) and not foreign_included and not unknown_included
+                and not (source.id in included_sources and included_scope_valid(draft, source))):
             checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id))
     # Same issue can be reached through the cover and a repeated section
     # binding. Preserve distinct fields/messages but show each exact concern once.
