@@ -24,7 +24,7 @@ def capture_native_window_errors(page, record, stage):
 
 def require_no_native_window_errors(snapshots, *, expected_origin=ORIGIN):
     """Every observed native error fails, including missed Playwright pageerrors."""
-    assert expected_origin in {ORIGIN, "http://127.0.0.1:8530"}, "Unknown native-error fixture origin."
+    assert expected_origin in {ORIGIN, "http://127.0.0.1:8526", "http://127.0.0.1:8530"}, "Unknown native-error fixture origin."
     assert isinstance(snapshots, list) and 1 <= len(snapshots) <= 2, "Missing or excessive native error snapshots."
     assert all(isinstance(snapshot, dict) for snapshot in snapshots), "Invalid native error snapshot."
     assert snapshots[-1].get("stage") == "final", "A final native error snapshot is required."

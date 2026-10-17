@@ -151,6 +151,36 @@ test('native Streamlit action click holds adjacent previews before the full reru
     assert.equal(h.gate.blockAll,true);h.cleanup();
 });
 
+test('shared-history disclosure holds queued preview work until its native full-render acknowledgment',()=>{
+    const h=pendingEditorWithSibling();
+    h.gate.pending=false;h.gate.scopePair=null;
+    // The production keyed disclosure has on_change="rerun". Its normal
+    // summary click is neither an input change nor an stButton activation.
+    const disclosure={classList:['stExpander','st-key-report_history_open']};
+    const summary={closest:s=>s==='[class*="_history_open"]'?disclosure:null};
+    h.intersections[1].callback([{isIntersecting:true}]);
+    h.dispatch('click',{target:{closest:s=>s==='summary'?summary:null}});
+    assert.equal(h.gate.pending,true,'opening history must claim its actual full editor rerun');
+    assert.equal(h.gate.blockAll,true);
+    h.fire();assert.equal(h.sent.length,0,'queued disposable previews cannot overtake opening history');
+    h.workspace.dataset.epcFullRender='history-opened';
+    h.app.setAttribute('data-test-script-state','running');
+    h.mutations[0].callback();h.fire();assert.equal(h.sent.length,0);
+    h.app.setAttribute('data-test-script-state','notRunning');
+    h.mutations[0].callback();h.fire();assert.equal(h.sent.length,2);
+    h.cleanup();
+});
+
+for(const name of ['st-key-report_help','st-key-report_history_open_notes'])
+test('ordinary disclosure does not strand previews awaiting a nonexistent full render: '+name,()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const summary={closest:s=>s==='[class*="_history_open"]'?{classList:[name]}:null};
+    h.dispatch('click',{target:{closest:s=>s==='summary'?summary:null}});
+    assert.equal(h.gate.pending,false);assert.equal(h.gate.blockAll,false);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,2);
+    h.cleanup();
+});
+
 for(const referenceSelector of ['[class*="st-key-epc_reference_"]','.epc-workspace-reference'])
 test('fragment Retry preview does not await an impossible full rerun: '+referenceSelector,()=>{
     const h=pendingEditorWithSibling();

@@ -25,6 +25,11 @@ from streamlit.proto.BackMsg_pb2 import BackMsg
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from scripts.qa_fresh_native_error_checks import capture_native_window_errors, require_no_native_window_errors
+from scripts.qa_workflow_route_observations import WorkflowRouteObservations, workflow_route
+
 OUT = ROOT / "test-artifacts" / "monthly-first-site"
 BASE_URL = "http://127.0.0.1:8526/?workflow=monthly"
 CONTRACT = "Rochester Regional Health"
@@ -222,7 +227,12 @@ def visit(browser, engine, method):
     context = browser.new_context(viewport={"width": 390 if touch else 1365, "height": 844 if touch else 900},
                                   has_touch=touch)
     page = context.new_page()
-    events = []
+    events, browser_errors = [], []
+    page.on("pageerror", lambda error: browser_errors.append(str(error)[:1000]))
+    page.add_init_script((ROOT / "scripts/qa_fresh_native_errors.js").read_text().replace(
+        'http://127.0.0.1:8529', 'http://127.0.0.1:8526'))
+    wire = WorkflowRouteObservations()
+    wire.attach(page)
     def route(request):
         parsed = urlparse(request.request.url)
         if parsed.scheme in ("blob", "data") or parsed.hostname == "127.0.0.1" and parsed.port == 8526:
@@ -299,6 +309,7 @@ def visit(browser, engine, method):
         expect(page.get_by_text("Select at least one site to continue.", exact=True)).to_be_visible(timeout=45000)
         evidence.stop()
         record["phase"] = "reload zero-site result with normal contract re-entry"
+        capture_native_window_errors(page, record, "before-reload")
         page.reload(wait_until="domcontentloaded")
         # Before a draft has actually been created, a clean report has not
         # saved its contract. A normal reload may rightly return to the
@@ -313,10 +324,13 @@ def visit(browser, engine, method):
         expect(page.get_by_text("Change report sites", exact=True)).to_be_visible(timeout=15000)
         expect(page.get_by_role("checkbox", name=FIRST, exact=True)).not_to_be_checked(timeout=45000)
         expect(page.get_by_text("Select at least one site to continue.", exact=True)).to_be_visible(timeout=45000)
-        record["result"] = "pass"
+        capture_native_window_errors(page, record, "final")
+        require_no_native_window_errors(record.get("native_window_errors"), expected_origin="http://127.0.0.1:8526")
+        assert not browser_errors, {"browser_errors": browser_errors}
         if events:
             raise AssertionError("A synthetic browser requested an external URL")
         assert not evidence.errors, "Browser errors were recorded: " + json.dumps(evidence.errors)
+        record["result"] = "pass"
         results["checks"].append(record)
     except Exception as exc:
         # Save screenshot BEFORE any further locator could fail (the checked
@@ -328,6 +342,15 @@ def visit(browser, engine, method):
         record["result"] = "fail"
         record["error_type"] = type(exc).__name__
         record["message"] = str(exc)[:1000]
+        record["workflow_route_after"] = workflow_route(page.url)
+        if not record.get("native_window_errors") or record["native_window_errors"][-1].get("stage") != "final":
+            capture_native_window_errors(page, record, "final")
+        try:
+            record["workflow_controls_after"] = page.locator('.st-key-workflow_mode').evaluate(
+                "node => Array.from(node.querySelectorAll('[role=radio]')).map(r => "
+                "({label:r.textContent.trim(),selected:r.getAttribute('aria-checked')}))")
+        except Exception:
+            pass
         try:
             record["after"] = page.get_by_role("checkbox", name=FIRST, exact=True).evaluate(
                 "node => ({checked:node.checked,disabled:node.disabled})")
@@ -335,6 +358,10 @@ def visit(browser, engine, method):
             pass
         results["failures"].append(record)
     finally:
+        record["workflow_wire"] = wire.snapshot()
+        # Preserve the structured native/tail errors and the independent
+        # Playwright pageerror receipt rather than overwriting either collector.
+        record["page_errors"] = browser_errors
         evidence.finish()
         try:
             context.close()

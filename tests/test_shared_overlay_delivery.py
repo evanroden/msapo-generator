@@ -76,3 +76,17 @@ def test_expected_virtualizer_rejects_valid_prior_overlay_only_publication(bundl
     assert compat.selected_frontend(root)["virtualizer_resize"] is False
     with pytest.raises(RuntimeError, match="lacks virtual-list"):
         _expected_virtualizer(root)
+
+
+def test_current_overlay_gate_rejects_valid_prior_publication_without_scroll_repair(bundle):
+    root, scripts = bundle
+    sources, members = compat._locked_sources(scripts)
+    old = compat._publication(sources, members, True, queued_scroll=False)
+    assert old.names[compat.INDEX_BUNDLE] == "index.enfra-frontend-25142a252245.js"
+    for native, raw in old.payloads.items():
+        (scripts / old.names[native]).write_bytes(raw)
+    (root / "index.html").write_bytes(compat._publication_html(
+        (root / "index.html").read_bytes(), compat.INDEX_BUNDLE, old, (old,)))
+    assert compat.selected_frontend(root)["queued_scroll"] is False
+    with pytest.raises(RuntimeError, match="lacks queued-scroll"):
+        _expected_overlay(root)

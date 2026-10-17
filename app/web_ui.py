@@ -1724,10 +1724,18 @@ def main() -> None:
     # workflow, so the expense report silently vanished and the Purchase Order
     # page rendered with no segment highlighted. Forcing a selection makes the
     # control unable to represent "no workflow" at all.
+    # The native control can mount after an earlier server rerun has already
+    # consumed its one-shot set_value message. Its fallback must agree with
+    # the actual route/session, rather than advertise Purchase on a Monthly
+    # page. Streamlit 1.61.1 keys this widget by its key and click mode, so a
+    # deliberate selection retains the same native identity as this changes.
+    workflow_default = st.session_state.get("workflow_mode", PURCHASE_WORKFLOW)
+    if workflow_default not in (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW, MONTHLY_REPORT_WORKFLOW):
+        workflow_default = PURCHASE_WORKFLOW
     workflow_mode = st.segmented_control(
         "Choose workflow",
         (PURCHASE_WORKFLOW, EXPENSE_WORKFLOW, MONTHLY_REPORT_WORKFLOW),
-        default=PURCHASE_WORKFLOW,
+        default=workflow_default,
         key="workflow_mode",
         label_visibility="collapsed",
         width="stretch",

@@ -69,12 +69,41 @@ def history(page):
         has=page.locator("summary").get_by_text("Shared report history", exact=True))
 
 
-def set_history(page, opened, identity):
+def set_history(page, opened, identity, activations):
     panel = history(page)
     current = panel.evaluate("node => node.matches('details') ? node.open : node.querySelector('details').open")
     if current != opened:
         before = receipt(page)["sequence"]
-        panel.locator("summary").first.click()
+        summary = panel.locator("summary").first
+        # Observe the real summary event after the app's capture listener and
+        # before React handles it. This reads the existing preview gate; it
+        # neither sets application state nor dispatches another gesture.
+        summary.evaluate("""node => {
+          const snapshot=()=>{
+            const app=node.closest('[data-testid="stApp"]');
+            const gate=window.__enfraPreviewNativeEditGates?.get(app);
+            const ancestors=[];
+            for(let item=node;item&&item!==app;item=item.parentElement){
+              const keys=[...item.classList].filter(name=>name.startsWith('st-key-'));
+              if(keys.length)ancestors.push(keys);
+            }
+            return {installed:Boolean(gate),pending:gate?.pending??null,
+              blockAll:gate?.blockAll??null,before:gate?.before??null,
+              fullRender:gate?.workspace?.dataset.epcFullRender??null,ancestors};
+          };
+          const observation={before:snapshot(),click:null};
+          window.__enfraHistoryDisclosureObservation=observation;
+          node.addEventListener('click',event=>{
+            observation.click={trusted:event.isTrusted,...snapshot()};
+          },{capture:true,once:true});
+        }""")
+        summary.click()
+        activation = page.evaluate("window.__enfraHistoryDisclosureObservation")
+        activations.append({"opening": opened, "sequence_before": before, **activation})
+        clicked = activation["click"]
+        assert clicked and clicked["trusted"] and clicked["installed"], activation
+        assert clicked["pending"] and clicked["blockAll"], (
+            "The history disclosure must protect its actual native full rerun before preview fragments.", activation)
         await_state(page, identity, after=before)
     expect(panel.get_by_role("combobox", name="Inspect a saved version", exact=True)).to_have_count(1 if opened else 0)
     return panel
@@ -111,8 +140,8 @@ def add_photo(page, number, identity):
     return await_state(page, identity, photos=number)
 
 
-def save_version(page, identity, revision, author, activity):
-    set_history(page, True, identity)
+def save_version(page, identity, revision, author, activity, activations):
+    set_history(page, True, identity, activations)
     history(page).get_by_role("button", name="Save shared version", exact=True).click()
     return await_state(page, identity, revision=revision, author=author, activity=activity)
 
@@ -191,7 +220,8 @@ def browser_task(engine, name, base):
     wire = WireObservations(PORT)
     wire.attach(page)
     evidence = {"tested_checkout": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                "synthetic_only": True, "observations": []}
+                "synthetic_only": True, "observations": [], "history_activations": []}
+    activations = evidence["history_activations"]
     def capture(stage, baseline=None):
         evidence["phase"] = stage
         current = await_state(page, identity, revision=3, author=AUTHOR_TWO, activity=UNSAVED, photos=2)
@@ -216,22 +246,22 @@ def browser_task(engine, name, base):
         evidence["phase"] = "first-normal-photo-upload"
         first = add_photo(page, 1, identity)
         evidence["phase"] = "save-first-shared-version"
-        save_version(page, identity, 2, AUTHOR_ONE, ACTIVITY_ONE)
+        save_version(page, identity, 2, AUTHOR_ONE, ACTIVITY_ONE, activations)
         evidence["phase"] = "second-author-and-wording"
         edit(page, "Prepared by", AUTHOR_TWO, identity, author=AUTHOR_TWO)
         edit(page, "Activity summary", ACTIVITY_TWO, identity, activity=ACTIVITY_TWO)
         evidence["phase"] = "second-normal-photo-upload"
         second = add_photo(page, 2, identity)
         evidence["phase"] = "save-second-shared-version"
-        save_version(page, identity, 3, AUTHOR_TWO, ACTIVITY_TWO)
-        set_history(page, False, identity)
+        save_version(page, identity, 3, AUTHOR_TWO, ACTIVITY_TWO, activations)
+        set_history(page, False, identity, activations)
         evidence["phase"] = "keep-distinct-unsaved-draft"
         edit(page, "Activity summary", UNSAVED, identity, activity=UNSAVED)
         from scripts.qa_cover_photo_controls import exercise_cover_photo
         exercise_cover_photo(page, identity, base, token, evidence, receipt=receipt, await_state=await_state,
             storage_state=storage_state, url=URL, port=PORT, author=AUTHOR_TWO, activity=UNSAVED, output=out)
         baseline = capture("before-history")
-        set_history(page, True, identity)
+        set_history(page, True, identity, activations)
         evidence["rows"] = history_rows(page)
         expected_images = [first["working"]["photos"][0].split(".")[0],
                            *[ref.split(".")[0] for ref in second["working"]["photos"]]]
@@ -242,14 +272,14 @@ def browser_task(engine, name, base):
         page.wait_for_function("() => document.querySelector('.epc-workspace')?.dataset.epcMode==='compact'")
         capture("narrow-history", baseline)
         page.screenshot(path=str(out / "narrow-history.png"), full_page=False)
-        set_history(page, False, identity)
+        set_history(page, False, identity, activations)
         capture("closed-history", baseline)
         page.set_viewport_size({"width": 1365, "height": 900})
         page.wait_for_function("() => document.querySelector('.epc-workspace')?.dataset.epcMode==='wide'")
         capture("wide-return", baseline)
         page.reload(wait_until="domcontentloaded")
         capture("reload-current-unsaved-draft", baseline)
-        set_history(page, True, identity)
+        set_history(page, True, identity, activations)
         assert history_rows(page) == evidence["rows"]
         inspect(page, identity, expected_images)
         capture("saved-version-still-accessible-after-reload", baseline)
@@ -269,12 +299,17 @@ def browser_task(engine, name, base):
         finally:
             other.close()
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
+        expect(page.get_by_text("Connection error", exact=True)).not_to_be_visible()
+        assert any(item["opening"] for item in activations) and any(not item["opening"] for item in activations)
         assert not errors and not attempts, {"browser_errors": errors, "external_requests": attempts}
         evidence["result"] = "passed"
     except Exception as exc:
         evidence["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
         try:
             evidence["first_failure_receipt"] = receipt(page)
+            evidence["visible_connection_errors"] = page.get_by_text(re.compile(
+                r"Cached ForwardMsg MISS|Failed to process a Websocket message"
+            )).evaluate_all("nodes => nodes.filter(n=>n.getClientRects().length).map(n=>n.textContent.slice(0,1000))")
             page.screenshot(path=str(out / "first-failure.png"), full_page=False)
         except Exception:
             pass

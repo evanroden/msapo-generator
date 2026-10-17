@@ -32,7 +32,8 @@ def previous_overlay(bundle, scalar_date, virtualizer=False):
     """Install an exact former 81-member generation from pinned originals."""
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
-    publication = compat._publication(sources, members, scalar_date, virtualizer_resize=virtualizer, floating_resize=False)
+    publication = compat._publication(sources, members, scalar_date, virtualizer_resize=virtualizer,
+                                      floating_resize=False, queued_scroll=False)
     # These are independently retained published identities, not names inferred
     # from the selected files or supplied by the current implementation.
     assert publication.names[compat.INDEX_BUNDLE] == {
@@ -46,6 +47,36 @@ def previous_overlay(bundle, scalar_date, virtualizer=False):
     (root / "index.html").write_bytes(compat._publication_html(
         (root / "index.html").read_bytes(), compat.INDEX_BUNDLE, publication, (publication,)))
     return publication
+
+
+@pytest.mark.parametrize("previous_date", [False, True])
+@pytest.mark.parametrize("requested_date", [False, True])
+def test_published_83_member_generation_upgrades_without_losing_originals_or_date(bundle, previous_date, requested_date):
+    root, scripts = bundle
+    sources, members = compat._locked_sources(scripts)
+    old = compat._publication(sources, members, previous_date, queued_scroll=False)
+    # Exact deployed Water and tested Training identities retained before this
+    # repair; deriving these expectations from current output would miss a
+    # backwards-compatibility break in the publication recipe.
+    assert old.names[compat.INDEX_BUNDLE] == {
+        False: "index.enfra-frontend-fbb0a97cf659.js",
+        True: "index.enfra-frontend-25142a252245.js",
+    }[previous_date]
+    for native, raw in old.payloads.items():
+        (scripts / old.names[native]).write_bytes(raw)
+    (root / "index.html").write_bytes(compat._publication_html(
+        (root / "index.html").read_bytes(), compat.INDEX_BUNDLE, old, (old,)))
+    before = files(root)
+    assert compat.selected_frontend(root)["queued_scroll"] is False
+    assert files(root) == before
+    receipt = compat.patch_bundle(root, installed_version="1.61.1", scalar_date=requested_date)
+    assert receipt["queued_scroll"] is True and receipt["closure_count"] == 83
+    assert receipt["scalar_date"] is (previous_date or requested_date)
+    assert receipt["entry"] != old.names[compat.INDEX_BUNDLE]
+    for name, raw in before.items():
+        if name != "index.html":
+            assert (root / name).read_bytes() == raw
+    assert compat.patch_bundle(root, installed_version="1.61.1")["already_patched"]
 
 
 def test_full_editor_request_dominates_fragments_in_actual_locked_scheduler(bundle):
@@ -151,6 +182,7 @@ def test_content_named_scheduler_entry_preserves_originals_and_is_idempotent(bun
     assert receipt["closure_count"] == len(members) + 2 == 83
     assert receipt["floating_resize"] is True
     assert receipt["virtualizer_resize"] is True
+    assert receipt["queued_scroll"] is True
     for name in members:
         assert (scripts / name).read_bytes() == before["static/js/" + name]
     raw = (scripts / receipt["entry"]).read_bytes()

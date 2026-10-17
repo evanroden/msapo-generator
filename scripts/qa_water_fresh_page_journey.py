@@ -156,12 +156,15 @@ def select(page, name, value, *, record=None):
                 const brief=()=>({id:node.id,connected:node.isConnected,
                     focused:document.activeElement===node,expanded:node.getAttribute('aria-expanded')});
                 const snapshot=()=>{const r=node.getBoundingClientRect();return {
-                    ...brief(),rect:{x:r.x,y:r.y,width:r.width,height:r.height},
+                    ...brief(),inputTop:r.top,rect:{x:r.x,y:r.y,width:r.width,height:r.height},
                     fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender??null,
                     scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')??null,
                     events:events.slice(),mutations:mutations.slice(),droppedEvents,droppedMutations};};
                 const observe=event=>{if(!event.isTrusted)return;
-                    if(events.length<24)events.push({type:event.type,at:performance.now(),trusted:true,...brief()});
+                    if(events.length<24)events.push({type:event.type,at:performance.now(),trusted:true,
+                        eventTime:event.timeStamp,target:event.target?.tagName||null,
+                        scrollTop:event.target===document?document.scrollingElement?.scrollTop:event.target?.scrollTop,
+                        scrollLeft:event.target===document?document.scrollingElement?.scrollLeft:event.target?.scrollLeft,...brief()});
                     else droppedEvents++;};
                 const collect=records=>{const changes=records.filter(r=>r.target===node&&r.attributeName==='aria-expanded');
                     for(let i=0;i<changes.length;i++){
@@ -174,8 +177,12 @@ def select(page, name, value, *, record=None):
                 observer.observe(node,{attributes:true,attributeFilter:['aria-expanded'],attributeOldValue:true});
                 const kinds=['pointerdown','pointerup','mousedown','mouseup','click','focus','blur'];
                 for(const kind of kinds)node.addEventListener(kind,observe,{capture:true,passive:true});
+                const scroll=event=>{if(event.target===window||event.target===document||
+                    event.target?.contains?.(node))observe(event);};
+                window.addEventListener('scroll',scroll,{capture:true,passive:true});
                 window.__enfraFreshMonthActivation={snapshot,finish:()=>{
                     collect(observer.takeRecords());observer.disconnect();
+                    window.removeEventListener('scroll',scroll,true);
                     for(const kind of kinds)node.removeEventListener(kind,observe,true);
                     const result=snapshot();delete window.__enfraFreshMonthActivation;return result;}};
                 return snapshot();

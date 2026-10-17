@@ -62,6 +62,7 @@ RUN python runtime/check_renderer.py
 
 RUN python scripts/patch_streamlit_metadata.py
 RUN python scripts/patch_streamlit_frontend.py
+RUN python scripts/patch_streamlit_date_input.py
 
 RUN mkdir -p output
 

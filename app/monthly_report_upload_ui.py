@@ -473,6 +473,10 @@ def set_source_manager_open(key, opened):
     st.session_state[key] = opened
 
 
+def _select_review_file(key, identity):
+    st.session_state[key] = identity
+
+
 def _queue_page_action(key, source, block, number, action, caption_key=None, scope=None):
     st.session_state[key] = {
         "source_id": source.id, "source_fingerprint": source.fingerprint,
@@ -932,9 +936,29 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                     if blocks.get(destination) is not None and blocks[destination].source != "Omit" else 0)
         if included:
             st.caption(f"{included} {'page' if included == 1 else 'pages'} included in this draft.")
-        if (pending and not additions and not st.session_state.get(request_key)
+        current_pages = tuple(n for n in sources.image_numbers(revised)
+                              if (selected, n) in owned)
+        current_is_compact = (current_pages and not _undecided_pages(revised, revised.source)
+                              and all(page_allowed(revised.source, n) for n in current_pages)
+                              and not st.session_state.get(
+                                  local_key + "_" + selected + "_edit_page_reviews", False))
+        if (current_is_compact and not additions and not st.session_state.get(request_key)
                 and not retained_water_omission(blocks.get(destination))):
-            st.caption("Finish reviewing the remaining pages to include your selected pages automatically.")
+            # A finished file may be selected while a different file still
+            # needs decisions. Name that file and reopen the ordinary review.
+            # Only show this shortcut from the compact state, which has no
+            # pending caption input to lose. Reviewed report-only removals
+            # are not unfinished reviews and never authorize reinclusion.
+            remaining = next(((item, _undecided_pages(item, item.source))
+                              for item in scoped if item.source.id != selected
+                              and _undecided_pages(item, item.source)), None)
+            if remaining:
+                item, pages = remaining
+                count = len(pages)
+                st.caption(f"{item.source.filename}: {count} "
+                           + ("page needs review." if count == 1 else "pages need review."))
+                st.button("Review " + item.source.filename, key=local_key + "_review_next_file",
+                          on_click=_select_review_file, args=(selected_key, item.source.id))
         return tuple(c.source for c in contents), additions, {}
 
     if pending:

@@ -102,12 +102,12 @@ def test_actual_passive_javascript_retains_batched_open_close_and_bounds_without
     script = r'''
 const assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs');
 const install=JSON.parse(fs.readFileSync(0,'utf8'));
-const listeners=new Map();let observer,rectReads=0,clock=0;
-const document={activeElement:null,querySelector:selector=>selector==='.epc-workspace'
+const listeners=new Map(),windowListeners=new Map();let observer,rectReads=0,clock=0;
+const document={activeElement:null,scrollingElement:{scrollTop:70,scrollLeft:3},querySelector:selector=>selector==='.epc-workspace'
   ?{dataset:{epcFullRender:'full-1'}}:{getAttribute:()=> 'notRunning'}};
 const node={id:'native-1',isConnected:true,expanded:'false',getAttribute:name=>{
   assert.equal(name,'aria-expanded');return node.expanded;},getBoundingClientRect:()=>{
-  rectReads++;return{x:1,y:2,width:300,height:40};},
+  rectReads++;return{x:1,y:2,top:2,width:300,height:40};},
   addEventListener:(kind,callback,options)=>{assert.deepEqual({...options},{capture:true,passive:true});listeners.set(kind,callback);},
   removeEventListener:(kind,callback,capture)=>{assert.equal(capture,true);assert.equal(listeners.get(kind),callback);listeners.delete(kind);},
   focus:()=>{throw Error('Probe moved focus');},dispatchEvent:()=>{throw Error('Probe injected event');}};
@@ -117,27 +117,44 @@ class Observer{constructor(callback){this.callback=callback;this.pending=[];obse
     {attributes:true,attributeFilter:['aria-expanded'],attributeOldValue:true});}
   takeRecords(){const pending=this.pending;this.pending=[];return pending;}
   disconnect(){this.disconnected=true;}}
-const window={};
+const window={
+  addEventListener:(kind,callback,options)=>{assert.equal(kind,'scroll');
+    assert.deepEqual({...options},{capture:true,passive:true});windowListeners.set(kind,callback);},
+  removeEventListener:(kind,callback,capture)=>{assert.equal(capture,true);
+    assert.equal(windowListeners.get(kind),callback);windowListeners.delete(kind);}};
 const attach=vm.runInNewContext('('+install+')',{window,document,MutationObserver:Observer,performance:{now:()=>++clock}});
 const before=attach(node);assert.equal(before.id,'native-1');assert.equal(before.fullRender,'full-1');
 assert.equal(before.scriptState,'notRunning');assert.equal(before.connected,true);assert.equal(rectReads,1);
+assert.equal(before.inputTop,2);
 listeners.get('pointerdown')({type:'pointerdown',isTrusted:false});
 listeners.get('pointerdown')({type:'pointerdown',isTrusted:true});
 document.activeElement=node;listeners.get('focus')({type:'focus',isTrusted:true});
 assert.equal(rectReads,1,'Native-event listeners must not read layout');
+// Scroll receipts read native offsets only; unrelated scrollers do not add
+// events, and observing an ancestor cannot force a layout during the gesture.
+const scroll=windowListeners.get('scroll');
+scroll({type:'scroll',isTrusted:true,timeStamp:101,target:document});
+const ancestor={contains:other=>other===node,scrollTop:30,scrollLeft:4};
+scroll({type:'scroll',isTrusted:true,timeStamp:102,target:ancestor});
+scroll({type:'scroll',isTrusted:true,target:{contains:()=>false}});
+assert.equal(rectReads,1,'Scroll diagnostics must not force native layout');
 // Both mutations can be delivered after the final value is already false.
 observer.callback([{target:node,attributeName:'aria-expanded',oldValue:'false'},
                    {target:node,attributeName:'aria-expanded',oldValue:'true'}]);
 let state=window.__enfraFreshMonthActivation.snapshot();
 assert.deepEqual(Array.from(state.mutations,m=>[m.before,m.after]),[['false','true'],['true','false']]);
-assert.deepEqual(Array.from(state.events,e=>e.type),['pointerdown','focus']);
+assert.deepEqual(Array.from(state.events,e=>e.type),['pointerdown','focus','scroll','scroll']);
+assert.deepEqual(Array.from(state.events.slice(2),e=>[e.eventTime,e.scrollTop,e.scrollLeft]),
+  [[101,70,3],[102,30,4]]);
+const beforeFlood=rectReads;
 for(let i=0;i<60;i++)listeners.get('mousedown')({type:'mousedown',isTrusted:true});
+assert.equal(rectReads,beforeFlood,'A burst of native input never triggers diagnostic layout reads');
 observer.pending=Array.from({length:60},()=>({target:node,attributeName:'aria-expanded',oldValue:'false'}));
 node.isConnected=false;
 const final=window.__enfraFreshMonthActivation.finish();
-assert.equal(final.connected,false);assert.equal(final.events.length,24);assert.equal(final.droppedEvents,38);
+assert.equal(final.connected,false);assert.equal(final.events.length,24);assert.equal(final.droppedEvents,40);
 assert.equal(final.mutations.length,24);assert.equal(final.droppedMutations,38);
-assert.equal(observer.disconnected,true);assert.equal(listeners.size,0);
+assert.equal(observer.disconnected,true);assert.equal(listeners.size,0);assert.equal(windowListeners.size,0);
 assert.equal(window.__enfraFreshMonthActivation,undefined);assert.equal(node.value,'October');
 console.log('PASS actual passive probe, intermediate state, bounds, cleanup, and no native writes');
 '''
