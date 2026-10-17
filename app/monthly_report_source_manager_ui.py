@@ -5,6 +5,7 @@ import streamlit as st
 
 from app.monthly_report_source_status import source_manager_status
 from app.monthly_report_upload_ui import render_uploads
+from app.monthly_report_model import used_source_ids
 
 
 def _open_manager(manager_key, selection_key, source_id):
@@ -59,7 +60,8 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         return draft, blocks
 
     sources, additions, incoming_specs = render_uploads(
-        draft.profile, draft.period, prefix, field, attached_blocks=blocks)
+        draft.profile, draft.period, prefix, field, attached_blocks=blocks,
+        included_source_ids=used_source_ids(replace(draft, blocks=tuple(blocks.values()))))
     draft = replace(draft, sources=keep_missing(prefix, sources))
     if additions:
         previous_blocks = blocks
