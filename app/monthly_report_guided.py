@@ -1015,19 +1015,15 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     expected_revision=active.revision, expected_generation=active_generation)
                 active = None
                 active_sequence = 0
-            elif st.session_state.get(prefix + "_recover_previous") is not True:
-                st.warning("This browser has unfinished changes based on an older saved version. Nothing has been overwritten.")
-                if st.button("Review my unfinished work", key=prefix + "_restore_active"):
-                    st.session_state[prefix + "_recover_previous"] = True
-                    st.rerun()
-                if st.button("Use the current saved version instead", key=prefix + "_discard_stale_active"):
-                    try:
-                        active_work.discard(browser_token, contract, selected, period,
-                            expected_revision=active.revision, expected_generation=active_generation)
-                        st.rerun()
-                    except (library.LibraryError, OSError):
-                        st.error("Unfinished work could not be discarded. Your saved reports remain available.")
-                return
+            else:
+                from app.monthly_report_active_conflict_ui import render_older_draft_conflict
+                chosen = render_older_draft_conflict(active, snapshot, browser_token, prefix)
+                if chosen is None:
+                    return
+                # The explicit choice was durably kept. Re-enter through the
+                # normal loader so the resolved gate does not remain above the
+                # reopened editor or offer the same action a second time.
+                st.rerun()
         prepared = remembered_report_preparer(browser_token, contract, selected)
         using_import = False
         preserve_saved_defaults = False
@@ -1074,8 +1070,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             library.imported_snapshot_revision(contract, selected) if using_import else snapshot.revision if snapshot else 0)
         st.session_state[prefix + "_active_sequence"] = active_sequence
         st.session_state[prefix + "_active_generation"] = active_generation
+        st.session_state[prefix + "_active_updated_at"] = active.updated_at if active else ""
         if recovered_work:
-            recovery_notice.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
+            recovery_notice.success(st.session_state.pop(prefix + "_recovery_choice_notice",
+                "Recovered your unfinished changes from this browser. Completed report history is unchanged."))
     from app.monthly_report_setup import normalize_mbcx
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
@@ -1367,15 +1365,19 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     assets=assets)
                 st.session_state[prefix + "_active_sequence"] = recovered.revision
                 st.session_state[prefix + "_active_generation"] = recovered.generation
+                st.session_state[prefix + "_active_updated_at"] = recovered.updated_at
                 save_status.success("Current edits kept for this browser. Completed report versions remain unchanged.")
                 if recovered.revision != previous_sequence:
                     record_report_preferences(browser_token, contract, selected)
                     if prepared.strip():
                         record_report_preparer(browser_token, contract, selected, prepared)
             except active_work.ActiveWorkConflict:
-                save_status.error("Another tab or a new working copy has newer changes. "
-                                  "These edits are still on this page but were not kept for recovery. "
-                                  "Reload and compare before trying again.")
+                with save_status.container():
+                    st.error("Another tab or a new working copy has newer changes. "
+                             "These edits are still on this page but were not kept for recovery.")
+                    from app.monthly_report_active_conflict_ui import render_browser_conflict
+                    render_browser_conflict(draft, browser_token, prefix, assets,
+                                            st.session_state[prefix + "_revision"])
             except (library.LibraryError, OSError):
                 save_status.error("Automatic recovery could not keep these edits. "
                                   "Your current text remains on this page, but is not saved for a refresh. "
