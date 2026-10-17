@@ -4,6 +4,34 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
+## October 17 review repair checkpoint
+
+Refreshed 2026-10-17 02:14 UTC. Main remains `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`.
+Current published heads before this repair: PR249 `358e97e`, PR250 `df258bf`, PR251 `92ec8cd`, PR252 `28a13b4`.
+Exact Required/Adaptive pairs are respectively 38966735323/38966735321,
+38968288203/38968288206, 38968097828/38968097907 and 38967722381/38967722620.
+All pass except PR252 Adaptive's first photo-density keypress; no later photo steps were reached.
+These are branch evidence, not new merged or served acceptance. Render workspace selection and
+previously denied archive/browser operations remain unresolved in this session.
+
+This Training revision reproduces and repairs current review findings that older green CI did not close:
+consecutive session removal, distinguishable same-day removal labels, first staff-row defaults,
+missing shared browser path filters, and missing native-error instrumentation acceptance.
+Seven new source/UI/workflow regressions failed on exact `df258bf`; six instrumentation negative
+controls also failed while its three existing error checks passed. After the repairs, the first
+46-test affected suite passes on locked Python 3.12.14. A stale callback regression is retained too.
+Removals apply a collection-bound request before emitting the next controls and retain same-event
+monthly notes. New placeholder cells default to Not recorded; retained explicit blanks stay blank.
+Both PR and push filters include the actual shared helpers. A clean browser result now requires
+installed instrumentation and captured error lists in every observed document.
+
+Current status: locally repaired; new exact CI, normal main integration, deployment and browser
+verification pending. No original data, standing versions or saved reports were used as QA.
+The exact PR252 first-failure ZIP was retrieved: 13,272,057 bytes and its supplied digest matched.
+A private durable copy is retained as `libfile_f02903c20d3c8191856bda8ef46ec69f`; no customer sources
+or font files were published. The previous ledger below remains historical context until replaced
+by the next integrated checkpoint; its stale branch and pending labels are not current evidence.
+
 ## Current branch and evidence boundary
 
 Refreshed 2026-10-16 20:49 UTC. This candidate follows published parent1e3516e; no

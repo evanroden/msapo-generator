@@ -7,7 +7,20 @@ from scripts.qa_training_observer_checks import require_no_native_window_errors
 
 
 def document(stage, *errors):
-    return {"stage": stage, "evidence": {"errors": list(errors)}}
+    return {"stage": stage, "evidence": {"installation": "installed", "errors": list(errors)}}
+
+
+@pytest.mark.parametrize("documents", [
+    [],
+    [{"stage": "final", "evidence": None}],
+    [{"stage": "final", "evidence": {"errors": []}}],
+    [{"stage": "final", "evidence": {"installation": "native-feature-branch-would-change", "errors": []}}],
+    [{"stage": "final", "evidence": {"installation": "installed"}}],
+    [document("final"), {"stage": "earlier", "error": "Capture failed"}],
+])
+def test_missing_native_instrumentation_cannot_pass_as_error_free(documents):
+    with pytest.raises(AssertionError, match="instrumentation"):
+        require_no_native_window_errors(documents)
 
 
 def test_earlier_native_error_is_not_erased_by_clean_reload_or_empty_pageerror():

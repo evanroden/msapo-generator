@@ -11,6 +11,10 @@ from app.monthly_report_training import (FORMATS, MATRIX_REF, STATUSES,
     training_block, hospital_matrix, matrix_differs_from_current_standing)
 
 
+def _queue_session_removal(key, revision, index):
+    st.session_state[key] = (revision, index)
+
+
 def render_training(draft, blocks, prefix, field):
     from app.monthly_report_directory import load_directory
     if not draft.prepared_by.strip():
@@ -64,7 +68,7 @@ def render_training(draft, blocks, prefix, field):
         config = {"Site": st.column_config.SelectboxColumn("Site", options=sites, required=True)}
         labels = {"": "— Not recorded (blank)", "Completed": "🟢 Completed", "Pending": "🟠 Pending", "Not required": "⚪ Not required", "Not recorded": "— Not recorded"}
         config.update({name: st.column_config.SelectboxColumn(name, options=STATUSES, format_func=labels.get, required=True, default="Not recorded") for name in matrix.columns[2:]})
-        rows = _grid(key + "_grid_" + str(st.session_state.get(key + "_generation", 0)) + "_" + _signature(matrix.columns), [dict(zip(matrix.columns, row)) for row in matrix.rows] or [dict.fromkeys(matrix.columns, "")],
+        rows = _grid(key + "_grid_" + str(st.session_state.get(key + "_generation", 0)) + "_" + _signature(matrix.columns), [dict(zip(matrix.columns, row)) for row in matrix.rows] or [{name: "Not recorded" if index > 1 else "" for index, name in enumerate(matrix.columns)}],
                      num_rows="dynamic", hide_index=True, column_config=config)
         # Defaults apply to absent new cells; an existing/explicit blank remains
         # distinct from the recorded "Not recorded" option and is never saved
@@ -91,6 +95,17 @@ def render_training(draft, blocks, prefix, field):
     # Always render monthly fields. A rejected matrix/event must not let
     # Streamlit discard a sibling widget or its in-flight value.
     events = events_for_period(block, draft.period)
+    removal_key = key + "_remove_session_request"
+    removal = st.session_state.pop(removal_key, None)
+    if removal is not None:
+        revision, index = removal
+        if events and revision == _signature(events.rows) and 0 <= index < len(events.rows):
+            # Apply the revision-bound request before emitting row controls.
+            # Notes below still consume their same-event native value, and the
+            # caller receives the complete block before any durable save.
+            events = replace(events, rows=tuple(row for position, row in enumerate(events.rows) if position != index))
+        else:
+            st.warning("Training sessions changed. Review the current sessions before removing one.")
     st.subheader("Training completed this month")
     with st.expander("Add training session", expanded=False):
         with st.form(key + "_event_form", clear_on_submit=False):
@@ -106,24 +121,20 @@ def render_training(draft, blocks, prefix, field):
         except ValueError as exc:
             st.error(str(exc))
     if events and events.rows:
-        removed = set()
         # Binding every row action to this collection prevents a delayed click
         # from removing a different row after another session was added/removed.
         event_revision = _signature(events.rows)
+        same_day = [(row[0], row[1]) for row in events.rows]
         for index, row in enumerate(events.rows):
             title, when, mode, participants, hours = row
-            slot = st.empty()
-            with slot.container(border=True):
+            with st.container(border=True):
                 st.text(title)
                 st.caption(" · ".join((when, mode, participants, *([f"{hours} hours"] if hours else []))))
-                if st.button(f"Remove session: {title} · {when}",
-                             key=key + f"_remove_session_{event_revision}_{index}"):
-                    removed.add(index)
-                    slot.empty()
-        if removed:
-            events = replace(events, rows=tuple(row for index, row in enumerate(events.rows) if index not in removed))
-            if not events.rows:
-                st.caption("No training sessions added this month.")
+                label = f"Remove session: {title} · {when}"
+                if same_day.count((title, when)) > 1:
+                    label += " · " + " · ".join((mode, participants, *([f"{hours} hours"] if hours else [])))
+                st.button(label, key=key + f"_remove_session_{event_revision}_{index}",
+                          on_click=_queue_session_removal, args=(removal_key, event_revision, index))
     else:
         st.caption("No training sessions added this month.")
     block = apply_tables(block, matrix, events)

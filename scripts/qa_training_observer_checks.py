@@ -10,6 +10,13 @@ def require_no_native_window_errors(documents):
     Some native window errors do not become Playwright ``pageerror`` events.
     Keep every observed message terminal; this is not a ResizeObserver filter.
     """
+    assert documents, "Native error instrumentation has no captured documents."
+    for document in documents:
+        evidence = document.get("evidence")
+        assert (isinstance(evidence, dict) and evidence.get("installation") == "installed"
+                and isinstance(evidence.get("errors"), list)), (
+            "Native error instrumentation was not installed or captured for "
+            + str(document.get("stage", "unknown document")))
     errors = [
         {"document_stage": document.get("stage"), **error}
         for document in documents
