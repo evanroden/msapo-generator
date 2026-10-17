@@ -170,6 +170,10 @@ export default function(component) {
     function measure() {
         frame = null;
         if (disposed || !root.isConnected || document.hidden) return;
+        // The framework can replace this keyed container's class attribute
+        // while retaining its native subtree. Reassert only our owned class
+        // before measuring; the current mode must keep its matching CSS.
+        root.classList.add('epc-workspace');
         discover();
         const sample = snapshot();
         const context = geometry.resolveDisplayContext(sample);
@@ -246,6 +250,14 @@ export default function(component) {
     if (chrome) resize.observe(chrome);
     const mutation = new MutationObserver(schedule);
     mutation.observe(root, {childList:true,subtree:true});
+    const rootClass = new MutationObserver(() => {
+        if (disposed || !root.isConnected || root.classList.contains('epc-workspace')) return;
+        // Restore before paint, without touching scroll, focus or framework
+        // classes. The resulting class record is a no-op, not a rerun loop.
+        root.classList.add('epc-workspace');
+        schedule();
+    });
+    rootClass.observe(root, {attributes:true,attributeFilter:['class']});
     listen(window,'resize'); listen(window,'orientationchange');
     listen(window.visualViewport,'resize'); listen(window.visualViewport,'scroll');
     listen(window.screen?.orientation,'change');
@@ -258,7 +270,7 @@ export default function(component) {
         disposed = true;
         if (frame !== null) cancelAnimationFrame(frame);
         if (focusFrame !== null) cancelAnimationFrame(focusFrame);
-        resize.disconnect(); mutation.disconnect(); subscriptions.forEach(remove => remove());
+        resize.disconnect(); mutation.disconnect(); rootClass.disconnect(); subscriptions.forEach(remove => remove());
         safe.remove(); scrollport.classList.remove('epc-workspace-scroll-owner');
     };
     state.cleanup = cleanup;
