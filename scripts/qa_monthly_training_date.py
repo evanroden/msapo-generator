@@ -290,11 +290,16 @@ def enter_topic_and_participant(page, *, original_input=None):
           const events=[], workspace=input.closest('.epc-workspace'), app=input.closest('[data-testid="stApp"]');
           const read=()=>({connected:input.isConnected,focused:input===document.activeElement,
             value:input.value.slice(0,160),expanded:input.getAttribute('aria-expanded'),
+            rect:{x:input.getBoundingClientRect().x,y:input.getBoundingClientRect().y,
+              width:input.getBoundingClientRect().width,height:input.getBoundingClientRect().height},
             fullRender:workspace?.dataset.epcFullRender||null,
             scriptState:app?.getAttribute('data-test-script-state')||null});
           const record=(type,event)=>{events.push({at:performance.now(),type,...read(),
             trusted:event?.isTrusted??null,inputType:event?.inputType||null,
-            data:typeof event?.data==='string'?event.data.slice(0,160):null});
+            data:typeof event?.data==='string'?event.data.slice(0,160):null,
+            eventTime:event?.timeStamp??null,eventTarget:event?.target?.tagName||null,
+            scrollTop:event?.target===document?document.scrollingElement?.scrollTop:event?.target?.scrollTop,
+            scrollLeft:event?.target===document?document.scrollingElement?.scrollLeft:event?.target?.scrollLeft});
             if(events.length>60)events.shift();};
           const handlers=['focus','beforeinput','input','change','blur'].map(type=>{
             const handler=event=>record(type,event);input.addEventListener(type,handler,{capture:true,passive:true});
@@ -304,8 +309,12 @@ def enter_topic_and_participant(page, *, original_input=None):
           mutations.observe(input,{attributes:true,attributeFilter:['aria-expanded','aria-controls']});
           if(workspace)mutations.observe(workspace,{attributes:true,attributeFilter:['data-epc-full-render']});
           if(app)mutations.observe(app,{attributes:true,attributeFilter:['data-test-script-state']});
+          const scroll=event=>{if(event.target===window||event.target===document||
+            event.target?.contains?.(input))record('ancestor-scroll',event);};
+          window.addEventListener('scroll',scroll,{capture:true,passive:true});
           window.__enfraTrainingParticipantEvidence={events};
           window.__enfraTrainingParticipantDispose=()=>{mutations.disconnect();
+            window.removeEventListener('scroll',scroll,true);
             for(const [type,handler] of handlers)input.removeEventListener(type,handler,{capture:true});};
           record('bound-original-input');return read();
         }""")

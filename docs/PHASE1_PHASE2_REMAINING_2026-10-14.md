@@ -4,7 +4,38 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## October 17 review repair checkpoint
+## Current integration checkpoint — 2026-10-17 03:52 UTC
+
+This checkpoint supersedes the dated branch status below. PR249 is merged; the other cleanup
+is still on branches. The owner prompt remains one existing TXT, updated in place. First-failure
+ZIPs and focused receipts are privately retained; no customer originals entered public Git/CI.
+
+| Requirement / retained IDs | Current implementation | Tested scope | Actually served | Unresolved / next action / owner | Acceptance |
+| --- | --- | --- | --- | --- | --- |
+| Water, CONT09, SIM-W, ADP-A12/A16/A20 | PR249 merged to `90049cf65b7d19d2e96ec0ecf9a9b0288fdc476a` | Exact branch76 focused tests; merged Tests38996467909 and Adaptive38996467782 pass | Full90049cf in isolated live browser. Observed entry `index.enfra-frontend-fbb0a97cf659.js`:464,115bytes, SHA256`fbb0a97cf659f548829b6038e8f1033ff330c16c34e5a12a1c4d6f3900b27d4f`, independently reconstructed byte equality. Same-event caption correction/review/reopen/Done and normal reload retained exact caption; preview Current2pages with visible page1. | No fresh Render control-plane read; workspace selection remains unconfirmed. Live entry-byte proof is not a fetch of all83 assets, final output review, or full simplicity acceptance. | Verified for stated scope only |
+| Training, SIM-T, ORIG-T, ADP-A08/A11/A16–17 | PR250 published`c1d2ee1616357f31160dc937068f85a71521910f` on main90049cf; current candidate adds a narrowly pinned native queued-scroll repair | Required38997277952 passes. Adaptive38997278073 fails Chromium participant filter; WebKit completed date/session/output tail and4files. New exact native-hook baseline3fail/6pass; repaired native/publication suite69pass; four exact old83-member publication upgrade cases pass;40 affected Training/observer/source gates pass; one prior-valid-overlay negative gate passes. Counts overlap and are not summed. | Candidate not merged/deployed | Same native input receives filter then clears/closes. New guard compares ancestor/document offsets captured at listener setup, so a previously completed scroll event cannot close a newly opened menu. Subsequent movement and native cleanup preserved. Browser gestures/timeouts/assertions unchanged; passive timing/geometry added. Run exact candidate CI; only a browser result can close its current failure. Engineer. | Implemented, locally tested; browser pending |
+| Sources/history, SRC01/SRC04–06, CONT03/08, ADP-A10 | PR251`e72feb531018dd67b853bb53c4dbdb6880c49037` on main90049cf | Seven new failed baseline cases repaired;58 focused tests pass. Required38997771955 passes. Adaptive38997771892 full Water/output passes both engines, fresh Chromium fails before September selection. | Broader workspace cleanup not live | First source failure retains pending block; retired source contributions preserve human text/independent tables/Omit; context/history identities corrected. All five prior review threads resolved. Native first-month activation opened then closed after offscreen auto-scroll. Reconcile current queued-scroll candidate after eligible main integration. Engineer. | Branch repair only |
+| Photos and history browser tail, SIM-V, CONT07, ADP-A08/A18 | PR252`49a448d0beedb74ecb5e19be8240e0826b14c480` based on current PR251e72feb5, dependency conflict resolved |217 focused tests pass. Adaptive38998230129 photo job117295414354 passes both engines through density1–6, moves/captions/add/remove/reopen/Done/reload and actual Word/PDF. History Chromium fails; WebKit history completes. | Not deployed | Original density control was present; exact captured attributes compute a duplicated accessible name. Test correctly scopes its labelled group and native slider without removing outcomes. Current history screenshot shows Cached ForwardMsg MISS after opening history, with the actual3dated rows underneath. Full/fragment wire records retained. A parent-local regression reproduces missing native disclosure commit protection; patch and composed browser proof are next. Engineer. | Photo journey verified on branch; history/release incomplete |
+| Original integrity/retention, CONT01, AUTH01–03 | Existing unchanged owner archive retrieved privately |88,159,285bytes; archive SHA256`96d03736f91aa0d34f891234c525ccfeb1b8c89278a7d7cc915a71f35256981b`; all6member sizes/hashes match embedded manifest. Independent validation and manifest retrieved; manifest SHA256`a9f931ba0e2656530f7cfef7c8607c4bebb04b1d105d07688402a4e63f2f58fa` independently matched. | No original import/transfer performed | Prior shelf/localhost administrative denials remain denied; consumed owner diagnostic is not repeated. Retention after chat deletion, authentic replay/facts and cross-deployment retrieval remain open. Specific access resolution: owner/admin. | Integrity retrieval only |
+| Complete simplicity / outputs / adaptive acceptance,97-item inventory,113checks, ADP-A01–20 | Existing branch cleanup, no new frontend/wizard | Earlier scoped receipts retained; current actual photo/date files available for named-renderer review | Water limited live path only | Finish implemented replacement paths, current desktop/narrow fresh/populated/imported/unresolved/failed-save/generated/recovered review, all-page actual DOCX/PDF and hidden/graphic privacy, standing/concurrency, physical/native and combined-artwork approval. Independent UI/output work remains engineering work, not relabelled external acceptance. | Neither phase accepted |
+
+### Current first-failure evidence
+
+- Training artifact12088280240:889,396bytes, SHA256`ba4f83d603fab9c63e1bf68b4ae3a219b2579e3ac8edbe053959c7d36c98f1b0`.
+- Workspace artifact12088361011:98,551,444bytes, SHA256`c3e073e153de136e5307619e47c2c71184ea53cc9cfedac060a9f45a14ab8b7f`.
+- Passed photo artifact12088395797:24,289,344bytes, SHA256`fb55b54ee981de50e18239de79cc2284144063ff4f4b5f808d2d71453f3570f8`.
+- First history artifact12087503258:28,197,291bytes, SHA256`b0b82b6d92e05dd8d1033eb690894cb249209c56322c027930d25281de8f7095`.
+- Original photo failure artifact12074983632 remains retained unchanged; do not substitute the passing artifact for it.
+
+The queued-scroll function reproduction is a deterministic execution of the exact pinned callback
+with a controlled DOM/event model. It is not a physical-browser reproduction or proof of the sole
+historical cause. Full Training and fresh Water browser actions are unchanged. Both old81-member
+and old83-member publications remain reconstructable upgrade inputs; every original and previous
+immutable asset is preserved, with scalar-date configuration and installer serialization retained.
+Do not merge while a current review concern or exact browser failure remains unresolved.
+
+## Historical October 17 review repair checkpoint
+
 
 Refreshed 2026-10-17 02:14 UTC. Main remains `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`.
 Current published heads before this repair: PR249 `358e97e`, PR250 `df258bf`, PR251 `92ec8cd`, PR252 `28a13b4`.
@@ -32,7 +63,7 @@ A private durable copy is retained as `libfile_f02903c20d3c8191856bda8ef46ec69f`
 or font files were published. The previous ledger below remains historical context until replaced
 by the next integrated checkpoint; its stale branch and pending labels are not current evidence.
 
-## Current branch and evidence boundary
+## Historical October 16 branch and evidence boundary
 
 Refreshed 2026-10-16 20:49 UTC. This candidate follows published parent1e3516e; no
 new merge or live observation occurred. Child252 remains published8c53fb0, with new photo/history
@@ -43,7 +74,7 @@ reproduced defect; **Implemented** = implemented-needs-verification; **Verified(
 verified-for-a-stated-scope; **Blocked(dependency)** = blocked-on-specific-dependency. An unrun
 acceptance row is not a defect. Overlapping test counts are never summed.
 
-## Current code and release
+## Historical October 16 code and release
 
 Main is `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`. Last independently verified actually served
 SHA is the same, from [live38937063007](https://github.com/evanroden/msapo-generator/actions/runs/38937063007),
