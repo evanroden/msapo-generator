@@ -135,6 +135,7 @@ def receipt(page):
 
 
 def await_events(page, rows, baseline):
+    live.EVIDENCE["phase"] = "await-training-events:" + str(len(rows))
     page.wait_for_function("""expected=>{
       const nodes=document.querySelectorAll('[data-enfra-training-receipt]');
       if(!nodes.length)return false;
@@ -163,6 +164,7 @@ def open_form(page):
 
 def submit_form(page, submit, stage):
     live.EVIDENCE["phase"] = "submit-training:" + stage
+    capture_form(page, "before-submit:" + stage, require_participant=True)
     before = page.locator(".epc-workspace").get_attribute("data-epc-full-render")
     assert before, "A native full-editor receipt must precede the submission."
     submit.click()
@@ -170,6 +172,15 @@ def submit_form(page, submit, stage):
         const current=document.querySelector('.epc-workspace')?.dataset.epcFullRender;
         return current&&current!==before&&document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
     }""", arg=before, timeout=25000)
+
+
+def capture_form(page, stage, *, require_participant=False):
+    """Read the real native selection; never restore it or repeat its action."""
+    observed = page.evaluate("() => window.__enfraTrainingFormObservation?.capture() || null")
+    live.EVIDENCE.setdefault("form_retention", []).append({"stage": stage, "observation": observed})
+    if require_participant:
+        assert observed and observed["state"]["selected"] == ["expected-participant"], (
+            "The selected Training participant was lost at " + stage)
 
 
 def record_date(page, date, stage):
@@ -517,13 +528,17 @@ def exercise(browser_type, engine, *, patched):
         expect(field).to_have_value("")
         if patched:
             live.EVIDENCE["phase"] = "enter-topic-and-participant"
+            page.evaluate((ROOT / "scripts/qa_training_form_observations.js").read_text())
             # A multiselect deliberately keeps its popup open after selection.
             # Complete these existing entry actions before the date's normal
             # pointer/keyboard sequence, keeping the later clear assertion
             # independent of the other widget's open-popup state.
             # No extra dismissal gesture or hidden-control click is added.
             enter_topic_and_participant(page)
+            capture_form(page, "participant-selected", require_participant=True)
         replace_date(page, field, "2026/09/14", "typed-single-date")
+        if patched:
+            capture_form(page, "after-typed-date", require_participant=True)
         expect(field).to_have_value("2026/09/14")
         assert len(date_responses) == 1
         asset = date_responses[0]
@@ -543,6 +558,7 @@ def exercise(browser_type, engine, *, patched):
         selected_date(date, "2026/09/14")
         record_date(page, date, "typed-single-date")
         select_day(page, field, 15)
+        capture_form(page, "after-one-calendar-selection", require_participant=True)
         selected_date(date, "2026/09/15")
         record_date(page, date, "one-calendar-selection-closes")
         live.screenshot(page, "correct-single-date-announcement")
@@ -554,6 +570,7 @@ def exercise(browser_type, engine, *, patched):
         page.keyboard.press("Enter")
         expect(field).to_have_value("2026/09/16")
         selected_date(date, "2026/09/16")
+        capture_form(page, "after-keyboard-calendar-selection", require_participant=True)
         record_date(page, date, "keyboard-single-selection")
         baseline = receipt(page)
         assert baseline and baseline["working"] == baseline["durable"]
@@ -620,6 +637,11 @@ def exercise(browser_type, engine, *, patched):
             pass
         raise
     finally:
+        if patched:
+            try:
+                capture_form(page, "final")
+            except Exception as exc:
+                live.EVIDENCE["form_observation_error"] = str(exc)[:300]
         capture_observers(page, "final")
         native_error_failure = None
         # Do not mask an earlier input/business/output failure. On success the

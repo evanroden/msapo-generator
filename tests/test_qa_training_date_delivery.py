@@ -1,5 +1,6 @@
 """The date diagnostic observes only the marked synthetic date/form controls."""
 import json
+from hashlib import sha256
 
 from streamlit.proto.BackMsg_pb2 import BackMsg
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
@@ -44,6 +45,25 @@ def test_empty_date_is_distinct_from_unknown_or_unrelated_wire_value():
     observer.message("sent", message.SerializeToString())
     assert rows[-1]["widgets"] == [{"widget": "date_input", "dates": [], "redacted_values": 1}]
     assert "not a date" not in json.dumps(rows)
+
+
+def test_participant_wire_records_selection_and_later_clear_without_names():
+    rows = []
+    observer = TrainingDateDelivery(rows.append)
+    learn(observer, "multiselect", "Participants", "participant-id")
+    learn(observer, "multiselect", "Unrelated staff", "other-id")
+    message = BackMsg()
+    selected = message.rerun_script.widget_states.widgets.add(id="participant-id")
+    selected.string_array_value.data.append("Synthetic Person North")
+    message.rerun_script.widget_states.widgets.add(id="other-id").string_array_value.data.append("Private unrelated name")
+    observer.message("sent", message.SerializeToString())
+    assert rows[-1]["widgets"] == [{"widget": "multiselect", "count": 1,
+        "value_hashes": [sha256(b"Synthetic Person North").hexdigest()]}]
+    selected.string_array_value.ClearField("data")
+    observer.message("sent", message.SerializeToString())
+    assert rows[-1]["widgets"] == [{"widget": "multiselect", "count": 0, "value_hashes": []}]
+    assert "Synthetic Person North" not in json.dumps(rows)
+    assert "Private unrelated name" not in json.dumps(rows)
 
 
 def test_unknown_date_widgets_and_malformed_frames_are_ignored_and_capture_is_bounded():
