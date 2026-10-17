@@ -4,7 +4,28 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current publication checkpoint — 2026-10-17 16:39:14 UTC
+## Current main integration checkpoint — 2026-10-17 16:52:07 UTC
+
+PR251 merged normally into MAIN at16:50:13UTC as
+`de651cb1ed0bd3e2c1ea0484009754c86cb1495e`, parents main9b2843e and251head4722e69.
+The expected-head merge guard was used; no feature-parent merge or force push occurred.
+PR252 is being retargeted/reconciled against this resulting main. `git merge-tree --write-tree`
+for252head97952ce and main de651cb returns the unchanged reviewed treea3f2c84;
+this checkpoint is the only additional file delta. Both siblings' source changes are preserved.
+
+| Requirement | Current implementation | Tested scope | Served evidence | Next action / owner | Acceptance |
+| --- | --- | --- | --- | --- | --- |
+| Workspace/source/history; SRC01/SRC04–06, CONT03/08 | PR251 merged to main de651cb | Exact parent Tests39019891373 and Adaptive39019891361 freshly verified SUCCESS. All5current review threads resolved. Composed97952ce history job117447628552 of Adaptive39050395347 passed both engines through saved-version access after reload;3real dated/author rows,5trusted native disclosure activations,7working/durable/history/storage observations,0browser errors and0external requests. Tested checkout1ca65e0f09afd935acd839f25b689d7d6c464482 has the exact candidate treea3f2c84. | Last fresh browser read still9b2843e at16:47UTC; no de651cb served claim yet. | Check merged-main gates and full served de651cb/asset identity, then native isolated workspace/source/history paths. Engineer. | Merged; deployment/live behavior pending |
+| Photos/Training/copy; SIM-A14–15/SIM-T01, CONT07/09 | PR25297952ce on parent472; reconciliation to new main preserves its complete source tree | Exact Adaptive39050395347 photo job117447628464 and Training job117447628566 SUCCESS. Photos keep density1–6/order/captions/add-remove/re-entry/reload and actual29-page Word/PDF. Container/resource jobs also pass. Broader DOM and Required pytest were still running before dependency reconciliation; do not call the whole runs passed. | Follow-on not deployed. | Retarget252toMAIN and publish guarded reconciliation; obtain new exact integrated Required/Adaptive and current reviews before main merge. Engineer. | Named branch jobs passed; release pending |
+| Evidence retention / review limits | Same TXT identity and private evidence bundle | Independently downloaded history39392397bytes/SHA256927876cbcc923f1082373c6694fcd076f5ffa85226d1dba95a5cf08418e09f22; photos31794196/de23f5007023463b9a84d68fddc16e52f87b8d34aa06c029a761ecc775adae2a; Training1296158/755c0e0670f708f0b3f855d1ab15d0af886c3c65204585f5b60385fb3792b97b. History result receipts examined. | New synthetic files are retained, not yet manually reviewed page-by-page. Earlier completed named-renderer review stays dated below. | Complete actual delivered simplicity and all remaining scoped acceptance; same original access/native-device/artwork boundaries. Engineer/owner. | Neither Phase1 nor Phase2 accepted |
+
+The history screenshots capture the picture comparison/final-review areas; they do not by
+themselves prove the dated table's visual layout. The recorded table rows and full native
+journey assertions establish their narrower scope. Native WebKit is Playwright WebKit26.0,
+not physical Safari or assistive-technology listening. The earlier cached-message failure remains
+retained and is not assigned a sole cause from this passing composed run.
+
+## Historical publication checkpoint — 2026-10-17 16:39:14 UTC
 
 The owner explicitly renewed the GitHub publication attempt at16:35UTC. The same GitHub
 create-commit operation succeeded: reconciliation commit
