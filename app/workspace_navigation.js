@@ -35,13 +35,26 @@ globalThis.ENFRAWorkspaceNavigation = {
                 if (entries.some(item => item.id === selected)) select.value=selected;
                 select.disabled = !entries.length; signature=next; select._epcNavigationSignature=next;
             }
+            // Normal page scrolling can reach Review without a menu action.
+            // Keep the same selector reachable once that heading crosses its
+            // reading line; this changes display only, without moving focus
+            // or scroll. Confined editors still use the deliberate Review
+            // choice to leave their working scroll root.
+            const line=Math.max(sample.chromeBottom,sample.scrollport.y)+height()+12;
+            if (!state.reviewNavigation && !state.navigationRequest && !state.ownsScroll &&
+                review && box(review).top <= line) {
+                state.reviewNavigation=true;
+                state.reviewScrollTop=scrollport.scrollTop;
+                state.navigationReturn=null;
+                state.navigationActive='report_review';
+                state.navigationJump=null;
+            }
             // Reverse scrolling from review returns to the actual visible
             // section, preserving its paragraph offset when scroll ownership
             // changes back to the measured tabletop/confined layout.
             if (state.reviewNavigation && !state.navigationRequest && review &&
                 scrollport.scrollTop < (state.reviewScrollTop ?? scrollport.scrollTop)-1 &&
                 box(review).top > Math.max(sample.chromeBottom, sample.scrollport.y)+height()+48) {
-                const line=Math.max(sample.chromeBottom,sample.scrollport.y)+height()+12;
                 const id=geometry.selectActiveSection(entries.filter(item=>!item.outside).map(item=>({id:item.id,top:box(item.target).top,bottom:box(item.target).bottom})),null,line,0);
                 restore=capture(entries.find(item=>item.id===id));
                 state.reviewNavigation=false;
@@ -79,7 +92,11 @@ globalThis.ENFRAWorkspaceNavigation = {
             if (!active) {
                 state.navigationJump=null;
                 const line=state.ownsScroll?box(root).top+height()+12:top;
-                active=geometry.selectActiveSection(entries.map(item=>({id:item.id,top:box(item.target).top,bottom:box(item.target).bottom})),state.navigationActive,line,12);
+                // Review stays in ordinary page flow outside a fixed working
+                // root. Its rectangle cannot identify that root's current
+                // editor; selecting it explicitly still exits to Review.
+                const visibleEntries=state.ownsScroll ? entries.filter(item=>!item.outside) : entries;
+                active=geometry.selectActiveSection(visibleEntries.map(item=>({id:item.id,top:box(item.target).top,bottom:box(item.target).bottom})),state.navigationActive,line,12);
             }
             state.navigationActive=active;
             // Never change a menu's highlighted option while it has focus.

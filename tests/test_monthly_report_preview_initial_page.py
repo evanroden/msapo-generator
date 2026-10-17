@@ -42,6 +42,38 @@ def test_unknown_or_content_first_layout_keeps_the_first_page(first, pages):
         assert preview.section_initial_page(pdf, None) == 0
 
 
+@pytest.mark.parametrize('arrangement', ['excluded', 'reordered'])
+def test_preview_initial_page_uses_the_actually_rendered_section_number(monkeypatch, tmp_path, arrangement):
+    from docx import Document
+    report = draft()
+    if arrangement == 'excluded':
+        report = replace(report, sections=tuple(replace(s, included=False) if s.key == 'activity' else s
+                                                for s in report.sections))
+    else:
+        selected = next(s for s in report.sections if s.key == 'training')
+        report = replace(report, sections=(selected, *(s for s in report.sections if s != selected)))
+    converted = []
+
+    def convert(path):
+        paragraphs = [p.text for p in Document(path).paragraphs]
+        section_number = next(text for text in paragraphs if text.startswith('Section '))
+        converted.append(section_number)
+        result = tmp_path / (path.stem + '.pdf')
+        with fitz.open() as pdf:
+            pdf.new_page().insert_text((50, 60), section_number + '\nTraining Summary')
+            pdf.new_page().insert_text((50, 60), 'Completed synthetic safety training')
+            pdf.save(result)
+        return result
+
+    monkeypatch.setattr(preview.pdf_converter, 'convert_to_pdf', convert)
+    result = preview.preview_section(report, 'training')
+    assert converted == ['Section 10' if arrangement == 'excluded' else 'Section 1']
+    assert result.initial_page == 1 and result.pages == 2
+    with fitz.open(stream=result.pdf, filetype='pdf') as pdf:
+        assert converted[0] in pdf[0].get_text()
+        assert 'Completed synthetic safety training' in pdf[1].get_text()
+
+
 @requires_libreoffice
 @pytest.mark.parametrize('key,expected', [('organization', 'Synthetic contact'), ('training', 'Completed synthetic safety training')])
 def test_real_section_conversion_opens_meaningful_content_and_keeps_divider(key, expected):

@@ -28,9 +28,8 @@ export default function(component) {
     // Layout measurement, preview fragments and viewport changes do not change
     // it. The reference viewer uses this as an acknowledgment of native edits.
     root.dataset.epcFullRender = data.fullRender || '';
-    const nav = data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+    let nav = null, navigation = null;
     const chrome = document.querySelector('[data-testid="stHeader"]');
-    const navigation = globalThis.ENFRAWorkspaceNavigation?.create({root,app,scrollport,nav,state,geometry,schedule});
     // An empty span can change the hash without giving a keyboard user the
     // prerequisite field. Handle only this owned Monthly correction link and
     // only when its unique native field exists. No value, input event, business
@@ -183,6 +182,18 @@ export default function(component) {
         };
     }
     function discover() {
+        // The keyed navigation may arrive after this component in the native
+        // stream. Rebind through the existing child/resize measurement path,
+        // including replacement of its container on a later full render.
+        const currentNav = data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
+        if (currentNav !== nav) {
+            if (nav) resize.unobserve(nav);
+            navigation?.dispose(); navigation = null;
+            nav = currentNav;
+            if (nav) resize.observe(nav);
+        }
+        if (nav && !navigation)
+            navigation = globalThis.ENFRAWorkspaceNavigation?.create({root,app,scrollport,nav,state,geometry,schedule});
         pairs = Array.from(root.querySelectorAll('[data-epc-pair]')).map(marker => {
             const id = marker.dataset.epcPair;
             const pair = marker.closest('.st-key-epc_pair_' + CSS.escape(id));
@@ -241,6 +252,10 @@ export default function(component) {
     function measure() {
         frame = null;
         if (disposed || !root.isConnected || document.hidden) return;
+        // The framework can replace this keyed container's class attribute
+        // while retaining its native subtree. Reassert only our owned class
+        // before measuring; the current mode must keep its matching CSS.
+        root.classList.add('epc-workspace');
         discover();
         const sample = snapshot();
         let context = geometry.resolveDisplayContext(sample);
@@ -317,10 +332,18 @@ export default function(component) {
     }
     function schedule() {if (!disposed && frame === null) frame = requestAnimationFrame(measure);}
     const resize = new ResizeObserver(schedule);
-    resize.observe(app); resize.observe(scrollport); if (nav) resize.observe(nav);
+    resize.observe(app); resize.observe(scrollport);
     if (chrome) resize.observe(chrome);
     const mutation = new MutationObserver(schedule);
     mutation.observe(root, {childList:true,subtree:true});
+    const rootClass = new MutationObserver(() => {
+        if (disposed || !root.isConnected || root.classList.contains('epc-workspace')) return;
+        // Restore before paint, without touching scroll, focus or framework
+        // classes. The resulting class record is a no-op, not a rerun loop.
+        root.classList.add('epc-workspace');
+        schedule();
+    });
+    rootClass.observe(root, {attributes:true,attributeFilter:['class']});
     listen(window,'resize'); listen(window,'orientationchange');
     listen(window.visualViewport,'resize'); listen(window.visualViewport,'scroll');
     listen(window.screen?.orientation,'change');
@@ -333,7 +356,7 @@ export default function(component) {
         disposed = true;
         if (frame !== null) cancelAnimationFrame(frame);
         if (focusFrame !== null) cancelAnimationFrame(focusFrame);
-        resize.disconnect(); mutation.disconnect(); subscriptions.forEach(remove => remove());
+        resize.disconnect(); mutation.disconnect(); rootClass.disconnect(); subscriptions.forEach(remove => remove());
         navigation?.dispose();
         safe.remove(); scrollport.classList.remove('epc-workspace-scroll-owner');
     };

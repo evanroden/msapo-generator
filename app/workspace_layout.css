@@ -10,7 +10,10 @@
 .epc-workspace-reference {position:sticky; top:var(--epc-preview-top); align-self:start; flex:0 0 auto !important; height:fit-content !important; z-index:3;}
 .epc-workspace [data-testid="stDataFrame"] {max-width:100%;}
 .epc-workspace button:focus-visible {outline:3px solid #557f7f; outline-offset:3px;}
-.st-key-monthly_report_navigation {position:sticky;top:var(--epc-nav-top,3rem);z-index:15;background:var(--background-color,#fff);border-bottom:1px solid rgba(128,128,128,.25);padding:.25rem 0;}
+/* The locked framework wraps each keyed container. Stick its direct working
+   root child; the inner one-row box cannot stick beyond that short wrapper. */
+.epc-workspace > [data-testid="stLayoutWrapper"]:has(> .st-key-monthly_report_navigation) {position:sticky;top:var(--epc-nav-top,3rem);z-index:15;}
+.st-key-monthly_report_navigation {background:var(--background-color,#fff);border-bottom:1px solid rgba(128,128,128,.25);padding:.25rem 0;}
 .epc-section-navigation {display:flex;gap:.6rem;align-items:center;min-width:0;max-width:100%;background:var(--background-color,#fff);}
 .epc-section-selector {font:inherit;color:inherit;background:var(--background-color,#fff);border:1px solid #557f7f;border-radius:.4rem;min-height:44px;min-width:0;width:min(32rem,100%);flex:0 1 32rem;padding:.4rem .6rem;}
 .epc-section-selector:focus-visible {outline:3px solid #557f7f;outline-offset:2px;}

@@ -88,6 +88,18 @@ for(const mode of ['tabletop','confined'])test(`${mode} review exits the owned s
     assert.equal(h.field.value,'Unblurred human wording');assert.equal(h.counts().nativeEvents,0);
 });
 
+for(const mode of ['tabletop','confined'])test(`${mode} current section excludes the outside Review heading until explicitly selected`,()=>{
+    const h=harness(mode);h.root.scrollTop=650;
+    // Review remains in normal page flow when the editor is fixed in the
+    // lower pane. Its viewport position is unrelated to this working root.
+    h.review.getBoundingClientRect=()=>({top:550,bottom:610,height:60});
+    h.measure();
+    assert.equal(h.select.value,'monthly_activity');
+    assert.equal(h.root.dataset.epcReviewOpen,'false');
+    assert.equal(h.select.children.at(-1).value,'report_review','Review remains an explicit reachable destination');
+    assert.equal(h.root.scrollTop,650);assert.equal(h.counts().nativeEvents,0);
+});
+
 test('reverse scroll from review restores tabletop at the visible paragraph without a trap',()=>{
     const h=harness('tabletop');h.root.scrollTop=650;h.measure();h.choose('report_review');
     h.scrollport.scrollTop=2700;
@@ -106,6 +118,78 @@ for(const mode of ['wide','compact'])test(`${mode} review keeps normal scrolling
     assert.equal(h.state.mode,mode);assert.equal(h.counts().nativeEvents,0);
 });
 
+for(const mode of ['wide','compact'])test(`${mode} natural review entry keeps the selector reachable and reverse scroll restores its section`,()=>{
+    const h=harness(mode);h.document.activeElement=h.field;
+    const select=h.select,field=h.field;
+    h.scrollport.scrollTop=3880;h.measure();
+    assert.equal(h.review.getBoundingClientRect().top,120);
+    assert.equal(h.root.dataset.epcReviewOpen,'true','natural entry retains the one selector beyond its editor container');
+    assert.equal(h.select.value,'report_review');assert.equal(h.state.ownsScroll,false);
+    assert.equal(h.scrollport.scrollTop,3880);assert.equal(h.document.activeElement,field);
+    h.scrollport.scrollTop=4200;h.measure();
+    assert.equal(h.root.dataset.epcReviewOpen,'true','review remains reachable below its heading');
+    h.scrollport.scrollTop=3500;h.measure();
+    assert.equal(h.root.dataset.epcReviewOpen,'false');assert.equal(h.select.value,'monthly_empty');
+    assert.equal(h.scrollport.scrollTop,3500);assert.equal(h.state.mode,mode);
+    assert.equal(h.select,select);assert.equal(h.field,field);assert.equal(h.field.value,'Unblurred human wording');
+    assert.equal(h.counts().scheduled,0);assert.equal(h.counts().nativeEvents,0);
+});
+
+test('a streamed navigation container binds through existing discovery and later replacement disposes its predecessor',()=>{
+    const classes=()=>{const values=new Set();return {add:value=>values.add(value),remove:value=>values.delete(value),
+        contains:value=>values.has(value),toggle:(value,on)=>on?values.add(value):values.delete(value)};};
+    const element=()=>({isConnected:true,dataset:{},style:{setProperty(){}},classList:classes(),scrollTop:0,
+        children:[],append(child){this.children.push(child)},remove(){},addEventListener(){},removeEventListener(){},
+        querySelectorAll:()=>[],querySelector:()=>null,
+        getBoundingClientRect:()=>({x:0,y:0,top:0,bottom:900,width:1180,height:900})});
+    const root=element(),app=element(),scrollport=element();
+    const field={value:'Pending native wording',selectionStart:5,selectionEnd:11};root.children.push(field);
+    root.closest=selector=>selector.includes('stMainBlockContainer')?app:scrollport;
+    root.dispatchEvent=()=>{};
+    const review={isConnected:true,querySelector:()=>null,setAttribute(){},focus(){},
+        getBoundingClientRect:()=>({top:4000-scrollport.scrollTop,bottom:4060-scrollport.scrollTop,height:60})};
+    app.querySelector=()=>review;
+    let mounted=null;
+    const makeNav=()=>{
+        const nav=element();nav.getBoundingClientRect=()=>({top:64,height:52});
+        nav.select={value:'',disabled:true,closest:()=>nav,replaceChildren(...children){this.children=children;this.value=children[0]?.value||'';}};
+        nav.querySelector=()=>nav.select;return nav;
+    };
+    const document={activeElement:field,hidden:false,documentElement:{clientWidth:1180},body:element(),
+        createElement:element,addEventListener(){},removeEventListener(){},
+        querySelector:selector=>selector.includes('epc_workspace_')?root:selector.includes('monthly_report_navigation')?mounted:null};
+    const observers=[],frames=new Map();let sequence=0;
+    class Observer {
+        constructor(callback){this.callback=callback;this.targets=new Set();observers.push(this);}
+        observe(target){this.targets.add(target)}unobserve(target){this.targets.delete(target)}disconnect(){this.targets.clear()}
+    }
+    const window={innerHeight:900,addEventListener(){},removeEventListener(){},matchMedia:element};
+    const context={document,window,navigator:{},CSS:{escape:value=>value},ENFRAWorkspaceGeometry:geometry,
+        ResizeObserver:Observer,MutationObserver:Observer,CustomEvent:class {},
+        getComputedStyle:()=>({paddingLeft:'0',paddingRight:'0',fontSize:'16px'}),
+        requestAnimationFrame:callback=>{frames.set(++sequence,callback);return sequence},cancelAnimationFrame:id=>frames.delete(id)};
+    vm.createContext(context);vm.runInContext(fs.readFileSync('app/workspace_navigation.js','utf8'),context);
+    const render=vm.runInContext('('+fs.readFileSync('app/workspace_layout.js','utf8').replace('export default function','function')+')',context);
+    const flush=()=>{const pending=[...frames.values()];frames.clear();pending.forEach(callback=>callback())};
+    const cleanup=render({data:{workflow:'monthly',identity:'one',navigationKey:'monthly_report_navigation'}});flush();
+    const observerCount=observers.length;
+    const mutation=observers.find(observer=>observer.targets.has(root));
+    assert.ok(mutation,'the existing root child observer admits streamed content');
+    mounted=makeNav();mutation.callback();flush();
+    const first=mounted;
+    assert.equal(typeof first.select.onchange,'function','late-mounted native selector binds without a business rerun');
+    assert.equal(first.select.disabled,false);assert.equal(first.select.children[0].value,'report_review');
+    assert.ok(observers[0].targets.has(first),'the existing resize observer measures the admitted navigation');
+    mounted=makeNav();first.isConnected=false;mutation.callback();flush();
+    assert.equal(first.select.onchange,null);assert.equal(typeof mounted.select.onchange,'function');
+    assert.equal(observers[0].targets.has(first),false);assert.equal(observers[0].targets.has(mounted),true);
+    assert.equal(root.children[0],field);assert.equal(document.activeElement,field);
+    assert.equal(field.value,'Pending native wording');assert.equal(field.selectionStart,5);assert.equal(field.selectionEnd,11);
+    assert.equal(scrollport.scrollTop,0);assert.equal(root.scrollTop,0);assert.equal(frames.size,0);
+    assert.equal(observers.length,observerCount,'streaming/replacement reuses existing observers');
+    cleanup();assert.equal(mounted.select.onchange,null);assert.ok(observers.every(observer=>observer.targets.size===0));
+});
+
 test('the adapter reuses existing measurement and cleanup with no display submission',()=>{
     const adapter=fs.readFileSync('app/workspace_layout.js','utf8');
     assert.ok(adapter.includes('navigation?.prepare(context,sample,pairs)'));
@@ -115,4 +199,14 @@ test('the adapter reuses existing measurement and cleanup with no display submis
     assert.ok(!/new (MutationObserver|ResizeObserver)|requestAnimationFrame|setStateValue|setTriggerValue|dispatchEvent|location\.|history\./.test(source));
     const css=fs.readFileSync('app/workspace_layout.css','utf8');
     assert.ok(css.includes('width:min(32rem,100%)'));assert.ok(css.includes('min-width:0'));
+});
+
+test('sticky navigation belongs to the direct workspace wrapper rather than its one-row child',()=>{
+    const css=fs.readFileSync('app/workspace_layout.css','utf8');
+    const selector='.epc-workspace > [data-testid="stLayoutWrapper"]:has(> .st-key-monthly_report_navigation)';
+    const rule=css.split(selector+' {')[1]?.split('}')[0];
+    assert.ok(rule,'the retained native snapshot has a short stLayoutWrapper between workspace and keyed navigation');
+    assert.ok(rule.includes('position:sticky') && rule.includes('top:var(--epc-nav-top'));
+    const inner=css.split('.st-key-monthly_report_navigation {')[1]?.split('}')[0];
+    assert.ok(inner && !inner.includes('position:sticky'),'nested stickiness cannot escape the short wrapper');
 });
