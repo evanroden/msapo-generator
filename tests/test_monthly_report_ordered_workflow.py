@@ -8,6 +8,26 @@ from test_monthly_report_ui import monthly, choose_report, ROOT
 from streamlit.testing.v1 import AppTest
 
 
+def test_activity_writing_precedes_sources_and_keeps_one_native_editor(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    editor = next(item for item in app.text_area if item.label == "Activity summary")
+    native_id = editor.id
+    text = "Direct writing remains first when source management opens."
+    editor.set_value(text).run()
+    next(item for item in app.button if item.label == "Manage source files").click().run()
+    assert not app.exception
+    editors = [item for item in app.text_area if item.label == "Activity summary"]
+    assert len(editors) == 1 and editors[0].id == native_id and editors[0].value == text
+    ordered = list(app.main)
+    editor_position = ordered.index(editors[0])
+    uploader = next(item for item in app.get("file_uploader") if item.label == "Add activity files (optional)")
+    manager = next(item for item in app.button if item.label == "Done with source files")
+    assert editor_position < ordered.index(uploader) < ordered.index(manager)
+    next(item for item in app.button if item.label == "Done with source files").click().run()
+    editor = next(item for item in app.text_area if item.label == "Activity summary")
+    assert editor.id == native_id and editor.value == text
+
+
 def test_report_order_all_editors_and_direct_previews(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     next(item for item in app.text_input if item.label == "Prepared by").set_value("Report Author").run()

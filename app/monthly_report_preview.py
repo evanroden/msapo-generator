@@ -45,6 +45,10 @@ _REVIEW_CODES = {
     "follow_up",
     "follow_up_section",
     "library_save",
+    # The private, watermarked editing view must remain available while the
+    # user inspects and corrects a source's site. Finished output still uses
+    # the mandatory source-facility gate in preflight/assemble_docx.
+    "source_facility",
 }
 
 

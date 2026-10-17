@@ -295,7 +295,7 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
     return blocks
 
 
-def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
+def render_drafting(draft, blocks, prefix, field, allowed_keys=None, *, editor_container=None):
     """Return updated draft/blocks; caller still owns snapshot confirmation."""
     _finish_job(draft, prefix)
     _apply_pending_fact_approval(draft, prefix)
@@ -676,5 +676,7 @@ def render_drafting(draft, blocks, prefix, field, allowed_keys=None):
                 st.success(
                     "Checked wording added. Existing pictures and tables were retained."
                 )
-    blocks = edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
+    from contextlib import nullcontext
+    with editor_container if editor_container is not None else nullcontext():
+        blocks = edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys)
     return draft, blocks

@@ -13,6 +13,14 @@ from scripts.workspace_browser_observations import require_synthetic_root
 # The locked Multiselect input adds 4px padding on each side and has no border.
 OBSERVED_INPUT_CONTENT_WIDTH = {"chromium": 358.765625, "playwright-webkit": 355.59375}
 NATIVE_INPUT_HORIZONTAL_PADDING = 8
+REFERENCE_FORM_READY = """input=>{
+  const details=input?.closest('details');
+  if(!input?.isConnected||!details?.open||typeof details.getAnimations!=='function')return false;
+  const content=details.querySelector('[data-testid="stExpanderDetails"]');
+  return !!content&&!content.hasAttribute('inert')&&!details.style.height&&!details.style.overflow&&
+    details.scrollTop===0&&details.clientHeight>=details.scrollHeight-1&&
+    details.getAnimations().every(animation=>animation.playState==='finished'||animation.playState==='idle');
+}"""
 REFERENCE_COLUMNS_CSS = '''<style>
   .st-key-native_training_reference_columns [data-testid="stHorizontalBlock"] {
     display:grid;grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);column-gap:12px;

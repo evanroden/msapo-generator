@@ -63,7 +63,7 @@ def test_saved_source_date_site_correction_on_resumed_report(monkeypatch, tmp_pa
     # existing file manager. Re-entry must not require another upload or save
     # a new shared version merely to show the current source.
     before = app.session_state[prefix + "_draft"]
-    next(w for w in app.button if w.label == "Review source files").click().run()
+    next(w for w in app.button if w.label == "Manage source files").click().run()
     assert not app.exception
     dates = [w for w in app.date_input if w.label == "Source date"]
     assert len(dates) == 1 and dates[0].value == date(2026, 9, 20)

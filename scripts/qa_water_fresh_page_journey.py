@@ -296,7 +296,7 @@ def exercise(browser, name, base, record):
             has=page.get_by_text("Water-treatment files", exact=True))
         uploader.locator('input[type="file"]').set_input_files(
             {"name": NAME, "mimeType": "application/pdf", "buffer": raw})
-        expect(water.get_by_text("Reviewing " + NAME, exact=True)).to_be_visible(timeout=45000)
+        expect(water.get_by_text(NAME, exact=True)).to_be_visible(timeout=45000)
         include = water.get_by_role("button", name="Include page and continue", exact=True)
         expect(include).to_be_enabled()
         include.click()

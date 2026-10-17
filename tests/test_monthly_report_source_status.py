@@ -237,3 +237,42 @@ def test_display_cannot_create_uninitialized_qa_namespace(included, tmp_path):
         assert not entry(draft, content).resolved
         assert testing.generation() is None
     assert set(tmp_path.rglob("*")) == before
+
+
+@pytest.mark.parametrize("name,raw", [
+    ("synthetic-reference.txt", b"Optional synthetic reference note."),
+    ("synthetic-workorders.csv", b"Work order,Description\nDEMO-01,Inspected pump\n"),
+])
+def test_optional_text_and_spreadsheets_are_quiet_without_approving_them(included, name, raw):
+    draft, _, _ = included
+    content, _ = sources.ingest(draft.profile, name, raw)
+    draft = replace(draft, sources=(content.source,))
+    status = entry(draft, content)
+    assert not status.resolved and not status.needs_correction
+    assert status.reason and status.source_id == content.source.id
+    # A real incomplete addition or missing original must still be actionable,
+    # even when the file itself has no image-page review to complete.
+    assert entry(draft, content, pending=True).needs_correction
+    assert entry(draft, content, unavailable=(content.source,)).needs_correction
+
+
+def test_specific_page_and_scope_problems_stay_actionable(included):
+    draft, content, _ = included
+    assert not entry(draft, content).needs_correction
+    for changes in ({"service_date": ""}, {"facility": ""}, {"selected_pages": ()},
+                    {"notices": ("Unreadable original artwork.",)}):
+        changed, current = source_change(draft, content, **changes)
+        status = entry(changed, current)
+        assert not status.resolved and status.needs_correction
+
+
+@pytest.mark.parametrize("classification", ["Reference only", "Utility results"])
+def test_reading_notice_is_actionable_even_for_optional_text(included, classification):
+    draft, _, _ = included
+    content, _ = sources.ingest(draft.profile, "synthetic-notes.txt", b"Synthetic reference note.")
+    source = replace(content.source, classification=classification,
+                     notices=("Some original artwork could not be read.",))
+    content = replace(content, source=source)
+    status = entry(replace(draft, sources=(source,)), content)
+    assert not status.resolved and status.needs_correction
+    assert "reading notices" in status.reason

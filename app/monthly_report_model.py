@@ -433,6 +433,37 @@ def used_asset_references(draft: ReportDraft) -> set[str]:
             | {s.divider_asset for s in included_sections(draft.sections) if s.divider_asset})
 
 
+def used_source_ids(draft: ReportDraft) -> set[str]:
+    """Source/page evidence attached to included content, never a saved route.
+
+    Inspect provenance fields rather than serializing human text. Removing a
+    section, emptying a table or remembering a source destination does not put
+    that source in the generated report.
+    """
+    references = []
+    keys = used_block_keys(draft)
+    for block in draft.blocks:
+        if block.key not in keys or block.source == "Omit":
+            continue
+        tables = [t for t in block.extra_tables if any(c.strip() for row in t.rows for c in row)]
+        if not (block.text.strip() or block.asset_hashes or block.org_nodes or tables
+                or any(c.strip() for row in block.rows for c in row)):
+            continue
+        references.extend(block.references)
+        references.extend(t.reference for t in tables)
+        references.extend(r for p in block.ai_paragraphs if p.text.strip() for r in p.references)
+        references.extend(r for asset, refs in block.asset_provenance
+                          if asset in block.asset_hashes for r in refs)
+    sections = {s.key for s in included_sections(draft.sections)}
+    references.extend(r for item in draft.follow_ups if item.included
+                      and ("issues" if item.category == "issue" else "proposals") in sections
+                      for r in item.references)
+    # Native narrative, table, AI and page references share source:page:stamp.
+    # Routing/history/period receipts are distinct metadata, not evidence.
+    parts = [reference.split(":") for reference in references if isinstance(reference, str)]
+    return {p[0] for p in parts if len(p) == 3 and p[1].isdigit()}
+
+
 def report_filename(draft: ReportDraft, extension: Literal["docx", "pdf"]) -> str:
     title = f"{draft.profile.contract} - {draft.profile.title} {draft.period.label} Monthly Report"
     # A display name is never allowed to create a path or a response-header line.

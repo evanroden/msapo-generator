@@ -1,9 +1,10 @@
 """Conservative display facts for the ordinary source-file manager.
 
-This is a disclosure decision, not an import, review, save or export gate. A
-source stays open whenever the existing records cannot prove that its image
-pages have reached the current report. Originals receive only a bounded stat;
-their bytes are still verified by the existing readers and output paths.
+This is a display decision, not an import, review, save or export gate. Optional
+references stay available without a routine warning; specific problems remain
+actionable. Only current included image pages can earn resolved status.
+Originals receive only a bounded stat; their bytes are still verified by the
+existing readers and output paths.
 """
 
 from collections import defaultdict
@@ -32,6 +33,7 @@ class SourceManagerStatus:
     reason: str
     pages: int
     destinations: tuple[str, ...]
+    needs_correction: bool = True
 
 
 def source_manager_status(draft, contents, *, unavailable=(), pending=False):
@@ -103,9 +105,10 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
                 attached.append(number)
                 destinations.add(destination)
 
-        def result(reason=""):
+        def result(reason="", *, needs_correction=True):
             return SourceManagerStatus(source.id, source.filename, not reason, reason,
-                                       len(attached), tuple(sorted(destinations)))
+                                       len(attached), tuple(sorted(destinations)),
+                                       bool(reason) and needs_correction)
 
         if pending:
             return result("Finish adding the current file selection to the report.")
@@ -126,15 +129,15 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
                 return result("Restore the original source file within its size limit.")
         except (ValueError, OSError):
             return result("Restore the original source file.")
+        if source.notices:
+            return result("Resolve the source reading notices.")
         if source.classification not in CLASSIFICATION_DESTINATIONS:
-            return result("Review this file's use in the report.")
+            return result("Review this file's use in the report.", needs_correction=False)
         numbers = tuple(sources.image_numbers(content))
         if (content.tables or not numbers
                 or set(numbers) != set(range(1, len(source.page_texts) + 1))
                 or len(numbers) != len(set(numbers))):
-            return result("Review the extracted text or spreadsheet content.")
-        if source.notices:
-            return result("Resolve the source reading notices.")
+            return result("Review the extracted text or spreadsheet content.", needs_correction=False)
         when = source_date(source.service_date)
         if when is None or not draft.period.start <= when <= draft.period.end:
             return result("Check the source reporting date.")

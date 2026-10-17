@@ -190,3 +190,36 @@ def test_cold_check_rejects_recorded_shift_missing_grid_scroll_rescue_and_remoun
     with pytest.raises(AssertionError):
         cold_open()(page, cold_qa(), {})
     assert page.releases == 1 and page.handler is None
+
+
+def test_cold_sampler_identifies_tables_among_other_lazy_native_inputs():
+    import ast
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "scripts/qa_water_page_journey.py").read_text())
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "open_water_with_cold_tables")
+    sample = next(ast.literal_eval(n.value) for n in fn.body if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == "sample" for t in n.targets))
+    # First-failure Chromium evidence had five unrelated native text skeletons
+    # plus these three actual held DataFrame editors. Do not wait those away.
+    keys = ["activity_summary_text", "ai_read_pages", "copilot_prompt", "copilot_paste",
+            "work_orders_imported_0", "utility_analysis_text", "thermal_capacity_imported_0",
+            "service_calls_imported_0"]
+    script = r"""
+const names=JSON.parse(process.argv[1]);
+const boxes=names.map(name=>({classList:['st-key-report_guided_scope_edit_'+name+'_stamp'],
+ querySelector:sel=>sel.includes('stSkeleton')?{}:null,
+ compareDocumentPosition:()=>4,getBoundingClientRect:()=>({height:149})}));
+const root={querySelectorAll:()=>boxes,dataset:{epcFullRender:'same'}};
+const button={getBoundingClientRect:()=>({x:16,y:298,width:115,height:44})};
+const pair={closest:()=>root,querySelector:()=>button};
+const document={querySelector:sel=>sel==='.water'?pair:{scrollTop:6357}};
+const Node={DOCUMENT_POSITION_FOLLOWING:4};
+const sample=eval('('+process.argv[2]+')');
+console.log(JSON.stringify(sample({water:'.water',keys:null})));
+"""
+    result = subprocess.run(["node", "-e", script, json.dumps(keys), sample],
+                            capture_output=True, text=True, check=True, timeout=5)
+    observed = json.loads(result.stdout)
+    assert [g["key"] for g in observed["grids"]] == [
+        "st-key-report_guided_scope_edit_" + key + "_stamp" for key in
+        ("work_orders_imported_0", "thermal_capacity_imported_0", "service_calls_imported_0")]
+    assert all(g["loading"] and not g["mounted"] for g in observed["grids"])

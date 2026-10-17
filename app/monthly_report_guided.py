@@ -61,7 +61,7 @@ def _rich_text_editor_key(prefix, block):
             _signature((block.references, _rich_text_scope(prefix))))
 
 
-def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
+def _mark_explicit_rich_text_edit(marker, widget_key, block, scope, *, preserve_clear_undo=False):
     """Capture the exact submission and the version the operator edited.
 
     A string alone cannot distinguish an interrupted edit from a stale edit
@@ -83,10 +83,28 @@ def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
     if not isinstance(text, str):
         # A removed/uninitialized widget is not an intentional empty edit.
         return
-    st.session_state[marker] = {
+    undo = st.session_state.get(marker + "_clear_undo")
+    if not preserve_clear_undo and isinstance(undo, dict) and undo.get("scope") == scope:
+        # The same empty fingerprint can recur after deliberate later edits.
+        # Equality must not resurrect an earlier destructive-action receipt.
+        st.session_state.pop(marker + "_clear_undo", None)
+    previous = st.session_state.get(marker)
+    receipt = {
         "text": text, "baseline": block.fingerprint,
         "result": _edited_rich_text(block, text).fingerprint, "scope": scope,
     }
+    if (isinstance(previous, dict) and previous.get("scope") == scope
+            and previous.get("result") == block.fingerprint
+            and isinstance(previous.get("baseline"), str)):
+        # The shown edit can receive another native action before the full
+        # render commits it. Retain only its exact uncommitted parent, never
+        # permission to replace an unrelated newer canonical revision.
+        receipt["previous_baseline"] = previous["baseline"]
+    st.session_state[marker] = receipt
+
+
+def _rich_text_receipt_matches(receipt, block):
+    return block.fingerprint in (receipt.get("baseline"), receipt.get("previous_baseline"))
 
 
 def _clear_rich_text_for_this_report(marker, widget_key, block, scope, prefix):
@@ -98,8 +116,28 @@ def _clear_rich_text_for_this_report(marker, widget_key, block, scope, prefix):
     """
     if _rich_text_scope(prefix) != scope:
         return  # A stale tab cannot clear a different imported/reset report.
+    prior_text = st.session_state.get(widget_key, block.text)
+    if isinstance(prior_text, str) and prior_text:
+        st.session_state[marker + "_clear_undo"] = {
+            "text": prior_text, "scope": scope, "token": uuid4().hex,
+            "cleared": _edited_rich_text(block, "").fingerprint,
+        }
     st.session_state[widget_key] = ""
+    _mark_explicit_rich_text_edit(marker, widget_key, block, scope, preserve_clear_undo=True)
+    if isinstance(prior_text, str) and prior_text:
+        st.session_state[marker]["clear_previous"] = prior_text
+
+
+def _undo_rich_text_clear(marker, widget_key, block, scope, prefix, token):
+    undo = st.session_state.get(marker + "_clear_undo")
+    if (not isinstance(undo, dict) or undo.get("token") != token
+            or undo.get("scope") != scope or _rich_text_scope(prefix) != scope
+            or undo.get("cleared") != block.fingerprint
+            or st.session_state.get(widget_key) != block.text):
+        return
+    st.session_state[widget_key] = undo["text"]
     _mark_explicit_rich_text_edit(marker, widget_key, block, scope)
+    st.session_state.pop(marker + "_clear_undo", None)
 
 
 def _pending_rich_text_edit(prefix, block):
@@ -108,7 +146,7 @@ def _pending_rich_text_edit(prefix, block):
     receipt = st.session_state.get(key + "_explicitly_edited")
     if (isinstance(receipt, dict)
             and receipt.get("scope") == _rich_text_scope(prefix)
-            and receipt.get("baseline") == block.fingerprint
+            and _rich_text_receipt_matches(receipt, block)
             and isinstance(receipt.get("text"), str)
             and receipt["text"] != block.text
             and receipt["text"] == st.session_state.get(key)):
@@ -119,8 +157,19 @@ def _pending_rich_text_edit(prefix, block):
 def _recover_rich_text_edit(marker, widget_key, block, scope):
     recovered = st.session_state.get(marker + "_recovery")
     if isinstance(recovered, dict) and recovered.get("scope") == scope:
+        if recovered.get("text") == "" and recovered.get("clear_previous"):
+            # Applying a refused Clear is a new, explicit operation against
+            # the current wording. Its Undo must restore what this choice
+            # removes, not the older wording from the refused operation.
+            current_text = st.session_state.get(widget_key, block.text)
+            if isinstance(current_text, str) and current_text:
+                st.session_state[marker + "_clear_undo"] = {
+                    "text": current_text, "scope": scope, "token": uuid4().hex,
+                    "cleared": _edited_rich_text(block, "").fingerprint,
+                }
         st.session_state[widget_key] = recovered["text"]
-        _mark_explicit_rich_text_edit(marker, widget_key, block, scope)
+        _mark_explicit_rich_text_edit(marker, widget_key, block, scope,
+                                     preserve_clear_undo=recovered.get("text") == "" and bool(recovered.get("clear_previous")))
         st.session_state.pop(marker + "_recovery", None)
 
 
@@ -153,6 +202,9 @@ def _render_rich_text_recovery(marker, widget_key, block, scope):
             st.code(recovered["text"], language=None, wrap_lines=True)
         else:
             st.caption("Your interrupted edit cleared this section.")
+            if recovered.get("clear_previous"):
+                st.markdown("**Wording retained from before Clear**")
+                st.code(recovered["clear_previous"], language=None, wrap_lines=True)
         st.button("Apply interrupted edit", key=marker + "_apply_recovery",
                   on_click=_recover_rich_text_edit,
                   args=(marker, widget_key, block, scope))
@@ -468,7 +520,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             st.session_state.pop(changed_marker, None)
             receipt = None
             valid = False
-        submitted = (valid and receipt.get("baseline") == block.fingerprint
+        submitted = (valid and _rich_text_receipt_matches(receipt, block)
                      and receipt["text"] == displayed)
         if valid and not submitted:
             # Do not overwrite newer content or lose the interrupted operator
@@ -480,11 +532,24 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             # permits changing canonical text. A genuine clear has a receipt
             # and therefore remains a valid edit.
             st.session_state[editor_key] = block.text
+        if submitted:
+            # Bind every control below to the wording actually being shown.
+            # Registering against the pre-edit block makes the next Clear or
+            # textarea callback look stale even after this edit is committed.
+            # Keep an exact receipt until the authoritative draft agrees, and
+            # collapse any delivered parent chain to this canonical baseline.
+            receipt = {**receipt, "baseline": block.fingerprint}
+            receipt.pop("previous_baseline", None)
+            st.session_state[changed_marker] = receipt
+            block = _edited_rich_text(block, receipt["text"])
+        else:
+            # A mismatched/old receipt never authorizes a later overwrite.
+            st.session_state.pop(changed_marker, None)
         editor_anchor = "report-editor-" + spec.key
         if draft is not None:
             from html import escape
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
-        text = st.text_area(
+        st.text_area(
             spec.key.replace("_", " ").capitalize(),
             # The native protocol default must agree with the actual draft.
             # A new browser mount initially reads this field; relying solely
@@ -492,7 +557,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             # later unrelated button/fragment request. In pinned 1.61.1 a keyed
             # text area's ID excludes value (only max_chars is whitelisted),
             # so changing this default does not remount or reset current input.
-            value=receipt["text"] if submitted else block.text,
+            value=block.text,
             key=field(editor_key, block.text), height=140,
             on_change=_mark_explicit_rich_text_edit,
             args=(changed_marker, editor_key, block, scope))
@@ -509,15 +574,13 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                 on_click=_clear_rich_text_for_this_report,
                 args=(changed_marker, editor_key, block, scope, prefix),
             )
-        if submitted and text != block.text:
-            block = _edited_rich_text(block, text)
-            # Do not consume yet. Preview/fragment work can interrupt a full
-            # rerun before the edited block reaches the authoritative draft.
-            # Replay only this exact submitted value until that draft agrees.
-        else:
-            # A mismatched/old receipt is never a license to overwrite a
-            # newer draft on the next rerun.
-            st.session_state.pop(changed_marker, None)
+            undo = st.session_state.get(changed_marker + "_clear_undo")
+            if (isinstance(undo, dict) and undo.get("scope") == scope
+                    and undo.get("cleared") == block.fingerprint):
+                st.button("Undo Clear Activity", key=changed_marker + "_undo_clear_" + undo["token"],
+                          help="Restores the wording removed by this Clear in this report only. Later edits are kept.",
+                          on_click=_undo_rich_text_clear,
+                          args=(changed_marker, editor_key, block, scope, prefix, undo["token"]))
         _render_rich_text_recovery(changed_marker, editor_key, block, scope)
         if draft is not None and not block.ai_written:
             from app.monthly_report_period_items_ui import render_period_items
@@ -630,6 +693,10 @@ def client_table_draft(draft):
 
 def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field):
     """Edit one report section without splitting standing and monthly content."""
+    # Reserve the writing position before source tools. Populate it after
+    # source callbacks have been reconciled so one native editor sees the
+    # current result without changing the established mutation order.
+    writing = st.container(key=prefix + "_activity_writing") if section.key == "activity" else None
     if section.key in {"organization", "subcontractors", "training"} and not draft.prepared_by.strip():
         st.info("Enter Prepared by above to view or edit saved contact and team information.")
         return draft, blocks
@@ -702,7 +769,8 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         from app.monthly_report_ai_ui import render_drafting
         # One shared evidence workspace: rendering this once avoids duplicated
         # source/job widget identities when every report section is visible.
-        draft, blocks = render_drafting(draft, blocks, prefix, field, allowed_keys={spec.key for spec in section.blocks})
+        draft, blocks = render_drafting(draft, blocks, prefix, field,
+            allowed_keys={spec.key for spec in section.blocks}, editor_container=writing)
     if section.key != "activity":
         from app.monthly_report_ai_ui import edit_linked_paragraphs
         blocks = edit_linked_paragraphs(draft, blocks, prefix, field, {spec.key for spec in section.blocks})
@@ -775,8 +843,9 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             from app.monthly_report_visual_ui import edit_contacts
             block = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
         else:
-            block = _edit_content(spec, block, state, prefix, assets, field, draft,
-                                  manage_saved_pictures=not page_managed)
+            with writing if writing is not None and spec.key == "activity_summary" else nullcontext():
+                block = _edit_content(spec, block, state, prefix, assets, field, draft,
+                                      manage_saved_pictures=not page_managed)
         if spec.key in MONTHLY_EDIT_KEYS:
             block = _review_carried_update(block, period, prefix)
         blocks[spec.key] = block
@@ -840,6 +909,20 @@ def _render_report_details_action(candidate, existing, period, browser_token):
             st.rerun()
         except (ValueError, OSError) as exc:
             st.error("Report details could not be saved: " + str(exc))
+
+
+def _current_source_detail(source, contents):
+    """Use this report's delivered source changes before drawing its form.
+
+    Page actions commit evidence before requesting a full rerun; the report
+    snapshot may still be one render behind. An ambiguous or different
+    original is never substituted, and the form keeps its revision guard.
+    """
+    matches = tuple(content.source for content in contents if content.source.id == source.id)
+    if (len(matches) == 1 and matches[0].sha256 == source.sha256
+            and matches[0].suffix == source.suffix):
+        return matches[0]
+    return source
 
 
 def render_guided_workflow(browser_token, browser_timezone, field, move):
@@ -1056,18 +1139,23 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     source for source in missing if source.id != selected_missing.id)
                 st.session_state[draft_key] = draft
                 st.rerun()
-    if st.session_state.get(prefix + "_source_details_on_resume") and draft.sources:
+    if draft.sources:
         from app.monthly_report_source_details import detail_problems
         from app.monthly_report_upload_ui import render_source_details
+        from app.monthly_report_model import used_source_ids
         # A resumed report needs an exact-item correction path, not every
-        # source form expanded above the report. Valid/reference-only sources
-        # remain available through Manage source files. Keep each unresolved
+        # source form expanded above the report. Valid or unused reference-only
+        # sources remain available through Manage source files. Keep each unresolved
         # source's anchor outside its quiet disclosure so review links land on
         # a visible, named action. Opening it does not approve or change facts.
         corrections = {}
+        included_sources = used_source_ids(draft)
+        resumed = st.session_state.get(prefix + "_source_details_on_resume")
         for source in draft.sources:
-            problems = detail_problems(source, profile, period)
-            if problems:
+            source = _current_source_detail(source, st.session_state.get(prefix + "_evidence", ()))
+            in_report = source.id in included_sources
+            problems = detail_problems(source, profile, period, in_report=in_report)
+            if problems and (resumed or in_report):
                 corrections[source.id] = render_source_details(
                     source, profile, prefix + "_resumed_" + source.id, field,
                     compact_problems=problems)

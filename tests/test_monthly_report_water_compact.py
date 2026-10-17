@@ -1,6 +1,7 @@
 """Previously included Water pages stay compact; new or changed ones remain visible."""
 
 from dataclasses import replace
+from datetime import date
 from io import BytesIO
 
 import fitz
@@ -28,7 +29,8 @@ def test_included_water_page_has_compact_status_and_explicit_edit(monkeypatch, t
     block = app.session_state["test_blocks"]["water_reports"]
     before = block.fingerprint
     assert len(block.asset_hashes) == 1
-    assert any("1 page included in this draft" in item.value for item in app.get("caption"))
+    assert sum(item.value == "**Report pages (1)**" for item in app.markdown) == 1
+    assert not any("included in this draft" in item.value for item in app.get("caption"))
     assert not any(w.label == "Page to review" for w in app.selectbox)
     assert not any(w.label == "Add reviewed pages" for w in app.button)
     assert button(app, "Edit pages")
@@ -44,6 +46,35 @@ def test_included_water_page_has_compact_status_and_explicit_edit(monkeypatch, t
     assert not any(w.label == "Page to review" for w in app.selectbox)
     assert app.session_state["test_blocks"]["water_reports"].fingerprint == before
     assert app.session_state["test_apply_count"] == 1
+
+
+def test_resolved_water_summary_hides_file_forms_until_its_one_editor_reopens(monkeypatch, tmp_path):
+    app = water_app(monkeypatch, tmp_path, 1)
+    next(w for w in app.date_input if w.label == "Source date").set_value(date(2026, 9, 16))
+    next(w for w in app.selectbox if w.label == "Source facility").set_value("north")
+    button(app, "Use these source details").click().run()
+    button(app, "Include page and continue").click().run()
+    app.run()
+    before = app.session_state["test_blocks"]["water_reports"]
+    source = app.session_state["test_sources"][0]
+    original = sources.source_bytes(synthetic_profiles()[0], source)
+    assert not any(w.label == "Source date" for w in app.date_input)
+    assert not any(w.label == "File details (optional)" for w in app.expander)
+    assert not any("Reviewing " in item.value for item in app.get("caption"))
+    assert sum(item.value == source.filename for item in app.get("caption")) == 1
+
+    button(app, "Edit pages").click().run()
+    assert next(w for w in app.date_input if w.label == "Source date").value == date(2026, 9, 16)
+    assert next(w for w in app.selectbox if w.label == "Source facility").value == "north"
+    assert any(w.label == "File details (optional)" for w in app.expander)
+    assert any(w.label == "Page caption" for w in app.text_input)
+    button(app, "Done reviewing pages").click().run()
+    assert not app.exception
+    assert app.session_state["test_blocks"]["water_reports"] == before
+    assert app.session_state["test_sources"][0] == source
+    assert sources.source_bytes(synthetic_profiles()[0], source) == original
+    assert not any(w.label == "Source date" for w in app.date_input)
+    assert button(app, "Edit pages")
 
 
 def test_unreviewed_water_page_remains_visible_until_final_decision(monkeypatch, tmp_path):
