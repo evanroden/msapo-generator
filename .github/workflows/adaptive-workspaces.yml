@@ -21,6 +21,9 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_report_row_cards.py'
+      - 'scripts/workspace_row_observations.py'
+      - 'tests/test_report_row_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
       - 'scripts/qa_fresh_native_errors.js'
       - 'scripts/qa_fresh_native_error_checks.py'
@@ -124,6 +127,9 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_report_row_cards.py'
+      - 'scripts/workspace_row_observations.py'
+      - 'tests/test_report_row_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
       - 'scripts/qa_fresh_native_errors.js'
       - 'scripts/qa_fresh_native_error_checks.py'
@@ -328,6 +334,11 @@ jobs:
         env:
           EPC_MONTHLY_WATER_TASK: '1'
         run: python scripts/qa_water_page_journey.py
+      - name: Native proposal and onsite row editing with actual output
+        if: ${{ !cancelled() }}
+        env:
+          EPC_MONTHLY_ROW_TASK: '1'
+        run: python scripts/qa_report_row_cards.py
       - name: Fresh ordinary Water page review from empty omitted state
         if: ${{ !cancelled() }}
         run: python scripts/qa_water_fresh_page_journey.py
@@ -353,6 +364,7 @@ jobs:
             test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
             test-artifacts/water-page-journey/
+            test-artifacts/report-row-cards/
             test-artifacts/water-fresh-page-journey/
           retention-days: 7
           if-no-files-found: warn

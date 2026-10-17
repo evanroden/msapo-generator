@@ -477,7 +477,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         if notes != block.text:
             source = "Omit" if retained_mbcx and block.source == "Omit" else "This month"
             block = replace(block, source=source, text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
-    if block.extra_tables and edit_tables:
+    row_cards = spec.key in {"proposals", "service_calls"} and (spec.type in ("table", "work_order_grid") or block.extra_tables)
+    if row_cards:
+        from app.monthly_report_row_cards_ui import edit_row_cards
+        block = edit_row_cards(spec, block, prefix, field)
+    if block.extra_tables and edit_tables and not row_cards:
         from app.monthly_report_editor import _cell_text
         tables = []
         for n, table in enumerate(block.extra_tables):
@@ -589,7 +593,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             resolved = render_period_items(block, draft.period, draft.sources, prefix,
                 section_title=section_title, editor_anchor=editor_anchor)
             block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
-    elif edit_tables and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
+    elif edit_tables and not row_cards and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         if optional_table:
             seed = empty_text_seed(seed, spec)

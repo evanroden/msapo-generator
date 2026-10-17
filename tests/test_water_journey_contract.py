@@ -92,12 +92,13 @@ def cold_open():
 
 class ColdPage:
     """Model only the harness contract; real browser coverage remains in CI."""
-    def __init__(self, *, prior_url="about:blank", shift=0, count=3, no_request=False,
-                 scroll_shift=0, render_changed=False):
+    def __init__(self, *, prior_url="about:blank", shift=0, count=2, no_request=False,
+                 scroll_shift=0, render_changed=False, cards=True, card_shift=0):
         from types import SimpleNamespace
         self.url, self.shift, self.count = prior_url, shift, count
         self.scroll_shift, self.render_changed = scroll_shift, render_changed
         self.no_request = no_request
+        self.cards, self.card_shift = cards, card_shift
         self.saved = {"working_fingerprint": "from UI", "durable_fingerprint": "from UI"}
         self.navigations = self.releases = 0
         self.handler = None
@@ -142,12 +143,13 @@ class ColdPage:
                            "width": 114, "height": 44},
                 "scrollTop": 6484 + (self.scroll_shift if mounted else 0),
                 "fullRender": "changed" if mounted and self.render_changed else "same render",
+                "cards": [{"key": "onsite-card", "height": 160 + (self.card_shift if mounted else 0)}] if self.cards else [],
                 "grids": [{"key": "st-key-grid" + str(i), "height": 184 - 35 * i,
                            "loading": not mounted, "mounted": mounted} for i in range(self.count)]}
 
     def wait_for_function(self, script, *, arg, timeout):
         assert self.releases == 1 and timeout == 20000
-        assert arg == ["st-key-grid" + str(i) for i in range(3)]
+        assert arg == ["st-key-grid" + str(i) for i in range(2)]
 
 
 def cold_qa():
@@ -162,7 +164,7 @@ def test_cold_check_starts_unused_and_requires_the_actual_module_before_release(
     assert page.navigations == page.releases == 1 and page.handler is None
     proof = observations["cold_table_layout"]
     assert proof["held_module_requests"] == 1
-    assert len(proof["before"]["grids"]) == len(proof["after"]["grids"]) == 3
+    assert len(proof["before"]["grids"]) == len(proof["after"]["grids"]) == 2
     assert all(g["loading"] for g in proof["before"]["grids"])
     assert all(g["mounted"] for g in proof["after"]["grids"])
     assert proof["before"]["button"] == proof["after"]["button"]
@@ -183,7 +185,7 @@ def test_missing_request_is_not_replaced_with_a_warm_mount_or_timeout_extension(
 
 
 @pytest.mark.parametrize("options", [
-    {"shift": 327}, {"count": 2}, {"scroll_shift": 327}, {"render_changed": True},
+    {"shift": 327}, {"count": 1}, {"scroll_shift": 327}, {"render_changed": True}, {"cards": False}, {"card_shift": 50},
 ])
 def test_cold_check_rejects_recorded_shift_missing_grid_scroll_rescue_and_remount(options):
     page = ColdPage(**options)
@@ -199,7 +201,7 @@ def test_cold_sampler_identifies_tables_among_other_lazy_native_inputs():
     sample = next(ast.literal_eval(n.value) for n in fn.body if isinstance(n, ast.Assign)
                   and any(isinstance(t, ast.Name) and t.id == "sample" for t in n.targets))
     # First-failure Chromium evidence had five unrelated native text skeletons
-    # plus these three actual held DataFrame editors. Do not wait those away.
+    # plus actual DataFrame editors. The service table is now native row cards.
     keys = ["activity_summary_text", "ai_read_pages", "copilot_prompt", "copilot_paste",
             "work_orders_imported_0", "utility_analysis_text", "thermal_capacity_imported_0",
             "service_calls_imported_0"]
@@ -208,7 +210,7 @@ const names=JSON.parse(process.argv[1]);
 const boxes=names.map(name=>({classList:['st-key-report_guided_scope_edit_'+name+'_stamp'],
  querySelector:sel=>sel.includes('stSkeleton')?{}:null,
  compareDocumentPosition:()=>4,getBoundingClientRect:()=>({height:149})}));
-const root={querySelectorAll:()=>boxes,dataset:{epcFullRender:'same'}};
+const root={querySelectorAll:sel=>sel.includes('stElementContainer')?boxes:[],dataset:{epcFullRender:'same'}};
 const button={getBoundingClientRect:()=>({x:16,y:298,width:115,height:44})};
 const pair={closest:()=>root,querySelector:()=>button};
 const document={querySelector:sel=>sel==='.water'?pair:{scrollTop:6357}};
@@ -221,5 +223,5 @@ console.log(JSON.stringify(sample({water:'.water',keys:null})));
     observed = json.loads(result.stdout)
     assert [g["key"] for g in observed["grids"]] == [
         "st-key-report_guided_scope_edit_" + key + "_stamp" for key in
-        ("work_orders_imported_0", "thermal_capacity_imported_0", "service_calls_imported_0")]
+        ("work_orders_imported_0", "thermal_capacity_imported_0")]
     assert all(g["loading"] and not g["mounted"] for g in observed["grids"])
