@@ -22,6 +22,16 @@ globalThis.ENFRASourceReviewNavigation = {
         }
         function click(event) {
             if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+            const button=event.target?.closest?.('button');
+            const warning=button?.closest?.('[class*="st-key-monthly_source_warning_"]')?.querySelector?.('.enfra-source-warning');
+            const reviewTarget=app.querySelector('#report-review');
+            if(warning&&reviewTarget) {
+                // Let the native callback select/open the source and commit
+                // any delivered edits. Only remember presentation context.
+                state.sourceReviewReturn={source:warning.dataset.sourceId,link:button,
+                    linkTop:button.getBoundingClientRect().top,reviewTop:reviewTarget.getBoundingClientRect().top};
+                returnLinks();return;
+            }
             const link = event.target?.closest?.('a');
             if (!link || !app.contains(link)) return;
             if (link.classList.contains('enfra-source-review-return')) {
@@ -67,6 +77,18 @@ globalThis.ENFRASourceReviewNavigation = {
         // A valid correction can remove its warning and form. The keyed return
         // location stays mounted; reveal it again after that ordinary rerun.
         returnLinks();
+        const request=app.querySelector('.enfra-source-review-target');
+        if(request?.dataset?.token&&request.dataset.token!==state.sourceReviewFocusToken) {
+            const marker=document.getElementById('source-details-'+request.dataset.sourceId);
+            const boundary=marker?.closest('[class*="st-key-source_detail_editor_"]');
+            const labels=request.dataset.field==='site'?['Source sites','Source facility']:['Source date'];
+            const field=labels.map(label=>boundary?.querySelector('input[aria-label="'+label+'"]')).find(Boolean);
+            if(field&&!field.disabled) {
+                state.sourceReviewFocusToken=request.dataset.token;
+                boundary.querySelectorAll('details').forEach(details=>{details.open=true;});
+                later(()=>{if(field.isConnected){field.focus({preventScroll:true});field.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});}},boundary);
+            }
+        }
         return () => {disposed=true;if(frame!==null)cancelAnimationFrame(frame);app.removeEventListener('click',click);};
     },
 };

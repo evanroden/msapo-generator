@@ -35,7 +35,7 @@ def test_structured_source_review_decisions_survive_metadata_owner_and_reload(mo
     stream.name = "synthetic-owner-order.pdf"
     uploader = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
-        [stream] if label == "Add activity files (optional)" else uploader(label, *args, **kwargs))
+        [stream] if label == "Add source files" else uploader(label, *args, **kwargs))
     app.run()
     assert not app.exception
     select(app, "Classification").set_value("Vendor service").run()

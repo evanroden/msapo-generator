@@ -733,7 +733,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     draft = replace(draft, blocks=tuple(blocks.values()))
     profile, period = draft.profile, draft.period
     destination = {"activity": "activity_summary", "capital": "capital_renewal", "proposals": "proposals"}.get(section.key)
-    if destination:
+    if destination and section.key != "activity":
         from app.monthly_report_upload_ui import render_structured_uploads
         from app.monthly_report_structured_uploads import COLUMNS as STANDARD_COLUMNS
         native_spec = next((b for s in draft.sections for b in s.blocks if b.key == destination), None)
@@ -771,7 +771,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         # source and caption. The manager keeps the Activity destination and
         # its atomic, repeat-safe preparation path.
         draft, blocks = render_guided_source_manager(
-            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources)
+            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
         from app.monthly_report_ai_ui import render_drafting
         # One shared evidence workspace: rendering this once avoids duplicated
         # source/job widget identities when every report section is visible.
@@ -934,6 +934,7 @@ def _current_source_detail(source, contents):
 def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.session_state["_monthly_source_detail_anchors"] = set()
     st.session_state["_monthly_source_detail_forms"] = {}
+    st.session_state["_monthly_source_details_managed"] = True
     last_contract, last_profile = remembered_report_preferences(browser_token)
     recovery_available = active_work.enabled(browser_token)
     with st.expander("Help"):
@@ -1145,53 +1146,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     source for source in missing if source.id != selected_missing.id)
                 st.session_state[draft_key] = draft
                 st.rerun()
-    # Source metadata can appear after the first upload. Keep its subtree at
-    # one fixed root position so native section controls retain their ancestry.
-    with st.container(key=prefix + "_source_correction_area"):
-        if draft.sources:
-            from app.monthly_report_source_details import detail_problems
-            from app.monthly_report_upload_ui import render_source_details
-            from app.monthly_report_model import used_source_ids
-            # A resumed report needs an exact-item correction path, not every
-            # source form expanded above the report. Valid or unused reference-only
-            # sources remain available through Manage source files. Keep each unresolved
-            # source's anchor outside its quiet disclosure so review links land on
-            # a visible, named action. Opening it does not approve or change facts.
-            corrections = {}
-            included_sources = used_source_ids(draft)
-            resumed = st.session_state.get(prefix + "_source_details_on_resume")
-            for source in draft.sources:
-                source = _current_source_detail(source, st.session_state.get(prefix + "_evidence", ()))
-                in_report = source.id in included_sources
-                problems = detail_problems(source, profile, period, in_report=in_report, draft=draft)
-                if in_report and not source.facility:
-                    from app.monthly_report_source_scope import included_scope_valid
-                    if not included_scope_valid(draft, source) and not any("scope" in p or "site" in p for p in problems):
-                        problems = (*problems, "source scope needs review")
-                # Keep one quiet return location even when this exact correction
-                # removes its warning/form. The display adapter reveals it only
-                # during a deliberate trip from final review.
-                with st.container(key="monthly_source_correction_" + source.id):
-                    from html import escape
-                    st.markdown('<a class="enfra-source-review-return" data-source-id="' +
-                                escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
-                                unsafe_allow_html=True)
-                    if problems and (resumed or in_report):
-                        from app.monthly_report_source_scope import artwork_scope_keys
-                        corrections[source.id] = render_source_details(
-                            source, profile, prefix + "_resumed_" + source.id, field,
-                            compact_problems=problems, artwork_keys=artwork_scope_keys(draft, source.id))
-            if any(corrections.get(source.id, source) != source for source in draft.sources):
-                draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
-                st.session_state[prefix + "_evidence"] = tuple(
-                    replace(content, source=corrections.get(content.source.id, content.source))
-                    for content in st.session_state.get(prefix + "_evidence", ()))
-                # A metadata correction does not restore missing original bytes.
-                # Keep the corrected record in that retained set as well, or the
-                # next source renderer would restore its pre-correction metadata.
-                st.session_state[prefix + "_unavailable_sources"] = tuple(
-                    corrections.get(source.id, source)
-                    for source in st.session_state.get(prefix + "_unavailable_sources", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
@@ -1254,6 +1208,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                    "[Enter Prepared by](#report-prepared-by) above to view them.")
                     else:
                         render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
+    if not any(section.key == "activity" for section in draft.sections):
+        from app.monthly_report_source_manager_ui import render_guided_source_manager
+        draft, blocks = render_guided_source_manager(
+            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
     draft = complete_guided_sections(replace(draft, blocks=tuple(blocks.values())))
     footer = blocks.get("footer_text")
@@ -1432,7 +1390,20 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
         for check in checks:
-            (st.error if check.blocking else st.warning)(review_message(check, draft))
+            source = next((source for source in draft.sources if source.id == check.block_key), None)
+            if source is not None and check.code.startswith("source_"):
+                from html import escape
+                from app.monthly_report_source_manager_ui import open_source_review
+                target = "site" if check.code == "source_facility" else "date"
+                with st.container(key="monthly_source_warning_" + source.id + "_" + check.code):
+                    st.markdown('<span class="enfra-source-warning" data-source-id="' +
+                        escape(source.id, quote=True) + '"></span>', unsafe_allow_html=True)
+                    (st.error if check.blocking else st.warning)(check.message)
+                    st.button("Correct site" if target == "site" else "Correct date",
+                        key=prefix + "_correct_source_" + source.id + "_" + check.code,
+                        on_click=open_source_review, args=(prefix, source.id, target))
+            else:
+                (st.error if check.blocking else st.warning)(review_message(check, draft))
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)

@@ -14,7 +14,7 @@ function fixture() {
         const back={dataset:{sourceId:id},hidden:true,classList:{contains:()=>true},closest(){return this;}};
         entries[id]={outer,details,field,boundary,marker,link,back};
     }
-    const app={listeners:new Map(),contains:()=>true,querySelector:()=>review,querySelectorAll:()=>Object.values(entries).map(v=>v.back),addEventListener(k,fn){this.listeners.set(k,fn);},removeEventListener(k,fn){if(this.listeners.get(k)===fn)this.listeners.delete(k);}};
+    const app={request:null,listeners:new Map(),contains:()=>true,querySelector:s=>s==='#report-review'?review:app.request,querySelectorAll:()=>Object.values(entries).map(v=>v.back),addEventListener(k,fn){this.listeners.set(k,fn);},removeEventListener(k,fn){if(this.listeners.get(k)===fn)this.listeners.delete(k);}};
     const context={document:{getElementById:id=>entries[id.replace('source-details-','')]?.marker,scrollingElement:scroll},getComputedStyle:()=>({overflowY:'auto'}),Promise,requestAnimationFrame:fn=>{frames.set(++seq,fn);return seq;},cancelAnimationFrame:id=>frames.delete(id)};
     vm.runInNewContext(fs.readFileSync('app/monthly_report_source_navigation.js','utf8'),context);
     const state={};const install=()=>context.ENFRASourceReviewNavigation.install(app,state);
@@ -54,4 +54,21 @@ test('modifier clicks and stale navigation callbacks do not disturb the editor',
     const h=fixture(),cleanup=h.install(),a=h.entries.first;
     assert.equal(h.click(a.link,{ctrlKey:true}).prevented,false);assert.equal(a.details.open,false);
     h.click(a.link);cleanup();await h.flush();assert.equal(a.field.focuses,0);
+});
+
+test('native warning action retains its callback and a new target focuses once after rerun',async()=>{
+    const h=fixture(),a=h.entries.first;let cleanup=h.install();
+    const warning={dataset:{sourceId:'first'}};
+    const wrapper={querySelector:()=>warning};
+    const button={isConnected:true,parentElement:h.scroll,getBoundingClientRect:()=>({top:420}),closest:()=>wrapper,setAttribute(){},focus(){this.focused=true;}};
+    const target={closest:s=>s==='button'?button:null};
+    assert.equal(h.click(target).prevented,false,'the native selection/open callback must still run');
+    assert.equal(a.field.focuses,0);assert.equal(h.state.sourceReviewReturn.source,'first');
+    cleanup();h.app.request={dataset:{sourceId:'first',field:'site',token:'new-native-action'}};
+    cleanup=h.install();await h.flush();
+    assert.equal(a.field.focuses,1);assert.equal(a.details.open,true);assert.equal(a.back.hidden,false);
+    cleanup();cleanup=h.install();await h.flush();
+    assert.equal(a.field.focuses,1,'an ordinary rerender cannot repeatedly steal editor focus');
+    h.click(a.back);assert.equal(button.focused,true);assert.equal(h.state.sourceReviewReturn,null);
+    cleanup();
 });
