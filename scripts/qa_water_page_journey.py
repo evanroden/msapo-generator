@@ -174,6 +174,7 @@ def open_water_with_cold_tables(page, qa, observations):
       const button=pair.querySelector('.epc-compact-open');
       const boxes=wanted.keys? wanted.keys.map(key=>root.querySelector('.'+CSS.escape(key))) :
         [...root.querySelectorAll('[data-testid="stElementContainer"]')].filter(node=>
+          [...node.classList].some(key=>/^st-key-report_guided_.+_edit_(work_orders|thermal_capacity|service_calls)_imported_0_/.test(key)) &&
           node.querySelector(':scope > [data-testid="stSkeleton"]') &&
           (node.compareDocumentPosition(pair)&Node.DOCUMENT_POSITION_FOLLOWING) &&
           node.getBoundingClientRect().height>0);
