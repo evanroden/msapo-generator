@@ -1106,7 +1106,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         from app.monthly_report_directory_ui import _resume_contacts
         draft = apply_contacts(draft, updated_contacts)
         _resume_contacts(draft, prefix)
-    save_status = st.empty()
+    from app.monthly_report_save_status import SaveStatus
+    save_status = SaveStatus(prefix, recovery_available=recovery_available)
     from app.monthly_report_asset_review import refresh_asset_source_context
     from app.monthly_report_section_preview_ui import render_section_preview
     blocks = {b.key: refresh_asset_source_context(b, draft.sources) for b in draft.blocks}
@@ -1143,44 +1144,48 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     source for source in missing if source.id != selected_missing.id)
                 st.session_state[draft_key] = draft
                 st.rerun()
-    if draft.sources:
-        from app.monthly_report_source_details import detail_problems
-        from app.monthly_report_upload_ui import render_source_details
-        from app.monthly_report_model import used_source_ids
-        # A resumed report needs an exact-item correction path, not every
-        # source form expanded above the report. Valid or unused reference-only
-        # sources remain available through Manage source files. Keep each unresolved
-        # source's anchor outside its quiet disclosure so review links land on
-        # a visible, named action. Opening it does not approve or change facts.
-        corrections = {}
-        included_sources = used_source_ids(draft)
-        resumed = st.session_state.get(prefix + "_source_details_on_resume")
-        for source in draft.sources:
-            source = _current_source_detail(source, st.session_state.get(prefix + "_evidence", ()))
-            in_report = source.id in included_sources
-            problems = detail_problems(source, profile, period, in_report=in_report, draft=draft)
-            if in_report and not source.facility:
-                from app.monthly_report_source_scope import included_scope_valid
-                if not included_scope_valid(draft, source) and not any("scope" in p or "site" in p for p in problems):
-                    problems = (*problems, "source scope needs review")
-            # Keep one quiet return location even when this exact correction
-            # removes its warning/form. The display adapter reveals it only
-            # during a deliberate trip from final review.
-            with st.container(key="monthly_source_correction_" + source.id):
-                from html import escape
-                st.markdown('<a class="enfra-source-review-return" data-source-id="' +
-                            escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
-                            unsafe_allow_html=True)
-                if problems and (resumed or in_report):
-                    from app.monthly_report_source_scope import artwork_scope_keys
-                    corrections[source.id] = render_source_details(
-                        source, profile, prefix + "_resumed_" + source.id, field,
-                        compact_problems=problems, artwork_keys=artwork_scope_keys(draft, source.id))
-        if any(corrections.get(source.id, source) != source for source in draft.sources):
-            draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
-            st.session_state[prefix + "_evidence"] = tuple(
-                replace(content, source=corrections.get(content.source.id, content.source))
-                for content in st.session_state.get(prefix + "_evidence", ()))
+    # Source metadata can appear after the first upload. Keep its subtree at
+    # one fixed root position so native section controls below it retain their
+    # delta paths while that first source is committed and reviewed.
+    with st.container(key=prefix + "_source_metadata_corrections"):
+        if draft.sources:
+            from app.monthly_report_source_details import detail_problems
+            from app.monthly_report_upload_ui import render_source_details
+            from app.monthly_report_model import used_source_ids
+            # A resumed report needs an exact-item correction path, not every
+            # source form expanded above the report. Valid or unused reference-only
+            # sources remain available through Manage source files. Keep each unresolved
+            # source's anchor outside its quiet disclosure so review links land on
+            # a visible, named action. Opening it does not approve or change facts.
+            corrections = {}
+            included_sources = used_source_ids(draft)
+            resumed = st.session_state.get(prefix + "_source_details_on_resume")
+            for source in draft.sources:
+                source = _current_source_detail(source, st.session_state.get(prefix + "_evidence", ()))
+                in_report = source.id in included_sources
+                problems = detail_problems(source, profile, period, in_report=in_report, draft=draft)
+                if in_report and not source.facility:
+                    from app.monthly_report_source_scope import included_scope_valid
+                    if not included_scope_valid(draft, source) and not any("scope" in p or "site" in p for p in problems):
+                        problems = (*problems, "source scope needs review")
+                # Keep one quiet return location even when this exact correction
+                # removes its warning/form. The display adapter reveals it only
+                # during a deliberate trip from final review.
+                with st.container(key="monthly_source_correction_" + source.id):
+                    from html import escape
+                    st.markdown('<a class="enfra-source-review-return" data-source-id="' +
+                                escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
+                                unsafe_allow_html=True)
+                    if problems and (resumed or in_report):
+                        from app.monthly_report_source_scope import artwork_scope_keys
+                        corrections[source.id] = render_source_details(
+                            source, profile, prefix + "_resumed_" + source.id, field,
+                            compact_problems=problems, artwork_keys=artwork_scope_keys(draft, source.id))
+            if any(corrections.get(source.id, source) != source for source in draft.sources):
+                draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
+                st.session_state[prefix + "_evidence"] = tuple(
+                    replace(content, source=corrections.get(content.source.id, content.source))
+                    for content in st.session_state.get(prefix + "_evidence", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
@@ -1251,12 +1256,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_issues import apply_issue_action
     draft = apply_issue_action(draft, prefix)
     st.session_state[draft_key] = draft
-    if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
-        save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
-    elif prior_draft:
-        save_status.info(f"Starting from the saved {prior_draft.period.label} report. Monthly work and attachments start fresh; site information carries forward.")
-    else:
-        save_status.info("Your selected design is ready. Changes are kept for this browser when automatic recovery is available.")
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
     if conflict:
@@ -1354,7 +1353,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if recovery_available and snapshot and snapshot.draft.fingerprint == draft.fingerprint:
             # The complete current version already exists in immutable history;
             # no new browser journal is necessary after Generate/Save.
-            save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
+            save_status.shared_saved(snapshot.revision)
         elif recovery_available:
             try:
                 previous_sequence = st.session_state.get(prefix + "_active_sequence", 0)
@@ -1366,30 +1365,34 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[prefix + "_active_sequence"] = recovered.revision
                 st.session_state[prefix + "_active_generation"] = recovered.generation
                 st.session_state[prefix + "_active_updated_at"] = recovered.updated_at
-                save_status.success("Current edits kept for this browser. Completed report versions remain unchanged.")
+                save_status.browser_saved(recovered.updated_at)
                 if recovered.revision != previous_sequence:
                     record_report_preferences(browser_token, contract, selected)
                     if prepared.strip():
                         record_report_preparer(browser_token, contract, selected, prepared)
             except active_work.ActiveWorkConflict:
-                with save_status.container():
-                    st.error("Another tab or a new working copy has newer changes. "
-                             "These edits are still on this page but were not kept for recovery.")
-                    from app.monthly_report_active_conflict_ui import render_browser_conflict
-                    render_browser_conflict(draft, browser_token, prefix, assets,
-                                            st.session_state[prefix + "_revision"])
+                save_status.failed()
+                st.error("Another tab or a new working copy has newer changes. "
+                         "These edits are still on this page but were not kept for recovery.")
+                from app.monthly_report_active_conflict_ui import render_browser_conflict
+                render_browser_conflict(draft, browser_token, prefix, assets,
+                                        st.session_state[prefix + "_revision"])
             except (library.LibraryError, OSError):
-                save_status.error("Automatic recovery could not keep these edits. "
+                save_status.failed()
+                st.error("Automatic recovery could not keep these edits. "
                                   "Your current text remains on this page, but is not saved for a refresh. "
-                                  "Try another edit to retry, or save a report version before leaving.")
+                                  "Retry the browser save, or save a shared report version before leaving.")
+                # Native button activation starts one full render, whose
+                # persistence attempt above retries the current draft once.
+                st.button("Retry browser save", key=prefix + "_retry_browser_save")
         else:
             if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
                 # A completed/saved version is still saved, even when cookies
                 # prevent separately retaining unfinished browser changes.
-                save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
+                save_status.shared_saved(snapshot.revision)
                 st.caption("Automatic recovery for new edits is unavailable in this browser.")
             else:
-                save_status.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
+                st.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
         if package and package.fingerprint != draft.fingerprint:
             st.session_state.pop(prefix + "_package", None)
             package = None
@@ -1478,7 +1481,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 record_report_preferences(browser_token, contract, selected)
                 record_report_preparer(browser_token, contract, selected, prepared)
                 record_shared_save(prefix, package, saved=saved)
-                save_status.success(f"Saved · version {saved.revision} · {period.label}")
+                save_status.shared_saved(saved.revision)
             except (ValueError, OSError) as exc:
                 record_shared_save(prefix, package, error=str(exc))
         if package:

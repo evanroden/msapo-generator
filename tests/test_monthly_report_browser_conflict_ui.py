@@ -113,11 +113,14 @@ def test_recovery_choice_write_failure_keeps_both_copies_and_an_actionable_error
     assert any('This page could not be kept for recovery' in item.value for item in first.error)
     assert _value(first, 'Activity summary').value == 'Synthetic wording still on the first page.'
     assert active.load(TOKEN, RRH_CONTRACT, 'synthetic-guided', PERIOD) == newer
-    assert not any('Current edits kept for this browser' in item.value for item in first.success)
+    assert not any('data-save-state="saved"' in item.value for item in first.markdown)
     monkeypatch.setattr(active, 'save', original)
     _button(first, 'Keep this page for recovery').click().run()
     assert not first.exception
-    assert any('Current edits kept for this browser' in item.value for item in first.success)
+    assert any('data-save-state="saved"' in item.value and 'Last saved' in item.value for item in first.markdown)
+    assert active.load(TOKEN, RRH_CONTRACT, 'synthetic-guided', PERIOD).draft == next(
+        value for key, value in first.session_state.filtered_state.items()
+        if key.endswith('_draft') and hasattr(value, 'blocks'))
 
 
 def test_another_write_during_the_choice_is_rejected_atomically(monkeypatch, tmp_path):
