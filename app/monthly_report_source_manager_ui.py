@@ -38,7 +38,8 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
     opened = bool(st.session_state[manager_key])
 
     if states:
-        st.caption(f"{len(states)} source {'file' if len(states) == 1 else 'files'}")
+        st.caption(f"{len(states)} source {'file' if len(states) == 1 else 'files'}" +
+                   (f" · {len(attention)} need details" if attention else ""))
     if attention:
         with st.container(border=True):
             for item in attention:
@@ -58,6 +59,11 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
               args=(manager_key, selection_key, "") if not opened else (manager_key,))
     if not opened:
         return draft, blocks
+
+    selected_id = st.session_state.get(selection_key)
+    selected_status = next((item for item in states if item.source_id == selected_id), states[0] if states else None)
+    if selected_status and selected_status.summary and not selected_status.needs_correction:
+        st.caption(selected_status.filename + " · " + selected_status.summary)
 
     sources, additions, incoming_specs = render_uploads(
         draft.profile, draft.period, prefix, field, attached_blocks=blocks,
