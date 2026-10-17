@@ -6,6 +6,7 @@ display changes alone cannot change the report.
 """
 from dataclasses import replace
 from datetime import date
+from html import escape
 from uuid import uuid4
 
 import streamlit as st
@@ -14,7 +15,8 @@ from app.monthly_report_editor import _cell_text, _signature
 
 
 CARD_TABLES = {"proposals": ("proposal", "Add proposal"),
-               "service_calls": ("onsite call", "Add onsite call")}
+               "service_calls": ("onsite call", "Add onsite call"),
+               "rfi_matrix": ("request", "Add request")}
 
 
 def _values(fields):
@@ -53,6 +55,7 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
         draft_token = draft_token or uuid4().hex
         draft_index = len(rows)
         active = draft_token
+        record["entry_focus"] = {"token": uuid4().hex, "row": active}
     elif action == "close":
         if active == draft_token:
             draft_token = None
@@ -65,6 +68,8 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
             active = None
     elif action == "remove" and target == draft_token:
         active, draft_token = None, None
+    if action != "add":
+        record.pop("entry_focus", None)
     if changed_fields:
         retained = [(row, token) for row, token in zip(rows, identities)
                     if any(value is not None and str(value).strip() for value in row)]
@@ -109,7 +114,7 @@ def _field_default(value, kind):
 def _summary(columns, row, noun, index):
     values = tuple((column, row[n] if n < len(row) else "") for n, column in enumerate(columns))
     main = next((value for column, value in values if value and any(
-        word in column.casefold() for word in ("description", "scope", "title", "task", "recommendation"))), "")
+        word in column.casefold() for word in ("description", "scope", "title", "task", "recommendation", "requested", "question"))), "")
     st.write(main or f"{noun.capitalize()} {index + 1}")
     identifiers = [(column, value) for column, value in values if value and (any(
         word in column.casefold() for word in ("number", "#", "identifier", "facility", "site", "vendor", "area", "asset"))
@@ -130,7 +135,7 @@ def _comparison_rows(columns, rows):
     return [dict(zip(labels, row)) for row in rows]
 
 
-def _edit_table(columns, rows, types, key, noun, add_label, field):
+def _edit_table(columns, rows, types, key, noun, add_label, field, *, placeholders=None, focus_column=None):
     record = dict(st.session_state.get(key, {}))
     pending = record.get("pending")
     incoming = tuple(tuple(row) for row in rows)
@@ -200,7 +205,12 @@ def _edit_table(columns, rows, types, key, noun, add_label, field):
                 # first identifier or a long title is entered. Keep this
                 # active heading the same height until explicit closure.
                 st.write("Edit " + noun)
-                _render_fields(columns, fields, args, field)
+                _render_fields(columns, fields, args, field, placeholders=placeholders)
+                focus = record.get("entry_focus", {})
+                if focus_column is not None and focus.get("row") == token:
+                    st.html('<span hidden data-epc-entry-focus="' + escape(focus["token"], quote=True)
+                            + '" data-epc-field-key="' + escape(fields[focus_column][0], quote=True)
+                            + '" data-epc-origin-key="' + escape(key + "_add", quote=True) + '"></span>')
                 st.button("Close editing", key=key + "_close_" + token, on_click=_queue, args=(*args, "close"))
             else:
                 _summary(columns, row, noun, index)
@@ -215,9 +225,12 @@ def _edit_table(columns, rows, types, key, noun, add_label, field):
     return rows
 
 
-def _render_fields(columns, fields, args, field):
-    for title, (key, original, kind, default) in zip(columns, fields):
+def _render_fields(columns, fields, args, field, *, placeholders=None):
+    for index, (title, (key, original, kind, default)) in enumerate(zip(columns, fields)):
         options = dict(key=field(key, default), value=default, on_change=_queue, args=args)
+        placeholder = (placeholders or {}).get(index)
+        if placeholder and kind == "text":
+            options["placeholder"] = placeholder
         if kind == "date" and (isinstance(default, date) or default is None):
             st.date_input(title, format="YYYY-MM-DD", **options)
         elif kind in {"number", "currency"} and (isinstance(default, float) or default is None):
@@ -236,6 +249,16 @@ def edit_row_cards(spec, block, prefix, field):
     context = (spec.key, _rich_text_scope(prefix), block.references,
                tuple(table.reference for table in block.extra_tables), spec.columns)
     key = prefix + "_row_cards_" + _signature(context)
+    request_notice = st.container(key=key + "_empty_state") if spec.key == "rfi_matrix" else None
+    def entry_options(columns):
+        if spec.key != "rfi_matrix":
+            return {}
+        request_column = next((index for index, column in enumerate(columns)
+                               if any(word in column.casefold() for word in ("requested", "question"))), None)
+        # Source schemas keep their own labels and ordering. Focus a recognized
+        # request field, never reinterpret an unknown column as a question.
+        return {"placeholders": {request_column: "What information is needed?"} if request_column is not None else {},
+                "focus_column": request_column}
     tables = []
     for index, table in enumerate(block.extra_tables):
         if len(block.extra_tables) > 1:
@@ -249,12 +272,21 @@ def edit_row_cards(spec, block, prefix, field):
             # in the same event. Price validation remains in force.
             tables.append(review_table_headings(table, key + "_headings_" + str(index), field))
             continue
-        edited = _edit_table(table.columns, table.rows, (), table_key, noun, add_label, field)
+        edited = _edit_table(table.columns, table.rows, (), table_key, noun, add_label, field,
+                             **entry_options(table.columns))
         tables.append(replace(table, rows=edited) if edited != table.rows else table)
     rows = block.rows
     if rows or not block.extra_tables:
         columns = tuple(column.title for column in spec.columns) or ("Facility", "Item", "Status")
-        rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field)
+        rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field,
+                          **entry_options(columns))
+    if request_notice is not None:
+        from app.monthly_report_table_entry_ui import has_values
+        active_entry = any(isinstance(value, dict) and value.get("active")
+                           for name, value in st.session_state.items() if name.startswith(key))
+        if (not active_entry and not any(has_values(values) for values in (rows, *(table.rows for table in tables)))
+                and not (block.text.strip() or block.asset_hashes or block.ai_paragraphs)):
+            request_notice.caption("No requests added.")
     if rows == block.rows and tuple(tables) == block.extra_tables:
         return block
     return replace(block, source="This month", rows=rows, extra_tables=tuple(tables),

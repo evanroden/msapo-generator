@@ -456,7 +456,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     request_notice = None
     from app.monthly_report_table_entry_ui import EMPTY_TABLES, empty_text_seed, entry_open, has_values
     optional_table = spec.key in EMPTY_TABLES
-    if optional_table and (spec.type in ("table", "work_order_grid") or block.extra_tables):
+    row_cards = spec.key in {"proposals", "service_calls", "rfi_matrix"} and (spec.type in ("table", "work_order_grid") or block.extra_tables)
+    if optional_table and not row_cards and (spec.type in ("table", "work_order_grid") or block.extra_tables):
         # A fresh report shows an honest empty state. Add opens the
         # existing native grid; an empty editor slot is never report content.
         # Reset/import/source replacement receives different native IDs while
@@ -477,7 +478,6 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         if notes != block.text:
             source = "Omit" if retained_mbcx and block.source == "Omit" else "This month"
             block = replace(block, source=source, text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
-    row_cards = spec.key in {"proposals", "service_calls"} and (spec.type in ("table", "work_order_grid") or block.extra_tables)
     if row_cards:
         from app.monthly_report_row_cards_ui import edit_row_cards
         block = edit_row_cards(spec, block, prefix, field)
