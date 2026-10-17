@@ -4,37 +4,81 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current integration checkpoint — 2026-10-17 09:20 UTC
+## Current publication checkpoint — 2026-10-17 16:39:14 UTC
 
-The newest evidence supersedes dated status below. Both phases remain open. PR249 and PR250
-are merged to main. This PR252 candidate normally reconciles current PR2514722e69, including
-main9b2843e, with the follow-on work; it is not a merge of a child into a feature parent.
+The owner explicitly renewed the GitHub publication attempt at16:35UTC. The same GitHub
+create-commit operation succeeded: reconciliation commit
+`841399494cee598e90dea84a2e52b0e510b850f0`, tree
+`08dcc8818560d4444face4155e3af24a2ed160cd`, parents
+`49a448d0beedb74ecb5e19be8240e0826b14c480` and
+`4722e69d6232d438793fe7cc7c7a1fd1f8dc9099`. The earlier rejection is historical and
+remains documented below. This renewal concerns GitHub publication only; original-file shelf
+and managed-localhost denials remain in force.
 
-| Requirement / IDs | Current implementation / base | Tested scope | Actual served evidence | Unresolved review / next action / owner | Acceptance |
+| Requirement | Current implementation | Tested scope | Served evidence | Next action / owner | Acceptance |
 | --- | --- | --- | --- | --- | --- |
-| Water; CONT09, SIM-W01–07, ADP-A12/A16/A20 | PR249 merged; included in current main9b2843e8e49b104ebd87aebf91e814084d5da928 |76focused and merged Tests38996467909/Adaptive38996467782 pass; later main9b gates also pass | Live isolated Chromium90049cf correction/review/reopen/Done/reload retained. Normal reload to9b retains that source and caption; Current2pages and first page visible. | Broader delivered simplicity review follows remaining cleanup. No fresh Render control-plane read; workspace remains unconfirmed. Engineer. | Scoped live verification only |
-| Training/workflow; SIM-T01–07, ORIG-D01–03/D16–19, ADP-A08/A09/A16–17 | PR250c56fa2b8c374c8dd324b9bb0d87db50d66bcd9a7 merged normally to main9b2843e | Exact Tests39017499544 has3017passes; Adaptive39017499531 passes. Merged Tests39019054329/Adaptive39019054334 and automatic isolated live39020305196 pass. Ten first-site paths retain exact Monthly route and installed native-error receipts. Eight review threads resolved before merge. | Full9b in live DOM. Observed entry index.enfra-frontend-4cf97569e258.js independently fetched464115bytes/SHA2564cf97569e258c61ec3abbe6812abe7786de173b60ce6bd25786da43ad28fb0f9, equal to CI. Live typed14/calendar15/keyboard16 observed; one calendar or keyboard selection closes. Automatic run has two isolated synthetic passes, durable Activity edit/clear/reentry, stale-tab reset rejection, and pointer/keyboard Prepared-by reload checks. | Live clear immediately showed “Selected date is .”; subsequent partial input has no selection announcement. Determine transient versus persistent/audible behavior before changing native semantics. A first Add session click with the participant menu open only dismissed it; no session or date error yet. First screenshot retained; do not accept a repeated click as first-action success. Engineer; actual assistive-technology listening remains unavailable. | Merged/served; named gates pass; full live Training/simplicity tail open |
-| Source pending/routing/history; SRC01/SRC04–06, CONT03/08, ADP-A10 | PR2514722e69d6232d438793fe7cc7c7a1fd1f8dc9099 on main9b |7baseline failures repaired/58affected passes; Required38997771955 prior pass. Current Adaptive39019891361 passes; Tests39019891373 still running at this checkpoint. Five prior review threads resolved. Native history-disclosure hold has failing-before/passing-after model coverage. | Workspace cleanup not live | Current child composes actual trusted-click observation with this hold. Verify both browser history tails, exact Required result and refreshed reviews before main merge; guard-model success does not establish sole CachedForwardMsg cause. Engineer. | Branch only |
-| Photos/remaining Water file; SIM-A14–15, SIM-W02/W04/W07, ORIG-A07/A08/A11/A12, CONT07/09 | PR25249a448d0beedb74ecb5e19be8240e0826b14c480 plus local0457c2e, normally reconciled with PR2514722e69 | Prior Required38998230103 and photo job117295414354 pass. Both engines complete density1–6, moves, same-event captions, Add/Remove/re-entry/Done/reload/actual outputs. Current combined19-file focused gate283passes in152.20s; no failures/skips. New Water2baseline failures/final44passes and history34contracts retained. | Branch only | Publish exact composed revision and run native history/photo/Water tails; then retarget/reconcile against resulting main after eligible PR251 merge. Old density locator and Chromium history cached-message failures retained. Engineer. | Scoped photo journey passed; integration open |
-| Editable output; VIS, CONT07, ADP-A18 | Actual PR252run38998230129/integration01d26d810e837ca55390b0ce8c02df5ddda312c2; current c56Training run39017499531 | All29actualphotoPDF and29DOCX-rendered pages inspected150dpi. BothPDFpixelsets andDOCXbytes equal. Nine editable tables, photos1then3/captions, section10/AppendixG retained. Current Training4PDF/2uniqueDOCX rendered;24unique page images remain for visual review. | Branch synthetic files; live9b automatic output bytes retained separately | LibreOffice24.2 PDF producer; DOCX LibreOfficeDev26.8.0.0.alpha0/Poppler26.05.0 is not Microsoft Word. Synthetic design omits approved cover/logo/TOC references. Finish all-page named scope, approved-master and graphic/hidden privacy checks. Engineer/owner for native check. | Named synthetic scope only |
-|97/113/ADP20 and originals | Exact97audit definitions restored in existing crosswalk, no renumbering | Six unchanged originals match recovered88159285-byte archive/manifest. Historical bounded same-site and narrower removal evidence recovered without new genuine execution. Combined artwork recovered and visually read; many Letter-PDF labels/footnotes4.4–5.75pt. | No external original-shelf retention claim | Finish delivered desktop/narrow states, standing scope/concurrency and adaptive coverage. Prior transfer/localhost denials remain denied; consumed one-shot diagnostic not repeated. Combined composition needs owner printed-scale approval. | Neither phase accepted |
+| PR252 reconciliation and Training copy; SIM-A14–15, SIM-T01, CONT07/09 | Commit8413994 preserves the previously reviewed52-entry tree. The three prepared copy-only edits and the14:00 evidence ledger are included in the follow-up. | Exact local tree identity and old review-patch digest reverified; all7current251/252review threads reread resolved. Prior283focused passes apply to tree08dcc; Python AST and diff checks apply to copy. | None for the new candidate. | Update only the existing252branch with expected-head49a448d lease, then inspect exact Required/Adaptive/native history/photo/Water runs. Engineer. | Prepared for branch CI; not merged/deployed |
+| Workspace source/history; SRC01/SRC04–06, CONT03/08 | PR2514722e69 remains open against main9b2843e; fresh branch and PR metadata agree. | Existing Required39019891373 and Adaptive39019891361 passed. The dedicated composed native history tail remains required. | Workspace cleanup not live. | Once the composed tail passes, merge eligible251 into MAIN, then retarget/reconcile252 against the resulting MAIN and rerun integrated deltas. Engineer. | Branch only |
+| Water and Training delivery | Main9b2843e8e49b104ebd87aebf91e814084d5da928 freshly unchanged at16:35UTC. | Merged and live runs retained below; no repeat generation to prove deployment. | Last browser-served full9b and entry4cf97569e258 proof is dated13:52UTC/earlier byte receipt, not a new browser walkthrough. | Verify full served commit and asset identity after each meaningful main merge. Engineer. | Prior named live scope only |
+| Full Phase1/2 acceptance | Same97-item/113-check/ADP20 traceability and external boundaries retained below. | No new authentic-source, physical-device, native-Word or approved-art acceptance. | No new delivery claim. | Complete independent UI/output/scope work; retain the smallest exact external permission or device/artwork checks. Engineer/owner as scoped. | OPEN / NOT ACCEPTED |
 
-The reconciliation preserves both branches' changes, including scalar-date/native frontend
-patches and original assets, source provenance and recovery, photo identity and density,
-Training observations and the native history hold. Both workflow filters include the union of
-first-site and workflow-wire tests. Error receipts keep independent native/tail and Playwright
-page errors; the exact fixture-origin assertion permits only8526/8529/8530 and rejects all other
-origins. Lazy browser imports remain usable by the normal Required unit-test environment.
-No business assertion, error handling, resource cap or timeout was weakened.
+No candidate branch update or CI result is claimed at this checkpoint's writing time.
+The following14:00 checkpoint preserves the complete earlier evidence and stopped-publication
+boundary; the renewed authorization and successful commit above supersede its current-block wording.
 
-The PR251 integration first yielded101passes/1failure/1skip: the passive month-scroll model
-needed window listeners, and inputTop was moved to explicit snapshots so native event handlers
-retain their no-layout-read assertion. The affected18checks then passed156.21s. The local PO
-converter skip reflects missing writer/calc filters, not successful PO output validation.
+## Historical integration checkpoint — 2026-10-17 14:00:52 UTC
 
-Private checkpoint/evidence last saved at08:39UTC; this new283-pass and live9b evidence awaits
-the next in-place save. Original failed archives stay unchanged. The historical audit's
-owner-only fixture proposal is superseded by the owner's explicit shared/no-login instruction.
+This supersedes the09:20 checkpoint retained in Git tree08dcc8818560d4444face4155e3af24a2ed160cd.
+Both phases remain **OPEN / NOT ACCEPTED**. PR249 and PR250 are merged to main.
+PR251 and PR252 remain open. No child was merged into a feature parent.
+
+**Publication is stopped:** the GitHub create-commit request for the reviewed PR252
+reconciliation returned `user rejected MCP tool call`, with no further reason. It was
+not an automatic-review rejection. No commit or branch update was made for that candidate.
+Do not retry through another tool or publish a repackaged equivalent. The smallest owner
+action is renewed authorization to publish that reconciliation to the existing PR252 branch.
+
+| Requirement / retained IDs | Current implementation / base | Tested scope | Actual served evidence | Unresolved / next action / owner | Acceptance |
+| --- | --- | --- | --- | --- | --- |
+| Water; CONT09, SIM-W01–07, ADP-A12/A16/A20 | PR249 merged; current main9b2843e8e49b104ebd87aebf91e814084d5da928 |76focused; merged Tests38996467909/Adaptive38996467782 pass; subsequent main9b gates pass | Isolated live Chromium90049cf correction/review/reopen/Done/reload, then9b reload, retained the corrected Water source/caption and useful Current2-page preview. | Finish the remaining delivered cleanup and broader states. No fresh Render control-plane read; workspace unconfirmed. Engineer. | Scoped live Water path verified |
+| Training/workflow; SIM-T02–07, ORIG-D01–03/D16–19, ADP-A08/A09/A16–17 | PR250c56fa2b8c374c8dd324b9bb0d87db50d66bcd9a7 merged to main9b | Exact Tests39017499544:3017passes/0failures/errors/skips; Adaptive39017499531 pass. Merged Tests39019054329/Adaptive39019054334 and automatic isolated live39020305196 pass. Ten native first-site routes and installed error receipts pass. | Full9b visibly reread after final live Training cleanup. Entry index.enfra-frontend-4cf97569e258.js:464115bytes/SHA2564cf97569e258c61ec3abbe6812abe7786de173b60ce6bd25786da43ad28fb0f9 independently matched CI earlier in this session. Typed14/calendar15/keyboard16; single selections close. One valid Add, reload, Current2-page native scrolling, targeted removal/reload retained original row/notes and baseline report fingerprint. One closed-menu native clipboard partial-date submit showed the precise date error and created no row. | Earlier fill-based/no-error and menu-dismissal observations retained separately; native paste does not establish their cause. Transient empty scalar announcement and aria-invalid=false with visible date error do not close actual assistive listening/focus checks. Engineer/device owner. | Named live Training path verified; full Training/standing/accessibility acceptance open |
+| Training copy; SIM-T01 | Three local, unstaged copy-only edits after tree08dcc: section_help.py, training_ui.py, guided.py | Python AST parses and index/working diff checks pass. Routine repeated explanations57→22 whitespace-delimited words; no controls/model/date/save behavior changed. | Current9b screenshot still shows the57-word copy. No after-deployment screenshot or count claimed. | Short scope in section; actual shared-versus-report consequence beside matrix; explicit staff exclusions/confirmed-completion rule in Help. Publish only after the stopped publication is authorized; inspect delivered copy. Engineer/owner publication. | Local only |
+| Source pending/routing/history; SRC01/SRC04–06, CONT03/08, ADP-A10 | PR2514722e69d6232d438793fe7cc7c7a1fd1f8dc9099 on main9b; freshly read open/clean/mergeable |7baseline failures→58affected passes. Exact Tests39019891373 and Adaptive39019891361 pass. All5review threads freshly reread resolved. Native history-disclosure hold has failing-before/passing-after model coverage. | Workspace cleanup is not live. | Run the composed child native history tail before claiming the cached-message repair. Its dedicated journey is absent from the251-only Adaptive scope. Do not settle this concern solely from green parent CI. Then merge eligible251 to MAIN. Engineer; publication blocker affects composed proof. | Branch only |
+| Photos/remaining Water file; SIM-A14–15, SIM-W02/W04/W07, ORIG-A07/A08/A11/A12, CONT07/09 | Remote252head49a448d0beedb74ecb5e19be8240e0826b14c480 remains conflicted. Actual Workspace branch4722e69; PR API still reports base.shae72feb531018dd67b853bb53c4dbdb6880c49037. Local restored reconciliation index is exactly08dcc8818560d4444face4155e3af24a2ed160cd. | Required38998230103 and photo job117295414354 pass. Both engines complete density1–6, moves, captions, Add/Remove/re-entry/Done/reload and actual files. Combined19-file local gate283passes/152.20s before runtime reset; stdout observed, XML lost.44Water passes and34history contract receipts remain retained. | Branch only. No composed-candidate CI or served claim. |2review threads reread resolved. After renewed publication authorization, create exact reviewed tree with parents49a448d and4722e69 and expected-head lease, run native history/photo/Water tails; after251main merge, retarget/reconcile252 to resulting MAIN and rerun integrated delta. Preserve siblings. Engineer/owner publication. | Photo journey scope passed; integration open |
+| Editable output; VIS, CONT07, ADP-A18 | Actual252run38998230129 checkout01d26d810e837ca55390b0ce8c02df5ddda312c2; actual250run39017499531 checkoute5c4c014cd1ce0bec2cb5dafa4e9ff5fdd6792f6 | Photo29actualPDF+29DOCX-rendered pages inspected. Training4PDF/108page instances and2uniqueDOCX/54rendered pages fully mapped:24new unique pixel images manually inspected,32unique groups identical to previously inspected photo pages. Nine editable tables, repeat headers/intact rows, unknown hours blank, removal preserves matrix/notes. All XML text/attributes/media/relationships and actual PDF metadata checked in named synthetic scope. | Branch synthetic files; automatic live9b bytes retained separately, not claimed all-page reviewed here. | PDF producerLibreOffice24.2; DOCX rendererLibreOfficeDev26.8.0.0.alpha0 build2c87e51eeaa2b413ff4ae097b2705eea1995d8e5; Poppler26.05.0/150dpi. Heading-only fixture pages11/17/27, missing approved cover/logo/TOC references and differing fonts remain explicit limits. Native Word, actual master and authentic graphic/privacy checks open. Engineer/owner. | Named synthetic output scope only |
+|97/113/ADP20, originals/artwork/device checks | Existing97 definitions/correct IDs retained; no renumbering | Six unchanged originals match recovered88159285-byte archive/manifest. Historical bounded same-site and narrower removal evidence recovered without new genuine execution. Actual combined artwork read; many Letter-PDF labels4.4–5.75pt. | No independent external-after-chat original-shelf retention claim. | Delivered fresh/populated/imported/unresolved/failed-save/generated/recovered desktop+narrow review; standing scope/concurrency; six adaptive journeys and physical/native checks; AUTH01–03; exact denied transfer resolution and explicit combined-art printed-scale approval. Owner/engineer as scoped. | Neither phase accepted |
+
+The source tree08dcc is unchanged and exists in GitHub Git Data; it has no published candidate
+commit. Earlier local mergea314c569b774f34d9625bb8795f7f3f33a00cfcd was observed before the runtime
+reset. The restored local worktree is at remote49a448d with merge4722e69 in progress and all
+conflicts resolved/staged. New Training copy and this ledger are unstaged, separate from the
+283-pass tree. No unauthorized retry, push, alternate commit or workflow dispatch occurred.
+
+The combined tree keeps both branches' changes: scalar-date/immutable native assets, source
+pending/provenance/recovery, photo identity/density and history hold. Workflow path filters keep
+the union of shared observations, first-site and workflow-wire coverage. Exact synthetic
+observation origins are8526/8529/8530; negative-origin tests remain. Native/tail error receipts
+and independent Playwright page errors remain distinct. Lazy imports preserve Required's
+non-browser environment. No assertion, error scope, resource cap or timeout was weakened.
+
+The parent reconciliation first yielded101passes/1failure/1skip. Moving inputTop measurement to
+explicit snapshots preserved the native handler's no-layout-read assertion; adding required
+window listeners to its passive model yielded18affected passes/156.21s. The PO conversion skip
+was missing local writer/calc filters, not a successful output claim. These dated failures remain.
+
+Private evidence is kept in the same checkpoint TXT and evidence ZIP identities. After runtime
+reset the existing170510851-byte bundle was restored byte-identically; current c56 passing
+Adaptive/Training/Required and main9b live archives were independently recovered. The original
+photo-density failure artifact12074983632 was retrieved again:13272057bytes and the owner's
+SHA2566f5268e432efcc58457e09ad44cc510aa8afa9024de5db276b678f79a2193ca5 match.
+Both truncated local page PNGs are preserved, and only their two pages were regenerated from
+unchanged PDFs. New output inspection, live screenshots and exact failure boundaries accompany
+the in-place evidence save. The283 XML was not recovered and is not claimed retained.
+
+The historical audit's owner-only fixture proposal remains superseded by the owner's explicit
+shared/no-login decision. Prior original-transfer and managed-localhost denials remain denied;
+the consumed genuine diagnostic allowance was not repeated. No business sends or budget/access
+changes occurred.
 
 ## Historical Training checkpoint — 2026-10-17 08:25 UTC
 

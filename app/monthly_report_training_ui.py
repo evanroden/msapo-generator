@@ -46,7 +46,7 @@ def render_training(draft, blocks, prefix, field):
             st.session_state[matrix_key] = matrix
             st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
         st.subheader("Staff training requirements")
-        st.caption("Client/hospital staff only. Requirement changes are saved for these sites and reused in future reports; sessions and notes stay in this report.")
+        st.caption("Requirements are shared for these sites and reused in future reports. Completed training and notes stay in this report.")
         if st.session_state.get(key + "_stale_standing"):
             st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
                        "Monthly notes and the saved report version are unchanged.")
