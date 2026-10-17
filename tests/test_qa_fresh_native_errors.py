@@ -48,9 +48,11 @@ def test_first_site_collector_requires_its_exact_explicit_origin(actual_collecto
     row["evidence"]["origin"] = "http://127.0.0.1:8526"
     with pytest.raises(AssertionError, match="this fixture"):
         require_no_native_window_errors([row])
-    require_no_native_window_errors([row], origin="http://127.0.0.1:8526")
+    require_no_native_window_errors([row], expected_origin="http://127.0.0.1:8526")
+    with pytest.raises(AssertionError, match="Unknown native-error fixture origin"):
+        require_no_native_window_errors([row], expected_origin="http://127.0.0.1:8535")
     with pytest.raises(AssertionError, match="this fixture"):
-        require_no_native_window_errors([row], origin="http://127.0.0.1:8535")
+        require_no_native_window_errors([row], expected_origin="http://127.0.0.1:8530")
 
 
 def test_resource_errors_rejections_and_first16_overflow_all_fail(actual_collector_model):

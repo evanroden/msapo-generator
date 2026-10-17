@@ -81,7 +81,7 @@ def target_path(name: str) -> Path:
 
 
 @contextmanager
-def observe(output: Path, browser_class, context_class):
+def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8521, 8528)):
     output.mkdir(parents=True, exist_ok=True)
     states = {}
     sequence = 0
@@ -111,7 +111,7 @@ def observe(output: Path, browser_class, context_class):
 
         def on_page(page):
             from scripts.qa_widget_delivery import WidgetDelivery
-            WidgetDelivery(record).attach(page)
+            WidgetDelivery(record, ports=widget_ports).attach(page)
             page.on('console', lambda msg: record('client', msg.text)
                     if msg.text.startswith('ENFRA_QA_DIAGNOSTIC ') else None)
             page.on('pageerror', lambda error: record('pageerror', {

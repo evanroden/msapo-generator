@@ -94,7 +94,7 @@ def test_immediately_failed_reader_keeps_native_text_and_no_parser_trace(monkeyp
         return future
     monkeypatch.setattr(receipt_jobs, 'start_receipt', immediate_failure)
     app = app_for_text(monkeypatch, tmp_path, ai_key='synthetic-test-token')
-    app.run()
+    next(b for b in app.button if b.label=='Read selected files').click().run()
     assert not app.exception
     assert 'Completed strainer cleaning' in activity(app)
     assert any('incomplete response' in w.value for w in app.warning)

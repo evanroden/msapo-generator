@@ -715,6 +715,7 @@ def imported_draft(profile: ReportProfile, period: ReportPeriod, prepared_by: st
     from app.monthly_report_asset_review import preserve_asset_reviews
     for block in mapped.blocks:
         reviewed = block.client_reviewed_fingerprint == block.fingerprint
-        block = preserve_asset_reviews(block, replace(block, source="Last month"))
+        block = preserve_asset_reviews(block, replace(
+            block, source="Omit" if block.key == "cover_photo" and block.source == "Omit" else "Last month"))
         blocks.append(replace(block, client_reviewed_fingerprint=block.fingerprint if reviewed else ""))
     return ReportDraft(profile, period, prepared_by, sections, tuple(blocks), footer)

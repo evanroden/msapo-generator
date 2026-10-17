@@ -19,8 +19,10 @@ def digest(text):
 
 class WaterWidgetDelivery:
     """Never submit events, change inputs, swallow test errors or retain raw values."""
-    def __init__(self, record):
+    def __init__(self, record, *, ports=(8520,), labels=LABELS,
+                 widget_types=frozenset({"button", "selectbox", "text_input"})):
         self.record = record
+        self.ports, self.labels, self.widget_types = tuple(ports), frozenset(labels), frozenset(widget_types)
         self.cache = OrderedDict()
         self.known = OrderedDict()
         self.count = 0
@@ -38,10 +40,10 @@ class WaterWidgetDelivery:
         if direction == "received" and kind == "delta":
             element = msg.delta.new_element
             element_kind = element.WhichOneof("type")
-            if element_kind not in {"button", "selectbox", "text_input"}:
+            if element_kind not in self.widget_types:
                 return
             widget = getattr(element, element_kind)
-            if widget.label not in LABELS:
+            if widget.label not in self.labels:
                 return
             row.update(label=widget.label, type=element_kind, id_hash=digest(widget.id),
                        path=list(msg.metadata.delta_path), fragment=msg.delta.fragment_id)
@@ -87,7 +89,7 @@ class WaterWidgetDelivery:
     def attach(self, page):
         def connected(socket):
             address = urlparse(socket.url)
-            if address.hostname != "127.0.0.1" or address.port != 8520:
+            if address.hostname != "127.0.0.1" or address.port not in self.ports:
                 raise ValueError("Water observations require the existing synthetic localhost server")
             socket.on("framereceived", lambda raw: self.message("received", raw))
             socket.on("framesent", lambda raw: self.message("sent", raw))

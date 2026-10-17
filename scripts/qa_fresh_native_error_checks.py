@@ -1,4 +1,4 @@
-"""Strict primary-document native error observation for the fresh fixture only."""
+"""Strict primary-document native errors for the exact opted-in synthetic fixtures."""
 SCHEMA = "enfra-fresh-native-errors-v1"
 ORIGIN = "http://127.0.0.1:8529"
 LIMIT = 16
@@ -22,8 +22,9 @@ def capture_native_window_errors(page, record, stage):
     return snapshot
 
 
-def require_no_native_window_errors(snapshots, *, origin=ORIGIN):
+def require_no_native_window_errors(snapshots, *, expected_origin=ORIGIN):
     """Every observed native error fails, including missed Playwright pageerrors."""
+    assert expected_origin in {ORIGIN, "http://127.0.0.1:8526", "http://127.0.0.1:8530"}, "Unknown native-error fixture origin."
     assert isinstance(snapshots, list) and 1 <= len(snapshots) <= 2, "Missing or excessive native error snapshots."
     assert all(isinstance(snapshot, dict) for snapshot in snapshots), "Invalid native error snapshot."
     assert snapshots[-1].get("stage") == "final", "A final native error snapshot is required."
@@ -33,7 +34,7 @@ def require_no_native_window_errors(snapshots, *, origin=ORIGIN):
         value = snapshot.get("evidence")
         assert isinstance(value, dict), "Native error collector is missing."
         assert (value.get("schema") == SCHEMA and value.get("installed") is True
-                and value.get("origin") == origin and value.get("limit") == LIMIT), "Native error collector was not installed for this fixture."
+                and value.get("origin") == expected_origin and value.get("limit") == LIMIT), "Native error collector was not installed for this fixture."
         errors, total, overflow = value.get("errors"), value.get("total"), value.get("overflow")
         assert isinstance(errors, list) and len(errors) <= LIMIT, "Invalid native error buffer."
         assert (type(total) is int and total >= 0 and type(overflow) is int and overflow >= 0

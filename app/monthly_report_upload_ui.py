@@ -23,12 +23,26 @@ def _undecided_pages(content, source):
             and exclusions.get(n) != page_fingerprint(source, n)]
 
 
-def _sync_source_fields(source, prefix, field):
+def _sync_source_fields(source, prefix, field, *, caption_defaults=None):
     """Refresh stale widgets when another section edited the canonical source.
 
     Only external changes are copied. A widget's pending input on this rerun is
     preserved when the canonical source still matches this view's last render.
     """
+    if caption_defaults is not None:
+        defaults_key = prefix + "_inherited_caption_view"
+        previous_defaults = st.session_state.get(defaults_key, {})
+        explicit_captions = dict(source.captions)
+        for number, caption in caption_defaults.items():
+            if (number not in explicit_captions and number in previous_defaults
+                    and previous_defaults[number] != caption):
+                key = field(prefix + f"_caption_{number}", caption)
+                # An unchanged displayed default follows the actual attached
+                # page. A different native value is a delivered operator edit,
+                # including a deliberate blank, and must be consumed normally.
+                if st.session_state.get(key) == previous_defaults[number]:
+                    st.session_state[key] = caption
+        st.session_state[defaults_key] = dict(caption_defaults)
     previous = st.session_state.get(prefix + "_canonical_view")
     if previous is None or previous == source:
         return
@@ -46,13 +60,14 @@ def _sync_source_fields(source, prefix, field):
     before, after = dict(previous.captions), dict(source.captions)
     for number in set(before) | set(after):
         if before.get(number) != after.get(number):
-            value = after.get(number, f"{source.filename} · page/item {number}")
+            value = after.get(number, (caption_defaults or {}).get(number, f"{source.filename} · page/item {number}"))
             st.session_state[field(prefix + f"_caption_{number}", value)] = value
             active = st.session_state.get(prefix + "_caption_widget_keys", {}).get(number)
             if active is not None:
                 st.session_state[active] = value
 
-def render_source_details(source, profile, prefix, field, *, applied_caption="Corrected details applied to this draft."):
+def render_source_details(source, profile, prefix, field, *, applied_caption="Corrected details applied to this draft.",
+                          compact_problems=()):
     """One explicit date/site correction form for native text and image sources.
 
     Pending form values are separate from canonical evidence. Opening the form
@@ -91,7 +106,9 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
         st.session_state[site_key] = initial_facility
     st.session_state[p + "_baseline"] = baseline
     missing = initial_date is None or initial_facility in ("", KEEP_FACILITY)
-    with st.expander("Date and facility · " + source.filename, expanded=missing):
+    label = ("Correct source details · " + source.filename + " · " + "; ".join(compact_problems)
+             if compact_problems else "Date and facility · " + source.filename)
+    with st.expander(label, expanded=missing and not compact_problems):
         if changed_elsewhere:
             st.info("This source was corrected elsewhere. Check the updated details before saving.")
         if source.service_date and initial_date is None:
@@ -107,7 +124,10 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
             st.session_state[site_key] = initial_facility
         labels = {"": "Not established", KEEP_FACILITY: "Keep unresolved: " + source.facility, **sites}
         with st.form(p + "_form"):
-            chosen_date = st.date_input("Source date", value=None, key=date_key,
+            # Match the native first-mount default to the current form value.
+            # Python session state alone leaves saved dates visibly blank in
+            # the browser; a delivered deliberate clear remains None here.
+            chosen_date = st.date_input("Source date", value=st.session_state[date_key], key=date_key,
                                         format="YYYY-MM-DD")
             chosen_facility = st.selectbox("Source facility", options, key=site_key,
                                           format_func=labels.get)
@@ -195,7 +215,8 @@ def _cmms(content, profile, period, prefix, field):
     return (signature, result[1]) if result else (signature, None)
 
 
-def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False):
+def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False,
+                   attached_blocks=None):
     st.caption("Read source files, check their pages, or match spreadsheet columns.")
     st.caption("PDF, Word, Excel, photos and email files. Uploaded emails are read, not sent.")
     with st.expander("File formats and limits"):
@@ -248,7 +269,21 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         selected = st.selectbox("File to review", list(by_id), format_func=lambda v: by_id[v].source.filename, key=selection_key)
     content, source = by_id[selected], by_id[selected].source
     p = key + "_" + selected
-    _sync_source_fields(source, p, field)
+    # An absent source caption inherits the already attached page's caption.
+    # Opening Change must not materialize a new source caption or invalidate
+    # its existing page review merely to display an editable default.
+    caption_defaults = {}
+    if attached_blocks is not None:
+        from app.monthly_report_page_controls import page_asset_index
+        for number in sources.image_numbers(content):
+            candidates = []
+            for block in attached_blocks.values():
+                index = page_asset_index(block, source.id, number) if block.source != "Omit" else None
+                if index is not None:
+                    candidates.append(block.asset_captions[index] if index < len(block.asset_captions) else "")
+            if len(candidates) == 1:
+                caption_defaults[number] = candidates[0]
+    _sync_source_fields(source, p, field, caption_defaults=caption_defaults)
     source = render_source_details(source, profile, p, field,
         applied_caption=("Corrected details are kept in this file selection. Add the selection below to update the report."
                          if retain_accepted else "Corrected details applied to this draft."))
@@ -290,13 +325,16 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                     preview_ok = True
                 except (ValueError, OSError) as exc:
                     st.error(str(exc))
-                captions[page] = st.text_input("Page caption", key=field(p + f"_caption_{page}", captions.get(page, f"{source.filename} · page/item {page}")))
+                default_caption = captions.get(page, caption_defaults.get(page, f"{source.filename} · page/item {page}"))
+                caption = st.text_input("Page caption", key=field(p + f"_caption_{page}", default_caption))
+                if page in captions or page not in caption_defaults or caption != default_caption:
+                    captions[page] = caption
         changes["captions"] = tuple(sorted(captions.items()))
         source = replace(source, **changes)
         if pages and page in sources.image_numbers(content):
             kind, reason = page_status(source.page_texts[page-1], unreadable=page in source.needs_vision)
             blocked_content = kind in ("pricing", "legal", "blank", "signature")
-            priced_caption = contains_price(captions.get(page, ""))
+            priced_caption = contains_price(caption)
             blocked = blocked_content or priced_caption
             if priced_caption:
                 reason = "Remove pricing from the caption before including this page."
@@ -336,6 +374,9 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 by_id[selected] = replace(content, source=source)
                 st.session_state[key] = tuple(by_id.values())
                 st.session_state[p + "_canonical_view"] = source
+                forms = st.session_state.get("_monthly_source_detail_forms")
+                if isinstance(forms, dict):
+                    forms[source.id] = source
                 # Apply widget changes before instantiation on the next rerun.
                 st.session_state[p + "_page_action"] = (list(source.selected_pages), next_page)
                 st.rerun()
@@ -346,6 +387,12 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         contents = tuple(by_id.values())
         st.session_state[key] = contents
         st.session_state[p + "_canonical_view"] = source
+        # Later section views reuse this render's one metadata form. They must
+        # receive the source after native captions/selections were captured,
+        # rather than restore the form's earlier pre-edit source snapshot.
+        forms = st.session_state.get("_monthly_source_detail_forms")
+        if isinstance(forms, dict):
+            forms[source.id] = source
         if st.button("Remove source from this selection" if retain_accepted else "Remove source from this draft", key=p + "_remove"):
             st.session_state[key] = tuple(c for c in contents if c.source.id != selected)
             st.rerun()
@@ -430,6 +477,10 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
 
 def set_source_manager_open(key, opened):
     st.session_state[key] = opened
+
+
+def _select_review_file(key, identity):
+    st.session_state[key] = identity
 
 
 def _queue_page_action(key, source, block, number, action, caption_key=None, scope=None):
@@ -794,7 +845,10 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                 choice_key = field(local_key + "_saved_choice", next(iter(choices)))
                 if st.session_state[choice_key] not in choices:
                     st.session_state[choice_key] = next(iter(choices))
-                chosen = st.selectbox("Saved file", list(choices), format_func=lambda v: choices[v].source.filename, key=choice_key)
+                # The native serializer retains this formatter after the
+                # function reuses `choices` for the section's own files.
+                filenames = {identity: item.source.filename for identity, item in choices.items()}
+                chosen = st.selectbox("Saved file", list(choices), format_func=filenames.get, key=choice_key)
                 if st.button("Use in " + title, key=local_key + "_use_saved"):
                     bindings[chosen] = destination
                     st.session_state[key + "_section_routes"] = bindings
@@ -888,9 +942,29 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                     if blocks.get(destination) is not None and blocks[destination].source != "Omit" else 0)
         if included:
             st.caption(f"{included} {'page' if included == 1 else 'pages'} included in this draft.")
-        if (pending and not additions and not st.session_state.get(request_key)
+        current_pages = tuple(n for n in sources.image_numbers(revised)
+                              if (selected, n) in owned)
+        current_is_compact = (current_pages and not _undecided_pages(revised, revised.source)
+                              and all(page_allowed(revised.source, n) for n in current_pages)
+                              and not st.session_state.get(
+                                  local_key + "_" + selected + "_edit_page_reviews", False))
+        if (current_is_compact and not additions and not st.session_state.get(request_key)
                 and not retained_water_omission(blocks.get(destination))):
-            st.caption("Finish reviewing the remaining pages to include your selected pages automatically.")
+            # A finished file may be selected while a different file still
+            # needs decisions. Name that file and reopen the ordinary review.
+            # Only show this shortcut from the compact state, which has no
+            # pending caption input to lose. Reviewed report-only removals
+            # are not unfinished reviews and never authorize reinclusion.
+            remaining = next(((item, _undecided_pages(item, item.source))
+                              for item in scoped if item.source.id != selected
+                              and _undecided_pages(item, item.source)), None)
+            if remaining:
+                item, pages = remaining
+                count = len(pages)
+                st.caption(f"{item.source.filename}: {count} "
+                           + ("page needs review." if count == 1 else "pages need review."))
+                st.button("Review " + item.source.filename, key=local_key + "_review_next_file",
+                          on_click=_select_review_file, args=(selected_key, item.source.id))
         return tuple(c.source for c in contents), additions, {}
 
     if pending:
@@ -935,11 +1009,18 @@ def _section_read_progress(local_key):
         st.info("Reading uploaded files and preparing this section…")
 
 
+def _queue_section_read(local_key, request):
+    st.session_state[local_key + "_read_request"] = dict(request)
+
+
 def render_structured_uploads(profile, period, prefix, field, destination, *, blocks=None, assets=None, table_columns=None):
-    """Automatically draft new evidence once; retain subsequent human edits on reruns."""
+    """Keep native extraction free; read externally only on an exact user request."""
     from app import monthly_report_structured_uploads as structured
     from app import monthly_report_ai as ai
     from app.receipt_jobs import start_receipt
+    from app import monthly_report_library as library, monthly_report_testing as testing
+    from app.monthly_report_guided import _rich_text_scope
+    from uuid import uuid4
 
     if destination not in {"activity_summary", "capital_renewal", "proposals"}:
         raise ValueError("Unknown upload-first section.")
@@ -948,10 +1029,37 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     local_key = evidence_key + "_structured_" + destination
     contents = st.session_state.setdefault(evidence_key, ())
     labels = {"activity_summary": "Add activity files (optional)", "capital_renewal": "Add capital renewal file", "proposals": "Add proposal file"}
+    context = _signature((asdict(profile), period.key, destination, tuple(table_columns or ()),
+                          _rich_text_scope(prefix), testing.scope(), testing.generation()))
     st.caption("Add files to help draft this section, or edit directly below. Detected pricing blocks page inclusion; review every client-facing page.")
     uploaded = st.file_uploader(labels[destination], type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
-                                accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
+                                accept_multiple_files=True, max_upload_size=128,
+                                key=local_key + "_upload_" + context)
+    picked = tuple((u.name, u.getvalue()) for u in (uploaded or ()))
+    signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
+    picked_ids = {hashlib.sha256(raw).hexdigest() for _, raw in picked}
+    if st.session_state.get(local_key + "_context") != context:
+        old = st.session_state.pop(local_key + "_job", None)
+        if old:
+            old["future"].cancel()
+        for suffix in ("read", "native_ids", "completed_ids", "pending", "error",
+                       "cache_checked", "completed_read", "read_cycle"):
+            st.session_state.pop(local_key + "_" + suffix, None)
+        st.session_state[local_key + "_context"] = context
     additions = {}
+
+    def read_target():
+        return {"context": context, "files": signature,
+                "sources": tuple(c.source.fingerprint for c in contents if c.source.id in picked_ids),
+                "revision": st.session_state.get(prefix + "_revision", 0)}
+
+    def read_request():
+        return dict(read_target(), token=st.session_state.setdefault(local_key + "_read_cycle", uuid4().hex))
+
+    def shared_base_matches(target):
+        saved = library.load_snapshot(profile.contract, profile.key, period)
+        return target["revision"] == (saved.revision if saved else 0)
+
     def remember(block, current_sources):
         # The async progress fragment may request a full rerun before this page
         # reaches its normal final draft commit. Persist the native first pass
@@ -968,10 +1076,19 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     def complete_finished_job():
         nonlocal contents
         job = st.session_state.get(local_key + "_job")
-        if not job or not job["future"].done():
+        if not job:
+            return
+        if job.get("request") != read_target():
+            st.session_state.pop(local_key + "_job", None)
+            job["future"].cancel()
+            st.session_state[local_key + "_error"] = "The report or selected files changed. The earlier reading was not applied; review the current files before reading again."
+            return
+        if not job["future"].done():
             return
         st.session_state.pop(local_key + "_job", None)
         try:
+            if not shared_base_matches(job["request"]):
+                raise ValueError("A newer shared report was saved. The earlier reading was not applied; compare the shared version before reading again.")
             value = job["future"].result()
             current = additions.get(destination, blocks.get(destination))
             from app.monthly_report_guided import _pending_rich_text_edit
@@ -981,15 +1098,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                 raise ValueError("New source suggestions are ready. Your edits were kept; add the suggestions below when ready.")
             result, pages = structured.reader_update(job["contents"], destination, value, current,
                 table_columns=job.get("table_columns"))
-            additions[destination] = result
-            remember(result, contents)
-            # Only a validated, successfully applied result may enter the
-            # reusable cache; a malformed reply must not poison Retry.
-            ai.save_cache(profile, "section_upload", job["digest"], value)
-            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ()))
-            st.session_state[local_key + "_completed_ids"] = tuple(
-                set(st.session_state.get(local_key + "_completed_ids", ()))
-                | {content.source.id for content in job["contents"]})
+            prepared = ()
             if destination == "activity_summary" and pages:
                 selected = []
                 for content in job["contents"]:
@@ -1008,12 +1117,25 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     profile, tuple(selected),
                     tuple((content.source.id, "improvements") for content in selected
                           if content.source.selected_pages))
-                additions.update({block.key: block for block in prepared})
                 changed = {content.source.id: content for content in selected}
                 contents = tuple(changed.get(content.source.id, content) for content in contents)
                 st.session_state[evidence_key] = contents
-                remember(result, contents)
+            additions[destination] = result
+            additions.update({block.key: block for block in prepared})
+            remember(result, contents)
+            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ()))
+            st.session_state[local_key + "_completed_ids"] = tuple(
+                set(st.session_state.get(local_key + "_completed_ids", ()))
+                | {content.source.id for content in job["contents"]})
+            st.session_state[local_key + "_completed_read"] = read_target()
             st.session_state.pop(local_key + "_error", None)
+            # A reuse-cache failure cannot turn an already validated, applied
+            # result into another paid reading. Its completion remains current.
+            if not job.get("cached"):
+                try:
+                    ai.save_cache(profile, "section_upload", job["digest"], value)
+                except (ValueError, OSError) as exc:
+                    st.session_state[local_key + "_error"] = "The reading is ready, but its reuse cache could not be saved: " + str(exc)
         except ValueError as exc:
             st.session_state[local_key + "_error"] = str(exc)
         except Exception:
@@ -1099,45 +1221,64 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         return tuple(content.source for content in contents), additions, {}
 
     complete_finished_job()
-    picked = tuple((u.name, u.getvalue()) for u in (uploaded or ()))
-    signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
-    if picked and st.session_state.get(local_key + "_read") != signature and local_key + "_job" not in st.session_state:
-        ids = {hashlib.sha256(raw).hexdigest() for _, raw in picked}
+    if picked and st.session_state.get(local_key + "_read") != signature:
         contents, messages = sources.ingest_batch(profile, picked, contents)
         st.session_state[evidence_key] = contents
-        scoped = tuple(c for c in contents if c.source.id in ids)
+        scoped = tuple(c for c in contents if c.source.id in picked_ids)
         st.session_state[local_key + "_messages"] = messages
-        if ids <= set(st.session_state.get(local_key + "_completed_ids", ())):
-            st.session_state[local_key + "_read"] = signature
-            show_workorder_metrics()
-            return finish_with_source_details()
         processed = set(st.session_state.get(local_key + "_native_ids", ()))
         fresh = tuple(c for c in scoped if c.source.id not in processed)
-        additions[destination] = structured.native_update(
-            fresh, destination, additions.get(destination, blocks.get(destination)),
-            table_columns=table_columns)
-        remember(additions[destination], contents)
-        st.session_state[local_key + "_native_ids"] = tuple(processed | {c.source.id for c in fresh})
-        scoped = fresh or scoped
-        digest = ai.digest(("section-upload-v4", destination, tuple(table_columns or ()),
-                            sorted(c.source.id for c in scoped)))
+        if fresh:
+            additions[destination] = structured.native_update(
+                fresh, destination, additions.get(destination, blocks.get(destination)),
+                table_columns=table_columns)
+            remember(additions[destination], contents)
+            st.session_state[local_key + "_native_ids"] = tuple(processed | {c.source.id for c in fresh})
+        st.session_state[local_key + "_read"] = signature
+    # A successful reading consumed these unchanged source bytes. Saving a
+    # shared version or editing its human wording must not replay its cached
+    # contribution; only new selected files need another reading.
+    completed_ids = set(st.session_state.get(local_key + "_completed_ids", ()))
+    scoped = tuple(c for c in contents if c.source.id in picked_ids and c.source.id not in completed_ids)
+    target = read_target()
+    digest = ai.digest(("section-upload-v4", destination, tuple(table_columns or ()),
+                        sorted(c.source.id for c in scoped)))
+    pending = st.session_state.get(local_key + "_pending")
+    if pending and pending[0].get("request") != target:
+        st.session_state.pop(local_key + "_pending", None)
+        st.session_state.pop(local_key + "_error", None)
+        pending = None
+    completed = st.session_state.get(local_key + "_completed_read") == target
+    if (scoped and not completed and not pending and local_key + "_job" not in st.session_state
+            and st.session_state.get(local_key + "_cache_checked") != target):
+        st.session_state[local_key + "_cache_checked"] = target
         try:
-            if not ai.ANTHROPIC_API_KEY:
-                # The built-in extractive pass requires no network, image
-                # rendering or allowance. Keep it and allow normal editing.
-                st.session_state.pop(local_key + "_error", None)
-                st.session_state[local_key + "_read"] = signature
-                st.caption("Automatic reading is off. Any readable text was added below for review; edit the summary directly or use Copilot.")
-                show_workorder_metrics()
-                return finish_with_source_details()
-            force = st.session_state.pop(local_key + "_force_network", False)
-            cached = None if force else ai.cached(profile, "section_upload", digest)
+            cached = ai.cached(profile, "section_upload", digest)
             if cached is not None:
-                # Keep one completion path, including page handling and validation.
                 from concurrent.futures import Future
                 future = Future()
                 future.set_result(cached)
-            else:
+                current = additions.get(destination, blocks.get(destination))
+                st.session_state[local_key + "_job"] = {
+                    "future": future, "contents": scoped, "digest": digest,
+                    "baseline": current.fingerprint if current else None,
+                    "table_columns": table_columns, "request": target,
+                    "token": uuid4().hex, "cached": True}
+        except (ValueError, OSError) as exc:
+            st.session_state[local_key + "_error"] = str(exc)
+    submitted = st.session_state.pop(local_key + "_read_request", None)
+    if submitted is not None:
+        if submitted != read_request() or not scoped:
+            st.warning("The report or selected files changed before reading started. Nothing was sent. Review the current files and select Read selected files.")
+        elif local_key + "_job" not in st.session_state and not completed:
+            st.session_state[local_key + "_read_cycle"] = uuid4().hex
+            try:
+                if not shared_base_matches(target):
+                    raise ValueError("A newer shared report was saved before reading started. Nothing was sent. Compare the shared version and continue with your draft before reading again.")
+                if testing.scope() is not None:
+                    raise ValueError("External reading is off in isolated testing. Native extracted text and manual editing remain available.")
+                if not ai.ANTHROPIC_API_KEY:
+                    raise ValueError("The document reader is not configured. Native extracted text and manual editing remain available.")
                 def prepare():
                     payloads = structured.reader_batches(profile, scoped, destination,
                             table_columns=table_columns)
@@ -1146,18 +1287,21 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                     return payloads
                 future = start_receipt(prepare, structured.read_batches)
                 if future is None:
-                    raise ValueError("Other document readings are running. Your extracted text is kept; retry this upload when they finish.")
-            st.session_state[local_key + "_job"] = {"future": future, "contents": scoped,
-                "digest": digest, "baseline": additions[destination].fingerprint,
-                "table_columns": table_columns}
-        except (ValueError, OSError, RuntimeError) as exc:
-            st.session_state[local_key + "_error"] = str(exc)
-        st.session_state[local_key + "_read"] = signature
+                    raise ValueError("Other document readings are running. Your extracted text is kept; retry reading when they finish.")
+                current = additions.get(destination, blocks.get(destination))
+                st.session_state[local_key + "_job"] = {
+                    "future": future, "contents": scoped, "digest": digest,
+                    "baseline": current.fingerprint if current else None,
+                    "table_columns": table_columns, "request": target,
+                    "token": uuid4().hex}
+                st.session_state.pop(local_key + "_error", None)
+            except (ValueError, OSError, RuntimeError) as exc:
+                st.session_state[local_key + "_error"] = str(exc)
     for message in st.session_state.get(local_key + "_messages", ()):
         st.warning(message)
     show_workorder_metrics()
     pending = st.session_state.get(local_key + "_pending")
-    if pending and st.button("Add new source suggestions to my edits", key=local_key + "_accept_suggestions"):
+    if pending and st.button("Add new source suggestions to my edits", key=local_key + "_accept_suggestions_" + pending[0]["token"]):
         from concurrent.futures import Future
         pending_job, value = st.session_state.pop(local_key + "_pending")
         future = Future()
@@ -1171,10 +1315,18 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     complete_finished_job()
     if local_key + "_error" in st.session_state:
         st.warning(st.session_state[local_key + "_error"])
-        if st.button("Retry reading uploaded files", key=local_key + "_retry"):
-            st.session_state.pop(local_key + "_read", None)
-            st.session_state[local_key + "_force_network"] = True
-            st.rerun()
+    completed = st.session_state.get(local_key + "_completed_read") == read_target()
     if local_key + "_job" in st.session_state:
         _section_read_progress(local_key)
+    elif scoped and not completed and local_key + "_pending" not in st.session_state:
+        if testing.scope() is not None:
+            st.caption("External reading is off in isolated testing. Native extracted text and manual editing remain available.")
+        elif ai.ANTHROPIC_API_KEY:
+            st.caption("Reading sends these selected files to the external document reader and uses this report's reading allowance. Charges may apply.")
+            request = read_request()
+            label = "Retry reading uploaded files" if local_key + "_error" in st.session_state else "Read selected files"
+            st.button(label, key=local_key + "_read_selected_" + _signature(request),
+                      on_click=_queue_section_read, args=(local_key, request))
+        else:
+            st.caption("The external reader is not configured. Any native text was kept below; edit directly or use Copilot.")
     return finish_with_source_details()

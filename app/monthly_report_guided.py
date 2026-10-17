@@ -1,6 +1,7 @@
 """A small monthly workspace around the versioned report model."""
 
 from dataclasses import asdict, replace
+from contextlib import nullcontext
 import re
 from uuid import uuid4
 
@@ -394,7 +395,8 @@ def _has_request_rows(block):
                for row in rows for value in row)
 
 
-def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True, manage_saved_pictures=True):
+def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True,
+                  manage_saved_pictures=True, inline_photo_intake=False):
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -544,7 +546,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         block = edit_saved_pictures(block, key, lambda ref: assets.get(ref) or library.read_asset(state.profile.contract, state.profile.key, ref), show_preview=False)
     if spec.type in ("rich_text", "stock_text", "table", "work_order_grid"):
         if spec.key in ("training_summary", "equipment_issues"):
-            with st.expander("Add a supporting photo (optional)"):
+            with nullcontext() if inline_photo_intake else st.expander("Add a supporting photo (optional)"):
                 photo = st.file_uploader("Photo to add to this section", type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_add_photo")
                 if photo and st.button("Add this photo", key=key + "_add_photo_save"):
                     from pathlib import Path
@@ -700,17 +702,9 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                 from app.monthly_report_upload_ui import acknowledge_autoincluded_water_pages
                 acknowledge_autoincluded_water_pages(prefix, blocks)
     if section.key == "activity":
-        from app.monthly_report_upload_ui import render_uploads, set_source_manager_open
-        manager_key = field(prefix + "_batch_files_open", False)
-        manager_open = st.session_state[manager_key]
-        st.button("Done with source files" if manager_open else "Manage source files",
-                  key=prefix + "_source_manager_" + str(manager_open),
-                  on_click=set_source_manager_open, args=(manager_key, not manager_open))
-        if manager_open:
-            sources, additions, incoming_specs = render_uploads(profile, period, prefix, field)
-            draft = replace(draft, sources=_keep_missing_sources(prefix, sources))
-            if additions:
-                draft, blocks = _apply_prepared(draft, blocks, additions, incoming_specs, prefix)
+        from app.monthly_report_source_manager_ui import render_guided_source_manager
+        draft, blocks = render_guided_source_manager(
+            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources)
         from app.monthly_report_ai_ui import render_drafting
         # One shared evidence workspace: rendering this once avoids duplicated
         # source/job widget identities when every report section is visible.
@@ -719,18 +713,30 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         from app.monthly_report_ai_ui import edit_linked_paragraphs
         blocks = edit_linked_paragraphs(draft, blocks, prefix, field, {spec.key for spec in section.blocks})
     specs.update({b.key: b for current in draft.sections for b in current.blocks})
-    if section.key in ("issues", "proposals"):
+    handled = set()
+    if section.key == "issues":
+        from app.monthly_report_issues import render_issue_cards
+        def edit_issue_pages(current):
+            current_blocks = {block.key: block for block in current.blocks}
+            for block_key, label in (("equipment_issues", "Section photos"),
+                                     ("equipment_issues_evidence", "Attached section evidence pages")):
+                if block_key not in specs:
+                    continue
+                block = current_blocks.get(block_key, ResolvedBlock(block_key, "This month"))
+                st.markdown("**" + label + "**")
+                if block_key == "equipment_issues":
+                    st.caption("These photos belong to the section. Supporting source links above belong to the named issue.")
+                current_blocks[block_key] = _edit_content(specs[block_key], block, state,
+                    prefix, assets, field, current, edit_text=False, inline_photo_intake=True)
+            return replace(current, blocks=tuple(current_blocks.values()))
+        draft = render_issue_cards(replace(draft, blocks=tuple(blocks.values())), prefix, field,
+                                   defer_actions=True, evidence_pages=edit_issue_pages)
+        blocks = {block.key: block for block in draft.blocks}
+        handled.update(("equipment_issues", "equipment_issues_evidence"))
+    elif section.key == "proposals":
         from app.monthly_report_followups import render_followups
         draft = replace(draft, blocks=tuple(blocks.values()))
-        draft = render_followups(draft, prefix, field, category="issue" if section.key == "issues" else "proposal")
-        if section.key == "issues":
-            blocks = {block.key: block for block in draft.blocks}
-    handled = set()
-    if section.key == "issues" and "equipment_issues" in specs:
-        block = blocks.get("equipment_issues", ResolvedBlock("equipment_issues", "This month"))
-        blocks["equipment_issues"] = _edit_content(specs["equipment_issues"], block, state,
-            prefix, assets, field, draft, edit_text=False)
-        handled.add("equipment_issues")
+        draft = render_followups(draft, prefix, field, category="proposal")
     if section.key == "training":
         from app.monthly_report_training_ui import render_training
         blocks = render_training(draft, blocks, prefix, field)
@@ -761,7 +767,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         from app.monthly_report_page_controls import source_managed_pages
         page_managed = (spec.key == "water_reports" and source_managed_pages(
             block, st.session_state.get(prefix + "_evidence", ())))
-        if not page_managed and spec.key not in {"proposals", "rfi_matrix"}:
+        if not page_managed and spec.key not in {"proposals", "rfi_matrix", "utility_analysis"}:
             st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
             from app.monthly_report_capacity_ui import render_capacity
@@ -851,6 +857,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
         st.caption("Selecting several sites combines them in one report. For separate reports, select each site individually.")
         st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
+        st.caption("Training covers hospital/client staff. ENFRA employees, asset managers and vendor personnel are outside its scope. Record only confirmed completed training in the monthly list. Enter hours only when known.")
         st.caption("Draft recovery keeps edits after they reach the app. Text still being typed may not be recoverable. Check the save status before leaving. Saving or creating files adds a shared version. Prepared by is report attribution, not a sign-in.")
     from app.monthly_report_admin_ui import render_administration_links
     render_administration_links()
@@ -1055,25 +1062,25 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[draft_key] = draft
                 st.rerun()
     if st.session_state.get(prefix + "_source_details_on_resume") and draft.sources:
-        from app.monthly_report_source_details import facility_choice, source_date, KEEP_FACILITY
+        from app.monthly_report_source_details import detail_problems
         from app.monthly_report_upload_ui import render_source_details
-        needs_correction = any(
-            source_date(source.service_date) is None
-            or facility_choice(source, profile) in ("", KEEP_FACILITY)
-            for source in draft.sources
-        )
-        review_key = field(prefix + "_review_saved_source_details", needs_correction)
-        if st.checkbox("Review source dates and sites from saved files", key=review_key):
-            st.caption("Correct the date or site beside each saved source. Original files and reviewed page decisions are retained.")
-            corrections = {}
-            for source in draft.sources:
+        # A resumed report needs an exact-item correction path, not every
+        # source form expanded above the report. Valid/reference-only sources
+        # remain available through Manage source files. Keep each unresolved
+        # source's anchor outside its quiet disclosure so review links land on
+        # a visible, named action. Opening it does not approve or change facts.
+        corrections = {}
+        for source in draft.sources:
+            problems = detail_problems(source, profile, period)
+            if problems:
                 corrections[source.id] = render_source_details(
-                    source, profile, prefix + "_resumed_" + source.id, field)
-            if any(corrections[source.id] != source for source in draft.sources):
-                draft = replace(draft, sources=tuple(corrections[source.id] for source in draft.sources))
-                st.session_state[prefix + "_evidence"] = tuple(
-                    replace(content, source=corrections.get(content.source.id, content.source))
-                    for content in st.session_state.get(prefix + "_evidence", ()))
+                    source, profile, prefix + "_resumed_" + source.id, field,
+                    compact_problems=problems)
+        if any(corrections.get(source.id, source) != source for source in draft.sources):
+            draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
+            st.session_state[prefix + "_evidence"] = tuple(
+                replace(content, source=corrections.get(content.source.id, content.source))
+                for content in st.session_state.get(prefix + "_evidence", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
@@ -1098,9 +1105,14 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
                 # Contract, period, sites and preparer were already chosen at Start.
-                # Do not repeat a "Cover and report details" step or a hidden
-                # appearance/settings form. The starting-report photo gallery below
-                # handles an imported cover image when its identity is uncertain.
+                # Keep report-only photo changes reachable independently from the
+                # starting-report gallery and shared design administration.
+                from app.monthly_report_cover_ui import render_cover_photograph
+                blocks = render_cover_photograph(
+                    blocks, prefix, assets,
+                    lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
+                    scope=_rich_text_scope(prefix),
+                )
                 from app.monthly_report_section_ui import render_section_setup
                 render_section_setup(contract, period, prepared, field, state=state,
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),
@@ -1136,6 +1148,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     footer = blocks.get("footer_text")
     if footer:
         draft = replace(draft, address_line=footer.text if footer.source != "Omit" else "")
+    from app.monthly_report_issues import apply_issue_action
+    draft = apply_issue_action(draft, prefix)
     st.session_state[draft_key] = draft
     if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
         save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
@@ -1225,7 +1239,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.subheader("Review and download", anchor="report-review")
         from app.monthly_report_editor import review_client_images
         if prepared.strip():
+            from app.monthly_report_asset_review import pending_asset_indexes
+            before_review = tuple((block.key, block.asset_hashes, pending_asset_indexes(block))
+                                  for block in draft.blocks)
             draft = review_client_images(draft, assets, prefix, field)
+            after_review = tuple((block.key, block.asset_hashes, pending_asset_indexes(block))
+                                 for block in draft.blocks)
+            if after_review != before_review:
+                # Ordered section controls were rendered before these image
+                # decisions. Refresh them only after the complete draft and
+                # its recovery attempt below, never before delivered edits.
+                st.session_state[prefix + "_period_editor_refresh"] = True
         st.session_state[draft_key] = draft
         if recovery_available and snapshot and snapshot.draft.fingerprint == draft.fingerprint:
             # The complete current version already exists in immutable history;

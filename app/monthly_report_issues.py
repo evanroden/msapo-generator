@@ -1,6 +1,6 @@
 """One report-scoped issue list; omission is not resolution or history deletion."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from uuid import uuid4
 
 from app.monthly_report_content_policy import table_price_columns
@@ -121,6 +121,118 @@ def clear_issues(draft):
         for item in draft.follow_ups))
 
 
+def _action_scope(draft, prefix):
+    """A delayed list action cannot cross a reset, source or report identity."""
+    import streamlit as st
+    epoch = st.session_state.setdefault(prefix + "_rich_text_epoch", uuid4().hex)
+    return _digest((prefix, epoch, st.session_state.get("_monthly_qa_generation", ""),
+                    asdict(draft.profile), draft.period.key,
+                    tuple(source.fingerprint for source in draft.sources),
+                    tuple(item.key for item in draft.follow_ups if item.category == "issue")))
+
+
+def _queue_issue_action(prefix, scope, action, expected=""):
+    import streamlit as st
+    st.session_state[prefix + "_pending_issue_action"] = {
+        "scope": scope, "action": action, "expected": expected,
+    }
+
+
+def _action_cycle(prefix, scope):
+    """One local cycle token, plus an optional exact-report Undo receipt."""
+    import streamlit as st
+    key = prefix + "_issue_clear_undo"
+    cycle = st.session_state.get(key)
+    if not isinstance(cycle, dict) or cycle.get("scope") != scope:
+        cycle = {"scope": scope, "token": uuid4().hex}
+    elif not isinstance(cycle.get("token"), str) or not cycle["token"]:
+        cycle = {**cycle, "token": uuid4().hex}
+    st.session_state[key] = cycle
+    return cycle
+
+
+def apply_issue_action(draft, prefix):
+    """Apply after native edits, so Clear retains them and Undo cannot replace them.
+
+    The ordered workspace calls this only after every section's delivered
+    values have reached the draft, including tables rendered after Issues.
+    A receipt contains inclusion flags, never another copy of source bytes.
+    """
+    import streamlit as st
+    request = st.session_state.pop(prefix + "_pending_issue_action", None)
+    if not request:
+        return draft
+    scope = _action_scope(draft, prefix)
+    undo_key = prefix + "_issue_clear_undo"
+    if request.get("scope") != scope:
+        st.warning("The report or its sources changed. Review the issue list before trying that action again.")
+        return draft
+    cycle = st.session_state.get(undo_key)
+    if (not isinstance(cycle, dict) or cycle.get("scope") != scope
+            or cycle.get("token") != request.get("expected")):
+        st.warning("That issue action was replaced. Review the current issue selection and try again.")
+        return draft
+    if request.get("action") == "clear":
+        inclusion = tuple((item.key, item.included) for item in draft.follow_ups
+                          if item.category == "issue")
+        if not any(included for _, included in inclusion):
+            return draft
+        draft = clear_issues(draft)
+        st.session_state[undo_key] = {"scope": scope, "after": draft.fingerprint,
+                                      "token": uuid4().hex, "inclusion": inclusion}
+        notice = "Issues left out of this report. Their wording, status and history are retained."
+    elif request.get("action") == "undo":
+        if draft.fingerprint != cycle.get("after"):
+            st.warning("The report changed after Clear. Your edits are kept; use Include again for individual issues.")
+            return draft
+        inclusion = dict(cycle["inclusion"])
+        draft = replace(draft, follow_ups=tuple(
+            replace(item, included=inclusion[item.key])
+            if item.category == "issue" and item.key in inclusion else item
+            for item in draft.follow_ups))
+        st.session_state[undo_key] = {"scope": scope, "token": uuid4().hex}
+        notice = "The previous issue selection is restored in this report."
+    else:
+        return draft
+    st.session_state[prefix + "_issue_action_notice"] = (scope, notice)
+    # The authoritative draft and recovery journal must commit before the
+    # normal workspace refreshes its controls. Never rerun mid-editor.
+    st.session_state[prefix + "_period_editor_refresh"] = True
+    return draft
+
+
+def _render_issue_actions(draft, prefix):
+    import streamlit as st
+    scope = _action_scope(draft, prefix)
+    notice = st.session_state.pop(prefix + "_issue_action_notice", None)
+    if notice and notice[0] == scope:
+        st.caption(notice[1])
+    cycle = _action_cycle(prefix, scope)
+    token = cycle["token"]
+    receipt = cycle if "after" in cycle else None
+    included = any(item.category == "issue" and item.included for item in draft.follow_ups)
+    if not included and not receipt:
+        return
+    with st.popover("Issue actions", key=prefix + "_issue_actions_" + scope):
+        st.caption("Changes only this report's issue selection. Saved versions, source files and issue history stay intact.")
+        # Both native IDs and callback arguments carry the action cycle.
+        # Completing Clear or Undo retires the preceding native buttons even
+        # when the report has identical content in the same incarnation.
+        st.button("Clear issues from this report", key=prefix + "_issue_clear_" + scope + "_" + token,
+                  disabled=not included, on_click=_queue_issue_action,
+                  args=(prefix, scope, "clear", token))
+        if receipt:
+            unchanged = receipt["after"] == draft.fingerprint
+            # Equal content after a reset is still another native action.
+            # Scope in callback arguments alone is insufficient: reusing the
+            # native ID would bind an old click to the NEW callback arguments.
+            st.button("Undo Clear issues", key=prefix + "_issue_undo_clear_" + scope + "_" + token + "_" + receipt["after"],
+                      disabled=not unchanged, on_click=_queue_issue_action,
+                      args=(prefix, scope, "undo", token))
+            if not unchanged:
+                st.caption("The report changed after Clear. Use Include again for individual issues.")
+
+
 def _issue_changed(key, before):
     import streamlit as st
     st.session_state[key + "_change"] = {"before": before, "value": st.session_state.get(key)}
@@ -147,7 +259,32 @@ def _issue_control(widget, label, key, value, field, **kwargs):
     return value
 
 
-def render_issue_cards(draft, prefix, field):
+def _render_issue_evidence(item, draft, options, p, field):
+    import streamlit as st
+    update = _issue_control(st.text_area, "Issue update", p + "_update", item.update,
+                            field, height=90, max_chars=4000)
+    note, references = item.evidence_note, item.references
+    if item.status in ("updated", "resolved") or note:
+        note = _issue_control(st.text_area, "Evidence or explanation for the status",
+                              p + "_note", note, field, height=90, max_chars=4000)
+    if options or references:
+        selected = _issue_control(st.multiselect, "Supporting source pages",
+            p + "_sources_" + _digest(list(options)),
+            [ref for ref in references if ref in options], field,
+            options=list(options), format_func=options.get) if options else []
+        missing = tuple(ref for ref in references if ref not in options)
+        if missing:
+            st.warning("A supporting source changed or is missing.")
+            if st.checkbox("Remove unavailable source links",
+                           key=field(p + "_remove_missing_" + _digest(missing), False)):
+                missing = ()
+        references = (*selected, *missing)
+    if item.carried_from != draft.period.key:
+        st.caption("Carried from " + item.carried_from)
+    return replace(item, update=update, evidence_note=note, references=references)
+
+
+def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pages=None):
     import streamlit as st
 
     draft = canonical_issues(draft)
@@ -158,16 +295,13 @@ def render_issue_cards(draft, prefix, field):
         item = ReportFollowUp("issue-" + uuid4().hex, "issue", "", draft.period.key)
         draft = replace(draft, follow_ups=(*draft.follow_ups, item))
         issues.append(item)
-    if any(item.included for item in issues):
-        if st.button("Clear issues from this report", key=prefix + "_issue_clear"):
-            draft = clear_issues(draft)
-            st.caption("Issue list cleared for this report. Their status and history are retained.")
+    _render_issue_actions(draft, prefix)
     block = next((b for b in draft.blocks if b.key == "equipment_issues"), None)
     if block and block.text and not block.ai_written and not block.ai_paragraphs:
         st.text(block.text)
         if st.button("Remove no-issues statement", key=prefix + "_issue_statement_remove"):
             draft = remove_issue_statement(draft)
-    items = []
+    items, evidence_controls = [], {}
     for original in draft.follow_ups:
         if original.category != "issue" or not original.included:
             items.append(original)
@@ -180,39 +314,42 @@ def render_issue_cards(draft, prefix, field):
                                   field, height=90, max_chars=4000)
             status = _issue_control(st.selectbox, "Issue status", p + "_status", item.status,
                                     field, options=ISSUE_STATUSES, format_func=_status_label)
-            update, note, references = item.update, item.evidence_note, item.references
-            with st.expander("Evidence", expanded=status in ("updated", "resolved")):
-                update = _issue_control(st.text_area, "Issue update", p + "_update", update,
-                                        field, height=90, max_chars=4000)
-                if status in ("updated", "resolved") or note:
-                    note = _issue_control(st.text_area, "Evidence or explanation for the status",
-                                          p + "_note", note, field, height=90, max_chars=4000)
-                if options or references:
-                    selected = _issue_control(st.multiselect, "Supporting source pages",
-                        p + "_sources_" + _digest(list(options)),
-                        [ref for ref in references if ref in options], field,
-                        options=list(options), format_func=options.get) if options else []
-                    missing = tuple(ref for ref in references if ref not in options)
-                    if missing:
-                        st.warning("A supporting source changed or is missing.")
-                        if st.checkbox("Remove unavailable source links",
-                                       key=field(p + "_remove_missing_" + _digest(missing), False)):
-                            missing = ()
-                    references = (*selected, *missing)
-                if item.carried_from != draft.period.key:
-                    st.caption("Carried from " + item.carried_from)
-            item = replace(item, text=text, status=status, update=update,
-                           evidence_note=note, references=references)
-            for message in problems(item, draft):
-                st.warning(message)
+            item = replace(item, text=text, status=status)
+            warnings = st.empty()
             removed = st.button("Remove from this report", key=p + "_remove")
             if removed:
                 item = replace(item, included=False)
         if removed:
             surface.empty()
+        evidence_controls[len(items)] = (p, warnings)
         items.append(item)
-    draft = replace(draft, follow_ups=tuple(items))
-    omitted = [item for item in items if item.category == "issue" and not item.included]
+    if evidence_controls or evidence_pages:
+        needs_evidence = any(items[n].included and items[n].status in ("updated", "resolved")
+                             for n in evidence_controls)
+        with st.expander("Evidence", expanded=needs_evidence):
+            for n, (p, warnings) in evidence_controls.items():
+                item = items[n]
+                evidence_surface = st.empty()
+                with evidence_surface.container(border=True):
+                    label = " ".join(item.text.split()) or "Unfinished issue"
+                    st.caption("Issue: " + (label if len(label) <= 120 else label[:117] + "…"))
+                    # A Remove click can deliver the last native evidence edit
+                    # in the same packet. Read it before retiring the controls;
+                    # omission must preserve that wording and its source links.
+                    item = _render_issue_evidence(item, draft, options, p, field)
+                if not item.included:
+                    evidence_surface.empty()
+                else:
+                    with warnings.container():
+                        for message in problems(item, draft):
+                            st.warning(message)
+                items[n] = item
+            draft = replace(draft, follow_ups=tuple(items))
+            if evidence_pages:
+                draft = evidence_pages(draft)
+    else:
+        draft = replace(draft, follow_ups=tuple(items))
+    omitted = [item for item in draft.follow_ups if item.category == "issue" and not item.included]
     if omitted:
         with st.expander(f"Removed from this report ({len(omitted)})"):
             st.caption("Unresolved issues remain available for future reports.")
@@ -221,4 +358,4 @@ def render_issue_cards(draft, prefix, field):
                 st.caption(_status_label(item.status))
                 if st.button("Include again", key=prefix + "_issue_restore_" + item.key):
                     draft = issue_visibility(draft, item.key, True)
-    return draft
+    return draft if defer_actions else apply_issue_action(draft, prefix)

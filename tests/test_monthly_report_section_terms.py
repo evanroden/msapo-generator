@@ -1,4 +1,7 @@
 """Plain-language section guidance is available without opening onboarding."""
+import ast
+from pathlib import Path
+
 from app.monthly_report_section_help import SECTION_HELP, section_help, editor_section_title
 from app.monthly_report_model import default_sections
 
@@ -21,9 +24,29 @@ def test_rfi_acronym_expanded_with_clear_workflow():
 
 
 def test_training_excludes_enfra_staff_without_mislabeling_external_events():
-    guidance = section_help("training").guidance
-    assert "hospital or client staff" in guidance
-    assert "not ENFRA" in guidance
+    assert section_help("training").guidance == "Hospital/client staff training."
+    # The full scope rule moved into the quiet Help disclosure. Check its
+    # actual location and retained consequences, not the superseded paragraph
+    # beside every valid training matrix.
+    source = Path(__file__).resolve().parents[1] / "app/monthly_report_guided.py"
+    tree = ast.parse(source.read_text())
+    help_panels = [node for node in ast.walk(tree) if isinstance(node, ast.With)
+                   and any(isinstance(item.context_expr, ast.Call)
+                           and isinstance(item.context_expr.func, ast.Attribute)
+                           and item.context_expr.func.attr == "expander"
+                           and item.context_expr.args
+                           and isinstance(item.context_expr.args[0], ast.Constant)
+                           and item.context_expr.args[0].value == "Help"
+                           for item in node.items)]
+    assert len(help_panels) == 1
+    context = help_panels[0].items[0].context_expr
+    assert not any(keyword.arg == "expanded" and ast.literal_eval(keyword.value)
+                   for keyword in context.keywords)
+    guidance = " ".join(node.value for node in ast.walk(help_panels[0])
+                        if isinstance(node, ast.Constant) and isinstance(node.value, str))
+    assert "Training covers hospital/client staff" in guidance
+    assert "ENFRA employees, asset managers and vendor personnel are outside its scope" in guidance
+    assert "only confirmed completed training" in guidance
     assert "hours only when known" in guidance
 
 

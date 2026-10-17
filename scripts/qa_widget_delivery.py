@@ -11,6 +11,8 @@ from google.protobuf.message import DecodeError
 from streamlit.proto.BackMsg_pb2 import BackMsg
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
 
+DEFAULT_PORTS = (8520, 8521, 8528)
+
 
 def _hash(value):
     return sha256(value.encode('utf-8')).hexdigest()
@@ -21,8 +23,11 @@ def _text(value):
 
 
 class WidgetDelivery:
-    def __init__(self, record):
+    def __init__(self, record, *, ports=DEFAULT_PORTS):
         self.record = record
+        # New fixture servers opt in to their exact port; existing diagnostic
+        # callers retain their previous localhost-only scope.
+        self.ports = tuple(ports)
         self.cache = OrderedDict()
         self.socket_sequence = 0
 
@@ -77,7 +82,7 @@ class WidgetDelivery:
     def attach(self, page):
         def connected(socket):
             parsed = urlparse(socket.url)
-            if parsed.hostname != '127.0.0.1' or parsed.port not in (8520, 8521, 8528):
+            if parsed.hostname != '127.0.0.1' or parsed.port not in self.ports:
                 raise ValueError('Widget diagnostics require the synthetic localhost fixture')
             self.socket_sequence += 1
             socket_id = self.socket_sequence

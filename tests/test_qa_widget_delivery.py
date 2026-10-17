@@ -91,3 +91,31 @@ def test_external_socket_cannot_be_observed():
         url = 'wss://example.invalid/_stcore/stream'
     with pytest.raises(ValueError, match='synthetic localhost'):
         page.listener(Socket())
+
+
+@pytest.mark.parametrize('url', ['ws://127.0.0.1:8520/_stcore/stream',
+    'ws://127.0.0.1:8543/_stcore/stream', 'wss://example.invalid:8542/_stcore/stream'])
+def test_explicit_history_port_still_rejects_other_fixture_or_external_sockets(url):
+    class Page:
+        def on(self, event, listener):
+            self.listener = listener
+    class Socket:
+        def on(self, *_args):
+            pytest.fail('Rejected socket must not receive a frame listener')
+    page, socket = Page(), Socket()
+    socket.url = url
+    WidgetDelivery(lambda *_: pytest.fail('Rejected socket recorded'), ports=(8542,)).attach(page)
+    with pytest.raises(ValueError, match='synthetic localhost'):
+        page.listener(socket)
+
+
+def test_default_fixture_scope_does_not_silently_expand_for_history():
+    class Page:
+        def on(self, event, listener):
+            self.listener = listener
+    class Socket:
+        url = 'ws://127.0.0.1:8542/_stcore/stream'
+    page = Page()
+    WidgetDelivery(lambda *_: None).attach(page)
+    with pytest.raises(ValueError, match='synthetic localhost'):
+        page.listener(Socket())

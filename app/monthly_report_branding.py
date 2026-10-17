@@ -197,13 +197,15 @@ def card_image(raw):
         return output.getvalue()
 
 
-def apply_defaults(draft, assets):
-    """Fill empty logos only; pinned/custom content always stays intact."""
+def apply_defaults(draft, assets, *, skip_slots=()):
+    """Fill empty logos except source slots explicitly preserved by the caller."""
     blocks = {block.key: block for block in draft.blocks}
     state = load_branding()
     if not state:
         return draft
     for key in ("client_logo", "brand_logo"):
+        if key in skip_slots:
+            continue
         block = blocks.get(key)
         if block and (block.asset_hashes or block.source == "Omit"):
             continue

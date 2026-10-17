@@ -142,6 +142,10 @@ def _identity(contract, prepared, prefix, field, state, inspection=None):
     return candidate, actor, missing
 
 
+def _use_new_cover_photo(key, digest):
+    st.session_state[key] = digest
+
+
 def _replacement_pictures(section, p, plan):
     """Keep each replacement tied to a named report part across reruns."""
     if section.key == "cover":
@@ -155,6 +159,8 @@ def _replacement_pictures(section, p, plan):
         st.caption("Choose “Leave out” on the old picture when replacing it. Complete vendor, chemical and MBCx files can be added in This month’s work after setup.")
     replacements = {slot: image for slot, image in plan.get("new_assets", ())
                     if slot not in {"client_logo", "brand_logo"}}
+    use_key = p + "_new_cover_photo_use"
+    pending_use = st.session_state.pop(use_key, "") if section.key == "cover" else ""
     for slot, label in labels.items():
         upload = st.file_uploader(label, type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=p + "_replacement_" + slot, max_upload_size=30)
         if upload:
@@ -163,8 +169,20 @@ def _replacement_pictures(section, p, plan):
             except (ValueError, OSError):
                 st.error("This picture could not be read. Choose another image; your previous selection is retained.")
         if slot in replacements:
-            st.image(replacements[slot].data, width="stretch", caption=label + " — included in this report")
+            if slot == "cover_photo" and pending_use:
+                if hashlib.sha256(replacements[slot].data).hexdigest() == pending_use:
+                    plan["cover_photo_omitted"] = False
+                else:
+                    st.error("The new cover photograph changed before that choice was applied. Your No cover photograph choice remains; review the current image before using it.")
+            omitted = section.key == "cover" and plan.get("cover_photo_omitted")
+            st.image(replacements[slot].data, width="stretch", caption=label + (
+                " — retained here; No cover photograph is selected" if omitted else " — included in this report"))
     plan["new_assets"] = list(replacements.items())
+    if section.key == "cover" and plan.get("cover_photo_omitted") and "cover_photo" in replacements:
+        image = replacements["cover_photo"]
+        digest = hashlib.sha256(image.data).hexdigest()
+        st.button("Use this new cover photograph", key=p + "_use_new_cover_" + digest[:20],
+                  on_click=_use_new_cover_photo, args=(use_key, digest))
 
 
 def _explicit_quote_price_risk(section, inspection):
@@ -182,7 +200,8 @@ def _explicit_quote_price_risk(section, inspection):
                for item in section.items)
 
 
-def _section_card(section, path, inspection, period, prefix, field, plans, first):
+def _section_card(section, path, inspection, period, prefix, field, plans, first, *, cover_photo_ids=(),
+                  cover_design_available=False, source_name="Uploaded Word report"):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
     status = "Ready" if old.get("approved") else "Review"
@@ -197,6 +216,9 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
         st.write(guide.guidance)
         actions = ["Keep and review", "Edit text or change pictures", "Leave this section out"]
         labels = dict(zip(actions, (guide.keep, guide.edit, "Start this section blank")))
+        if section.key == "cover":
+            labels[actions[2]] = ("Use this report’s cover design" if cover_design_available
+                                  else "Leave imported cover artwork out")
         action = st.radio("What would you like to do?", actions, format_func=labels.get, key=field(p + "_action", old.get("action", actions[0])), horizontal=True)
         plan = {"key": section.key, "action": action, "target": section.key,
                 "omit": action == actions[2], "selected": [], "texts": {},
@@ -204,6 +226,11 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "new_assets": [(slot, image) for slot, image in old.get("new_assets", [])
                                if slot not in {"brand_logo", "client_logo"}],
                 "image_notes": dict(old.get("image_notes", {})), "automatic": old.get("automatic", False),
+                "source_sha256": old.get("source_sha256", ""),
+                "source_site_relation": old.get("source_site_relation", ""),
+                "automatic_logo_skips": {role:list(ids) for role,ids in old.get("automatic_logo_skips", {}).items()},
+                "cover_photo_omitted": old.get("cover_photo_omitted", False),
+                "cover_photo_source_ids": tuple(old.get("cover_photo_source_ids", ())),
                 # A separate price/text question cannot erase an already
                 # preserved native source diagram when this card reopens.
                 "auto_native_diagrams": old.get("auto_native_diagrams", False),
@@ -211,8 +238,30 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "preserved_assets": list(old.get("preserved_assets", ())),
                 "word_page_records": list(old.get("word_page_records", ()))}
         blocking = []
+        cover_recovery = ("Choose ‘Use this report’s cover design’ above to keep its current artwork."
+                          if cover_design_available else
+                          "Open an existing report if you want to use its saved cover design.")
         if plan["omit"]:
-            st.caption("This section stays in the report. The uploaded content remains in the saved original for reference.")
+            if section.key == "cover":
+                from app.monthly_report_start_import import unresolved_cover_artwork
+                unread = any(i.kind == "unsupported" for i in section.items)
+                if not cover_design_available and (unread or unresolved_cover_artwork(section.items)):
+                    blocking.append(
+                        "This starting report would also supply the new report’s page design. "
+                        "Repair the unread or unassigned cover artwork in the original Word file "
+                        "and upload it again, or open an existing report with a saved cover design. "
+                        "Leaving its cover contribution out cannot make that source artwork safe."
+                    )
+                else:
+                    st.caption(
+                        "Keeps this report’s current cover design, logos, photograph and footer. "
+                        "No cover artwork or address from this upload is added; the unchanged "
+                        "original is retained."
+                        if cover_design_available else
+                        "The uploaded cover content stays in the saved original for reference."
+                    )
+            else:
+                st.caption("This section stays in the report. The uploaded content remains in the saved original for reference.")
         else:
             from app.monthly_report_word_pages_ui import chart_page_review
             if chart_page_review(section, path, period, p, field, old, plan, blocking):
@@ -288,31 +337,85 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 fixed_logos = [i for i in pictures if old.get("destinations", {}).get(i.id, i.suggested_slot)
                                in {"brand_logo", "client_logo"}]
                 for item in fixed_logos:
+                    role = old.get("destinations", {}).get(item.id, item.suggested_slot)
+                    if (old.get("automatic") and inspection is not None
+                            and old.get("source_sha256") == inspection.sha256
+                            and item.id in old.get("automatic_logo_skips", {}).get(role, ())
+                            and item.id not in old.get("selected", ())):
+                        # An unrelated review card cannot silently select a
+                        # source logo already replaced by preferred artwork.
+                        continue
                     plan["selected"].append(item.id)
                     plan["destinations"][item.id] = old.get("destinations", {}).get(item.id, item.suggested_slot)
                 pictures = [i for i in pictures if i not in fixed_logos]
-            review_pictures(pictures, section.key,
-                            path, p, prefix, field, old, plan, blocking, allow_branding=False)
+                if cover_photo_ids:
+                    # The dedicated gallery already owns this same source's
+                    # photo choice. A second gallery here used an independent
+                    # native key and could reverse No cover photograph or a
+                    # new selection while reviewing unrelated cover artwork.
+                    chosen = old.get("cover_picture_id", "")
+                    if (chosen in cover_photo_ids and chosen in old.get("selected", ())
+                            and old.get("destinations", {}).get(chosen) == "cover_photo"):
+                        plan["selected"].append(chosen)
+                        plan["destinations"][chosen] = "cover_photo"
+                    plan["cover_picture_id"] = chosen if chosen in cover_photo_ids else ""
+                    plan["picture_choices"] = [chosen] if chosen in plan["selected"] else []
+                    plan["picture_roles"] = {identity: "cover_photo" if identity in plan["picture_choices"] else ""
+                                             for identity in cover_photo_ids}
+            if not (section.key == "cover" and cover_photo_ids):
+                review_pictures(pictures, section.key,
+                                path, p, prefix, field, old, plan, blocking, allow_branding=False)
+            if section.key == "cover":
+                from app.monthly_report_start_import import unresolved_cover_artwork
+                from app.monthly_report_import import read_import_image
+                unknown = unresolved_cover_artwork(section.items)
+                if unknown:
+                    st.markdown("**Other imported cover artwork**")
+                    for number, item in enumerate(unknown[:4], 1):
+                        st.caption(f"Cover artwork {number} · {source_name}")
+                        try:
+                            preview = read_import_image(path, item, preview=True)
+                            st.image(preview.data, width=min(preview.width, 650))
+                        except (ValueError, OSError):
+                            st.warning(f"Cover artwork {number} could not be displayed; it remains in the original Word file.")
+                    if len(unknown) > 4:
+                        st.caption(f"{len(unknown) - 4} more unassigned cover images remain in this original.")
+                    blocking.append(
+                        "Cover artwork 1" + (f" and {len(unknown) - 1} more images have" if len(unknown) > 1 else " has") +
+                        " no confirmed photograph or logo role. Repair it in the original Word "
+                        "file and upload it again. " + cover_recovery +
+                        " These images will not be silently dropped or assigned a guessed role."
+                    )
             if action == actions[1] and section.key != "other":
                 _replacement_pictures(section, p, plan)
             elif plan["new_assets"]:
                 from app.monthly_report_sections import readable_label
                 for slot, image in plan["new_assets"]:
-                    st.image(image.data, width="stretch", caption="Your updated " + readable_label(slot).lower() + " is retained")
+                    caption = "Your updated " + readable_label(slot).lower() + " is retained"
+                    if section.key == "cover" and plan.get("cover_photo_omitted") and slot == "cover_photo":
+                        caption += "; No cover photograph is selected, so it is not included"
+                    st.image(image.data, width="stretch", caption=caption)
             if any(i.kind == "unsupported" for i in section.items):
                 # Do not silently exclude a difficult SmartArt/VML/OLE frame
                 # after removing the old generic "continue without" radio.
                 # It must be rendered into the original section or have an
                 # explicit clear replacement before this section is accepted.
-                preserved = bool(plan.get("page_layout") and plan.get("preserved_assets")
+                preserved = section.key != "cover" and bool(plan.get("page_layout") and plan.get("preserved_assets")
                                  or plan.get("auto_native_diagrams") and plan.get("preserved_assets")
                                  or plan.get("new_assets"))
                 plan["unsupported_reviewed"] = preserved
                 if not preserved:
+                    if section.key == "cover":
+                        count = sum(i.kind == "unsupported" for i in section.items)
+                        st.caption(f"{count} unread cover drawing{'s' if count != 1 else ''} · {source_name}")
                     blocking.append(
-                        "A Word diagram in " + section.title +
-                        " could not be preserved. Use its original-page preview "
-                        "or the clear replacement upload; it will not be silently left out."
+                        "A Word diagram in " + section.title + " could not be preserved. " +
+                        ("A new cover photograph changes only the photograph; it cannot replace "
+                         "this unread drawing. Repair that artwork in the original Word file and "
+                         "upload it again. " + cover_recovery
+                         if section.key == "cover" else
+                         "Use its original-page preview or the clear replacement upload; "
+                         "it will not be silently left out.")
                     )
                 else:
                     st.caption("Source drawings are retained in this section, "
@@ -361,6 +464,15 @@ def render_pending_cover_selection(draft, assets, contract, period, state):
     _, path, inspection = staged
     plans = st.session_state.get(prefix + "_" + inspection.sha256[:16] + "_section_plans", {})
     plan = plans.get("cover", {})
+    if plan.get("omit"):
+        return draft, assets
+    if plan.get("cover_photo_omitted"):
+        current = next((block for block in draft.blocks if block.key == "cover_photo"), None)
+        if current and current.source != "Omit" and current.asset_hashes:
+            st.caption("The imported cover photo is left out. Your current report photo is unchanged; remove it in this report first if you want no cover photograph.")
+            return draft, assets
+        omitted = replace(current, source="Omit") if current else ResolvedBlock("cover_photo", "Omit")
+        return replace(draft, blocks=tuple(block for block in draft.blocks if block.key != "cover_photo") + (omitted,)), assets
     identity = next((item_id for item_id, slot in plan.get("destinations", {}).items()
                      if slot == "cover_photo" and item_id in plan.get("selected", ())), "")
     if not identity:
@@ -395,7 +507,8 @@ def _starting_review_sections(sections, plans, diagram_failures):
     for section in sections:
         plan = plans.get(section.key, {})
         questions = plan.get("questions", ())
-        if plan.get("approved") and not questions:
+        if (plan.get("approved") and not questions
+                and not (section.key == "cover" and plan.get("omit"))):
             continue
         if (section.key in diagram_failures and questions
                 and all(q.startswith("A Word diagram or image") for q in questions)):
@@ -604,28 +717,33 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     # a repeated radio under every large photo/logo. The automatic suggestion
     # is already in the plan; clicking a replacement changes only this unsaved
     # draft and leaves the retained original/approved logos untouched.
+    cover_photo_ids = ()
     cover_section = next((section for section in sections if section.key == "cover"), None)
     if cover_section and analysis.site_relation == "same":
         from app.monthly_report_start_import import cover_photo_candidates
         from app.monthly_report_picture_cards import review_cover_gallery
         candidates = cover_photo_candidates(cover_section.items)
         if candidates:
+            cover_photo_ids = tuple(item.id for item in candidates)
             with st.expander("Cover photograph", expanded=True,
                              key=p + "_cover_gallery_expander", on_change="rerun") as gallery:
                 if gallery.open:
                     existing = plans["cover"]
-                    updated = dict(existing)
-                    updated["selected"] = list(existing.get("selected", ()))
-                    updated["destinations"] = dict(existing.get("destinations", {}))
-                    review_cover_gallery(candidates, path, p + "_cover_gallery",
-                                         existing, updated)
-                    # No blanket approval button: the selected source photo
-                    # still flows through the image/package safety checks.
-                    # A photograph selection cannot resolve unread Word art
-                    # or a previous blocking review in this same cover.
-                    updated["approved"] = bool(existing.get("approved")
-                                               and not updated.get("questions"))
-                    plans["cover"] = updated
+                    if existing.get("omit"):
+                        st.caption("Imported cover photos are not selected while this upload’s cover content is left out. Change that choice in Cover and page design below.")
+                    else:
+                        updated = dict(existing)
+                        updated["selected"] = list(existing.get("selected", ()))
+                        updated["destinations"] = dict(existing.get("destinations", {}))
+                        review_cover_gallery(candidates, path, p + "_cover_gallery",
+                                             existing, updated)
+                        # No blanket approval button: the selected source photo
+                        # still flows through the image/package safety checks.
+                        # A photograph selection cannot resolve unread Word art
+                        # or a previous blocking review in this same cover.
+                        updated["approved"] = bool(existing.get("approved")
+                                                   and not updated.get("questions"))
+                        plans["cover"] = updated
     questions = [section for section in sections if plans.get(section.key, {}).get("questions")]
     if diagram_failures:
         st.subheader("Diagrams needing a specific recovery")
@@ -676,7 +794,10 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         for index, section in enumerate(questions):
             for message in seed[section.key]["questions"]:
                 st.caption(section.title + ": " + message)
-            _section_card(section, path, inspection, period, p, field, plans, index == 0)
+            _section_card(section, path, inspection, period, p, field, plans, index == 0,
+                          cover_photo_ids=cover_photo_ids if section.key == "cover" else (),
+                          cover_design_available=state is not None,
+                          source_name=upload.name if upload is not None else "Saved original Word report")
     with st.expander("Review what will be carried across (optional)", key=p + "_check_import", on_change="rerun") as details:
         if details.open:
             for section in sections:
@@ -684,6 +805,18 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     st.caption(section.title + (" · ready" if plans[section.key].get("selected") else " · starts blank"))
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
+    if state is None and cover_section and plans["cover"].get("approved"):
+        from app.monthly_report_start_import import unresolved_cover_artwork
+        if (any(item.kind == "unsupported" for item in cover_section.items)
+                or unresolved_cover_artwork(cover_section.items)):
+            # Even deliberately excluded foreign content would remain inside a
+            # new profile's uploaded native design. A contribution omission or
+            # an older staged approval cannot certify that design's artwork.
+            message = ("The cover artwork in " + (upload.name if upload is not None else "the saved original") +
+                       " is unread or has no confirmed role. Repair it in the original Word file and upload it again, "
+                       "or open an existing report with a saved cover design. This upload would also supply a new report’s page design.")
+            st.error(message)
+            todo.append("Repair the source cover artwork before using it as a new report design.")
     for message in todo:
         st.info(message)
     if not todo:
@@ -691,15 +824,24 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     st.caption("Saving remembers this design and its site information for next month. Saved content is shared in this public internal-testing app. Your entered name records the change; it is not a login.")
     if st.button("Continue to this month’s updates", key=p + "_save", type="primary", disabled=bool(todo) or not candidate):
         try:
+            if todo:
+                raise ValueError("Resolve the remaining starting-report messages before continuing. Your draft and upload are unchanged.")
             with st.spinner("Saving your report and its reusable design…"):
                 mapped, mappings = build_starting_import(path, inspection, tuple(plans[s.key] for s in sections))
                 profile = candidate if state else design_profile(candidate, inspection, mappings, mapped.overrides)
                 profile = replace(profile, excluded_sections=())
                 draft = imported_draft(profile, period, actor, mapped)
                 draft = replace(draft, sections=tuple(replace(s, included=True) for s in draft.sections))
-                source_draft = draft
                 previous, verified = library.starting_contribution(
                     contract, profile.key, period, inspection.sha256) if state else (None, False)
+                from app.monthly_report_start_replay import retain_automatic_logo_contributions
+                incoming_keys = {block.key for block in draft.blocks}
+                draft = retain_automatic_logo_contributions(
+                    draft, previous, verified=verified, inspection=inspection,
+                    plans=plans.values(), preferred_logos=preferred_logos)
+                consumed_logo_slots = {block.key for block in draft.blocks
+                                       if block.key in ("brand_logo", "client_logo") and block.key not in incoming_keys}
+                source_draft = draft
                 current = library.load_snapshot(contract, profile.key, period) if state else None
                 prior_import = library.load_imported_draft(contract, profile.key) if state else None
                 base = current.draft if current else None
@@ -720,15 +862,19 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 # A starting report must not replace them with older artwork.
                 assets = dict((*working_assets, *mapped.assets))
                 blocks = {b.key: b for b in draft.blocks}
+                # Three-way replay has already preserved report-only Clear or
+                # removal of consumed source logos. Standing/default art cannot
+                # silently refill those slots after that decision.
                 for key in preferred_logos:
                     saved = state.block(key) if state else None
-                    if saved and saved.asset_hashes and key not in blocks:
+                    if saved and saved.asset_hashes and key not in blocks and key not in consumed_logo_slots:
                         blocks[key] = saved
                         for reference in saved.asset_hashes:
                             assets[reference] = library.read_asset(contract, profile.key, reference)
                 from app.monthly_report_branding import apply_defaults
                 draft = apply_defaults(replace(draft, blocks=tuple(blocks.values()),
-                                               sections=tuple(replace(s, included=True) for s in draft.sections)), assets)
+                                               sections=tuple(replace(s, included=True) for s in draft.sections)),
+                                       assets, skip_slots=consumed_logo_slots)
                 review = {"sha256": inspection.sha256, "intent": intent, "period": period.key, "image_review_scope": p,
                           "inferred_source": asdict(analysis),
                           "items": [asdict(i) for i in inspection.items],
