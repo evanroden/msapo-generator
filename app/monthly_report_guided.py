@@ -1145,50 +1145,53 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     source for source in missing if source.id != selected_missing.id)
                 st.session_state[draft_key] = draft
                 st.rerun()
-    if draft.sources:
-        from app.monthly_report_source_details import detail_problems
-        from app.monthly_report_upload_ui import render_source_details
-        from app.monthly_report_model import used_source_ids
-        # A resumed report needs an exact-item correction path, not every
-        # source form expanded above the report. Valid or unused reference-only
-        # sources remain available through Manage source files. Keep each unresolved
-        # source's anchor outside its quiet disclosure so review links land on
-        # a visible, named action. Opening it does not approve or change facts.
-        corrections = {}
-        included_sources = used_source_ids(draft)
-        resumed = st.session_state.get(prefix + "_source_details_on_resume")
-        for source in draft.sources:
-            source = _current_source_detail(source, st.session_state.get(prefix + "_evidence", ()))
-            in_report = source.id in included_sources
-            problems = detail_problems(source, profile, period, in_report=in_report, draft=draft)
-            if in_report and not source.facility:
-                from app.monthly_report_source_scope import included_scope_valid
-                if not included_scope_valid(draft, source) and not any("scope" in p or "site" in p for p in problems):
-                    problems = (*problems, "source scope needs review")
-            # Keep one quiet return location even when this exact correction
-            # removes its warning/form. The display adapter reveals it only
-            # during a deliberate trip from final review.
-            with st.container(key="monthly_source_correction_" + source.id):
-                from html import escape
-                st.markdown('<a class="enfra-source-review-return" data-source-id="' +
-                            escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
-                            unsafe_allow_html=True)
-                if problems and (resumed or in_report):
-                    from app.monthly_report_source_scope import artwork_scope_keys
-                    corrections[source.id] = render_source_details(
-                        source, profile, prefix + "_resumed_" + source.id, field,
-                        compact_problems=problems, artwork_keys=artwork_scope_keys(draft, source.id))
-        if any(corrections.get(source.id, source) != source for source in draft.sources):
-            draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
-            st.session_state[prefix + "_evidence"] = tuple(
-                replace(content, source=corrections.get(content.source.id, content.source))
-                for content in st.session_state.get(prefix + "_evidence", ()))
-            # A metadata correction does not restore missing original bytes.
-            # Keep the corrected record in that retained set as well, or the
-            # next source renderer would restore its pre-correction metadata.
-            st.session_state[prefix + "_unavailable_sources"] = tuple(
-                corrections.get(source.id, source)
-                for source in st.session_state.get(prefix + "_unavailable_sources", ()))
+    # Source metadata can appear after the first upload. Keep its subtree at
+    # one fixed root position so native section controls retain their ancestry.
+    with st.container(key=prefix + "_source_correction_area"):
+        if draft.sources:
+            from app.monthly_report_source_details import detail_problems
+            from app.monthly_report_upload_ui import render_source_details
+            from app.monthly_report_model import used_source_ids
+            # A resumed report needs an exact-item correction path, not every
+            # source form expanded above the report. Valid or unused reference-only
+            # sources remain available through Manage source files. Keep each unresolved
+            # source's anchor outside its quiet disclosure so review links land on
+            # a visible, named action. Opening it does not approve or change facts.
+            corrections = {}
+            included_sources = used_source_ids(draft)
+            resumed = st.session_state.get(prefix + "_source_details_on_resume")
+            for source in draft.sources:
+                source = _current_source_detail(source, st.session_state.get(prefix + "_evidence", ()))
+                in_report = source.id in included_sources
+                problems = detail_problems(source, profile, period, in_report=in_report, draft=draft)
+                if in_report and not source.facility:
+                    from app.monthly_report_source_scope import included_scope_valid
+                    if not included_scope_valid(draft, source) and not any("scope" in p or "site" in p for p in problems):
+                        problems = (*problems, "source scope needs review")
+                # Keep one quiet return location even when this exact correction
+                # removes its warning/form. The display adapter reveals it only
+                # during a deliberate trip from final review.
+                with st.container(key="monthly_source_correction_" + source.id):
+                    from html import escape
+                    st.markdown('<a class="enfra-source-review-return" data-source-id="' +
+                                escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
+                                unsafe_allow_html=True)
+                    if problems and (resumed or in_report):
+                        from app.monthly_report_source_scope import artwork_scope_keys
+                        corrections[source.id] = render_source_details(
+                            source, profile, prefix + "_resumed_" + source.id, field,
+                            compact_problems=problems, artwork_keys=artwork_scope_keys(draft, source.id))
+            if any(corrections.get(source.id, source) != source for source in draft.sources):
+                draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
+                st.session_state[prefix + "_evidence"] = tuple(
+                    replace(content, source=corrections.get(content.source.id, content.source))
+                    for content in st.session_state.get(prefix + "_evidence", ()))
+                # A metadata correction does not restore missing original bytes.
+                # Keep the corrected record in that retained set as well, or the
+                # next source renderer would restore its pre-correction metadata.
+                st.session_state[prefix + "_unavailable_sources"] = tuple(
+                    corrections.get(source.id, source)
+                    for source in st.session_state.get(prefix + "_unavailable_sources", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
