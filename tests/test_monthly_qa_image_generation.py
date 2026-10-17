@@ -80,8 +80,8 @@ def test_qa_toolbar_generates_real_docx_with_ingested_source_page(monkeypatch, t
     from app.monthly_report_asset_review import pending_asset_indexes
     water = next(block for block in accepted.blocks if block.key == "water_reports")
     assert pending_asset_indexes(water) == (0,)
-    next(b for b in app.button if b.label == "Edit pages").click().run()
-    water_actions = [b for b in app.button if b.label == "Include page and continue"
+    next(b for b in app.button if b.label == "Report pages").click().run()
+    water_actions = [b for b in app.button if b.label == "Include page"
                      and b.key.startswith(prefix + "_evidence_section_water_reports_")]
     assert len(water_actions) == 1 and not water_actions[0].disabled
     water_actions[0].click().run()

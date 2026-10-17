@@ -7,6 +7,8 @@ globalThis.ENFRASourceReviewNavigation = {
         function returnLinks() {
             app.querySelectorAll('.enfra-source-review-return').forEach(link => {
                 link.hidden = link.dataset.sourceId !== state.sourceReviewReturn?.source;
+                link.textContent = state.sourceReviewReturn?.target === 'report-section-water'
+                    ? 'Return to report pages' : 'Return to review';
             });
         }
         function owner(node) {
@@ -23,6 +25,16 @@ globalThis.ENFRASourceReviewNavigation = {
         function click(event) {
             if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
             const button=event.target?.closest?.('button');
+            const pageContext=button?.closest?.('[class*="st-key-monthly_source_page_correction_"]')?.querySelector?.('.enfra-source-page-correction');
+            if(pageContext?.dataset?.returnTarget==='report-section-water') {
+                const section=app.querySelector('#report-section-water');
+                if(section) {
+                    state.sourceReviewReturn={source:pageContext.dataset.sourceId,target:'report-section-water',
+                        anchor:'source-page-context-'+pageContext.dataset.sourceId,link:button,
+                        linkTop:button.getBoundingClientRect().top,reviewTop:section.getBoundingClientRect().top};
+                    returnLinks();return;
+                }
+            }
             const warning=button?.closest?.('[class*="st-key-monthly_source_warning_"]')?.querySelector?.('.enfra-source-warning');
             const reviewTarget=app.querySelector('#report-review');
             if(warning&&reviewTarget) {
@@ -36,10 +48,10 @@ globalThis.ENFRASourceReviewNavigation = {
             if (!link || !app.contains(link)) return;
             if (link.classList.contains('enfra-source-review-return')) {
                 const prior = state.sourceReviewReturn;
-                const review = app.querySelector('#report-review');
+                const review = app.querySelector('#'+(prior?.target || 'report-review'));
                 if (!prior || !review) return;
                 event.preventDefault();
-                const original = prior.link?.isConnected ? prior.link : review;
+                const original = prior.link?.isConnected ? prior.link : (prior.anchor ? document.getElementById(prior.anchor) : null) || review;
                 const scroll = owner(original);
                 const top = original === review ? prior.reviewTop : prior.linkTop;
                 original.setAttribute('tabindex', '-1');
@@ -77,6 +89,14 @@ globalThis.ENFRASourceReviewNavigation = {
         // A valid correction can remove its warning and form. The keyed return
         // location stays mounted; reveal it again after that ordinary rerun.
         returnLinks();
+        const pageRequest=app.querySelector('.enfra-report-page-target');
+        if(pageRequest?.dataset?.token&&pageRequest.dataset.token!==state.sourcePageFocusToken) {
+            const context=document.getElementById('source-page-context-'+pageRequest.dataset.sourceId);
+            if(context) {
+                state.sourcePageFocusToken=pageRequest.dataset.token;
+                later(()=>{if(context.isConnected){context.setAttribute('tabindex','-1');context.focus({preventScroll:true});context.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});}},context.parentElement);
+            }
+        }
         const request=app.querySelector('.enfra-source-review-target');
         if(request?.dataset?.token&&request.dataset.token!==state.sourceReviewFocusToken) {
             const marker=document.getElementById('source-details-'+request.dataset.sourceId);

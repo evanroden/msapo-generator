@@ -8,8 +8,8 @@ from streamlit.proto.BackMsg_pb2 import BackMsg
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
 
 
-LABELS = frozenset({"Include page and continue", "Leave page out and continue",
-                   "Page to review", "Page caption", "Edit pages", "Done reviewing pages",
+LABELS = frozenset({"Include page", "Exclude page",
+                   "Page to review", "Page caption", "Report pages", "Close report pages",
                    "Move page earlier", "Move page later"})
 
 

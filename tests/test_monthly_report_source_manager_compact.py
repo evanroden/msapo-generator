@@ -13,7 +13,7 @@ def resolved_app(monkeypatch,tmp_path):
     native_uploader=upload_ui.st.file_uploader
     upload(monkeypatch,'synthetic-resolved-utility.pdf',utility_pdf())
     app.run();app.run()  # Upload performs the free native read.
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     button(app,'Add selected pages and tables to report').click().run()
     assert not app.exception
     # Only the real file bytes enter through the uploader seam. Restore the
@@ -33,7 +33,7 @@ def test_successful_add_collapses_exact_resolved_file_without_another_review_rit
     # Closed controls stay mounted to preserve unsubmitted native form input;
     # the one keyed panel owns visibility and does no hidden source raster work.
     assert any('_source_manager_panel{display:none' in item.value for item in app.markdown)
-    assert button(app,'Include page and continue').disabled
+    assert button(app,'Include page').disabled
     assert not next(block for block in current_draft(app).blocks if block.key=='activity_summary').references
     assert len(next(b for b in current_draft(app).blocks if b.key=='utility_analysis').asset_hashes)==1
 
@@ -107,7 +107,7 @@ def test_change_does_not_materialize_absent_source_caption_or_replace_inherited_
     assert current_draft(app)==before
     assert not current_draft(app).sources[0].captions
     assert next(w for w in app.text_input if w.label=='Page caption').value==inherited
-    assert button(app,'Include page and continue').disabled is blocked
+    assert button(app,'Include page').disabled is blocked
 
 
 def test_done_consumes_delivered_caption_before_retiring_its_native_control(monkeypatch,tmp_path):

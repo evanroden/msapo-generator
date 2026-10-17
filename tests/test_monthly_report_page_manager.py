@@ -8,15 +8,15 @@ from test_monthly_report_sources import pdf_bytes
 
 def test_included_water_removal_is_in_the_same_page_reviewer(monkeypatch, tmp_path):
     app = _water_app(monkeypatch, tmp_path, pdf_bytes(1))
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     app.run()
     original = app.session_state["test_blocks"]["water_reports"]
     assert len(original.asset_hashes) == 1
-    button(app, "Edit pages").click().run()
+    button(app, "Report pages").click().run()
     assert not app.exception
-    assert any(b.label == "Leave page out and continue" for b in app.button), (
+    assert any(b.label == "Exclude page" for b in app.button), (
         "Removing an included page requires a second picture editor.")
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert not app.exception
     assert not app.session_state["test_blocks"]["water_reports"].asset_hashes
     source = app.session_state["test_sources"][0]
@@ -25,7 +25,7 @@ def test_included_water_removal_is_in_the_same_page_reviewer(monkeypatch, tmp_pa
     app.run()
     assert not app.session_state["test_blocks"]["water_reports"].asset_hashes
     assert app.session_state["test_apply_count"] == 1
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert len(app.session_state["test_blocks"]["water_reports"].asset_hashes) == 1
     assert app.session_state["test_apply_count"] == 2
 
@@ -121,18 +121,18 @@ def test_included_water_caption_review_and_order_use_one_editor(monkeypatch, tmp
     from app.monthly_report_asset_review import pending_asset_indexes
     from app.monthly_report_content_policy import page_allowed
     app = _water_app(monkeypatch, tmp_path, pdf_bytes(2))
-    button(app, "Include page and continue").click().run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
+    button(app, "Include page").click().run()
     app.run()
     original = app.session_state["test_blocks"]["water_reports"]
-    button(app, "Edit pages").click().run()
+    button(app, "Report pages").click().run()
     next(w for w in app.selectbox if w.label == "Page to review").set_value(1).run()
     next(w for w in app.text_input if w.label == "Page caption").set_value("Updated first page").run()
     block = app.session_state["test_blocks"]["water_reports"]
     assert block.asset_captions[0] == "Updated first page"
     assert pending_asset_indexes(block) == (0,)
     assert not page_allowed(app.session_state["test_sources"][0], 1)
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not pending_asset_indexes(app.session_state["test_blocks"]["water_reports"])
     button(app, "Move page later").click().run()
     assert not app.exception
@@ -144,7 +144,7 @@ def test_included_water_caption_review_and_order_use_one_editor(monkeypatch, tmp
 
 def test_opening_external_caption_mismatch_never_edits_the_attached_page(monkeypatch, tmp_path):
     app = _water_app(monkeypatch, tmp_path, pdf_bytes(1))
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     app.run()
     block = app.session_state["test_blocks"]["water_reports"]
     content = app.session_state["synthetic_evidence"][0]

@@ -297,7 +297,7 @@ def exercise(browser, name, base, record):
         uploader.locator('input[type="file"]').set_input_files(
             {"name": NAME, "mimeType": "application/pdf", "buffer": raw})
         expect(water.get_by_text(NAME, exact=True)).to_be_visible(timeout=45000)
-        include = water.get_by_role("button", name="Include page and continue", exact=True)
+        include = water.get_by_role("button", name="Include page", exact=True)
         expect(include).to_be_enabled()
         include.click()
         expect(water.get_by_role("combobox", name="Page to review", exact=True)).to_have_value(re.compile(r"^Page 2(?: ·|$)"))
@@ -308,7 +308,7 @@ def exercise(browser, name, base, record):
         capture("first-page-approved-nothing-included-yet", first)
 
         record["phase"] = "explicit page-two exclusion then atomic one-page inclusion"
-        water.get_by_role("button", name="Leave page out and continue", exact=True).click()
+        water.get_by_role("button", name="Exclude page", exact=True).click()
         final = wait_durable(page, base, [1], reviewed=[1], excluded=[2])
         assert final["water_source"] != "Omit"
         assert final["state"]["sources"][0]["selected"] == [1]

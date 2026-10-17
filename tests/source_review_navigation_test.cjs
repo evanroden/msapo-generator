@@ -20,7 +20,7 @@ function fixture() {
     const state={};const install=()=>context.ENFRASourceReviewNavigation.install(app,state);
     const click=(target,other={})=>{const e={button:0,target,prevented:false,preventDefault(){this.prevented=true;},...other};app.listeners.get('click')(e);return e;};
     const flush=async()=>{await Promise.resolve();await Promise.resolve();for(const [id,fn]of frames){frames.delete(id);fn();}};
-    return{entries,app,state,review,scroll,install,click,flush};
+    return{entries,app,state,review,scroll,install,click,flush,context};
 }
 
 test('one correction opens its outer and exact source disclosure and focuses its native field',async()=>{
@@ -71,4 +71,36 @@ test('native warning action retains its callback and a new target focuses once a
     assert.equal(a.field.focuses,1,'an ordinary rerender cannot repeatedly steal editor focus');
     h.click(a.back);assert.equal(button.focused,true);assert.equal(h.state.sourceReviewReturn,null);
     cleanup();
+});
+
+test('page correction keeps its native callback and returns to the same page task',async()=>{
+    const h=fixture(),a=h.entries.first;let cleanup=h.install();
+    const context={dataset:{sourceId:'first',returnTarget:'report-section-water'}};
+    const wrapper={querySelector:s=>s==='.enfra-source-page-correction'?context:null};
+    const button={isConnected:true,parentElement:h.scroll,top:420,getBoundingClientRect(){return{top:this.top};},
+        closest:s=>s.includes('monthly_source_page_correction_')?wrapper:null,setAttribute(){},focus(){this.focused=true;}};
+    const originalQuery=h.app.querySelector;
+    h.app.querySelector=s=>s==='#report-section-water'?h.review:originalQuery(s);
+    const target={closest:s=>s==='button'?button:null};
+    assert.equal(h.click(target).prevented,false);
+    assert.equal(h.state.sourceReviewReturn.target,'report-section-water');
+    assert.equal(a.back.textContent,'Return to report pages');
+    cleanup();h.app.request={dataset:{sourceId:'first',field:'site',token:'page-context-action'}};
+    cleanup=h.install();await h.flush();
+    assert.equal(a.field.focuses,1);button.top=120;
+    h.click(a.back);assert.equal(h.scroll.scrollTop,500);assert.equal(button.focused,true);
+    assert.equal(h.state.sourceReviewReturn,null);cleanup();
+});
+
+
+test('opening the single page owner scrolls its exact source once without reading input',async()=>{
+    const h=fixture();
+    const page={isConnected:true,parentElement:{getAnimations:()=>[]},focuses:0,scrolls:0,
+        setAttribute(){},focus(o){assert.equal(o.preventScroll,true);this.focuses++;},scrollIntoView(){this.scrolls++;}};
+    const originalId=h.context.document.getElementById;
+    h.context.document.getElementById=id=>id==='source-page-context-first'?page:originalId(id);
+    const originalQuery=h.app.querySelector;
+    h.app.querySelector=s=>s==='.enfra-report-page-target'?{dataset:{sourceId:'first',token:'one-open'}}:originalQuery(s);
+    let cleanup=h.install();await h.flush();assert.equal(page.focuses,1);assert.equal(page.scrolls,1);
+    cleanup();cleanup=h.install();await h.flush();assert.equal(page.focuses,1);cleanup();
 });

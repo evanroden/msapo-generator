@@ -26,11 +26,14 @@ def _statuses(draft, blocks, prefix):
         unavailable=st.session_state.get(prefix + "_unavailable_sources", ()), pending=pending)
 
 
-def open_source_review(prefix, source_id, target):
+def open_source_review(prefix, source_id, target, page=None):
     """Native navigation callback; no source or report content changes."""
     from uuid import uuid4
     _open_manager(prefix + "_batch_files_open", prefix + "_evidence_selected", source_id)
     st.session_state[prefix + "_source_review_target"] = (source_id, target, uuid4().hex)
+    if type(page) is int and page > 0:
+        st.session_state[prefix + "_evidence_" + source_id + "_page"] = page
+    st.session_state[prefix + "_source_review_context"] = source_id
 
 
 def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, keep_missing, *,
@@ -42,18 +45,19 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
     from app.monthly_report_source_details import detail_problems
     from app.monthly_report_upload_ui import (
         render_source_details, render_structured_uploads, render_workorder_metrics,
+        _remember_delivered_source_edit,
     )
+    st.session_state[prefix + "_source_native_changes"] = {}
     manager_key = field(prefix + "_batch_files_open", False)
     selection_key = prefix + "_evidence_selected"
     active_key = prefix + "_source_active_selected"
     states = _statuses(draft, blocks, prefix)
     attention = tuple(item for item in states if item.needs_correction)
     opened = bool(st.session_state[manager_key])
-    if states:
-        st.caption(f"{len(states)} source {'file' if len(states) == 1 else 'files'}" +
-                   (f" · {len(attention)} need details" if attention else ""))
-    if attention and not opened:
-        st.caption("Open source files to review the remaining details.")
+    with st.container(key=prefix + "_source_file_status"):
+        if states:
+            st.caption(f"{len(states)} source {'file' if len(states) == 1 else 'files'}" +
+                       (f" · {len(attention)} need details" if attention else ""))
     st.button("Done with source files" if opened else "Manage source files",
               key=prefix + "_source_manager_" + str(opened),
               on_click=_open_manager if not opened else _close_manager,
@@ -82,6 +86,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         ordered = {source.id: source for source in draft.sources}
         ordered.update((content.source.id, content.source) for content in contents)
         ids = tuple(ordered)
+        shown_page = []
         if ids:
             fresh = tuple(identity for identity in ids if identity not in before_ids)
             field(selection_key, ids[0])
@@ -108,11 +113,25 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                     st.markdown('<a class="enfra-source-review-return" data-source-id="' +
                                 escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
                                 unsafe_allow_html=True)
+                    def source_preview(source_id=source.id):
+                        if not opened or selected != source_id or st.session_state.get(prefix + "_source_review_context") != source_id:
+                            return
+                        content = next((item for item in contents if item.source.id == source_id), None)
+                        if content is None:
+                            st.caption("This original is unavailable. Re-upload its unchanged file to inspect this page.")
+                            return
+                        page = st.session_state.get(prefix + "_evidence_" + source_id + "_page", 1)
+                        from app.monthly_report_page_context_ui import render_correction_page
+                        shown = render_correction_page(draft.profile, content, page)
+                        if shown is not None:
+                            shown_page.append(shown)
                     corrected[source.id] = render_source_details(
                         source, draft.profile, prefix + "_evidence_" + source.id, field,
                         artwork_keys=artwork_scope_keys(current, source.id), manager_owner=True,
+                        source_preview=source_preview,
                         compact_problems=detail_problems(source, draft.profile, draft.period,
                             in_report=source.id in included, draft=current))
+                    _remember_delivered_source_edit(prefix, source, corrected[source.id])
                     target = st.session_state.get(prefix + "_source_review_target")
                     if target and target[0] == selected == source.id:
                         st.markdown('<span class="enfra-source-review-target" data-source-id="' +
@@ -134,11 +153,17 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                     st.caption(selected_status.filename + " · " + selected_status.summary)
         else:
             selected = requested = None
+        from app.monthly_report_section_uploads import source_destinations
+        water_is_present = any(section.key == "water" and section.included for section in draft.sections)
+        page_owners = source_destinations(contents, st.session_state.get(prefix + "_evidence_section_routes", {}), blocks)
+        section_page_owners = tuple(identity for identity, owners in page_owners.items()
+                                    if water_is_present and owners == {"water_reports"})
         sources, additions, incoming_specs = render_uploads(
             draft.profile, draft.period, prefix, field, attached_blocks=blocks,
             scope_draft=replace(draft, blocks=tuple(blocks.values())),
             included_source_ids=used_source_ids(replace(draft, blocks=tuple(blocks.values()))),
-            show_intake=not has_activity, selected_source_id=selected, visible=opened)
+            show_intake=not has_activity, selected_source_id=selected, visible=opened,
+            shown_source_page=shown_page[0] if shown_page else None, section_page_owners=section_page_owners)
         draft = replace(draft, sources=keep_missing(prefix, sources))
         if additions:
             previous_blocks = blocks
