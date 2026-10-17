@@ -917,6 +917,20 @@ def _render_report_details_action(candidate, existing, period, browser_token):
             st.error("Report details could not be saved: " + str(exc))
 
 
+def _current_source_detail(source, contents):
+    """Use this report's delivered source changes before drawing its form.
+
+    Page actions commit evidence before requesting a full rerun; the report
+    snapshot may still be one render behind. An ambiguous or different
+    original is never substituted, and the form keeps its revision guard.
+    """
+    matches = tuple(content.source for content in contents if content.source.id == source.id)
+    if (len(matches) == 1 and matches[0].sha256 == source.sha256
+            and matches[0].suffix == source.suffix):
+        return matches[0]
+    return source
+
+
 def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.session_state["_monthly_source_detail_anchors"] = set()
     st.session_state["_monthly_source_detail_forms"] = {}
@@ -1144,8 +1158,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         included_sources = used_source_ids(draft)
         resumed = st.session_state.get(prefix + "_source_details_on_resume")
         for source in draft.sources:
+            source = _current_source_detail(source, st.session_state.get(prefix + "_evidence", ()))
             in_report = source.id in included_sources
-            problems = detail_problems(source, profile, period, in_report=in_report)
+            problems = detail_problems(source, profile, period, in_report=in_report, draft=draft)
             if in_report and not source.facility:
                 from app.monthly_report_source_scope import included_scope_valid
                 if not included_scope_valid(draft, source) and not any("scope" in p or "site" in p for p in problems):

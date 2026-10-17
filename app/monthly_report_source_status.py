@@ -78,8 +78,17 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
         expected_reference = sources.source_reference(source, number)
         page_references = tuple(reference for reference in context
                                 if page_identity(reference) is not None)
-        if (not page_references
-                or any(reference != expected_reference for reference in page_references)):
+        from app.monthly_report_asset_review import _source_context_marker
+        from app.monthly_report_source_scope import reviewed_scope
+        # A site-scope decision changes the full source fingerprint without
+        # changing reviewed page bytes/caption. Existing targeted provenance
+        # proves the relevant current page facts; the asset review below must
+        # still match it. A raw page identity alone never supplies that proof.
+        current_scoped_page = (reviewed_scope(source, draft.profile) is not None
+                               and _source_context_marker(source, number) in context)
+        if (len(set(page_references)) != 1
+                or any(reference != expected_reference for reference in page_references)
+                and not current_scoped_page):
             return None, "Review the attached page against the current source details."
         if any(page_identity(reference) is None
                and not reference.startswith("asset-source-context:v1:")

@@ -29,7 +29,7 @@ def facility_choice(source, profile):
     return matches[0] if len(matches) == 1 else KEEP_FACILITY
 
 
-def detail_problems(source, profile, period, *, in_report=False):
+def detail_problems(source, profile, period, *, in_report=False, draft=None):
     """Short, read-only reasons to expose a saved source's correction route."""
     if not in_report and (source.classification == "Reference only" or not source.selected_pages):
         return ()
@@ -41,7 +41,10 @@ def detail_problems(source, profile, period, *, in_report=False):
         problems.append("date outside this report month")
     site = facility_choice(source, profile)
     if not site:
-        problems.append("site unknown")
+        from app.monthly_report_source_scope import included_scope_valid
+        if not (in_report and draft is not None and draft.profile == profile and draft.period == period
+                and included_scope_valid(draft, source)):
+            problems.append("site unknown")
     elif site == KEEP_FACILITY:
         problems.append("site does not match this report")
     elif source.scope_review:
