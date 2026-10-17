@@ -114,6 +114,39 @@ def build_section_import(path, inspection, plans):
             raise ValueError("Review each included section before continuing.")
         if plan.get("omit"):
             continue
+        if plan["key"] == "cover":
+            from app.monthly_report_start_import import unresolved_cover_artwork
+            cover = sections["cover"]
+            # A different-site source deliberately contributes only recognized
+            # branding, never its foreign photos/drawings. Keep that existing
+            # exclusion semantics distinct from certifying unread same-site art.
+            foreign_excluded = bool(
+                plan.get("automatic") and plan.get("source_sha256") == inspection.sha256
+                and plan.get("source_site_relation") == "other"
+                and not any(plan.get(key) for key in ("new_assets", "preserved_assets", "page_layout", "auto_native_diagrams"))
+                and all(items[identity].kind == "image"
+                        and items[identity].suggested_slot in ("brand_logo", "client_logo")
+                        and plan.get("destinations", {}).get(identity) == items[identity].suggested_slot
+                        for identity in plan.get("selected", ()))
+            )
+            if not foreign_excluded and any(item.kind == "unsupported" for item in cover.items):
+                # A photograph upload is not a replacement for a different
+                # unread Word drawing. No supported Cover whole-page recovery
+                # exists here; only explicit omission can keep an existing
+                # report's design without certifying that source artwork.
+                raise ValueError("Unread cover artwork must be repaired in the original Word file, or left out using the existing report’s saved cover design. A new cover photograph cannot replace it.")
+            if not foreign_excluded and unresolved_cover_artwork(cover.items):
+                raise ValueError("Cover artwork has no confirmed photograph or logo role. Repair the original Word file or use the existing report’s saved cover design.")
+            if plan.get("cover_photo_omitted"):
+                from app.monthly_report_start_import import cover_photo_candidates
+                candidates = tuple(item.id for item in cover_photo_candidates(cover.items))
+                if (not candidates or plan.get("source_sha256") != inspection.sha256
+                        or tuple(plan.get("cover_photo_source_ids", ())) != candidates
+                        or any(plan.get("destinations", {}).get(identity) == "cover_photo"
+                               for identity in plan.get("selected", ()))):
+                    raise ValueError("The No cover photograph choice belongs to another source or selection. Review this cover again; nothing was changed.")
+                grouped["cover_photo"] = ResolvedBlock(
+                    "cover_photo", "Omit", references=tuple(f"docx:{inspection.sha256}:{identity}" for identity in candidates))
         if plan.get("page_layout") or plan.get("auto_native_diagrams"):
             preserved = plan.get("preserved_assets", ())
             records = plan.get("word_page_records", ())
@@ -213,6 +246,8 @@ def build_section_import(path, inspection, plans):
             grouped[slot] = replace(block, references=tuple(dict.fromkeys((*block.references, reference))))
             mappings.append(ImportMapping(identity, slot))
         for slot, image in plan.get("new_assets", ()):
+            if slot == "cover_photo" and plan.get("cover_photo_omitted"):
+                continue  # The explicit No-photo action wins over a retained staged upload.
             digest = hashlib.sha256(image.data).hexdigest() + "." + image.extension
             if digest not in assets:
                 total += len(image.data)

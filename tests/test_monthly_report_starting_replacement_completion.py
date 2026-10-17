@@ -1,4 +1,4 @@
-"""Explicit drawing replacements survive reruns and the real import save."""
+"""Named uploads retain their own scope through reruns and the real save gate."""
 from io import BytesIO
 
 from PIL import Image
@@ -19,7 +19,7 @@ from tests.test_monthly_report_starting_review_recovery import (
     ("cover", "New cover photograph"),
     ("proposals", "Updated price-free proposal image"),
 ])
-def test_explicit_replacement_survives_reruns_and_saves_original(
+def test_named_upload_survives_reruns_without_certifying_a_different_role(
         monkeypatch, tmp_path, section, label):
     path, _ = drawing_report(tmp_path, section)
     original = path.read_bytes()
@@ -37,6 +37,20 @@ def test_explicit_replacement_survives_reruns_and_saves_original(
     action = next(r for r in app.radio if r.label == "What would you like to do?")
     action.set_value("Edit text or change pictures").run()
     assert not app.exception
+    if section == "cover":
+        # An optional photograph cannot replace the unrelated VML drawing in
+        # this actual inspected source. Existing-report cover-design recovery
+        # has its separate complete save/original-retention regression.
+        for _ in range(2):
+            assert continue_button(app).disabled
+            assert any("new cover photograph changes only the photograph" in e.value for e in app.error)
+            plans = next(value for key, value in app.session_state.filtered_state.items()
+                         if key.endswith("_section_plans"))
+            assert {slot for slot, _ in plans["cover"]["new_assets"]} == {"cover_photo"}
+            assert not library.list_profiles(synthetic_profiles()[0].contract)
+            assert path.read_bytes() == original
+            app.run()
+        return
     assert not continue_button(app).disabled
     app.run()
     assert not app.exception

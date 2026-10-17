@@ -3,6 +3,7 @@ from io import BytesIO
 import hashlib
 
 from PIL import Image
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_section_ui as ui
@@ -35,7 +36,7 @@ _section_card(section, Path("synthetic.docx"), None, ReportPeriod(2026,9), "repo
 '''.replace('SECTION', repr(section)), default_timeout=20).run()
 
 
-def test_cover_uploads_are_named_retained_and_make_replacement_choice_possible(monkeypatch, tmp_path):
+def test_optional_cover_upload_is_retained_but_cannot_replace_unread_artwork(monkeypatch, tmp_path):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     incoming = {}
     real_upload = ui.st.file_uploader
@@ -46,17 +47,18 @@ def test_cover_uploads_are_named_retained_and_make_replacement_choice_possible(m
     incoming["New cover photograph"] = picture("green")
     app.run()
     assert not any(w.label.startswith("Some content could not") for w in app.radio)
-    assert not app.error and not app.exception
+    assert not app.exception
+    assert any("new cover photograph changes only the photograph" in e.value for e in app.error)
     assert {slot for slot, _ in app.session_state["plans"]["cover"]["new_assets"]} == {"cover_photo"}
     incoming.clear()
     next(w for w in app.radio if w.label == "What would you like to do?").set_value("Keep and review").run()
     assert len(app.session_state["plans"]["cover"]["new_assets"]) == 1
     assert not any(w.label.startswith("This section is ready") for w in app.checkbox)
     plan = app.session_state["plans"]["cover"]
-    assert plan["approved"]
+    assert not plan["approved"] and not plan["unsupported_reviewed"]
     inspection = DocxInspection("synthetic", (ImportItem("unsupported", "unsupported", "word/document.xml", 1, 2, ""),), (), (), 2)
-    mapped, _ = build_section_import("unused", inspection, (plan,))
-    assert {block.key for block in mapped.blocks} == {"cover_photo"}
+    with pytest.raises(ValueError, match="Review each included section"):
+        build_section_import("unused", inspection, (plan,))
 
 
 def test_kept_complete_chart_and_new_outage_picture_both_reach_saved_design(monkeypatch, tmp_path):

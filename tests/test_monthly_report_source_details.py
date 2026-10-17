@@ -121,6 +121,27 @@ def test_stale_form_submission_cannot_restore_older_metadata(monkeypatch, tmp_pa
     assert any("corrected elsewhere" in item.value for item in app.info)
 
 
+def test_native_date_default_matches_saved_source_and_deliberate_clear(monkeypatch, tmp_path):
+    profile, raw, content = source_fixture(monkeypatch, tmp_path)
+    source = replace(content.source, service_date="2026-09-16", facility=profile.facilities[0].key)
+    app = AppTest.from_string(APP)
+    app.session_state["source"] = source
+    app.run()
+    assert not app.exception
+    widget = app.date_input[0]
+    assert widget.value == date(2026, 9, 16)
+    # A populated Python value alone missed the real browser's empty field.
+    assert list(widget.proto.default) == ["2026-09-16"]
+    native_id = widget.proto.id
+    app.date_input[0].set_value(None)
+    app.button[0].click().run()
+    assert app.session_state["source"].service_date == ""
+    assert app.date_input[0].value is None
+    assert list(app.date_input[0].proto.default) == []
+    assert app.date_input[0].proto.id == native_id
+    assert sources.source_bytes(profile, app.session_state["source"]) == raw
+
+
 def test_native_text_section_has_editable_source_details_before_page_return(monkeypatch, tmp_path):
     profile, raw, content = source_fixture(monkeypatch, tmp_path)
     stream = BytesIO(raw)

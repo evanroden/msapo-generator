@@ -15,6 +15,54 @@ def _content(block: ResolvedBlock | None):
                    client_reviewed_fingerprint="", client_asset_reviews=())
 
 
+def retain_automatic_logo_contributions(incoming: ReportDraft,
+                                        previous: ReportDraft | None, *, verified: bool,
+                                        inspection, plans, preferred_logos=()) -> ReportDraft:
+    """Keep a consumed exact source logo when automatic setup uses saved art.
+
+    The prior source contribution stays separate from the current human-edited
+    report. Ordinary three-way replay can then preserve current edits/omission.
+    A manually rebuilt review plan has no automatic skip receipt, so explicit
+    deselection still uses the normal conservative recovery.
+    """
+    if previous is None or not verified:
+        return incoming
+    identity = lambda draft: (draft.profile.contract, draft.profile.key, draft.period)
+    if identity(previous) != identity(incoming):
+        return incoming
+    plans = tuple(plans)
+    items = {item.id: item for item in inspection.items}
+    selected = {item_id for plan in plans for item_id in plan.get("selected", ())}
+    existing_keys = {block.key for block in incoming.blocks}
+    retained = []
+    for role in ("brand_logo", "client_logo"):
+        if role not in preferred_logos or role in existing_keys:
+            continue
+        skipped = {item_id for plan in plans
+                   if plan.get("automatic") and not plan.get("omit")
+                   and plan.get("source_sha256") == inspection.sha256
+                   for item_id in plan.get("automatic_logo_skips", {}).get(role, ())
+                   if item_id in items and items[item_id].kind == "image"
+                   and items[item_id].suggested_slot == role}
+        if not skipped or skipped & selected:
+            continue
+        prior = next((block for block in previous.blocks if block.key == role), None)
+        references = {f"docx:{inspection.sha256}:{item_id}" for item_id in skipped}
+        if (prior is not None and prior.asset_hashes and prior.references
+                and set(prior.references) <= references):
+            retained.append(prior)
+    if not retained:
+        return incoming
+    blocks = list(incoming.blocks)
+    prior_order = tuple(block.key for block in previous.blocks)
+    for block in retained:
+        successors = set(prior_order[prior_order.index(block.key) + 1:])
+        position = next((index for index, present in enumerate(blocks)
+                         if present.key in successors), len(blocks))
+        blocks.insert(position, block)
+    return replace(incoming, blocks=tuple(blocks))
+
+
 def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
                           previous: ReportDraft | None = None, *, verified: bool = True) -> ReportDraft:
     """Three-way, report-scoped replay; unrelated sources use the normal merge.
@@ -25,11 +73,34 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
     Concurrent changes in both the report and its source review need a named
     correction, never an automatic overwrite or resurrection.
     """
-    if existing is None or previous is None:
+    if existing is None:
         return merge_drafts(existing, incoming)
     identity = lambda d: (d.profile.contract, d.profile.key, d.period)
-    if identity(existing) != identity(incoming) or identity(previous) != identity(incoming):
+    if identity(existing) != identity(incoming) or previous is not None and identity(previous) != identity(incoming):
         raise ValueError("Starting report replay belongs to different sites or a different month.")
+
+    omission = next((block for block in incoming.blocks if block.key == "cover_photo" and block.source == "Omit"), None)
+    present_photo = next((block for block in existing.blocks if block.key == "cover_photo"), None)
+    if omission and present_photo:
+        old_photo = next((block for block in previous.blocks if block.key == "cover_photo"), None) if previous else None
+        unchanged_omission = verified and _content(omission) == _content(old_photo)
+        populated = present_photo.source != "Omit" and bool(
+            present_photo.asset_hashes or present_photo.text.strip() or present_photo.rows
+            or present_photo.org_nodes or any(table.rows for table in present_photo.extra_tables))
+        if populated and not unchanged_omission:
+            raise ValueError(
+                "Cover photo is still in this report, but the Starting review chooses No cover photograph. "
+                "Your report and original are unchanged. Choose No cover photograph in this report first, "
+                "or keep the earlier source selection before importing again."
+            )
+        if not populated:
+            # An already omitted picture can retain hashes for report-level
+            # recovery. Do not replace it with the source's empty Omit payload.
+            retained = replace(present_photo, source="Omit")
+            existing = replace(existing, blocks=tuple(retained if block.key == "cover_photo" else block for block in existing.blocks))
+            incoming = replace(incoming, blocks=tuple(block for block in incoming.blocks if block.key != "cover_photo"))
+    if previous is None:
+        return merge_drafts(existing, incoming)
 
     prior = {b.key: b for b in previous.blocks}
     current = {b.key: b for b in existing.blocks}

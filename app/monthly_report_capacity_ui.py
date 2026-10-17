@@ -1,6 +1,6 @@
 """One upload and one reviewed contract-wide capacity save."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 
 import pandas as pd
@@ -21,9 +21,44 @@ def _reading_progress(prefix):
         st.info("Reading capacity tables from the uploaded file…")
 
 
-def _finish(prefix, profile):
+def _cancel_reading(prefix):
+    job = st.session_state.pop(prefix + "_capacity_job", None)
+    if job is not None:
+        job["future"].cancel()
+
+
+def _context(draft, prefix):
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_testing import scope, generation
+    return ai.digest((asdict(draft.profile), draft.period.key,
+                      _rich_text_scope(prefix), scope(), generation()))
+
+
+def _read_request(prefix, inspection, context):
+    return {
+        "context": context,
+        "digest": st.session_state[prefix + "_capacity_digest"],
+        "source": inspection.content.source.fingerprint,
+        "revision": st.session_state[prefix + "_capacity_revision"],
+    }
+
+
+def _queue_read(prefix, request):
+    # Capture the displayed file, report incarnation and shared base. Reusing
+    # a prefix cannot turn a delayed native action into approval of a new file.
+    st.session_state[prefix + "_capacity_read_request"] = dict(request)
+
+
+def _finish(prefix, profile, context):
     job = st.session_state.get(prefix + "_capacity_job")
     if job is None:
+        return
+    inspection = st.session_state.get(prefix + "_capacity_inspection")
+    if (job["context"] != context
+            or job["digest"] != st.session_state.get(prefix + "_capacity_digest")
+            or inspection is None
+            or job["source"] != inspection.content.source.fingerprint):
+        _cancel_reading(prefix)
         return
     if not job["future"].done():
         _reading_progress(prefix)
@@ -32,12 +67,29 @@ def _finish(prefix, profile):
     try:
         result = job["future"].result()
         inspection = capacity.reader_result(profile, job["inspection"], result)
+        # A failed reuse-cache write must not discard a completed, validated
+        # reading or require another paid request to review the same result.
+        st.session_state[prefix + "_capacity_inspection"] = inspection
         ai.save_cache(profile, "capacity", job["digest"], result)
-        if st.session_state.get(prefix + "_capacity_digest") == job["digest"]:
-            st.session_state[prefix + "_capacity_inspection"] = inspection
     except Exception as exc:
         # Network errors leave the original file and existing data untouched.
         st.session_state[prefix + "_capacity_error"] = str(exc)
+
+
+def _reload_conflict(prefix, profile):
+    if st.session_state.get(prefix + "_capacity_conflict"):
+        if st.button("Reload shared capacity for review", key=prefix + "_capacity_reload"):
+            latest = capacity.load_capacity(profile.contract)
+            st.session_state[prefix + "_capacity_revision"] = latest.revision if latest else 0
+            st.session_state.pop(prefix + "_capacity_conflict", None)
+            st.rerun()
+
+
+def _has_values(block):
+    return bool(block.text.strip() or block.asset_hashes or block.org_nodes or any(
+        cell is not None and str(cell).strip()
+        for rows in (block.rows, *(table.rows for table in block.extra_tables))
+        for row in rows for cell in row))
 
 
 def _columns(columns):
@@ -50,6 +102,17 @@ def _columns(columns):
     return names
 
 
+def _capacity_file(prefix):
+    return st.file_uploader(
+        "Thermal capacity file",
+        type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
+        max_upload_size=128,
+        key=prefix + "_capacity_upload",
+        help="DOCX: up to 128 MB. Other supported files: up to 30 MB. "
+             "Use capacity values for the relevant sites.",
+    )
+
+
 def render_capacity(draft, block, prefix, field):
     """Automatically persist safe first-fill rows, preserving historical pins.
 
@@ -58,6 +121,12 @@ def render_capacity(draft, block, prefix, field):
     """
     profile = draft.profile
     block = block or ResolvedBlock("thermal_capacity", "Library")
+    context = _context(draft, prefix)
+    if st.session_state.get(prefix + "_capacity_context") != context:
+        _cancel_reading(prefix)
+        for suffix in ("digest", "upload_identity", "inspection", "error", "saved", "conflict"):
+            st.session_state.pop(prefix + "_capacity_" + suffix, None)
+        st.session_state[prefix + "_capacity_context"] = context
     state = capacity.load_capacity(profile.contract)
     changing_existing = False
     if state:
@@ -71,30 +140,27 @@ def render_capacity(draft, block, prefix, field):
                 "Update existing capacity values",
                 key=field(prefix + "_capacity_change", False),
             )
-            uploaded = st.file_uploader(
-                "Thermal capacity file",
-                type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
-                key=prefix + "_capacity_upload",
-                help="PDF, Word, spreadsheet or image with chilled-water and steam values for the relevant sites.",
-            )
+            uploaded = _capacity_file(prefix)
+    elif _has_values(block):
+        st.caption("These capacity values are in this report only. Monthly utility results are separate.")
+        with st.expander("Add capacity for future reports", expanded=False):
+            st.caption("A reviewed file can supply matched sites' capacity to future reports. This report's edited values stay unchanged.")
+            uploaded = _capacity_file(prefix)
     else:
         st.caption("Add capacity data once for these sites; future reports reuse it.")
-        uploaded = st.file_uploader(
-            "Thermal capacity file",
-            type=sorted(suffix.lstrip(".") for suffix in capacity.SUPPORTED),
-            key=prefix + "_capacity_upload",
-            help="PDF, Word, spreadsheet or image with chilled-water and steam values for the relevant sites.",
-        )
-    _finish(prefix, profile)
+        uploaded = _capacity_file(prefix)
     if uploaded is None:
+        _cancel_reading(prefix)
+        for suffix in ("digest", "upload_identity", "inspection", "error", "read_request"):
+            st.session_state.pop(prefix + "_capacity_" + suffix, None)
         return draft, block
     raw = uploaded.getvalue()
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != st.session_state.get(prefix + "_capacity_digest"):
-        previous_job = st.session_state.pop(prefix + "_capacity_job", None)
-        if previous_job:
-            previous_job["future"].cancel()
+    upload_identity = (uploaded.name, digest)
+    if upload_identity != st.session_state.get(prefix + "_capacity_upload_identity"):
+        _cancel_reading(prefix)
         st.session_state[prefix + "_capacity_digest"] = digest
+        st.session_state[prefix + "_capacity_upload_identity"] = upload_identity
         st.session_state[prefix + "_capacity_revision"] = state.revision if state else 0
         st.session_state.pop(prefix + "_capacity_inspection", None)
         st.session_state.pop(prefix + "_capacity_error", None)
@@ -106,32 +172,55 @@ def render_capacity(draft, block, prefix, field):
                 cached = ai.cached(profile, "capacity", digest)
                 if cached is not None:
                     st.session_state[prefix + "_capacity_inspection"] = capacity.reader_result(profile, inspection, cached)
-                elif prefix + "_capacity_job" not in st.session_state:
-                    def prepare():
-                        payload = capacity.reader_request(profile, inspection)
-                        ai.reserve_call(profile, draft.period)
-                        return payload
-                    future = start_receipt(prepare, ai.request_json)
-                    if future is None:
-                        st.session_state[prefix + "_capacity_error"] = "Two document readings are already running. Try reading this file again when one finishes."
-                    else:
-                        st.session_state[prefix + "_capacity_job"] = {"digest": digest, "inspection": inspection, "future": future}
-                        _reading_progress(prefix)
         except (ValueError, OSError, RuntimeError) as exc:
             st.session_state[prefix + "_capacity_error"] = str(exc)
+    _finish(prefix, profile, context)
+    inspection = st.session_state.get(prefix + "_capacity_inspection")
+    needs_reading = inspection is not None and (not inspection.tables or inspection.pending_pages)
+    request = _read_request(prefix, inspection, context) if needs_reading else None
+    submitted = st.session_state.pop(prefix + "_capacity_read_request", None)
+    if submitted is not None:
+        if submitted != request:
+            st.warning("The capacity file or report changed before reading started. Nothing was sent. Review the current file and select Read capacity file.")
+        elif submitted["revision"] != (state.revision if state else 0):
+            st.warning("Shared capacity changed before reading started. Nothing was sent. Reload it for review; your uploaded file is kept.")
+            st.session_state[prefix + "_capacity_conflict"] = True
+        elif prefix + "_capacity_job" not in st.session_state:
+            try:
+                from app.monthly_report_testing import scope
+                if scope() is not None:
+                    raise ValueError("External reading is off in isolated testing. Use native file review or enter the synthetic values below.")
+                def prepare():
+                    payload = capacity.reader_request(profile, inspection)
+                    ai.reserve_call(profile, draft.period)
+                    return payload
+                future = start_receipt(prepare, ai.request_json)
+                if future is None:
+                    raise ValueError("Two document readings are already running. Your file is kept; try Read capacity file again when one finishes.")
+                st.session_state.pop(prefix + "_capacity_error", None)
+                st.session_state[prefix + "_capacity_job"] = dict(request, inspection=inspection, future=future)
+                _finish(prefix, profile, context)
+            except (ValueError, OSError, RuntimeError) as exc:
+                st.session_state[prefix + "_capacity_error"] = str(exc)
     if prefix + "_capacity_error" in st.session_state:
         st.warning(st.session_state[prefix + "_capacity_error"])
-        if st.button("Read capacity file again", key=prefix + "_capacity_retry"):
-            st.session_state.pop(prefix + "_capacity_digest", None)
+        if inspection is None and st.button("Try opening capacity file again", key=prefix + "_capacity_retry"):
+            st.session_state.pop(prefix + "_capacity_upload_identity", None)
             st.rerun()
     inspection = st.session_state.get(prefix + "_capacity_inspection")
     if inspection is None or prefix + "_capacity_job" in st.session_state:
         return draft, block
-    if inspection.pending_pages:
-        st.info("Some capacity pages still need reading. Finish reading them before saving the contract tables.")
-        return draft, block
-    if not inspection.tables:
-        st.info("No capacity table was found. Upload a clearer copy or enter the information in this report's table below.")
+    if not inspection.tables or inspection.pending_pages:
+        from app.monthly_report_testing import scope
+        st.info("Some capacity pages need reading. Your existing report and saved capacity have been kept. You can also enter values in this report's table below.")
+        if scope() is None:
+            st.caption("Reading sends the capacity pages to the external document reader and uses this report's reading allowance. Charges may apply.")
+            request = _read_request(prefix, inspection, context)
+            st.button("Read capacity file", key=prefix + "_capacity_read_" + ai.digest(request),
+                      on_click=_queue_read, args=(prefix, request))
+        else:
+            st.caption("External reading is off in isolated testing. Use native file review or enter the synthetic values below.")
+        _reload_conflict(prefix, profile)
         return draft, block
     facilities = capacity.contract_facilities(profile)
     names = {f.key: f.title for f in facilities}
@@ -224,6 +313,7 @@ def render_capacity(draft, block, prefix, field):
     if state and not changing_existing and not first_fill:
         st.caption("Those sites already have saved capacity. To change existing values, "
                    "open Update existing capacity values above.")
+        _reload_conflict(prefix, profile)
         return draft, block
     mode = "merge"
     conflicts = capacity.schema_conflicts(state, tables)
@@ -237,8 +327,13 @@ def render_capacity(draft, block, prefix, field):
     if not actor:
         st.info("Enter your name before saving capacity for the contract.")
     site_count = len({key for table in tables for key in table.site_keys if key})
+    # Bind approval to the displayed source/result/base, while accepting cell
+    # corrections delivered with this same native click. Hashing the edited
+    # grid here would change its action ID and silently discard that click.
+    approval = ai.digest((_read_request(prefix, inspection, context),
+                          tuple(asdict(table) for table in inspection.tables)))
     if st.button(f"Apply reviewed capacity for {site_count} site{'s' if site_count != 1 else ''}",
-                 key=prefix + "_capacity_save", type="primary",
+                 key=prefix + "_capacity_save_" + approval, type="primary",
                  disabled=not tables or unresolved or not actor or not mode):
         try:
             saved = capacity.save_capacity(
@@ -261,10 +356,5 @@ def render_capacity(draft, block, prefix, field):
             st.session_state[prefix + "_capacity_conflict"] = True
         except (ValueError, OSError) as exc:
             st.warning(str(exc))
-    if st.session_state.get(prefix + "_capacity_conflict"):
-        if st.button("Reload shared capacity for review", key=prefix + "_capacity_reload"):
-            latest = capacity.load_capacity(profile.contract)
-            st.session_state[prefix + "_capacity_revision"] = latest.revision if latest else 0
-            st.session_state.pop(prefix + "_capacity_conflict", None)
-            st.rerun()
+    _reload_conflict(prefix, profile)
     return draft, block

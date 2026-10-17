@@ -61,3 +61,21 @@ def test_same_name_changed_bytes_not_identical_and_conflicts_excluded(monkeypatc
     result, = work_order_evidence(conflicting, PERIOD, PROFILE)
     assert (result.total, result.completed, result.open) == (2, 1, 1)
     assert any("conflicted" in n for n in result.notices)
+
+
+def test_every_counted_work_order_remains_available_for_review_beyond_forty(monkeypatch, tmp_path):
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    # Independently authored 60-row export: 50 completed and 10 open. The
+    # displayed total must be auditable through all its actual source rows.
+    lines = ["Work Order,Date,Status,Facility"]
+    for number in range(1, 61):
+        status = "Completed" if number <= 50 else "Open"
+        lines.append(f"SYNTHETIC-{number:03},2026-09-15,{status},Demo North")
+    data, _ = sources.ingest(PROFILE, "sixty-work-orders.csv", "\n".join(lines).encode())
+    result, = work_order_evidence(data, PERIOD, PROFILE)
+    assert (result.total, result.completed, result.open) == (60, 50, 10)
+    assert len(result.rows) == 60
+    assert result.rows[0] == ("SYNTHETIC-001", "2026-09-15", "Completed")
+    assert result.rows[-1] == ("SYNTHETIC-060", "2026-09-15", "Open")
+    assert sum(row[2] == "Completed" for row in result.rows) == 50
+    assert result.reference.startswith(data.source.id + ":1:")

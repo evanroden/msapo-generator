@@ -202,17 +202,18 @@ def report_text(item):
     )
 
 
-def render_followups(draft, prefix, field, *, category=None):
+def render_followups(draft, prefix, field, *, category=None, defer_issue_actions=False):
     """Edit carried items in their section, retaining every other category."""
     if category is not None:
         if category not in ("issue", "proposal"):
             raise ValueError("Choose equipment issues or proposals to review.")
         if category == "issue":
             from app.monthly_report_issues import render_issue_cards
-            return render_issue_cards(draft, prefix, field)
+            return render_issue_cards(draft, prefix, field, defer_actions=defer_issue_actions)
         return _render_section_followups(draft, prefix, field, category)
-    from app.monthly_report_issues import render_issue_cards
-    return _render_all_followups(render_issue_cards(draft, prefix, field), prefix, field)
+    from app.monthly_report_issues import apply_issue_action, render_issue_cards
+    draft = _render_all_followups(render_issue_cards(draft, prefix, field, defer_actions=True), prefix, field)
+    return draft if defer_issue_actions else apply_issue_action(draft, prefix)
 
 
 def _render_section_followups(draft, prefix, field, category):

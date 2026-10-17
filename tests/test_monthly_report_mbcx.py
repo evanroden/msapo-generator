@@ -221,12 +221,24 @@ def test_compact_mbcx_has_one_editable_status_and_no_repeat_page_instructions():
     assert len(app.text_area) == 1
     assert app.text_area[0].label == "Status or findings"
     captions = [c.value for c in app.caption]
-    assert "Add monitoring results or a brief status update." in captions
+    # The ordered section owns the single short introduction. This inner
+    # editor must not repeat it before the same status field.
+    assert "Add monitoring results or a brief status update." not in captions
     assert not any("No report pages added" in c or
                    "Add a PDF or Word report using the files area" in c
                    for c in captions)
     assert not any("Report pages for this month" in t.value for t in app.text)
     assert app.session_state["pages"].asset_hashes == ()
+
+
+def test_ordered_mbcx_has_one_instruction_and_the_same_editable_status(monkeypatch, tmp_path):
+    from test_monthly_report_ui import monthly
+    app = monthly(monkeypatch, tmp_path)
+    assert not app.exception
+    assert sum(item.value == "Add monitoring results or a brief status update."
+               for item in app.caption) == 1
+    assert sum(item.label == "Status or findings" for item in app.text_area) == 1
+    assert not any(item.value == "**System performance reports**" for item in app.markdown)
 
 
 def test_mbcx_status_only_needs_no_upload_or_second_review():

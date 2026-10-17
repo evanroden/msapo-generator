@@ -124,5 +124,5 @@ def work_order_evidence(content: SourceContent, period: ReportPeriod,
                 f"{pct}% of these recorded work orders completed.")
         output.append(WorkOrderEvidence(content.source.id, content.source.filename,
             source_reference(content.source, number), text, total, completed, opened,
-            rows[:40], facility is None, tuple(notices)))
+            rows, facility is None, tuple(notices)))
     return tuple(output)

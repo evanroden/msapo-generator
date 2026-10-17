@@ -53,6 +53,7 @@ def upload(monkeypatch, name, data):
 
 def test_one_batch_action_adds_reviewed_pages_once_and_preserves_them_on_neutral_reruns(monkeypatch, tmp_path):
     app, _ = app_with_library(monkeypatch, tmp_path)
+    assert not any(w.label == "Add reviewed vendor service pages" for w in app.checkbox)
     upload(monkeypatch, "synthetic.pdf", pdf_bytes(3))
     app.run()
     button(app, "Read monthly files").click().run()

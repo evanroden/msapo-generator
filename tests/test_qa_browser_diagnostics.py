@@ -104,3 +104,48 @@ def test_actual_context_creation_failure_is_not_suppressed(tmp_path):
     with pytest.raises(RuntimeError,match="Actual browser context failure"):
         with observe(tmp_path,Browser,Context):
             Browser().new_context()
+
+
+def test_explicit_history_fixture_port_keeps_both_socket_observers_attached(tmp_path):
+    from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+    from scripts.workspace_wire_observations import WireObservations
+
+    class Socket:
+        url = 'ws://127.0.0.1:8542/_stcore/stream'
+        def __init__(self):
+            self.listeners = {}
+        def on(self, event, listener):
+            self.listeners.setdefault(event, []).append(listener)
+
+    class Page:
+        def __init__(self):
+            self.listeners = {}
+        def on(self, event, listener):
+            self.listeners.setdefault(event, []).append(listener)
+
+    class HistoryContext(Context):
+        def on(self, event, listener):
+            super().on(event, listener)
+            if event == 'page':
+                self.page_listener = listener
+
+    class HistoryBrowser(Browser):
+        def new_context(self, **kwargs):
+            return HistoryContext()
+
+    with observe(tmp_path, HistoryBrowser, HistoryContext, widget_ports=(8542,)):
+        context = HistoryBrowser().new_context()
+        page = Page()
+        context.page_listener(page)
+        wire = WireObservations(8542)
+        wire.attach(page)
+        socket = Socket()
+        for listener in page.listeners['websocket']:
+            listener(socket)
+        payload = ForwardMsg(script_finished=ForwardMsg.FINISHED_SUCCESSFULLY).SerializeToString()
+        for listener in socket.listeners['framereceived']:
+            listener(payload)
+        context.close()
+    rows = [json.loads(line) for line in next(tmp_path.glob('*-events.jsonl')).read_text().splitlines()]
+    assert [row['detail']['kind'] for row in rows if row['kind'] == 'widget-wire'] == ['script_finished']
+    assert wire.snapshot()['total_events'] == 1

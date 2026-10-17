@@ -36,7 +36,6 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
     from app.monthly_report_guided import _rich_text_scope
     scope = _rich_text_scope(prefix)
     status_scope = hashlib.sha256(repr((scope, status.references)).encode()).hexdigest()[:20]
-    st.caption("Add monitoring results or a brief status update.")
     if status.source == "Omit" and (status.text.strip() or status.ai_paragraphs):
         st.info("This saved update is currently left out.")
     if status.ai_paragraphs:
@@ -58,7 +57,6 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
         choice_key = prefix + "_mbcx_sentence_chosen_" + status_scope
         current_text = st.session_state.get(key, status.text)
         if not current_text.strip():
-            st.caption("Choose a status only when it describes these sites.")
             for column, (label, sentence) in zip(st.columns(len(STATUS_STARTERS)), STATUS_STARTERS):
                 column.button(label, key=prefix + "_mbcx_starter_" + status_scope + "_" + str(STATUS_STARTERS.index((label, sentence))),
                               on_click=_choose_sentence, args=(key, sentence, choice_key))

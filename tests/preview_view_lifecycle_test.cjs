@@ -8,6 +8,10 @@ const vm = require('node:vm');
 class Element {
     constructor(tag='div') {Object.assign(this,{tag,children:[],dataset:{},style:{},listeners:new Map(),clientHeight:500,clientWidth:400,scrollTop:0,offsetTop:0});}
     append(...children) {for(const child of children)child.parent=this;this.children.push(...children);}
+    get parentElement() {return this.parent || null;}
+    get nextElementSibling() {return this.parent?.children[this.parent.children.indexOf(this)+1] || null;}
+    insertBefore(child,before) {child.remove();child.parent=this;this.children.splice(before?this.children.indexOf(before):this.children.length,0,child);}
+    prepend(child) {this.insertBefore(child,this.children[0]);}
     replaceChildren(...children) {this.children=children;}
     remove() {if(this.parent)this.parent.children=this.parent.children.filter(child=>child!==this);}
     querySelectorAll(selector) {
@@ -30,6 +34,34 @@ function dom() {
     const retry=new Element('button');retry.dataset.action='retry-request';panel.append(retry);
     return {root,panel};
 }
+
+test('compact preview belongs below its section heading without moving native editors',()=>{
+    const file=fs.readFileSync('app/workspace_layout.js','utf8');
+    const source='function addControls'+file.split('function addControls')[1].split('function discover')[0];
+    const document={createElement:tag=>new Element(tag),activeElement:null},state={};
+    const add=vm.runInNewContext('('+source+')',{document,state,schedule:()=>{}});
+    const pair=new Element(),marker=new Element(),divider=new Element('hr'),heading=new Element('h3');
+    const rowWrapper=new Element(),row=new Element(),reference=new Element(),input=new Element('textarea');
+    pair.append(marker,divider,heading,rowWrapper);rowWrapper.append(row);row.append(input,reference);
+    const original=[...pair.children],inputs=[...row.children];
+    add(pair,reference,'Water',row);
+    const open=pair.querySelector('.epc-compact-open'),controls=open.parentElement;
+    const ordered=[marker,divider,heading,controls,rowWrapper];
+    assert.deepEqual(pair.children.map(node=>ordered.indexOf(node)),[0,1,2,3,4],
+        'View preview must follow its own heading rather than the previous section');
+    assert.deepEqual(row.children,inputs,'the native editor and reference never move');
+    add(pair,reference,'Water',row);
+    assert.equal(pair.querySelectorAll('.epc-compact-open').length,1);
+    assert.equal(pair.querySelector('.epc-compact-open'),open,'measurement retains the same control');
+    assert.deepEqual(pair.children.filter(node=>node!==controls),original);
+    // Upgrade a retained app-owned control from the former pre-heading slot.
+    pair.prepend(controls);document.activeElement=open;
+    let refocused=0;open.focus=options=>{assert.equal(options.preventScroll,true);refocused++;};
+    add(pair,reference,'Water',row);
+    assert.equal(controls.nextElementSibling,rowWrapper);
+    assert.equal(refocused,1);
+    assert.deepEqual(row.children,inputs);
+});
 
 test('viewer presents a scroll-only document without page, fit, zoom or enlarge controls',()=>{
     const file=fs.readFileSync('app/monthly_report_preview_view.py','utf8');

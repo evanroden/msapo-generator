@@ -23,6 +23,24 @@ def facility_choice(source, profile):
     return matches[0] if len(matches) == 1 else KEEP_FACILITY
 
 
+def detail_problems(source, profile, period):
+    """Short, read-only reasons to expose a saved source's correction route."""
+    if source.classification == "Reference only" or not source.selected_pages:
+        return ()
+    problems = []
+    when = source_date(source.service_date)
+    if when is None:
+        problems.append("date unreadable" if source.service_date else "date unknown")
+    elif not period.start <= when <= period.end:
+        problems.append("date outside this report month")
+    site = facility_choice(source, profile)
+    if not site:
+        problems.append("site unknown")
+    elif site == KEEP_FACILITY:
+        problems.append("site does not match this report")
+    return tuple(problems)
+
+
 def correct_source_details(source, profile, chosen_date, chosen_facility):
     """Apply an explicit correction without relabeling a source or approving its pages."""
     if chosen_date is not None and type(chosen_date) is not date:

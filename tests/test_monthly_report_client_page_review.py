@@ -40,8 +40,10 @@ def test_only_pending_pages_are_shown_and_caption_change_reopens_one_picture():
     app = AppTest.from_string(SCRIPT).run()
     assert not app.exception
     assert not app.selectbox and not app.checkbox
+    assert len(app.image) == 1
     button(app, "This page is ready to include").click().run()
     assert pending_asset_indexes(app.session_state.draft.blocks[0]) == (1,)
+    assert len(app.image) == 1
     assert any(c.value == "Second caption" for c in app.caption)
     assert not any(b.label in ("Previous page", "Next page") for b in app.button)
     button(app, "This page is ready to include").click().run()
@@ -49,14 +51,44 @@ def test_only_pending_pages_are_shown_and_caption_change_reopens_one_picture():
     assert block.client_reviewed_fingerprint == block.fingerprint
     assert not pending_asset_indexes(block)
     assert not any(b.label == "This page is ready to include" for b in app.button)
-    assert not app.get("imgs")
+    assert not app.image
     button(app, "Change caption").click().run()
     assert pending_asset_indexes(app.session_state.draft.blocks[0]) == (0,)
+    assert len(app.image) == 1
     assert any(c.value == "Changed caption" for c in app.caption)
     assert not any(c.value == "Second caption" for c in app.caption)
     button(app, "This page is ready to include").click().run()
     assert not pending_asset_indexes(app.session_state.draft.blocks[0])
     assert not app.exception
+
+
+def test_reviewed_source_images_collapse_without_hiding_public_branding_and_can_be_reopened():
+    # The typed image collection must detect real displayed pages; an unrelated
+    # public logo must remain visible when the source review itself collapses.
+    branding_caption = "Public synthetic branding"
+    app = AppTest.from_string(SCRIPT + '''
+public_logo = BytesIO()
+Image.new("RGB", (24, 12), "red").save(public_logo, "PNG")
+st.image(public_logo.getvalue(), caption="Public synthetic branding")
+''').run()
+    assert not app.exception
+
+    def displayed_sources():
+        return [url for group in app.image if group.captions != [branding_caption] for url in group.value]
+
+    first = displayed_sources()
+    assert len(app.image) == 2 and len(first) == 1
+    button(app, "This page is ready to include").click().run()
+    second = displayed_sources()
+    assert len(app.image) == 2 and len(second) == 1 and second != first
+    button(app, "This page is ready to include").click().run()
+    assert not displayed_sources()
+    assert len(app.image) == 1 and app.image[0].captions == [branding_caption]
+    assert set(first + second).isdisjoint(app.image[0].value)
+    button(app, "View or edit").click().run()
+    assert not app.exception
+    assert len(app.image) == 2 and displayed_sources() == first
+    assert any(group.captions == [branding_caption] for group in app.image)
 
 
 def test_remove_page_keeps_caption_source_alignment_and_hides_single_page_navigation():

@@ -7,6 +7,7 @@ from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
+import posixpath
 import re
 from zipfile import ZipFile
 import sys
@@ -22,6 +23,86 @@ from playwright.sync_api import expect
 WATER = ".st-key-epc_pair_monthly_water"
 CAPTION = "Synthetic conductivity check; follow-up remains pending."
 NAME = "Synthetic water treatment - long source name for the September review.pdf"
+
+
+def assert_docx_water_pages(word, expected_pages):
+    """Check real inline picture references and caption adjacency, not media alone.
+
+    This is the synthetic journey's OOXML order/content assertion. It does not
+    establish Microsoft Word pagination, rendered legibility or PDF image order.
+    """
+    from collections import Counter
+    from lxml import etree
+    from urllib.parse import unquote, urlsplit
+
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+          "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+          "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+          "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
+    expected = [item["asset"].split(".")[0] for item in expected_pages]
+    assert expected and len(set(expected)) == len(expected), "Water fixture needs distinct expected page images"
+
+    def text(paragraph):
+        parts = []
+        for node in paragraph.iter():
+            if node.tag == "{" + ns["w"] + "}t":
+                parts.append(node.text or "")
+            elif node.tag == "{" + ns["w"] + "}tab":
+                parts.append("\t")
+            elif node.tag == "{" + ns["w"] + "}cr" or (
+                    node.tag == "{" + ns["w"] + "}br"
+                    and node.get("{" + ns["w"] + "}type") not in ("page", "column")):
+                parts.append("\n")
+        return "".join(parts)
+
+    with ZipFile(BytesIO(word)) as package:
+        xml = etree.fromstring(package.read("word/document.xml"))
+        body = xml.find("w:body", ns)
+        assert body is not None, "DOCX has no document body"
+        relationships = etree.fromstring(package.read("word/_rels/document.xml.rels"))
+        links = {item.get("Id"): item for item in relationships}
+        occurrences = []
+        for blip in body.findall(".//a:blip", ns):
+            identity = blip.get("{" + ns["r"] + "}embed")
+            assert identity in links, "DOCX picture has no embedded image relationship"
+            link = links[identity]
+            assert (link.get("Type", "").endswith("/image")
+                    and link.get("TargetMode") != "External"), "DOCX picture is not an internal image"
+            target = urlsplit(link.get("Target", ""))
+            assert not target.scheme and not target.netloc, "DOCX picture target is external"
+            path = unquote(target.path)
+            part = posixpath.normpath(path.lstrip("/") if path.startswith("/") else posixpath.join("word", path))
+            assert not part.startswith("../") and part in package.namelist(), "DOCX picture target is missing"
+            digest = sha256(package.read(part)).hexdigest()
+            if digest not in expected:
+                continue
+            assert blip.xpath("ancestor::wp:inline", namespaces=ns), "Water page picture must be inline"
+            assert not blip.xpath("ancestor::wp:anchor", namespaces=ns), "Water page picture is floating"
+            paragraph = next((node for node in blip.iterancestors() if node.tag == "{" + ns["w"] + "}p"), None)
+            assert paragraph is not None, "Water page picture has no paragraph"
+            assert not any(item["paragraph"] is paragraph for item in occurrences), "Water pages share one picture paragraph"
+            following = paragraph.getnext()
+            caption = ""
+            if following is not None and following.tag == "{" + ns["w"] + "}p":
+                style = following.find("w:pPr/w:pStyle", ns)
+                style_name = style.get("{" + ns["w"] + "}val", "") if style is not None else ""
+                if (not following.findall(".//w:drawing", ns)
+                        and not following.findall(".//w:sectPr", ns)
+                        and not style_name.startswith(("Heading", "Title"))):
+                    caption = text(following)
+            occurrences.append({"asset_sha256": digest, "relationship": identity,
+                                "part": part, "caption_sha256": sha256(caption.encode()).hexdigest(),
+                                "paragraph": paragraph})
+        assert [item["asset_sha256"] for item in occurrences] == expected, "DOCX Water inline page order/count differs from the working report"
+        for actual, wanted in zip(occurrences, expected_pages):
+            assert actual["caption_sha256"] == wanted["caption_sha256"], "DOCX Water caption is missing, changed or attached to the wrong page"
+        # A moved/duplicated caption elsewhere cannot satisfy the adjacent
+        # check or hide behind one correct copy next to its intended image.
+        blank = sha256(b"").hexdigest()
+        wanted_captions = Counter(item["caption_sha256"] for item in expected_pages if item["caption_sha256"] != blank)
+        paragraph_captions = Counter(sha256(text(p).encode()).hexdigest() for p in body.findall(".//w:p", ns))
+        assert all(paragraph_captions[digest] == count for digest, count in wanted_captions.items()), "DOCX Water caption occurrence count differs from the working report"
+        return [{key: value for key, value in item.items() if key != "paragraph"} for item in occurrences]
 
 
 def source_pdf():
@@ -70,6 +151,152 @@ def current_water_preview(page, qa, *, inset=130):
     # preserve the production viewer's visibility-driven work boundary.
     qa.scroll_pair(page, WATER, inset=inset, preview=True)
     qa.current_image(page, WATER)
+
+
+def open_water_with_cold_tables(page, qa, observations):
+    """Exercise the recorded late-table shift without waiting it away.
+
+    Open the already-saved draft in a fresh browser context and hold only its
+    real local DataFrame module on the first navigation,
+    measure the loading page, then release its unchanged response. The button
+    and scroll position must stay put as the three preceding editors mount.
+    No report state, input, geometry or control event is injected.
+    """
+    assert page.url == "about:blank", "Cold table coverage requires an unused browser page."
+    pattern = re.compile(re.escape(qa.URL) + r"/static/js/DataFrame\.[^/?]+\.js$")
+    held = []
+
+    def hold(route):
+        held.append(route)
+
+    sample = """wanted => {
+      const pair=document.querySelector(wanted.water),root=pair.closest('.epc-workspace');
+      const button=pair.querySelector('.epc-compact-open');
+      const boxes=wanted.keys? wanted.keys.map(key=>root.querySelector('.'+CSS.escape(key))) :
+        [...root.querySelectorAll('[data-testid="stElementContainer"]')].filter(node=>
+          node.querySelector(':scope > [data-testid="stSkeleton"]') &&
+          (node.compareDocumentPosition(pair)&Node.DOCUMENT_POSITION_FOLLOWING) &&
+          node.getBoundingClientRect().height>0);
+      const b=button.getBoundingClientRect();
+      return {button:{x:b.x,y:b.y,width:b.width,height:b.height},
+        scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop,
+        fullRender:root.dataset.epcFullRender,
+        grids:boxes.map(node=>({key:[...node.classList].find(k=>k.startsWith('st-key-')),
+          height:node.getBoundingClientRect().height,
+          loading:!!node.querySelector(':scope > [data-testid="stSkeleton"]'),
+          mounted:!!node.querySelector('[data-testid="stDataFrameResizable"]')}))};
+    }"""
+    result = observations["cold_table_layout"] = {}
+    page.route(pattern, hold)
+    try:
+        with page.expect_request(pattern, timeout=20000):
+            page.goto(qa.URL, wait_until="domcontentloaded")
+            state = wait_pages(page, [2, 1], pending=[])
+        qa.scroll_pair(page, WATER, inset=90)
+        before = result["before"] = page.evaluate(sample, {"water": WATER, "keys": None})
+        result["held_module_requests"] = len(held)
+        assert len(held) == 1, "Expected one held DataFrame module request: " + str(len(held))
+        assert len(before["grids"]) == 3, "Observe all three imported editors preceding Water."
+        keys = [item["key"] for item in before["grids"]]
+        assert all(keys) and all(item["loading"] for item in before["grids"])
+        result["module"] = held[0].request.url.rsplit("/", 1)[-1]
+        held.pop().continue_()
+        page.wait_for_function("""keys => keys.every(key=>{
+          const node=document.querySelector('.'+CSS.escape(key));
+          return node && !node.querySelector(':scope > [data-testid="stSkeleton"]') &&
+            node.querySelector('[data-testid="stDataFrameResizable"]')?.getBoundingClientRect().height>0;
+        })""", arg=keys, timeout=20000)
+        qa.frames(page)
+        after = result["after"] = page.evaluate(sample, {"water": WATER, "keys": keys})
+        assert after["fullRender"] == before["fullRender"]
+        assert after["scrollTop"] == before["scrollTop"], "Do not hide a shift by restoring scroll."
+        assert all(item["mounted"] for item in after["grids"])
+        for old, current in zip(before["grids"], after["grids"]):
+            assert abs(current["height"] - old["height"]) <= 2, (old, current)
+        for axis in ("x", "y", "width", "height"):
+            assert abs(after["button"][axis] - before["button"][axis]) <= 2, result
+        return state
+    finally:
+        # A failing assertion still releases the original request and handler.
+        for route in held:
+            route.continue_()
+        page.unroute(pattern, hold)
+
+
+def open_water_preview(page, water, qa, observations):
+    """Observe the one compact action without repairing it or changing its wait."""
+    control = water.get_by_role("button", name="View preview", exact=True)
+    probe = observations["compact_preview_activation"] = {}
+    try:
+        probe["before"] = control.evaluate("""(node, selector) => {
+            window.__enfraWaterPreviewActivation?.finish();
+            const pair=node.closest(selector), root=pair?.closest('.epc-workspace');
+            const reference=pair?.querySelector('.st-key-epc_reference_monthly_water');
+            const events=[],mutations=[];let droppedEvents=0,droppedMutations=0;
+            const brief=()=>{const currentPair=document.querySelector(selector);
+                const currentButton=currentPair?.querySelector('.epc-compact-open');
+                const currentReference=currentPair?.querySelector('.st-key-epc_reference_monthly_water');
+                const currentRoot=currentPair?.closest('.epc-workspace');
+                return {buttonConnected:node.isConnected,pairConnected:pair?.isConnected??false,
+                    referenceConnected:reference?.isConnected??false,
+                    currentPairIsOriginal:currentPair===pair,currentButtonIsOriginal:currentButton===node,
+                    currentReferenceIsOriginal:currentReference===reference,currentRootIsOriginal:currentRoot===root,
+                    onclickType:typeof node.onclick,
+                    expanded:node.getAttribute('aria-expanded'),pairOpen:pair?.getAttribute('data-epc-preview-open')??null,
+                    currentExpanded:currentButton?.getAttribute('aria-expanded')??null,
+                    currentPairOpen:currentPair?.getAttribute('data-epc-preview-open')??null,
+                    fullRender:root?.dataset.epcFullRender??null,mode:root?.dataset.epcMode??null,
+                    currentFullRender:currentRoot?.dataset.epcFullRender??null,currentMode:currentRoot?.dataset.epcMode??null,
+                    focused:document.activeElement===node,
+                    scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')??null};};
+            const snapshot=()=>{const r=node.getBoundingClientRect();return {...brief(),
+                rect:{x:r.x,y:r.y,width:r.width,height:r.height},
+                events:events.slice(),mutations:mutations.slice(),droppedEvents,droppedMutations};};
+            const observe=event=>{if(!event.isTrusted)return;
+                if(events.length<24)events.push({type:event.type,at:performance.now(),trusted:true,
+                    phase:event.eventPhase,x:Number.isFinite(event.clientX)?event.clientX:null,
+                    y:Number.isFinite(event.clientY)?event.clientY:null,targetIsOriginal:event.target===node,
+                    targetInOriginal:node.contains(event.target),targetTag:event.target?.tagName??null,...brief()});
+                else droppedEvents++;};
+            const collect=records=>{const changes=records.filter(r=>
+                r.target===node&&r.attributeName==='aria-expanded'||
+                r.target===pair&&r.attributeName==='data-epc-preview-open');
+                for(let i=0;i<changes.length;i++){const change=changes[i];
+                    const next=changes.slice(i+1).find(r=>r.target===change.target&&r.attributeName===change.attributeName);
+                    const after=next?next.oldValue:change.target.getAttribute(change.attributeName);
+                    if(mutations.length<24)mutations.push({at:performance.now(),
+                        target:change.target===node?'original-button':'original-pair',
+                        attribute:change.attributeName,before:change.oldValue,after,...brief()});
+                    else droppedMutations++;}};
+            const observer=new MutationObserver(collect);
+            observer.observe(pair,{attributes:true,subtree:true,
+                attributeFilter:['aria-expanded','data-epc-preview-open'],attributeOldValue:true});
+            const kinds=['pointerdown','pointerup','mousedown','mouseup','click','focusin','focusout'];
+            for(const kind of kinds){document.addEventListener(kind,observe,{capture:true,passive:true});
+                document.addEventListener(kind,observe,{capture:false,passive:true});}
+            window.__enfraWaterPreviewActivation={snapshot,finish:()=>{
+                try{collect(observer.takeRecords());return snapshot();}
+                finally{observer.disconnect();
+                    for(const kind of kinds){document.removeEventListener(kind,observe,true);
+                        document.removeEventListener(kind,observe,false);}
+                    delete window.__enfraWaterPreviewActivation;}}};
+            return snapshot();
+        }""", WATER)
+    except Exception as exc:
+        probe["setup_error"] = str(exc)[:500]
+    try:
+        control.click()
+        if "before" in probe:
+            try:
+                probe["after_click"] = page.evaluate("window.__enfraWaterPreviewActivation.snapshot()")
+            except Exception as exc:
+                probe["after_click_error"] = str(exc)[:500]
+        current_water_preview(page, qa, inset=90)
+    finally:
+        try:
+            probe["final"] = page.evaluate("window.__enfraWaterPreviewActivation?.finish()??null")
+        except Exception as exc:
+            probe["cleanup_error"] = str(exc)[:500]
 
 
 def choose_page(page, number):
@@ -178,7 +405,7 @@ def exercise(page, name, qa):
         page.set_viewport_size({"width": 390, "height": 844})
         qa.mode(page, "compact")
         qa.scroll_pair(page, WATER, inset=90)
-        upload(page, raw)  # Same bytes after a genuine new browser session.
+        upload(page, raw)  # Same bytes after an ordinary reload of this browser page.
         state = wait_pages(page, [2], pending=[])
         unchanged(state)
         assert state["working"]["sources"][0]["excluded"] == [1]
@@ -196,8 +423,7 @@ def exercise(page, name, qa):
         state = wait_pages(page, [2, 1], pending=[])
         unchanged(state)
         qa.scroll_pair(page, WATER, inset=90)
-        water.get_by_role("button", name="View preview", exact=True).click()
-        current_water_preview(page, qa, inset=90)
+        open_water_preview(page, water, qa, observations)
         record("narrow-current-preview", state)
         water.get_by_role("button", name="Back to editing", exact=True).click()
 
@@ -207,6 +433,7 @@ def exercise(page, name, qa):
         live.request_qa_generation(page, "water-page-journey")
         word = live.download(page, "Download isolated QA DOCX", "water-pages.docx")
         pdf = live.download(page, "Download isolated QA PDF", "water-pages.pdf")
+        observations["output_docx_water_pages"] = assert_docx_water_pages(word, state["working"]["pages"])
         with ZipFile(BytesIO(word)) as package:
             from lxml import etree
             xml = etree.fromstring(package.read("word/document.xml"))
@@ -221,6 +448,7 @@ def exercise(page, name, qa):
         observations["exports"] = live.EVIDENCE
         observations["result"] = "passed"
         qa.check(name, "Water native upload/review/order/omit/reload/reinclude and actual Word/PDF", True)
+        return state
     except Exception as exc:
         observations["result"] = "failed"
         observations["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
@@ -240,7 +468,8 @@ def browser_task(browser_type, name):
     from scripts import qa_monthly_adaptive as qa
     browser = browser_type.launch(headless=True)
     context = browser.new_context(viewport={"width": 1365, "height": 900})
-    context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": qa.URL}])
+    device_cookie = {"name": "epc_device_id", "value": secrets.token_hex(16), "url": qa.URL}
+    context.add_cookies([device_cookie])
     attempts, errors = [], []
     def route(request):
         address = urlparse(request.request.url)
@@ -249,12 +478,13 @@ def browser_task(browser_type, name):
         else:
             attempts.append(address.hostname)
             request.abort()
-    context.route("**/*", route)
-    context.add_init_script("""window.__waterShareAttempts=[];
+    share_guard = """window.__waterShareAttempts=[];
       Object.defineProperty(navigator,'share',{configurable:true,value:()=>{
         window.__waterShareAttempts.push('share');
         return Promise.reject(new Error('Sharing is forbidden in synthetic QA'));
-      }});""")
+      }});"""
+    context.route("**/*", route)
+    context.add_init_script(share_guard)
     page = context.new_page()
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -268,11 +498,47 @@ def browser_task(browser_type, name):
         page.get_by_role("button", name="Load known-value report", exact=True).click()
         expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
         expect(page.get_by_role("textbox", name="Activity summary", exact=True)).to_be_visible(timeout=45000)
-        exercise(page, name, qa)
+        expected = exercise(page, name, qa)
         qa.check(name, "Water task has no external request, browser error or sharing",
                  not attempts and not errors and not page.evaluate("window.__waterShareAttempts.length"),
                  {"external": attempts, "errors": errors})
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
+
+        # Both retained WebKit traces reuse the original module response across
+        # reload, including the attempt with no-store. Preserve ordinary reload
+        # above and test a cold mount separately. Only the same synthetic device
+        # cookie crosses contexts: the app must read the real durable draft.
+        context.close()
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        context.add_cookies([device_cookie])
+        context.route("**/*", route)
+        context.add_init_script(share_guard)
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        WaterWidgetDelivery(lambda row: delivery.append({"at": time.monotonic(), **row})).attach(page)
+        cold = {"entry": "fresh browser context; same synthetic device cookie; saved draft",
+                "expected_fingerprint": expected["durable_fingerprint"]}
+        try:
+            state = open_water_with_cold_tables(page, qa, cold)
+            assert state == expected, "Fresh session must restore the exact UI-saved report and originals."
+            cold["receipt"] = state
+            open_water_preview(page, page.locator(WATER), qa, cold)
+            qa.capture(page, name, "water-cold-session-current-preview")
+            assert not attempts and not errors and not page.evaluate("window.__waterShareAttempts.length")
+            expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
+            cold["result"] = "passed"
+            qa.check(name, "Cold saved Water session keeps all three table heights and one preview click", True)
+        except Exception as exc:
+            cold["result"] = "failed"
+            cold["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
+            try:
+                qa.capture(page, name, "water-cold-session-first-failure")
+            except Exception as capture_error:
+                cold["capture_failure"] = str(capture_error)[:500]
+            raise
+        finally:
+            (out / "cold-session.json").write_text(json.dumps(cold, indent=2))
     finally:
         (out / "widget-delivery.json").write_text(json.dumps(delivery, indent=2))
         (out / "browser.json").write_text(json.dumps({"external": attempts, "errors": errors}, indent=2))

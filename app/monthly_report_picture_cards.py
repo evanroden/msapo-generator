@@ -42,6 +42,13 @@ def picture_options(section, *, allow_branding=True):
     return choices
 
 
+def _cover_choice(key, omitted_key, identity):
+    # Native callbacks run before the next render. Updating after the gallery
+    # loop left its old Selected/Choose controls visible for one extra event.
+    st.session_state[key] = identity
+    st.session_state[omitted_key] = not bool(identity)
+
+
 def review_cover_gallery(images, path, prefix, old, plan):
     """One clickable photo gallery; no per-image radio or mandatory selection.
 
@@ -56,15 +63,21 @@ def review_cover_gallery(images, path, prefix, old, plan):
     from app.monthly_report_content_policy import contains_price
     ids = {item.id for item in candidates}
     key = prefix + "_cover_photo_choice"
+    omitted_key = prefix + "_cover_photo_action"
     previous = old.get("cover_picture_id", None)
     prior = next((i for i, slot in old.get("destinations", {}).items()
                   if slot == "cover_photo" and i in ids), None)
     guess = suggested_cover_photo(candidates)
     default = (previous if previous in ids or previous == "" else
                prior if prior else guess.id if guess else "")
+    omitted = st.session_state.pop(omitted_key, bool(old.get("cover_photo_omitted")))
+    if omitted:
+        default = ""
     if key not in st.session_state or st.session_state[key] not in (ids | {""}):
         st.session_state[key] = default
     selected = st.session_state[key]
+    if omitted:
+        selected = ""
     st.markdown("**Cover photograph**")
     st.caption("The most likely cover photo is selected when its placement and size identify it. Choose another picture or leave it blank.")
     visible = set()
@@ -86,14 +99,13 @@ def review_cover_gallery(images, path, prefix, old, plan):
                     continue
                 if item.id == selected:
                     st.success("Selected cover photo")
-                elif st.button(f"Choose picture {index}", key=prefix + "_choose_cover_" + item.id,
-                               width="stretch"):
-                    selected = item.id
-                    st.session_state[key] = item.id
-    if st.button("No cover photograph", key=prefix + "_omit_cover",
-                 type="secondary", width="stretch"):
-        selected = ""
-        st.session_state[key] = ""
+                else:
+                    st.button(f"Choose picture {index}", key=prefix + "_choose_cover_" + item.id,
+                              width="stretch", on_click=_cover_choice,
+                              args=(key, omitted_key, item.id))
+    st.button("No cover photograph", key=prefix + "_omit_cover",
+              type="secondary", width="stretch", on_click=_cover_choice,
+              args=(key, omitted_key, ""))
     # Never let an unavailable, priced or stale source picture survive the
     # new selection. Existing logos/footer stay in the same approved plan.
     chosen = next((item for item in candidates if item.id == selected
@@ -107,6 +119,8 @@ def review_cover_gallery(images, path, prefix, old, plan):
     plan["selected"] = selected_ids
     plan["destinations"] = destinations
     plan["cover_picture_id"] = chosen.id if chosen else ""
+    plan["cover_photo_omitted"] = bool(omitted and not chosen)
+    plan["cover_photo_source_ids"] = tuple(item.id for item in candidates)
     plan["picture_roles"] = {identity: "cover_photo" if chosen and identity == chosen.id else ""
                              for identity in ids}
     plan["picture_choices"] = [chosen.id] if chosen else []
