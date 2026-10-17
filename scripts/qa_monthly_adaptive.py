@@ -278,6 +278,56 @@ def editor_state(field):
     return field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd,focused:document.activeElement===n,identity:n===window.__monthlyActivityNode})")
 
 
+def exercise_section_navigation(page, browser, field):
+    """One native selector, including the otherwise confined Review boundary.
+
+    select_option exercises the real HTML select's change path. This is not a
+    physical device/native popup claim; the served keyboard check stays distinct.
+    """
+    selector = page.get_by_role("combobox", name="Jump to section", exact=True)
+    expect(selector).to_have_count(1)
+    expect(selector).to_be_enabled()
+    labels = page.locator(".epc-workspace-pair [data-epc-title]").evaluate_all(
+        "nodes=>nodes.map(n=>n.dataset.epcTitle)")
+    check(browser, "one selector uses every editor heading in report order",
+          selector.locator("option").all_text_contents() == labels + ["Review and download"])
+    inject(page, [{"x": 0, "y": 0, "width": 1440, "height": 380},
+                  {"x": 0, "y": 410, "width": 1440, "height": 490}])
+    mode(page, "tabletop")
+    scroll_pair(page, ACTIVITY, inset=110)
+    expect(selector).to_have_value("monthly_activity")
+    field.evaluate("n=>{window.__monthlyNavigationNode=n;}")
+    before_field = field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})")
+    before_offset = page.locator(ACTIVITY).evaluate("n=>n.getBoundingClientRect().top-n.closest('.epc-workspace').getBoundingClientRect().top")
+    before_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
+    selector.select_option("report_review")
+    mode(page, "compact")
+    expect(page.locator("#report-review")).to_be_in_viewport()
+    check(browser, "Review exits only the confined display and stays reachable", page.evaluate("""() => {
+      const root=document.querySelector('.epc-workspace'), main=document.querySelector('[data-testid="stMain"]');
+      return root.dataset.epcReviewOpen==='true' && root.dataset.epcReason==='review-navigation' &&
+        root.dataset.epcConfined!=='true' && !main.classList.contains('epc-workspace-scroll-owner');
+    }"""))
+    expect(selector).to_be_in_viewport()
+    capture(page, browser, "selector-tabletop-review")
+    selector.select_option("monthly_activity")
+    mode(page, "tabletop")
+    after_offset = page.locator(ACTIVITY).evaluate("n=>n.getBoundingClientRect().top-n.closest('.epc-workspace').getBoundingClientRect().top")
+    check(browser, "section selection restores actual lower-editor reading position", abs(after_offset-before_offset) <= TOLERANCE,
+          {"before": before_offset, "after": after_offset})
+    check(browser, "selector preserves the same native Activity input and pending selection",
+          field.evaluate("n=>n===window.__monthlyNavigationNode") and
+          field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})") == before_field)
+    after_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
+    check(browser, "section navigation avoids full reruns and report changes",
+          before_runtime["full_runs"] == after_runtime["full_runs"] and
+          before_runtime["draft_hashes"] == after_runtime["draft_hashes"],
+          {"before": before_runtime, "after": after_runtime})
+    capture(page, browser, "selector-tabletop-return")
+    inject(page, None)
+    mode(page, "wide")
+
+
 def exercise(browser_type, name):
     browser = browser_type.launch(headless=True)
     context = browser.new_context(viewport={"width": 1440, "height": 900})
@@ -461,6 +511,7 @@ def exercise(browser_type, name):
         committed = before["value"]
         expect(page.get_by_text("QA durable Activity SHA256: " + hashlib.sha256(committed.encode()).hexdigest(), exact=True)).to_be_visible(timeout=60000)
         current_image(page, ACTIVITY)
+        exercise_section_navigation(page, name, field)
 
         scroll_pair(page, EMPTY)
         frames(page)
@@ -469,6 +520,7 @@ def exercise(browser_type, name):
         page.set_viewport_size({"width": 390, "height": 844})
         mode(page, "compact")
         scroll_pair(page, ACTIVITY, inset=80)
+        expect(page.get_by_role("combobox", name="Jump to section", exact=True)).to_be_in_viewport()
         check(name, "compact still has one current Activity editor", field.count() == 1 and field.input_value() == committed)
         check(name, "compact contains whole-page horizontal overflow", page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2"))
         page.locator(ACTIVITY).get_by_role("button", name="View preview", exact=True).click()

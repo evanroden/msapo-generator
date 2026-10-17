@@ -14,6 +14,11 @@ export default function(component) {
         state.active = null;
         state.mode = null;
         state.compactPositions = new WeakMap();
+        state.reviewNavigation = false;
+        state.navigationActive = null;
+        state.navigationJump = null;
+        state.navigationRequest = null;
+        state.navigationReturn = null;
     }
     let frame = null, focusFrame = null, disposed = false, pairs = [], lastGeometry = '';
     const subscriptions = [];
@@ -25,6 +30,7 @@ export default function(component) {
     root.dataset.epcFullRender = data.fullRender || '';
     const nav = data.navigationKey ? document.querySelector('.st-key-' + CSS.escape(data.navigationKey)) : null;
     const chrome = document.querySelector('[data-testid="stHeader"]');
+    const navigation = globalThis.ENFRAWorkspaceNavigation?.create({root,app,scrollport,nav,state,geometry,schedule});
     // An empty span can change the hash without giving a keyboard user the
     // prerequisite field. Handle only this owned Monthly correction link and
     // only when its unique native field exists. No value, input event, business
@@ -200,7 +206,7 @@ export default function(component) {
                 track.classList.add('epc-reference-track'); track=track.parentElement;
             }
             addControls(pair, reference, marker.dataset.epcTitle || 'Section preview', row, editor);
-            return {id, pair, reference};
+            return {id, pair, reference, title:marker.dataset.epcTitle || 'Section'};
         }).filter(Boolean);
     }
     function snapshot() {
@@ -237,7 +243,7 @@ export default function(component) {
         if (disposed || !root.isConnected || document.hidden) return;
         discover();
         const sample = snapshot();
-        const context = geometry.resolveDisplayContext(sample);
+        let context = geometry.resolveDisplayContext(sample);
         // Do not place a fixed reference through transformed framework ancestors.
         if (context.mode === 'tabletop') {
             let ancestor = root.parentElement;
@@ -249,6 +255,7 @@ export default function(component) {
                 ancestor = ancestor.parentElement;
             }
         }
+        context = navigation?.prepare(context,sample,pairs) || context;
         const confined = context.mode === 'compact' && context.reason === 'segments-insufficient-space' && context.editor;
         const ownsScroll = context.mode === 'tabletop' || Boolean(confined);
         const ownedScrollBefore = state.ownsScroll;
@@ -278,8 +285,10 @@ export default function(component) {
             css('enlarge-height',Math.max(1,enlargement.height-2*inset));
         }
         const navStyle = nav ? getComputedStyle(nav) : null;
+        css('nav-top',ownsScroll ? 0 : Math.max(sample.visual?.y||0,sample.scrollport.y,sample.chromeBottom));
+        css('nav-left',sample.app.x); css('nav-width',sample.app.width);
         const navTop = navStyle?.position === 'sticky' ? parseFloat(navStyle.top)||0 : 0;
-        const top = Math.max(sample.visual?.y || 0, sample.scrollport.y, sample.chromeBottom, navTop) + (nav ? nav.getBoundingClientRect().height : 0) + 12;
+        const top = Math.max(sample.visual?.y || 0, sample.scrollport.y, sample.chromeBottom, navTop) + (navigation?.height() || (nav ? nav.getBoundingClientRect().height : 0)) + 12;
         css('preview-top',top);
         const bottom = Math.min(sample.scrollport.y+sample.scrollport.height, (sample.visual?.y||0)+(sample.visual?.height||sample.layout.height));
         css('preview-height',context.mode === 'tabletop' && context.preview ? Math.max(120,context.preview.height-24) : Math.max(180,bottom-top-16));
@@ -297,6 +306,7 @@ export default function(component) {
         }
         state.mode = context.mode;
         state.ownsScroll = ownsScroll;
+        navigation?.update(context,sample);
         updateActive(context);
         const signature = JSON.stringify([context.mode,context.editor,context.preview,top]);
         if (signature !== lastGeometry) {
@@ -324,6 +334,7 @@ export default function(component) {
         if (frame !== null) cancelAnimationFrame(frame);
         if (focusFrame !== null) cancelAnimationFrame(focusFrame);
         resize.disconnect(); mutation.disconnect(); subscriptions.forEach(remove => remove());
+        navigation?.dispose();
         safe.remove(); scrollport.classList.remove('epc-workspace-scroll-owner');
     };
     state.cleanup = cleanup;
