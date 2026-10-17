@@ -61,7 +61,13 @@ export default function(component) {
         target.addEventListener(type, listener, {passive:true});
         subscriptions.push(() => target.removeEventListener(type, listener));
     }
-    function addControls(pair, reference, title) {
+    function addControls(pair, reference, title, row) {
+        // Keep the action under its own heading/errors, immediately before
+        // the working row. Prepending it to the pair made it read as the prior
+        // section's action on narrow screens. Move only our own control group.
+        let before = row;
+        while (before?.parentElement && before.parentElement !== pair) before = before.parentElement;
+        if (before?.parentElement !== pair) return;
         let open = pair.querySelector('.epc-compact-open');
         if (!open) {
             const controls = document.createElement('div');
@@ -69,7 +75,11 @@ export default function(component) {
             open = document.createElement('button');
             open.type = 'button'; open.className = 'epc-compact-open';
             open.textContent = 'View preview'; open.setAttribute('aria-expanded', 'false');
-            controls.append(open); pair.prepend(controls);
+            controls.append(open); pair.insertBefore(controls, before);
+        } else if (open.parentElement.nextElementSibling !== before) {
+            const focused = document.activeElement === open;
+            pair.insertBefore(open.parentElement, before);
+            if (focused) open.focus({preventScroll:true});
         }
         open.onclick = () => {
             state.returnFocus = document.activeElement;
@@ -124,7 +134,7 @@ export default function(component) {
             while (track && track !== refColumn) {
                 track.classList.add('epc-reference-track'); track=track.parentElement;
             }
-            addControls(pair, reference, marker.dataset.epcTitle || 'Section preview');
+            addControls(pair, reference, marker.dataset.epcTitle || 'Section preview', row);
             return {id, pair, reference};
         }).filter(Boolean);
     }

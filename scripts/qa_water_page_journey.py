@@ -153,6 +153,72 @@ def current_water_preview(page, qa, *, inset=130):
     qa.current_image(page, WATER)
 
 
+def reload_water_with_cold_tables(page, qa, observations):
+    """Exercise the recorded late-table shift without waiting it away.
+
+    Hold only the real local DataFrame module during this existing reload,
+    measure the loading page, then release its unchanged response. The button
+    and scroll position must stay put as the three preceding editors mount.
+    No report state, input, geometry or control event is injected.
+    """
+    pattern = re.compile(re.escape(qa.URL) + r"/static/js/DataFrame\.[^/?]+\.js$")
+    held = []
+
+    def hold(route):
+        held.append(route)
+
+    sample = """wanted => {
+      const pair=document.querySelector(wanted.water),root=pair.closest('.epc-workspace');
+      const button=pair.querySelector('.epc-compact-open');
+      const boxes=wanted.keys? wanted.keys.map(key=>root.querySelector('.'+CSS.escape(key))) :
+        [...root.querySelectorAll('[data-testid="stElementContainer"]')].filter(node=>
+          node.querySelector(':scope > [data-testid="stSkeleton"]') &&
+          (node.compareDocumentPosition(pair)&Node.DOCUMENT_POSITION_FOLLOWING) &&
+          node.getBoundingClientRect().height>0);
+      const b=button.getBoundingClientRect();
+      return {button:{x:b.x,y:b.y,width:b.width,height:b.height},
+        scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop,
+        fullRender:root.dataset.epcFullRender,
+        grids:boxes.map(node=>({key:[...node.classList].find(k=>k.startsWith('st-key-')),
+          height:node.getBoundingClientRect().height,
+          loading:!!node.querySelector(':scope > [data-testid="stSkeleton"]'),
+          mounted:!!node.querySelector('[data-testid="stDataFrameResizable"]')}))};
+    }"""
+    result = observations["cold_table_layout"] = {}
+    page.route(pattern, hold)
+    try:
+        page.reload(wait_until="domcontentloaded")
+        state = wait_pages(page, [2, 1], pending=[])
+        qa.scroll_pair(page, WATER, inset=90)
+        before = result["before"] = page.evaluate(sample, {"water": WATER, "keys": None})
+        assert len(held) == 1, "The actual DataFrame module must be held, not already warm."
+        assert len(before["grids"]) == 3, "Observe all three imported editors preceding Water."
+        keys = [item["key"] for item in before["grids"]]
+        assert all(keys) and all(item["loading"] for item in before["grids"])
+        result["module"] = held[0].request.url.rsplit("/", 1)[-1]
+        held.pop().continue_()
+        page.wait_for_function("""keys => keys.every(key=>{
+          const node=document.querySelector('.'+CSS.escape(key));
+          return node && !node.querySelector(':scope > [data-testid="stSkeleton"]') &&
+            node.querySelector('[data-testid="stDataFrameResizable"]')?.getBoundingClientRect().height>0;
+        })""", arg=keys, timeout=20000)
+        qa.frames(page)
+        after = result["after"] = page.evaluate(sample, {"water": WATER, "keys": keys})
+        assert after["fullRender"] == before["fullRender"]
+        assert after["scrollTop"] == before["scrollTop"], "Do not hide a shift by restoring scroll."
+        assert all(item["mounted"] for item in after["grids"])
+        for old, current in zip(before["grids"], after["grids"]):
+            assert abs(current["height"] - old["height"]) <= 2, (old, current)
+        for axis in ("x", "y", "width", "height"):
+            assert abs(after["button"][axis] - before["button"][axis]) <= 2, result
+        return state
+    finally:
+        # A failing assertion still releases the original request and handler.
+        for route in held:
+            route.continue_()
+        page.unroute(pattern, hold)
+
+
 def open_water_preview(page, water, qa, observations):
     """Observe the one compact action without repairing it or changing its wait."""
     control = water.get_by_role("button", name="View preview", exact=True)
@@ -349,10 +415,8 @@ def exercise(page, name, qa):
         assert len(set(p["asset"] for p in state["working"]["pages"])) == 2
         assert page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
         record("narrow-reincluded", state)
-        page.reload(wait_until="domcontentloaded")
-        state = wait_pages(page, [2, 1], pending=[])
+        state = reload_water_with_cold_tables(page, qa, observations)
         unchanged(state)
-        qa.scroll_pair(page, WATER, inset=90)
         open_water_preview(page, water, qa, observations)
         record("narrow-current-preview", state)
         water.get_by_role("button", name="Back to editing", exact=True).click()

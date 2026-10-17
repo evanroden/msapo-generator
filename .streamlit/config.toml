@@ -11,6 +11,11 @@ maxUploadSize = 200
 [browser]
 gatherUsageStats = false
 
+[client]
+# The root workflow selector owns navigation. Keep the old pages/ bookmark
+# notice reachable by URL without promoting it as a second working tool.
+showSidebarNavigation = false
+
 [theme]
 primaryColor = "#D6EF4B"
 backgroundColor = "#FFFFFF"

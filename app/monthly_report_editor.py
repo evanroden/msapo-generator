@@ -162,11 +162,33 @@ def review_client_images(draft, assets, prefix, field):
         blocks.append(block)
     return replace(draft, blocks=tuple(blocks))
 
+def _reserve_grid_loading_space(key: str, row_count: int, **kwargs) -> None:
+    """Size only this native grid's lazy placeholder, not the live editor.
+
+    Streamlit 1.61.1 loads DataFrame separately after its Python receipt. Its
+    2.5rem skeleton can otherwise expand several earlier sections during a
+    native click. Match its one-header-row sizing, add-row slot, border and
+    inline-block baseline; rem units retain browser text scaling. Explicit
+    heights already reserve their own element space. Never change widget
+    height/identity, focus, scroll position or edit deltas to do this.
+    """
+    if st.__version__ != "1.61.1" or kwargs.get("height", "auto") != "auto":
+        return
+    name = re.sub(r"[^a-zA-Z0-9_-]", "-", key.strip())
+    rows = max(1, row_count + int(kwargs.get("num_rows") in ("dynamic", "add")))
+    row_height = kwargs.get("row_height")
+    size = (f"2.1875rem + {rows * row_height + 2}px" if row_height else
+            f"{(min(rows, 11) + 1) * 2.1875:g}rem + 2px")
+    st.html(f'<style>.st-key-{name} > [data-testid="stSkeleton"]'
+            '{display:inline-block;height:min(25rem,calc(' + size + '));}</style>')
+
+
 def _grid(key: str, seed: list[dict], **kwargs) -> list[dict]:
     """Keep the editor's input stable while Streamlit reapplies edit deltas."""
     data_key = key + "_data"
     if key not in st.session_state:
         st.session_state[data_key + "_seed"] = st.session_state.get(data_key, seed)
+    _reserve_grid_loading_space(key, len(st.session_state.get(data_key, seed)), **kwargs)
     rows = st.data_editor(st.session_state[data_key + "_seed"], key=key, **kwargs)
     st.session_state[data_key] = rows
     return rows

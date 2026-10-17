@@ -4,32 +4,49 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current implementation checkpoint — 2026-10-17 17:22 UTC
+## Current implementation checkpoint — 2026-10-17 18:08 UTC
 
-PR251 is merged into MAIN as `de651cb1ed0bd3e2c1ea0484009754c86cb1495e`.
-PR252 is open against that main, head `77b2c1562d9b56c9278f7fb52bb4f8f025183ae7`;
-its parent reconciliation preserved the complete sibling source tree. The changes described
-as local below are being prepared on this head. Neither phase is accepted.
+MAIN remains `de651cb1ed0bd3e2c1ea0484009754c86cb1495e`, with PR251 merged.
+PR252 is open against that main at `229e79d9fe8ab1aa28e56f0c4960e4bc00184b10`.
+The new loading/heading/navigation delta below is local on229 and awaiting publication.
+The original navigation worktree is retained; its exact three-file delta was reconciled
+into252 before adding the shared layout regression paths. Neither phase is accepted.
 
 | Requirement / retained IDs | Current implementation | Tested scope | Actual served evidence | Next action / owner | Acceptance |
 | --- | --- | --- | --- | --- | --- |
-| Workspace/source/history; SRC01/SRC04–06, CONT03/08, ADP-A10/A20 | PR251 merged normally to main de651cb; expected-head guard, no feature-parent merge or force push | Merged Tests39051140826 and Adaptive39051140791 freshly SUCCESS. All5 parent review threads resolved. Composed979 history passes both engines through saved-version access after reload; 3 dated/author rows, 5 trusted disclosure activations and 7 equal working/durable/history/storage observations per engine. | Full de651cb read in live isolated Chromium About. The dated semantic table shows version1, Oct12 2026 15:54UTC, Synthetic QA Operator; native selection opens its comparison. History open/close preserves the current report fingerprint. Fresh public entry464115bytes, SHA2564cf97569e258c61ec3abbe6812abe7786de173b60ce6bd25786da43ad28fb0f9. | Complete remaining source/history/context/concurrency and broader simplicity states. Engineer. | Merged, deployed and named live history scope verified |
-| Photos/Training/remaining Water; SIM-A14–15/SIM-T01, CONT07/09 | PR25277b2c15 based on main de651cb | Exact979 Adaptive39050395347 and integrated77 Adaptive39051346174 SUCCESS. Photos retain keyboard density1–6, moves, captions, re-entry, add/remove, Done, reload and actual29-page Word/PDF. | Follow-on not deployed. | Resolve the Required copy failure, publish the reviewed source/copy delta, and require new exact Required/Adaptive plus current review before main merge. Engineer. | Integrated Adaptive passed; release pending |
-| Training copy/scope; SIM-T01 | Local correction of the retained copy gate and Help wording on77 | First Required39050395352:3506passed/1failed. The test still required the superseded long in-section paragraph. Updated test checks the short label and actual collapsed Help location, retained staff exclusions, confirmed completion and hours-only-when-known rule. Focused5pass. Integrated77 Required39051346228 subsequently reproduced the same sole failure (3506passed). First failure artifact81859bytes/SHA256e724ccf1f2cf4e1766ef635afda939eb6b41e4992eecc3f238b3780dfcd4f7fb retained privately. | Training shorter copy remains branch-only. | Run affected and exact branch gates; verify delivered copy. Engineer. | Local correction; CI pending |
-| Resumed source simplicity/date fidelity; SRC01, CONT04/06/08, SIM-A/W | Local compact exact-source correction disclosures and native date-default repair | Live before-state reproduced8 expanded forms and empty date inputs even for sources without a date warning. Compact regression fails on77 then passes after correction. A separate native protocol test proves saved Python date2026-09-16 previously emitted an empty default; repair emits2026-09-16, preserves deliberate clear and native widget identity. Final focused gate:83passed in37.01s across9 affected files, including retained source/caption/batch failure and original-byte/re-entry coverage. Resolved details become quiet and reopen through the existing manager without upload, shared save or original-byte changes. | Local changes not yet deployed. The before state is retained privately. | Publish after focused gate and review, then real native disclosure/date/correction/re-entry/reload on served build. Engineer. | Reproduced and locally repaired; browser acceptance pending |
-| Full Phase1/2 acceptance | Existing97/113/ADP20 traceability retained | No new authentic-source, physical Safari/assistive listening/native Word or canonical combined-art approval. New979 actual output ZIPs retained; no new all-page manual review claim. | Exact entry proof is not a fetch of all83 module assets. No new Render control-plane read: My Workspace still requires user selection. | Complete independent interface/output/scope work; retain precise original-access, consumed-diagnostic, device and artwork boundaries. Engineer/owner as scoped. | OPEN / NOT ACCEPTED |
+| Workspace/source/history; SRC01/SRC04–06, CONT03/08, ADP-A10/A20 | PR251 merged normally to main de651cb | Merged Tests39051140826 and Adaptive39051140791 SUCCESS; all5 parent review threads resolved. Composed history passes both engines through saved-version access after reload. | Full de651cb read in live isolated Chromium About. Dated semantic table: version1, Oct12 2026 15:54UTC, Synthetic QA Operator; native selection opens its comparison. History open/close retains the current report fingerprint. Public entry464115bytes/SHA2564cf97569e258c61ec3abbe6812abe7786de173b60ce6bd25786da43ad28fb0f9. | Complete remaining context/concurrency and broader simplicity states. Engineer. | Merged, deployed and named live history scope verified |
+| Photos/Training/remaining Water; SIM-A14–15/SIM-T01, CONT07/09 | PR252229 on main de651cb | Exact Tests39053602105 SUCCESS. Adaptive39053602124 FAILS only full WebKit Water at compact preview activation after narrow reinclusion/reload. Chromium full Water and both fresh Water paths pass; separate photos117456968990, Training117456969172 and history117456969244 pass. Both252 review threads reread resolved at18:06. | Follow-on not deployed. | Publish the focused repair below, require new exact Required/Adaptive and current review before main merge. Engineer. | Release held for the observed browser defect |
+| Training copy/scope; SIM-T01 |229 includes corrected Help wording and copy gate | Older979/77 Required each3506pass/1stale-copy failure;229 Required now succeeds. Short section label and actual collapsed Help preserve staff exclusions, confirmed-completion and hours-only-when-known rules. | Shorter Training copy remains branch-only. | Verify delivered copy after eligible merge. Engineer. | Implemented and branch CI passed; deployment pending |
+| Resumed source simplicity/date fidelity; SRC01, CONT04/06/08, SIM-A/W |229 compact exact-source correction disclosures and native date-default repair | Live before-state:8 expanded forms and blank date inputs even for sources without date warnings. Focused83passed/37.01s across9 affected files; exact229 Required passes. Native protocol now emits saved date2026-09-16, retains deliberate clear and widget identity. Valid details become quiet and reopen through the manager without upload/shared save/original-byte change. | Before state retained privately; repair not deployed. | Native disclosure/date/correction/re-entry/reload on served build. Engineer. | Implemented and branch CI passed; live acceptance pending |
+| Stable loading and section preview; ADP-A02/A08/A12/A13, SIM-G01 | Local version-scoped CSS sizes only `_grid` loading skeletons; existing native editor arguments, widget identity, input, focus and scroll unchanged. Local display adapter places View preview after its own heading, before the editor row. | Native first-failure trace shows three earlier lazy table mounts, same scrollTop6629 and same connected button/full render, but button y95.90625→422.90625; pointerup/click miss it. New gate deliberately holds/releases the original local DataFrame module and asserts all3 table heights and the button stay fixed before the existing one-click/full-output tail. Placement regression fails on old code then passes. Native wire row edit/add/repeat retains identity and content. Combined11-file focused gate83passed/12.28s;4 workspace tests include actual Node adapter/lifecycle models. | No browser result for this local repair yet. | Exact new browser run must prove cold-table geometry, one native activation and final Water files. Engineer. | Reproduced; locally repaired; browser acceptance OPEN |
+| Ordinary navigation; SIM-G07 | Local client.showSidebarNavigation=false removes run web / Smartsheet PO auto-navigation; root three-workflow selector and old pages/2_Smartsheet_PO.py bookmark notice remain | Original audit ID and actual compatibility source checked. Missing config/entry/pages workflow triggers fail6 before;37 focused navigation/recovery tests pass afterward. Both workflow filters now also cover grid/loading and layout test files; included in83-case combined gate. | Current main still shows the old sidebar links. | Verify deployed navigation and retained old bookmark. Engineer. | Local implementation; deployment pending |
+| Editable output; VIS, CONT07, ADP-A18/A20 | Actual229 photo files from checkoutfe5e11db1c0e7e81821e68cc22482256885a0650, verified tree9b614dcc070bcf58233b06b74536872f4c1cef7d and parentsde+229 | Both actual29-page PDFs and29 DOCX-rendered pages:87/87 raster images have identical geometry and RGB hashes to prior complete readable-scale inspection38998230129;0 fresh manual page reads claimed. DOCX165800bytes/SHA25649ec838a5ce32263a5ea676d4bee486cdc0a0ffd31deceae3163d2c82e9403c9;9 editable/repeating-header tables,172XML/rels parts scanned, no hidden runs/comments/embeddings/VML/external links or scoped price/site hits. | Branch synthetic outputs, not delivered approved master acceptance. | Complete actual master/authentic graphic/privacy and native Word checks when permitted. Engineer/owner. | Named synthetic output comparison only |
+| Full Phase1/2 acceptance | Existing97/113/ADP20 traceability retained | No new authentic-source, physical Safari/assistive listening/native Word or canonical combined-art approval. | Entry proof is not a fetch of all83 module assets. No new Render control-plane read: My Workspace still requires user selection. | Finish independent interface/output/scope work; retain precise original-access, consumed-diagnostic, device and artwork boundaries. Engineer/owner as scoped. | OPEN / NOT ACCEPTED |
 
-The whole working report fingerprint changed across the251 deployment from f9556d8c… to
-0603d1a9… while the Activity working/durable fingerprint stayed2c84081e… and its exact human
-text remained visible. The added explicit built-in design pin is a code-supported hypothesis,
-not a proved full before/after payload comparison. Do not claim the entire draft was byte-identical
-across deployment. Subsequent native history inspection retained0603d1a9… unchanged.
+The original229 Water failure ZIP is116714110bytes, SHA256
+a4bb2a9ab28ce1115470ff2476235e1a8e69a387644bd1bc3289032b2d5aad09,
+artifact12109285737. The final WebKit Water generation was unreached. Browser errors/external
+requests were empty. No page-state injection, second click, retry-until-green, error suppression
+or timeout inflation was used. The focused CSS does not patch or replace Streamlit assets.
+Its selectors and sizing are guarded for the installed1.61.1 dependency. The model tests are
+not represented as native browser geometry proof. The new83-case gate is distinct from the
+previous source/date83-case gate. An initial new unit test used AppTest.run without the native
+data-editor payload; the corrected test sends the real WidgetStates message on each rerun.
+That first failed XML is retained, not called a product regression.
 
-Private evidence includes the real live history-table screenshot, source/date DOM receipt,
-merged/branch run responses, entry-byte receipt and the three979 passed ZIPs. Their exact hashes
-remain in the single private restart TXT/evidence manifest. The earlier history screenshots
-showed comparison/final-review areas; those are not relabeled as dated-table visual proof.
-Playwright WebKit remains distinct from physical Safari. Original failed artifacts remain intact. Two new test-observation mistakes were corrected without weakening outcomes: SavedReport exposes draft.sources, and the locked date protocol serializes ISO dates with hyphens. Their first XML receipts are retained separately from the passing83-case result.
+Current output rendering: LibreOfficeDev26.8.0.0.alpha0
+2c87e51eeaa2b413ff4ae097b2705eea1995d8e5; Poppler26.05.0 at150dpi.
+The two PDF byte hashes differ while all their raster pages match. Existing synthetic fixture
+limitations (approved cover/logo/TOC references, heading-only pages and native Word) remain.
+
+The whole working report fingerprint changed across251 deployment from f9556d8c… to
+0603d1a9… while Activity working/durable stayed2c84081e… and its exact human text stayed visible.
+The added explicit built-in design pin is a code-supported hypothesis, not a proved full payload
+comparison. Subsequent native history inspection retained0603d1a9… unchanged.
+
+The same private restart TXT and release evidence ZIP retain dated screenshots, source/date DOM,
+original failures, exact publication/run receipts and actual output hashes. Previous evidence
+has not been relabeled as fresh manual inspection, physical Safari or full acceptance.
 
 ## Historical publication checkpoint — 2026-10-17 16:39:14 UTC
 

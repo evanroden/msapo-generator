@@ -93,6 +93,11 @@ def test_first_staff_row_uses_new_cell_defaults_without_display_writes(tmp_path,
     "scripts/workspace_browser_observations.py",
     "scripts/qa_monthly_live.py",
     "scripts/qa_workflow_route_observations.py",
+    ".streamlit/config.toml",
+    "run_web.py",
+    "pages/2_Smartsheet_PO.py",
+    "tests/test_workspace_layout.py",
+    "tests/test_monthly_report_grid_loading.py",
 ])
 def test_training_shared_runtime_changes_trigger_each_browser_gate(event, dependency):
     workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/adaptive-workspaces.yml").read_text()
