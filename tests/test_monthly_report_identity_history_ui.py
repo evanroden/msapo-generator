@@ -56,6 +56,68 @@ def history_tables(app):
     return tables
 
 
+def indexed_history_app(monkeypatch, tmp_path, *, keep_head_stale=False):
+    from streamlit.testing.v1 import AppTest
+    from app.monthly_report_model import synthetic_draft, synthetic_profiles
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(library, "_now", lambda: "2026-10-17T03:00:00+00:00")
+    drafts = {}
+    for key in ("north-history", "south-history"):
+        profile = replace(synthetic_profiles()[0], key=key)
+        draft = replace(synthetic_draft(profile, PERIOD), prepared_by=key)
+        drafts[key] = draft
+        for revision in range(20):
+            library.save_snapshot(draft, expected_revision=revision, entered_editor=key)
+
+    def render(stale):
+        from dataclasses import replace
+        import streamlit as st
+        from app import monthly_report_library as library
+        from app.monthly_report_model import ReportPeriod, synthetic_draft, synthetic_profiles
+        from app.monthly_report_history_ui import render_snapshot_history
+        key = st.selectbox("Report context", ("north-history", "south-history"))
+        profile = replace(synthetic_profiles()[0], key=key)
+        draft = replace(synthetic_draft(profile, ReportPeriod(2026, 9)), prepared_by=key)
+        snapshot = None if stale else library.load_snapshot(profile.contract, key, draft.period)
+        render_snapshot_history(draft, "same-report-area", {}, snapshot)
+
+    return AppTest.from_function(render, args=(keep_head_stale,)).run(), drafts
+
+
+@pytest.mark.parametrize("refresh", [False, True])
+def test_new_history_window_cannot_reuse_an_expired_selection(monkeypatch, tmp_path, refresh):
+    app, drafts = indexed_history_app(monkeypatch, tmp_path, keep_head_stale=refresh)
+    widget(app, "selectbox", "Inspect a saved version").set_value(1).run()
+    draft = drafts["north-history"]
+    newest = library.save_snapshot(draft, expected_revision=20, entered_editor="Newest author")
+    if refresh:
+        widget(app, "button", "Refresh shared history").click().run()
+    else:
+        app.run()
+    assert not app.exception
+    assert widget(app, "selectbox", "Inspect a saved version").value is None
+    assert history_tables(app)[0].xpath('./tbody/tr/td[1]/text()') == [str(n) for n in range(21, 1, -1)]
+    assert library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period) == newest
+
+
+def test_history_report_context_resets_cursor_cache_and_selection(monkeypatch, tmp_path):
+    app, drafts = indexed_history_app(monkeypatch, tmp_path)
+    draft = drafts["north-history"]
+    library.save_snapshot(draft, expected_revision=20, entered_editor="North latest")
+    other = drafts["south-history"]
+    library.save_snapshot(other, expected_revision=20, entered_editor="South latest")
+    app.run()
+    widget(app, "button", "Older versions").click().run()
+    widget(app, "selectbox", "Inspect a saved version").set_value(1).run()
+    widget(app, "selectbox", "Report context").set_value("south-history").run()
+    assert not app.exception
+    table = history_tables(app)[0]
+    assert table.xpath('./tbody/tr/td[1]/text()') == [str(n) for n in range(21, 1, -1)]
+    assert table.xpath('./tbody/tr/td[3]/text()')[0] == "South latest"
+    assert widget(app, "selectbox", "Inspect a saved version").value is None
+    assert not any(item.label == "Newest versions" for item in app.button)
+
+
 def test_one_help_and_scoped_report_actions_keep_native_fields(monkeypatch, tmp_path):
     app = monthly(monkeypatch, tmp_path)
     labels = [item.label for item in app.expander]

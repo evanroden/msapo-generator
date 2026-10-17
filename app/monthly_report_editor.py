@@ -468,6 +468,13 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
         st.session_state[prefix + "_evidence"] = tuple(replace(ingest(profile, s.filename, source_bytes(profile, s))[0], source=s) for s in prior.draft.sources)
     report_sources, monthly_blocks, monthly_specs = render_uploads(
         profile, period, prefix, field, retain_accepted=True)
+    # This editor reconstructs blocks from saved report fallbacks on every
+    # action. Keep retirement receipts until the new report is saved, so moving
+    # an accepted source cannot resurrect its old destination from that fallback.
+    from app.monthly_report_source_retirement import retire_contributions
+    retired = st.session_state.get(prefix + "_evidence_retired_contributions", {})
+    previous = {key: retire_contributions(block, retired.get(key, ()))
+                for key, block in previous.items()}
     st.caption("Use the guided report to draft source-linked wording, review carried issues and edit people/photo pages. These controls manage detailed layout and shared assets.")
 
     st.subheader("5. Assemble the report")
