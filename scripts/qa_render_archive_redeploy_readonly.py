@@ -142,7 +142,8 @@ def _check_served(page, expected: str, *, wait: bool) -> None:
     while True:
         try:
             page.goto(ORIGIN + BUILD_ROUTE, wait_until='domcontentloaded', timeout=65000)
-            marker = page.get_by_text(re.compile(r'^Running code: [0-9a-f]{40}$')).first
+            from scripts.qa_public_build import running_code_marker
+            marker = running_code_marker(page)
             expect(marker).to_have_text('Running code: ' + expected, timeout=16000)
             return
         except Exception as exc:

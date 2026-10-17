@@ -79,6 +79,14 @@ class SavedReport:
     entered_editor: str = ""
 
 
+@dataclass(frozen=True)
+class SnapshotVersion:
+    """Small history index; listing versions does not retain every draft in memory."""
+    revision: int
+    generated_at: str
+    entered_editor: str
+
+
 def _json(value) -> bytes:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     if len(encoded) > MAX_JSON_BYTES:
@@ -689,20 +697,90 @@ def save_snapshot(draft: ReportDraft, *, expected_revision: int, open_issues: tu
         return saved
 
 
-def load_snapshot(contract: str, key: str, period: ReportPeriod) -> SavedReport | None:
-    target = _profile_path(contract, key, snapshots=True) / (period.key + ".json")
-    if not target.exists():
-        return None
-    value = _read(target)
+def _saved_report(value, contract, key, period, *, revision=None):
     try:
         draft = draft_from_dict(value["draft"])
         if (draft.profile.contract, draft.profile.key, draft.period) != (contract, key, period):
             raise LibraryError("Snapshot identity does not match its directory.")
+        if (type(value["revision"]) is not int or value["revision"] < 1
+                or revision is not None and value["revision"] != revision):
+            raise LibraryError("Snapshot revision does not match its history version.")
+        if (not isinstance(value["generated_at"], str)
+                or not isinstance(value.get("entered_editor", ""), str)):
+            raise LibraryError("Invalid saved report attribution.")
         return SavedReport(draft, value["generated_at"], value["revision"],
                            tuple(value.get("open_issues", ())), tuple(value.get("pending_proposals", ())),
                            value.get("entered_editor", ""))
     except (KeyError, TypeError) as exc:
         raise LibraryError("Invalid saved report snapshot.") from exc
+
+
+def load_snapshot(contract: str, key: str, period: ReportPeriod) -> SavedReport | None:
+    target = _profile_path(contract, key, snapshots=True) / (period.key + ".json")
+    return _saved_report(_read(target), contract, key, period) if target.exists() else None
+
+
+def load_snapshot_version(contract: str, key: str, period: ReportPeriod, revision: int) -> SavedReport:
+    """Read an immutable version without advancing the head or changing browser work."""
+    if type(revision) is not int or revision < 1:
+        raise LibraryError("Invalid saved report version.")
+    head = load_snapshot(contract, key, period)
+    if head is None or revision > head.revision:
+        raise LibraryError("That version has not been published to shared report history.")
+    target = (_profile_path(contract, key, snapshots=True) / "history"
+              / f"{period.key}-{revision:08d}.json")
+    return _saved_report(_read(target), contract, key, period, revision=revision)
+
+
+def snapshot_history(contract: str, key: str, period: ReportPeriod, *,
+                     before_revision: int | None = None, limit: int = 20) -> tuple[tuple[SnapshotVersion, ...], bool]:
+    """Bounded newest-first history, with an explicit cursor for older versions.
+
+    A broken/misplaced version is an error, never silently hidden as absent history.
+    Listing validates each version's scope/revision/attribution, without building
+    every historical draft. Selecting a version validates its complete draft.
+    """
+    if type(limit) is not int or not 1 <= limit <= 50:
+        raise LibraryError("Invalid report history page size.")
+    if before_revision is not None and (type(before_revision) is not int or before_revision < 1):
+        raise LibraryError("Invalid report history cursor.")
+    head = load_snapshot(contract, key, period)
+    if head is None:
+        return (), False
+    directory = _profile_path(contract, key, snapshots=True) / "history"
+    _qa_path_guard(directory)
+    pattern = re.compile(re.escape(period.key) + r"-([0-9]{8,})\.json\Z")
+    candidates = []
+    for path in directory.glob(period.key + "-*.json"):
+        match = pattern.fullmatch(path.name)
+        if (match and int(match[1]) <= head.revision
+                and (before_revision is None or int(match[1]) < before_revision)):
+            candidates.append(int(match[1]))
+    candidates.sort(reverse=True)
+    if before_revision is None and head.revision not in candidates:
+        raise LibraryError("The current shared report exists, but its immutable history version is unavailable.")
+    expected = min(head.revision, before_revision - 1 if before_revision is not None else head.revision)
+    if len(set(candidates)) != expected:
+        raise LibraryError("Some published report history versions are unavailable. Existing saved versions were preserved.")
+    versions = []
+    for revision in candidates[:limit]:
+        value = _read(directory / f"{period.key}-{revision:08d}.json")
+        try:
+            saved = value["draft"]
+            if ((saved["profile"]["contract"], saved["profile"]["key"], ReportPeriod(**saved["period"]))
+                    != (contract, key, period)):
+                raise LibraryError("Snapshot identity does not match its directory.")
+            if type(value["revision"]) is not int or value["revision"] != revision:
+                raise LibraryError("Snapshot revision does not match its history version.")
+            author = value.get("entered_editor", "") or saved["prepared_by"]
+            if not isinstance(value["generated_at"], str) or not isinstance(author, str):
+                raise LibraryError("Invalid saved report attribution.")
+            versions.append(SnapshotVersion(revision, value["generated_at"], author))
+        except (KeyError, TypeError, ValueError) as exc:
+            if isinstance(exc, LibraryError):
+                raise
+            raise LibraryError("Invalid saved report history metadata.") from exc
+    return tuple(versions), len(candidates) > limit
 
 
 def usage_count(contract: str, key: str, reference: str) -> int:

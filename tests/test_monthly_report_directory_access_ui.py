@@ -41,7 +41,7 @@ def test_empty_name_never_lists_loads_or_renders_saved_directory(monkeypatch):
     app.run()
     assert not app.exception
     assert not app.radio and not app.dataframe and not app.get("data_editor")
-    assert [b.label for b in app.button] == ["Back to monthly reports"]
+    assert not app.button
     assert any("Enter your name" in message.value for message in app.info)
     app.text_input("report_directory_actor").set_value("   ").run()
     assert not app.exception and not app.dataframe

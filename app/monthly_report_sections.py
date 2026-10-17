@@ -70,8 +70,9 @@ def readable_label(key):
             "after_hours_workflow": "After-hours outage procedure", "contact_matrix": "Facility contacts",
             "activity_summary": "Work completed this month", "work_orders": "Work-order summary",
             "service_calls": "Service calls", "vendor_reports": "Vendor service reports", "water_reports": "Water treatment reports",
-            "improvements": "Improvement photos", "mbcx_report": "MBCx report", "subcontractor_matrix": "Vendor contacts",
-            "mbcx_status": "Commissioning update", "capital_renewal": "Priority capital renewal", "proposals": "Pending and declined proposals"}.get(key, key.replace("_", " ").capitalize())
+            "improvements": "Progress photos", "mbcx_report": "MBCx report", "subcontractor_matrix": "Vendor contacts",
+            "mbcx_status": "Commissioning update", "capital_renewal": "Priority capital renewal", "proposals": "Proposals",
+            "rfi_matrix": "Information requests"}.get(key, key.replace("_", " ").capitalize())
 
 
 def default_slot(section):

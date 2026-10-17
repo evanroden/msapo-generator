@@ -115,7 +115,7 @@ def test_staged_batch_workbook_cannot_bypass_blank_editor_gate(monkeypatch, acto
     assert not app.exception
     assert not app.radio and not app.dataframe and not app.get("data_editor")
     assert not app.get("file_uploader")
-    assert [button.label for button in app.button] == ["Back to monthly reports"]
+    assert not app.button
     assert any("Enter your name" in message.value for message in app.info)
 
 
@@ -138,4 +138,4 @@ def test_clearing_editor_in_batch_mode_closes_import_before_any_directory_read(m
     app.text_input("report_directory_actor").set_value("").run()
     assert not app.exception
     assert not app.radio and not app.dataframe and not app.get("file_uploader")
-    assert [button.label for button in app.button] == ["Back to monthly reports"]
+    assert not app.button

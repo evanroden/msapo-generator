@@ -93,9 +93,9 @@ def test_recovered_draft_does_not_silently_upgrade_to_a_later_master(monkeypatch
     original_pin = designs.pin
     calls = []
 
-    def tracked(profile, *, latest_master=False):
-        calls.append(latest_master)
-        return original_pin(profile, latest_master=latest_master)
+    def tracked(profile, *, latest_master=False, preserve_legacy=False):
+        calls.append((latest_master, preserve_legacy))
+        return original_pin(profile, latest_master=latest_master, preserve_legacy=preserve_legacy)
 
     monkeypatch.setattr(designs, 'pin', tracked)
     app = monthly(monkeypatch, tmp_path)
@@ -108,5 +108,5 @@ def test_recovered_draft_does_not_silently_upgrade_to_a_later_master(monkeypatch
     another.segmented_control[0].set_value('Monthly report').run()
     choose_report(another, synthetic_profiles()[0].facilities[0].title)
     assert not another.exception
-    assert False in calls, "Recovered working copies must not auto-install the latest master."
+    assert (False, True) in calls, "Recovered working copies must retain their original design, including the built-in layout."
     assert _value(another, 'Activity summary').value == 'Unfinished work retains its design.'

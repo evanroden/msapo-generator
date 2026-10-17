@@ -10,17 +10,17 @@ def test_short_help_and_admin_storage_remain_accessible(monkeypatch, tmp_path):
     assert not app.exception
 
     labels = {expander.label for expander in app.expander}
-    assert "How to use this page" in labels
-    assert "Saving and recovery" in labels
+    assert "Help" in labels
+    assert "How to use this page" not in labels
+    assert "Saving and recovery" not in labels
     assert "First time here? How to finish a monthly report" not in labels
     assert "What will be remembered?" not in labels
 
-    # Backend storage tools are not routine authoring questions. They remain
-    # discoverable in the administrative sidebar and preserve their widget keys.
-    sidebar_labels = {expander.label for expander in app.sidebar.expander}
-    assert "Storage maintenance — all contracts" in sidebar_labels
-    sidebar_buttons = {button.key for button in app.sidebar.button}
-    assert {"report_storage_check", "report_storage_consolidate"} <= sidebar_buttons
+    # Storage maintenance opens separately without submitting the authoring tab.
+    assert "Administration" in {expander.label for expander in app.sidebar.expander}
+    link = next(link for link in app.sidebar.get("link_button") if link.label == "Storage maintenance")
+    assert "monthly_admin=storage" in link.url and link.proto.ignore_rerun
+    assert not any(button.key in {"report_storage_check", "report_storage_consolidate"} for button in app.sidebar.button)
     assert not any("Suggested month: previous month" in item.value for item in app.get("caption"))
 
 
@@ -30,8 +30,9 @@ def test_administrative_storage_check_does_not_modify_report_records(monkeypatch
     original = library.load_profile(RRH_CONTRACT, selected.key)
     assert original is not None
 
-    next(button for button in app.sidebar.button
-         if button.key == "report_storage_check").click().run()
+    app.query_params["monthly_admin"] = "storage"
+    app.run()
+    app.button("report_storage_check").click().run()
 
     assert not app.exception
     assert "report_storage_summary" in app.session_state.filtered_state

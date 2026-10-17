@@ -1,5 +1,6 @@
 """Plain-language section guidance is available without opening onboarding."""
-from app.monthly_report_section_help import SECTION_HELP, section_help
+from app.monthly_report_section_help import SECTION_HELP, section_help, editor_section_title
+from app.monthly_report_model import default_sections
 
 
 def test_mbcx_and_enfra_connect_defined_where_section_is_edited():
@@ -13,8 +14,9 @@ def test_mbcx_and_enfra_connect_defined_where_section_is_edited():
 
 def test_rfi_acronym_expanded_with_clear_workflow():
     guidance = section_help("rfi").guidance
-    assert "RFI means Request for Information" in guidance
-    assert "site and status" in guidance
+    section = next(section for section in default_sections() if section.key == "rfi")
+    assert editor_section_title(section) == "Information requests (RFI)"
+    assert "facility and status" in guidance
     assert "only when confirmed" in guidance
 
 

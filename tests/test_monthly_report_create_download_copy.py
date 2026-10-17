@@ -12,7 +12,7 @@ def test_working_report_offers_one_clear_creation_action_without_ready_claim(mon
     assert labels.count("Create Word and PDF") == 1
     assert "Generate DOCX and PDF" not in labels
     assert "Generate anyway" not in labels
-    assert any("Creating files also saves a shared report version" in node.value
+    assert any("Creating files also saves a version in Shared report history." in node.value
                for node in app.get("caption"))
     assert not any("Ready to download" in node.value for node in app.success)
     assert next(w for w in app.text_area if w.label == "Activity summary").value == (

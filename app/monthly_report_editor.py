@@ -466,7 +466,15 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     if prefix + "_evidence" not in st.session_state and from_prior and prior.draft.sources:
         from app.monthly_report_sources import ingest, source_bytes
         st.session_state[prefix + "_evidence"] = tuple(replace(ingest(profile, s.filename, source_bytes(profile, s))[0], source=s) for s in prior.draft.sources)
-    report_sources, monthly_blocks, monthly_specs = render_uploads(profile, period, prefix, field)
+    report_sources, monthly_blocks, monthly_specs = render_uploads(
+        profile, period, prefix, field, retain_accepted=True)
+    # This editor reconstructs blocks from saved report fallbacks on every
+    # action. Keep retirement receipts until the new report is saved, so moving
+    # an accepted source cannot resurrect its old destination from that fallback.
+    from app.monthly_report_source_retirement import retire_contributions
+    retired = st.session_state.get(prefix + "_evidence_retired_contributions", {})
+    previous = {key: retire_contributions(block, retired.get(key, ()))
+                for key, block in previous.items()}
     st.caption("Use the guided report to draft source-linked wording, review carried issues and edit people/photo pages. These controls manage detailed layout and shared assets.")
 
     st.subheader("5. Assemble the report")
@@ -532,6 +540,11 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     estimated = estimate_bytes(draft, loader)
     st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Target: under 15 MB.")
     checks = preflight(draft, estimated)
+    pending_selection = bool(st.session_state.get(prefix + "_evidence_pending_acceptance"))
+    if pending_selection:
+        from app.monthly_report_checks import ReportCheck
+        checks = (*checks, ReportCheck("source_selection_pending",
+            "Apply the pending file selection, or explicitly remove the last added selection, before creating files. The last added report content is kept.", True))
     for check in checks:
         (st.error if check.blocking else st.warning)(check.message)
     warning_ack = not any(not c.blocking for c in checks)
@@ -541,7 +554,7 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     needed.extend(start_key + "_" + c.block_key + "_source" for c in checks if c.blocking and c.block_key)
     highlight_needed_fields(needed)
     package = st.session_state.get(prefix + "_package")
-    if package and package.fingerprint != draft.fingerprint:
+    if package and (package.fingerprint != draft.fingerprint or pending_selection):
         st.session_state.pop(prefix + "_package", None)
         package = None
     current_snapshot = library.load_snapshot(contract, profile.key, period)
@@ -564,8 +577,10 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
         if st.button("Use this draft for the next version", disabled=not approved, key=prefix + "_reload_revision"):
             st.session_state[revision_key] = current_revision
             st.rerun()
+    generation_allowed = (not any(c.blocking for c in checks) and warning_ack
+                          and st.session_state[revision_key] == current_revision)
     if st.button("Generate DOCX and PDF", key=prefix + "_generate", type="primary",
-                 disabled=any(c.blocking for c in checks) or not warning_ack or st.session_state[revision_key] != current_revision):
+                 disabled=not generation_allowed) and generation_allowed:
         try:
             with st.spinner("Assembling DOCX and PDF…"):
                 package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)

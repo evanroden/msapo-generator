@@ -117,3 +117,143 @@ def test_comparison_does_not_show_migration_as_a_change_or_text_edit_as_picture_
     caption_edit = replace(edited, asset_captions=("A changed caption", "Two"))
     change, = compare_drafts(replace(saved, blocks=(caption_edit,)), saved)
     assert "1 of 2 pictures/pages need review" in change.working
+
+
+def test_history_inspection_can_reach_every_saved_picture_without_loading_them_all(monkeypatch):
+    from app import monthly_report_compare_ui as ui
+    from app.monthly_report_library import SavedReport
+    saved = example()
+    saved = replace(saved, blocks=(*saved.blocks, ResolvedBlock(
+        "vendor_reports", "This month", asset_hashes=tuple(f"page-{n}.png" for n in range(8)))))
+    working = replace(saved, blocks=tuple(block for block in saved.blocks if block.key != "vendor_reports"))
+    calls = []
+
+    def loader(reference):
+        calls.append(reference)
+        raise OSError("Synthetic missing old picture")
+
+    monkeypatch.setattr(ui, "_test_inputs", (working, SavedReport(saved, "", 2)), raising=False)
+    monkeypatch.setattr(ui, "_test_loader", loader, raising=False)
+    app = AppTest.from_string("""
+from app import monthly_report_compare_ui as ui
+ui.render_conflict_comparison(*ui._test_inputs, saved_asset_loader=ui._test_loader,
+                             can_accept=False, image_key='history_version_2')
+""").run()
+    assert not app.exception and calls == [f"page-{n}.png" for n in range(4)]
+    calls.clear()
+    next(item for item in app.selectbox if item.label == "Saved report pictures/pages").set_value(4).run()
+    assert not app.exception and calls == [f"page-{n}.png" for n in range(4, 8)]
+    assert not any("Use the full report preview" in item.value for item in app.caption)
+
+
+def test_picture_page_resets_when_working_images_shrink_without_losing_saved_access(monkeypatch):
+    from app import monthly_report_compare_ui as ui
+    from app.monthly_report_library import SavedReport
+    saved = replace(example(), blocks=(ResolvedBlock(
+        "vendor_reports", "This month", asset_hashes=tuple(f"saved-{n}.png" for n in range(12))),))
+    working = replace(saved, blocks=(replace(saved.blocks[0], asset_hashes=tuple(
+        f"working-{n}.png" for n in range(12))),))
+    snapshot = SavedReport(saved, "", 7)
+    calls = []
+
+    def loader(reference):
+        calls.append(reference)
+        raise OSError("Synthetic picture unavailable")
+
+    monkeypatch.setattr(ui, "_test_inputs", (working, snapshot), raising=False)
+    monkeypatch.setattr(ui, "_test_loader", loader, raising=False)
+    app = AppTest.from_string("""
+from app import monthly_report_compare_ui as ui
+ui.render_conflict_comparison(*ui._test_inputs, saved_asset_loader=ui._test_loader,
+                             working_asset_loader=ui._test_loader,
+                             image_key='history_version_7')
+""").run()
+    assert not app.exception
+    calls.clear()
+    next(item for item in app.selectbox if item.label == "Saved report pictures/pages").set_value(4).run()
+    assert calls[:4] == [f"saved-{n}.png" for n in range(4, 8)]
+    next(item for item in app.selectbox if item.label == "Saved report pictures/pages").set_value(8).run()
+    next(item for item in app.selectbox if item.label == "Your current work pictures/pages").set_value(8).run()
+    assert not app.exception
+    working = replace(working, blocks=(replace(working.blocks[0], asset_hashes=working.blocks[0].asset_hashes[:5]),))
+    monkeypatch.setattr(ui, "_test_inputs", (working, snapshot))
+    calls.clear()
+    app.run()
+    assert not app.exception
+    assert next(item for item in app.selectbox if item.label == "Your current work pictures/pages").value == 0
+    assert calls == [*(f"saved-{n}.png" for n in range(8, 12)), *(f"working-{n}.png" for n in range(4))]
+    assert snapshot.draft == saved and len(working.blocks[0].asset_hashes) == 5
+
+
+def test_inserted_or_removed_picture_comparison_does_not_reuse_another_blocks_page(monkeypatch):
+    from app import monthly_report_compare_ui as ui
+    from app.monthly_report_library import SavedReport
+    saved = example()
+    vendor = ResolvedBlock("vendor_reports", "This month", asset_hashes=tuple(f"vendor-{n}.png" for n in range(12)))
+    organization = ResolvedBlock("org_chart", "This month", asset_hashes=tuple(f"organization-{n}.png" for n in range(12)))
+    working = replace(saved, blocks=(*saved.blocks, vendor))
+    snapshot = SavedReport(saved, "", 2)
+    calls = []
+
+    def loader(reference):
+        calls.append(reference)
+        raise OSError("Synthetic picture unavailable")
+
+    monkeypatch.setattr(ui, "_test_inputs", (working, snapshot), raising=False)
+    monkeypatch.setattr(ui, "_test_loader", loader, raising=False)
+    app = AppTest.from_string("""
+from app import monthly_report_compare_ui as ui
+ui.render_conflict_comparison(*ui._test_inputs, working_asset_loader=ui._test_loader,
+                             image_key='history_version_2')
+""").run()
+    app.selectbox[0].set_value(8).run()
+    assert not app.exception
+    working = replace(working, blocks=(*saved.blocks, organization, vendor))
+    monkeypatch.setattr(ui, "_test_inputs", (working, snapshot))
+    calls.clear()
+    app.run()
+    assert not app.exception
+    assert [item.value for item in app.selectbox] == [0, 8]
+    assert calls == [*(f"organization-{n}.png" for n in range(4)), *(f"vendor-{n}.png" for n in range(8, 12))]
+    working = replace(working, blocks=(*saved.blocks, vendor))
+    monkeypatch.setattr(ui, "_test_inputs", (working, snapshot))
+    calls.clear()
+    app.run()
+    assert not app.exception and app.selectbox[0].value == 8
+    assert calls == [f"vendor-{n}.png" for n in range(8, 12)]
+    assert snapshot.draft == saved and working.blocks[-1] == vendor
+
+
+def test_reordered_working_pictures_reset_page_while_historical_page_stays_selected(monkeypatch):
+    from app import monthly_report_compare_ui as ui
+    from app.monthly_report_library import SavedReport
+    saved = replace(example(), blocks=(ResolvedBlock(
+        "vendor_reports", "This month", asset_hashes=tuple(f"saved-{n}.png" for n in range(12))),))
+    working = replace(saved, blocks=(replace(saved.blocks[0], asset_hashes=tuple(
+        f"working-{n}.png" for n in range(12))),))
+    snapshot = SavedReport(saved, "", 9)
+    calls = []
+
+    def loader(reference):
+        calls.append(reference)
+        raise OSError("Synthetic picture unavailable")
+
+    monkeypatch.setattr(ui, "_test_inputs", (working, snapshot), raising=False)
+    monkeypatch.setattr(ui, "_test_loader", loader, raising=False)
+    app = AppTest.from_string("""
+from app import monthly_report_compare_ui as ui
+ui.render_conflict_comparison(*ui._test_inputs, saved_asset_loader=ui._test_loader,
+                             working_asset_loader=ui._test_loader,
+                             image_key='history_version_9')
+""").run()
+    next(item for item in app.selectbox if item.label == "Saved report pictures/pages").set_value(8).run()
+    next(item for item in app.selectbox if item.label == "Your current work pictures/pages").set_value(8).run()
+    working = replace(working, blocks=(replace(working.blocks[0], asset_hashes=tuple(reversed(
+        working.blocks[0].asset_hashes))),))
+    monkeypatch.setattr(ui, "_test_inputs", (working, snapshot))
+    calls.clear()
+    app.run()
+    assert not app.exception
+    assert [item.value for item in app.selectbox] == [8, 0]
+    assert calls == [*(f"saved-{n}.png" for n in range(8, 12)), *(f"working-{n}.png" for n in range(11, 7, -1))]
+    assert snapshot.draft == saved and working.blocks[0].asset_hashes[0] == "working-11.png"

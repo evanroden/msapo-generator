@@ -222,7 +222,8 @@ def _render_section_followups(draft, prefix, field, category):
         return draft
     proposal = category == "proposal"
     st.markdown("**Carried proposals**" if proposal else "**Open and recently resolved issues**")
-    st.caption("Keep what is still correct. Open an item only when its details or status changed.")
+    st.caption("Confirm the current decision, or open the proposal to update it." if proposal
+               else "Open an item when its details or status changed.")
     options = {
         source_reference(s, n): f"{s.filename} · page {n}"
         for s in draft.sources
@@ -248,7 +249,7 @@ def _render_section_followups(draft, prefix, field, category):
             if item.update.strip():
                 st.text(item.update)
             actions = st.columns(3 if not proposal and item.status != "resolved" else 2)
-            keep_label = "Still open" if not proposal and item.status == "ongoing" else "Still correct"
+            keep_label = "Confirm unchanged" if proposal else "Still open" if item.status == "ongoing" else "Still correct"
             with actions[0]:
                 if st.button(keep_label, key=p + "_keep", disabled=bool(needs_correction)):
                     item = confirmed

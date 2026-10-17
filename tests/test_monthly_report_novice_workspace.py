@@ -49,7 +49,7 @@ def test_general_template_sections_have_one_editing_home(monkeypatch, tmp_path):
     next(b for b in app.button if b.label == 'Start this report').click().run()
     step(app, 2)
     titles = [w.value for w in app.subheader]
-    assert {'Equipment Performance Issues', 'Priority Capital Renewal List', 'Pending & Declined Proposals',
+    assert {'Equipment Performance Issues', 'Priority Capital Renewal List', 'Proposals',
             'Organizational Chart', 'Sub-Contractor Status'} <= set(titles)
     assert not any(w.label in ('Section to update', 'Site information to update') for w in app.selectbox)
     assert sum(w.label == 'Utility analysis' for w in app.text_area) == 1

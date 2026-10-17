@@ -58,6 +58,7 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
     # This hidden selector is a navigation choice only. The actual separation
     # is the server-side physical namespace in monthly_report_testing.
     selected = st.query_params.get("monthly_qa")
+    administration = st.query_params.get("monthly_admin")
     mode = selected if selected in {"isolated", "fixtures"} else "live"
     requested = mode != "live"
     last = st.session_state.get("_monthly_report_storage_mode")
@@ -71,7 +72,7 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
         st.session_state.pop("_monthly_qa_generation", None)
     st.session_state["_monthly_report_storage_mode"] = mode
     restore_report_draft_state()
-    st.title("Monthly report")
+    st.title("Monthly administration" if administration is not None else "Monthly report")
     try:
         if requested:
             from app.memory import _data_dir
@@ -94,10 +95,18 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
                         if key.startswith(("report_", "report_guided_", "monthly_qa_", "_shared_fixture_")) and key != "_shared_fixture_pending":
                             del st.session_state[key]
                 st.session_state["_monthly_qa_generation"] = current
-                render(run_token, browser_timezone, _field, _move, live_root)
+                if administration is not None:
+                    from app.monthly_report_admin_ui import render_administration
+                    render_administration(administration, _field, mode=mode)
+                else:
+                    render(run_token, browser_timezone, _field, _move, live_root)
         else:
-            from app.monthly_report_guided import render_guided_workflow
-            render_guided_workflow(browser_token, browser_timezone, _field, _move)
+            if administration is not None:
+                from app.monthly_report_admin_ui import render_administration
+                render_administration(administration, _field, mode=mode)
+            else:
+                from app.monthly_report_guided import render_guided_workflow
+                render_guided_workflow(browser_token, browser_timezone, _field, _move)
     except (ValueError, OSError) as exc:
         st.error(f"The report could not be loaded: {exc}. Your saved versions were not changed.")
     preserve_report_draft_state()

@@ -1611,7 +1611,8 @@ def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
         unsafe_allow_html=True,
     )
     commit = runtime_commit()
-    st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
+    with st.expander("About"):
+        st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
 
 
 _WORKFLOW_QUERY_CHOICES = {
@@ -1754,9 +1755,12 @@ def main() -> None:
             st.query_params["workflow"] = route
     except (AttributeError, RuntimeError, ValueError):
         pass
-    if workflow_mode != MONTHLY_REPORT_WORKFLOW and st.query_params.get("monthly_qa") in {"isolated", "fixtures"}:
-        # Switching away from testing also exits the hidden route.
-        del st.query_params["monthly_qa"]
+    if workflow_mode != MONTHLY_REPORT_WORKFLOW:
+        if st.query_params.get("monthly_qa") in {"isolated", "fixtures"}:
+            # Switching away from testing also exits the hidden route.
+            del st.query_params["monthly_qa"]
+        if "monthly_admin" in st.query_params:
+            del st.query_params["monthly_admin"]
     if workflow_mode == MONTHLY_REPORT_WORKFLOW:
         render_monthly_report_workflow(browser_token, browser_timezone)
         _render_footer(workflow_mode)

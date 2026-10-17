@@ -47,7 +47,8 @@ def _served_commit(page):
     from playwright.sync_api import expect
 
     page.goto(audit.ORIGIN + audit.BUILD_ROUTE, wait_until="domcontentloaded", timeout=65000)
-    marker = page.get_by_text(re.compile(r"^Running code: [0-9a-f]{40}$")).first
+    from scripts.qa_public_build import running_code_marker
+    marker = running_code_marker(page, timeout=45000)
     expect(marker).to_be_visible(timeout=45000)
     value = (marker.text_content() or "").strip()
     commit = value.removeprefix("Running code: ")

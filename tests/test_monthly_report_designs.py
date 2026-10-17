@@ -286,3 +286,32 @@ def test_explicit_master_switch_replaces_saved_variant_order_but_preserves_conte
     assert excluded not in {section.key for section in updated.sections}
     assert updated.blocks == original.blocks
     assert original.profile.template == designs.MASTER_PREFIX + hashes[0]
+
+
+def test_report_pinned_before_first_master_keeps_builtin_source_and_new_report_can_adopt(tmp_path, monkeypatch):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
+    previous = designs.pin(synthetic_profiles()[0])
+    assert designs.source_for(previous) is None
+    before_install = previous
+    master = designs.install_master(master_reference(tmp_path), actor='Master Editor', expected_revision=0)
+    stored = {path: path.read_bytes() for path in (tmp_path / 'runtime').rglob('*') if path.is_file()}
+    assert designs.source_for(previous) is None
+    assert not designs.is_master(previous)
+    assert designs.pin(previous) == before_install
+    fresh = designs.pin(previous, latest_master=True)
+    assert fresh.template == designs.MASTER_PREFIX + master
+    assert designs.source_for(fresh).name == master + '.docx'
+    assert {path: path.read_bytes() for path in (tmp_path / 'runtime').rglob('*') if path.is_file()} == stored
+
+
+def test_unpinned_saved_builtin_does_not_adopt_first_master_when_reopened(tmp_path, monkeypatch):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'runtime'))
+    historical = synthetic_profiles()[0]
+    master = designs.install_master(master_reference(tmp_path), actor='Master Editor', expected_revision=0)
+    before = {path: path.read_bytes() for path in (tmp_path / 'runtime').rglob('*') if path.is_file()}
+    # Native output can resolve an older saved profile without opening its UI.
+    assert designs.source_for(historical) is None and not designs.is_master(historical)
+    reopened = designs.pin(historical, preserve_legacy=True)
+    assert designs.source_for(reopened) is None and not designs.is_master(reopened)
+    assert designs.pin(historical, latest_master=True).template == designs.MASTER_PREFIX + master
+    assert {path: path.read_bytes() for path in (tmp_path / 'runtime').rglob('*') if path.is_file()} == before

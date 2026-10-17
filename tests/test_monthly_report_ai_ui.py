@@ -54,13 +54,8 @@ def test_read_draft_review_preserves_existing_work_and_invalidates(
     button(app, "Read monthly files").click().run()
     button(app, "Find work, findings and follow-ups").click().run()
     assert not app.exception
-    next(
-        w
-        for w in app.checkbox
-        if w.label == "Use these facts as evidence for suggestions"
-    ).check().run()
-    button(app, "Keep these facts").click().run()
-    assert any("Optional Copilot help" in x.label for x in app.expander)
+    button(app, "Use these facts").click().run()
+    assert any(x.label == "Help write this summary" for x in app.expander)
     button(app, "Suggest wording / redraft").click().run()
     assert not app.exception
     assert button(app, "Use checked wording in this report").disabled

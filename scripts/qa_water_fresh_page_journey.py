@@ -154,10 +154,9 @@ def select(page, name, value, *, record=None):
                 const events=[], mutations=[];
                 let droppedEvents=0, droppedMutations=0;
                 const brief=()=>({id:node.id,connected:node.isConnected,
-                    focused:document.activeElement===node,expanded:node.getAttribute('aria-expanded'),
-                    inputTop:node.getBoundingClientRect().top});
+                    focused:document.activeElement===node,expanded:node.getAttribute('aria-expanded')});
                 const snapshot=()=>{const r=node.getBoundingClientRect();return {
-                    ...brief(),rect:{x:r.x,y:r.y,width:r.width,height:r.height},
+                    ...brief(),inputTop:r.top,rect:{x:r.x,y:r.y,width:r.width,height:r.height},
                     fullRender:document.querySelector('.epc-workspace')?.dataset.epcFullRender??null,
                     scriptState:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')??null,
                     events:events.slice(),mutations:mutations.slice(),droppedEvents,droppedMutations};};
@@ -254,7 +253,7 @@ def exercise(browser, name, base, record):
         capture("zero-sites")
         site.locator("xpath=ancestor::label[1]").click()
         expect(site).to_be_checked(timeout=45000)
-        expect(page.get_by_text("Sites selected (1): " + FIRST, exact=True)).to_be_visible(timeout=45000)
+        expect(page.locator(".st-key-monthly_report_identity_sites")).to_have_text("Site: " + FIRST, timeout=45000)
         capture("one-native-site-action")
 
         record["phase"] = "ordinary empty design then unsaved earlier month"

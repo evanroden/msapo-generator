@@ -3,6 +3,7 @@
 from app import monthly_report_guided as guided, monthly_report_library as library
 from app.monthly_report_docx import ReportPackage
 from app.monthly_report_model import ReportPeriod, default_sections
+from app.monthly_report_section_help import editor_section_title
 from test_monthly_report_ui import monthly, choose_report, ROOT
 from streamlit.testing.v1 import AppTest
 
@@ -17,7 +18,7 @@ def test_report_order_all_editors_and_direct_previews(monkeypatch, tmp_path):
     app.run()
     assert not app.exception
     titles = [item.value for item in app.subheader]
-    expected = [section.title for section in default_sections()]
+    expected = [editor_section_title(section) for section in default_sections()]
     assert [title for title in titles if title in expected] == expected
     assert [key for key, _ in calls] == ["cover", *(section.key for section in default_sections())]
     assert all(options.get("deferred") for _, options in calls)

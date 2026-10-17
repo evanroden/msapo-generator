@@ -11,6 +11,7 @@ from app.monthly_report_guided import STEPS, complete_guided_sections, review_de
 from app.monthly_report_model import (BlockSpec, ColumnSpec, ReportDraft, ReportFollowUp, ReportPeriod, ReportSource,
                                      ResolvedBlock, default_sections, synthetic_draft, synthetic_profiles)
 from app.monthly_report_sources import SourceContent
+from app.monthly_report_section_help import editor_section_title
 from test_monthly_report_ui import monthly, step
 
 
@@ -44,8 +45,8 @@ def test_first_template_has_every_section_visible_with_one_editing_home(monkeypa
     assert not any("logo" in value.label.lower() for value in app.get("file_uploader"))
     sections = working_state(app)[1].sections
     headings = [value.value for value in app.subheader]
-    assert all(headings.count(section.title) == 1 for section in sections)
-    assert [title for title in headings if title in {section.title for section in sections}] == [section.title for section in sections]
+    assert all(headings.count(editor_section_title(section)) == 1 for section in sections)
+    assert [title for title in headings if title in {editor_section_title(section) for section in sections}] == [editor_section_title(section) for section in sections]
     assert not any(value.label in ("Section to update", "Site information to update") for value in app.selectbox)
     assert not any(value.value == "Cover and report details" for value in app.subheader)
 

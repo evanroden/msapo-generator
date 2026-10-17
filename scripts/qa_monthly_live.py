@@ -200,8 +200,8 @@ def open_until_matching(page):
     while time.monotonic() < deadline:
         try:
             page.goto(address, wait_until="domcontentloaded", timeout=65000)
-            page.get_by_text("Running code: ", exact=False).first.wait_for(timeout=16000)
-            label = page.get_by_text(re.compile(r"^Running code:")).first.text_content() or ""
+            from scripts.qa_public_build import running_code_marker
+            label = running_code_marker(page).text_content() or ""
             last = label.strip()
             if last == "Running code: " + EXPECTED:
                 return last

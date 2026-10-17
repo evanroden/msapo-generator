@@ -66,6 +66,7 @@ def test_synthetic_rrh_quick_path_generates_two_files_and_native_new_tab_link(
     assert [item.label for item in app.expander] == [
         "Review scope, inclusions, and exclusions",
         "Change a value the tool already filled",
+        "About",
     ]
     assert app.button[1].disabled
 

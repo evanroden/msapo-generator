@@ -52,7 +52,7 @@ def _sync_source_fields(source, prefix, field):
             if active is not None:
                 st.session_state[active] = value
 
-def render_source_details(source, profile, prefix, field):
+def render_source_details(source, profile, prefix, field, *, applied_caption="Corrected details applied to this draft."):
     """One explicit date/site correction form for native text and image sources.
 
     Pending form values are separate from canonical evidence. Opening the form
@@ -111,7 +111,7 @@ def render_source_details(source, profile, prefix, field):
                                         format="YYYY-MM-DD")
             chosen_facility = st.selectbox("Source facility", options, key=site_key,
                                           format_func=labels.get)
-            submitted = st.form_submit_button("Save corrected details")
+            submitted = st.form_submit_button("Use these source details")
         if submitted and not changed_elsewhere:
             try:
                 source = correct_source_details(source, profile, chosen_date, chosen_facility)
@@ -119,7 +119,7 @@ def render_source_details(source, profile, prefix, field):
                 st.error(str(exc))
             else:
                 st.session_state[p + "_baseline"] = (source.service_date, source.facility)
-                st.caption("Corrected details applied to this draft.")
+                st.caption(applied_caption)
     if isinstance(rendered, dict):
         rendered[source.id] = source
     return source
@@ -195,7 +195,7 @@ def _cmms(content, profile, period, prefix, field):
     return (signature, result[1]) if result else (signature, None)
 
 
-def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field):
+def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False):
     st.caption("Read source files, check their pages, or match spreadsheet columns.")
     st.caption("PDF, Word, Excel, photos and email files. Uploaded emails are read, not sent.")
     with st.expander("File formats and limits"):
@@ -203,6 +203,11 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         st.caption("Limits: 50 sources / 180 MB per report, 30 MB per file (DOCX 128 MB), 800,000 extracted characters, 150 embedded PDF/image pages and 20 OCR/vision pages. The file chooser and review process still enforce these limits.")
     key = prefix + "_evidence"
     contents = st.session_state.setdefault(key, ())
+    accepted_key = key + "_accepted_batch"
+    pending_key = key + "_pending_acceptance"
+    failure_key = key + "_accepted_failure"
+    retired_key = key + "_retired_contributions"
+    accepted = st.session_state.get(accepted_key) if retain_accepted else None
     upload = st.file_uploader("Monthly source files", type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                              accept_multiple_files=True, max_upload_size=128, key=prefix + "_source_upload")
     if st.button("Read monthly files", disabled=not upload, key=prefix + "_read_sources"):
@@ -213,6 +218,20 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     for message in st.session_state.get(key + "_messages", ()):
         st.warning(message)
     if not contents:
+        if accepted:
+            st.session_state[pending_key] = True
+            st.info("No source files are selected. This report keeps its last added selection until you explicitly remove it.")
+            if st.button("Remove last added pages and tables from this report",
+                         key=key + "_remove_accepted_" + accepted[0][:16]):
+                from app.monthly_report_source_retirement import record_retired_contributions
+                st.session_state[retired_key] = record_retired_contributions(
+                    st.session_state.get(retired_key, {}), accepted[1], {})
+                for marker in (accepted_key, pending_key, failure_key):
+                    st.session_state.pop(marker, None)
+                return (), {}, {}
+            return tuple(accepted[3]), dict(accepted[1]), dict(accepted[2])
+        for marker in (accepted_key, pending_key, failure_key):
+            st.session_state.pop(marker, None)
         st.info("Add source files when available, or continue with library content and entered text.")
         with st.expander("Synthetic CMMS column example"):
             st.code("Work order,Finish date,Facility,Type,Status,Description\nDEMO-001,2026-09-02,Demo North,PM,Closed,Inspected demonstration unit", language="text")
@@ -230,7 +249,9 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     content, source = by_id[selected], by_id[selected].source
     p = key + "_" + selected
     _sync_source_fields(source, p, field)
-    source = render_source_details(source, profile, p, field)
+    source = render_source_details(source, profile, p, field,
+        applied_caption=("Corrected details are kept in this file selection. Add the selection below to update the report."
+                         if retain_accepted else "Corrected details applied to this draft."))
     pending = st.session_state.pop(p + "_page_action", None)
     if pending:
         st.session_state[p + "_pages"] = pending[0]
@@ -319,20 +340,20 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 st.session_state[p + "_page_action"] = (list(source.selected_pages), next_page)
                 st.rerun()
             if not left:
-                st.success("Every page has been checked. Prepare the included pages below." if checked else "Every page has been checked and left out. The original file is still saved.")
+                st.success("Every page has been checked. Choose its destination below, then add it to the report." if checked else "Every page has been checked and left out. The original file is still saved.")
             st.caption("Leaving a page out keeps the original file. Use the page selector to revisit any page.")
         by_id[selected] = replace(content, source=source)
         contents = tuple(by_id.values())
         st.session_state[key] = contents
         st.session_state[p + "_canonical_view"] = source
-        if st.button("Remove source from this draft", key=p + "_remove"):
+        if st.button("Remove source from this selection" if retain_accepted else "Remove source from this draft", key=p + "_remove"):
             st.session_state[key] = tuple(c for c in contents if c.source.id != selected)
             st.rerun()
     st.caption(f"{len(contents)} sources. {sum(len(c.source.selected_pages) for c in contents)} selected pages/items. "
                f"{sum(len(set(c.source.needs_vision) & set(c.source.selected_pages)) for c in contents)} selected pages need OCR/vision; no paid extraction runs automatically.")
     blocks, specs = {}, {}
-    with st.expander("Embed selected report pages and photographs"):
-        destinations = []
+    destinations = []
+    with st.expander("Add reviewed pages to report sections"):
         defaults = {"Vendor service": "improvements", "Water treatment": "water_reports", "MBCx": "mbcx_report", "Utility results": "utility_analysis", "Improvement / training photo": "improvements"}
         for item in contents:
             if not sources.image_numbers(item):
@@ -341,28 +362,11 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                       "water_reports": "Water treatment — chemical/service pages", "mbcx_report": "MBCx — commissioning report pages",
                       "utility_analysis": "Monthly scorecards — utility results and charts",
                       "improvements": "Monthly activity — reviewed service pages and photos"}
-            slot = st.selectbox("Add " + item.source.filename + " to", ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
+            slot = st.selectbox("Report section for " + item.source.filename, ["Do not embed", *sources.PAGE_DESTINATIONS], format_func=labels.get,
                                 key=field(key + "_destination_" + item.source.id + "_" + item.source.classification,
                                           defaults.get(item.source.classification, "Do not embed")))
             if slot != "Do not embed":
                 destinations.append((item.source.id, slot))
-        signature = _signature(([c.source.fingerprint for c in contents], destinations))
-        prepared_key = key + "_prepared_pages"
-        prepared = st.session_state.get(prepared_key)
-        if prepared and prepared[0] != signature:
-            st.session_state.pop(prepared_key, None)
-            prepared = None
-            st.info("Source details or selections changed. Prepare pages again to use this version.")
-        if st.button("Prepare selected pages", disabled=not destinations, key=key + "_prepare_pages"):
-            try:
-                with st.spinner("Preparing selected pages one at a time…"):
-                    prepared = (signature, sources.prepare_pages(profile, contents, tuple(destinations)))
-                st.session_state[prepared_key] = prepared
-            except (ValueError, OSError) as exc:
-                st.error(str(exc))
-        if prepared:
-            blocks.update((b.key, b) for b in prepared[1])
-            st.success("Reviewed pages are ready. Add them to the draft below.")
     cmms_contents = [c for c in contents if c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
     if cmms_contents:
@@ -379,8 +383,49 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             if mapped:
                 blocks.update((b.key, b) for b in mapped.blocks)
                 specs.update((s.key, s) for s in mapped.specs)
-                st.caption("Use Add prepared pages and tables to this draft below to include these work-order totals and service calls.")
-    return tuple(c.source for c in contents), blocks, specs
+                st.caption("The selected spreadsheet totals and service calls will be added with the reviewed pages below.")
+    signature = _signature((profile.contract, profile.key, period.key,
+        [content.source.fingerprint for content in contents], destinations,
+        {name: asdict(block) for name, block in blocks.items()},
+        {name: asdict(spec) for name, spec in specs.items()}))
+    pending = bool((accepted and accepted[0] != signature) or st.session_state.get(failure_key))
+    if retain_accepted:
+        st.session_state[pending_key] = pending
+    if pending:
+        st.info("Review and add the pending file selection before creating files."
+                + (" This report keeps its last added selection." if accepted else
+                   " No pages or tables from this selection have been added."))
+        if accepted:
+            st.caption("Adding replaces the last added pages and tables in this detailed layout. Other report content and original files stay unchanged.")
+    # The guided editor commits additions into its canonical draft once. The
+    # retained detailed editor reconstructs its draft on every native action,
+    # so it keeps a source/mapping-bound accepted selection for that consumer.
+    if st.button("Add selected pages and tables to report", key=key + "_add_selection_" + signature[:16],
+                 disabled=not destinations and not blocks):
+        try:
+            with st.spinner("Adding reviewed pages and tables…"):
+                prepared = sources.prepare_pages(profile, contents, tuple(destinations)) if destinations else ()
+            blocks.update((block.key, block) for block in prepared)
+            if retain_accepted:
+                # The accepted report uses the exact source facts that bound
+                # these pages/tables, while the intake UI may stage new facts.
+                from app.monthly_report_source_retirement import record_retired_contributions
+                st.session_state[retired_key] = record_retired_contributions(
+                    st.session_state.get(retired_key, {}), accepted[1] if accepted else {}, blocks)
+                st.session_state[accepted_key] = (signature, dict(blocks), dict(specs),
+                                                 tuple(content.source for content in contents))
+                st.session_state[pending_key] = False
+                st.session_state.pop(failure_key, None)
+            return tuple(c.source for c in contents), blocks, specs
+        except (ValueError, OSError) as exc:
+            if retain_accepted:
+                st.session_state[failure_key] = signature
+                st.session_state[pending_key] = True
+            st.error(str(exc))
+            st.caption("Nothing was added. Correct the selected source pages and try again.")
+    if accepted:
+        return tuple(accepted[3]), dict(accepted[1]), dict(accepted[2])
+    return tuple(c.source for c in contents), {}, {}
 
 
 def set_source_manager_open(key, opened):

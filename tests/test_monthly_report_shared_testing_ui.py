@@ -181,7 +181,7 @@ def test_actual_starting_ui_two_sessions_refresh_and_scoped_reset(sample, monkey
     staged = app.session_state["_shared_fixture_staged"]
     assert staged.source_path.read_bytes() == original
     assert any(item.label == "Your name" for item in app.text_input)
-    assert any("Sites selected (1): Synthetic Site A" in caption.value for caption in app.caption)
+    assert any("Site: Synthetic Site A" in caption.value for caption in app.caption)
     assert not list(staged.context.data_root.rglob("manifest.json"))  # No implicit import approval.
     assert "synthetic pump" in " ".join(item.text for item in staged.inspection.items)
 
