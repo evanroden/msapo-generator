@@ -216,7 +216,7 @@ def _cmms(content, profile, period, prefix, field):
 
 
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False,
-                   attached_blocks=None):
+                   attached_blocks=None, included_source_ids=()):
     st.caption("Read source files, check their pages, or match spreadsheet columns.")
     st.caption("PDF, Word, Excel, photos and email files. Uploaded emails are read, not sent.")
     with st.expander("File formats and limits"):
@@ -393,7 +393,10 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         forms = st.session_state.get("_monthly_source_detail_forms")
         if isinstance(forms, dict):
             forms[source.id] = source
-        if st.button("Remove source from this selection" if retain_accepted else "Remove source from this draft", key=p + "_remove"):
+        source_in_use = not retain_accepted and selected in included_source_ids
+        if st.button("Remove source from this selection" if retain_accepted else "Remove source from this draft", key=p + "_remove",
+                     disabled=source_in_use,
+                     help="Remove the linked report content first. Its original source is still needed." if source_in_use else None):
             st.session_state[key] = tuple(c for c in contents if c.source.id != selected)
             st.rerun()
     st.caption(f"{len(contents)} sources. {sum(len(c.source.selected_pages) for c in contents)} selected pages/items. "

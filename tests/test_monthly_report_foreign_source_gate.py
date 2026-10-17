@@ -59,6 +59,33 @@ def test_populated_imported_table_is_also_included_evidence(report):
     assert any(c.code == "source_facility" and c.blocking for c in preflight(draft))
 
 
+@pytest.mark.parametrize("kind", ["narrative", "table", "AI paragraph", "issue"])
+def test_removed_source_cannot_authorize_orphaned_included_evidence(report, kind):
+    draft, index, _ = report
+    reference = source_reference(draft.sources[0], 1)
+    block = draft.blocks[index]
+    if kind == "table":
+        block = replace(block, references=(), extra_tables=(ReportTable(
+            ("Finding",), (("Bearing inspection",),), reference),))
+    elif kind == "AI paragraph":
+        block = replace(block, references=(), ai_paragraphs=(DraftParagraph(block.text, (), (reference,)),))
+    elif kind == "issue":
+        block = replace(block, references=())
+        draft = replace(draft, follow_ups=(ReportFollowUp("synthetic issue", "issue", "Pump inspection",
+            "2026-09", references=(reference,)),))
+    draft = replace(draft, sources=(), blocks=(*draft.blocks[:index], block, *draft.blocks[index + 1:]))
+    checks = preflight(draft)
+    missing = [check for check in checks if check.code == "source_missing"]
+    assert len(missing) == 1 and missing[0].blocking
+    assert generation_block_reason(conflict=None, checks=checks, warnings_ok=True)
+    with pytest.raises(ValueError, match="source file that is no longer"):
+        assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)
+    # Deliberately omitted report content keeps its evidence without blocking.
+    omitted = replace(draft, blocks=tuple(replace(b, source="Omit") for b in draft.blocks),
+        follow_ups=tuple(replace(item, included=False) for item in draft.follow_ups))
+    assert not any(check.code == "source_missing" for check in preflight(omitted))
+
+
 @pytest.mark.parametrize("mode", ["unused", "omitted", "section omitted", "route only", "empty table", "cleared"])
 def test_unused_or_removed_evidence_does_not_create_a_required_site_block(report, mode):
     draft, index, _ = report
@@ -214,3 +241,8 @@ def test_resumed_foreign_source_keeps_one_native_correction_path(monkeypatch, tm
     assert next(b for b in corrected.blocks if b.key == "activity_summary").text == text
     assert source_bytes(profile, corrected.sources[0]) == raw
     assert library.load_snapshot(profile.contract, profile.key, period).draft.sources == (foreign,)
+    next(w for w in app.button if w.label == "Manage source files").click().run()
+    assert not app.exception
+    remove = next(w for w in app.button if w.label == "Remove source from this draft")
+    assert remove.disabled
+    assert "linked report content" in remove.help
