@@ -11,6 +11,10 @@ from app.monthly_report_training import (FORMATS, MATRIX_REF, STATUSES,
     training_block, hospital_matrix, matrix_differs_from_current_standing)
 
 
+def _queue_session_removal(key, revision, index):
+    st.session_state[key] = (revision, index)
+
+
 def render_training(draft, blocks, prefix, field):
     from app.monthly_report_directory import load_directory
     if not draft.prepared_by.strip():
@@ -41,15 +45,14 @@ def render_training(draft, blocks, prefix, field):
         if matrix != previous:
             st.session_state[matrix_key] = matrix
             st.session_state[key + "_generation"] = st.session_state.get(key + "_generation", 0) + 1
-        st.write("Hospital/client staff training")
-        st.caption("Client staff only. ENFRA and vendor contacts are excluded from automatic training records.")
-        st.caption("Blank = Not recorded; no completion is assumed.")
+        st.subheader("Staff training requirements")
+        st.caption("Client/hospital staff only. Requirement changes are saved for these sites and reused in future reports; sessions and notes stay in this report.")
         if st.session_state.get(key + "_stale_standing"):
             st.warning("This report has an older training matrix. Review the latest shared training before changing the matrix. "
                        "Monthly notes and the saved report version are unchanged.")
         with st.expander("Add requirement", expanded=False):
-            new_training = st.text_input("Add a training requirement", key=key + "_new_requirement")
-            if st.button("Add training column", key=key + "_add_requirement", disabled=not new_training.strip()):
+            new_training = st.text_input("Requirement name", key=key + "_new_requirement")
+            if st.button("Add requirement", key=key + "_add_requirement", disabled=not new_training.strip()):
                 title = new_training.strip()
                 if title.casefold() in {c.casefold() for c in matrix.columns}:
                     st.error("That training already has a column.")
@@ -63,11 +66,14 @@ def render_training(draft, blocks, prefix, field):
                     st.session_state[matrix_key] = matrix
         sites = [facility.title for facility in draft.profile.facilities]
         config = {"Site": st.column_config.SelectboxColumn("Site", options=sites, required=True)}
-        labels = {"Completed": "🟢 Completed", "Pending": "🟠 Pending", "Not required": "⚪ Not required", "Not recorded": "— Not recorded"}
+        labels = {"": "— Not recorded (blank)", "Completed": "🟢 Completed", "Pending": "🟠 Pending", "Not required": "⚪ Not required", "Not recorded": "— Not recorded"}
         config.update({name: st.column_config.SelectboxColumn(name, options=STATUSES, format_func=labels.get, required=True, default="Not recorded") for name in matrix.columns[2:]})
-        rows = _grid(key + "_grid_" + str(st.session_state.get(key + "_generation", 0)) + "_" + _signature(matrix.columns), [dict(zip(matrix.columns, row)) for row in matrix.rows] or [dict.fromkeys(matrix.columns, "")],
+        rows = _grid(key + "_grid_" + str(st.session_state.get(key + "_generation", 0)) + "_" + _signature(matrix.columns), [dict(zip(matrix.columns, row)) for row in matrix.rows] or [{name: "Not recorded" if index > 1 else "" for index, name in enumerate(matrix.columns)}],
                      num_rows="dynamic", hide_index=True, column_config=config)
-        edited = ReportTable(matrix.columns, tuple(tuple(str(row.get(c) or ("Not recorded" if i > 1 else "")).strip()
+        # Defaults apply to absent new cells; an existing/explicit blank remains
+        # distinct from the recorded "Not recorded" option and is never saved
+        # merely because the matrix was displayed.
+        edited = ReportTable(matrix.columns, tuple(tuple(str(row.get(c, "Not recorded" if i > 1 else "") or "").strip()
                               for i, c in enumerate(matrix.columns)) for row in rows if row.get("Team member")), MATRIX_REF)
         if hospital_matrix(draft.profile, edited, directory) != edited:
             raise ValueError("This matrix is for hospital staff. Remove the identified ENFRA, asset-management or vendor person before saving.")
@@ -89,26 +95,48 @@ def render_training(draft, blocks, prefix, field):
     # Always render monthly fields. A rejected matrix/event must not let
     # Streamlit discard a sibling widget or its in-flight value.
     events = events_for_period(block, draft.period)
-    st.write("Training completed this month")
-    if events:
-        st.dataframe([dict(zip(events.columns, row)) for row in events.rows], hide_index=True)
-        with st.expander("Remove training entries", expanded=False):
-            remove = st.multiselect("Remove a training entry", range(len(events.rows)), format_func=lambda n: f"{events.rows[n][1]} · {events.rows[n][0]}", key=key + "_remove_events_" + _signature(events.rows))
-            if st.button("Remove selected entries", key=key + "_remove_button", disabled=not remove):
-                events = replace(events, rows=tuple(row for i, row in enumerate(events.rows) if i not in remove))
-    with st.expander("Add training", expanded=False):
+    removal_key = key + "_remove_session_request"
+    removal = st.session_state.pop(removal_key, None)
+    if removal is not None:
+        revision, index = removal
+        if events and revision == _signature(events.rows) and 0 <= index < len(events.rows):
+            # Apply the revision-bound request before emitting row controls.
+            # Notes below still consume their same-event native value, and the
+            # caller receives the complete block before any durable save.
+            events = replace(events, rows=tuple(row for position, row in enumerate(events.rows) if position != index))
+        else:
+            st.warning("Training sessions changed. Review the current sessions before removing one.")
+    st.subheader("Training completed this month")
+    with st.expander("Add training session", expanded=False):
         with st.form(key + "_event_form", clear_on_submit=False):
             title = st.text_input("Training topic", key=key + "_event_topic")
-            when = st.date_input("Training date", value=draft.period.start, min_value=draft.period.start, max_value=draft.period.end, key=key + "_event_date")
+            when = st.date_input("Training date", value=None, min_value=draft.period.start, max_value=draft.period.end, key=key + "_event_date")
             mode = st.selectbox("Method", FORMATS, key=key + "_event_format")
             participants = st.multiselect("Participants", list(dict.fromkeys(r[0] for r in (matrix.rows if matrix is not None else ()))), accept_new_options=True, key=key + "_event_participants")
             hours = st.text_input("Hours (optional)", key=key + "_event_hours")
-            submit = st.form_submit_button("Add completed training")
+            submit = st.form_submit_button("Add training session")
     if submit:
         try:
             events = add_event(events, title=title, when=when, mode=mode, participants=participants, hours=hours, period=draft.period)
         except ValueError as exc:
             st.error(str(exc))
+    if events and events.rows:
+        # Binding every row action to this collection prevents a delayed click
+        # from removing a different row after another session was added/removed.
+        event_revision = _signature(events.rows)
+        same_day = [(row[0], row[1]) for row in events.rows]
+        for index, row in enumerate(events.rows):
+            title, when, mode, participants, hours = row
+            with st.container(border=True):
+                st.text(title)
+                st.caption(" · ".join((when, mode, participants, *([f"{hours} hours"] if hours else []))))
+                label = f"Remove session: {title} · {when}"
+                if same_day.count((title, when)) > 1:
+                    label += " · " + " · ".join((mode, participants, *([f"{hours} hours"] if hours else [])))
+                st.button(label, key=key + f"_remove_session_{event_revision}_{index}",
+                          on_click=_queue_session_removal, args=(removal_key, event_revision, index))
+    else:
+        st.caption("No training sessions added this month.")
     block = apply_tables(block, matrix, events)
     # Match the native protocol default to the canonical notes, as Activity
     # already does. A one-shot session-state set_value is not the first-mount

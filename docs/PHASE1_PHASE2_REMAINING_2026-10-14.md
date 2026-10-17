@@ -4,7 +4,75 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current branch and evidence boundary
+## Current integration checkpoint — 2026-10-17 08:25 UTC
+
+This table supersedes dated branch status below. PR249 is merged; other cleanup remains on
+branches. Both phases remain open. The original owner prompt remains one existing TXT, updated
+in place. First-failure ZIPs and focused receipts stay private; no customer originals entered Git/CI.
+
+| Requirement / retained IDs | Current implementation / base | Tested scope | Actually served | Unresolved / next action / owner | Acceptance |
+| --- | --- | --- | --- | --- | --- |
+| Water, CONT09, SIM-W, ADP-A12/A16/A20 | PR249 merged to main `90049cf65b7d19d2e96ec0ecf9a9b0288fdc476a` |76 focused passes; merged Tests38996467909 and Adaptive38996467782 pass | Full90049cf read again in live isolated Chromium at08:10UTC. Entry `index.enfra-frontend-fbb0a97cf659.js`,464115bytes, SHA256`fbb0a97cf659f548829b6038e8f1033ff330c16c34e5a12a1c4d6f3900b27d4f` independently byte-equal to pinned reconstruction. Caption correction/review/reopen/Done and ordinary reload retained; Current2pages and visible first page. | No fresh Render control-plane read; workspace not confirmed. Entry proof is not a fetch of all83 assets. New screenshot retained successfully. Engineer: integrate remaining cleanup and complete live review. | Verified for stated scope only |
+| Training / native menus / workflow return, SIM-T, ORIG-T, CONT02, ADP-A08/A09/A16–17 | PR250 published `a6a6dce5bc2828f9940c98645d9312cbe56be809` on main90049cf; this candidate fixes the conflicting workflow fallback and historical fixture flags | Exact a6 Adaptive39015614269: Training and both full/fresh Water journeys pass, including8 Training files. Only first-site Chromium square path fails: checkbox passes checked assertion, then app displays Purchase order. Nine other pointer/keyboard/touch paths pass. Tests39015614263:2998pass,9setup errors in archived diagnostic fixture; container/resource pass. New route/default baseline4fails and historical-copy baseline1error; repaired affected gate37passes; observation gate29passes; origin/filter subset10passes. Counts overlap. | Not merged/deployed | Every workflow render now gives the native control the current selection as its fallback, preserving keyed widget identity and deliberate switching. The consumed historical diagnostic fixture explicitly excludes later queued-scroll repair. Passive route/wire/native-error evidence added; original ten site actions/assertions/timeouts preserved. Exact new CI and current review required. Engineer. | Locally repaired; browser/release pending |
+| Sources / history, SRC01/SRC04–06, CONT03/08, ADP-A10 | PR251 `e72feb531018dd67b853bb53c4dbdb6880c49037`, base main90049cf; native history disclosure guard local | Seven baseline failures repaired,58 affected passes; Required38997771955 passes. Its earlier Adaptive38997771892 fails fresh Chromium month; latest Training sibling now passes that journey. New history gate fails before repair, passes after; Help and fragment Retry remain independent. | Broader workspace cleanup not live | Source first-failure pending block, provenance-only retirement and context/window identity fixes retained; all five prior threads resolved. Guard full rerun before app-owned Shared report history summary sends it. Compose parent guard with PR252's native activation observation after eligible main integration. Engineer. | Branch/local repair only |
+| Photos / history tail / remaining-file review, SIM-V/SIM-W, CONT07/09, ADP-A08/A18 | PR252 `49a448d0beedb74ecb5e19be8240e0826b14c480`, base PR251e72; history activation check and Water next-file shortcut local |217 reconciliation passes; exact Required38998230103 passes. Adaptive38998230129 photo job117295414354 passes both engines through density1–6, moves, captions, add/remove, re-entry, Done, reload and actual files. History Chromium cached-message failure retained; WebKit completes. New Water2case baseline fails, final affected44pass; native history observation contracts34pass. | Not deployed | Live Water's generic remaining-pages message referred to a second file, not an absent control. Candidate names the actual unreviewed file and offers one direct native review action from the finished compact state; removed reviewed pages no longer falsely prompt review or resurrect. Compose history guard, rerun exact browser tails, then normal main integration. Engineer. | Photo branch scope verified; history/release pending |
+| Actual editable outputs / privacy, CONT07, VIS, ADP-A18 | Actual photo files from PR252 run38998230129 / tested checkout01d26d810e837ca55390b0ce8c02df5ddda312c2 | Both actual PDFs29pages, every pair pixel-identical at150dpi. DOCX files byte-identical;29 rendered pages inspected using LibreOfficeDev26.8.0.0.alpha0 (2c87e51eeaa2b413ff4ae097b2705eea1995d8e5), Poppler26.05.0. Nine editable Word tables have repeat headers/intact-row settings. Photo1 then3/captions and section10/AppendixG retained; no observed overlaps/clipping. Scoped package text/media/metadata reviewed. | Branch output bytes, not live generation | Synthetic design has no approved cover logo/office image and no contents page references; low-resolution synthetic photos do not prove real image sizing. Named renderer is not Microsoft Word. Approved-master, authentic and broader graphic/hidden/privacy acceptance remains open. Engineer/owner for unavailable native checks. | Actual synthetic file scope only |
+| Original integrity / retention, CONT01, AUTH01–03 | Existing unchanged owner archive retrieved privately |88159285bytes, SHA256`96d03736f91aa0d34f891234c525ccfeb1b8c89278a7d7cc915a71f35256981b`; all6member sizes/hashes match manifest. Independent manifest SHA256`a9f931ba0e2656530f7cfef7c8607c4bebb04b1d105d07688402a4e63f2f58fa` matched. | No new original import/transfer | Prior shelf and managed-localhost administrative denials remain denied; one-shot genuine diagnostic not repeated. Exact owner/admin access resolution, non-OpenAI retention and authentic scenario facts/replay/cross-deployment checks remain open. | Integrity retrieval only |
+| Complete simplicity / standing / adaptive acceptance, inventory97, original113, ADP-A01–20 | Existing coherent branch cleanup retained; one ordered workspace | Historical evidence retains its original IDs; current isolated Water path and actual photo output review only | Main90049cf only | Finish replacement paths, desktop/narrow fresh/populated/imported/unresolved/failed-save/generated/recovered review, word/action comparisons, standing scope/concurrency, six adaptive journeys, physical/native checks and combined-artwork approval. Independent UI work remains engineering work. | Neither phase accepted |
+
+### Current first-failure evidence and limits
+
+- Original photo failure12074983632:13272057bytes, SHA256`6f5268e432efcc58457e09ad44cc510aa8afa9024de5db276b678f79a2193ca5`.
+- First integrated Training12088280240:889396bytes, SHA256`ba4f83d603fab9c63e1bf68b4ae3a219b2579e3ac8edbe053959c7d36c98f1b0`.
+- First Workspace12088361011:98551444bytes, SHA256`c3e073e153de136e5307619e47c2c71184ea53cc9cfedac060a9f45a14ab8b7f`.
+- Passed photos12088395797:24289344bytes, SHA256`fb55b54ee981de50e18239de79cc2284144063ff4f4b5f808d2d71453f3570f8`.
+- First history12087503258:28197291bytes, SHA256`b0b82b6d92e05dd8d1033eb690894cb249209c56322c027930d25281de8f7095`.
+- a6 Adaptive first site failure12094044668:112757840bytes, SHA256`6fa3be0de8c2d8dcbec31b7a4200437167a4dfc52e3428c23509ab96b2a3bd86`.
+- a6 Required12095406078:72558bytes, SHA256`58ea457a16f3b8f94b6646184cdb999518d1d3b626971ab5e1840900d6919078`.
+- a6 passed Training12094906300:1326308bytes, SHA256`7b5afa8ea6386d00b3cd410dba89452ae807e0414d76052ee4945dd32dc2e872`.
+
+The queued-scroll callback model reproduces a conditional native mechanism; it does not prove
+the sole historical cause. Current a6 Training and fresh Water results close their stated branch
+journeys only. The new first-site screenshot proves a workflow switch after the selected-checkbox
+assertion, not its unique cause. The conflicting native fallback is independently reproduced and
+repaired; unchanged real interactions plus new passive receipts must verify the composed candidate.
+
+The Water test's first repaired run had43pass/1failure because both invented files contained the
+same first-page image, correctly deduplicated. A visibly different second-file page makes the
+intended two-page assertion meaningful; final44pass. A mistyped test pathname collected0tests;
+no product assertion was weakened. Exact local commands and XML receipts remain with the one
+private checkpoint. All original/old81/old83 frontend assets and scalar-date pins remain preserved.
+
+## Historical October 17 review repair checkpoint
+
+
+Refreshed 2026-10-17 02:14 UTC. Main remains `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`.
+Current published heads before this repair: PR249 `358e97e`, PR250 `df258bf`, PR251 `92ec8cd`, PR252 `28a13b4`.
+Exact Required/Adaptive pairs are respectively 38966735323/38966735321,
+38968288203/38968288206, 38968097828/38968097907 and 38967722381/38967722620.
+All pass except PR252 Adaptive's first photo-density keypress; no later photo steps were reached.
+These are branch evidence, not new merged or served acceptance. Render workspace selection and
+previously denied archive/browser operations remain unresolved in this session.
+
+This Training revision reproduces and repairs current review findings that older green CI did not close:
+consecutive session removal, distinguishable same-day removal labels, first staff-row defaults,
+missing shared browser path filters, and missing native-error instrumentation acceptance.
+Seven new source/UI/workflow regressions failed on exact `df258bf`; six instrumentation negative
+controls also failed while its three existing error checks passed. After the repairs, the first
+46-test affected suite passes on locked Python 3.12.14. A stale callback regression is retained too.
+Removals apply a collection-bound request before emitting the next controls and retain same-event
+monthly notes. New placeholder cells default to Not recorded; retained explicit blanks stay blank.
+Both PR and push filters include the actual shared helpers. A clean browser result now requires
+installed instrumentation and captured error lists in every observed document.
+
+Current status: locally repaired; new exact CI, normal main integration, deployment and browser
+verification pending. No original data, standing versions or saved reports were used as QA.
+The exact PR252 first-failure ZIP was retrieved: 13,272,057 bytes and its supplied digest matched.
+A private durable copy is retained as `libfile_f02903c20d3c8191856bda8ef46ec69f`; no customer sources
+or font files were published. The previous ledger below remains historical context until replaced
+by the next integrated checkpoint; its stale branch and pending labels are not current evidence.
+
+## Historical October 16 branch and evidence boundary
 
 Refreshed 2026-10-16 20:49 UTC. This candidate follows published parent1e3516e; no
 new merge or live observation occurred. Child252 remains published8c53fb0, with new photo/history
@@ -15,7 +83,7 @@ reproduced defect; **Implemented** = implemented-needs-verification; **Verified(
 verified-for-a-stated-scope; **Blocked(dependency)** = blocked-on-specific-dependency. An unrun
 acceptance row is not a defect. Overlapping test counts are never summed.
 
-## Current code and release
+## Historical October 16 code and release
 
 Main is `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`. Last independently verified actually served
 SHA is the same, from [live38937063007](https://github.com/evanroden/msapo-generator/actions/runs/38937063007),
@@ -301,3 +369,15 @@ existing owner acceptance folder; never publish private client material. No paid
 migration, credentials, spending, security change, business send or irreversible cleanup is
 authorized. This documentation commit is held for the next coherent implementation publication;
 no docs-only production deployment or CI dispatch is authorized by the compaction.
+
+This branch reconciliation normally merges published358e97e into d7da87daba5b83c00e0f566f0e1d6becd0d85664.
+Its preceding complete ledger remains retained at that Git commit (SHA256
+8a80e06cfe2643614faaac9a388b035c3c9e75176eff9f1dfde69cece08a6a7e); the compact current ledger preserves every coverage ID.
+All branch-specific application and QA paths remain, with exact composed checks and new CI required.
+
+Training reconciliation validation:26 frontend/scalar/announcement/native-delivery/reference
+checks passed in75.22s on locked Python3.12.14. The original26-case run had22 passes and
+four failures from its old81-file fixture omitting the two newly required pinned originals.
+The fixture now copies and hashes the complete83-member manifest union; behavior assertions
+are unchanged. Both receipts are retained. Training editor/model/date journey remain unchanged
+from publishedd7; new exact Required/Adaptive and Training browser output remain required.

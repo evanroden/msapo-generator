@@ -57,6 +57,8 @@ def _expected_overlay(static_dir=None):
     from scripts import patch_streamlit_frontend as compat
     root = static_dir or Path(streamlit.__file__).parent / "static"
     selected = compat.selected_frontend(root)
+    if not selected["queued_scroll"]:
+        raise RuntimeError("The pinned frontend lacks queued-scroll overlay compatibility.")
     raw = (root / "static/js" / selected["overlay_bundle"]).read_bytes()
     if sha256(raw).hexdigest() != selected["overlay_sha256"]:
         raise RuntimeError("Pinned overlay frontend changed after validation.")
