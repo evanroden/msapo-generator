@@ -179,10 +179,11 @@ def test_repeated_source_views_emit_one_resolver_anchor(monkeypatch, tmp_path):
     app.session_state["source"] = content.source
     app.run()
     assert not app.exception
-    anchor = 'id="source-details-' + content.source.id + '"'
-    assert sum(anchor in node.value for node in app.markdown) == 1
-    app.run()
-    assert sum(anchor in node.value for node in app.markdown) == 1
+    for _ in range(2):
+        for suffix in ("", "--site", "--date"):
+            anchor = 'id="source-details-' + content.source.id + suffix + '"'
+            assert sum(anchor in node.value for node in app.markdown) == 1
+        app.run()
 
 
 def test_structured_native_activity_correction_preserves_manual_text_and_original(monkeypatch, tmp_path):
