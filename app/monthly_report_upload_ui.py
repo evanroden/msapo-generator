@@ -66,7 +66,8 @@ def _sync_source_fields(source, prefix, field, *, caption_defaults=None):
             if active is not None:
                 st.session_state[active] = value
 
-def render_source_details(source, profile, prefix, field, *, applied_caption="Corrected details applied to this draft."):
+def render_source_details(source, profile, prefix, field, *, applied_caption="Corrected details applied to this draft.",
+                          compact_problems=()):
     """One explicit date/site correction form for native text and image sources.
 
     Pending form values are separate from canonical evidence. Opening the form
@@ -105,7 +106,9 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
         st.session_state[site_key] = initial_facility
     st.session_state[p + "_baseline"] = baseline
     missing = initial_date is None or initial_facility in ("", KEEP_FACILITY)
-    with st.expander("Date and facility · " + source.filename, expanded=missing):
+    label = ("Correct source details · " + source.filename + " · " + "; ".join(compact_problems)
+             if compact_problems else "Date and facility · " + source.filename)
+    with st.expander(label, expanded=missing and not compact_problems):
         if changed_elsewhere:
             st.info("This source was corrected elsewhere. Check the updated details before saving.")
         if source.service_date and initial_date is None:
@@ -121,7 +124,10 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
             st.session_state[site_key] = initial_facility
         labels = {"": "Not established", KEEP_FACILITY: "Keep unresolved: " + source.facility, **sites}
         with st.form(p + "_form"):
-            chosen_date = st.date_input("Source date", value=None, key=date_key,
+            # Match the native first-mount default to the current form value.
+            # Python session state alone leaves saved dates visibly blank in
+            # the browser; a delivered deliberate clear remains None here.
+            chosen_date = st.date_input("Source date", value=st.session_state[date_key], key=date_key,
                                         format="YYYY-MM-DD")
             chosen_facility = st.selectbox("Source facility", options, key=site_key,
                                           format_func=labels.get)

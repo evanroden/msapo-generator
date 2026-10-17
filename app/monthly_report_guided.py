@@ -857,7 +857,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.write("1. Choose sites and month.\n2. Update the sections below; sections without a new update can stay blank.\n3. Review source pages that need attention, then create and download Word/PDF.")
         st.caption("Selecting several sites combines them in one report. For separate reports, select each site individually.")
         st.write("Saved site details carry forward. Monthly files and progress photos start fresh. Browser drafts and shared report versions are separate.")
-        st.caption("Training covers hospital/client staff. ENFRA employees, asset managers and vendor personnel are outside its scope. Record only confirmed completed training in the monthly list.")
+        st.caption("Training covers hospital/client staff. ENFRA employees, asset managers and vendor personnel are outside its scope. Record only confirmed completed training in the monthly list. Enter hours only when known.")
         st.caption("Draft recovery keeps edits after they reach the app. Text still being typed may not be recoverable. Check the save status before leaving. Saving or creating files adds a shared version. Prepared by is report attribution, not a sign-in.")
     from app.monthly_report_admin_ui import render_administration_links
     render_administration_links()
@@ -1062,25 +1062,25 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[draft_key] = draft
                 st.rerun()
     if st.session_state.get(prefix + "_source_details_on_resume") and draft.sources:
-        from app.monthly_report_source_details import facility_choice, source_date, KEEP_FACILITY
+        from app.monthly_report_source_details import detail_problems
         from app.monthly_report_upload_ui import render_source_details
-        needs_correction = any(
-            source_date(source.service_date) is None
-            or facility_choice(source, profile) in ("", KEEP_FACILITY)
-            for source in draft.sources
-        )
-        review_key = field(prefix + "_review_saved_source_details", needs_correction)
-        if st.checkbox("Review source dates and sites from saved files", key=review_key):
-            st.caption("Correct the date or site beside each saved source. Original files and reviewed page decisions are retained.")
-            corrections = {}
-            for source in draft.sources:
+        # A resumed report needs an exact-item correction path, not every
+        # source form expanded above the report. Valid/reference-only sources
+        # remain available through Manage source files. Keep each unresolved
+        # source's anchor outside its quiet disclosure so review links land on
+        # a visible, named action. Opening it does not approve or change facts.
+        corrections = {}
+        for source in draft.sources:
+            problems = detail_problems(source, profile, period)
+            if problems:
                 corrections[source.id] = render_source_details(
-                    source, profile, prefix + "_resumed_" + source.id, field)
-            if any(corrections[source.id] != source for source in draft.sources):
-                draft = replace(draft, sources=tuple(corrections[source.id] for source in draft.sources))
-                st.session_state[prefix + "_evidence"] = tuple(
-                    replace(content, source=corrections.get(content.source.id, content.source))
-                    for content in st.session_state.get(prefix + "_evidence", ()))
+                    source, profile, prefix + "_resumed_" + source.id, field,
+                    compact_problems=problems)
+        if any(corrections.get(source.id, source) != source for source in draft.sources):
+            draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
+            st.session_state[prefix + "_evidence"] = tuple(
+                replace(content, source=corrections.get(content.source.id, content.source))
+                for content in st.session_state.get(prefix + "_evidence", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
