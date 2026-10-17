@@ -221,6 +221,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     accepted_key = key + "_accepted_batch"
     pending_key = key + "_pending_acceptance"
     failure_key = key + "_accepted_failure"
+    retired_key = key + "_retired_contributions"
     accepted = st.session_state.get(accepted_key) if retain_accepted else None
     upload = st.file_uploader("Monthly source files", type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                              accept_multiple_files=True, max_upload_size=128, key=prefix + "_source_upload")
@@ -237,6 +238,9 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             st.info("No source files are selected. This report keeps its last added selection until you explicitly remove it.")
             if st.button("Remove last added pages and tables from this report",
                          key=key + "_remove_accepted_" + accepted[0][:16]):
+                from app.monthly_report_source_retirement import record_retired_contributions
+                st.session_state[retired_key] = record_retired_contributions(
+                    st.session_state.get(retired_key, {}), accepted[1], {})
                 for marker in (accepted_key, pending_key, failure_key):
                     st.session_state.pop(marker, None)
                 return (), {}, {}
@@ -425,12 +429,15 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
         [content.source.fingerprint for content in contents], destinations,
         {name: asdict(block) for name, block in blocks.items()},
         {name: asdict(spec) for name, spec in specs.items()}))
-    pending = bool(accepted and (accepted[0] != signature or st.session_state.get(failure_key) == signature))
+    pending = bool((accepted and accepted[0] != signature) or st.session_state.get(failure_key))
     if retain_accepted:
         st.session_state[pending_key] = pending
     if pending:
-        st.info("File selections or spreadsheet columns changed, or their preparation failed. This report keeps its last added selection. Review and add the new selection before creating files.")
-        st.caption("Adding replaces the last added pages and tables in this detailed layout. Other report content and original files stay unchanged.")
+        st.info("Review and add the pending file selection before creating files."
+                + (" This report keeps its last added selection." if accepted else
+                   " No pages or tables from this selection have been added."))
+        if accepted:
+            st.caption("Adding replaces the last added pages and tables in this detailed layout. Other report content and original files stay unchanged.")
     # The guided editor commits additions into its canonical draft once. The
     # retained detailed editor reconstructs its draft on every native action,
     # so it keeps a source/mapping-bound accepted selection for that consumer.
@@ -443,13 +450,16 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             if retain_accepted:
                 # The accepted report uses the exact source facts that bound
                 # these pages/tables, while the intake UI may stage new facts.
+                from app.monthly_report_source_retirement import record_retired_contributions
+                st.session_state[retired_key] = record_retired_contributions(
+                    st.session_state.get(retired_key, {}), accepted[1] if accepted else {}, blocks)
                 st.session_state[accepted_key] = (signature, dict(blocks), dict(specs),
                                                  tuple(content.source for content in contents))
                 st.session_state[pending_key] = False
                 st.session_state.pop(failure_key, None)
             return tuple(c.source for c in contents), blocks, specs
         except (ValueError, OSError) as exc:
-            if accepted:
+            if retain_accepted:
                 st.session_state[failure_key] = signature
                 st.session_state[pending_key] = True
             st.error(str(exc))

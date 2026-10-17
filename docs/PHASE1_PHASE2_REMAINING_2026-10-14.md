@@ -4,18 +4,56 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current branch and evidence boundary
+## Current integration checkpoint — October 17, 2026, 03:08 UTC
 
-Refreshed 2026-10-16 21:09 UTC. This finishing candidate reconciles published parent358e97e
-with its own photo/history, inherited-caption and preferred-logo repairs. No new merge or live
-observation occurred. Remote child252 is still8c53fb0 until this coherent batch is published.
+This checkpoint supersedes the dated branch table below. Both phases remain open.
+No owner-source replay, physical-device, native-Word or combined-artwork approval is implied.
+
+**Subsequent coherent photo reconciliation, October 17:** PR251 published e72feb531018dd67b853bb53c4dbdb6880c49037
+is now reconciled into the PR252 candidate. The three history/test/ledger conflicts preserve the
+semantic history table, new context/selection regression and both branches' dated receipts.
+The composed photo/source/history/capacity/organization/preferred-logo gate passes217 checks
+in139.18s. Browser CI is still required; the original first-failure archive remains unchanged.
+Water main90049cf merged-head Required38996467909 and Adaptive38996467782 now both pass.
+The browser-observed464,115-byte entry was independently fetched and exactly matches the pinned
+reconstruction: SHA256fbb0a97cf659f548829b6038e8f1033ff330c16c34e5a12a1c4d6f3900b27d4f.
+Training's c1d2ee1 runs38997277952/38997278073 and Workspace's e72feb5
+runs38997771955/38997771892 were still running when this candidate was prepared.
+The six original ZIP members have now all been streamed and matched against their embedded
+size/digest manifest. This verifies unchanged retrieved bytes, not authentic importer acceptance
+or external shelf retention after chat deletion.
+
+| Requirement / retained IDs | Implementation and integration | Tested scope | Actual served evidence | Review / next action / owner | Acceptance |
+| --- | --- | --- | --- | --- | --- |
+| Water pages; CONT09, SIM-W01–07, ADP-A12–13/A16/A20 | PR249 head358e97e merged normally to main90049cf65b7d19d2e96ec0ecf9a9b0288fdc476a | Exact branch Required38966735323 and Adaptive38966735321 pass. Current local Water review gate76 passes; five reviewed findings resolved with code/tests. Main38996467909/38996467782 were still running at this checkpoint. | Cloud Chromium rendered full90049cf and entry index.enfra-frontend-fbb0a97cf659.js. Independent pinned83-member reconstruction predicts that entry. Isolated Water editor opens; a caption sent with Done is retained and correctly requires renewed page review. This is a limited live path, not a new all-output walkthrough. | Finish the isolated correction/reopen/reload path, then merged-head gates. No generation used to wait for deployment. | Merged; served; partial browser verification. |
+| Training; SIM-T01–07, ORIG-T01–05, UX21, ADP-A08/A11/A16–17 | PR250 retargeted to main; repaired4b3b6b2 then normally reconciled90049cf at c1d2ee1616357f31160dc937068f85a71521910f | New baseline:7 failures covering consecutive removal, distinct names, first-row defaults and missing filters;6 separate missing-instrumentation failures. Repaired47 checks pass, repeated47 after main reconciliation. Exact new CI pending. | Not yet merged or delivered. Existing dated date/output evidence remains scoped to its recorded revision. | Both filters now cover workspace_browser_observations.py and qa_monthly_live.py; older delivery/diagnostic helpers remain listed. Inspect new exact CI and current reviews before merge. | Implemented and locally tested. |
+| Accepted source batches and history; SRC03–06, CONT04/06/08, ADP-A10–11/A16 | PR251 candidate follows92ec8cd7, retargeted to main90049cf | New exact baseline:7 failures/2 passes. Four first-batch failure cases now stay pending through rerun and correction; saved move and explicit removal retire source-owned pages while human notes/tables remain; history context resets cursor/cache/selection. Full affected gate58 passes. Displayed-version-window tests also pass on the pinned baseline and remain guards. | Not yet merged or delivered. | Retained receipts use page provenance, preserve explicit omission and equal unlinked human content, and never edit originals/history. Existing retained-intake and comparison-pagination findings checked against current code/tests. Publish and run integrated CI. | Implemented and locally tested. |
+| Progress photos; SIM-V01–03, CONT07, ADP-A08/A18 | PR252 still based on older PR251; locator/re-entry candidate local | Original38967722620 first failure preserved unchanged:13,272,057 bytes; SHA2566f5268e432efcc58457e09ad44cc510aa8afa9024de5db276b678f79a2193ca5. Both retained DOMs compute “Photos per page Photos per page” using dom-accessibility-api0.7.1/jsdom26.1.0; the original exact single-name locator does not match. Local photo gate21 passes. | Not delivered. No assertion that density state was absent or broken; no final outputs exist for the failed journey. | Group-scoped native slider observation retains End/Home, adds keyboard values1–6 and compact editor re-entry. Reconcile PR251 first, then run both engines through the complete add/remove/Done/reload/output tail. | Browser acceptance pending. |
+| Simplicity inventory97 / original113 / ADP-A01–20 | Existing branch cleanup preserved; inventory numbering unchanged | The live90049cf page still visibly contains older duplicate help/copy and secondary controls; branch cleanup is not claimed live. | Representative Water/editor inspection only. | Finish integration, then fresh/populated/imported/unresolved/save-failed/generated/recovered desktop and narrow reviews, words/actions/screenshots and exact residual corrections. | Open implementation/product review. |
+| AUTH01–03, standing data, original retention, all-page/privacy/native/physical checks and combined artwork | All existing requirements and evidence boundaries below remain active | Exact private owner archive retrieved again:88,159,285 bytes, six originals plus manifest/README; full manifest-member verification is separate from importer replay. No consumed one-shot genuine diagnostic was repeated. | No new external original-shelf retention claim. | Owner/admin resolution of the specifically denied original transfer remains necessary; unavailable native/physical checks and separate combined-composition approval remain owner checks. Complete independent synthetic/code/output work meanwhile. | Open; precise external dependencies retained. |
+
+Private first-failure ZIP retained as libfile_f02903c20d3c8191856bda8ef46ec69f.
+Local JUnit receipts: pr249-review-current.xml; pr250-review-baseline.xml;
+pr250-observer-baseline.xml; pr250-review-final.xml; pr250-integrated-review.xml;
+pr251-review-baseline.xml; pr251-review-repair.xml; pr251-review-full.xml;
+pr252-photo-locator-local.xml. Keep them with the one restart checkpoint.
+The browser screenshot was captured but its documented shared-file synchronization did not
+produce a readable local file; it is not claimed as a retained screenshot artifact.
+
+## Historical branch and evidence boundary — October 16
+
+Retained PR252 receipt, 21:09 UTC: published parent358e97e was reconciled with its own photo/history, inherited-caption and preferred-logo repairs. Remote child252 was then8c53fb0 until the28a13b4 batch published. This is historical, not the current release.
+
+Refreshed 2026-10-16 20:49 UTC. This candidate follows published parent1e3516e; no
+new merge or live observation occurred. Child252 remains published8c53fb0, with new photo/history
+repairs locally verified but not browser-accepted.
 Later gate changes require another read. Statuses are
 scoped: **Observed** = browser-observed; **Conditional** = source-only conditional; **Defect** =
 reproduced defect; **Implemented** = implemented-needs-verification; **Verified(scope)** =
 verified-for-a-stated-scope; **Blocked(dependency)** = blocked-on-specific-dependency. An unrun
 acceptance row is not a defect. Overlapping test counts are never summed.
 
-## Current code and release
+## Historical code and release — October 16
 
 Main is `4ca42c59fe647d4cf1f766bfb2d232092e48f7cf`. Last independently verified actually served
 SHA is the same, from [live38937063007](https://github.com/evanroden/msapo-generator/actions/runs/38937063007),
@@ -37,7 +75,7 @@ A reported integration SHA or mergeable value is not a merge. Merge the parent t
 only after justified exact gates, reconcile/retarget each child to main and inspect its own delta;
 never merge a child into its feature parent. No docs-only deployment or CI dispatch is requested.
 
-## Current work and acceptance
+## Acceptance inventory — retain IDs; newest status is above
 
 | Area / retained coverage | State | Evidence limit | Next concrete action |
 | --- | --- | --- | --- |
@@ -58,7 +96,7 @@ never merge a child into its feature parent. No docs-only deployment or CI dispa
 | Native Word/PDF/master/privacy; CONT07, SRC06, VIS, UX21, ORIG-C/Q, ADP-A18 | Blocked(dependency) | Named synthetic bytes/rendering scopes are not approved authentic master, Microsoft Word, combined-outage approval or every graphic/hidden/package privacy channel. | Inspect all actual pages with exact source/build/design and named renderer; keep Microsoft Word, actual-scale combined artwork and physical checks separate. Continue independently reproducible native/privacy fixes. |
 | Six adaptive journeys; ADP-J01–06/A01–20, UX04/22/23, CONT10 | Verified(scope) | Isolated emulated Monthly/PO/Expense book/tabletop/compact scopes only; active failures and physical/assistive/IME/latency/eviction/durability breadth remain open. | Preserve every coverage ID and one authoritative editor, asymmetric/reverse/keyboard/source return, scoped writes, PO two-file and Expense receipt/split/share-cancel integrity; no business sends. |
 
-## Active first failures and discriminators
+## Retained first failures and discriminators — dated scopes
 
 - **Current automatic review, checked without starting another reviewer:** the older empty-Omit
   and no-source retained-content comments are already covered by current code and dedicated
@@ -302,3 +340,14 @@ existing owner acceptance folder; never publish private client material. No paid
 migration, credentials, spending, security change, business send or irreversible cleanup is
 authorized. This documentation commit is held for the next coherent implementation publication;
 no docs-only production deployment or CI dispatch is authorized by the compaction.
+
+This branch reconciliation normally merges published358e97e into 4c3dac25cf596e4f6c1b1b2a2f4ad85ab20d9aa2.
+Its preceding complete ledger remains retained at that Git commit (SHA256
+1f7a1b7530ca7ea8c6f7b40408feb7c92137eab636ef22a7da084c139c772fc3); the compact current ledger preserves every coverage ID.
+All branch-specific application and QA paths remain, with exact composed checks and new CI required.
+
+PR251 additionally takes the exact already-published28a13b4 semantic history table and its
+regression, so the known Chromium header-accessibility gap is fixed in the owning history
+branch before integration. The prior103-case reconciliation pass precedes these two byte-exact
+backports; targeted history verification passed21 checks, zero failures/errors/skips,15.35s. The
+reconciled workspace/source/Water gate passed103 checks,62.41s. New exact CI remains required.

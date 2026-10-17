@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from html import escape
+from hashlib import sha256
 
 import streamlit as st
 
@@ -24,11 +25,17 @@ def render_snapshot_history(draft, prefix, assets, snapshot):
         st.caption("[Enter Prepared by](#report-prepared-by) to view shared report history.")
         return
     contract, selected, period = draft.profile.contract, draft.profile.key, draft.period
+    context = (contract, selected, tuple(site.key for site in draft.profile.facilities), period.key)
+    context_key = prefix + "_history_context"
     cursor_key = prefix + "_history_before"
+    cache_key = prefix + "_history_index"
+    if st.session_state.get(context_key) != context:
+        st.session_state.pop(cursor_key, None)
+        st.session_state.pop(cache_key, None)
+        st.session_state[context_key] = context
     before = st.session_state.get(cursor_key)
     try:
-        identity = (snapshot.revision, snapshot.generated_at, before) if snapshot else (0, "", before)
-        cache_key = prefix + "_history_index"
+        identity = (context, snapshot.revision, snapshot.generated_at, before) if snapshot else (context, 0, "", before)
         cached = st.session_state.get(cache_key)
         if not cached or cached[0] != identity:
             cached = (identity, library.snapshot_history(contract, selected, period, before_revision=before))
@@ -57,19 +64,22 @@ def render_snapshot_history(draft, prefix, assets, snapshot):
                     '<th scope="col">Saved by</th></tr></thead><tbody>'
                     + rows + '</tbody></table></div>')
             by_revision = {version.revision: version for version in versions}
+            selection_identity = sha256(repr((identity, tuple(
+                (version.revision, version.generated_at, version.entered_editor)
+                for version in versions))).encode()).hexdigest()[:20]
             revision = st.selectbox(
                 "Inspect a saved version", (None, *by_revision),
                 format_func=lambda value: "Choose a version" if value is None else (
                     f"Version {value} · {_saved_at(by_revision[value].generated_at)} · "
                     + (by_revision[value].entered_editor or "Saved by not recorded")),
-                key=prefix + "_history_inspect_" + str(before or 0),
+                key=prefix + "_history_inspect_" + selection_identity,
             )
             if revision is not None:
                 saved = library.load_snapshot_version(contract, selected, period, revision)
                 from app.monthly_report_compare_ui import render_conflict_comparison
                 render_conflict_comparison(
                     draft, saved, can_accept=False,
-                    image_key=prefix + f"_history_images_{revision}",
+                    image_key=prefix + f"_history_images_{selection_identity}_{revision}",
                     working_asset_loader=lambda ref: assets.get(ref) or library.read_asset(contract, selected, ref),
                     saved_asset_loader=lambda ref: library.read_asset(contract, selected, ref),
                 )

@@ -395,13 +395,37 @@ def browser_task(engine, name, base):
         panel(2).get_by_role("button", name="Move earlier", exact=True).click()
         block = preserve_asset_reviews(block, replace(block, asset_hashes=refs[:2], asset_captions=(MOVED, CAPTIONS[1])))
         capture("desktop-reverse-earlier", block)
-        slider = page.locator(PAIR).get_by_role("slider", name="Photos per page", exact=True)
+        # Streamlit 1.61.1 labels both the scalar thumb and its group. The
+        # native thumb's aria-labelledby joins those two labels, so its name
+        # is "Photos per page Photos per page" in the retained first failure.
+        # Locate the user's labelled group and its one native slider instead
+        # of treating a failed exact-name match as missing density state.
+        density = page.locator(PAIR).get_by_role("group", name="Photos per page", exact=True)
+        expect(density).to_have_count(1)
+        density.scroll_into_view_if_needed()
+        expect(density).to_be_in_viewport()
+        slider = density.get_by_role("slider")
+        expect(slider).to_have_count(1)
+        expect(slider).to_be_enabled()
+        record["density_accessibility"] = {
+            "before_keyboard": density.aria_snapshot(),
+            "labelledby": slider.get_attribute("aria-labelledby"),
+            "value_text": slider.get_attribute("aria-valuetext"),
+        }
         slider.press("End")
         block = replace(block, photos_per_page=6)
         capture("desktop-density-six", block)
         slider.press("Home")
         block = replace(block, photos_per_page=1)
         capture("desktop-density-one", block)
+        for value in range(2, 7):
+            slider.press("ArrowRight")
+            block = replace(block, photos_per_page=value)
+            capture("desktop-density-keyboard-" + str(value), block)
+            expect(slider).to_have_attribute("aria-valuetext", str(value))
+        slider.press("Home")
+        block = replace(block, photos_per_page=1)
+        capture("desktop-density-return-one", block)
         block = review(block)
         upload((3,))
         start = len(delivery)
@@ -428,6 +452,22 @@ def browser_task(engine, name, base):
         block = review(block)
         capture("narrow-reviewed-ready", block, activity=ACTIVITY)
         page.screenshot(path=str(output / "narrow-progress-ready.png"), full_page=False)
+        page.locator(PAIR).get_by_role("button", name="Edit photos or captions", exact=True).click()
+        density = page.locator(PAIR).get_by_role("group", name="Photos per page", exact=True)
+        density.scroll_into_view_if_needed()
+        expect(density).to_be_in_viewport()
+        expect(density.get_by_role("slider")).to_have_count(1)
+        expect(panel(1).get_by_role("textbox", name="Caption", exact=True)).to_have_value(ADDED)
+        expect(panel(2).get_by_role("textbox", name="Caption", exact=True)).to_have_value(THIRD)
+        record["density_accessibility"]["narrow_reentry"] = density.aria_snapshot()
+        density.get_by_role("slider").press("End")
+        block = replace(block, photos_per_page=6)
+        capture("narrow-reentry-density-six", block, activity=ACTIVITY)
+        density.get_by_role("slider").press("Home")
+        block = replace(block, photos_per_page=1)
+        capture("narrow-reentry-density-one", block, activity=ACTIVITY)
+        page.locator(PAIR).get_by_role("button", name="Done editing photos", exact=True).click()
+        capture("narrow-reentry-done", block, activity=ACTIVITY)
         native = {}
         capture_native_window_errors(page, native, "final")
         native_documents.append(native["native_window_errors"])
