@@ -104,7 +104,7 @@ export default function(component) {
             const nativeChange = event => {
                 const target = event.target;
                 if (!target?.matches?.('input,textarea,select') ||
-                        target.closest?.('.report-preview')) return;
+                        target.closest?.('.report-preview') || target.closest?.('.epc-section-navigation')) return;
                 awaitNativeEdit();
             };
             // Streamlit's checkbox/toggle label can synchronously request its
@@ -197,11 +197,19 @@ export default function(component) {
     const views = window.__enfraPreviewViews || (window.__enfraPreviewViews = new Map());
     const viewKey = data.viewScope;
     if (state.scope !== viewKey) {
-        const retained = views.get(viewKey) || {page:0,offset:0};
-        Object.assign(state, retained, {scope:viewKey, restore:true});
+        const retained = views.get(viewKey);
+        Object.assign(state, retained || {page:0,offset:0}, {
+            scope:viewKey, restore:true, positioned:retained ? retained.positioned !== false : false,
+        });
     }
     const pagesKnown = Boolean(data.sizes && data.sizes.length);
     const sizes = pagesKnown ? data.sizes : [[612,792]];
+    if (pagesKnown && !state.positioned) {
+        state.page = Math.max(0, Math.min(Number(data.initialPage) || 0, sizes.length - 1));
+        state.offset = 0;
+        state.positioned = true;
+        state.restore = true;
+    }
     const layout = JSON.stringify([data.generation, sizes, data.ready, data.stale]);
     status.textContent = state.requestFailed ? 'Preview request interrupted — retry.' : (data.status || '');
     if (state.layout !== layout) {
@@ -283,7 +291,7 @@ export default function(component) {
         // cannot overwrite the last usable reading position.
         if (!state.restore && pagesKnown && scroll.clientWidth && scroll.clientHeight && figure)
             state.offset = scroll.scrollTop - (figure.offsetTop-scroll.offsetTop);
-        views.delete(viewKey); views.set(viewKey,{page:state.page,offset:state.offset});
+        views.delete(viewKey); views.set(viewKey,{page:state.page,offset:state.offset,positioned:state.positioned});
         while (views.size > 64) views.delete(views.keys().next().value);
         positionLabel.textContent = pagesKnown ? (state.page+1)+' / '+sizes.length : '—';
     }
@@ -465,6 +473,7 @@ def render_view(*, key, generation, title, ticket=None, images=(), status='', st
     return view(key=key, data={
         'generation': generation, 'title': title, 'viewScope': str(view_scope or key), 'ready': ticket is not None and not stale, 'stale': bool(stale),
         'sizes': ticket.sizes if ticket else (), 'status': status, 'pending': bool(pending),
+        'initialPage': ticket.initial_page if ticket else 0,
         'acknowledgedViewport': {'visible': bool(applied['visible']), 'pages': list(applied['pages']),
                                  'dpi': applied['dpi'], 'generation': generation},
         'pages': [{'index': index, 'image': b64encode(raw).decode('ascii')} for index, raw in images],

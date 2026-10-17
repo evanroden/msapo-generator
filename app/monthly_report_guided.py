@@ -1169,26 +1169,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state[prefix + "_evidence"] = tuple(
                 replace(content, source=corrections.get(content.source.id, content.source))
                 for content in st.session_state.get(prefix + "_evidence", ()))
-    from app.monthly_report_model import included_sections
-    short_links = {
-        "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
-        "mbcx": "MBCx", "maintenance": "Onsite calls", "subcontractors": "Subcontractors",
-        "water": "Water", "issues": "Issues", "capital": "Capital",
-        "proposals": "Proposals", "training": "Training", "rfi": "RFI",
-        "accounts_receivable": "A/R",
-    }
     from app.workspace_layout import workspace, workspace_section, workspace_columns
     with workspace("monthly", prefix, navigation_key="monthly_report_navigation"):
         with st.container(key="monthly_report_navigation"):
-            links = [f"[{short_links.get(section.key, section.title)}](#report-section-{section.key})"
-                     for section in included_sections(draft.sections)]
-            st.markdown("**Jump to:** " + " · ".join((*links, "[Review & download](#report-review)")))
-        st.markdown(
-            '<style>.st-key-monthly_report_navigation{position:sticky;top:3rem;z-index:15;'
-            'background:var(--background-color,#fff);border-bottom:1px solid rgba(128,128,128,.25);'
-            'padding:.25rem .5rem;max-height:6rem;overflow-y:auto;}</style>',
-            unsafe_allow_html=True,
-        )
+            st.markdown('<label class="epc-section-navigation">Section'
+                        '<select class="epc-section-selector" aria-label="Jump to section" disabled>'
+                        '<option>Loading sections…</option></select></label>', unsafe_allow_html=True)
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
@@ -1391,7 +1377,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             with st.expander("Sections without new updates (optional)", expanded=False):
                 st.caption("Blank or unchanged sections are allowed; saved standing details remain.")
                 st.markdown(" · ".join(
-                    f"[{short_links.get(section.key, section.title)}](#report-section-{section.key})"
+                    f"[{editor_section_title(section)}](#report-section-{section.key})"
                     for section in without_new_monthly))
         # Pre-generation page/size estimates are not client deliverables.
         # Actual sizes and the >15 MB warning are shown after generation.

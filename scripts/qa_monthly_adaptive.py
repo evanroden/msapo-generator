@@ -233,15 +233,33 @@ def pair_state(observed, key):
 
 def scroll_pair(page, selector, inset=130, *, preview=False):
     # Python's notRunning receipt can precede the workspace component mounting
-    # its layout classes/mode after reload. Wait for that actual scroll owner,
-    # rather than dereferencing a missing enhancement root. In compact mode an
+    # its layout classes after reload. A mode receipt alone can precede the
+    # requested pair's discovery; require that row's actual CSS and surfaces
+    # before this one scroll. In compact mode an
     # open preview follows the editor; moving the SECTION top into view would
     # move that preview back below the viewport.
-    page.wait_for_function("""wanted => {""" + DEEP + """
+    page.wait_for_function("""wanted => {""" + DEEP + r"""
       const pair=document.querySelector(wanted.selector);
       const root=pair?.closest('.epc-workspace');
       const mode=root?.dataset.epcMode;
       if(!['wide','book','tabletop','compact'].includes(mode))return false;
+      if(!pair.classList.contains('epc-workspace-pair'))return false;
+      const editor=pair.querySelector('.epc-workspace-editor');
+      const reference=pair.querySelector('.epc-workspace-reference');
+      const editColumn=editor?.closest('.epc-editor-column');
+      const refColumn=reference?.closest('.epc-reference-column');
+      const row=editColumn?.parentElement;
+      if(!row||row!==refColumn?.parentElement||!row.classList.contains('epc-workspace-row'))return false;
+      const rowStyle=getComputedStyle(row);
+      const columns=rowStyle.gridTemplateColumns?.trim().split(/\s+/);
+      if(rowStyle.display!=='grid'||columns?.length!==(['compact','tabletop'].includes(mode)?1:2))return false;
+      if(!editor.getClientRects().length||editor.getBoundingClientRect().width<=0)return false;
+      if(mode==='compact'){
+        if(Math.abs(editColumn.getBoundingClientRect().width-row.getBoundingClientRect().width)>2)return false;
+        const closed=pair.dataset.epcPreviewOpen!=='true';
+        if(closed&&(getComputedStyle(refColumn).display!=='none'||reference.getClientRects().length))return false;
+        if(!closed&&!reference.getClientRects().length)return false;
+      }
       const scroll=mode==='tabletop'||root.dataset.epcConfined==='true'
         ?root:document.querySelector('[data-testid="stMain"]');
       if(!scroll)return false;
@@ -276,6 +294,93 @@ def current_image(page, selector):
 
 def editor_state(field):
     return field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd,focused:document.activeElement===n,identity:n===window.__monthlyActivityNode})")
+
+
+def exercise_section_navigation(page, browser, field):
+    """One native selector, including the otherwise confined Review boundary.
+
+    select_option exercises the real HTML select's change path. This is not a
+    physical device/native popup claim; the served keyboard check stays distinct.
+    """
+    selector = page.get_by_role("combobox", name="Jump to section", exact=True)
+    expect(selector).to_have_count(1)
+    expect(selector).to_be_enabled()
+    labels = page.locator(".epc-workspace-pair [data-epc-title]").evaluate_all(
+        "nodes=>nodes.map(n=>n.dataset.epcTitle)")
+    check(browser, "one selector uses every editor heading in report order",
+          selector.locator("option").all_text_contents() == labels + ["Review and download"])
+    inject(page, [{"x": 0, "y": 0, "width": 1440, "height": 380},
+                  {"x": 0, "y": 410, "width": 1440, "height": 490}])
+    mode(page, "tabletop")
+    # Place the section marker across the selector's actual reading line.
+    # The former 110px inset left Activity below that line in the lower pane;
+    # its current-section assertion described a different visible section.
+    nav_height = selector.evaluate("n=>n.closest('.epc-section-navigation').getBoundingClientRect().height")
+    scroll_pair(page, ACTIVITY, inset=max(0, nav_height - 4))
+    expect(selector).to_be_in_viewport(ratio=1)
+    expect(selector).to_have_value("monthly_activity")
+    field.evaluate("n=>{window.__monthlyNavigationNode=n;}")
+    before_field = field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})")
+    before_offset = page.locator(ACTIVITY).evaluate("n=>n.getBoundingClientRect().top-n.closest('.epc-workspace').getBoundingClientRect().top")
+    before_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
+    selector.select_option("report_review")
+    mode(page, "compact")
+    expect(page.locator("#report-review")).to_be_in_viewport()
+    check(browser, "Review exits only the confined display and stays reachable", page.evaluate("""() => {
+      const root=document.querySelector('.epc-workspace'), main=document.querySelector('[data-testid="stMain"]');
+      return root.dataset.epcReviewOpen==='true' && root.dataset.epcReason==='review-navigation' &&
+        root.dataset.epcConfined!=='true' && !main.classList.contains('epc-workspace-scroll-owner');
+    }"""))
+    expect(selector).to_be_in_viewport()
+    capture(page, browser, "selector-tabletop-review")
+    selector.select_option("monthly_activity")
+    mode(page, "tabletop")
+    after_offset = page.locator(ACTIVITY).evaluate("n=>n.getBoundingClientRect().top-n.closest('.epc-workspace').getBoundingClientRect().top")
+    check(browser, "section selection restores actual lower-editor reading position", abs(after_offset-before_offset) <= TOLERANCE,
+          {"before": before_offset, "after": after_offset})
+    check(browser, "selector preserves the same native Activity input and pending selection",
+          field.evaluate("n=>n===window.__monthlyNavigationNode") and
+          field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})") == before_field)
+    after_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
+    check(browser, "section navigation avoids full reruns and report changes",
+          before_runtime["full_runs"] == after_runtime["full_runs"] and
+          before_runtime["draft_hashes"] == after_runtime["draft_hashes"],
+          {"before": before_runtime, "after": after_runtime})
+    capture(page, browser, "selector-tabletop-return")
+    inject(page, None)
+    mode(page, "wide")
+
+
+def exercise_natural_review_navigation(page, browser, field, layout):
+    """Observe ordinary page scrolling across Review, without choosing its option."""
+    selector = page.get_by_role("combobox", name="Jump to section", exact=True)
+    field.evaluate("n=>{window.__monthlyNaturalNavigationNode=n;}")
+    before_field = field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})")
+    before_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
+    page.evaluate("""() => {
+      const main=document.querySelector('[data-testid="stMain"]');
+      const review=document.querySelector('#report-review');
+      const nav=document.querySelector('.epc-section-navigation');
+      const header=document.querySelector('[data-testid="stHeader"]');
+      const line=Math.max(main.getBoundingClientRect().top,header?.getBoundingClientRect().bottom||0)+nav.getBoundingClientRect().height+12;
+      main.scrollTop+=review.getBoundingClientRect().top-line+16;
+    }""")
+    page.wait_for_function("document.querySelector('.epc-workspace')?.dataset.epcReviewOpen==='true'")
+    frames(page)
+    expect(selector).to_be_in_viewport()
+    expect(selector).to_have_value("report_review")
+    capture(page, browser, "selector-natural-review-" + layout)
+    scroll_pair(page, ACTIVITY, inset=130)
+    page.wait_for_function("document.querySelector('.epc-workspace')?.dataset.epcReviewOpen==='false'")
+    expect(selector).to_be_in_viewport()
+    expect(selector).to_have_value("monthly_activity")
+    after_runtime = page.evaluate(CLIENT_SNAPSHOT)["server"]
+    check(browser, layout + " natural Review and reverse scroll retain navigation and native input",
+          field.evaluate("n=>n===window.__monthlyNaturalNavigationNode") and
+          field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd})") == before_field and
+          before_runtime["full_runs"] == after_runtime["full_runs"] and
+          before_runtime["draft_hashes"] == after_runtime["draft_hashes"],
+          {"before": before_runtime, "after": after_runtime})
 
 
 def exercise(browser_type, name):
@@ -461,6 +566,8 @@ def exercise(browser_type, name):
         committed = before["value"]
         expect(page.get_by_text("QA durable Activity SHA256: " + hashlib.sha256(committed.encode()).hexdigest(), exact=True)).to_be_visible(timeout=60000)
         current_image(page, ACTIVITY)
+        exercise_section_navigation(page, name, field)
+        exercise_natural_review_navigation(page, name, field, "wide")
 
         scroll_pair(page, EMPTY)
         frames(page)
@@ -469,6 +576,7 @@ def exercise(browser_type, name):
         page.set_viewport_size({"width": 390, "height": 844})
         mode(page, "compact")
         scroll_pair(page, ACTIVITY, inset=80)
+        expect(page.get_by_role("combobox", name="Jump to section", exact=True)).to_be_in_viewport()
         check(name, "compact still has one current Activity editor", field.count() == 1 and field.input_value() == committed)
         check(name, "compact contains whole-page horizontal overflow", page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2"))
         page.locator(ACTIVITY).get_by_role("button", name="View preview", exact=True).click()
@@ -476,6 +584,7 @@ def exercise(browser_type, name):
         page.locator(ACTIVITY).get_by_role("button", name="Back to editing", exact=True).click()
         check(name, "compact preview returns to same editor", field.is_visible() and field.input_value() == committed)
         capture(page, name, "actual-compact-return")
+        exercise_natural_review_navigation(page, name, field, "compact")
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
         check(name, "zero external browser requests or sharing", not attempts and not page.evaluate("window.__monthlyShareAttempts.length"), attempts)
         check(name, "no uncaught browser errors", not errors, errors)
