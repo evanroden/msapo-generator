@@ -92,6 +92,9 @@ capacity-publishbb18538, mbcx-publish65a71ff, rows-followon742b8b1, section-navi
 save-feedback-followon82fb41b, training-followoncc687b1 and recovery-followon74f49a4.
 The original source-review workspace retains older combined intermediate versions; it is an archival
 recovery source, never an integration candidate. Do not overwrite newer per-slice files with it.
+That exact original workspace is now committed and pushed on `archive/combined-workspace-20261017`
+at `626d22d80fc2b83ca29b10a976602d94f7d53430` (tree7a6c2006b206dbe923c6fb536b938ec78d4e2058).
+The archive has no merge PR and must not replace the newer candidate trees above.
 
 ## Historical implementation checkpoint — 2026-10-17 21:46 UTC
 
