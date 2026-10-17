@@ -123,8 +123,17 @@ export default function(component) {
                         target.closest('.epc-workspace-reference')) return;
                 const label = target.closest('label');
                 const button = target.closest('[data-testid="stButton"] button');
+                // This app-owned keyed disclosure uses on_change="rerun".
+                // Its summary sends a native full run without an input change
+                // or stButton event. Hold queued preview fragments before that
+                // dispatch, just as for an ordinary report action. Other Help
+                // and comparison disclosures are display-only and must not
+                // wait for a full-render receipt they will never receive.
+                const disclosure = target.closest('summary')?.closest('[class*="_history_open"]');
+                const historyRerun = Array.from(disclosure?.classList || []).some(
+                    name => name.startsWith('st-key-') && name.endsWith('_history_open'));
                 if (label?.querySelector('input[type="checkbox"], input[type="radio"]') ||
-                        (button && !button.disabled)) awaitNativeEdit();
+                        (button && !button.disabled) || historyRerun) awaitNativeEdit();
             };
             // Ctrl/Command+Enter commits without blur/change. Tab/Shift+Tab
             // moves focus/scroll before its change/blur handlers can protect

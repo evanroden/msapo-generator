@@ -22,7 +22,7 @@ def capture_native_window_errors(page, record, stage):
     return snapshot
 
 
-def require_no_native_window_errors(snapshots):
+def require_no_native_window_errors(snapshots, *, origin=ORIGIN):
     """Every observed native error fails, including missed Playwright pageerrors."""
     assert isinstance(snapshots, list) and 1 <= len(snapshots) <= 2, "Missing or excessive native error snapshots."
     assert all(isinstance(snapshot, dict) for snapshot in snapshots), "Invalid native error snapshot."
@@ -33,7 +33,7 @@ def require_no_native_window_errors(snapshots):
         value = snapshot.get("evidence")
         assert isinstance(value, dict), "Native error collector is missing."
         assert (value.get("schema") == SCHEMA and value.get("installed") is True
-                and value.get("origin") == ORIGIN and value.get("limit") == LIMIT), "Native error collector was not installed for this fixture."
+                and value.get("origin") == origin and value.get("limit") == LIMIT), "Native error collector was not installed for this fixture."
         errors, total, overflow = value.get("errors"), value.get("total"), value.get("overflow")
         assert isinstance(errors, list) and len(errors) <= LIMIT, "Invalid native error buffer."
         assert (type(total) is int and total >= 0 and type(overflow) is int and overflow >= 0

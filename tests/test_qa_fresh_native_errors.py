@@ -43,6 +43,16 @@ def test_actual_js_resizeobserver_error_fails_gate_when_pageerror_is_empty(actua
         require_no_native_window_errors([snapshot(observed)])
 
 
+def test_first_site_collector_requires_its_exact_explicit_origin(actual_collector_model):
+    row = snapshot(actual_collector_model["clean"])
+    row["evidence"]["origin"] = "http://127.0.0.1:8526"
+    with pytest.raises(AssertionError, match="this fixture"):
+        require_no_native_window_errors([row])
+    require_no_native_window_errors([row], origin="http://127.0.0.1:8526")
+    with pytest.raises(AssertionError, match="this fixture"):
+        require_no_native_window_errors([row], origin="http://127.0.0.1:8535")
+
+
 def test_resource_errors_rejections_and_first16_overflow_all_fail(actual_collector_model):
     mixed, bounded = actual_collector_model["mixed"], actual_collector_model["bounded"]
     assert [row["kind"] for row in mixed["errors"]] == ["error", "unhandledrejection", "error"]

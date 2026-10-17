@@ -57,6 +57,7 @@ class Publication:
     scalar_date: bool
     virtualizer_resize: bool
     floating_resize: bool
+    queued_scroll: bool
     generation: str
 
 
@@ -132,14 +133,14 @@ def _locked_sources(scripts):
     return sources, members
 
 
-def _publication(sources, members, scalar_date, *, virtualizer_resize=True, floating_resize=True):
+def _publication(sources, members, scalar_date, *, virtualizer_resize=True, floating_resize=True, queued_scroll=True):
     if not floating_resize:
         originals = json.loads(MANIFEST_PATH.read_bytes())["members"]
         sources = {name: raw for name, raw in sources.items() if name in originals}
         members = {name: record for name, record in members.items() if name in originals}
     repaired = dict(sources)
     repaired[INDEX_BUNDLE] = sources[INDEX_BUNDLE].replace(ORIGINAL, REPAIRED, 1)
-    repaired[OVERLAY_BUNDLE] = repair_overlay(sources[OVERLAY_BUNDLE])
+    repaired[OVERLAY_BUNDLE] = repair_overlay(sources[OVERLAY_BUNDLE], queued_scroll=queued_scroll)
     if virtualizer_resize:
         repaired[VIRTUALIZER_BUNDLE] = repair_virtualizer(sources[VIRTUALIZER_BUNDLE])
     if floating_resize:
@@ -167,7 +168,7 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True, floa
             raise RuntimeError("Generated frontend import edges did not match their manifest; no bytes were changed.")
         payloads[name] = rewritten
     names[INDEX_BUNDLE] = _entry_name(payloads[INDEX_BUNDLE])
-    return Publication(names, payloads, scalar_date, virtualizer_resize, floating_resize, generation)
+    return Publication(names, payloads, scalar_date, virtualizer_resize, floating_resize, queued_scroll, generation)
 
 
 def _legacy_variants(sources):
@@ -199,8 +200,10 @@ def _validated_publications(static_dir, installed_version):
     # The first two are current outputs. The exact previous overlay-only
     # generations remain fully reconstructable upgrade inputs, including all
     # immutable members and preloads. Preserve their original identity recipe.
-    publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard, floating_resize=floating)
-                         for floating, guard in ((True, True), (False, True), (False, False))
+    publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard,
+                                     floating_resize=floating, queued_scroll=scroll)
+                         for scroll, floating, guard in ((True, True, True), (False, True, True),
+                                                         (False, False, True), (False, False, False))
                          for flag in (False, True))
     legacy, legacy_date_name, legacy_date = _legacy_variants(sources)
     variants = {**legacy, **{p.names[INDEX_BUNDLE]: (p.payloads[INDEX_BUNDLE], p.scalar_date) for p in publications}}
@@ -257,6 +260,7 @@ def _receipt(publication):
             "virtualizer_sha256": sha256(publication.payloads[VIRTUALIZER_BUNDLE]).hexdigest(),
             "virtualizer_resize": publication.virtualizer_resize,
             "floating_resize": publication.floating_resize,
+            "queued_scroll": publication.queued_scroll,
             "floating_bundle": publication.names.get(FLOATING_BUNDLE, FLOATING_BUNDLE),
             "original_floating_sha256": FLOATING_SHA256,
             "floating_sha256": (sha256(publication.payloads[FLOATING_BUNDLE]).hexdigest()
