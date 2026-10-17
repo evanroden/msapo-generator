@@ -16,6 +16,12 @@ def facility_choice(source, profile):
     """Map only a unique exact title/key/alias; never infer a site from a filename."""
     value = source.facility.strip().casefold()
     if not value:
+        from app.monthly_report_source_scope import (
+            CONTRACT_ARTWORK, MULTIPLE_FACILITIES, source_review,
+        )
+        scope = source_review(source)
+        if scope:
+            return CONTRACT_ARTWORK if scope.get("kind") == "contract_artwork" else MULTIPLE_FACILITIES
         return ""
     matches = [site.key for site in profile.facilities
                if value in {name.strip().casefold() for name in
@@ -38,14 +44,24 @@ def detail_problems(source, profile, period, *, in_report=False):
         problems.append("site unknown")
     elif site == KEEP_FACILITY:
         problems.append("site does not match this report")
+    elif source.scope_review:
+        from app.monthly_report_source_scope import reviewed_scope
+        if reviewed_scope(source, profile) is None:
+            problems.append("source scope changed; review its sites")
     return tuple(problems)
 
 
-def correct_source_details(source, profile, chosen_date, chosen_facility):
+def correct_source_details(source, profile, chosen_date, chosen_facility, *, chosen_facilities=(), artwork_keys=()):
     """Apply an explicit correction without relabeling a source or approving its pages."""
     if chosen_date is not None and type(chosen_date) is not date:
         raise ValueError("Choose one source date, or leave the date unknown.")
     sites = {site.key: site for site in profile.facilities}
+    from app.monthly_report_source_scope import CONTRACT_ARTWORK, MULTIPLE_FACILITIES, correct_scope
+    if chosen_facility in (MULTIPLE_FACILITIES, CONTRACT_ARTWORK):
+        updated = replace(source, service_date=chosen_date.isoformat() if chosen_date else "",
+                          facility="", scope_review="")
+        return correct_scope(updated, profile, chosen_facilities,
+                             contract_artwork=chosen_facility == CONTRACT_ARTWORK, artwork_keys=artwork_keys)
     if chosen_facility == KEEP_FACILITY:
         facility = source.facility
     elif chosen_facility == "":
@@ -54,5 +70,6 @@ def correct_source_details(source, profile, chosen_date, chosen_facility):
         facility = sites[chosen_facility].key
     else:
         raise ValueError("Choose an exact site from this report, or keep the source identity unresolved.")
-    return replace(source, service_date=chosen_date.isoformat() if chosen_date else "",
-                   facility=facility)
+    updated = replace(source, service_date=chosen_date.isoformat() if chosen_date else "",
+                      facility=facility, scope_review="")
+    return correct_scope(updated, profile, (chosen_facility,)) if chosen_facility in sites else updated

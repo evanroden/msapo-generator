@@ -251,9 +251,64 @@ def request_qa_generation(page, stage):
         raise
 
 
+def correct_replay_source_scope(page):
+    """An explicit synthetic reviewer choice, never an extraction assertion."""
+    warning = page.locator('[data-testid="stAlert"]').filter(has_text=
+        "Establish the site scope of synthetic-activity.txt before including its content.")
+    expect(warning).to_have_count(1, timeout=25000)
+    expect(page.get_by_role("button", name="Create Word and PDF", exact=True)).to_be_disabled()
+    before = (page.get_by_text(re.compile(r"^QA working report SHA256: [0-9a-f]{64}$"))
+              .last.text_content() or "").split(": ")[-1]
+    checkpoint("replay unknown source blocks generation", bool(re.fullmatch(r"[0-9a-f]{64}", before)))
+    # The source text intentionally has no printed site. For this synthetic
+    # journey the reviewer chooses Demo North explicitly; the original TXT
+    # stays unchanged and the later 18/18 check still verifies its byte digest.
+    warning.get_by_role("link", name="Correct site", exact=True).click()
+    details = page.locator('[data-testid="stForm"]').filter(has=
+        page.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites"))
+    # The targeted link exposes exactly this source's existing form. Other
+    # collapsed correction forms remain mounted, so select the visible one.
+    details = details.filter(visible=True)
+    expect(details).to_have_count(1)
+    sites = details.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites")
+    combo = sites.get_by_role("combobox")
+    combo.fill("Demo North")
+    page.get_by_role("option", name="Demo North", exact=True).click()
+    details.get_by_role("button", name="Use these source details", exact=True).click()
+    expect(warning).to_have_count(0, timeout=25000)
+    changed = page.get_by_text(re.compile(r"^QA working report SHA256: (?!" + before + r"$)[0-9a-f]{64}$")).last
+    changed.wait_for(timeout=25000)
+    after = (changed.text_content() or "").split(": ")[-1]
+    page.get_by_text("QA durable report SHA256: " + after, exact=True).wait_for(timeout=25000)
+    event("source_scope_correction_committed", source="synthetic-activity.txt",
+          selected_site="Demo North", before=before[:12], after=after[:12])
+    checkpoint("replay targeted source correction persisted", after != before)
+    # The existing issue retains its old provenance until the reviewer picks
+    # the current source. A site correction must not silently waive that gate.
+    stale = page.get_by_text("A supporting source changed or is missing.", exact=True)
+    expect(stale).to_have_count(1)
+    evidence = page.locator('[data-testid="stExpander"]').filter(has=
+        page.get_by_role("checkbox", name="Remove unavailable source links", exact=True))
+    summary = evidence.locator("summary")
+    if not summary.evaluate("el => el.parentElement.open"):
+        summary.click()
+    source_pages = evidence.locator('[data-testid="stMultiSelect"]').filter(has_text="Supporting source pages")
+    source_pages.get_by_role("combobox").fill("synthetic-activity.txt")
+    page.get_by_role("option", name="synthetic-activity.txt · page 1", exact=True).click()
+    evidence.get_by_role("checkbox", name="Remove unavailable source links", exact=True).check()
+    expect(stale).to_have_count(0, timeout=25000)
+    final = page.get_by_text(re.compile(r"^QA working report SHA256: (?!" + after + r"$)[0-9a-f]{64}$")).last
+    final.wait_for(timeout=25000)
+    fingerprint = (final.text_content() or "").split(": ")[-1]
+    page.get_by_text("QA durable report SHA256: " + fingerprint, exact=True).wait_for(timeout=25000)
+    checkpoint("replay current issue evidence persisted", True, fingerprint[:12])
+
+
 def complete_report(page, mode):
     checkpoint("fixture " + mode + " loaded", page.get_by_text(
         "Current fixture: " + mode, exact=False).first.is_visible())
+    if "replay" in mode:
+        correct_replay_source_scope(page)
     event("comparison_requested", mode=mode)
     page.get_by_role("button", name="Compare fixture facts", exact=True).click()
     expected = "source replay" if "replay" in mode else "known-value prefill"

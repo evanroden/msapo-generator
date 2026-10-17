@@ -57,7 +57,7 @@ def parse_date(value: str, format: str) -> date | None:
 
 
 def map_cmms(table: SourceTable, mapping: CMMSMapping, profile: ReportProfile,
-             period: ReportPeriod, reference: str) -> CMMSResult:
+             period: ReportPeriod, reference: str, *, scope_source=None) -> CMMSResult:
     columns = {name: i for i, name in enumerate(table.columns)}
     selected = (mapping.finished, mapping.work_order, mapping.facility, mapping.description,
                 mapping.area, mapping.tag, mapping.category, mapping.status)
@@ -141,5 +141,11 @@ def map_cmms(table: SourceTable, mapping: CMMSMapping, profile: ReportProfile,
         BlockSpec("work_orders", "work_order_grid", columns=(ColumnSpec("month", "Month"), ColumnSpec("facility", "Facility"),
             ColumnSpec("pm", "PM completed", "number"), ColumnSpec("cm", "CM completed", "number"), ColumnSpec("total", "Total completed", "number"))),
     )
-    return CMMSResult((ResolvedBlock("service_calls", "This month", rows=tuple(service_rows), references=(reference,)),
-                       ResolvedBlock("work_orders", "This month", rows=tuple(grid), references=(reference,))), specs, tuple(notices))
+    from app.monthly_report_source_scope import contribution_receipt
+    blocks = []
+    for spec, rows in zip(specs, (tuple(service_rows), tuple(grid))):
+        receipt = contribution_receipt(reference, profile, period, spec.key,
+                                       columns=tuple(c.title for c in spec.columns), rows=rows, source=scope_source)
+        blocks.append(ResolvedBlock(spec.key, "This month", rows=rows,
+                                    references=(reference, receipt) if receipt else (reference,)))
+    return CMMSResult(tuple(blocks), specs, tuple(notices))

@@ -269,7 +269,9 @@ def review_message(check, draft):
     key = check.block_key
     source = next((source for source in draft.sources if source.id == key), None)
     if source is not None and check.code.startswith("source_"):
-        return check.message + f" [Correct source details](#source-details-{source.id})."
+        target = "site" if check.code == "source_facility" else "date"
+        label = "Correct site" if target == "site" else "Correct date"
+        return check.message + f" [{label}](#source-details-{source.id}--{target})."
     follow_up = next((item for item in draft.follow_ups if item.key == key), None)
     if follow_up:
         category = "proposals" if follow_up.category == "proposal" else "equipment issues"
@@ -710,13 +712,17 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             current = blocks.get("activity_summary", ResolvedBlock("activity_summary", "This month"))
             matches = (request["contract"] == draft.profile.contract
                        and request["profile"] == draft.profile.key
-                       and request["month"] == draft.period.key)
+                       and request["month"] == draft.period.key
+                       and any(source.id == request["source_id"]
+                               and request["reference"].split(":")[-1] == source.fingerprint
+                               for source in draft.sources))
             if (matches and request["expected"] == current.fingerprint
                     and not _pending_rich_text_edit(prefix, current)):
                 if request["text"] not in current.text:
                     updated = replace(current, source="This month",
                         text="\n\n".join(filter(None, (current.text.strip(), request["text"]))),
-                        references=tuple(dict.fromkeys((*current.references, request["reference"]))),
+                        references=tuple(dict.fromkeys((*current.references, request["reference"],
+                                                        *([request["scope_receipt"]] if request.get("scope_receipt") else [])))),
                         reviewed_fingerprint="", client_reviewed_fingerprint="")
                     blocks["activity_summary"] = updated
                     _forget_block_widgets(prefix, {"activity_summary"})
@@ -1140,10 +1146,23 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         for source in draft.sources:
             in_report = source.id in included_sources
             problems = detail_problems(source, profile, period, in_report=in_report)
-            if problems and (resumed or in_report):
-                corrections[source.id] = render_source_details(
-                    source, profile, prefix + "_resumed_" + source.id, field,
-                    compact_problems=problems)
+            if in_report and not source.facility:
+                from app.monthly_report_source_scope import included_scope_valid
+                if not included_scope_valid(draft, source) and not any("scope" in p or "site" in p for p in problems):
+                    problems = (*problems, "source scope needs review")
+            # Keep one quiet return location even when this exact correction
+            # removes its warning/form. The display adapter reveals it only
+            # during a deliberate trip from final review.
+            with st.container(key="monthly_source_correction_" + source.id):
+                from html import escape
+                st.markdown('<a class="enfra-source-review-return" data-source-id="' +
+                            escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
+                            unsafe_allow_html=True)
+                if problems and (resumed or in_report):
+                    from app.monthly_report_source_scope import artwork_scope_keys
+                    corrections[source.id] = render_source_details(
+                        source, profile, prefix + "_resumed_" + source.id, field,
+                        compact_problems=problems, artwork_keys=artwork_scope_keys(draft, source.id))
         if any(corrections.get(source.id, source) != source for source in draft.sources):
             draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
             st.session_state[prefix + "_evidence"] = tuple(

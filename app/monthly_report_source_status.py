@@ -141,7 +141,10 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
         when = source_date(source.service_date)
         if when is None or not draft.period.start <= when <= draft.period.end:
             return result("Check the source reporting date.")
-        if facility_choice(source, draft.profile) in ("", KEEP_FACILITY):
+        from app.monthly_report_source_scope import included_scope_valid, reviewed_scope
+        if (facility_choice(source, draft.profile) in ("", KEEP_FACILITY)
+                or source.scope_review and (reviewed_scope(source, draft.profile) is None
+                                           or not included_scope_valid(draft, source))):
             return result("Check the source facility.")
         if (not selected or len(selected) != len(set(selected))
                 or any(type(number) is not int or number not in numbers for number in selected)):
