@@ -126,6 +126,20 @@ def test_undo_does_not_discard_text_delivered_by_the_same_native_click():
     assert_wording(app, "New text typed after Clear and delivered with Undo.")
 
 
+def test_undo_clear_never_resurrects_after_deliberate_later_edits_return_to_empty():
+    app = AppTest.from_string(APP, default_timeout=15).run()
+    button(app, "Clear Activity for this report").click().run()
+    assert any(b.label == "Undo Clear Activity" for b in app.button)
+    editor(app).set_value("Later deliberate human wording.").run()
+    assert_wording(app, "Later deliberate human wording.")
+    editor(app).set_value("").run()
+    assert_wording(app, "")
+    assert not any(b.label == "Undo Clear Activity" for b in app.button)
+    app.run()
+    assert_wording(app, "")
+    assert not any(b.label == "Undo Clear Activity" for b in app.button)
+
+
 JOURNAL_APP = '''
 import streamlit as st
 from dataclasses import replace

@@ -61,7 +61,7 @@ def _rich_text_editor_key(prefix, block):
             _signature((block.references, _rich_text_scope(prefix))))
 
 
-def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
+def _mark_explicit_rich_text_edit(marker, widget_key, block, scope, *, preserve_clear_undo=False):
     """Capture the exact submission and the version the operator edited.
 
     A string alone cannot distinguish an interrupted edit from a stale edit
@@ -83,6 +83,11 @@ def _mark_explicit_rich_text_edit(marker, widget_key, block, scope):
     if not isinstance(text, str):
         # A removed/uninitialized widget is not an intentional empty edit.
         return
+    undo = st.session_state.get(marker + "_clear_undo")
+    if not preserve_clear_undo and isinstance(undo, dict) and undo.get("scope") == scope:
+        # The same empty fingerprint can recur after deliberate later edits.
+        # Equality must not resurrect an earlier destructive-action receipt.
+        st.session_state.pop(marker + "_clear_undo", None)
     previous = st.session_state.get(marker)
     receipt = {
         "text": text, "baseline": block.fingerprint,
@@ -118,7 +123,7 @@ def _clear_rich_text_for_this_report(marker, widget_key, block, scope, prefix):
             "cleared": _edited_rich_text(block, "").fingerprint,
         }
     st.session_state[widget_key] = ""
-    _mark_explicit_rich_text_edit(marker, widget_key, block, scope)
+    _mark_explicit_rich_text_edit(marker, widget_key, block, scope, preserve_clear_undo=True)
     if isinstance(prior_text, str) and prior_text:
         st.session_state[marker]["clear_previous"] = prior_text
 
@@ -163,7 +168,8 @@ def _recover_rich_text_edit(marker, widget_key, block, scope):
                     "cleared": _edited_rich_text(block, "").fingerprint,
                 }
         st.session_state[widget_key] = recovered["text"]
-        _mark_explicit_rich_text_edit(marker, widget_key, block, scope)
+        _mark_explicit_rich_text_edit(marker, widget_key, block, scope,
+                                     preserve_clear_undo=recovered.get("text") == "" and bool(recovered.get("clear_previous")))
         st.session_state.pop(marker + "_recovery", None)
 
 
