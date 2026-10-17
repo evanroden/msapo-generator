@@ -16,8 +16,12 @@ STATUS = 'On hold — awaiting owner decision'
 NOTE = 'Synthetic decision: inspect the existing valve; no price included.'
 TASK = 'Synthetic onsite task: inspect AHU-TEST-04 and retain follow-up.'
 ASSET = 'AHU-TEST-0042'
+PHONE = '202-555-0142'
+AGREEMENT = 'Awaiting signed agreement'
 PROPOSALS = '.st-key-epc_pair_monthly_proposals'
 ONSITE = '.st-key-epc_pair_monthly_maintenance'
+CONTACTS = '.st-key-epc_pair_monthly_organization'
+VENDORS = '.st-key-epc_pair_monthly_subcontractors'
 
 
 def receipt(page, *, field=None, value=None):
@@ -34,7 +38,7 @@ def receipt(page, *, field=None, value=None):
     return json.loads(page.locator('[data-enfra-row-receipt]').last.get_attribute('data-enfra-row-receipt'))
 
 
-def assert_outputs(word, pdf):
+def assert_outputs(word, pdf, *, contacts=False):
     from lxml import etree
     import pymupdf
     with ZipFile(BytesIO(word)) as package:
@@ -49,9 +53,16 @@ def assert_outputs(word, pdf):
         assert 'Status' in proposal[0] and 'Asset' in onsite[0]
         full='\n'.join(root.xpath('.//w:t/text()', namespaces=ns))
         assert full.count(NOTE)==1 and full.count(TASK)==1
+        if contacts:
+            contact = next(table for table in tables if any('Synthetic Person North' in row for row in table))
+            vendor = next(table for table in tables if any('Invented Vendor Contact' in row for row in table))
+            assert any('Synthetic Person North' in row and PHONE in row for row in contact)
+            assert any('Invented Vendor Contact' in row and AGREEMENT in row for row in vendor)
     with pymupdf.open(stream=pdf, filetype='pdf') as doc:
         text=' '.join(' '.join(page.get_text().split()) for page in doc)
         assert all(' '.join(value.split()) in text for value in (STATUS, NOTE, TASK, ASSET))
+        if contacts:
+            assert PHONE in text and AGREEMENT in text
         pages=len(doc)
     return {'docx': {'bytes':len(word),'sha256':sha256(word).hexdigest()},
             'pdf': {'bytes':len(pdf),'sha256':sha256(pdf).hexdigest(),'pages':pages},
@@ -105,7 +116,31 @@ def browser_task(browser_type, name):
         expect(proposal.get_by_role('textbox',name='Technical Notes',exact=True)).to_have_value(NOTE)
         proposal.get_by_role('button',name='Close editing',exact=True).click()
         capture('desktop-proposal-reentry')
+        contacts=page.locator(CONTACTS)
+        contacts.get_by_role('button',name='Edit contact',exact=True).nth(0).click()
+        expect(contacts.get_by_role('textbox',name='Name',exact=True)).to_have_value('Synthetic Person North')
+        expect(contacts.get_by_role('textbox',name='Phone',exact=True)).to_have_count(1)
+        contacts.get_by_role('textbox',name='Phone',exact=True).fill(PHONE)
+        contacts.get_by_role('button',name='Close editing',exact=True).click()
+        contact_state=capture('contact-phone-delivered-with-close',field='Phone',value=PHONE)
+        before_directory=baseline['directory']; after_directory=contact_state['directory']
+        assert after_directory['revision']==before_directory['revision']+1
+        assert after_directory['sites'][0]['contacts'][0]['phone']==PHONE
+        assert after_directory['sites'][1:]==before_directory['sites'][1:]
+        assert after_directory['contract_contacts']==before_directory['contract_contacts']
+        contacts.get_by_role('button',name='Remove contact',exact=True).nth(0).click()
+        removed=capture('report-only-remove-contact')
+        assert removed['directory']==after_directory
+        contacts.get_by_role('button',name='Undo remove contact',exact=True).click()
+        restored=capture('report-only-undo-contact',field='Phone',value=PHONE)
+        assert restored['directory']==after_directory
         page.set_viewport_size({'width':545,'height':757})
+        vendors=page.locator(VENDORS)
+        vendors.get_by_role('button',name='Edit vendor contact',exact=True).click()
+        vendors.get_by_role('textbox',name='Agreement status (MSA)',exact=True).fill(AGREEMENT)
+        vendors.get_by_role('button',name='Close editing',exact=True).click()
+        vendor_state=capture('narrow-vendor-agreement-delivered-with-close',field='MSA',value=AGREEMENT)
+        assert vendor_state['directory']==after_directory
         onsite=page.locator(ONSITE)
         onsite.get_by_role('button',name='Edit onsite call',exact=True).click()
         onsite.get_by_role('textbox',name='Asset',exact=True).fill(ASSET)
@@ -126,12 +161,22 @@ def browser_task(browser_type, name):
         expect(proposal.get_by_role('textbox',name='Status',exact=True)).to_have_value(STATUS)
         proposal.get_by_role('button',name='Close editing',exact=True).click()
         capture('narrow-proposal-and-onsite-reentry')
+        contacts=page.locator(CONTACTS)
+        contacts.get_by_role('button',name='Edit contact',exact=True).nth(0).click()
+        expect(contacts.get_by_role('textbox',name='Phone',exact=True)).to_have_value(PHONE)
+        contacts.get_by_role('button',name='Close editing',exact=True).click()
+        vendors=page.locator(VENDORS)
+        vendors.get_by_role('button',name='Edit vendor contact',exact=True).click()
+        expect(vendors.get_by_role('textbox',name='Agreement status (MSA)',exact=True)).to_have_value(AGREEMENT)
+        vendors.get_by_role('button',name='Close editing',exact=True).click()
+        final=capture('narrow-contact-and-vendor-reentry',field='MSA',value=AGREEMENT)
+        assert final['directory']==after_directory
         qa.capture(page,name,'row-cards-narrow')
         live.ROOT=out;live.EVIDENCE={'checks':{},'events':[],'artifacts':{},'synthetic_only':True}
         live.request_qa_generation(page,'row-card-journey')
         word=live.download(page,'Download isolated QA DOCX','row-cards.docx')
         pdf=live.download(page,'Download isolated QA PDF','row-cards.pdf')
-        record['outputs']=assert_outputs(word,pdf)
+        record['outputs']=assert_outputs(word,pdf,contacts=True)
         record['generation']=live.EVIDENCE
         assert not errors and not external
         record['result']='passed';qa.check(name,'Native row status/identifiers/edit-close/reload and actual output',True)

@@ -47,7 +47,16 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
             identities.insert(index, active)
             draft_token = None
             changed_fields = True
-    if action == "open":
+    if action == "edit" or changed_fields or action in {"add", "remove"}:
+        record.pop("undo", None)
+    removed_version = None
+    if action == "undo":
+        undo = record.get("undo")
+        if undo and undo["result"] == expected:
+            rows, identities = list(undo["rows"]), list(undo["tokens"])
+            active, draft_token = None, None
+        record.pop("undo", None)
+    elif action == "open":
         active = target if target in identities else None
     elif action == "add":
         draft_token = draft_token or uuid4().hex
@@ -58,6 +67,8 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
             draft_token = None
         active = None
     elif action == "remove" and target in identities:
+        if record.get("allow_undo"):
+            removed_version = (tuple(rows), tuple(identities))
         index = identities.index(target)
         del rows[index]
         del identities[index]
@@ -69,6 +80,8 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
         retained = [(row, token) for row, token in zip(rows, identities)
                     if any(value is not None and str(value).strip() for value in row)]
         rows, identities = [row for row, _ in retained], [token for _, token in retained]
+    if removed_version is not None:
+        record["undo"] = {"rows": removed_version[0], "tokens": removed_version[1], "result": tuple(rows)}
     # Consecutive callbacks may arrive before the parent commits. Collapse
     # only an exact acknowledged result, never an unrelated current table.
     previous = record.get("pending")
@@ -130,10 +143,19 @@ def _comparison_rows(columns, rows):
     return [dict(zip(labels, row)) for row in rows]
 
 
-def _edit_table(columns, rows, types, key, noun, add_label, field):
+def _edit_table(columns, rows, types, key, noun, add_label, field, *, summary=None,
+                labels=None, max_chars=None, scope_labels=None, allow_undo=False, empty_label=None):
     record = dict(st.session_state.get(key, {}))
+    record["allow_undo"] = allow_undo
     pending = record.get("pending")
     incoming = tuple(tuple(row) for row in rows)
+    # Labels describe the supplied canonical rows. A delivered add/remove can
+    # change their positions before the parent commits; bind by row identity,
+    # not the new positional index. Ambiguous copies remain report-scoped.
+    row_scopes = {}
+    if scope_labels:
+        for row, scope in zip(incoming, scope_labels):
+            row_scopes[row] = scope if incoming.count(row) == 1 else "This report only"
     rows = incoming
     if pending and incoming in (pending["baseline"], pending["expected"], pending["result"]):
         rows = pending["result"]
@@ -164,6 +186,11 @@ def _edit_table(columns, rows, types, key, noun, add_label, field):
     active = record.get("active")
     draft_token = record.get("draft_token")
     st.session_state[key] = record
+
+    if empty_label:
+        with st.container(key=key + "_empty_state"):
+            if not rows and not active:
+                st.caption(empty_label)
 
     active_values = (rows[tokens.index(active)] if active in tokens else
                      tuple("" for _ in columns) if active and active == draft_token else ())
@@ -200,32 +227,38 @@ def _edit_table(columns, rows, types, key, noun, add_label, field):
                 # first identifier or a long title is entered. Keep this
                 # active heading the same height until explicit closure.
                 st.write("Edit " + noun)
-                _render_fields(columns, fields, args, field)
+                if scope_labels is not None:
+                    st.caption(row_scopes.get(row, "This report only"))
+                _render_fields(columns, fields, args, field, labels=labels, max_chars=max_chars)
                 st.button("Close editing", key=key + "_close_" + token, on_click=_queue, args=(*args, "close"))
             else:
-                _summary(columns, row, noun, index)
+                (summary or _summary)(columns, row, noun, index)
                 st.button("Edit " + noun, key=key + "_open_" + token,
                           on_click=_queue, args=(*args, "open", token))
             if token != draft_token:
                 st.button("Remove " + noun, key=key + "_remove_" + token,
                           help="Removes only this row from this report; source files and saved versions remain.",
                           on_click=_queue, args=(*args, "remove", token))
+    undo = record.get("undo")
+    if allow_undo and undo and undo["result"] == rows:
+        st.button("Undo remove " + noun, key=key + "_undo", on_click=_queue, args=(*args, "undo"))
     st.button(add_label, key=key + "_add", on_click=_queue, args=(*args, "add"),
               disabled=bool(active and active == draft_token))
     return rows
 
 
-def _render_fields(columns, fields, args, field):
+def _render_fields(columns, fields, args, field, *, labels=None, max_chars=None):
     for title, (key, original, kind, default) in zip(columns, fields):
+        label = (labels or {}).get(title, title)
         options = dict(key=field(key, default), value=default, on_change=_queue, args=args)
         if kind == "date" and (isinstance(default, date) or default is None):
-            st.date_input(title, format="YYYY-MM-DD", **options)
+            st.date_input(label, format="YYYY-MM-DD", **options)
         elif kind in {"number", "currency"} and (isinstance(default, float) or default is None):
-            st.number_input(title, **options)
+            st.number_input(label, **options)
         elif any(word in title.casefold() for word in ("description", "scope", "notes", "recommendation")):
-            st.text_area(title, height=100, **options)
+            st.text_area(label, height=100, max_chars=max_chars, **options)
         else:
-            st.text_input(title, **options)
+            st.text_input(label, max_chars=max_chars, **options)
 
 
 def edit_row_cards(spec, block, prefix, field):

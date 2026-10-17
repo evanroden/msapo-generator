@@ -6,16 +6,22 @@ from docx import Document
 import pymupdf
 import pytest
 
-from scripts.qa_report_row_cards import assert_outputs, STATUS, NOTE, TASK, ASSET
+from scripts.qa_report_row_cards import assert_outputs, STATUS, NOTE, TASK, ASSET, PHONE, AGREEMENT
 from scripts.workspace_row_observations import row_state
 
 
-def outputs(*, status=STATUS, asset=ASSET, note=NOTE):
+def outputs(*, status=STATUS, asset=ASSET, note=NOTE, contacts=False, phone=PHONE, agreement=AGREEMENT):
     doc=Document()
-    for columns, row in [
+    rows = [
         (('Project Number','Status','Technical Notes'),('Q-TEST-731',status,note)),
         (('WO#','Task','Asset'),('WO-TEST-1005',TASK,asset)),
-    ]:
+    ]
+    if contacts:
+        rows.extend([
+            (('Facility','Role','Name','Phone','Email'),('Demo North','Engineer','Synthetic Person North',phone,'')),
+            (('Vendor','Contact','MSA'),('Invented Vendor','Invented Vendor Contact',agreement)),
+        ])
+    for columns, row in rows:
         table=doc.add_table(rows=2,cols=len(columns))
         for i,value in enumerate(columns):table.cell(0,i).text=value
         for i,value in enumerate(row):table.cell(1,i).text=value
@@ -28,7 +34,8 @@ def outputs(*, status=STATUS, asset=ASSET, note=NOTE):
         font=Path('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
         if not font.is_file():pytest.skip('PDF text fixture needs DejaVu Sans')
         page.insert_font(fontname='qa',fontfile=str(font))
-        page.insert_textbox((40,40,550,500),'\n'.join((status,note,TASK,asset)),fontname='qa',fontsize=10)
+        values = (status,note,TASK,asset) + ((phone,agreement) if contacts else ())
+        page.insert_textbox((40,40,550,500),'\n'.join(values),fontname='qa',fontsize=10)
         raw=pdf.tobytes()
     return word.getvalue(),raw
 
@@ -41,6 +48,16 @@ def test_native_output_assertion_checks_cells_and_pdf():
 @pytest.mark.parametrize('change',[{'status':'Pending'},{'asset':'AHU-WRONG'},{'note':''}])
 def test_changed_field_cannot_pass_the_actual_output_assertion(change):
     with pytest.raises(AssertionError):assert_outputs(*outputs(**change))
+
+
+def test_contact_journey_checks_actual_editable_cells_and_pdf():
+    assert assert_outputs(*outputs(contacts=True), contacts=True)['pdf']['pages'] == 1
+
+
+@pytest.mark.parametrize('change', [{'phone':'Wrong phone'}, {'agreement':''}])
+def test_contact_journey_rejects_lost_correction_in_actual_output(change):
+    with pytest.raises(AssertionError):
+        assert_outputs(*outputs(contacts=True, **change), contacts=True)
 
 
 def test_row_receipt_preserves_all_source_columns_and_unrelated_fingerprint():
