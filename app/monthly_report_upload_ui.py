@@ -251,7 +251,7 @@ def _cmms(content, profile, period, prefix, field):
 
 
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field, *, retain_accepted=False,
-                   attached_blocks=None, included_source_ids=()):
+                   attached_blocks=None, included_source_ids=(), scope_draft=None):
     st.caption("Read source files, check their pages, or match spreadsheet columns.")
     st.caption("PDF, Word, Excel, photos and email files. Uploaded emails are read, not sent.")
     with st.expander("File formats and limits"):
@@ -319,7 +319,11 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             if len(candidates) == 1:
                 caption_defaults[number] = candidates[0]
     _sync_source_fields(source, p, field, caption_defaults=caption_defaults)
-    source = render_source_details(source, profile, p, field,
+    from app.monthly_report_source_scope import artwork_scope_keys
+    artwork_keys = (artwork_scope_keys(scope_draft, source.id)
+                    if scope_draft is not None and scope_draft.profile == profile
+                    and scope_draft.period == period else ())
+    source = render_source_details(source, profile, p, field, artwork_keys=artwork_keys,
         applied_caption=("Corrected details are kept in this file selection. Add the selection below to update the report."
                          if retain_accepted else "Corrected details applied to this draft."))
     pending = st.session_state.pop(p + "_page_action", None)

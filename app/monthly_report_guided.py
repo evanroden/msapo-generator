@@ -1183,6 +1183,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.session_state[prefix + "_evidence"] = tuple(
                 replace(content, source=corrections.get(content.source.id, content.source))
                 for content in st.session_state.get(prefix + "_evidence", ()))
+            # A metadata correction does not restore missing original bytes.
+            # Keep the corrected record in that retained set as well, or the
+            # next source renderer would restore its pre-correction metadata.
+            st.session_state[prefix + "_unavailable_sources"] = tuple(
+                corrections.get(source.id, source)
+                for source in st.session_state.get(prefix + "_unavailable_sources", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",

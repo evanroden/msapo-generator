@@ -67,6 +67,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
 
     sources, additions, incoming_specs = render_uploads(
         draft.profile, draft.period, prefix, field, attached_blocks=blocks,
+        scope_draft=replace(draft, blocks=tuple(blocks.values())),
         included_source_ids=used_source_ids(replace(draft, blocks=tuple(blocks.values()))))
     draft = replace(draft, sources=keep_missing(prefix, sources))
     if additions:
