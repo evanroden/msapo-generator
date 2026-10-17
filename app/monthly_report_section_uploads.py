@@ -1,6 +1,7 @@
 """Section-local evidence routing without copying or reclassifying saved sources."""
 
 from dataclasses import replace
+import re
 
 from app import monthly_report_sources as sources
 
@@ -18,6 +19,19 @@ CLASSIFICATION_DESTINATIONS = {
     "Improvement / training photo": "improvements",
 }
 
+SOURCE_ROUTE_PREFIX = "section-source-route:v1:"
+
+
+def source_route(reference):
+    """Read routing metadata, never an image inclusion or evidence approval."""
+    if not reference.startswith(SOURCE_ROUTE_PREFIX):
+        return None
+    parts = reference[len(SOURCE_ROUTE_PREFIX):].split(":")
+    if (len(parts) != 3 or parts[0] not in SECTION_UPLOADS
+            or any(re.fullmatch(r"[0-9a-f]{64}", part) is None for part in parts[1:])):
+        return None
+    return tuple(parts)
+
 
 def page_identity(reference):
     """Read the stable source/page identity, independent of mutable source facts."""
@@ -31,10 +45,14 @@ def included_pages(blocks):
     for key, block in blocks.items():
         if key not in sources.PAGE_DESTINATIONS or not block.asset_hashes:
             continue
-        for reference in block.references:
-            identity = page_identity(reference)
-            if identity:
-                result.setdefault(identity, set()).add(key)
+        # Narrative evidence may retain a removed page's reference. Only
+        # provenance on an actually included image establishes page ownership.
+        from app.monthly_report_asset_review import asset_context
+        for index in range(len(block.asset_hashes)):
+            for reference in asset_context(block, index):
+                identity = page_identity(reference)
+                if identity:
+                    result.setdefault(identity, set()).add(key)
     return result
 
 
@@ -46,8 +64,10 @@ def source_destinations(contents, bindings, blocks):
     for content in contents:
         identity = content.source.id
         if identity not in owners:
+            retained = {key for key, block in blocks.items() for reference in block.references
+                        if source_route(reference) == (key, identity, content.source.sha256)}
             slot = bindings.get(identity) or CLASSIFICATION_DESTINATIONS.get(content.source.classification)
-            owners[identity] = {slot} if slot else set()
+            owners[identity] = retained or ({slot} if slot else set())
     return owners
 
 

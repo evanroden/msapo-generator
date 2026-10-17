@@ -36,7 +36,12 @@ def test_imported_water_notes_are_visible_and_editable_without_losing_pages():
     assert app.session_state.block.text == "Updated findings and follow-ups."
     assert app.session_state.block.asset_hashes == original.asset_hashes
     assert app.session_state.block.references == original.references
-    assert "Replace all report pages with one image (optional)" in {e.label for e in app.expander}
+    assert "Replace this section’s attached pages" in {e.label for e in app.expander}
+    assert "Replace all report pages with one image (optional)" not in {e.label for e in app.expander}
+    assert any(c.value == "Replaces 1 attached pages in Water treatment reports with one image. "
+               "Other sections and saved originals stay unchanged." for c in app.caption)
+    assert any(u.label == "Replacement image for Water treatment reports"
+               for u in app.get("file_uploader"))
 
 
 def test_training_photo_appends_and_retains_notes_and_original_sources(monkeypatch):

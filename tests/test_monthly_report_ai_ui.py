@@ -3,7 +3,7 @@ from concurrent.futures import Future
 from app import monthly_report_ai_ui as ui
 from app.monthly_report_checks import preflight
 from test_monthly_report_ui import monthly, step
-from test_monthly_report_upload_ui import upload, button
+from test_monthly_report_upload_ui import upload, button, open_source_manager
 
 
 def test_read_draft_review_preserves_existing_work_and_invalidates(
@@ -44,7 +44,7 @@ def test_read_draft_review_preserves_existing_work_and_invalidates(
     monkeypatch.setattr(ui, "start_receipt", start)
     app = monthly(monkeypatch, tmp_path)
     step(app, 2)
-    next(w for w in app.checkbox if w.label == "Add work-order spreadsheets").check().run()
+    open_source_manager(app)
     upload(
         monkeypatch,
         "synthetic.txt",

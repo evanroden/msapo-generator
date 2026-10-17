@@ -38,43 +38,110 @@ EXPECTATION_ONLY = "EXPECTATION_ONLY_CANARY_NOT_SOURCE_CONTENT"
 
 
 def _expected_frontend(static_dir=None):
-    """Read the exact pinned publisher output; this observer performs no writes."""
+    """Independently validate pinned inputs/reconstructed output before reading."""
     import streamlit
     from scripts import patch_streamlit_frontend as compat
     root = static_dir or Path(streamlit.__file__).parent / "static"
-    scripts = root / "static/js"
-    original = (scripts / compat.INDEX_BUNDLE).read_bytes()
-    date = (scripts / compat.DATE_BUNDLE).read_bytes()
-    if (sha256(original).hexdigest() != compat.INDEX_SHA256
-            or sha256(date).hexdigest() != compat.DATE_SHA256):
-        raise AssertionError("The frontend observer requires the exact locked original assets")
-    scheduler = original.replace(compat.ORIGINAL, compat.REPAIRED, 1)
-    date_name = "DateInput.enfra-scalar-" + sha256(date.replace(compat.DATE_ORIGINAL, compat.DATE_REPAIRED, 1)).hexdigest()[:12] + ".js"
-    choices = (scheduler, scheduler.replace(compat.DATE_BUNDLE.encode(), date_name.encode()))
-    html = (root / "index.html").read_bytes()
-    matches = [(compat._entry_name(raw), raw) for raw in choices
-               if html.count(compat._entry_name(raw).encode()) == 1]
-    if len(matches) != 1 or (scripts / matches[0][0]).read_bytes() != matches[0][1]:
-        raise AssertionError("The frontend observer did not find one verified current HTML entry")
-    return matches[0]
+    # This read-only API reconstructs all expected assets from STATIC pins,
+    # exact known repairs/config and edges, then compares every selected blob.
+    # A selected filename or a digest of unvalidated installed bytes is not proof.
+    selected = compat.selected_frontend(root)
+    raw = (root / "static/js" / selected["entry"]).read_bytes()
+    if sha256(raw).hexdigest() != selected["patched_entry_sha256"]:
+        raise RuntimeError("Pinned primary frontend changed after validation.")
+    return selected["entry"], raw
 
 
-def _frontend_response_receipt(response, expected):
-    """Hash one actual browser response, without another request or raw JS logs."""
+def _expected_overlay(static_dir=None):
+    import streamlit
     from scripts import patch_streamlit_frontend as compat
+    root = static_dir or Path(streamlit.__file__).parent / "static"
+    selected = compat.selected_frontend(root)
+    raw = (root / "static/js" / selected["overlay_bundle"]).read_bytes()
+    if sha256(raw).hexdigest() != selected["overlay_sha256"]:
+        raise RuntimeError("Pinned overlay frontend changed after validation.")
+    return selected["overlay_bundle"], raw
+
+
+def _expected_virtualizer(static_dir=None):
+    import streamlit
+    from scripts import patch_streamlit_frontend as compat
+    root = static_dir or Path(streamlit.__file__).parent / "static"
+    selected = compat.selected_frontend(root)
+    if not selected["virtualizer_resize"]:
+        raise RuntimeError("The pinned frontend lacks virtual-list resize compatibility.")
+    raw = (root / "static/js" / selected["virtualizer_bundle"]).read_bytes()
+    if sha256(raw).hexdigest() != selected["virtualizer_sha256"]:
+        raise RuntimeError("Pinned virtual-list frontend changed after validation.")
+    return selected["virtualizer_bundle"], raw
+
+
+def _expected_floating(static_dir=None):
+    import streamlit
+    from scripts import patch_streamlit_frontend as compat
+    root = static_dir or Path(streamlit.__file__).parent / "static"
+    selected = compat.selected_frontend(root)
+    if not selected["floating_resize"]:
+        raise RuntimeError("The pinned frontend lacks Floating UI resize compatibility.")
+    raw = (root / "static/js" / selected["floating_bundle"]).read_bytes()
+    if sha256(raw).hexdigest() != selected["floating_sha256"]:
+        raise RuntimeError("Pinned Floating UI frontend changed after validation.")
+    return selected["floating_bundle"], raw
+
+
+def _floating_response_receipt(response, expected):
+    from scripts.streamlit_floating_resize import FLOATING_END, FLOATING_END_REPAIRED
+    receipt, raw = _asset_response_receipt(response, expected)
+    receipt.update({"resize_hold_count": raw.count(FLOATING_END_REPAIRED),
+                    "original_resize_hook_count": raw.count(FLOATING_END)})
+    receipt["matches"] = bool(receipt.get("matches") and receipt["resize_hold_count"] == 1
+                              and receipt["original_resize_hook_count"] == 0)
+    return receipt
+
+
+def _asset_response_receipt(response, expected):
+    """Hash one actual browser response, without another request or raw JS logs."""
     entry, expected_bytes = expected
     receipt = {"entry": Path(urlparse(response.url).path).name,
                "status": response.status, "expected_sha256": sha256(expected_bytes).hexdigest()}
     declared = int(response.headers.get("content-length", "0"))
     if response.status != 200 or declared != len(expected_bytes) or declared > 1024 * 1024:
-        return {**receipt, "matches": False, "error": "unexpected response status or size"}
+        return {**receipt, "matches": False, "error": "unexpected response status or size"}, b""
     raw = response.body()
     if len(raw) > 1024 * 1024:
-        return {**receipt, "matches": False, "error": "oversized frontend response"}
+        return {**receipt, "matches": False, "error": "oversized frontend response"}, b""
     receipt.update({"size": len(raw), "sha256": sha256(raw).hexdigest(),
-                    "full_scope_predicate_count": raw.count(compat.REPAIRED),
-                    "original_predicate_count": raw.count(compat.ORIGINAL),
                     "matches": receipt["entry"] == entry and raw == expected_bytes})
+    return receipt, raw
+
+
+def _frontend_response_receipt(response, expected):
+    from scripts import patch_streamlit_frontend as compat
+    receipt, raw = _asset_response_receipt(response, expected)
+    if receipt.get("matches"):
+        receipt.update({"full_scope_predicate_count": raw.count(compat.REPAIRED),
+                        "original_predicate_count": raw.count(compat.ORIGINAL)})
+    return receipt
+
+
+def _overlay_response_receipt(response, expected):
+    """Check only the Tooltip module naturally requested by this real page."""
+    from scripts.streamlit_overlay_resize import OVERLAY_ORIGINAL, OVERLAY_REPAIRED
+    receipt, raw = _asset_response_receipt(response, expected)
+    receipt.update({"resize_hold_count": raw.count(OVERLAY_REPAIRED),
+                    "original_resize_hook_count": raw.count(OVERLAY_ORIGINAL)})
+    receipt["matches"] = bool(receipt.get("matches") and receipt["resize_hold_count"] == 1
+                              and receipt["original_resize_hook_count"] == 0)
+    return receipt
+
+
+def _virtualizer_response_receipt(response, expected):
+    from scripts.streamlit_virtualizer_resize import VIRTUALIZER_ORIGINAL, VIRTUALIZER_REPAIRED
+    receipt, raw = _asset_response_receipt(response, expected)
+    receipt.update({"resize_hold_count": raw.count(VIRTUALIZER_REPAIRED),
+                    "original_resize_hook_count": raw.count(VIRTUALIZER_ORIGINAL)})
+    receipt["matches"] = bool(receipt.get("matches") and receipt["resize_hold_count"] == 1
+                              and receipt["original_resize_hook_count"] == 0)
     return receipt
 
 
@@ -231,10 +298,12 @@ def capture(page, name, label):
 def exercise(browser_type, name, base):
     from playwright.sync_api import expect
     expected_frontend = _expected_frontend()
+    expected_overlay = _expected_overlay()
     browser = browser_type.launch(headless=True)
     contexts, attempts, errors = [], [], []
     error_details, canceled_on_reload = [], []
     frontend_delivery = []
+    overlay_delivery = []
     phase = {"name": "initial navigation"}
     navigation = {"primary": False, "coworker": False}
     reload_count = 0
@@ -273,6 +342,15 @@ def exercise(browser_type, name, base):
             except Exception as exc:
                 frontend_delivery[0] = {"matches": False, "error": type(exc).__name__ + ": " + str(exc)[:300]}
         page.on("response", observe_frontend)
+        def observe_overlay(response):
+            if role != "primary" or overlay_delivery or not Path(urlparse(response.url).path).name.startswith("Tooltip.DJg7muty"):
+                return
+            overlay_delivery.append({"matches": False, "error": "response observation incomplete"})
+            try:
+                overlay_delivery[0] = _overlay_response_receipt(response, expected_overlay)
+            except Exception as exc:
+                overlay_delivery[0] = {"matches": False, "error": type(exc).__name__ + ": " + str(exc)[:300]}
+        page.on("response", observe_overlay)
         page.set_default_timeout(20000)
         def browser_exception(error):
             # Keep the entire first browser error receipt. A browser image
@@ -297,6 +375,8 @@ def exercise(browser_type, name, base):
         if role == "primary":
             check(name, "browser received the exact current repaired Streamlit entry",
                   len(frontend_delivery) == 1 and frontend_delivery[0].get("matches"), frontend_delivery)
+            check(name, "browser received the exact repaired native overlay position module",
+                  len(overlay_delivery) == 1 and overlay_delivery[0].get("matches"), overlay_delivery)
         return page, cookie
 
     page = None
@@ -506,6 +586,7 @@ def exercise(browser_type, name, base):
         REPORT["browsers"].setdefault(name, {}).update({
             "external_attempts": attempts, "browser_errors": errors,
             "frontend_delivery": frontend_delivery,
+            "overlay_delivery": overlay_delivery,
             "page_error_details": error_details,
             "navigation_cancellations": canceled_on_reload})
         for context in contexts:

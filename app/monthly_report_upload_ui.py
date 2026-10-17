@@ -48,6 +48,9 @@ def _sync_source_fields(source, prefix, field):
         if before.get(number) != after.get(number):
             value = after.get(number, f"{source.filename} · page/item {number}")
             st.session_state[field(prefix + f"_caption_{number}", value)] = value
+            active = st.session_state.get(prefix + "_caption_widget_keys", {}).get(number)
+            if active is not None:
+                st.session_state[active] = value
 
 def render_source_details(source, profile, prefix, field):
     """One explicit date/site correction form for native text and image sources.
@@ -175,7 +178,7 @@ def _cmms(content, profile, period, prefix, field):
         st.session_state.pop(result_key, None)
         result = None
     st.caption("Applying uses the columns and complete-coverage selections shown above. Months without confirmed coverage stay blank.")
-    if st.button("Apply CMMS mapping", key=prefix + "_apply"):
+    if st.button("Use these spreadsheet columns", key=prefix + "_apply"):
         try:
             index = content.tables.index(table) + 1
             mapped = map_cmms(table, mapping, profile, period, sources.source_reference(source, index))
@@ -193,8 +196,7 @@ def _cmms(content, profile, period, prefix, field):
 
 
 def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field):
-    st.subheader("File and work-order tools")
-    st.caption("Add supporting files, then review the pages or work-order rows you intend to use.")
+    st.caption("Read source files, check their pages, or match spreadsheet columns.")
     st.caption("PDF, Word, Excel, photos and email files. Uploaded emails are read, not sent.")
     with st.expander("File formats and limits"):
         st.caption("Supported: PDF, DOCX, XLSX, CSV, EML, MSG, TXT, and image files including HEIC.")
@@ -364,7 +366,8 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     cmms_contents = [c for c in contents if c.tables and c.source.classification == "CMMS export"
                      and any(i in c.source.selected_pages for i in range(1, len(c.tables)+1))]
     if cmms_contents:
-        with st.expander("Map CMMS columns and twelve-month coverage"):
+        with st.expander("Match spreadsheet columns"):
+            st.caption("CMMS means computerized maintenance management system. Confirm only the months and facilities fully covered by this export.")
             cmms_key = field(key + "_cmms_source", cmms_contents[0].source.id)
             if st.session_state[cmms_key] not in {c.source.id for c in cmms_contents}:
                 st.session_state[cmms_key] = cmms_contents[0].source.id
@@ -380,11 +383,142 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
     return tuple(c.source for c in contents), blocks, specs
 
 
-def _render_section_page_review(profile, content, prefix, field, blocks, *, auto_include=False):
+def set_source_manager_open(key, opened):
+    st.session_state[key] = opened
+
+
+def _queue_page_action(key, source, block, number, action, caption_key=None, scope=None):
+    st.session_state[key] = {
+        "source_id": source.id, "source_fingerprint": source.fingerprint,
+        "block_key": block.key, "block_fingerprint": block.fingerprint,
+        "number": number, "action": action, "scope": scope,
+    }
+    # Streamlit installs submitted widget values before invoking callbacks.
+    # Capture the delivered caption, not the prior render's source object.
+    # Absence is not an intentional clear; invalid payloads fail validation.
+    if caption_key is not None and caption_key in st.session_state:
+        st.session_state[key]["caption"] = st.session_state[caption_key]
+
+
+def _queue_section_inclusion(key, request):
+    st.session_state[key] = request
+
+
+def _omitted_water_recovery(contents, blocks, local_key, prefix):
+    from app.monthly_report_guided import _rich_text_scope
+    from app.monthly_report_page_controls import (
+        apply_omitted_section_request, omitted_section_ready, omitted_section_request, retained_water_omission,
+    )
+    scope = _rich_text_scope(prefix)
+    request_key = local_key + "_reinclude_omitted"
+    request = st.session_state.pop(request_key, None)
+    if request is not None:
+        try:
+            changes = apply_omitted_section_request(contents, blocks, request, scope=scope)
+        except ValueError as exc:
+            st.warning(str(exc))
+        else:
+            blocks.update(changes)
+            # Refresh controls only after the caller commits the complete draft
+            # and attempts durable recovery, just like automatic page inclusion.
+            st.session_state[prefix + "_period_editor_refresh"] = True
+    block = blocks.get("water_reports")
+    if not retained_water_omission(block):
+        return
+    st.info("Water treatment is left out of this report. Its retained content is unchanged.")
+    page_label = "page" if len(block.asset_hashes) == 1 else "pages"
+    scope_copy = (f"all {len(block.asset_hashes)} retained {page_label} and any retained wording or tables"
+                  if block.asset_hashes else "the retained wording and tables")
+    st.caption(f"This action includes {scope_copy} in Water treatment. Other sections and original files stay unchanged.")
+    ready = omitted_section_ready(block, contents)
+    if not ready:
+        st.caption("Review every retained page before including this section. For unmapped artwork, use the attached-page replacement below to provide a clear included copy.")
+    request = omitted_section_request(block, contents, scope=scope)
+    stamp = _signature(request)[:16]
+    st.button("Include Water treatment section in this report", key=local_key + "_include_section_" + stamp,
+              disabled=not ready, on_click=_queue_section_inclusion, args=(request_key, request))
+
+
+def _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents, *,
+                            scope="", caption_source=None):
+    """Edit the attached page beside its source, not in a second picture panel."""
+    from app.monthly_report_page_controls import included_page_caption, page_asset_index, revise_included_page
+    block = blocks.get("water_reports")
+    index = page_asset_index(block, source.id, page)
+    if index is None:
+        return source, False
+    p = prefix + "_" + source.id
+    current_caption = included_page_caption(block, source, page)
+    # Ordinary caption/review edits keep the native field. A replaced
+    # source, image set or report incarnation cannot receive an older packet.
+    context_source = replace(caption_source or source, captions=(), selected_pages=(),
+                             client_page_reviews=(), client_page_exclusions=())
+    from app.monthly_report_section_uploads import page_identity
+    identity = lambda ref: page_identity(ref) or ref
+    provenance = tuple((asset, tuple(identity(ref) for ref in refs
+                                    if not ref.startswith("asset-source-context:v1:")))
+                       for asset, refs in block.asset_provenance)
+    context = _signature((scope, context_source.fingerprint, block.asset_hashes,
+                          tuple(identity(ref) for ref in block.references), provenance,
+                          block.source == "Omit"))[:20]
+    caption_key = field(p + f"_caption_{page}_" + context, current_caption)
+    st.session_state.setdefault(p + "_caption_widget_keys", {})[page] = caption_key
+    caption = st.text_input("Page caption", key=caption_key)
+    if caption != current_caption:
+        block, source = revise_included_page(block, source, page, "caption", caption=caption,
+                                            all_sources=tuple(c.source for c in contents))
+        blocks[block.key] = block
+    if not page_allowed(source, page):
+        st.warning("This retained page changed since its review. Check the page and caption before including the section."
+                   if block.source == "Omit" else
+                   "This included page changed since its review. Check the page and caption, then include it again or leave it out.")
+    elif block.source == "Omit":
+        st.caption("Retained page — left out of this report. Reviewing it does not include the section.")
+    else:
+        st.caption("Included in this report. Changes here do not alter the original file.")
+    kind, reason = page_status(source.page_texts[page - 1], unreadable=page in source.needs_vision)
+    blocked = kind in ("pricing", "legal", "blank", "signature") or contains_price(caption)
+    if blocked:
+        st.warning("Remove pricing from the caption before including this page." if contains_price(caption) else reason)
+    stamp = _signature((scope, block.fingerprint, source.fingerprint, page))[:16]
+    request_key = prefix + "_page_edit"
+    keep, omit = st.columns(2)
+    keep.button("Review retained page and continue" if block.source == "Omit" else "Include page and continue", key=p + "_included_keep_" + stamp,
+                disabled=blocked or not preview_ok, on_click=_queue_page_action,
+                args=(request_key, source, block, page, "review", caption_key, scope))
+    omit.button("Remove retained page from this section" if block.source == "Omit" else "Leave page out and continue", key=p + "_included_omit_" + stamp,
+                on_click=_queue_page_action, args=(request_key, source, block, page, "omit", caption_key, scope))
+    if len(block.asset_hashes) > 1:
+        earlier, later = st.columns(2)
+        earlier.button("Move page earlier", key=p + "_earlier_" + stamp, disabled=index == 0,
+                       on_click=_queue_page_action, args=(request_key, source, block, page, "earlier", caption_key, scope))
+        later.button("Move page later", key=p + "_later_" + stamp, disabled=index == len(block.asset_hashes) - 1,
+                     on_click=_queue_page_action, args=(request_key, source, block, page, "later", caption_key, scope))
+    return source, True
+
+
+def _render_section_page_review(profile, content, prefix, field, blocks, *, auto_include=False, contents=(),
+                                editor_prefix=None):
     """Review pages once; completed Water reviews can add pages automatically."""
     from app.monthly_report_section_uploads import included_pages
+    from app.monthly_report_page_controls import retained_water_omission
 
     source = content.source
+    canonical_source = source
+    close_reviews = False
+    refresh_prefix = editor_prefix or prefix
+    from app.monthly_report_guided import _rich_text_scope
+    scope = _rich_text_scope(refresh_prefix)
+
+    def finish(updated):
+        if close_reviews:
+            st.session_state[p + "_edit_page_reviews"] = False
+            # The caller must keep every delivered editor value and attempt
+            # durable recovery before the one-shot controls refresh.
+            st.session_state[refresh_prefix + "_period_editor_refresh"] = True
+        return updated
+
+    section_omitted = auto_include and retained_water_omission(blocks.get("water_reports"))
     p = prefix + "_" + source.id
     _sync_source_fields(source, p, field)
     source = render_source_details(source, profile, p, field)
@@ -417,22 +551,23 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
             if not st.session_state.get(expanded_key, False):
                 if st.button(
                     "Edit pages", key=p + "_open_page_reviews",
-                    help="Review the source pages or change excluded selections. Remove already included pages in the report pictures below.",
+                    help="Review, caption, reorder or leave out pages here. Saved originals are unchanged.",
                 ):
                     st.session_state[expanded_key] = True
                     st.rerun()
                 st.session_state[p + "_canonical_view"] = source
                 return replace(content, source=source)
-            if st.button("Done reviewing pages", key=p + "_close_page_reviews"):
-                st.session_state[expanded_key] = False
-                st.rerun()
+            stamp = _signature((scope, canonical_source.fingerprint,
+                                blocks.get("water_reports")))[:20]
+            close_reviews = st.button("Done reviewing pages", key=p + "_close_page_reviews_" + stamp)
     page_key = field(p + "_page", undecided[0] if undecided else image_pages[0])
     pending = st.session_state.pop(p + "_next_page", None)
     if pending in image_pages:
         st.session_state[page_key] = pending
     if st.session_state[page_key] not in image_pages:
         st.session_state[page_key] = image_pages[0]
-    page_labels = {n: f"Page {n}" + (" · already in report" if (source.id, n) in existing
+    page_labels = {n: f"Page {n}" + (" · retained, left out" if section_omitted and (source.id, n) in existing
+                  else " · already in report" if (source.id, n) in existing
                   else " · reviewed, not in report" if n in source.selected_pages and page_allowed(source, n)
                   else " · left out" if dict(source.client_page_exclusions).get(n) == page_fingerprint(source, n)
                   else " · needs review") for n in image_pages}
@@ -444,9 +579,15 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
         preview_ok = True
     except (ValueError, OSError) as exc:
         st.error(str(exc))
-    with st.expander("Read extracted text"):
+    with st.expander("Text read from this page"):
         st.text(source.page_texts[page - 1][:12000] or "No native text on this page. Review the image above.")
     if (source.id, page) in existing:
+        if auto_include:
+            source, handled = _included_page_controls(source, page, prefix, field, blocks, preview_ok, contents,
+                                                       scope=scope, caption_source=canonical_source)
+            if handled:
+                st.session_state[p + "_canonical_view"] = source
+                return finish(replace(content, source=source))
         if not page_allowed(source, page):
             st.warning("This included page changed since its review. Correct or remove it below, then review the current source before export.")
         else:
@@ -462,9 +603,11 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
             reason = "Remove pricing from the caption before including this page."
         (st.warning if blocked else st.caption)(reason)
         st.caption("Include confirms that you checked this page and caption: relevant work, no prices, and no legal-only, blank or signature-only content.")
+        if section_omitted:
+            st.caption("Water treatment is left out. Include its retained section below before adding pages; its other retained content will stay unchanged.")
         keep, omit = st.columns(2)
         action = None
-        if keep.button("Include page and continue", key=p + "_keep_page", disabled=blocked or not preview_ok):
+        if keep.button("Include page and continue", key=p + "_keep_page", disabled=blocked or not preview_ok or section_omitted):
             action = "keep"
         if omit.button("Leave page out and continue", key=p + "_omit_page"):
             action = "omit"
@@ -515,7 +658,7 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
             # other section's canonical evidence object unchanged.
             st.session_state[prefix + "_review_rerun"] = True
     st.session_state[p + "_canonical_view"] = source
-    return replace(content, source=source)
+    return finish(replace(content, source=source))
 
 
 def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, field,
@@ -528,63 +671,101 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
     from app.monthly_report_section_uploads import (
         SECTION_UPLOADS, pending_pages, prepare_section_pages, section_contents, source_destinations,
     )
+    from app.monthly_report_page_controls import retained_water_omission
     if destination not in SECTION_UPLOADS:
         raise ValueError("Unknown report section for uploaded pages.")
-    blocks = blocks or {}
+    blocks = {} if blocks is None else blocks
     title, upload_label = SECTION_UPLOADS[destination]
     key = prefix + "_evidence"
     local_key = key + "_section_" + destination
     contents = st.session_state.setdefault(key, ())
     bindings = dict(st.session_state.setdefault(key + "_section_routes", {}))
+    if (destination == "water_reports" and retained_water_omission(blocks.get(destination))
+            and st.session_state.pop(local_key + "_auto_include", None) is not None):
+        # Retire a completion from before omission even when a distinct
+        # section-inclusion action is delivered in this same native run.
+        st.session_state.pop(local_key + "_auto_include_failure", None)
+        st.warning("Water treatment is left out. Include its retained section before adding more pages.")
+    pending_edit = st.session_state.pop(local_key + "_page_edit", None)
+    if pending_edit:
+        from app.monthly_report_page_controls import apply_page_request
+        try:
+            from app.monthly_report_guided import _rich_text_scope
+            if not isinstance(pending_edit, dict) or pending_edit.get("scope") != _rich_text_scope(prefix):
+                raise ValueError("This report changed after the page action was opened. Your current report is unchanged; review the page again.")
+            contents, changes = apply_page_request(contents, blocks, pending_edit)
+        except ValueError as exc:
+            st.warning(str(exc))
+        else:
+            blocks.update(changes)
+            st.session_state[key] = contents
+            forms = st.session_state.get("_monthly_source_detail_forms")
+            if isinstance(forms, dict):
+                for content in contents:
+                    if content.source.id == pending_edit["source_id"]:
+                        forms[content.source.id] = content.source
+            request = st.session_state.get(local_key + "_auto_include")
+            if request and request["source_id"] == pending_edit["source_id"]:
+                st.session_state.pop(local_key + "_auto_include", None)
+                st.session_state.pop(local_key + "_auto_include_failure", None)
     if destination not in {"water_reports", "utility_analysis"}:
         st.markdown("**" + title + "**")
         st.caption("Choose a file, check its useful pages, then add them here. Existing report content is kept.")
     # Water and Scorecards already have section-level instructions. Keep one
     # labeled uploader without a duplicate title, while retaining the complete
     # canonical page-review flow and its safety checks.
-    upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
-                             accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
-    picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
-    signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
-    if picked and st.session_state.get(local_key + "_read") != signature:
-        before = {c.source.id for c in contents}
+    with st.popover("Add files", key=local_key + "_add_files", help="Upload a file or reuse a file already saved in this draft."):
+        upload = st.file_uploader(upload_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
+                                 accept_multiple_files=True, max_upload_size=128, key=local_key + "_upload")
+        picked = tuple((u.name, u.getvalue()) for u in (upload or ()))
+        signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
+        if picked and st.session_state.get(local_key + "_read") != signature:
+            before = {c.source.id for c in contents}
+            owners = source_destinations(contents, bindings, blocks)
+            with st.spinner("Reading files and checking duplicates…"):
+                contents, messages = sources.ingest_batch(profile, picked, contents)
+            messages = list(messages)
+            for content in contents:
+                if content.source.id not in before:
+                    bindings[content.source.id] = destination
+            for _, raw in picked:
+                identity = hashlib.sha256(raw).hexdigest()
+                assigned = owners.get(identity, set())
+                if identity in before and not assigned:
+                    bindings[identity] = destination
+                elif assigned and destination not in assigned:
+                    messages.append("This file already belongs to another report section. Its pages and saved classification were kept there.")
+            st.session_state[key] = contents
+            st.session_state[key + "_section_routes"] = bindings
+            st.session_state[local_key + "_messages"] = tuple(messages)
+            st.session_state[local_key + "_read"] = signature
+        elif not picked:
+            st.session_state.pop(local_key + "_read", None)
         owners = source_destinations(contents, bindings, blocks)
-        with st.spinner("Reading files and checking duplicates…"):
-            contents, messages = sources.ingest_batch(profile, picked, contents)
-        messages = list(messages)
-        for content in contents:
-            if content.source.id not in before:
-                bindings[content.source.id] = destination
-        for _, raw in picked:
-            identity = hashlib.sha256(raw).hexdigest()
-            assigned = owners.get(identity, set())
-            if identity in before and not assigned:
-                bindings[identity] = destination
-            elif assigned and destination not in assigned:
-                messages.append("This file already belongs to another report section. Its pages and saved classification were kept there.")
-        st.session_state[key] = contents
-        st.session_state[key + "_section_routes"] = bindings
-        st.session_state[local_key + "_messages"] = tuple(messages)
-        st.session_state[local_key + "_read"] = signature
-    elif not picked:
-        st.session_state.pop(local_key + "_read", None)
+        unassigned = [c for c in contents if not owners[c.source.id]]
+        if unassigned:
+            with st.expander("Use an uploaded file"):
+                choices = {c.source.id: c for c in unassigned}
+                choice_key = field(local_key + "_saved_choice", next(iter(choices)))
+                if st.session_state[choice_key] not in choices:
+                    st.session_state[choice_key] = next(iter(choices))
+                chosen = st.selectbox("Saved file", list(choices), format_func=lambda v: choices[v].source.filename, key=choice_key)
+                if st.button("Use in " + title, key=local_key + "_use_saved"):
+                    bindings[chosen] = destination
+                    st.session_state[key + "_section_routes"] = bindings
     for message in st.session_state.get(local_key + "_messages", ()):
         st.warning(message)
-    owners = source_destinations(contents, bindings, blocks)
-    unassigned = [c for c in contents if not owners[c.source.id]]
-    if unassigned:
-        with st.expander("Use a file already saved in this draft"):
-            choices = {c.source.id: c for c in unassigned}
-            choice_key = field(local_key + "_saved_choice", next(iter(choices)))
-            if st.session_state[choice_key] not in choices:
-                st.session_state[choice_key] = next(iter(choices))
-            chosen = st.selectbox("Saved file", list(choices), format_func=lambda v: choices[v].source.filename, key=choice_key)
-            if st.button("Review this file here", key=local_key + "_use_saved"):
-                bindings[chosen] = destination
-                st.session_state[key + "_section_routes"] = bindings
     scoped = section_contents(contents, destination, bindings, blocks)
     if not scoped:
+        # Retained native wording/tables can outlive their source workspace.
+        # Their explicit section choice must remain reachable without a file.
+        if destination == "water_reports":
+            _omitted_water_recovery(contents, blocks, local_key, prefix)
         return tuple(c.source for c in contents), {}, {}
+    if destination == "water_reports":
+        included = (len(blocks["water_reports"].asset_hashes)
+                    if "water_reports" in blocks and blocks["water_reports"].source != "Omit" else 0)
+        st.markdown(f"**Report pages ({included})**")
     choices = {c.source.id: c for c in scoped}
     selected_key = field(local_key + "_selected", next(iter(choices)))
     if st.session_state[selected_key] not in choices:
@@ -596,12 +777,17 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
-        auto_include=(destination == "water_reports"),
+        auto_include=(destination == "water_reports"), contents=contents, editor_prefix=prefix,
     )
     contents = tuple(revised if c.source.id == selected else c for c in contents)
     st.session_state[key] = contents
+    forms = st.session_state.get("_monthly_source_detail_forms")
+    if isinstance(forms, dict) and selected in forms:
+        forms[selected] = revised.source
     if st.session_state.pop(local_key + "_review_rerun", False):
         st.rerun()
+    if destination == "water_reports":
+        _omitted_water_recovery(contents, blocks, local_key, prefix)
     scoped = section_contents(contents, destination, bindings, blocks)
     pending = pending_pages(scoped, destination, blocks)
     by_id = {c.source.id: c for c in scoped}
@@ -653,10 +839,12 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                             st.error(message)
                         else:
                             st.session_state.pop(failure_key, None)
-        included = sum(destination in owners for owners in owned.values())
+        included = (sum(destination in owners for owners in owned.values())
+                    if blocks.get(destination) is not None and blocks[destination].source != "Omit" else 0)
         if included:
             st.caption(f"{included} {'page' if included == 1 else 'pages'} included in this draft.")
-        if pending and not additions and not st.session_state.get(request_key):
+        if (pending and not additions and not st.session_state.get(request_key)
+                and not retained_water_omission(blocks.get(destination))):
             st.caption("Finish reviewing the remaining pages to include your selected pages automatically.")
         return tuple(c.source for c in contents), additions, {}
 
@@ -686,6 +874,11 @@ def acknowledge_autoincluded_water_pages(prefix, blocks):
     if all("water_reports" in owners.get(identity, ()) for identity in expected):
         st.session_state.pop(key, None)
         st.session_state.pop(key + "_failure", None)
+        # Page controls were drawn before this batch became canonical. Reuse
+        # the guided editor's historically named, one-shot post-commit refresh
+        # (also used by dated-item decisions). Never rerun here: the caller
+        # must first finish the draft assignment and durable recovery attempt.
+        st.session_state[prefix + "_period_editor_refresh"] = True
 
 
 @st.fragment(run_every=1)
