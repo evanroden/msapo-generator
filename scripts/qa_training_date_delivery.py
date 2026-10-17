@@ -39,7 +39,7 @@ class TrainingDateDelivery:
                 return
             widget = getattr(element, widget_type)
             if ((widget_type == "date_input" and widget.label != "Training date") or
-                    (widget_type == "button" and widget.label != "Add training session")):
+                    (widget_type == "button" and widget.label != "Add completed training")):
                 return
             if len(self.known) >= 16 and widget.id not in self.known:
                 return

@@ -150,7 +150,7 @@ def await_events(page, rows, baseline):
 
 def open_form(page):
     live.EVIDENCE["phase"] = "open-training-form"
-    summary = page.locator('[data-testid="stExpander"] summary').filter(has=page.get_by_text("Add training session", exact=True))
+    summary = page.locator('[data-testid="stExpander"] summary').filter(has=page.get_by_text("Add completed training", exact=True))
     expect(summary).to_have_count(1)
     if not summary.evaluate("el => el.closest('details')?.open ?? el.getAttribute('aria-expanded')==='true'"):
         summary.click()
@@ -566,9 +566,9 @@ def exercise(browser_type, engine, *, patched):
         expect(field).to_have_value("")
         expect(date.locator('[aria-live="assertive"]')).to_have_text("")
         record_date(page, date, "cleared-date")
-        submit = page.get_by_role("button", name="Add training session", exact=True)
+        submit = page.get_by_role("button", name="Add completed training", exact=True)
         submit_form(page, submit, "missing-date")
-        expect(page.get_by_text("Choose a training date within this reporting month.", exact=True)).to_be_visible()
+        expect(page.get_by_text("Choose a date in September 2026", exact=True)).to_be_visible()
         await_events(page, baseline["working"]["events"], baseline)
         for value, stage in (("2026/09/", "partial-date"), ("2026/08/31", "before-month"), ("2026/10/01", "after-month")):
             date, field = open_form(page)
@@ -576,7 +576,7 @@ def exercise(browser_type, engine, *, patched):
             record_date(page, date, stage)
             no_second_date(date)
             submit_form(page, submit, stage)
-            expect(page.get_by_text("Choose a training date within this reporting month.", exact=True)).to_be_visible()
+            expect(page.get_by_text("Choose a date in September 2026", exact=True)).to_be_visible()
             await_events(page, baseline["working"]["events"], baseline)
         date, field = open_form(page)
         replace_date(page, field, "2026/09/14", "valid-date-before-calendar")

@@ -18,7 +18,7 @@ def test_records_actual_date_submission_and_button_without_unrelated_values():
     rows = []
     observer = TrainingDateDelivery(rows.append)
     learn(observer, "date_input", "Training date", "synthetic-date-id")
-    learn(observer, "button", "Add training session", "synthetic-submit-id")
+    learn(observer, "button", "Add completed training", "synthetic-submit-id")
     learn(observer, "text_input", "Prepared by", "unrelated-name")
     message = BackMsg()
     message.rerun_script.widget_states.widgets.add(id="synthetic-date-id").string_array_value.data.extend(["2026/08/31"])
