@@ -343,7 +343,7 @@ def _preview_section(draft, section_key, asset_loader=None):
                 result = pdf.tobytes(garbage=3, deflate=True)
                 if len(result) > MAX_PREVIEW_BYTES:
                     raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
-                section = next((s for s in draft.sections if s.key == section_key), None)
+                _, section = _section_scope(draft, section_key)
                 return ReportPreview(result, len(pdf), section_preview_fingerprint(draft, section_key),
                                      draft.period.label, section_initial_page(pdf, section))
     finally:
