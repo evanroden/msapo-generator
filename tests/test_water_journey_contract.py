@@ -1,6 +1,5 @@
 """The browser receipt predicate must not depend on optional/null serialization."""
 import json
-import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -74,76 +73,120 @@ def test_first_page_decision_requires_its_own_durable_acknowledgment():
     assert not run_predicate(data,wanted)
 
 
-def cold_module_handler():
+def cold_open():
     import ast
     source = Path(__file__).resolve().parents[1] / "scripts/qa_water_page_journey.py"
     tree = ast.parse(source.read_text())
     function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
-                    and n.name == "keep_table_module_uncached")
-    namespace = {"re": re, "sha256": hashlib.sha256}
+                    and n.name == "open_water_with_cold_tables")
+
+    def saved_pages(page, order, *, pending):
+        assert order == [2, 1] and pending == []
+        assert page.navigations == 1
+        return page.saved
+
+    namespace = {"re": re, "WATER": ".water", "wait_pages": saved_pages}
     exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), namespace)
     return namespace[function.name]
 
 
-class ModuleRoute:
-    def __init__(self, url, status=200, response_url=None):
+class ColdPage:
+    """Model only the harness contract; real browser coverage remains in CI."""
+    def __init__(self, *, prior_url="about:blank", shift=0, count=3, no_request=False,
+                 scroll_shift=0, render_changed=False):
         from types import SimpleNamespace
-        self.request = SimpleNamespace(url=url)
-        self.raw = b'/* unchanged native module */ export const identity = "native";'
-        self.response = SimpleNamespace(status=status, url=response_url or url,
-            headers={"cache-control": "public, immutable, max-age=31536000",
-                     "content-type": "application/javascript", "etag": '"original"'},
-            body=lambda: self.raw)
-        self.fetched, self.fulfilled = [], []
+        self.url, self.shift, self.count = prior_url, shift, count
+        self.scroll_shift, self.render_changed = scroll_shift, render_changed
+        self.no_request = no_request
+        self.saved = {"working_fingerprint": "from UI", "durable_fingerprint": "from UI"}
+        self.navigations = self.releases = 0
+        self.handler = None
+        self.waiting = False
+        self.request = SimpleNamespace(url="http://127.0.0.1:8520/static/js/DataFrame.real.js")
 
-    def fetch(self, **options):
-        self.fetched.append(options)
-        return self.response
+    def route(self, pattern, handler):
+        assert pattern.fullmatch(self.request.url)
+        self.handler = handler
 
-    def fulfill(self, **options):
-        self.fulfilled.append(options)
+    def unroute(self, pattern, handler):
+        assert self.handler is handler
+        self.handler = None
+
+    def expect_request(self, pattern, *, timeout):
+        from contextlib import contextmanager
+        assert timeout == 20000 and pattern.fullmatch(self.request.url)
+
+        @contextmanager
+        def expected():
+            self.waiting = True
+            yield
+            if self.no_request:
+                raise TimeoutError("Real module request never arrived")
+        return expected()
+
+    def goto(self, url, *, wait_until):
+        assert self.waiting and url == "http://127.0.0.1:8520"
+        assert wait_until == "domcontentloaded" and self.url == "about:blank"
+        self.navigations += 1
+        self.url = url
+        if not self.no_request:
+            self.handler(self)
+
+    def continue_(self):
+        self.releases += 1
+
+    def evaluate(self, sample, wanted):
+        assert wanted["water"] == ".water"
+        mounted = self.releases > 0
+        return {"button": {"x": 16, "y": 298 + (self.shift if mounted else 0),
+                           "width": 114, "height": 44},
+                "scrollTop": 6484 + (self.scroll_shift if mounted else 0),
+                "fullRender": "changed" if mounted and self.render_changed else "same render",
+                "grids": [{"key": "st-key-grid" + str(i), "height": 184 - 35 * i,
+                           "loading": not mounted, "mounted": mounted} for i in range(self.count)]}
+
+    def wait_for_function(self, script, *, arg, timeout):
+        assert self.releases == 1 and timeout == 20000
+        assert arg == ["st-key-grid" + str(i) for i in range(3)]
 
 
-def test_cold_reload_keeps_original_module_bytes_and_limits_only_its_test_cache():
-    origin = "http://127.0.0.1:8520"
-    name = "DataFrame.v-5GXvjU.enfra-overlay-732bfc01d57053d1e52f.js"
-    route = ModuleRoute(origin + "/static/js/" + name)
-    receipts = []
-    assert cold_module_handler()(route, origin, receipts)
-    assert route.fetched == [{"max_redirects": 0, "timeout": 20000}]
-    assert len(route.fulfilled) == 1
-    delivered = route.fulfilled[0]
-    assert delivered["response"] is route.response
-    assert delivered["body"] is route.raw
-    assert delivered["headers"] == {**route.response.headers, "cache-control": "no-store"}
-    assert route.response.headers["cache-control"] == "public, immutable, max-age=31536000"
-    assert receipts == [{"module": name, "bytes": len(route.raw),
-        "sha256": hashlib.sha256(route.raw).hexdigest(),
-        "original_cache_control": "public, immutable, max-age=31536000",
-        "synthetic_cache_control": "no-store"}]
+def cold_qa():
+    from types import SimpleNamespace
+    return SimpleNamespace(URL="http://127.0.0.1:8520", scroll_pair=lambda *a, **k: None,
+                           frames=lambda page: None)
 
 
-@pytest.mark.parametrize("url", [
-    "https://msapo-generator.onrender.com/static/js/DataFrame.test.js",
-    "http://127.0.0.1:8521/static/js/DataFrame.test.js",
-    "http://127.0.0.1:8520/static/js/index.test.js",
-    "http://127.0.0.1:8520/static/css/DataFrame.test.css",
-    "http://127.0.0.1:8520/static/js/DataFrame.test.js?other=1",
-    "data:text/javascript,unchanged",
+def test_cold_check_starts_unused_and_requires_the_actual_module_before_release():
+    page, observations = ColdPage(), {}
+    assert cold_open()(page, cold_qa(), observations) == page.saved
+    assert page.navigations == page.releases == 1 and page.handler is None
+    proof = observations["cold_table_layout"]
+    assert proof["held_module_requests"] == 1
+    assert len(proof["before"]["grids"]) == len(proof["after"]["grids"]) == 3
+    assert all(g["loading"] for g in proof["before"]["grids"])
+    assert all(g["mounted"] for g in proof["after"]["grids"])
+    assert proof["before"]["button"] == proof["after"]["button"]
+
+
+def test_a_previously_loaded_page_cannot_be_called_cold():
+    page = ColdPage(prior_url="http://127.0.0.1:8520")
+    with pytest.raises(AssertionError, match="unused browser page"):
+        cold_open()(page, cold_qa(), {})
+    assert page.navigations == page.releases == 0 and page.handler is None
+
+
+def test_missing_request_is_not_replaced_with_a_warm_mount_or_timeout_extension():
+    page = ColdPage(no_request=True)
+    with pytest.raises(TimeoutError, match="Real module request"):
+        cold_open()(page, cold_qa(), {})
+    assert page.navigations == 1 and page.releases == 0 and page.handler is None
+
+
+@pytest.mark.parametrize("options", [
+    {"shift": 327}, {"count": 2}, {"scroll_shift": 327}, {"render_changed": True},
 ])
-def test_cold_reload_does_not_fetch_or_change_other_routes(url):
-    route = ModuleRoute(url)
-    receipts = []
-    assert not cold_module_handler()(route, "http://127.0.0.1:8520", receipts)
-    assert route.fetched == route.fulfilled == receipts == []
-
-
-@pytest.mark.parametrize("status,response_url", [(302, None), (500, None),
-    (200, "https://example.invalid/redirected.js")])
-def test_cold_reload_rejects_redirects_and_failed_responses(status, response_url):
-    route = ModuleRoute("http://127.0.0.1:8520/static/js/DataFrame.test.js", status, response_url)
-    receipts = []
-    with pytest.raises(AssertionError, match="Unexpected local DataFrame response"):
-        cold_module_handler()(route, "http://127.0.0.1:8520", receipts)
-    assert route.fetched == [{"max_redirects": 0, "timeout": 20000}]
-    assert route.fulfilled == receipts == []
+def test_cold_check_rejects_recorded_shift_missing_grid_scroll_rescue_and_remount(options):
+    page = ColdPage(**options)
+    with pytest.raises(AssertionError):
+        cold_open()(page, cold_qa(), {})
+    assert page.releases == 1 and page.handler is None

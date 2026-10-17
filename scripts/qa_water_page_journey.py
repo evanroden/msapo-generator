@@ -153,14 +153,16 @@ def current_water_preview(page, qa, *, inset=130):
     qa.current_image(page, WATER)
 
 
-def reload_water_with_cold_tables(page, qa, observations):
+def open_water_with_cold_tables(page, qa, observations):
     """Exercise the recorded late-table shift without waiting it away.
 
-    Hold only the real local DataFrame module during this existing reload,
+    Open the already-saved draft in a fresh browser context and hold only its
+    real local DataFrame module on the first navigation,
     measure the loading page, then release its unchanged response. The button
     and scroll position must stay put as the three preceding editors mount.
     No report state, input, geometry or control event is injected.
     """
+    assert page.url == "about:blank", "Cold table coverage requires an unused browser page."
     pattern = re.compile(re.escape(qa.URL) + r"/static/js/DataFrame\.[^/?]+\.js$")
     held = []
 
@@ -187,8 +189,9 @@ def reload_water_with_cold_tables(page, qa, observations):
     result = observations["cold_table_layout"] = {}
     page.route(pattern, hold)
     try:
-        page.reload(wait_until="domcontentloaded")
-        state = wait_pages(page, [2, 1], pending=[])
+        with page.expect_request(pattern, timeout=20000):
+            page.goto(qa.URL, wait_until="domcontentloaded")
+            state = wait_pages(page, [2, 1], pending=[])
         qa.scroll_pair(page, WATER, inset=90)
         before = result["before"] = page.evaluate(sample, {"water": WATER, "keys": None})
         result["held_module_requests"] = len(held)
@@ -218,30 +221,6 @@ def reload_water_with_cold_tables(page, qa, observations):
         for route in held:
             route.continue_()
         page.unroute(pattern, hold)
-
-
-def keep_table_module_uncached(route, origin, receipts):
-    """Make this synthetic reload cold without changing one script byte.
-
-    WebKit reuses immutable module responses despite request interception.
-    The first-failure trace served the first response date on both reloads,
-    without running either route handler. Apply no-store from the first
-    request in this test context only, then the final page route can hold the
-    real request. All other app assets retain their actual cache behavior.
-    """
-    url = route.request.url
-    if not re.fullmatch(re.escape(origin) + r"/static/js/DataFrame\.[^/?]+\.js", url):
-        return False
-    response = route.fetch(max_redirects=0, timeout=20000)
-    assert response.status == 200 and response.url == url, "Unexpected local DataFrame response"
-    body = response.body()
-    headers = response.headers
-    receipts.append({"module": url.rsplit("/", 1)[-1], "bytes": len(body),
-                     "sha256": sha256(body).hexdigest(),
-                     "original_cache_control": headers.get("cache-control"),
-                     "synthetic_cache_control": "no-store"})
-    route.fulfill(response=response, body=body, headers={**headers, "cache-control": "no-store"})
-    return True
 
 
 def open_water_preview(page, water, qa, observations):
@@ -426,7 +405,7 @@ def exercise(page, name, qa):
         page.set_viewport_size({"width": 390, "height": 844})
         qa.mode(page, "compact")
         qa.scroll_pair(page, WATER, inset=90)
-        upload(page, raw)  # Same bytes after a genuine new browser session.
+        upload(page, raw)  # Same bytes after an ordinary reload of this browser page.
         state = wait_pages(page, [2], pending=[])
         unchanged(state)
         assert state["working"]["sources"][0]["excluded"] == [1]
@@ -440,8 +419,10 @@ def exercise(page, name, qa):
         assert len(set(p["asset"] for p in state["working"]["pages"])) == 2
         assert page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
         record("narrow-reincluded", state)
-        state = reload_water_with_cold_tables(page, qa, observations)
+        page.reload(wait_until="domcontentloaded")
+        state = wait_pages(page, [2, 1], pending=[])
         unchanged(state)
+        qa.scroll_pair(page, WATER, inset=90)
         open_water_preview(page, water, qa, observations)
         record("narrow-current-preview", state)
         water.get_by_role("button", name="Back to editing", exact=True).click()
@@ -467,6 +448,7 @@ def exercise(page, name, qa):
         observations["exports"] = live.EVIDENCE
         observations["result"] = "passed"
         qa.check(name, "Water native upload/review/order/omit/reload/reinclude and actual Word/PDF", True)
+        return state
     except Exception as exc:
         observations["result"] = "failed"
         observations["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
@@ -486,22 +468,23 @@ def browser_task(browser_type, name):
     from scripts import qa_monthly_adaptive as qa
     browser = browser_type.launch(headless=True)
     context = browser.new_context(viewport={"width": 1365, "height": 900})
-    context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": qa.URL}])
-    attempts, errors, table_responses = [], [], []
+    device_cookie = {"name": "epc_device_id", "value": secrets.token_hex(16), "url": qa.URL}
+    context.add_cookies([device_cookie])
+    attempts, errors = [], []
     def route(request):
         address = urlparse(request.request.url)
         if address.scheme in {"data", "blob"} or (address.hostname == "127.0.0.1" and address.port == 8520):
-            if not keep_table_module_uncached(request, qa.URL, table_responses):
-                request.continue_()
+            request.continue_()
         else:
             attempts.append(address.hostname)
             request.abort()
-    context.route("**/*", route)
-    context.add_init_script("""window.__waterShareAttempts=[];
+    share_guard = """window.__waterShareAttempts=[];
       Object.defineProperty(navigator,'share',{configurable:true,value:()=>{
         window.__waterShareAttempts.push('share');
         return Promise.reject(new Error('Sharing is forbidden in synthetic QA'));
-      }});""")
+      }});"""
+    context.route("**/*", route)
+    context.add_init_script(share_guard)
     page = context.new_page()
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: errors.append(str(error)))
@@ -515,15 +498,50 @@ def browser_task(browser_type, name):
         page.get_by_role("button", name="Load known-value report", exact=True).click()
         expect(page.get_by_text(re.compile(r"^QA fixture state: known-value prefill"))).to_be_visible(timeout=90000)
         expect(page.get_by_role("textbox", name="Activity summary", exact=True)).to_be_visible(timeout=45000)
-        exercise(page, name, qa)
+        expected = exercise(page, name, qa)
         qa.check(name, "Water task has no external request, browser error or sharing",
                  not attempts and not errors and not page.evaluate("window.__waterShareAttempts.length"),
                  {"external": attempts, "errors": errors})
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
+
+        # Both retained WebKit traces reuse the original module response across
+        # reload, including the attempt with no-store. Preserve ordinary reload
+        # above and test a cold mount separately. Only the same synthetic device
+        # cookie crosses contexts: the app must read the real durable draft.
+        context.close()
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        context.add_cookies([device_cookie])
+        context.route("**/*", route)
+        context.add_init_script(share_guard)
+        page = context.new_page()
+        page.set_default_timeout(20000)
+        page.on("pageerror", lambda error: errors.append(str(error)))
+        WaterWidgetDelivery(lambda row: delivery.append({"at": time.monotonic(), **row})).attach(page)
+        cold = {"entry": "fresh browser context; same synthetic device cookie; saved draft",
+                "expected_fingerprint": expected["durable_fingerprint"]}
+        try:
+            state = open_water_with_cold_tables(page, qa, cold)
+            assert state == expected, "Fresh session must restore the exact UI-saved report and originals."
+            cold["receipt"] = state
+            open_water_preview(page, page.locator(WATER), qa, cold)
+            qa.capture(page, name, "water-cold-session-current-preview")
+            assert not attempts and not errors and not page.evaluate("window.__waterShareAttempts.length")
+            expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
+            cold["result"] = "passed"
+            qa.check(name, "Cold saved Water session keeps all three table heights and one preview click", True)
+        except Exception as exc:
+            cold["result"] = "failed"
+            cold["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
+            try:
+                qa.capture(page, name, "water-cold-session-first-failure")
+            except Exception as capture_error:
+                cold["capture_failure"] = str(capture_error)[:500]
+            raise
+        finally:
+            (out / "cold-session.json").write_text(json.dumps(cold, indent=2))
     finally:
         (out / "widget-delivery.json").write_text(json.dumps(delivery, indent=2))
         (out / "browser.json").write_text(json.dumps({"external": attempts, "errors": errors}, indent=2))
-        (out / "cold-table-response-bytes.json").write_text(json.dumps(table_responses, indent=2))
         context.close()
         browser.close()
 

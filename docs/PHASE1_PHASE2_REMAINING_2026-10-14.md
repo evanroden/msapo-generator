@@ -4,7 +4,45 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current implementation checkpoint — 2026-10-17 19:20 UTC
+## Current implementation checkpoint — 2026-10-17 19:46 UTC
+
+Main and the last independently verified live revision remain `de651cb1ed0bd3e2c1ea0484009754c86cb1495e`.
+PR252 is open against main at `a961384d155fc41949961513893de002d740d9fe`, tree
+`d48511ccb786038d8a67d818ad07b20b1d8d35af`. Its sixteen-file source/copy/capacity/detail
+change was published normally after the owner's renewed continuation. Both inline reviews
+were read resolved at19:20; neither phase is accepted. The small Water harness delta below
+is local on a961 and awaiting publication, with no further production code changes.
+
+| Requirement / retained IDs | Current implementation / tested scope | Actual served evidence | Unresolved work / next action / owner | Acceptance |
+| --- | --- | --- | --- | --- |
+| PR252 delivery; SIM-A/M/T/G, SRC01/04/06, CONT07/09, ADP-A19/A20 | a961 Tests39062493918 is still running; resource117483147571 and container117483147779 pass. Adaptive39062493919 fails full WebKit Water's cold-test setup only. Photo117483147718, Training117483147987 and history117483147876 pass in both engines; ordinary DOM, Chromium full Water and both fresh Water tasks pass. | Follow-on remains branch-only. | Publish the precise cold-session change; require new exact Required/Adaptive, current review and main integration. Engineer. | OPEN |
+| Water loading and one-click preview; ADP-A02/A08/A12/A13 | a961 Chromium holds the real module, mounts all3 tables with unchanged184.59375/149.59375/114.59375px, button y299.234375, scroll6512 and full-render identity; one click and actual files pass. WebKit has3 still-loading tables but0 held requests. Full network evidence shows both reloads reuse the first response even after synthetic no-store. | No new production behavior inferred from the harness failure. | Local change preserves the ordinary reload/one-click/output tail, then opens the UI-saved draft in a fresh context with only the same synthetic device cookie. It holds/releases the first real module request, compares the entire working/durable/original receipt, all3 heights, button/scroll/render identity and one preview click. No data injection or cache/header changes. Engineer. |26 focused tests pass/3.01s; actual fresh-context browser result pending |
+| Simpler source/copy/capacity path; SIM-A01–04/A10–11/A14, SIM-M01–03, SIM-G04/A06/SC04 | a961 carries the prior104-case and105-case focused evidence, complete bounded work-order detail, removed competing vendor checkbox, quiet MBCx help, compact Activity copy and truthful capacity limits. | Old duplicate Activity controls/paragraphs and old source metadata still visible on de651cb. | Complete delivered before/after review, selected-spreadsheet source consolidation and remaining97/113/ADP20 states. Engineer. | Implementation not yet live |
+| Exact delivery, originals and remaining acceptance | The full83 derivative asset proof at19:13 and full browser de651cb identity at19:13–19:14 remain dated evidence. The routine final-review warning acknowledgment is under current-code investigation; no new gate fix or acceptance is claimed. | All83 derivative JS files match pinned bytes; actual About screenshot retained at19:30. | Exact merged/served verification after eligible integration; finish independent source/output/standing/privacy work. Original transfer/one-shot/device/native-Word/combined-art/Render-workspace boundaries remain unchanged. Engineer/owner as scoped. | OPEN / NOT ACCEPTED |
+
+Current a961 first-failure artifact12112292568 was independently downloaded unchanged:
+114016713bytes/SHA2565d1b925ec837afa724f766903ce77dab2e9fef3572759f7e7d8902fc31c08017.
+The screenshot shows the correct narrow Water section, Report pages(2), Edit pages and View
+preview; the control is present. Working/durable page order[2,1], caption hashes, original3500
+bytes/hash, review decisions and unrelated-content hash match. WebKit's one-click/output tail
+was unreached. The initial delayed-route explanation was not established: the network trace
+shows reused response dates and no new handler, including cache-control:no-store on the
+cached response. The ineffective synthetic header override is removed. The prior1a and229
+first-failure ZIPs and their narrower evidence remain intact.
+
+Focused command: `python -m pytest -q tests/test_water_journey_contract.py
+ tests/test_water_preview_activation_probe.py tests/test_monthly_report_grid_loading.py`
+using the existing review venv, result26passed/3.01s, XML`water-cold-session-focused-20261017.xml`.
+The harness model rejects a warm page, missing real request, the recorded327px shift, missing
+grid, scroll adjustment and remount; it is not a browser proof. Actual browser gates remain.
+
+Restart TXT is now saved version7 (76539bytes/SHA256f8c61785bbdaa3b63153b96e0c121cad1246727f1046a650107dd62d143a6603).
+Same private release ZIP is saved version2 (181members,344803403bytes/SHA256f40b516a5240259ff2fe9fc7a84503651b466ba8aec2f9430c24c1a682a21f05).
+All preceding member bytes and the original41052-byte owner-prompt tail are preserved.
+The new a961 first-failure ZIP is local pending the next in-place evidence update.
+
+
+## Historical implementation checkpoint — 2026-10-17 19:20 UTC
 
 Main and the last verified live build remain `de651cb1ed0bd3e2c1ea0484009754c86cb1495e`.
 PR252 is open against main at `1a701fa907b847fc782590a950a0fe455ff7751b`, tree
