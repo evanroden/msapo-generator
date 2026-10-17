@@ -23,9 +23,9 @@ def facility_choice(source, profile):
     return matches[0] if len(matches) == 1 else KEEP_FACILITY
 
 
-def detail_problems(source, profile, period):
+def detail_problems(source, profile, period, *, in_report=False):
     """Short, read-only reasons to expose a saved source's correction route."""
-    if source.classification == "Reference only" or not source.selected_pages:
+    if not in_report and (source.classification == "Reference only" or not source.selected_pages):
         return ()
     problems = []
     when = source_date(source.service_date)

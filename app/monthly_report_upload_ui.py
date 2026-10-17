@@ -593,7 +593,7 @@ def _included_page_controls(source, page, prefix, field, blocks, preview_ok, con
     return source, True
 
 
-def _render_section_page_review(profile, content, prefix, field, blocks, *, auto_include=False, contents=(),
+def _render_section_page_review(profile, content, prefix, field, blocks, *, period, auto_include=False, contents=(),
                                 editor_prefix=None):
     """Review pages once; completed Water reviews can add pages automatically."""
     from app.monthly_report_section_uploads import included_pages
@@ -617,22 +617,32 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, auto
     section_omitted = auto_include and retained_water_omission(blocks.get("water_reports"))
     p = prefix + "_" + source.id
     _sync_source_fields(source, p, field)
-    source = render_source_details(source, profile, p, field)
-    content = replace(content, source=source)
     image_pages = sources.image_numbers(content)
     existing = included_pages(blocks)
+    included_here = tuple(n for n in image_pages if (source.id, n) in existing)
+    compact = (auto_include and included_here and not _undecided_pages(content, source)
+               and all(page_allowed(source, n) for n in included_here)
+               and not st.session_state.get(p + "_edit_page_reviews", False))
+    from app.monthly_report_source_details import detail_problems
+    problems = detail_problems(source, profile, period) if compact else ()
+    if not compact or problems:
+        source = render_source_details(source, profile, p, field, compact_problems=problems)
+    # A submitted correction can invalidate page review in this same event.
+    compact = compact and source == canonical_source
+    content = replace(content, source=source)
     if not image_pages:
         st.info("This file contains extracted text or tables. Its original is saved. Use the section's text/table editor, or the work-order spreadsheet tools, to include that content.")
         with st.expander("Read this file"):
             st.text("\n\n".join(source.page_texts)[:12000] or "No readable text was found.")
         return content
-    with st.expander("File details (optional)"):
-        st.caption("These are suggested facts from the file. Blank means not established; adding it here does not change its classification.")
-        changes = {}
-        st.caption("File classification: " + source.classification)
-        for attr, label in (("vendor", "Vendor"), ("work_order", "Job / work-order number")):
-            changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
-        source = replace(source, **changes)
+    if not compact:
+        with st.expander("File details (optional)"):
+            st.caption("These are suggested facts from the file. Blank means not established; adding it here does not change its classification.")
+            changes = {}
+            st.caption("File classification: " + source.classification)
+            for attr, label in (("vendor", "Vendor"), ("work_order", "Job / work-order number")):
+                changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
+            source = replace(source, **changes)
     for notice in source.notices:
         st.warning(notice)
     undecided = [n for n in _undecided_pages(content, source) if (source.id, n) not in existing]
@@ -871,11 +881,12 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
         st.session_state[selected_key] = next(iter(choices))
     if len(choices) == 1:
         selected = next(iter(choices))
-        st.caption("Reviewing " + choices[selected].source.filename)
+        st.caption(choices[selected].source.filename)
     else:
         selected = st.selectbox("File to review", list(choices), format_func=lambda v: choices[v].source.filename, key=selected_key)
     revised = _render_section_page_review(
         profile, choices[selected], local_key, field, blocks,
+        period=period,
         auto_include=(destination == "water_reports"), contents=contents, editor_prefix=prefix,
     )
     contents = tuple(revised if c.source.id == selected else c for c in contents)
@@ -938,10 +949,6 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
                             st.error(message)
                         else:
                             st.session_state.pop(failure_key, None)
-        included = (sum(destination in owners for owners in owned.values())
-                    if blocks.get(destination) is not None and blocks[destination].source != "Omit" else 0)
-        if included:
-            st.caption(f"{included} {'page' if included == 1 else 'pages'} included in this draft.")
         current_pages = tuple(n for n in sources.image_numbers(revised)
                               if (selected, n) in owned)
         current_is_compact = (current_pages and not _undecided_pages(revised, revised.source)

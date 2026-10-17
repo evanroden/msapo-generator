@@ -1,4 +1,4 @@
-"""Only genuinely resolved guided sources move behind one Change route."""
+"""One manager retains originals, exact corrections and native edit capture."""
 from dataclasses import replace
 import pytest
 
@@ -17,7 +17,7 @@ def resolved_app(monkeypatch,tmp_path):
     button(app,'Add selected pages and tables to report').click().run()
     assert not app.exception
     # Only the real file bytes enter through the uploader seam. Restore the
-    # native picker before checking Change's actual reachable controls.
+    # native picker before checking the manager's actual reachable controls.
     monkeypatch.setattr(upload_ui.st,'file_uploader',native_uploader)
     app.run()
     assert not app.exception
@@ -26,12 +26,11 @@ def resolved_app(monkeypatch,tmp_path):
 
 def test_successful_add_collapses_exact_resolved_file_without_another_review_ritual(monkeypatch,tmp_path):
     app=resolved_app(monkeypatch,tmp_path)
-    panel=next(e for e in app.expander if e.label=='Included files and pictures')
-    assert panel.proto.expanded is False
-    assert any('synthetic-resolved-utility.pdf' in c.value for c in panel.caption)
-    assert sum(b.label=='Change' for b in panel.button)==1
+    assert sum(b.label=='Manage source files' for b in app.button)==1
+    assert sum(c.value=='1 source file' for c in app.caption)==1
+    assert not any(e.label=='Included files and pictures' for e in app.expander)
     assert not any(b.label in ('Include page and continue','Add selected pages and tables to report',
-                              'Manage source files','Done with source files') for b in app.button)
+                              'Change','Review source files','Done with source files') for b in app.button)
     assert not any(e.label=='Choose pages for the client report' for e in app.expander)
     assert len(next(b for b in current_draft(app).blocks if b.key=='utility_analysis').asset_hashes)==1
 
@@ -43,7 +42,7 @@ def test_change_reaches_original_controls_and_done_changes_no_source_draft_or_st
     original=library.load_profile(before.profile.contract,before.profile.key)
     raw=sources.source_bytes(before.profile,source)
     monkeypatch.setattr(ai,'reserve_call',lambda *a: (_ for _ in ()).throw(AssertionError('Display cannot reserve paid reading')))
-    button(app,'Change').click().run()
+    button(app,'Manage source files').click().run()
     assert not app.exception
     assert any(e.label=='Choose pages for the client report' for e in app.expander)
     assert any(b.label=='Remove source from this draft' for b in app.button)
@@ -57,7 +56,7 @@ def test_change_reaches_original_controls_and_done_changes_no_source_draft_or_st
     assert library.load_profile(before.profile.contract,before.profile.key)==original
     assert sources.source_bytes(before.profile,source)==raw
     assert not list(tmp_path.rglob('snapshots/**/*.json'))
-    assert next(e for e in app.expander if e.label=='Included files and pictures').proto.expanded is False
+    assert sum(b.label=='Manage source files' for b in app.button)==1
 
 
 def test_report_only_removed_page_stays_actionable_without_automatic_reinclusion(monkeypatch,tmp_path):
@@ -71,9 +70,9 @@ def test_report_only_removed_page_stays_actionable_without_automatic_reinclusion
     app.run()
     assert not app.exception
     assert not any(e.label=='Included files and pictures' for e in app.expander)
-    assert any(b.label=='Review source files' for b in app.button)
+    assert any(b.label=='Review synthetic-resolved-utility.pdf' for b in app.button)
     assert not next(b for b in current_draft(app).blocks if b.key=='utility_analysis').asset_hashes
-    button(app,'Review source files').click().run()
+    button(app,'Manage source files').click().run()
     assert any(e.label=='Choose pages for the client report' for e in app.expander)
     assert not next(b for b in current_draft(app).blocks if b.key=='utility_analysis').asset_hashes
 
@@ -99,7 +98,7 @@ def test_change_does_not_materialize_absent_source_caption_or_replace_inherited_
     assert not app.exception
     before=current_draft(app)
     assert not before.sources[0].captions
-    button(app,'Review source files' if blocked else 'Change').click().run()
+    button(app,'Manage source files').click().run()
     assert not app.exception
     assert current_draft(app)==before
     assert not current_draft(app).sources[0].captions
@@ -111,7 +110,7 @@ def test_done_consumes_delivered_caption_before_retiring_its_native_control(monk
     app=resolved_app(monkeypatch,tmp_path)
     before=current_draft(app)
     old=next(b for b in before.blocks if b.key=='utility_analysis')
-    button(app,'Change').click().run()
+    button(app,'Manage source files').click().run()
     next(w for w in app.text_input if w.label=='Page caption').set_value('New caption delivered with Done')
     button(app,'Done with source files').click().run()
     assert not app.exception
@@ -119,30 +118,31 @@ def test_done_consumes_delivered_caption_before_retiring_its_native_control(monk
     assert dict(current.sources[0].captions)[1]=='New caption delivered with Done'
     assert next(b for b in current.blocks if b.key=='utility_analysis').asset_captions==old.asset_captions
     assert not any(e.label=='Included files and pictures' for e in app.expander)
-    assert button(app,'Review source files')
+    assert button(app,'Manage source files')
 
 
 def test_mixed_sources_keep_one_actionable_card_and_reach_the_unresolved_file(monkeypatch,tmp_path):
     app=resolved_app(monkeypatch,tmp_path)
     before=current_draft(app)
-    button(app,'Change').click().run()
+    button(app,'Manage source files').click().run()
     native_uploader=upload_ui.st.file_uploader
     upload(monkeypatch,'synthetic-reference.txt',b'An undecided fictional source note.')
     app.run();button(app,'Read monthly files').click().run()
     monkeypatch.setattr(upload_ui.st,'file_uploader',native_uploader)
     app.run();button(app,'Done with source files').click().run()
     assert not app.exception
-    assert sum(e.label=='Included files and pictures' for e in app.expander)==1
-    assert sum('Source files to review (1)' in e.value for e in app.markdown)==1
-    assert sum(b.label=='Review source files' for b in app.button)==1
-    assert sum(b.label=='Change' for b in app.button)==1
+    assert not any(e.label=='Included files and pictures' for e in app.expander)
+    assert not any('Source files to review' in e.value for e in app.markdown)
+    assert sum(b.label=='Manage source files' for b in app.button)==1
+    assert sum(c.value=='2 source files' for c in app.caption)==1
     assert next(b for b in current_draft(app).blocks if b.key=='utility_analysis')==(
         next(b for b in before.blocks if b.key=='utility_analysis'))
-    button(app,'Review source files').click().run()
+    button(app,'Manage source files').click().run()
     assert not app.exception
     picker=select(app,'File to review')
     unknown=next(s for s in current_draft(app).sources if s.filename=='synthetic-reference.txt')
-    assert picker.value==unknown.id
+    picker.set_value(unknown.id).run()
+    assert select(app,'File to review').value==unknown.id
     assert any(b.label=='Remove source from this draft' for b in app.button)
 
 
@@ -178,14 +178,14 @@ def test_reader_completion_and_done_capture_caption_in_same_native_event(monkeyp
     assert dict(current.sources[0].captions)[1]==delivered
     assert len(starts)==1
     assert not any(e.label=='Included files and pictures' for e in app.expander)
-    assert button(app,'Review source files')
+    assert button(app,'Manage source files')
 
 
 def test_failed_add_keeps_original_manager_error_and_current_report(monkeypatch,tmp_path):
     from app import monthly_report_setup as setup
     app=resolved_app(monkeypatch,tmp_path)
     before=current_draft(app)
-    button(app,'Change').click().run()
+    button(app,'Manage source files').click().run()
     def reject(*args,**kwargs):
         raise ValueError('Synthetic current table conflict; nothing was replaced.')
     monkeypatch.setattr(setup,'merge_report_block',reject)
@@ -196,3 +196,74 @@ def test_failed_add_keeps_original_manager_error_and_current_report(monkeypatch,
     assert any(e.label=='Choose pages for the client report' for e in app.expander)
     assert button(app,'Done with source files')
     assert not any(e.label=='Included files and pictures' for e in app.expander)
+
+
+def test_one_source_manager_entry_reopens_ready_pages_in_one_action(monkeypatch,tmp_path):
+    app=resolved_app(monkeypatch,tmp_path)
+    before=current_draft(app)
+    assert sum(b.label=='Manage source files' for b in app.button)==1
+    assert not any(b.label in ('Change','Review source files') for b in app.button)
+    assert not any(e.label=='Included files and pictures' for e in app.expander)
+    assert sum(c.value=='1 source file' for c in app.caption)==1
+    button(app,'Manage source files').click().run()
+    assert not app.exception
+    assert any(e.label=='Choose pages for the client report' for e in app.expander)
+    assert button(app,'Done with source files')
+    assert current_draft(app)==before
+
+
+def test_eight_optional_files_remain_available_without_eight_generic_review_reminders(monkeypatch,tmp_path):
+    from io import BytesIO
+    app,_=app_with_library(monkeypatch,tmp_path)
+    native_uploader=upload_ui.st.file_uploader
+    originals={f'synthetic-reference-{n}.txt':f'Optional synthetic source note {n}.'.encode()
+               for n in range(8)}
+    streams=[]
+    for name,raw in originals.items():
+        stream=BytesIO(raw);stream.name=name;streams.append(stream)
+    monkeypatch.setattr(upload_ui.st,'file_uploader',lambda label,*a,**kw:
+        streams if label=='Monthly source files' else native_uploader(label,*a,**kw))
+    app.run();button(app,'Read monthly files').click().run()
+    monkeypatch.setattr(upload_ui.st,'file_uploader',native_uploader)
+    app.run();button(app,'Done with source files').click().run()
+    assert not app.exception
+    before=current_draft(app)
+    assert len(before.sources)==8
+    assert sum(c.value=='8 source files' for c in app.caption)==1
+    assert not any("Review this file's use" in c.value for c in app.caption)
+    assert sum(b.label=='Manage source files' for b in app.button)==1
+    button(app,'Manage source files').click().run()
+    assert len(select(app,'File to review').options)==8
+    assert current_draft(app)==before
+    for source in before.sources:
+        assert sources.source_bytes(before.profile,source)==originals[source.filename]
+
+
+def test_specific_problem_opens_its_file_beside_optional_references(monkeypatch,tmp_path):
+    from datetime import date
+    app=resolved_app(monkeypatch,tmp_path)
+    utility=current_draft(app).sources[0]
+    button(app,'Manage source files').click().run()
+    native_uploader=upload_ui.st.file_uploader
+    upload(monkeypatch,'synthetic-reference.txt',b'Optional synthetic reference note.')
+    app.run();button(app,'Read monthly files').click().run()
+    monkeypatch.setattr(upload_ui.st,'file_uploader',native_uploader)
+    app.run()
+    select(app,'File to review').set_value(utility.id).run()
+    next(w for w in app.date_input if w.label=='Source date').set_value(date(2026,8,1))
+    button(app,'Use these source details').click().run()
+    # Leave another file selected before closing. The correction action must
+    # reopen this exact dated original, not merely whichever file was last seen.
+    reference=next(s for s in current_draft(app).sources if s.filename=='synthetic-reference.txt')
+    select(app,'File to review').set_value(reference.id).run()
+    button(app,'Done with source files').click().run()
+    before=current_draft(app)
+    assert not app.exception
+    assert sum(b.label=='Manage source files' for b in app.button)==1
+    assert any('Check the source reporting date.' in c.value for c in app.caption)
+    assert not any("Review this file's use" in c.value for c in app.caption)
+    button(app,'Review '+utility.filename).click().run()
+    assert not app.exception
+    assert select(app,'File to review').value==utility.id
+    assert next(w for w in app.date_input if w.label=='Source date').value==date(2026,8,1)
+    assert current_draft(app)==before

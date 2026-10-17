@@ -313,7 +313,7 @@ def upload(page, raw):
         has=page.get_by_text("Water-treatment files", exact=True))
     uploader.locator('input[type="file"]').set_input_files(
         {"name": NAME, "mimeType": "application/pdf", "buffer": raw})
-    expect(page.locator(WATER).get_by_text("Reviewing " + NAME, exact=True)).to_be_visible(timeout=45000)
+    expect(page.locator(WATER).get_by_text(NAME, exact=True)).to_be_visible(timeout=45000)
     page.keyboard.press("Escape")
 
 

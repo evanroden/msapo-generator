@@ -4,7 +4,89 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current implementation checkpoint — 2026-10-17 19:46 UTC
+## Current implementation checkpoint — 2026-10-17 21:46 UTC
+
+Remote main is freshly `668ded68ecb0b69e1a0b971e2cd4acfe2f186b62` (tree
+`08c0a052a495fde731c28595bc420a386ff8aaaa`). PR249–252 remain merged. Main Tests
+39065493904 and isolated live39066968749 are SUCCESS; Adaptive39065494003 remains
+FAILED only at the independent Training participant reference. The new changes below
+are on `ui/monthly-source-review-20261017`, based on that exact main; publication and
+new exact-head CI are pending. Neither phase is accepted.
+
+The full served668ded68 was reread in isolated Chromium About. The existing fixture
+is original-source replay, September2026, two invented sites, generation0684b4767acc.
+A single native Activity fill → Tab → Clear reproduced the reported conflict: the typed
+text remained working/durable while the empty Clear was retained as an interrupted edit.
+No fixture reset, customer import, production generation or standing mutation was used.
+The two matching Activity text hashes were22cf7d237863085ae1352e6854b949ed4f84a02b336b110b7b9dbb78d9dfd4d1.
+This proves the before-state only; the candidate has no served claim.
+
+| Requirement / traceability | Decision and implementation | Exact current evidence | Remaining action / acceptance |
+| --- | --- | --- | --- |
+| Activity ordinary edit/Clear/re-entry; CONT01/02/07, SIM-A, ADP-A08/A10 | REDESIGN callback binding to the displayed revision before registering controls; preserve exact uncommitted parent only, real conflicts and both versions. Add report-scoped Undo that refuses to discard later typed text. | Both sequences fail against668 source.95 focused local cases pass, including real isolated journal revision/fingerprint, fresh-session reload, failed-save retry and independent-session stale persistence rejection. Live before-state independently reproduced. | Exact CI/native browser and served action geometry still required. Implemented locally, not released. |
+| Activity-first writing; SIM-A, SRC01, ADP-A08 | MOVE the one authoritative Activity editor before source/totals controls using a stable keyed native container. Linked writing follows the same position. | Native editor identity/text survive manager open/close; concrete rendered order test passes. Existing writing/help/order gate30passes. | Same populated desktop/narrow before/after and actual output on served candidate. Duplicate uploader consolidation remains OPEN. |
+| Included wrong-site source gate; SRC01/04/06, CONT04/06/08, SIM-R06 | REDESIGN actual-used-source detection across text, tables, page/AI/follow-up provenance. Known foreign evidence is mandatory despite global warning acknowledgment; classification/selection cannot hide included content. Private unfinished preview remains inspectable. | Actual Word assembler rejects foreign sources, exact correction releases only its blocker; source bytes, snapshot/reload and private watermarked preview tested. Related gate29pass/1renderer-dependent skip. | Unknown/multi-site/contract-wide scope needs persistent truthful per-use decisions; not silently inferred from CMMS counts/classification. Broader SIM-R06 remains OPEN. |
+| Source tray; SRC01, SIM-G07, SIM-A/W | SHORTEN optional reference clutter; KEEP Manage source files always reachable, precise per-file correction actions and original/missing/reading-notice gates. Quiet does not claim reviewed. | Native reopen, caption/Done/reader completion and exact selected-file tests pass. | Accepted text/table readiness, one uploader and selected-spreadsheet consolidation remain OPEN. |
+| Completed Water; SIM-W01–07, CONT09 | REMOVE duplicate page count; MOVE resolved date/site/vendor forms behind existing Edit pages; unresolved correction remains available. | Prior inherited gate82passes and current combined source/Water/editor gate below. Scripts retain all business assertions, matching exact filename copy. | Exact CI and live same-state review/reopen/Done required. |
+| Training diagnostic; SIM-T, ADP-A08/A17 | KEEP one-action five-second selection contract. Wait for native expander readiness before positioning; add passive input/menu/ancestor animation/event evidence. No product/front-end byte change. | Retained original failure: same input connected, ancestor scroll changes while popup closes.28focused checks pass. Animation link is supported but not directly captured in original failure. | Next ordinary CI must establish reference result and passive ordering. Full Training UX completion/edit/inline validation remains independent OPEN work. |
+| Preview usefulness/return; ADP-A01–04/A08/A12 | REDESIGN initial useful content and narrow return position; KEEP continuous full-page access, original export dividers, one editor and no toolbar. | Before-state served review remains valid; current source confirms Back explicitly scrolls to section top. | Implementation and native acceptance still OPEN. |
+| Warning links/recovery; SIM-G07, CONT01/02/08, ADP-A10/A17 | REDESIGN exact visible correction/focus/Return to review and dated two-version recovery comparison. | Current anchors still stop at collapsed panels; source gate correction is reachable manually. | Implement remaining navigation and context; do not auto-resolve production draft. OPEN. |
+| Remaining section/product cleanup; existing97/113 IDs and ADP-A01–20 | KEEP traceability and standing scope; capacity, proposals/onsite grids, contact cards, empty Capital/RFI states, header/navigation/save feedback still require current user-path work. | No new blanket usability or physical/native claim. | Independent engineering work remains; do not label it an owner dependency. OPEN. |
+| Full Phase1/2 | KEEP all original/archive, AUTH01–03, standing/concurrency, all-page/graphic privacy, native Word, physical Safari/assistive listening and combined-art approval boundaries. | Main/exact served proof is not output/owner acceptance. No Render workspace selected; no control-plane claim. | Finish independent work, then smallest precise remaining external checks. OPEN / NOT ACCEPTED. |
+
+Current combined local command: `python -m pytest -q` over foreign_source_gate,
+resumed_correction, source_details, source_manager_compact, source_status, water_compact,
+page_manager, water_no_resurrection, section_uploads, upload_ui, ordered_workflow,
+writing_help, linked_wording_single_editor, structured_upload_ui, rich_text_sequence and
+training_reference_geometry: **167 passed /57.92s**. A subsequent concrete Activity order/
+native-identity test passed1/2.11s. Exact XML/logs retained privately. Counts overlap prior
+focused checks and are not summed into a fake integrated total.
+
+One exploratory single-uploader consolidation caused3 meaningful page/caption regressions
+(14passed before stopping); that implementation was withdrawn, with original failures kept.
+The surviving candidate retains existing intake semantics. One test adapter restored the wrong
+uploader label during withdrawal; corrected to its actual structured-reader route, then30passed.
+No product assertion was weakened. Training's original failure ZIP remains intact; no denied
+archive transfer or consumed one-shot diagnostic was retried. Next step: publish this coherent
+candidate, run exact Tests/Adaptive, and continue the open UI work while those gates run.
+
+## Historical implementation checkpoint — 2026-10-17 20:15 UTC
+
+All cleanup PRs249–252 are merged into main. PR252 merged normally at20:09:04UTC as
+`668ded68ecb0b69e1a0b971e2cd4acfe2f186b62`, with parents `de651cb1ed0bd3e2c1ea0484009754c86cb1495e`
+and `713d24942c78a48882ba1ef21ffe238764c7c22f`. Its tree `08c0a052a495fde731c28595bc420a386ff8aaaa`
+exactly matches the tested PR head. Both current252 review threads were reread resolved before
+merge. The isolated browser About now independently reports the full668ded68 revision; its
+working report and working/durable Activity fingerprints remain unchanged. Neither phase is accepted.
+
+| Requirement / retained IDs | Implementation and tested scope | Actual served evidence | Remaining action / owner | Acceptance |
+| --- | --- | --- | --- | --- |
+| Main integration; ADP-A19/A20, CONT07/09 | Exact713 Tests39063967464 SUCCESS:3546passed,2warnings,842.53s; container and unchanged resource gate pass. Adaptive39063967419 SUCCESS: both full Water journeys and actual files, ordinary fresh Water, separate cold saved-draft session, photos, Training and history. Merged Tests39065493904 / Adaptive39065494003 are running. | Full668ded68 in Chromium About at20:15; entry `index.enfra-frontend-4cf97569e258.js` independently read from the live DOM. Earlier all83-byte proof remains dated19:13. No Render control-plane read. | Confirm merged-head results and continue hands-on desktop/narrow state review. Engineer. | Merged and deployed; named browser identity scope only |
+| Water loading/preview; ADP-A02/A08/A12/A13 | Both713 engines hold exactly one real original DataFrame request in a fresh context restored from the UI-saved draft using only its synthetic device cookie. All3 grid heights, button bounds, scroll and full-render identity remain fixed; one native preview activation succeeds. Ordinary reload and actual files remain separate checks. No changed response bytes/headers, injected report state or removed assertion. | Relevant frontend unchanged; no fresh live cold-session claim. | Retain the original a961 failure and exact passing receipts. Engineer. | Named synthetic browser gate passed |
+| Wrong-site included evidence; SRC01/04/06, CONT04/06/08 | New local delta on668ded68 rejects known foreign facility metadata attached to actually included narrative, tables, AI provenance, images or follow-ups. Changing classification or intake selection cannot bypass that block. Three actual Word assembler cases failed before despite current warning acknowledgment and pass after. Unused/omitted/cleared content and valid aliases/combined sites retain their distinctions. | Not yet deployed. | Publish the focused follow-up against main; run exact Required/Adaptive and review. Unknown/blank site and date semantics still need scoped investigation, especially valid per-row spreadsheet mappings. Engineer. | Focused repair; broader source/privacy acceptance OPEN |
+| Reachable correction; SRC01/04/06, SIM-G07 | Included sources keep one compact exact-item correction form even after Reference only or clearing intake selections. Two native resumed-report tests fail before (no form) and pass after; correction retains original bytes, human text and the earlier shared version. | Not yet deployed. | Verify native correction, warning clearance and reload on the delivered follow-up. Engineer. | Local failing-before/passing-after |
+| Quiet Water summary; SIM-W, SIM-G01/G07 | Resolved source date/site and optional file forms close with reviewed pages; Edit pages restores the same native editor and Done closes it. One filename and Report pages count remain. Unresolved details stay visible with a direct correction path. Both Water browser scripts now observe the exact filename; every business action/assertion remains. Two baseline tests fail before;37 affected tests pass after. | Existing live report still shows the previous duplicate count and resolved-form pattern. | Exact browser gate and representative before/after/re-entry review. Engineer. | Implemented locally, not delivered |
+| Actual outputs and complete acceptance; VIS, AUTH01–03, ADP-A01–A20 |713 actual Water DOCX236618bytes/SHA2561122b5344d1f1d602460ae945755ab4eaca7b27471dfe12c158de5b70455670e; both actual PDFs28pages/224679bytes. Current named-renderer all-page review is in progress.97/113/20 traceability remains; broad source consolidation, complete simplicity states, standing/concurrency, authentic replay, graphic privacy and physical/native checks remain open. | This build identity does not establish report fidelity or owner acceptance. | Finish independent work; retain original-transfer, consumed diagnostic, unavailable device/native Word, combined artwork approval and Render workspace boundaries. Engineer/owner as scoped. | OPEN / NOT ACCEPTED |
+
+Current follow-up combined command uses the existing review venv:
+`python -m pytest -q tests/test_monthly_report_foreign_source_gate.py tests/test_monthly_report_resumed_correction.py
+ tests/test_monthly_report_source_details.py tests/test_monthly_report_source_manager_compact.py
+ tests/test_monthly_report_water_compact.py tests/test_monthly_report_page_manager.py
+ tests/test_monthly_report_water_no_resurrection.py tests/test_monthly_report_section_uploads.py
+ tests/test_monthly_report_upload_ui.py` —82passed/36.60s, XML
+`source-scope-water-summary-focused-20261017.xml`. Related source/follow-up/content-policy/period/asset/CMMS
+regressions:70passed/3.84s. Earlier gate:81passed/1LibreOffice-dependent skip; that skip is not output proof.
+All first failures and the harness-only signature error are retained with their precise scopes.
+
+713 Adaptive artifact12112444589 was independently retrieved unchanged:112959737bytes,
+SHA256f10d75145ad0af4996aff32b9f61a39f55da53385a87888d9df830b204292e31.
+The original a961 failure114016713bytes/SHA2565d1b925ec837afa724f766903ce77dab2e9fef3572759f7e7d8902fc31c08017
+also remains local. These new receipts, actual files and the668 browser screenshot await the
+next in-place update of the same private evidence ZIP/version2 and restart TXT/version7.
+No production generation, business send, customer-file transfer, local browser, consumed genuine
+diagnostic, paid review, authentication or host-resource change was performed.
+
+## Historical implementation checkpoint — 2026-10-17 19:46 UTC
 
 Main and the last independently verified live revision remain `de651cb1ed0bd3e2c1ea0484009754c86cb1495e`.
 PR252 is open against main at `a961384d155fc41949961513893de002d740d9fe`, tree

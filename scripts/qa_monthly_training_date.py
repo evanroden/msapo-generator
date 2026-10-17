@@ -36,7 +36,9 @@ from scripts import qa_monthly_live as live
 from scripts.qa_training_date_delivery import TrainingDateDelivery
 from scripts.qa_training_frontend_delivery import TrainingFrontendDelivery
 from scripts.qa_training_observer_checks import require_no_native_window_errors
-from scripts.workspace_training_reference import OBSERVED_INPUT_CONTENT_WIDTH, NATIVE_INPUT_HORIZONTAL_PADDING
+from scripts.workspace_training_reference import (
+    OBSERVED_INPUT_CONTENT_WIDTH, NATIVE_INPUT_HORIZONTAL_PADDING, REFERENCE_FORM_READY,
+)
 
 OUT = ROOT / "test-artifacts" / "monthly-training-date"
 PORT = 8535
@@ -287,26 +289,38 @@ def enter_topic_and_participant(page, *, original_input=None):
         field = original_input if original_input is not None else locator.element_handle()
         assert field is not None
         observation["before_topic"] = field.evaluate("""input=>{
-          const events=[], workspace=input.closest('.epc-workspace'), app=input.closest('[data-testid="stApp"]');
+          const events=[], workspace=input.closest('.epc-workspace'), app=input.closest('[data-testid="stApp"]'),
+            details=input.closest('details'), content=details?.querySelector('[data-testid="stExpanderDetails"]');
           const read=()=>({connected:input.isConnected,focused:input===document.activeElement,
             value:input.value.slice(0,160),expanded:input.getAttribute('aria-expanded'),
             rect:{x:input.getBoundingClientRect().x,y:input.getBoundingClientRect().y,
               width:input.getBoundingClientRect().width,height:input.getBoundingClientRect().height},
+            expander:details?{open:details.open,height:details.style.height,overflow:details.style.overflow,
+              scrollTop:details.scrollTop,clientHeight:details.clientHeight,scrollHeight:details.scrollHeight,
+              contentInert:content?.hasAttribute('inert')??null,
+              animations:details.getAnimations().map(a=>({playState:a.playState,currentTime:a.currentTime}))}:null,
+            popup:{controls:input.getAttribute('aria-controls'),
+              options:document.getElementById(input.getAttribute('aria-controls'))?.querySelectorAll('[role="option"]').length??0},
             fullRender:workspace?.dataset.epcFullRender||null,
             scriptState:app?.getAttribute('data-test-script-state')||null});
           const record=(type,event)=>{events.push({at:performance.now(),type,...read(),
             trusted:event?.isTrusted??null,inputType:event?.inputType||null,
             data:typeof event?.data==='string'?event.data.slice(0,160):null,
             eventTime:event?.timeStamp??null,eventTarget:event?.target?.tagName||null,
+            eventTestId:event?.target?.getAttribute?.('data-testid')||null,
+            key:type==='keydown'?event.key:null,
             scrollTop:event?.target===document?document.scrollingElement?.scrollTop:event?.target?.scrollTop,
             scrollLeft:event?.target===document?document.scrollingElement?.scrollLeft:event?.target?.scrollLeft});
             if(events.length>60)events.shift();};
-          const handlers=['focus','beforeinput','input','change','blur'].map(type=>{
+          const handlers=['pointerdown','mousedown','pointerup','mouseup','click','keydown',
+            'focus','beforeinput','input','change','blur'].map(type=>{
             const handler=event=>record(type,event);input.addEventListener(type,handler,{capture:true,passive:true});
             return [type,handler];
           });
           const mutations=new MutationObserver(records=>record('attributes:'+Array.from(new Set(records.map(r=>r.attributeName))).join(',')));
           mutations.observe(input,{attributes:true,attributeFilter:['aria-expanded','aria-controls']});
+          if(details)mutations.observe(details,{attributes:true,attributeFilter:['open','style']});
+          if(content)mutations.observe(content,{attributes:true,attributeFilter:['inert']});
           if(workspace)mutations.observe(workspace,{attributes:true,attributeFilter:['data-epc-full-render']});
           if(app)mutations.observe(app,{attributes:true,attributeFilter:['data-test-script-state']});
           const scroll=event=>{if(event.target===window||event.target===document||
@@ -386,6 +400,21 @@ def exercise_participant_reference(browser_type, engine):
         expect(field).to_have_count(1)
         original_input = field.element_handle()
         assert original_input is not None
+        live.EVIDENCE["phase"] = "wait-native-reference-form-opening"
+        # The locked native expander animates a clipped fixed height for 500 ms.
+        # A visible input is not proof that this temporary scroll container has
+        # finished opening. Position the independent reference only after the
+        # native finish handler restores its full height and clears overflow.
+        # This does not alter the ordinary full Training journey's entry path.
+        live.EVIDENCE["reference_form_before_positioning"] = original_input.evaluate("""input=>{
+          const details=input.closest('details');return {at:performance.now(),height:details.style.height,
+            overflow:details.style.overflow,scrollTop:details.scrollTop,
+            clientHeight:details.clientHeight,scrollHeight:details.scrollHeight,
+            animations:details.getAnimations().map(a=>({playState:a.playState,currentTime:a.currentTime}))};
+        }""")
+        page.wait_for_function(REFERENCE_FORM_READY, arg=original_input, timeout=5000)
+        live.EVIDENCE["reference_form_opening_finished"] = original_input.evaluate(REFERENCE_FORM_READY)
+        assert live.EVIDENCE["reference_form_opening_finished"]
         before = field.bounding_box()
         assert before is not None
         # One normal scroll uses the same run's later Training screenshot

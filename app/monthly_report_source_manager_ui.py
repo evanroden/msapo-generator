@@ -1,4 +1,4 @@
-"""Quiet guided intake after exact included-page resolution; one original editor."""
+"""One source manager, with direct re-entry for specific file problems."""
 from dataclasses import replace
 
 import streamlit as st
@@ -26,41 +26,35 @@ def _statuses(draft, blocks, prefix):
 
 
 def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, keep_missing):
-    """A disclosure changes visibility only; Add retains its atomic commit path."""
-    from app.monthly_report_sections import readable_label
-
+    """Re-entry changes visibility only; Add retains its atomic commit path."""
     manager_key = field(prefix + "_batch_files_open", False)
     selection_key = prefix + "_evidence_selected"
     states = _statuses(draft, blocks, prefix)
-    ready = tuple(item for item in states if item.resolved)
-    attention = tuple(item for item in states if not item.resolved)
+    attention = tuple(item for item in states if item.needs_correction)
     # Another explicit reader may finish earlier in this same ordered render.
     # Never retire an already-open native control merely because its source
     # just resolved: delivered input still belongs to the normal capture below.
     opened = bool(st.session_state[manager_key])
 
-    if not opened and ready:
-        with st.expander("Included files and pictures", expanded=False):
-            for item in ready:
-                destinations = ", ".join(readable_label(key) for key in item.destinations)
-                st.caption(f"{item.filename} · {item.pages} {'page' if item.pages == 1 else 'pages'} · {destinations}")
-            st.button("Change", key=prefix + "_change_included_sources",
-                      on_click=_open_manager, args=(manager_key, selection_key, ready[0].source_id))
+    if states:
+        st.caption(f"{len(states)} source {'file' if len(states) == 1 else 'files'}")
     if attention:
         with st.container(border=True):
-            count = len(attention)
-            st.markdown(f"**Source files to review ({count})**")
             for item in attention:
-                st.caption(item.filename + " · " + item.reason)
-            if not opened:
-                st.button("Review source files", key=prefix + "_review_sources",
-                          on_click=_open_manager,
-                          args=(manager_key, selection_key, attention[0].source_id))
-    if opened or not states:
-        st.button("Done with source files" if opened else "Manage source files",
-                  key=prefix + "_source_manager_" + str(opened),
-                  on_click=_open_manager if not opened else _close_manager,
-                  args=(manager_key, selection_key, "") if not opened else (manager_key,))
+                if opened:
+                    st.caption(item.filename + " · " + item.reason)
+                else:
+                    st.caption(item.reason)
+                    st.button("Review " + item.filename,
+                              key=prefix + "_review_source_" + item.source_id,
+                              on_click=_open_manager,
+                              args=(manager_key, selection_key, item.source_id))
+    # Ready pages, optional references and new uploads all reopen this same
+    # native editor. Quiet does not mean reviewed, included or saved.
+    st.button("Done with source files" if opened else "Manage source files",
+              key=prefix + "_source_manager_" + str(opened),
+              on_click=_open_manager if not opened else _close_manager,
+              args=(manager_key, selection_key, "") if not opened else (manager_key,))
     if not opened:
         return draft, blocks
 
