@@ -144,6 +144,64 @@ test('delayed workspace cleanup cannot release a newer tabletop scroll owner',()
     assert.equal(frames.size,0);
 });
 
+test('framework root-class replacement restores only owned layout without scroll or native editor changes',()=>{
+    const root=new Element(),scrollport=new Element(),app=new Element(),document=new Element();
+    const input=new Element('textarea');input.value='Pending native text';input.selectionStart=7;input.selectionEnd=12;
+    root.append(input);root.isConnected=true;root.scrollTop=71;scrollport.scrollTop=10353;
+    const classes=element=>{const values=new Set();element.classList={add:value=>values.add(value),remove:value=>values.delete(value),
+        contains:value=>values.has(value),toggle:(value,on)=>on?values.add(value):values.delete(value)};};
+    [root,scrollport,app].forEach(classes);root.classList.add('framework-root');
+    root.style.setProperty=()=>{};
+    [root,scrollport,app].forEach(node=>{node.getBoundingClientRect=()=>({x:0,y:0,top:0,bottom:757,width:545,height:757});});
+    root.closest=selector=>selector.includes('stMainBlockContainer')?app:scrollport;
+    root.dispatchEvent=()=>{};
+    document.createElement=tag=>new Element(tag);document.activeElement=input;
+    document.querySelector=selector=>selector.includes('st-key-epc_workspace')?root:null;
+    document.documentElement={clientWidth:545};document.body=new Element();
+    const window=new Element();window.innerHeight=757;window.matchMedia=()=>new Element();
+    const observers=[],frames=new Map();let sequence=0,measurements=0;
+    class Observer {
+        constructor(callback){this.callback=callback;this.active=true;observers.push(this);}
+        observe(target,options){this.target=target;this.options=options;}
+        disconnect(){this.active=false;}
+    }
+    const context={window,document,navigator:{},CSS:{escape:value=>value},
+        globalThis:{ENFRAWorkspaceGeometry:{resolveDisplayContext:()=>{measurements++;return {
+            mode:'compact',reason:'single-segment',bounds:{x:0,y:0,width:545,height:757}};}}},
+        ResizeObserver:Observer,MutationObserver:Observer,
+        CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail;}},
+        getComputedStyle:()=>({paddingLeft:'0',paddingRight:'0',fontSize:'16px'}),
+        requestAnimationFrame:callback=>{frames.set(++sequence,callback);return sequence;},cancelAnimationFrame:id=>frames.delete(id)};
+    const source=fs.readFileSync('app/workspace_layout.js','utf8');
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const flush=()=>{const pending=[...frames];frames.clear();pending.forEach(([,callback])=>callback());};
+    const previous=render({data:{workflow:'monthly',identity:'same-draft'}});flush();
+    const owned=observers.find(observer=>observer.target===root && observer.options?.attributes);
+    assert.ok(owned,'root-only class changes must be observed even without a child mutation');
+    assert.deepEqual(Array.from(owned.options.attributeFilter),['class']);
+    assert.ok(!owned.options.subtree,'native/grid subtree class changes do not trigger layout work');
+    root.classList.remove('epc-workspace');
+    owned.callback([{target:root,attributeName:'class'}]);
+    assert.equal(root.classList.contains('epc-workspace'),true,'restore the owned class before the next paint');
+    assert.equal(root.classList.contains('framework-root'),true);
+    assert.equal(frames.size,1);
+    owned.callback([{target:root,attributeName:'class'}]); // delivery of our own restoration
+    assert.equal(frames.size,1,'owned class restoration converges without an observer loop');
+    flush();
+    assert.equal(measurements,2);assert.equal(frames.size,0);
+    assert.equal(root.children[0],input);assert.equal(document.activeElement,input);
+    assert.equal(input.value,'Pending native text');assert.equal(input.selectionStart,7);assert.equal(input.selectionEnd,12);
+    assert.equal(root.scrollTop,71);assert.equal(scrollport.scrollTop,10353);
+    const current=render({data:{workflow:'monthly',identity:'same-draft'}});
+    root.classList.remove('epc-workspace');
+    owned.callback([{target:root,attributeName:'class'}]);previous();
+    assert.equal(root.classList.contains('epc-workspace'),false,'queued old observer cannot mutate a newer owner');
+    assert.equal(owned.active,false);
+    flush();assert.equal(root.classList.contains('epc-workspace'),true,'current measurement also restores its root class');
+    current();assert.equal(observers.filter(observer=>observer.active).length,0);
+    assert.equal(frames.size,0);
+});
+
 test('only visible pending preview polls at two seconds and stale invocation cannot poll a new generation',()=>{
     const {root,panel}=dom(),timers=new Map(),sent=[],observers=[];let sequence=0;
     class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
