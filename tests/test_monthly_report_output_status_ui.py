@@ -50,8 +50,9 @@ def test_success_names_actual_shared_version_and_uses_one_replacing_save_status(
     app, _ = ready(monkeypatch, tmp_path)
     create(app)
     assert any('[Shared version 1](#shared-report-history)' in item.value for item in app.caption)
-    statuses = [item.value for item in app.success if item.value.startswith('Saved · version')]
-    assert statuses == ['Saved · version 1 · September 2026']
+    statuses = [item.value for item in app.markdown if 'class="enfra-browser-save-status"' in item.value]
+    assert len(statuses) == 1 and 'Shared report<br>Version 1 is saved' in statuses[0]
+    assert 'Browser draft' not in statuses[0]
     assert library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', ReportPeriod(2026,9)).revision == 1
 
 
