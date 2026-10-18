@@ -65,6 +65,38 @@ def _session_description(row):
     return " · ".join((when, mode, participants, *([duration] if duration else [])))
 
 
+def _selected_participants(value, names):
+    """Recover roster identities without inventing a split in legacy text.
+
+    Saved rows contain a display string, not an escaped participant array.
+    An exact roster name wins, including names containing the separator.
+    Otherwise use a unique complete roster match; ambiguous or unlisted
+    text stays intact as an editable option instead of becoming new people.
+    """
+    if not value:
+        return []
+    if value in names:
+        return [value]
+    separator = "; "
+    starts = [0, *(index + 2 for index in range(len(value)) if value.startswith(separator, index))]
+    paths = {len(value): [()]}
+    for start in reversed(starts):
+        candidates = []
+        for name in dict.fromkeys(names):
+            if not name or not value.startswith(name, start):
+                continue
+            end = start + len(name)
+            if end != len(value) and not value.startswith(separator, end):
+                continue
+            tail = end if end == len(value) else end + len(separator)
+            candidates.extend((name, *rest) for rest in paths.get(tail, ()))
+            if len(candidates) > 1:
+                break
+        paths[start] = candidates[:2]
+    matches = paths.get(0, ())
+    return list(matches[0]) if len(matches) == 1 else [value]
+
+
 def _render_monthly_sessions(events, matrix, period, key, scope):
     """One buffered entry form; consume revision-bound actions before mounting it."""
     state_key, request_key = key + "_session_editor", key + "_session_action"
@@ -166,7 +198,7 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
             if errors.get("mode"):
                 st.error(errors["mode"])
             names = list(dict.fromkeys(r[0] for r in (matrix.rows if matrix is not None else ())))
-            selected = seed[3].split("; ") if seed[3] else []
+            selected = _selected_participants(seed[3], names)
             st.multiselect("Participants", list(dict.fromkeys((*names, *selected))), default=selected,
                            accept_new_options=True, key=fields["participants"])
             if errors.get("participants"):

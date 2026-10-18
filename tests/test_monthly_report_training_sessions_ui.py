@@ -99,6 +99,51 @@ def test_edit_updates_only_selected_session_and_preserves_same_action_notes(trai
     assert len(rows(app)) == 1
 
 
+@pytest.mark.parametrize("roster, participants, expected", [
+    (("Taylor; Lead", "Taylor", "Lead"), ("Taylor; Lead",), ["Taylor; Lead"]),
+    (("Taylor; Lead", "Morgan; Tech"), ("Taylor; Lead", "Morgan; Tech"), ["Taylor; Lead", "Morgan; Tech"]),
+    (("Synthetic Hospital Tech",), ("Visiting; Instructor",), ["Visiting; Instructor"]),
+    (("Taylor", "Morgan"), ("Taylor", "Morgan"), ["Taylor", "Morgan"]),
+    (("Taylor; Lead", "Morgan", "Taylor", "Lead; Morgan"), ("Taylor; Lead", "Morgan"), ["Taylor; Lead; Morgan"]),
+])
+def test_edit_keeps_delimited_participant_identity_and_ambiguous_legacy_text(training, roster, participants, expected):
+    from app.monthly_report_training import add_event
+    from streamlit.testing.v1 import AppTest
+    from test_monthly_report_training_retention import APP
+
+    app, draft, matrix, _, standing, _ = training
+    matrix = replace(matrix, rows=tuple((name, "Synthetic North", "Not recorded") for name in roster))
+    event = add_event(None, title="Accepted safety event", when=date(2026, 9, 1),
+                      mode="In person", participants=participants, hours="0.75", period=draft.period)
+    block = replace(current(app), extra_tables=(matrix, event))
+    app = AppTest.from_string(APP, default_timeout=30)
+    app.session_state["draft"] = replace(draft, blocks=(block,))
+    app.session_state["blocks"] = {block.key: block}
+    app.run()
+    assert set(roster) <= set(widget(app, "multiselect", "Participants").options)
+    action(app, "Edit session").click().run()
+    assert widget(app, "multiselect", "Participants").value == expected
+    widget(app, "text_input", "Hours (optional)").set_value("1")
+    widget(app, "button", "Save session").click().run()
+    assert not app.exception and not app.error
+    assert rows(app) == ((*event.rows[0][:-1], "1"),)
+    assert current(app).text == NOTE
+    assert load_training(draft.profile.contract) == standing
+    from app import monthly_report_library as library
+    library.save_snapshot(replace(draft, blocks=(current(app),)), expected_revision=1,
+                          entered_editor=draft.prepared_by)
+    saved_again = library.load_snapshot(draft.profile.contract, draft.profile.key, draft.period)
+    assert saved_again.draft.blocks[0] == current(app)
+    # A fresh session reconstructs selection from the saved report content;
+    # this must not depend on a roster cache or the previous editor's token.
+    reopened = AppTest.from_string(APP, default_timeout=30)
+    reopened.session_state["draft"] = saved_again.draft
+    reopened.session_state["blocks"] = {block.key: saved_again.draft.blocks[0]}
+    reopened.run()
+    action(reopened, "Edit session").click().run()
+    assert widget(reopened, "multiselect", "Participants").value == expected
+
+
 def test_cancel_edit_keeps_saved_row_and_resets_to_add(training):
     app, *_ = training
     before = rows(app)
