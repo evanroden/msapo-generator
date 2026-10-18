@@ -14,10 +14,13 @@ export default function(component) {
         state.active = null;
         state.mode = null;
         state.compactPositions = new WeakMap();
+        state.sourceReviewReturn = null;
     }
     let frame = null, focusFrame = null, disposed = false, pairs = [], lastGeometry = '';
     const subscriptions = [];
     const controlsOwner = {};
+    if (data.workflow === 'monthly' && globalThis.ENFRASourceReviewNavigation)
+        subscriptions.push(globalThis.ENFRASourceReviewNavigation.install(app, state));
     root.classList.add('epc-workspace');
     // This stamp changes only on a real top-level Python workspace render.
     // Layout measurement, preview fragments and viewport changes do not change
