@@ -4,6 +4,31 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
+## Training integration and DOCX preview repair — 2026-10-18 14:40 UTC
+
+PR255 head `b884a259785e34a09d6f612284361785dbb4c7d6` passed Required39130827545
+and Adaptive39130827485 with no unresolved inline reviews. It merged directly into main
+as `f8ebbc48f6d9e30354ae7ef0c80673d86c24b0a0`. Merged Tests39135964448 and
+Adaptive39135964543 are separate running gates. A fresh deployed browser check is not
+claimed: the runtime and browser returned environment_offline during this continuation.
+
+PR260 review4307196679 reproduced a real large embedded-DOCX preview failure: two
+thumbnail-bound cases and both native review-panel cases fail on the prior implementation.
+The correction forwards the actual preview flag and uses a new DOCX-preview cache key,
+leaving the original and print derivatives intact. Focused tests cover a 1600×2200 source
+image, old print-sized preview caches, unchanged original/print bytes, decoded bounded
+thumbnails, and deliberate inclusion in both source panels. The final UI assertions inspect
+the actual image rather than demanding that unrelated whole-report blockers disappear.
+The local runtime disconnected before the repair could run; this published follow-up
+therefore requires exact-head CI before its review can be closed.
+
+The independent cold-Water loading repair remains local and unpublished at
+`9011abf0beef8d3ff46acc14e61c4a0dd1d23f8d`; do not overwrite or mark it delivered.
+Its retained geometry identifies 366.390625px of preceding native-control growth.
+The source-thumbnail review repair here does not close that separate browser failure.
+Neither phase is accepted. Original transfer permission, authentic scenarios, independent
+retention, all-page output inspection, physical/native checks and artwork approval remain open.
+
 ## Current implementation milestone — 2026-10-18 13:20 UTC
 
 Main and the dated served evidence remain `738233289aa5995058fd51d65f6c0f4530ff8985`.
