@@ -74,9 +74,9 @@ def test_commissioning_update_is_editable_in_its_own_section_and_survives_next_m
     step(app, 2)
     update = next(w for w in app.text_area if w.label == 'Status or findings')
     assert update.value == ''
-    next(b for b in app.button if b.label == 'Reporting has not started').click().run()
+    next(b for b in app.button if b.label == 'Not started').click().run()
     update = next(w for w in app.text_area if w.label == 'Status or findings')
-    assert 'has not started' in update.value
+    assert update.value == 'Monitoring-based commissioning reporting has not started.'
     update.set_value('Synthetic equipment monitoring is awaiting activation.').run()
     next(b for b in app.button if b.label == 'Save shared version').click().run()
     saved = library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', ReportPeriod(2026, 9))
