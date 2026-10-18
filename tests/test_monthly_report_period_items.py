@@ -39,6 +39,11 @@ def resolve(draft, index=0, action="historical"):
 
 def test_one_item_is_labeled_in_actual_docx_and_other_dates_remain_reviewable():
     draft = sample(OLD + "\n" + SECOND + "\n" + CURRENT)
+    from app.monthly_report_source_details import correct_source_details
+    # A historical-period decision does not waive an unknown source site.
+    assert any(c.code == "source_facility" and c.blocking for c in preflight(draft))
+    corrected = correct_source_details(draft.sources[0], draft.profile, None, "north")
+    draft = replace(draft, sources=(corrected,))
     first, second = pending_items(draft.blocks[0], OCTOBER, draft.sources)
     assert item_sources(draft.blocks[0], first, draft.sources) == ("Synthetic vendor report.txt · page/item 1",)
     assert item_sources(draft.blocks[0], second, draft.sources) == ("Synthetic vendor report.txt · page/item 2",)

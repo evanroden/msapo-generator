@@ -241,19 +241,8 @@ def render_expense_workflow(browser_token: str, browser_timezone: str = "") -> N
         st.session_state.setdefault("expense_report_memory_context", uuid.uuid4().hex)
     )
     with workspace('expense', report_memory_context):
-        st.markdown(
-            """
-            <div class="hero">
-                <p class="brand-kicker">EXPENSE REPORT WORKFLOW</p>
-                <h1>Expense Report <span class="zing">Process Control</span></h1>
-                <p class="hero-subtitle">
-                    Add receipts and mileage, review the prefilled fields, then create
-                    the completed Excel form, combined PDF, and approval email draft.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.title("Expense reimbursement")
+        st.caption("Add receipts or mileage, review the details, then create the Excel form, PDF and approval email draft.")
 
         st.markdown(
             """

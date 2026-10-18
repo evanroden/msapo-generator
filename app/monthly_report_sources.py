@@ -145,7 +145,11 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     date_match = re.search(r"\b(?:\d{4}-\d{1,2}-\d{1,2}|\d{1,2}/\d{1,2}/\d{2,4})\b", raw_date)
     facility = labeled("facility|site|building")
     if not facility:
-        matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", sample) for n in (f.title, *f.aliases))]
+        # Filenames can suggest a document type, but cannot establish which
+        # site's facts its contents describe. Scope needs native source text
+        # or the user's explicit item-specific correction.
+        scope_text = text[:30_000].casefold()
+        matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", scope_text) for n in (f.title, *f.aliases))]
         facility = matches[0] if len(matches) == 1 else ""
     def lines(term):
         return "\n".join(line.strip() for line in text.splitlines() if re.search(term, line, re.I))[:6000]
