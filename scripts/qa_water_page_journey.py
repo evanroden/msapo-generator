@@ -179,9 +179,20 @@ def open_water_with_cold_tables(page, qa, observations):
           (node.compareDocumentPosition(pair)&Node.DOCUMENT_POSITION_FOLLOWING) &&
           node.getBoundingClientRect().height>0);
       const b=button.getBoundingClientRect();
+      // Passive first-failure context for late content above the three grids.
+      // Keep the original scroll/button assertions; never restore their values.
+      const preceding=[...root.querySelectorAll('[data-testid="stElementContainer"]')]
+        .filter(node=>(node.compareDocumentPosition(pair)&Node.DOCUMENT_POSITION_FOLLOWING)
+          && node.getBoundingClientRect().height>0).slice(0,200)
+        .map((node,index)=>{const r=node.getBoundingClientRect();return {
+          key:[...node.classList].find(key=>key.startsWith('st-key-'))||'element-'+index,
+          type:node.firstElementChild?.getAttribute('data-testid')||node.firstElementChild?.tagName,
+          top:r.top,left:r.left,width:r.width,height:r.height,
+          images:[...node.querySelectorAll('img')].slice(0,4).map(image=>({
+            complete:image.complete,width:image.naturalWidth,height:image.naturalHeight}))};});
       return {button:{x:b.x,y:b.y,width:b.width,height:b.height},
         scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop,
-        fullRender:root.dataset.epcFullRender,
+        fullRender:root.dataset.epcFullRender,preceding,fontStatus:document.fonts.status,
         grids:boxes.map(node=>({key:[...node.classList].find(k=>k.startsWith('st-key-')),
           height:node.getBoundingClientRect().height,
           loading:!!node.querySelector(':scope > [data-testid="stSkeleton"]'),

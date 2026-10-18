@@ -91,6 +91,8 @@ def test_first_staff_row_uses_new_cell_defaults_without_display_writes(tmp_path,
 @pytest.mark.parametrize("event", ["pull_request", "push"])
 @pytest.mark.parametrize("dependency", [
     "scripts/workspace_browser_observations.py",
+    "tests/streamlit_static_fixture.py",
+    "tests/test_monthly_report_source_preview_lifetime.py",
     "scripts/qa_monthly_live.py",
     "scripts/qa_workflow_route_observations.py",
     ".streamlit/config.toml",

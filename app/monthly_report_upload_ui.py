@@ -360,7 +360,8 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             if page in sources.image_numbers(content):
                 try:
                     thumbnail = sources.page_image(profile, content, page, preview=True)
-                    st.image(thumbnail.data, width=650)
+                    from app.monthly_report_source_preview import source_thumbnail_uri
+                    st.image(source_thumbnail_uri(thumbnail), width=650)
                     preview_ok = True
                 except (ValueError, OSError) as exc:
                     st.error(str(exc))
@@ -729,7 +730,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
     preview_ok = False
     try:
         thumbnail = sources.page_image(profile, content, page, preview=True)
-        st.image(thumbnail.data, width=650)
+        from app.monthly_report_source_preview import source_thumbnail_uri
+        st.image(source_thumbnail_uri(thumbnail), width=650)
         preview_ok = True
     except (ValueError, OSError) as exc:
         st.error(str(exc))

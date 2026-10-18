@@ -4,7 +4,35 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current continuation checkpoint — 2026-10-18 12:46 UTC
+## Current implementation milestone — 2026-10-18 13:20 UTC
+
+Main and the dated served evidence remain `738233289aa5995058fd51d65f6c0f4530ff8985`.
+No new main merge or public browser walkthrough is claimed in this milestone.
+Normal GitHub publication was renewed by the owner's October18 continuation; updates to
+the existing PRs now succeed. The separate administrator-denied archive transfer and
+managed localhost-browser operation remain denied.
+
+| Requirement / existing IDs | Implementation and tested scope | Review / delivery / next action |
+| --- | --- | --- |
+| Training entry and participant identity; SIM-T, ADP-A08/A16/A17 | PR255 `b884a259785e34a09d6f612284361785dbb4c7d6`, reconciled with main. Prior `b507bb7` passed Required39128475832 and Adaptive39128475816, then a new delimiter-name review prevented merge. Exact roster names and uniquely recoverable lists now reopen intact; ambiguous legacy text is preserved without guessing. Four corrected-fixture cases fail on b507; all five pass through Edit/Save, real snapshot bytes and a fresh session. The focused Training set passes **87**. | Review4307071438 replied/resolved with this code and evidence. Fresh exact-head Required/Adaptive still required. Branch-only; not merged/deployed/owner accepted. |
+| Preview reading position and current gates; CONT01/02, ADP-A02/A08/A12 | PR254 `961c4d408668faf401a53c27e4ca3bde9c86f6e7`, reconciled directly with main, retaining source-return navigation and compact reading positions. Integrated focused set **83 pass**; initial-page set **10 pass/2 LibreOffice skips**; both Node harness files pass. The full changed-file delta was reviewed. | New exact-head CI started. Its source-notice review remains dependent on PR260 integration. Local initial-page checks are not physical-device or actual-renderer acceptance. |
+| Truthful accepted-source readiness; SRC01/06, SIM-G07, ADP-A11/A18 | Published PR260 `8be22f42413d7705ab41194887cd733e58b12953` passed Required39128845065. The three current source-review fixes passed **137** integrated checks; their original failures and review replies are retained. | Adaptive39128845081: Training/history/Photos pass; both fresh Water engines reproduce a native IMG error, and full Water Chromium has a separate cold reading-position failure. This is not overall green CI. |
+| Source thumbnail lifetime; SRC04, SIM-W, CONT09, ADP-A12/A20 | Current PR260 follow-up puts only the bounded prepared thumbnail in its native image element; original and print bytes are unchanged. Real page-one/page-two transitions through both source panels reproduce the old media-retirement failure on 8be and pass after repair. The missing historical d09e0f3acbab474eec2f7e08bdb71cfa JPG is independently identified as source page-one's prepared preview. The fresh browser journey now decodes each actual visible native image before reviewing it. | Initial fixed set:84 pass/3 fixture failures. Pinned frontend/date set:87 pass/1 remaining fixture failure; the final affected set passes37 after correcting both fixtures to pair native-entry HTML with their copied original assets. Production graph/integrity checks remain unchanged. Fresh browser CI on this follow-up is required; this is a supported lifecycle repair, not proof of the sole historical server ordering. |
+| Cold Water geometry; ADP-A02/A03/A20 | Retained 8be cold Chromium evidence has identical full-render token and all three grid heights. Button y299.03125→299.421875 stays visible while native scrollTop6207→6573 changes. Existing strict scroll and button assertions remain intact. | Cause remains open. Added bounded passive geometry/image/font observations for preceding content; no scroll restoration, extra click, timeout increase or waived assertion. Retain this first failure and inspect the next actual transition. |
+| Recovery choice races; CONT01/02/08, ADP-A10 | PR257 remains remotely117cc75; reconstructed follow-up is committed locally and reconciled with main. **59** integrated checks pass, including both explicit choices when history advances just after the browser save. Expense's first failure artifact is independently retained; it is not a recovery assertion failure. | Publish the reviewed integrated delta after correcting the Expense split-editor observation boundary. No live recovered report was resolved for QA. |
+
+Private evidence: original fbb Water ZIP120785460bytes/SHA256
+`0615f3166808ebefc1b77d2d880b6c035f1b59b46e9e9b0007d1afa6a9bbbf9e`;
+8be Adaptive first-failure ZIP117254073bytes/SHA256
+`bf28234b2def099b72a3a188f7679ca80526d2c0d520fa1c2b0f477c37057e18`;
+PR257 Expense first-failure ZIP116446078bytes/SHA256
+`9eac3f514f37da99ce1e6df9d66c2305dcb7f603e4b8de636ccbe846631e8edb`.
+All were size/digest/ZIP-CRC verified. The canonical TXT retains precise private locations.
+Original archives, AUTH01–03, independent retention after chat deletion, native Word,
+physical Safari/assistive listening and combined-art approval remain open. Neither phase
+is accepted; existing97/113 and ADP-A01–20 retain their original traceability and limits.
+
+## Prior continuation checkpoint — 2026-10-18 12:46 UTC
 
 Main remains `738233289aa5995058fd51d65f6c0f4530ff8985` (documentation PR268).
 Its exact Tests run39080067152 passed; isolated live run39082513461 failed while selecting
