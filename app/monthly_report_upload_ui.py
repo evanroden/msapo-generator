@@ -1088,6 +1088,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     labels = {"activity_summary": "Add activity files (optional)", "capital_renewal": "Add capital renewal file", "proposals": "Add proposal file"}
     context = _signature((asdict(profile), period.key, destination, tuple(table_columns or ()),
                           _rich_text_scope(prefix), testing.scope(), testing.generation()))
+    from app.monthly_report_native_loading import reserve_empty_uploader
+    reserve_empty_uploader(local_key + "_upload_" + context, labels[destination])
     uploaded = st.file_uploader(labels[destination], type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128,
                                 key=local_key + "_upload_" + context)

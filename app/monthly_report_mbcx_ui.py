@@ -60,6 +60,8 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
             for column, (label, sentence) in zip(st.columns(len(STATUS_STARTERS)), STATUS_STARTERS):
                 column.button(label, key=prefix + "_mbcx_starter_" + status_scope + "_" + str(STATUS_STARTERS.index((label, sentence))),
                               on_click=_choose_sentence, args=(key, sentence, choice_key))
+        from app.monthly_report_native_loading import reserve_text_area
+        reserve_text_area(key, 120)
         text = st.text_area("Status or findings", key=key, value=status.text, height=120,
                             help="This is the exact wording that will print when included. Leave it empty if your attached pages need no introduction.")
         chose_sentence = st.session_state.pop(choice_key, False)

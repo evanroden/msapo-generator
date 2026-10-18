@@ -550,6 +550,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         if draft is not None:
             from html import escape
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
+        from app.monthly_report_native_loading import reserve_text_area
+        reserve_text_area(editor_key, 140)
         st.text_area(
             spec.key.replace("_", " ").capitalize(),
             # The native protocol default must agree with the actual draft.
