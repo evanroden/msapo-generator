@@ -191,6 +191,7 @@ def open_water_with_cold_tables(page, qa, observations):
           images:[...node.querySelectorAll('img')].slice(0,4).map(image=>({
             complete:image.complete,width:image.naturalWidth,height:image.naturalHeight}))};});
       return {button:{x:b.x,y:b.y,width:b.width,height:b.height},
+        viewport:{width:document.documentElement.clientWidth,height:window.innerHeight},
         scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop,
         fullRender:root.dataset.epcFullRender,preceding,fontStatus:document.fonts.status,
         grids:boxes.map(node=>({key:[...node.classList].find(k=>k.startsWith('st-key-')),
@@ -207,6 +208,11 @@ def open_water_with_cold_tables(page, qa, observations):
         qa.scroll_pair(page, WATER, inset=90)
         before = result["before"] = page.evaluate(sample, {"water": WATER, "keys": None})
         result["held_module_requests"] = len(held)
+        button, viewport = before["button"], before["viewport"]
+        assert (button["width"] > 0 and button["height"] > 0 and button["x"] >= 0 and button["y"] >= 0
+                and button["x"] + button["width"] <= viewport["width"]
+                and button["y"] + button["height"] <= viewport["height"]), (
+                    "Water's actual preview action must be in view before releasing the held module.", before)
         assert len(held) == 1, "Expected one held DataFrame module request: " + str(len(held))
         assert len(before["grids"]) == 3, "Observe all three imported editors preceding Water."
         keys = [item["key"] for item in before["grids"]]

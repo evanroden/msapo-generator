@@ -233,15 +233,33 @@ def pair_state(observed, key):
 
 def scroll_pair(page, selector, inset=130, *, preview=False):
     # Python's notRunning receipt can precede the workspace component mounting
-    # its layout classes/mode after reload. Wait for that actual scroll owner,
-    # rather than dereferencing a missing enhancement root. In compact mode an
+    # its layout classes after reload. A mode receipt alone can precede the
+    # requested pair's discovery; require that row's actual CSS and surfaces
+    # before this one scroll. In compact mode an
     # open preview follows the editor; moving the SECTION top into view would
     # move that preview back below the viewport.
-    page.wait_for_function("""wanted => {""" + DEEP + """
+    page.wait_for_function("""wanted => {""" + DEEP + r"""
       const pair=document.querySelector(wanted.selector);
       const root=pair?.closest('.epc-workspace');
       const mode=root?.dataset.epcMode;
       if(!['wide','book','tabletop','compact'].includes(mode))return false;
+      if(!pair.classList.contains('epc-workspace-pair'))return false;
+      const editor=pair.querySelector('.epc-workspace-editor');
+      const reference=pair.querySelector('.epc-workspace-reference');
+      const editColumn=editor?.closest('.epc-editor-column');
+      const refColumn=reference?.closest('.epc-reference-column');
+      const row=editColumn?.parentElement;
+      if(!row||row!==refColumn?.parentElement||!row.classList.contains('epc-workspace-row'))return false;
+      const rowStyle=getComputedStyle(row);
+      const columns=rowStyle.gridTemplateColumns?.trim().split(/\s+/);
+      if(rowStyle.display!=='grid'||columns?.length!==(['compact','tabletop'].includes(mode)?1:2))return false;
+      if(!editor.getClientRects().length||editor.getBoundingClientRect().width<=0)return false;
+      if(mode==='compact'){
+        if(Math.abs(editColumn.getBoundingClientRect().width-row.getBoundingClientRect().width)>2)return false;
+        const closed=pair.dataset.epcPreviewOpen!=='true';
+        if(closed&&(getComputedStyle(refColumn).display!=='none'||reference.getClientRects().length))return false;
+        if(!closed&&!reference.getClientRects().length)return false;
+      }
       const scroll=mode==='tabletop'||root.dataset.epcConfined==='true'
         ?root:document.querySelector('[data-testid="stMain"]');
       if(!scroll)return false;

@@ -9,7 +9,8 @@ Neither phase is accepted. Do not merge a stacked cleanup PR into its parent fea
 PR255 head `b884a259785e34a09d6f612284361785dbb4c7d6` passed Required39130827545
 and Adaptive39130827485 with no unresolved inline reviews. It merged directly into main
 as `f8ebbc48f6d9e30354ae7ef0c80673d86c24b0a0`. Merged Tests39135964448 and
-Adaptive39135964543 are separate running gates. A fresh deployed browser check is not
+Adaptive39135964543 are separate merged-head gates: Adaptive passes; Tests is still running.
+A fresh deployed browser check is not
 claimed: the runtime and browser returned environment_offline during this continuation.
 
 PR260 review4307196679 reproduced a real large embedded-DOCX preview failure: two
@@ -20,7 +21,11 @@ image, old print-sized preview caches, unchanged original/print bytes, decoded b
 thumbnails, and deliberate inclusion in both source panels. The final UI assertions inspect
 the actual image rather than demanding that unrelated whole-report blockers disappear.
 The local runtime disconnected before the repair could run; this published follow-up
-therefore requires exact-head CI before its review can be closed.
+therefore requires exact-head CI before its review can be closed. Its first published
+head05ac54a could not start PR checks while conflicted with merged Training. This follow-up
+reconciles directly with mainf8ebbc4, keeping both sets of workflow dependencies, the honest
+save status, unavailable-source corrections and cold-button visibility assertions. The
+passive sampler fixture now supplies the native image/font properties it observes.
 
 The independent cold-Water loading repair remains local and unpublished at
 `9011abf0beef8d3ff46acc14e61c4a0dd1d23f8d`; do not overwrite or mark it delivered.
