@@ -68,6 +68,16 @@ def loaded_page(pair,index):
     check(f'loaded preview page {index+1}',image.evaluate('(node)=>node.naturalWidth>0'))
 
 
+def finalized_draft_match(page, key):
+    page.wait_for_function("""key => {
+        const ack=document.querySelector('[data-qa-expense-draft-ack]');
+        const app=document.querySelector('[data-testid="stApp"]');
+        if (!ack || !app || app.getAttribute('data-test-script-state')!=='notRunning') return false;
+        try {return JSON.parse(ack.dataset.matches||'{}')[key]===true;}
+        catch (_) {return false;}
+    }""", arg=key, timeout=30000)
+
+
 def tabletop_reference(page, pair, title, name):
     expect(pair).to_have_attribute('data-epc-active','true')
     heading=pair.locator('.epc-context-title')
@@ -281,6 +291,14 @@ def run(browser_type,name):
         expect(first.get_by_text('Preview · 2 pages',exact=True)).to_be_visible()
         loaded_page(first,0)
         set_toggle(first,'Split this receipt into multiple reimbursement lines',True,name+' receipt split')
+        # A checked toggle precedes the new split editor's completed full run.
+        # In Chromium39078873458 the amount edit began in that transition;
+        # the retained wire/receipt has only two full runs and no amount ack.
+        # Establish the actual two-line editor before its first amount edit.
+        # Keep the later deliberate rapid/unblurred edit batch unchanged.
+        expect(first.get_by_label('Reimbursable amount *',exact=True)).to_have_count(2)
+        finalized_draft_match(page,'split')
+        check(name+' completed draft contains split before entering its line amounts',True)
         amount=first.get_by_label('Reimbursable amount *',exact=True).first
         amount.fill('13.25');amount.press('Tab')
         # Native blur queues the complete expense editor rerun. Navigating a
@@ -289,13 +307,7 @@ def run(browser_type,name):
         # first-attempt run 38606086144). Wait for the actual server-side
         # synthetic edit receipt and completed render, not a fixed sleep or a
         # retry of the preview assertion. Do not substitute UI input_value.
-        page.wait_for_function("""() => {
-            const ack=document.querySelector('[data-qa-expense-draft-ack]');
-            const app=document.querySelector('[data-testid="stApp"]');
-            if (!ack || !app || app.getAttribute('data-test-script-state')!=='notRunning') return false;
-            try {return JSON.parse(ack.dataset.matches||'{}').first_amount===true;}
-            catch (_) {return false;}
-        }""", timeout=30000)
+        finalized_draft_match(page,'first_amount')
         check(name+' first amount acknowledged by finalized expense draft before receipt navigation', True)
         source=first.locator('.epc-workspace-reference')
         editor=first.locator('.epc-workspace-editor')

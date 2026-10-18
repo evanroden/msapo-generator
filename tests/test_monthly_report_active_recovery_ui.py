@@ -253,3 +253,43 @@ def test_entry_choice_rejects_intervening_browser_write_atomically(monkeypatch, 
     assert any('A version changed again' in item.value for item in app.error)
     assert active.load(TOKEN, RRH_CONTRACT, 'synthetic-guided', PERIOD) == raced[0]
     assert library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', PERIOD) == snapshot
+
+
+@pytest.mark.parametrize('label,expected', [
+    ('Continue with unfinished draft', 'Unfinished repair wording.'),
+    ('Open saved report', 'Completed saved wording.'),
+])
+def test_shared_version_advancing_after_choice_save_requires_a_new_comparison(monkeypatch, tmp_path, label, expected):
+    app, original, snapshot = _older_draft(monkeypatch, tmp_path)
+    _button(app, 'Review draft changes').click().run()
+    original_save = active.save
+    writes, later = [], []
+
+    def advance_after_save(token, draft, **kwargs):
+        kept = original_save(token, draft, **kwargs)
+        writes.append(kept)
+        if not later:
+            later.append(library.save_snapshot(replace(snapshot.draft,
+                prepared_by='Newer shared author', blocks=tuple(
+                    replace(block, text='Newer shared report after the explicit choice.')
+                    if block.key == 'activity_summary' else block for block in snapshot.draft.blocks)),
+                expected_revision=snapshot.revision, entered_editor='Newer shared editor'))
+        return kept
+
+    monkeypatch.setattr(active, 'save', advance_after_save)
+    _button(app, label).click().run()
+    assert not app.exception
+    assert len(writes) == 1, 'Rerender must not silently accept or save the advancing shared version.'
+    kept = active.load(TOKEN, RRH_CONTRACT, 'synthetic-guided', PERIOD)
+    assert kept == writes[0]
+    assert kept.generation == original.generation
+    assert kept.base_snapshot_revision == snapshot.revision
+    assert next(block.text for block in kept.draft.blocks if block.key == 'activity_summary') == expected
+    assert library.load_snapshot(RRH_CONTRACT, 'synthetic-guided', PERIOD) == later[0]
+    assert library.load_snapshot_version(RRH_CONTRACT, 'synthetic-guided', PERIOD, snapshot.revision) == snapshot
+    assert not any(item.label == 'Activity summary' for item in app.text_area)
+    assert any('older saved version' in item.value for item in app.warning)
+    _button(app, 'Review draft changes').click().run()
+    shown = '\n'.join(item.value for item in app.text)
+    assert expected in shown and 'Newer shared report after the explicit choice.' in shown
+    assert len(writes) == 1

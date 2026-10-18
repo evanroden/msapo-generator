@@ -444,9 +444,8 @@ def _refresh_period_editors_after_commit(prefix):
 
 
 def _has_request_rows(block):
-    return any(value is not None and str(value).strip()
-               for rows in (block.rows, *(table.rows for table in block.extra_tables))
-               for row in rows for value in row)
+    from app.monthly_report_table_entry_ui import has_rows
+    return has_rows(block)
 
 
 def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True,
@@ -457,20 +456,17 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     key = prefix + "_edit_" + spec.key
     edit_tables = True
     request_notice = None
-    if spec.key == "rfi_matrix" and (spec.type in ("table", "work_order_grid") or block.extra_tables):
-        # A fresh report shows an honest empty state. Add request opens the
+    from app.monthly_report_table_entry_ui import EMPTY_TABLES, empty_text_seed, entry_open, has_values
+    optional_table = spec.key in EMPTY_TABLES
+    if optional_table and (spec.type in ("table", "work_order_grid") or block.extra_tables):
+        # A fresh report shows an honest empty state. Add opens the
         # existing native grid; an empty editor slot is never report content.
         # Reset/import/source replacement receives different native IDs while
         # ordinary row edits keep the same mounted editor and input seed.
         key += "_" + _signature((_rich_text_scope(prefix), block.references,
                                  tuple(table.reference for table in block.extra_tables)))
         request_notice = st.empty()
-        if not _has_request_rows(block):
-            open_key = key + "_request_editor_open"
-            edit_tables = bool(st.session_state.get(open_key))
-            if not edit_tables and st.button("Add request", key=key + "_add_request"):
-                st.session_state[open_key] = True
-                edit_tables = True
+        edit_tables = entry_open(block, key)
     # Source-linked text has its own evidence-aware editor above. Do not echo a
     # competing read-only copy below that editor or add a second text control.
     if spec.type not in ("rich_text", "stock_text") and block.text.strip() and not block.ai_paragraphs:
@@ -492,13 +488,16 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             if len(block.extra_tables) > 1:
                 st.write(f"Table {n+1}")
             seed = [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)]
+            if optional_table:
+                seed = empty_text_seed(seed)
             rows = _grid(key + f"_imported_{n}_" + _signature(table.columns), seed, num_rows="dynamic", hide_index=True)
-            # Opening a blank imported RFI frame must retain its original
+            # Opening a blank imported frame must retain its original
             # structure/reference without pretending its editor slot is data.
-            edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows if any(v is not None and v != "" for v in r.values()))
-            tables.append(table if spec.key == "rfi_matrix" and rows == seed
+            edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows
+                                if any(v is not None and (str(v).strip() if optional_table else v != "") for v in r.values()))
+            tables.append(table if optional_table and (rows == seed or not edited_rows and not has_values(table.rows))
                           else replace(table, rows=edited_rows))
-        if spec.key == "rfi_matrix" and tuple(tables) != block.extra_tables:
+        if optional_table and tuple(tables) != block.extra_tables:
             block = replace(block, source="This month", extra_tables=tuple(tables),
                             reviewed_fingerprint="", client_reviewed_fingerprint="")
         else:
@@ -594,18 +593,21 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
     elif edit_tables and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
+        if optional_table:
+            seed = empty_text_seed(seed, spec)
         rows = _grid(key + "_table_" + _signature(asdict(spec)), seed, num_rows="dynamic", hide_index=True, column_config=config)
         from app.monthly_report_editor import _cell_text
         columns = [c.title for c in spec.columns] or ["Facility", "Item", "Status"]
         edited_rows = tuple(tuple(_cell_text(row.get(c)) for c in columns) for row in rows
-                            if any(v is not None and v != "" for v in row.values()))
-        if rows != seed and edited_rows != block.rows:
+                            if any(v is not None and (str(v).strip() if optional_table else v != "") for v in row.values()))
+        if (rows != seed and edited_rows != block.rows
+                and (not optional_table or edited_rows or has_values(block.rows))):
             block = replace(block, source="This month", rows=edited_rows, reviewed_fingerprint="", client_reviewed_fingerprint="")
-    if (request_notice is not None and not _has_request_rows(block)
+    if (request_notice is not None and not edit_tables and not _has_request_rows(block)
             and not (block.text.strip() or block.asset_hashes or block.org_nodes or block.ai_paragraphs)):
-        # Read the result of this native edit, not its pre-edit input; deleting
-        # the final request and entering the first one both update immediately.
-        request_notice.caption("No information requests added.")
+        # A deliberately opened draft slot replaces the empty-state sentence;
+        # its blank cells are still not report content.
+        request_notice.caption(EMPTY_TABLES[spec.key][0])
     if block.asset_hashes and manage_saved_pictures:
         from app.monthly_report_saved_pictures_ui import edit_saved_pictures
         block = edit_saved_pictures(block, key, lambda ref: assets.get(ref) or library.read_asset(state.profile.contract, state.profile.key, ref), show_preview=False)
@@ -628,12 +630,15 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         return block
     from app.monthly_report_sections import readable_label
     if spec.type == "pdf_pages":
-        with st.expander("Replace this section’s attached pages"):
-            st.caption(f"Replaces {len(block.asset_hashes)} attached pages in {readable_label(spec.key)} with one image. Other sections and saved originals stay unchanged.")
-            upload = st.file_uploader("Replacement image for " + readable_label(spec.key), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
+        replacing_pages = bool(block.asset_hashes)
+        with st.expander("Replace this section’s attached pages" if replacing_pages else "Add report pages"):
+            if replacing_pages:
+                st.caption(f"Replaces {len(block.asset_hashes)} attached {'page' if len(block.asset_hashes) == 1 else 'pages'} in {readable_label(spec.key)} with one image. Other sections and saved originals stay unchanged.")
+            upload = st.file_uploader(("Replacement image for " if replacing_pages else "Image page for ") + readable_label(spec.key), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
     else:
         upload = st.file_uploader("Upload a new " + readable_label(spec.key).lower(), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
-    if upload and st.button("Use this replacement in this report", key=key + "_replace"):
+    adding_page = spec.type == "pdf_pages" and not block.asset_hashes
+    if upload and st.button("Add page to this report" if adding_page else "Use this replacement in this report", key=key + "_replace"):
         from pathlib import Path
         image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix,
                                        line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"))
@@ -643,11 +648,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
         if spec.type == "pdf_pages":
             st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
-        st.image(image.data, width="stretch", caption="Updated image in this report")
+        st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")
     undo = st.session_state.get(key + "_replacement_undo") if spec.type == "pdf_pages" else None
     if undo:
         unchanged = block.fingerprint == undo[0]
-        if st.button("Undo attached-page replacement", key=key + "_undo_replacement_" + undo[0],
+        if st.button("Undo attached-page replacement" if undo[1].asset_hashes else "Undo added page", key=key + "_undo_replacement_" + undo[0],
                      disabled=not unchanged,
                      help="Restores this section’s previous pages. Unavailable after another edit changes this section."):
             block = undo[1]
