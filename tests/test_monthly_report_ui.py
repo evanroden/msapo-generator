@@ -263,7 +263,9 @@ def test_all_sections_preserve_content_and_saved_status_across_new_sessions(monk
     next(w for w in app.text_input if w.label == "Prepared by").set_value("Synthetic Editor").run()
     assert not any(w.label.startswith("Include ") for w in app.checkbox)
     next(b for b in app.button if b.label == "Save shared version").click().run()
-    assert any("Saved · version 1" in w.value for w in app.success)
+    assert any('role="status"' in w.value and 'data-save-state="shared"' in w.value
+               and "Shared report" in w.value and "Version 1 is saved" in w.value
+               for w in app.markdown)
     saved = library.load_snapshot(RRH_CONTRACT, "synthetic-guided", ReportPeriod(2026, 9))
     assert {s.key for s in saved.draft.sections} == {s.key for s in default_sections()}
     assert all(s.included for s in saved.draft.sections)
