@@ -1,6 +1,7 @@
 from io import BytesIO
 
 from PIL import Image
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_guided as guided
@@ -9,7 +10,7 @@ from app.monthly_report_model import BlockSpec, ColumnSpec, ReportSource, defaul
 from app.monthly_report_sources import native_action_lines
 
 
-def editor_app(key, kind):
+def editor_app(key, kind, *, pages=True, notes="Existing reviewed notes."):
     return AppTest.from_string('''
 from dataclasses import replace
 from io import BytesIO
@@ -21,9 +22,9 @@ from app.monthly_report_model import BlockSpec, ReportPeriod, ResolvedBlock, syn
 from app.monthly_report_ui import _field
 raw=BytesIO(); Image.new("RGB", (120,120), "navy").save(raw, "PNG")
 assets=st.session_state.setdefault("assets", {"old.png":raw.getvalue()})
-block=st.session_state.setdefault("block", ResolvedBlock(KEY, "Library", text="Existing reviewed notes.", asset_hashes=("old.png",), references=("original-source",)))
+block=st.session_state.setdefault("block", ResolvedBlock(KEY, "Library" if PAGES else "Omit", text=NOTES, asset_hashes=("old.png",) if PAGES else (), references=("original-source",) if NOTES else ()))
 st.session_state.block=_edit_content(BlockSpec(KEY, KIND), block, SimpleNamespace(profile=synthetic_profiles()[0]), "report_audit", assets, _field)
-'''.replace('KEY', repr(key)).replace('KIND', repr(kind))).run()
+'''.replace('KEY', repr(key)).replace('KIND', repr(kind)).replace('PAGES', repr(pages)).replace('NOTES', repr(notes))).run()
 
 
 def test_imported_water_notes_are_visible_and_editable_without_losing_pages():
@@ -38,10 +39,38 @@ def test_imported_water_notes_are_visible_and_editable_without_losing_pages():
     assert app.session_state.block.references == original.references
     assert "Replace this section’s attached pages" in {e.label for e in app.expander}
     assert "Replace all report pages with one image (optional)" not in {e.label for e in app.expander}
-    assert any(c.value == "Replaces 1 attached pages in Water treatment reports with one image. "
+    assert any(c.value == "Replaces 1 attached page in Water treatment reports with one image. "
                "Other sections and saved originals stay unchanged." for c in app.caption)
     assert any(u.label == "Replacement image for Water treatment reports"
                for u in app.get("file_uploader"))
+
+
+@pytest.mark.parametrize('notes', ['', 'Existing reviewed notes.'])
+def test_empty_mbcx_has_add_copy_and_first_page_can_be_undone_without_losing_omitted_notes(monkeypatch, notes):
+    incoming = {}
+    real_upload = guided.st.file_uploader
+    monkeypatch.setattr(guided.st, "file_uploader", lambda label, *args, **kwargs: incoming.get(label) or real_upload(label, *args, **kwargs))
+    app = editor_app('mbcx_report', 'pdf_pages', pages=False, notes=notes)
+    original = app.session_state.block
+    assert not app.exception and original.source == 'Omit' and not original.asset_hashes
+    assert 'Add report pages' in {item.label for item in app.expander}
+    assert 'Replace this section’s attached pages' not in {item.label for item in app.expander}
+    assert not any('Replaces 0' in item.value for item in app.caption)
+    assert any(item.label == 'Image page for MBCx report' for item in app.get('file_uploader'))
+    raw = BytesIO()
+    Image.new('RGB', (120, 120), 'green').save(raw, 'PNG')
+    raw.name, raw.size = 'synthetic-page.png', len(raw.getvalue())
+    incoming['Image page for MBCx report'] = raw
+    app.run()
+    next(item for item in app.button if item.label == 'Add page to this report').click().run()
+    assert not app.exception
+    added = app.session_state.block
+    assert len(added.asset_hashes) == 1 and added.text == original.text
+    assert added.source == 'Replace once'
+    next(item for item in app.button if item.label == 'Undo added page').click().run()
+    assert not app.exception and app.session_state.block == original
+    app.run()
+    assert 'Add report pages' in {item.label for item in app.expander}
 
 
 def test_training_photo_appends_and_retains_notes_and_original_sources(monkeypatch):

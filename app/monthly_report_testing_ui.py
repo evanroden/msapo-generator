@@ -509,6 +509,7 @@ def render(browser_token: str, browser_timezone: str, field, move, live_storage_
             st.warning("The isolated QA recovery journal could not be verified.")
         else:
             if active:
+                st.caption("QA durable report SHA256: " + active.draft.fingerprint)
                 activity = next((b.text for b in active.draft.blocks
                                  if b.key == "activity_summary"), "")
                 st.caption("QA durable Activity SHA256: " +

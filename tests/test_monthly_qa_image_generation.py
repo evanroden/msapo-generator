@@ -58,6 +58,38 @@ def test_qa_toolbar_generates_real_docx_with_ingested_source_page(monkeypatch, t
         path.unlink()
     app.run()
     assert not app.exception
+    from app.monthly_report_checks import preflight
+    unresolved = app.session_state[prefix + "_draft"]
+    assert any(check.code == "source_facility" and check.blocking
+               and check.block_key == content.source.id for check in preflight(unresolved))
+    assert next(b for b in app.button if b.label == "Create Word and PDF").disabled
+    # This invented image-resolver case explicitly belongs to Demo North.
+    # The generic source page contains no site; use the real item form instead
+    # of treating its earlier visual review as permission to include any site.
+    next(b for b in app.button if b.label == "Manage source files").click().run()
+    next(w for w in app.multiselect if w.label == "Source sites").set_value(["qa-north"])
+    next(b for b in app.button if b.label == "Use these source details").click().run()
+    assert not app.exception
+    accepted = app.session_state[prefix + "_draft"]
+    assert not any(check.code == "source_facility" and check.blocking
+                   for check in preflight(accepted))
+    assert accepted.sources[0].sha256 == content.source.sha256
+    # Changing the facility changes this page's client-output context. Review
+    # that exact attached page through the native Water path as well; do not
+    # replace the existing image/relevance gate with a test-side approval.
+    from app.monthly_report_asset_review import pending_asset_indexes
+    water = next(block for block in accepted.blocks if block.key == "water_reports")
+    assert pending_asset_indexes(water) == (0,)
+    next(b for b in app.button if b.label == "Edit pages").click().run()
+    water_actions = [b for b in app.button if b.label == "Include page and continue"
+                     and b.key.startswith(prefix + "_evidence_section_water_reports_")]
+    assert len(water_actions) == 1 and not water_actions[0].disabled
+    water_actions[0].click().run()
+    assert not app.exception
+    current_water = next(block for block in app.session_state[prefix + "_draft"].blocks
+                         if block.key == "water_reports")
+    assert not pending_asset_indexes(current_water)
+    assert current_water.asset_hashes == water.asset_hashes
     converted = []
 
     def converter_stub(input_path, **_kwargs):
@@ -75,7 +107,7 @@ def test_qa_toolbar_generates_real_docx_with_ingested_source_page(monkeypatch, t
     monkeypatch.setattr(jobs, "convert_to_pdf", converter_stub)
     next(b for b in app.button if b.label == "Generate QA Word and PDF").click().run()
     assert not app.exception
-    assert app.session_state["monthly_qa_generation_receipt"]["status"] == "completed"
+    assert app.session_state["monthly_qa_generation_receipt"]["status"] == "completed", app.session_state["monthly_qa_generation_receipt"].get("message")
     assert converted == [1]
     fingerprint, package = app.session_state["monthly_qa_package"]
     assert fingerprint == package.fingerprint
