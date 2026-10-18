@@ -56,7 +56,7 @@ def isolated_purchase(monkeypatch, tmp_path):
 def sample_app():
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
     assert not app.exception
-    next(w for w in app.button if w.label == "Built by Evan Roden").click().run()
+    next(w for w in app.button if w.label == "Load synthetic quote").click().run()
     assert not app.exception
     return app
 

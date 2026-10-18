@@ -4,7 +4,128 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
-## Current implementation checkpoint — 2026-10-17 21:46 UTC
+## Current continuation checkpoint — 2026-10-18 12:46 UTC
+
+Main remains `738233289aa5995058fd51d65f6c0f4530ff8985` (documentation PR268).
+Its exact Tests run39080067152 passed; isolated live run39082513461 failed while selecting
+Demo North in a replay source's native Source sites menu. The retained screenshot shows that
+menu closed; the option timeout does not prove extraction or Activity retention failed.
+This run verified full served738 and completed the known-value prefill and re-entry Word/PDF
+paths before that failure. This is dated CI browser evidence, not a fresh hands-on review.
+
+Workspace maintenance removed the previous local worktrees and unpublished commits. The
+canonical TXT and private evidence archives remain available. The deltas below were reconstructed
+from the current published heads and retested; old local commit IDs/results are not reused as
+current implementation evidence. Evan's October18 Continue instruction renewed publication
+authorization after the historical GitHub user-rejection receipt; no denied original-file transfer,
+managed localhost browser operation, genuine one-shot diagnostic or business send was retried.
+
+| Requirement / retained IDs | Current implementation | Tested scope / first failure | Next action / owner / acceptance |
+| --- | --- | --- | --- |
+| Training completion, honest save status and browser gates; SIM-T, ADP-A08/A16/A17/A19 | PR255 published `b507bb702ff8eeb7fc4c0fee00c0a3fe15c1bc90`; tree `3b6c0d65ff34f4b37c40af90160bc3a54ab3efe0`, parents83aebd8 and main738. Both workflow filters contain both passive observation helpers and their tests. Positive DOM fixtures describe mounted geometry; semantic shared-save assertions retain actual history/reload outcomes. | Reconstructed filter baseline:8failed/16passed. Integrated60focused and48Training/edit/save tests passed. Exact Required39128475832 and Adaptive39128475816 are running. Complete changed-file diff reviewed; no current inline thread. | Require exact-head CI and normal main integration, then served completion/save geometry. Branch published, not merged/deployed/accepted. Engineer. |
+| Source acceptance and exact corrections; SRC01/06, SIM-A/G07 | PR260 local integrated tree includes current main plus accepted row-value evidence, current-source complementary merges, follow-up/organization use visibility, AI evidence identity and current advanced-editor artwork ownership. The native correction container keeps main's identity and preserves corrected unavailable-source records. | Corrected fbb baseline25tests:21assertion failures/4passes. Integrated137tests passed after resolving the guided-file merge conflict. Earlier invalid test fixture and merge-marker collection errors are retained separately, not described as product failures. Current28 value-boundary cases preserve originals and shared snapshots. | Publish this tested delta to existing PR260 and resolve its three current threads with exact code/tests. Main/browser/output acceptance remains open. Engineer. |
+| Fresh Water image loading; SRC04, SIM-W, ADP-A12/A20 | Current fbb artifact12117734857, run39078447713: full Water and output paths passed; both fresh paths record one IMG resource failure after correct one-page atomic inclusion. | Exact request in both traces: media/d09e0f3acbab474eec2f7e08bdb71cfa.jpg returned404 with File not found. Original artifact120785460bytes/SHA0615f3166808ebefc1b77d2d880b6c035f1b59b46e9e9b0007d1afa6a9bbbf9e retained privately. Failed image identity/lifecycle still under investigation; no blanket native-error suppression. | Repair the proved image lifecycle/precondition, preserve first failure and rerun changed exact-head browser journeys. Engineer; OPEN. |
+| Remaining cleanup / Phase1 and Phase2; existing97/113 and ADP-A01–20 | PR254/257/261–267 remain open; PR266 remains draft. Their dated pending rows below are superseded by current CI:254 has no current-head run;255/257/261/262/264/265/266 Required failed;260/263/267 Required passed. Only255/266 Adaptive passed on their old heads. | Other current failures include five obsolete positive preview fixtures, PR264 contact edit paths, PR265 renamed preset, PR266 incomplete RFI entry, actual PR257 Expense Chromium and PR262 Monthly DOM failures. Open source routing/contact/capacity reviews remain engineering work. | Finish independent code, integration and hands-on simplicity acceptance. AUTH01–03, independent non-OpenAI archive retention, native Word, physical Safari/listening and combined-art approval remain precisely scoped external checks. Neither phase accepted. |
+
+Current private restart evidence: the single ENFRA_Fresh_Chat_Handoff_2026-10-17.txt (retained
+version8,95111bytes/SHAa632a0af307a5a132f3b696fc66464a701fbb79bcafd293f6424c96df72c56be);
+new local regression XML/logs and publication manifest under private-evidence. Repository-backed
+changes are published to existing branches; no customer originals or screenshots are added here.
+The remaining entries below retain their original dated scope and traceability.
+
+## Current implementation checkpoint — 2026-10-17 23:40 UTC
+
+Main is `09b9dee8984d0970610df527bfa6b05d4b23abaa` after the normal merge of PR256.
+PR253, PR258 and PR259 are also merged; PR249–252 remain merged. Full served About was
+independently read at23:38 as `7778db86703da5b1c45f2b0444c8478f0da7928e`; no served09b9 claim.
+Reload retained the original Activity text and fixture generation0684b4767acc. No production
+recovery was resolved, test fixture reset, paid reading, business delivery or denied transfer retried.
+Both phases remain **OPEN / NOT ACCEPTED**. A pushed branch is not a release or acceptance.
+
+| Requirement / existing traceability | Implementation / published head | Exact evidence | Remaining action / owner / acceptance |
+| --- | --- | --- | --- |
+| Activity edit/Clear/re-entry, writing first; CONT01/02/07, SIM-A, ADP-A08/A10 | MERGED PR253, exact tested297f0840d0cd75459da26648a6373f9c1c71215b; merge407b9cf54171fb8ae894bb2a32b7bde49bd8a535. | Tests39075955391:3604pass/2warnings, container/resource pass; Adaptive39075955340 all4jobs pass. Merged407 Tests39077748168 SUCCESS. Served immediate edit/Tab/Clear and acknowledged-save/Clear both clear once, Undo restores, re-entry persists. Real two-tab stale write rejected without hiding competing text. | Named same-tab served state repaired. Narrow/caret/output coverage remains; engineer. |
+| Mandatory included-source scope and direct warning navigation; SRC01/04/06, CONT04/06/08, SIM-R06/G07 | MERGED PR256 exact3f359d0ffd3309b74fcdf5be5a6326d7071ae3ec, merge09b9dee. Item-specific source scope and per-use totals receipts; stable correction parent; global acknowledgment cannot waive mandatory scope. | Exact Tests39078071854 and Adaptive39078071865 SUCCESS. Three review threads reread resolved before normal merge. Source original identity/stale guards retained. | Verify merged/served09b9 separately; actual authentic/privacy acceptance OPEN. |
+| Training reference; SIM-T, ADP-A08/A17 | MERGED PR253. Actual expander readiness precedes the unchanged one-action/five-second reference. | Exact297 reference/full Training passed. Original668 first failure retained; original closing event not proved. | Physical Safari/listening separate; no error suppression or second selection. |
+| Useful previews/narrow return/stable save; ADP-A01–04/A08/A12 | PR254 **6c549eff537fe96aff8ce7be513b0eee1c345862**, tree69ae7323646ea1dacbe632af5e5b17f38a0f65e8. Useful content keeps dividers/export; stable browser-save acknowledgment uses actual journal timestamp, explicit retry, rendered section numbering and narrow cold-layout repair. | Previous2488172 Adaptive39078867650: Training/history/Photos PASS, DOM FAIL cold Water scroll. Originaldd Photos failed after72px alert insertion during click; current Photos passes. New cold carry33focused pass. Full existing focused104 + reordered detector34pass/3renderer skips remain scoped. | Exact new CI and served initial-page/narrow-return acceptance OPEN. Do not call prior all-Adaptive green. |
+| Training completion; SIM-T, ADP-A08/A16/A17 | PR255 **83aebd853b74f43a42dab59582822c0fd7c7e170**, treeed5e03d915c8ac2f86dc47ff60b46313d1984d37. Add resets/closes, inline errors/Edit/Remove/1 hour; stable save and cold admission. | Current Tests39078869666 / Adaptive39078869663 pending at checkpoint. Combined save/cold54pass; original cold before-state offscreen prior to release and root-class replacement retained. Original2e participant-loss evidence retained separately. | Exact CI, served completion and native/physical distinctions remain; engineer. |
+| Recovery context; CONT01/02/08, ADP-A10/A17 | PR257 **117cc75ef81027a55f2b8069dd4851741d6e676a**, treedadd892aa54cd1ce7954e5cafeb2a6e973b67ac5. Both scopes/times/authors and consequences inspectable, exact CAS choices and failed-choice retry. |49focused pass incl actual durable match. Tests39078873444 / Adaptive39078873458 pending. Separate earlier fresh IMG error not waived. | Exact isolated recovered-state served acceptance OPEN; never resolve production draft for QA. |
+| Truthful empty states; SIM-C/R/M, ADP-A03/A08 | MERGED PR258 tested8ce2a485267edc9450fdb9efcd29c5c6585fe714, mergec84265b. Blank slots do not count/export; zero-page MBCx offers Add. | Exact Tests39076282484/Adaptive39076282619 pass. Servedc842 shows No end-of-life items added and Add report pages. | RFI native focus remains engineering; fresh/cleared/omitted output acceptance continues. |
+| Quiet PO/Expense; SIM-G, ADP-A09/A14/A15 | MERGED PR259 tested3f2cd69b393539e642b3fafc87906a1c1096eae0, merge7778db8. Native quieter titles and one attribution. | Exact Tests39076306580 / Adaptive39076306590 pass, review threads empty. Full777 About verified; workflow radios show Purchase order/Expense reimbursement. | Full served PO/Expense paths remain read-only unless their isolated boundary is established. No live sends. |
+| Accepted-source readiness; SRC01/06, SIM-A/G07 | PR260 **fbbf337b47a30b0cee47dd24f02ff7d927d56b23**, treec77cdcf19d745ec3fd43cbf7a89a23584e9abefb. Accepted facts/totals ready, page review separate; missing source and unsupported DOCX notes remain truthful. | Tests39078447717 pending. Adaptive39078447713 FAILED: full Water pass; fresh Chromium and WebKit each record one IMG resource error; Training/history/Photos pass. Artifact12117734857 retained/hash verified. | Diagnose exact failed image request, do not suppress resource errors. PR254 informational-notice review depends on integration. No graphic privacy closure. |
+| Readable proposal/onsite fields; SIM-C/M, ADP-A03/A08/A18 | PR261 **1171c23f362c7f2cbcbfed4d15aa75b4b618a6ea**, tree74a571cec35d193fa0a25ebe3939156c50a0520c. Native vertical field cards plus narrow cold repair;2grids+onsite-card assertions retained. | Old0a23 exact Tests39077251274 PASS. Its actual Chromium/WebKit row journeys and Word/PDF values PASS; separate cold Water scroll changed6449→6729 while button and both grid/card heights stayed stable. New carry35Python/12Node pass. Current Tests39079621413 / Adaptive39079621519 pending. | Preserve original cold evidence; exact new CI/served geometry/output OPEN. |
+| Persistent section selector; ADP-A01/A02/A06/A08/A17 | PR262 **bb32d76f78623015421b1da8cc5cc2598aab86a6**, tree50654f34453a7cec9e639c1befd17112b8d3c030. Late/replacement binding, natural Review return, rendered numbering, direct-wrapper sticky and tabletop reading-line fixes. | Originalc932 Tests/Adaptive failed and retained. Three review findings fixed/replied/resolved. New focused48Python/57Node pass. Tests39079426511 / Adaptive39079426454 pending. | Native exact-head/served selector still OPEN; do not equate geometry unit tests with usability. |
+| One source workspace / Water page task; SRC01/04/06, SIM-A/W/G07, CONT09 | PR263 **200591a698d8ad6155329c9a237fcce7b7e1579e**, treea901cc9afb3399b43e4e88815f7b45d0b65f0e26. One general intake and selected-file form; Water page actions have one owner; image/date/site correction and Return to report pages; explicit Include/Exclude/advance; scoped replacement Undo. |279source-focused baseline +5Node; integrated page48focused,102source/actualDOCX,37retained-route,7Node pass. Five old failures reproduced on unchanged07c then fixed by removing competing mounted page ownership. Exact caption/vendor/date receipt preserves external stale guards. Tests39079672853 / Adaptive39079672873 pending. | Native/served correction/Return and actual PDF remain OPEN. Focused Word uses original image bytes; its PDF seam is stubbed. |
+| Contact/vendor cards; SIM-O/S, ADP-A08/A11/A18 | PR264 **b0c8f2730822d0acc47444809d513c0f21a01876**, tree738b2d6fc3782e0e7e993b61906683c01790f225. One native editor, readable name/role/vendor/site, exact standing scope, report Remove/Undo, pending edits captured before actions. |118focused pass/4existing skips. Native journey prepared for phone/directory revision, remove/Undo, vendor agreement, narrow re-entry/reload and actual Word/PDF. Tests39079693283 / Adaptive39079693284 pending. | Depends on261; resolve current-main ancestry if required without dropping either change. Native/served acceptance OPEN. |
+| MBCx presets; SIM-M, ADP-A08 | PR265 **4ca7760af85284fce23c1f49165976626ac5e994**, treede27cea4d244f7b69997ba788dae4ef9d9bc8ec2. Short presets/selected status; newly delivered human findings cannot be overwritten by a stale preset. |40focused pass on777-based tree;2new cases fail before. Tests39079694364 / Adaptive39079694352 pending. | Native/served same-event check OPEN. Exported preset sentences unchanged. |
+| RFI focused entry; SIM-RFI, ADP-A03/A08 | DRAFT PR266 **47fc854cf2b58050faa05996abd0aaa0f6eb0c69**, treef96a10a471b2e1f6402f310c18cc88d984303544. Recovery checkpoint ONLY. | Existing row-card18pass, not RFI acceptance. docs/WIP_RFI_ENTRY.md records exact gaps. | NOT READY TO MERGE: missing one-shot native focus consumer, RFI-specific migrations/browser/output; reconcile264 helper additions. Engineer, not owner dependency. |
+| One capacity task; SIM-S, ADP-A11/A18 | PR267 **f695b2582178b9eadf446b1ff605cbc96821b843**, tree6b3ce6a365de5285e63dcc83fde401dded7c0619. One stable source/reuse task, direct report table first; exact standing scope; uncertain override stays report-only. |88pass/2existingwarnings on source-page integrated tree10.08s, including actual editable Word/currentNR/next-month1350, reload/history, no repeat write, mixed first-fill retained correction. Tests39079755942 / Adaptive39079756011 pending. | Depends on263. Native browser/real-PDF/served scope acceptance OPEN. |
+| Phase1/2, existing97/113 and ADP-A01–20 | OPEN / NOT ACCEPTED; counts remain traceability, not fresh defect counts. | Current main/served/branch CI are separate facts. All implementation slices above are pushed; unfinished RFI is draft only. | Finish independent engineering and exact integration/served/all-page/graphic+hidden privacy evidence. AUTH01–03, durable independent archive, native Word, physical Safari/listening and combined-art approval remain precisely scoped. |
+
+Current CI is listed as observed, not promised. Main777 Tests39079392411 / Adaptive39079392450
+were running; main09b9 was just merged and needs its own exact-head checks. Prior main407 Adaptive
+and mainc842 Adaptive were cancelled by later main pushes, not passing runs. No failing gate was waived.
+
+Served407 native evidence: route `?workflow=monthly&monthly_qa=isolated`, cloud Chromium1363×936,
+document width1363, original-source replay September2026 generation0684b4767acc. Activity field
+is172.171875px below heading versus1227.078125px on668 in the same populated fixture. Immediate
+edit hash5941831c69abd59b78a9a59fe03b375b1c4469eedc79faaaa34d872b075bee55 → Clear empty SHAe3b0…;
+Undo restores exact text/hash. Acknowledged editb1642aa4d356b6ae80b582695ff474b24920aaa1c2ba9e47d6e2a31c83311370
+also clears once. Re-entry restores original32296cfd8f4286b458bd6abc4743f0b003f0adf58184feb15b553c0a5a26caa2.
+Real second tab in same generation: working competing2326bee10961df004d76c5bd21ff5217e7c39eb7e20ca752e16cc9390aac90db,
+durable first-tab8ed8b724052e438ef609de6f5c8d876a4da5e71d55782934b3e1e3ad0f1994ed. Persistence rejected with
+specific newer-copy error, both synthetic texts retained in evidence. Original wording restored in first tab;
+disposable second tab closed. Reload completed on newly servedc842 with original working/durable32296….
+No other fixture field deliberately changed. Record: activity-sequence-served407-20261017.json.
+No narrow/physical/assistive or fresh output claim from these actions.
+
+First-failure artifacts are private, hash-verified and retained: PR254Photos12116957060,
+22071227bytes/SHA99d734c9eaae161bc6f90abfc4acfdfc4a7073773a2597ae802e12cc073e97e4;
+PR256Water12117386740,90330214bytes/SHAabdf264abbf91ce53fa16cdfa6ae9a8c45c7dca7438fa95a8a081c3a727dfff0;
+PR255cold12117835404,101431284bytes/SHAa6a106513e5435fa52c7b5c581b89579420889ac7e6dc24db0c9870dc83201fe.
+Original668 Training,2e participant-loss and earlier cold-selector evidence remain intact.
+The earlier cold predicate repair excludes5 text skeletons and keeps3 actual grids; it is distinct from
+new admission/root-class loss. Current row cards intentionally replace one grid with native cards.
+No original timeout was extended, error suppressed, repeat action substituted or backend browser state injected.
+
+Previously inspected exact8d Training outputs remain bounded evidence: artifact12116705100,
+1304770bytes/SHA4c91445dda7d8ea1bbe6aea20c7410069cc0d4cce34ea67781a56c38affb34b3. Added/removed DOCX
+138564bytes/SHA3e7a5348b7b947f96f6e13412a131d6ffb3a22955882e0d95aa2d0cf57c4437f and
+138521bytes/SHAd659f57d0d0acbb296d627268acb894f2723e4778adcb8d58982bdb7c9057af0 match reviewed e6 bytes.
+All27 added PDF and27 DOCX pages plus changed removed page25 inspected at115dpi. DOCX renderer
+LibreOfficeDev26.8.0.0.alpha0 commit2c87e51eeaa2b413ff4ae097b2705eea1995d8e5; CI PDF LibreOffice24.2;
+Poppler26.05.0. Actual8d rasters match corresponding reviewed e6 rasters;9 native editable tables,
+no comments/embeddings/hidden text in this synthetic package. Not native Word/approved master/authentic graphic privacy.
+
+
+Additional retained originals: PR260 fresh Water artifact12117734857,120785460bytes,
+SHA2560615f3166808ebefc1b77d2d880b6c035f1b59b46e9e9b0007d1afa6a9bbbf9e;
+PR261 artifact12117239914,128086222bytes,
+SHA256dc10ef9e183800ede5099d03083251291ecbcd08d09d9808ff00f92a7095b8ef.
+Both downloaded and verified unchanged in private-evidence. Their CI expiry is October24.
+PR261 Chromium/WebKit actual row DOCX138582bytes/SHA256bb1d83aa75d0d4edee045043d248fff9794e0bbfad694f5b993c6a36dd13d560;
+PDF27pages/157692bytes, Chromium9dd513491a08fdfb04fe33576fabf007778cbb84ee1883e423cbba9eca33be17,
+WebKit404ab38786df294c82ecba0e97eb591bf08247107dde0d71c6779bbd1b93d255.
+These actual table/text assertions are not all-page visual acceptance.
+
+Restart order: refresh exact PR heads/reviews/CI and merged/served main first. Diagnose260's fresh IMG
+resource failure and the still-pending native cold-layout results without increasing bounds or suppressing
+errors. Integrate eligible source/readiness and row primitives into main before dependent263/264/267;
+keep original per-slice behavior and focused tests when resolving ancestry conflicts. Complete RFI266
+native focus/test work, then served desktop/narrow paths and named-renderer all-page output/privacy checks.
+No local file or expiring CI artifact alone closes durable non-OpenAI archive access.
+
+Recovery: each current candidate is a remote PR head above. Local integrated worktrees include
+source-pr260-review64a40e4, report-page-task-integrated6c82638, contact-followon95b477a,
+capacity-publishbb18538, mbcx-publish65a71ff, rows-followon742b8b1, section-navigation-followone618de8,
+save-feedback-followon82fb41b, training-followoncc687b1 and recovery-followon74f49a4.
+The original source-review workspace retains older combined intermediate versions; it is an archival
+recovery source, never an integration candidate. Do not overwrite newer per-slice files with it.
+That exact original workspace is now committed and pushed on `archive/combined-workspace-20261017`
+at `626d22d80fc2b83ca29b10a976602d94f7d53430` (tree7a6c2006b206dbe923c6fb536b938ec78d4e2058).
+The archive has no merge PR and must not replace the newer candidate trees above.
+
+## Historical implementation checkpoint — 2026-10-17 21:46 UTC
 
 Remote main is freshly `668ded68ecb0b69e1a0b971e2cd4acfe2f186b62` (tree
 `08c0a052a495fde731c28595bc420a386ff8aaaa`). PR249–252 remain merged. Main Tests

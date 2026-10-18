@@ -33,7 +33,8 @@ class SourceContentReadiness:
 
 
 def content_readiness(draft, source):
-    uses = tuple(use for use in source_uses(draft, source.id) if use[0] in {"text", "rows"})
+    uses = tuple(use for use in source_uses(draft, source.id)
+                 if use[0] in {"text", "rows", "follow_up", "organization"})
     if not uses:
         return SourceContentReadiness()
     destinations = tuple(dict.fromkeys(use[1] for use in uses))
@@ -42,14 +43,16 @@ def content_readiness(draft, source):
     blocks = {block.key: block for block in draft.blocks}
 
     def current_review(use):
-        block = blocks[use[1]]
-        if not block.ai_written or not block.reviewed:
+        block = blocks.get(use[1])
+        if use[0] != "text" or block is None or not block.ai_written or not block.reviewed:
             return False
         from app.monthly_report_ai import ai_references, evidence_fingerprint
-        return bool(block.ai_evidence_fingerprint and block.ai_evidence_fingerprint ==
-                    evidence_fingerprint(draft.sources, ai_references(block)))
+        references = ai_references(block)
+        return bool(any(_source_id(ref) == source.id for ref in references)
+                    and block.ai_evidence_fingerprint and block.ai_evidence_fingerprint ==
+                    evidence_fingerprint(draft.sources, references))
 
-    covered = tuple(_covered_use(use, source, draft.profile, draft.period) for use in uses)
+    covered = tuple(_covered_use(use, source, draft.profile, draft.period, sources=draft.sources) for use in uses)
     reviewed = tuple(current_review(use) for use in uses)
     accepted = all(a or b for a, b in zip(covered, reviewed))
     kinds = {use[0] for use in uses}
@@ -65,7 +68,8 @@ def content_readiness(draft, source):
             for use in uses for ref in use[3] if ref.startswith(USE_PREFIX))
         if own_receipt:
             problem = "Review the changed totals or mapped rows."
-        elif any(blocks[use[1]].ai_written and not current_review(use) for use in uses):
+        elif any(blocks.get(use[1]) is not None and blocks[use[1]].ai_written
+                 and not current_review(use) for use in uses):
             problem = "Review the current suggested wording and its evidence."
     return SourceContentReadiness(True, accepted, label + " · " + locations,
                                   problem, destinations)

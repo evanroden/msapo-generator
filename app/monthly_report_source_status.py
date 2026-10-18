@@ -150,11 +150,12 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
         from app.monthly_report_source_scope import included_scope_valid, reviewed_scope
         if reading.included:
             site = facility_choice(source, draft.profile)
-            if (site == KEEP_FACILITY or
-                    (not source.facility or source.scope_review) and not included_scope_valid(draft, source)):
+            if site == KEEP_FACILITY:
                 return result("Check the source facility.")
             if reading.problem:
                 return result(reading.problem)
+            if (not source.facility or source.scope_review) and not included_scope_valid(draft, source):
+                return result("Check the source facility.")
         numbers = tuple(sources.image_numbers(content))
         if not numbers:
             if reading.included:
