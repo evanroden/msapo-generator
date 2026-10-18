@@ -1113,7 +1113,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         from app.monthly_report_directory_ui import _resume_contacts
         draft = apply_contacts(draft, updated_contacts)
         _resume_contacts(draft, prefix)
-    save_status = st.empty()
+    from app.monthly_report_save_status import SaveStatus
+    save_status = SaveStatus(prefix, recovery_available=recovery_available)
     from app.monthly_report_asset_review import refresh_asset_source_context
     from app.monthly_report_section_preview_ui import render_section_preview
     blocks = {b.key: refresh_asset_source_context(b, draft.sources) for b in draft.blocks}
@@ -1262,12 +1263,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_issues import apply_issue_action
     draft = apply_issue_action(draft, prefix)
     st.session_state[draft_key] = draft
-    if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
-        save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
-    elif prior_draft:
-        save_status.info(f"Starting from the saved {prior_draft.period.label} report. Monthly work and attachments start fresh; site information carries forward.")
-    else:
-        save_status.info("Your selected design is ready. Changes are kept for this browser when automatic recovery is available.")
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
     if conflict:
@@ -1365,7 +1360,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if recovery_available and snapshot and snapshot.draft.fingerprint == draft.fingerprint:
             # The complete current version already exists in immutable history;
             # no new browser journal is necessary after Generate/Save.
-            save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
+            save_status.shared_saved(snapshot.revision)
         elif recovery_available:
             try:
                 previous_sequence = st.session_state.get(prefix + "_active_sequence", 0)
@@ -1376,27 +1371,32 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     assets=assets)
                 st.session_state[prefix + "_active_sequence"] = recovered.revision
                 st.session_state[prefix + "_active_generation"] = recovered.generation
-                save_status.success("Current edits kept for this browser. Completed report versions remain unchanged.")
+                save_status.browser_saved(recovered.updated_at)
                 if recovered.revision != previous_sequence:
                     record_report_preferences(browser_token, contract, selected)
                     if prepared.strip():
                         record_report_preparer(browser_token, contract, selected, prepared)
             except active_work.ActiveWorkConflict:
-                save_status.error("Another tab or a new working copy has newer changes. "
+                save_status.failed()
+                st.error("Another tab or a new working copy has newer changes. "
                                   "These edits are still on this page but were not kept for recovery. "
                                   "Reload and compare before trying again.")
             except (library.LibraryError, OSError):
-                save_status.error("Automatic recovery could not keep these edits. "
+                save_status.failed()
+                st.error("Automatic recovery could not keep these edits. "
                                   "Your current text remains on this page, but is not saved for a refresh. "
-                                  "Try another edit to retry, or save a report version before leaving.")
+                                  "Retry the browser save, or save a shared report version before leaving.")
+                # Native button activation starts one full render, whose
+                # persistence attempt above retries the current draft once.
+                st.button("Retry browser save", key=prefix + "_retry_browser_save")
         else:
             if snapshot and snapshot.draft.fingerprint == draft.fingerprint:
                 # A completed/saved version is still saved, even when cookies
                 # prevent separately retaining unfinished browser changes.
-                save_status.success(f"Saved · version {snapshot.revision} · {period.label}")
+                save_status.shared_saved(snapshot.revision)
                 st.caption("Automatic recovery for new edits is unavailable in this browser.")
             else:
-                save_status.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
+                st.warning("Automatic recovery is unavailable in this browser. Save a report version before leaving.")
         if package and package.fingerprint != draft.fingerprint:
             st.session_state.pop(prefix + "_package", None)
             package = None
@@ -1485,7 +1485,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 record_report_preferences(browser_token, contract, selected)
                 record_report_preparer(browser_token, contract, selected, prepared)
                 record_shared_save(prefix, package, saved=saved)
-                save_status.success(f"Saved · version {saved.revision} · {period.label}")
+                save_status.shared_saved(saved.revision)
             except (ValueError, OSError) as exc:
                 record_shared_save(prefix, package, error=str(exc))
         if package:
