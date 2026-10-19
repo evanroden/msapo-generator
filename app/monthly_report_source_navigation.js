@@ -7,6 +7,27 @@ globalThis.ENFRASourceReviewNavigation = {
         const loadingText = 'Loading correction controls…';
         const workspaceSelector = '[class*="st-key-epc_workspace_monthly"]';
         const reportIdentity = state.identity;
+        function correctionWorkspace(node, source, kind) {
+            if (!node?.isConnected || !app.contains(node) || node.closest('[data-stale="true"]')) return null;
+            const enclosing = node.closest(workspaceSelector);
+            if (enclosing) return enclosing;
+            // Final review is a stable sibling after the workspace. Its
+            // server-owned exact-source marker must identify this report;
+            // an arbitrary matching href elsewhere in the app is not enough.
+            const group = node.closest('[class*="st-key-source_correction_"]');
+            if (!group?.isConnected || group.closest('[data-stale="true"]')) return null;
+            const markers = group.querySelectorAll('.enfra-source-correction');
+            if (markers.length !== 1 || !markers[0].isConnected ||
+                markers[0].closest('[data-stale="true"]') ||
+                markers[0].dataset.reportIdentity !== reportIdentity ||
+                markers[0].dataset.sourceId !== source || markers[0].dataset.kind !== kind) return null;
+            const exact = [...app.querySelectorAll('.enfra-source-correction')].filter(
+                marker => marker.dataset.sourceId === source && marker.dataset.kind === kind);
+            if (exact.length !== 1 || exact[0] !== markers[0]) return null;
+            const workspaces = app.querySelectorAll(workspaceSelector);
+            if (workspaces.length !== 1 || workspaces[0]._epcWorkspace !== state) return null;
+            return workspaces[0];
+        }
         function sourceBoundary(source, workspace) {
             if (!reportIdentity || state.identity !== reportIdentity ||
                 !workspace || workspace._epcWorkspace !== state || !workspace.dataset.epcMode ||
@@ -44,7 +65,7 @@ globalThis.ENFRASourceReviewNavigation = {
                 if (!loading) return;
                 const current = alert.querySelector('a[data-enfra-correction-link]');
                 const source = marker.dataset.sourceId, kind = marker.dataset.kind;
-                const workspace = marker.closest(workspaceSelector);
+                const workspace = correctionWorkspace(marker, source, kind);
                 const boundary = sourceBoundary(source, workspace);
                 const field = boundary && fieldFor(boundary, kind);
                 const ready = !retiring && !disposed && ['site', 'date'].includes(kind) &&
@@ -88,7 +109,7 @@ globalThis.ENFRASourceReviewNavigation = {
                 node => node.querySelector('label')?.textContent.trim() === 'Source date');
             return widget?.querySelector('input');
         }
-        function focusWhenReady(boundary, kind, source, workspace) {
+        function focusWhenReady(boundary, kind, source, workspace, link) {
             cancelPending();
             let active = true, waiting = false, deadline = null;
             const observer = new MutationObserver(schedule);
@@ -107,7 +128,8 @@ globalThis.ENFRASourceReviewNavigation = {
             }
             function attempt() {
                 if (!active || disposed) return;
-                if (sourceBoundary(source, workspace) !== boundary) {stop();return;}
+                if (correctionWorkspace(link, source, kind) !== workspace ||
+                    sourceBoundary(source, workspace) !== boundary) {stop();return;}
                 const field = fieldFor(boundary, kind);
                 if (field?.closest('[data-stale="true"]')) {stop();return;}
                 if (!field || field.disabled || !field.isConnected || field.closest('[inert]')) return;
@@ -163,7 +185,7 @@ globalThis.ENFRASourceReviewNavigation = {
             const match = /^#source-details-(.+)--(site|date)$/.exec(link.getAttribute('href') || '');
             if (!match) return;
             event.preventDefault();
-            const workspace = link.closest(workspaceSelector);
+            const workspace = correctionWorkspace(link, match[1], match[2]);
             const boundary = sourceBoundary(match[1], workspace);
             const review = app.querySelector('#report-review');
             if (!boundary || !review) return;
@@ -188,7 +210,7 @@ globalThis.ENFRASourceReviewNavigation = {
             returnLinks();
             // Cold native fields can still be skeletons at this point. Open
             // the real panel now and hand focus over once its input exists.
-            focusWhenReady(boundary, match[2], match[1], workspace);
+            focusWhenReady(boundary, match[2], match[1], workspace, link);
         }
         app.addEventListener('click', click);
         // This display-only observer also sees newly streamed warnings and
@@ -196,7 +218,7 @@ globalThis.ENFRASourceReviewNavigation = {
         // previews, read values, submit, or use a timer as readiness proof.
         const controlsObserver = new MutationObserver(controlsChanged);
         controlsObserver.observe(app, {subtree:true, childList:true, attributes:true,
-            attributeFilter:['disabled','data-stale','data-epc-mode','data-report-identity','id']});
+            attributeFilter:['disabled','data-stale','data-epc-mode','data-report-identity','data-source-id','data-kind','id']});
         controlsChanged();
         // A valid correction can remove its warning and form. The keyed return
         // location stays mounted; reveal it again after that ordinary rerun.

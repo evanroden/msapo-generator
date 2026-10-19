@@ -133,9 +133,18 @@ def add_photo(page, number, identity):
         has=page.locator("summary").get_by_text("Add photos", exact=True))
     if not intake.evaluate("node => node.matches('details') ? node.open : node.querySelector('details').open"):
         intake.locator("summary").first.click()
-    activity.get_by_test_id("stFileUploader").filter(
-        has=page.get_by_text("Progress photos", exact=True)).locator('input[type="file"]').set_input_files(
+    uploader = activity.get_by_test_id("stFileUploader").filter(
+        has=page.get_by_text("Progress photos", exact=True))
+    before = receipt(page)["sequence"]
+    uploader.locator('input[type="file"]').set_input_files(
             {"name": f"synthetic-history-photo-{number}.png", "mimeType": "image/png", "buffer": photo(number)})
+    # set_input_files returns before the native upload has necessarily finished.
+    # The previous photo keeps Add enabled, so wait for this entire selected set
+    # and its fresh server render before the one intended Add gesture.
+    for index in range(1, number + 1):
+        expect(uploader.get_by_title(f"synthetic-history-photo-{index}.png", exact=True)).to_be_visible(timeout=30000)
+    expect(uploader.get_by_test_id("stFileChipIconSpinner")).to_have_count(0, timeout=30000)
+    await_state(page, identity, after=before)
     activity.get_by_role("button", name="Add these photos", exact=True).click()
     return await_state(page, identity, photos=number)
 

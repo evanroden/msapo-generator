@@ -14,7 +14,7 @@ from html import escape
 import streamlit as st
 
 
-def render_source_check(check, draft):
+def render_source_check(check, draft, prefix):
     if check.code not in {"source_facility", "source_period", "source_date_unknown"}:
         return False
     source = next((item for item in draft.sources if item.id == check.block_key), None)
@@ -27,7 +27,8 @@ def render_source_check(check, draft):
         # Keep source identity out of the visible warning and URL parameters.
         # This inert marker belongs to the alert, not to its native form.
         st.markdown('<span class="enfra-source-correction" data-source-id="' +
-                    escape(source.id, quote=True) + '" data-kind="' + kind +
+                    escape(source.id, quote=True) + '" data-report-identity="' +
+                    sha256(prefix.encode()).hexdigest()[:24] + '" data-kind="' + kind +
                     '" data-label="' + label + '" aria-hidden="true"></span>',
                     unsafe_allow_html=True)
         # Streamlit's standard alert retains the exact problem and severity.

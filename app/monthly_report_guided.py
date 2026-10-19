@@ -1449,7 +1449,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
         from app.monthly_report_source_review_ui import render_source_check
         for check in checks:
-            if not render_source_check(check, draft):
+            if not render_source_check(check, draft, prefix):
                 (st.error if check.blocking else st.warning)(review_message(check, draft))
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:

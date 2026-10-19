@@ -25,7 +25,7 @@ function fixture() {
             querySelector:s=>boundary.ready&&id==='first'&&s.includes('Source sites')?field:null,
             querySelectorAll:s=>s==='details'?[details]:boundary.ready&&s==='[data-testid="stDateInput"]'&&id==='second'?[dateWidget]:[],getAnimations:()=>[]};
         const marker={id:'source-details-'+id,isConnected:true,closest:s=>s==='[data-stale="true"]'?(marker.stale?marker:null):boundary};
-        const link={isConnected:true,parentElement:scroll,top:400,classList:{contains:()=>false},closest(s){return s.includes('epc_workspace_monthly')?workspace:this;},getAttribute:()=>`#source-details-${id}--${id==='first'?'site':'date'}`,getBoundingClientRect(){return{top:this.top};},setAttribute(){},focus(){this.focused=true;}};
+        const link={isConnected:true,parentElement:scroll,top:400,classList:{contains:()=>false},closest(s){if(s==='a')return this;return s.includes('epc_workspace_monthly')?(this.alert?.marker.workspace ?? (this.alert ? null : workspace)):s==='[data-stale="true"]'?(this.stale?this:null):this.alert?.container || this;},getAttribute:()=>`#source-details-${id}--${id==='first'?'site':'date'}`,getBoundingClientRect(){return{top:this.top};},setAttribute(){},focus(){this.focused=true;}};
         const back={dataset:{sourceId:id},hidden:true,classList:{contains:()=>true},closest(){return this;}};
         entries[id]={outer,details,field,boundary,marker,link,back,owner,group};
     }
@@ -34,23 +34,23 @@ function fixture() {
         const attrs={};
         return {tagName:tag.toUpperCase(),isConnected:true,parentElement:scroll,
             textContent:'',getAttribute:key=>attrs[key],setAttribute:(key,value)=>{attrs[key]=value;},
-            classList:{contains:()=>false},closest(s){return s.includes('epc_workspace_monthly')?workspace:this;},
+            classList:{contains:()=>false},closest(s){if(s==='a')return this;return s.includes('epc_workspace_monthly')?(this.alert?.marker.workspace ?? (this.alert ? null : workspace)):s==='[data-stale="true"]'?(this.stale?this:null):this.alert?.container || this;},
             getBoundingClientRect:()=>({top:400}),focus(){this.focused=true;},
             after(replacement){this.alert.link=replacement;replacement.alert=this.alert;},
             remove(){if(this.alert.link===this)this.alert.link=null;}};
     }
-    const app={listeners:new Map(),extraMarkers:[],contains:node=>node.insideApp!==false,querySelector:()=>review,
-        querySelectorAll:s=>s==='.enfra-source-correction'?correctionMarkers:s==='[id^="source-details-"]'?[...Object.values(entries).map(v=>v.marker),...app.extraMarkers]:Object.values(entries).map(v=>v.back),
+    const app={listeners:new Map(),workspaces:[workspace],extraMarkers:[],contains:node=>node.insideApp!==false,querySelector:()=>review,
+        querySelectorAll:s=>s.includes('epc_workspace_monthly')?app.workspaces:s==='.enfra-source-correction'?correctionMarkers:s==='[id^="source-details-"]'?[...Object.values(entries).map(v=>v.marker),...app.extraMarkers]:Object.values(entries).map(v=>v.back),
         addEventListener(k,fn){this.listeners.set(k,fn);},removeEventListener(k,fn){if(this.listeners.get(k)===fn)this.listeners.delete(k);}};
     const addCorrection=id=>{
         const alert={querySelector:s=>s==='a[data-enfra-correction-link]'?alert.link:null,
             querySelectorAll:s=>s==='strong'?[alert.status]:[]};
         alert.status=inline('strong');alert.status.textContent='Loading correction controls…';alert.status.alert=alert;
         Object.defineProperty(alert,'control',{get:()=>alert.link||alert.status});
-        const container={querySelector:()=>alert};
-        const marker={dataset:{sourceId:id,kind:id==='first'?'site':'date',label:id==='first'?'Correct site':'Correct date'},
-            closest:s=>s.includes('epc_workspace_monthly')?workspace:container};
-        correctionMarkers.push(marker);return alert;
+        const container={isConnected:true,querySelector:()=>alert,querySelectorAll:()=>container.markers,closest:s=>container.stale?container:null};alert.container=container;
+        const marker={isConnected:true,workspace,dataset:{reportIdentity:state.identity,sourceId:id,kind:id==='first'?'site':'date',label:id==='first'?'Correct site':'Correct date'},
+            closest:s=>s.includes('epc_workspace_monthly')?marker.workspace:s==='[data-stale="true"]'?(marker.stale?marker:null):container};
+        alert.marker=marker;container.markers=[marker];correctionMarkers.push(marker);return alert;
     };
     class Observer {
         constructor(callback){this.callback=callback;}
@@ -281,4 +281,48 @@ test('a correction reopens a native disclosure during its inert closing transiti
     assert.equal(a.details.inert,false);assert.equal(a.field.focuses,1);
     assert.equal(h.entries.second.details.open,false);
     cleanup();
+});
+
+
+test('actual sibling review warning reaches its same-report sibling source form',async()=>{
+    const h=fixture(),a=h.entries.second,notice=h.addCorrection('second');
+    notice.marker.workspace=null;a.boundary.workspace=null;
+    const cleanup=h.install();await h.flush();assert.equal(notice.control.tagName,'A');
+    h.click(notice.control);await h.flush();assert.equal(a.field.focuses,1);assert.equal(a.details.inert,false);
+    cleanup();
+});
+
+test('sibling warnings cannot borrow foreign, stale, duplicate or missing ownership',async()=>{
+    for(const reason of ['missing identity','foreign identity','stale marker','detached marker','duplicate marker','duplicate workspace','foreign workspace','foreign containing workspace','stale warning','outside app','unknown kind','wrong source','duplicate warning']) {
+        const h=fixture(),a=h.entries.second,notice=h.addCorrection('second');
+        notice.marker.workspace=null;a.boundary.workspace=null;
+        if(reason==='missing identity')delete notice.marker.dataset.reportIdentity;
+        if(reason==='foreign identity')notice.marker.dataset.reportIdentity='foreign';
+        if(reason==='stale marker')notice.marker.stale=true;
+        if(reason==='detached marker')notice.marker.isConnected=false;
+        if(reason==='duplicate marker')notice.container.markers.push({...notice.marker});
+        if(reason==='duplicate workspace')h.app.workspaces.push({...h.workspace});
+        if(reason==='foreign workspace')h.workspace._epcWorkspace={identity:'foreign'};
+        if(reason==='stale warning')notice.container.stale=true;
+        if(reason==='foreign containing workspace')notice.marker.workspace={};
+        if(reason==='outside app')notice.marker.insideApp=false;
+        if(reason==='unknown kind')notice.marker.dataset.kind='unknown';
+        if(reason==='wrong source')notice.marker.dataset.sourceId='missing';
+        if(reason==='duplicate warning'){const duplicate=h.addCorrection('second');duplicate.marker.workspace=null;}
+        const cleanup=h.install();await h.flush();assert.equal(notice.control.tagName,'STRONG',reason);
+        cleanup();
+    }
+});
+
+test('sibling warning ownership is checked again at click and deferred focus',async()=>{
+    for(const phase of ['click','focus']) {
+        const h=fixture(),a=h.entries.second,notice=h.addCorrection('second');
+        notice.marker.workspace=null;a.boundary.workspace=null;
+        const cleanup=h.install();await h.flush();const link=notice.control;assert.equal(link.tagName,'A');
+        if(phase==='click')notice.marker.dataset.reportIdentity='foreign';
+        else a.boundary.ready=false;
+        h.click(link);await h.flush();
+        notice.marker.dataset.reportIdentity='foreign';a.boundary.ready=true;h.changed(a.boundary);await h.flush();
+        assert.equal(a.field.focuses,0,phase);assert.equal(a.field.scrolls,0,phase);cleanup();
+    }
 });

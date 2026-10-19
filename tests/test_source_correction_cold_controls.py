@@ -73,3 +73,29 @@ def test_fixed_sibling_source_forms_identify_the_current_report_owner(monkeypatc
     app.run()
     assert not app.exception and app.session_state[key] == before
     assert owners == [item.value for item in app.markdown if 'class="enfra-source-correction-owner"' in item.value]
+
+
+def test_real_warning_and_source_form_are_both_owned_siblings_outside_workspace(monkeypatch, tmp_path):
+    app, key = replay(monkeypatch, tmp_path)
+    identity = sha256(key.removesuffix("_draft").encode()).hexdigest()[:24]
+    def walk(node, parents=()):
+        yield node, parents
+        for child in getattr(node, 'children', {}).values():
+            yield from walk(child, parents + (node,))
+    nodes = list(walk(app._tree))
+    workspaces = [node for node, _ in nodes if getattr(getattr(node, 'proto', None), 'id', '').endswith('-epc_workspace_monthly')]
+    assert len(workspaces) == 1
+    source_markers, warnings = [], []
+    for node, parents in nodes:
+        if getattr(node, 'type', '') != 'markdown':
+            continue
+        if 'id="source-details-' in node.value:
+            source_markers.append(node)
+            assert all(parent is not workspaces[0] for parent in parents)
+        if 'class="enfra-source-correction"' in node.value:
+            warnings.append(node)
+            assert all(parent is not workspaces[0] for parent in parents)
+            assert 'data-report-identity="' + identity + '"' in node.value
+    assert len(source_markers) == 2 and len(warnings) == 3
+    # Binding this display-only trip does not accept a date/site or unblock export.
+    assert next(item for item in app.button if item.label == "Create Word and PDF").disabled
