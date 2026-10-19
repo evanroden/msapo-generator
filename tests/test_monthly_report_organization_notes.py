@@ -43,10 +43,13 @@ def test_replacement_report_notes_do_not_replay_prior_editor_value(monkeypatch, 
     assert not app.exception
     assert app.session_state["blocks"][part] == replacement
     assert notes(app).value == replacement.text
-    if boundary == "newer wording":
-        assert notes(app).key == old_key and notes(app).proto.id == old_id
-    else:
+    if boundary == "epoch":
         assert notes(app).key != old_key and notes(app).proto.id != old_id
+    else:
+        # An ordinary source correction keeps the authoritative native editor.
+        # Exact delivered receipts, rather than remounting its textarea, guard
+        # older wording; the recovery cases below exercise changed references.
+        assert notes(app).key == old_key and notes(app).proto.id == old_id
 
 
 @pytest.mark.parametrize("part", ["contact_matrix", "org_chart"])
@@ -88,27 +91,34 @@ def test_same_action_contact_and_notes_edits_keep_both_and_do_not_write_unlinked
 
 
 @pytest.mark.parametrize("decision", ["Apply interrupted edit", "Keep current wording"])
-def test_delivered_old_note_requires_explicit_recovery_after_newer_wording(monkeypatch, tmp_path, decision):
-    app = open_editor(monkeypatch, tmp_path, "contact_matrix")
+@pytest.mark.parametrize("part", ["contact_matrix", "org_chart"])
+@pytest.mark.parametrize("changed_source", [False, True])
+def test_delivered_old_note_requires_explicit_recovery_after_newer_wording(monkeypatch, tmp_path, decision, part, changed_source):
+    app = open_editor(monkeypatch, tmp_path, part)
+    original_key, original_id = notes(app).key, notes(app).proto.id
     # A genuine native on_change callback retains the version it was rendered
     # against. New canonical wording arrives before that callback is delivered.
     notes(app).set_value("The interrupted operator note.")
     blocks = dict(app.session_state["blocks"])
-    newer = replace(blocks["contact_matrix"], text="Keep this newer canonical note.")
-    blocks["contact_matrix"] = newer
+    newer = replace(blocks[part], text="Keep this newer canonical note.")
+    if changed_source:
+        newer = replace(newer, references=('new-source:1:new-revision',))
+    blocks[part] = newer
     app.session_state["blocks"] = blocks
     app.run()
     assert not app.exception
-    assert app.session_state["blocks"]["contact_matrix"] == newer
+    assert app.session_state["blocks"][part] == newer
     assert notes(app).value == newer.text
+    assert notes(app).key == original_key and notes(app).proto.id == original_id
     assert any("earlier edit was interrupted" in warning.value for warning in app.warning)
     assert {code.value for code in app.code} >= {newer.text, "The interrupted operator note."}
     click(app, decision)
     app.run()
     assert not app.exception and not app.warning
     expected = "The interrupted operator note." if decision.startswith("Apply") else newer.text
-    assert notes(app).value == app.session_state["blocks"]["contact_matrix"].text == expected
-    assert app.session_state["blocks"]["contact_matrix"].extra_tables == newer.extra_tables
+    assert notes(app).value == app.session_state["blocks"][part].text == expected
+    assert app.session_state["blocks"][part].extra_tables == newer.extra_tables
+    assert app.session_state["blocks"][part].references == newer.references
 
 
 def test_delayed_native_note_from_prior_epoch_cannot_change_replacement(monkeypatch, tmp_path):
