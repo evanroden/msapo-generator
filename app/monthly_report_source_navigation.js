@@ -3,7 +3,51 @@
 // with its workspace; only a same-report reading anchor survives a full rerun.
 globalThis.ENFRASourceReviewNavigation = {
     install(app, state) {
-        let disposed = false, frame = null, cancelPending = () => {};
+        let disposed = false, frame = null, controlsFrame = null, cancelPending = () => {};
+        const loadingText = 'Loading correction controls…';
+        const workspaceSelector = '[class*="st-key-epc_workspace_monthly"]';
+        function sourceBoundary(source) {
+            return document.getElementById('source-details-' + source)?.closest(
+                '[class*="st-key-source_detail_editor_"]');
+        }
+        function syncControls(retiring = false) {
+            // The standard alert is already readable while the v2 adapter or
+            // native field is a skeleton. Never advertise an inert anchor.
+            // Show our link beside the final status; keep the framework's
+            // status, alert, source form and all business inputs in their nodes.
+            app.querySelectorAll('.enfra-source-correction').forEach(marker => {
+                const container = marker.closest('[class*="st-key-source_correction_"]');
+                const alert = container?.querySelector('[data-testid="stAlert"]');
+                if (!alert) return;
+                const loading = [...alert.querySelectorAll('strong')].reverse().find(
+                    node => node.textContent === loadingText);
+                if (!loading) return;
+                const current = alert.querySelector('a[data-enfra-correction-link]');
+                const source = marker.dataset.sourceId, kind = marker.dataset.kind;
+                const workspace = marker.closest(workspaceSelector);
+                const boundary = sourceBoundary(source);
+                const field = boundary && fieldFor(boundary, kind);
+                const ready = !retiring && !disposed && ['site', 'date'].includes(kind) &&
+                    workspace?._epcWorkspace === state && Boolean(workspace.dataset.epcMode) &&
+                    boundary?.closest(workspaceSelector) === workspace &&
+                    !boundary.closest('[data-stale="true"]') &&
+                    field?.isConnected && !field.disabled && !field.closest('[data-stale="true"]');
+                if (ready && !current) {
+                    const link = document.createElement('a');
+                    link.textContent = marker.dataset.label;
+                    link.setAttribute('href', '#source-details-' + source + '--' + kind);
+                    link.setAttribute('data-enfra-correction-link', '');
+                    loading.after(link);
+                } else if (!ready && current) current.remove();
+                // Retain the framework's status node, too. Removing it would
+                // make a later ordinary Markdown reconciliation unsafe.
+                loading.hidden = Boolean(ready);
+            });
+        }
+        function controlsChanged() {
+            if (disposed || controlsFrame !== null) return;
+            controlsFrame = requestAnimationFrame(() => {controlsFrame = null;syncControls();});
+        }
         function returnLinks() {
             app.querySelectorAll('.enfra-source-review-return').forEach(link => {
                 link.hidden = link.dataset.sourceId !== state.sourceReviewReturn?.source;
@@ -97,8 +141,7 @@ globalThis.ENFRASourceReviewNavigation = {
             }
             const match = /^#source-details-(.+)--(site|date)$/.exec(link.getAttribute('href') || '');
             if (!match) return;
-            const marker = document.getElementById('source-details-' + match[1]);
-            const boundary = marker?.closest('[class*="st-key-source_detail_editor_"]');
+            const boundary = sourceBoundary(match[1]);
             const review = app.querySelector('#report-review');
             if (!boundary || !review) return; // Keep the native anchor fallback.
             event.preventDefault();
@@ -119,9 +162,21 @@ globalThis.ENFRASourceReviewNavigation = {
             focusWhenReady(boundary, match[2]);
         }
         app.addEventListener('click', click);
+        // This display-only observer also sees newly streamed warnings and
+        // lazy native controls. It does not wait for unrelated/offscreen
+        // previews, read values, submit, or use a timer as readiness proof.
+        const controlsObserver = new MutationObserver(controlsChanged);
+        controlsObserver.observe(app, {subtree:true, childList:true, attributes:true,
+            attributeFilter:['disabled','data-stale','data-epc-mode']});
+        controlsChanged();
         // A valid correction can remove its warning and form. The keyed return
         // location stays mounted; reveal it again after that ordinary rerun.
         returnLinks();
-        return () => {disposed=true;cancelPending();app.removeEventListener('click',click);};
+        return () => {
+            disposed=true;cancelPending();controlsObserver.disconnect();
+            if (controlsFrame !== null) cancelAnimationFrame(controlsFrame);
+            syncControls(true);
+            app.removeEventListener('click',click);
+        };
     },
 };

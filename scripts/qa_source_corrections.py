@@ -32,7 +32,7 @@ def source_form(page):
 def observe_correction_navigation(page):
     """Read native event geometry without submitting, scrolling or moving nodes."""
     page.evaluate("""() => {
-        const samples = [], ids = new WeakMap(); let nextId = 1;
+        const samples = [], ids = new WeakMap(); let nextId = 1, pressed = null;
         const id = node => {
             if (!node) return null;
             if (!ids.has(node)) ids.set(node, nextId++);
@@ -43,17 +43,26 @@ def observe_correction_navigation(page):
                 if (p.scrollHeight > p.clientHeight && /auto|scroll/.test(getComputedStyle(p).overflowY)) return p;
             return document.scrollingElement;
         };
-        for (const type of ['pointerdown', 'click', 'keydown', 'focusin'])
+        for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'click', 'keydown', 'focusin'])
             document.addEventListener(type, event => {
                 const link = event.target.closest?.('a');
-                if (!link || !(link.getAttribute('href')?.startsWith('#source-details-') ||
-                        link.classList.contains('enfra-source-review-return'))) return;
-                const rect = link.getBoundingClientRect(), scroll = owner(link);
+                const owned = link && (link.getAttribute('href')?.startsWith('#source-details-') ||
+                    link.classList.contains('enfra-source-review-return'));
+                if (type === 'pointerdown') pressed = owned ? link : null;
+                const observed = owned ? link : (['pointerup', 'pointercancel', 'click'].includes(type) ? pressed : null);
+                if (!observed) return;
+                const rect = observed.getBoundingClientRect(), scroll = owner(observed);
+                const workspace = observed.closest('[class*="st-key-epc_workspace_monthly"]');
                 samples.push({type, time:performance.now(), key:event.key || '',
-                    node:id(link), source:link.getAttribute('href'),
+                    node:id(observed), source:observed.getAttribute('href'),
+                    eventTarget:id(event.target), targetIsOwnedLink:Boolean(owned),
+                    connected:observed.isConnected,
+                    handlerReady:Boolean(workspace?._epcWorkspace && workspace?.dataset.epcMode),
+                    skeletons:workspace?.querySelectorAll('[data-testid="stSkeleton"]').length || 0,
                     rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
                     scroll:{node:id(scroll),top:scroll.scrollTop,height:scroll.scrollHeight,
-                        clientHeight:scroll.clientHeight}, focused:document.activeElement === link});
+                        clientHeight:scroll.clientHeight}, focused:document.activeElement === observed});
+                if (type === 'click' || type === 'pointercancel') pressed = null;
             }, {capture:true,passive:true});
         window.__sourceCorrectionNavigationObservations = samples;
     }""")
@@ -83,14 +92,31 @@ def browser_task(browser_type, name):
     record = {"synthetic_only": True, "errors": errors, "external": external}
     out = qa.OUT / name
     out.mkdir(parents=True, exist_ok=True)
+    # Hold the unchanged local native v2 module so the initial warning is
+    # exercised before its navigation adapter can exist. This changes only
+    # delivery timing; no source, input, event or page geometry is injected.
+    component_module = re.compile(re.escape(qa.URL) + r"/static/js/BidiComponent\.[^/?]+\.js$")
+    held = []
+    page.route(component_module, lambda route: held.append(route))
     try:
-        page.goto(qa.URL, wait_until="domcontentloaded")
-        live.load_fixture(page, "replay")
+        record["stage"] = "cold source warning before the native adapter"
+        with page.expect_request(component_module, timeout=20000):
+            page.goto(qa.URL, wait_until="domcontentloaded")
+            live.load_fixture(page, "replay")
         before = fingerprint(page)
         observe_correction_navigation(page)
         date_warning = page.locator('[data-testid="stAlert"]').filter(has_text=
             "Confirm the reporting date for synthetic-activity.txt; no date has been established.")
         date_link = date_warning.get_by_role("link", name="Correct date", exact=True)
+        expect(date_warning.get_by_text("Loading correction controls…", exact=True)).to_be_visible()
+        expect(date_link).to_have_count(0)
+        expect(page.get_by_role("button", name="Create Word and PDF", exact=True)).to_be_disabled()
+        record["cold_navigation"] = {"held_requests": len(held), "warning_visible": True,
+            "inactive_link_count": date_link.count(), "before": before}
+        assert len(held) == 1, "Hold the one original BidiComponent module, not a replacement."
+        record["cold_navigation"]["module"] = held[0].request.url.rsplit("/", 1)[-1]
+        held.pop().continue_()
+        page.unroute(component_module)
         source_marker = date_link.get_attribute("href").rsplit("--", 1)[0].removeprefix("#")
         assert re.fullmatch(r"source-details-[0-9a-f]{64}", source_marker)
         source_panel = page.locator('[class*="st-key-source_detail_editor_"]').filter(
@@ -103,6 +129,14 @@ def browser_task(browser_type, name):
         pointer = next(sample for sample in reversed(pointer_samples)
                        if sample["type"] == "pointerdown" and sample["source"].endswith("--date"))
         record["warning_at_native_pointer_action"] = pointer
+        assert pointer["handlerReady"], "A displayed correction link needs its owned native handler."
+        clicks = [sample for sample in pointer_samples if sample["type"] == "click" and
+                  sample["source"] == pointer["source"]]
+        releases = [sample for sample in pointer_samples if sample["type"] == "pointerup" and
+                    sample["source"] == pointer["source"]]
+        assert len(clicks) == len(releases) == 1, "The first intended pointer action must deliver once."
+        assert clicks[0]["node"] == releases[0]["node"] == pointer["node"]
+        assert clicks[0]["targetIsOwnedLink"] and releases[0]["targetIsOwnedLink"]
         link_y = pointer["rect"]["y"]
         assert 0 <= link_y < 900, "The native pointer must reach the visible warning."
         form = source_form(page)
@@ -181,6 +215,9 @@ def browser_task(browser_type, name):
             record["capture_failure"] = str(capture_error)[:500]
         raise
     finally:
+        for request in held:
+            request.continue_()
+        page.unroute(component_module)
         (out / "source-corrections.json").write_text(json.dumps(record, indent=2))
         context.close()
         browser.close()
