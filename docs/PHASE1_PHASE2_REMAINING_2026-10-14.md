@@ -4,6 +4,56 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
+## Source correction and MBCx delivery — 2026-10-19 17:30 UTC
+
+Current main is `94b9f0f7f229906a49c603b46a4c35cf34b21ed7`, from PR265 head
+`31a04d13b4750600018529cab416faa2f9a13fa9`. Required39137069565 and
+Adaptive39137069697 passed on that exact head, and the refreshed review had no open
+threads. The October18 merge request did not execute because the connector catalog
+changed; the October19 request succeeded. A new isolated public browser session read the
+full served94b9 SHA and the content-named frontend entry `index.enfra-frontend-4cf97569e258.js`.
+This is fresh served-UI evidence, not a claim that all release acceptance passed.
+Merged Tests39289718565 passes; Adaptive39289718645 fails its Chromium cold-Water
+scroll assertion ("Do not hide a shift by restoring scroll"). WebKit Water and both
+engines' ordinary fresh Water pass, as do Training, Progress photos and history jobs.
+The source branch's native-loading repair is still awaiting main integration; the first
+failed run remains evidence and is not replaced with an unexamined rerun.
+
+Training's merged f8ebbc4 Tests39135964448 and Adaptive39135964543 both passed.
+Live39137926288 reached exact served f8ebbc4, generated actual files and passed Activity
+edit/clear/reentry/reload, then failed at the synthetic source-site selection. The second
+live session and Prepared-by follow-on were not reached. The retained artifact12140745901
+is465827bytes, SHA256 `3e5184207439882fdfb209ccb0238f322c49fa00afcada9b2f6c9a19c34f4415`;
+its original end-state screenshot and summary were inspected after independent download.
+
+| Requirement / existing IDs | Current implementation and tested scope | Served evidence / remaining action |
+| --- | --- | --- |
+| Mixed source reading and page use; SRC01/06, SIM-G07, ADP-A18 | PR260 head715b567 passed Required39138347990 (**3779**) and Adaptive39138347923. A subsequent review4307452765 was still valid: an accepted table could waive the separate page-classification task. Three real mixed-DOCX cases fail before the correction; accepted content now exempts only sources with no image pages. The affected source/thumbnail/native-loading set passes **86** locally after repair. | This additional fix is branch work, not yet merged or served. Keep exact-head integrated CI and review resolution distinct. |
+| DOCX thumbnails and cold Water; SRC04, SIM-W, CONT09, ADP-A02/A03/A12/A20 | The exact715b567 Required/Adaptive runs validate the reconstructed native-loading adapter and forwarded DOCX preview flag/cache key. Local October19 checks also pass the actual image-sized thumbnail, both native review panels and all eleven loading cases. Original/print bytes and the pinned frontend graph remain unchanged. | Neither the full phase nor physical/native output acceptance is inferred from these passes. |
+| Exact-item source correction; SRC06, ADP-A08/A17/A20 | On served94b9, one Correct site click followed by one fill left the native field empty and unfocused. Its visible details body still had `inert`; the ordinary summary action cleared it and the same typing then worked. Correct date also failed to identify the native scalar input, whose input label is Select a date. The repair activates native summaries and resolves the date through its actual Source date widget label. | Retained private screenshot/DOM facts distinguish this reproduced product defect from a locator hypothesis. The link repair is not live. Added Chromium/WebKit pointer/keyboard, unchanged-navigation, deliberate correction, source-byte comparison and narrow reload coverage using the existing isolated fixture; both workflow filters include it. No new generation, paid reader or business send is added by that journey. |
+| MBCx simplicity; SIM-MBCx | The merged short status choices preserve same-event human findings. PR260 reconciliation keeps both that behavior and the fixed-height native loading placeholder. | The browser shows the short labels on94b9. A complete new MBCx editing walkthrough and merged-head release result remain separate. |
+
+Local source-link and workflow checks pass **43**; the source-navigation Node file failed
+before native-disclosure repair and passes afterward. The new browser journey has not yet
+run on this follow-up. Its live helper retains every correction/durable/source assertion and
+adds actual focus/typed-value checks so a merely visible but inactive form cannot pass.
+Source and MBCx overlap was explicitly reconciled; no sibling work was dropped.
+The reconciled MBCx, novice workspace, native loading, navigation and workflow set passes
+**78** locally (`pr260-integrated-mbcx-navigation.xml`); `git diff --check` also passes.
+PR261 Required39139077468 passes, but Adaptive39139077464 now fails its actual WebKit
+proposal-row journey: the Status textbox is absent after the editor's reopen action.
+Chromium's complete row/output journey and that run's Water steps pass. This is a separate
+current failure to inspect, not the older cold-Water failure and not accepted row behavior.
+
+The runtime became available again after workspace maintenance removed local copies.
+The existing canonical TXT and retained private evidence ZIP were recovered with their
+recorded sizes/digests unchanged. The separate administrator-denied original-archive
+transfer and managed localhost-browser operation remain denied; no alternate transfer or
+local browser was used. Authentic scenarios, independent non-OpenAI retention, all-page
+named-renderer output inspection, physical/native checks and combined-art approval remain
+open. Contacts, preview/recovery, source/capacity, proposal/RFI and remaining simplicity
+implementation are still work to finish, not relabeled external acceptance.
+
 ## Training integration and DOCX preview repair — 2026-10-18 14:40 UTC
 
 PR255 head `b884a259785e34a09d6f612284361785dbb4c7d6` passed Required39130827545

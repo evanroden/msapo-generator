@@ -104,7 +104,8 @@ def test_native_text_inclusion_is_never_mislabeled_reviewed(totals):
     assert changed.needs_correction and "suggested wording" in changed.reason
 
 
-def test_mixed_docx_keeps_page_review_separate_from_accepted_tables(monkeypatch, tmp_path):
+@pytest.mark.parametrize("classification", ("Utility results", "Reference only", "CMMS export", "Proposal / quote"))
+def test_mixed_docx_keeps_page_review_separate_from_accepted_tables(monkeypatch, tmp_path, classification):
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     profile = synthetic_profiles()[0]
     document = Document()
@@ -120,7 +121,8 @@ def test_mixed_docx_keeps_page_review_separate_from_accepted_tables(monkeypatch,
     assert content.source.facility == "Demo North" and content.source.service_date == "2026-09-04"
     numbers = sources.image_numbers(content)
     assert numbers and len(content.source.page_texts) > len(numbers)
-    source = replace(content.source, selected_pages=tuple(range(1, len(content.source.page_texts) + 1)))
+    source = replace(content.source, classification=classification,
+                     selected_pages=tuple(range(1, len(content.source.page_texts) + 1)))
     content = replace(content, source=source)
     # DOCX intake retains the table as a native item rather than an XLSX
     # worksheet. Read that unchanged table for this mapping-model check; this
@@ -135,14 +137,24 @@ def test_mixed_docx_keeps_page_review_separate_from_accepted_tables(monkeypatch,
     draft = ReportDraft(profile, PERIOD, "Synthetic editor", sections, mapped.blocks,
                         sources=(source,), synthetic=True)
     initial = status(draft, content)
-    assert initial.needs_correction and not initial.resolved
+    assert not initial.resolved
     assert "Tables accepted" in initial.summary
-    assert initial.reason == "Review the selected page and its caption."
+    if classification == "Utility results":
+        assert initial.needs_correction
+        assert initial.reason == "Review the selected page and its caption."
     reviewed_source = replace(source, client_page_reviews=tuple((n, page_fingerprint(source, n)) for n in numbers))
     reviewed = replace(content, source=reviewed_source)
     pages, = sources.prepare_pages(profile, (reviewed,), ((source.id, "utility_analysis"),))
     accepted = replace(draft, sources=(reviewed_source,), blocks=(*mapped.blocks, pages))
     complete = status(accepted, reviewed)
+    if classification != "Utility results":
+        # A current, accepted table and reviewed image bytes do not establish
+        # a page use for a reference, spreadsheet or proposal classification.
+        assert not complete.resolved
+        assert complete.reason == "Review this file's use in the report."
+        assert "Tables accepted" in complete.summary and complete.pages == len(numbers)
+        assert sources.source_bytes(profile, reviewed_source) == original.getvalue()
+        return
     assert complete.resolved and not complete.needs_correction
     assert complete.reason == ""
     assert "Tables accepted" in complete.summary

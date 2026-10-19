@@ -7,14 +7,20 @@ import streamlit as st
 
 
 STATUS_STARTERS = (
-    ("Reporting has not started", "Monitoring-based commissioning reporting has not started."),
-    ("Waiting for this month's report", "The monitoring-based commissioning report for this month is pending."),
+    ("Not started", "Monitoring-based commissioning reporting has not started."),
+    ("Awaiting this month’s report", "The monitoring-based commissioning report for this month is pending."),
 )
 
 
 def _choose_sentence(text_key, sentence, choice_key):
+    # The button was offered while empty, but its same native event can also
+    # deliver newly typed findings. That wording takes precedence over an
+    # obsolete empty-state action; never replace it silently.
+    if str(st.session_state.get(text_key, "")).strip():
+        st.session_state[choice_key] = "kept"
+        return
     st.session_state[text_key] = sentence
-    st.session_state[choice_key] = True
+    st.session_state[choice_key] = "chosen"
 
 
 def _include_update(status, prefix, scope):
@@ -60,11 +66,18 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
             for column, (label, sentence) in zip(st.columns(len(STATUS_STARTERS)), STATUS_STARTERS):
                 column.button(label, key=prefix + "_mbcx_starter_" + status_scope + "_" + str(STATUS_STARTERS.index((label, sentence))),
                               on_click=_choose_sentence, args=(key, sentence, choice_key))
+        else:
+            selected = next((label for label, sentence in STATUS_STARTERS if sentence == current_text), None)
+            if selected:
+                st.caption("Status: " + selected)
         from app.monthly_report_native_loading import reserve_text_area
         reserve_text_area(key, 120)
         text = st.text_area("Status or findings", key=key, value=status.text, height=120,
                             help="This is the exact wording that will print when included. Leave it empty if your attached pages need no introduction.")
-        chose_sentence = st.session_state.pop(choice_key, False)
+        choice = st.session_state.pop(choice_key, None)
+        chose_sentence = choice == "chosen"
+        if choice == "kept":
+            st.info("Your wording was kept. Clear it before choosing a status.")
         if text != status.text or chose_sentence:
             status = replace(status, source="Omit" if status.source == "Omit" else "This month",
                              text=text, reviewed_fingerprint="", client_reviewed_fingerprint="")

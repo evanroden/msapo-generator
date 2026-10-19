@@ -46,16 +46,27 @@ globalThis.ENFRASourceReviewNavigation = {
             const review = app.querySelector('#report-review');
             if (!boundary || !review) return; // Keep the native anchor fallback.
             const labels = match[2] === 'site' ? ['Source sites', 'Source facility'] : ['Source date'];
-            const field = labels.map(label => boundary.querySelector('input[aria-label="'+label+'"]')).find(Boolean);
+            let field = labels.map(label => boundary.querySelector('input[aria-label="'+label+'"]')).find(Boolean);
+            if (!field && match[2] === 'date') {
+                // The native scalar date input announces "Select a date."
+                // Its visible widget label identifies this source's field.
+                const widget = [...boundary.querySelectorAll('[data-testid="stDateInput"]')].find(
+                    node => node.querySelector('label')?.textContent.trim() === 'Source date');
+                field = widget?.querySelector('input');
+            }
             if (!field || field.disabled) return;
             event.preventDefault();
             state.sourceReviewReturn = {source:match[1], link,
                 linkTop:link.getBoundingClientRect().top, reviewTop:review.getBoundingClientRect().top};
-            // Open outer disclosures before the exact source form. Changing a
-            // native details disclosure is presentation, not source acceptance.
+            // Activate the native summary so Streamlit updates the body's
+            // inert state as well as details.open. Setting open alone makes
+            // the form visible while leaving its inputs unable to take focus.
+            // Opening the disclosure never submits or accepts source details.
             const parents=[];
             for(let p=boundary.parentElement;p;p=p.parentElement) if(p.tagName==='DETAILS') parents.unshift(p);
-            [...parents,...boundary.querySelectorAll('details')].forEach(details => {details.open=true;});
+            [...parents,...boundary.querySelectorAll('details')].forEach(details => {
+                if (!details.open) details.querySelector(':scope > summary')?.click();
+            });
             returnLinks();
             later(() => {
                 if (!field.isConnected) return;

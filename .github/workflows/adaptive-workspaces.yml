@@ -94,6 +94,8 @@ on:
       - 'scripts/qa_training_form_observations.js'
       - 'tests/test_qa_training_form_observations.py'
       - 'scripts/qa_monthly_live.py'
+      - 'scripts/qa_source_corrections.py'
+      - 'tests/source_review_navigation_test.cjs'
       - 'tests/test_training_review_regressions.py'
       - 'tests/test_streamlit_date_input_compat.py'
       - 'tests/test_workspace_training_observations.py'
@@ -204,6 +206,8 @@ on:
       - 'scripts/qa_training_form_observations.js'
       - 'tests/test_qa_training_form_observations.py'
       - 'scripts/qa_monthly_live.py'
+      - 'scripts/qa_source_corrections.py'
+      - 'tests/source_review_navigation_test.cjs'
       - 'tests/test_training_review_regressions.py'
       - 'tests/test_streamlit_date_input_compat.py'
       - 'tests/test_workspace_training_observations.py'
@@ -325,6 +329,9 @@ jobs:
       - name: Actual Monthly workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
         run: python scripts/qa_browser_diagnostics.py qa_monthly_adaptive.py
+      - name: Source correction links reach native controls and persist after reload
+        if: ${{ !cancelled() }}
+        run: python scripts/qa_source_corrections.py
       - name: Fresh ordinary Monthly site pointer and keyboard from zero
         if: ${{ !cancelled() }}
         run: python scripts/qa_monthly_site_pointer.py
@@ -362,6 +369,7 @@ jobs:
             test-artifacts/expense-adaptive/
             test-artifacts/po-adaptive/
             test-artifacts/monthly-adaptive/
+            test-artifacts/source-corrections/
             test-artifacts/monthly-first-site/
             test-artifacts/monthly-preparer-navigation/
             test-artifacts/monthly-text-hydration/

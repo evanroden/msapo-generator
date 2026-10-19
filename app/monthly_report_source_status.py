@@ -164,7 +164,9 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
                 # Plain native text is described as included, not reviewed.
                 return result(resolved=reading.accepted, needs_correction=False)
             return result(resolved=False, needs_correction=False)
-        if source.classification not in CLASSIFICATION_DESTINATIONS and not reading.included:
+        # Accepted text/tables do not approve the separate image-page use.
+        # Sources without image pages already returned above.
+        if source.classification not in CLASSIFICATION_DESTINATIONS:
             return result("Review this file's use in the report.", needs_correction=False)
         if (len(numbers) != len(set(numbers))
                 or any(type(number) is not int or not 1 <= number <= len(source.page_texts) for number in numbers)):

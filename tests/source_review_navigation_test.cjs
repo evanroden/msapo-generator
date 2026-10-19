@@ -5,10 +5,20 @@ function fixture() {
     const review={parentElement:scroll,top:80,isConnected:true,focuses:0,getBoundingClientRect(){return{top:this.top};},setAttribute(){},focus(o){assert.equal(o.preventScroll,true);this.focuses++;}};
     const entries={};
     for(const id of ['first','second']) {
-        const outer={tagName:'DETAILS',open:false,parentElement:scroll},details={open:false};
-        const field={disabled:false,isConnected:true,focuses:0,scrolls:0,focus(o){assert.equal(o.preventScroll,true);this.focuses++;},scrollIntoView(){this.scrolls++;}};
+        // Streamlit's native summary owns both its expanded state and the
+        // inert body. Assigning details.open alone leaves controls inactive.
+        function disclosure(parentElement) {
+            const node={tagName:'DETAILS',open:false,expanded:false,inert:true,clicks:0,parentElement};
+            node.summary={click(){node.clicks++;node.expanded=!node.expanded;node.open=node.expanded;node.inert=!node.expanded;}};
+            node.querySelector=selector=>selector===':scope > summary'?node.summary:null;
+            return node;
+        }
+        const outer=disclosure(scroll),details=disclosure(outer);
+        const field={disabled:false,isConnected:true,focuses:0,scrolls:0,focus(o){assert.equal(o.preventScroll,true);if(!outer.inert&&!details.inert)this.focuses++;},scrollIntoView(){this.scrolls++;}};
         Object.defineProperty(field,'value',{get(){throw Error('navigation cannot read business values');},set(){throw Error('navigation cannot write business values');}});
-        const boundary={parentElement:outer,querySelector:s=>s.includes(id==='first'?'Source sites':'Source date')?field:null,querySelectorAll:()=>[details],getAnimations:()=>[]};
+        const dateWidget={querySelector:s=>s==='label'?{textContent:'Source date'}:s==='input'?field:null};
+        const boundary={parentElement:outer,querySelector:s=>id==='first'&&s.includes('Source sites')?field:null,
+            querySelectorAll:s=>s==='details'?[details]:s==='[data-testid="stDateInput"]'&&id==='second'?[dateWidget]:[],getAnimations:()=>[]};
         const marker={closest:()=>boundary};
         const link={isConnected:true,parentElement:scroll,top:400,classList:{contains:()=>false},closest(){return this;},getAttribute:()=>`#source-details-${id}--${id==='first'?'site':'date'}`,getBoundingClientRect(){return{top:this.top};},setAttribute(){},focus(){this.focused=true;}};
         const back={dataset:{sourceId:id},hidden:true,classList:{contains:()=>true},closest(){return this;}};
@@ -27,6 +37,8 @@ test('one correction opens its outer and exact source disclosure and focuses its
     const h=fixture(),cleanup=h.install(),a=h.entries.first,b=h.entries.second;
     assert.equal(h.click(a.link).prevented,true);await h.flush();
     assert.equal(a.outer.open,true);assert.equal(a.details.open,true);assert.equal(a.field.focuses,1);assert.equal(a.field.scrolls,1);
+    assert.equal(a.outer.inert,false);assert.equal(a.details.inert,false);
+    assert.equal(a.outer.clicks,1);assert.equal(a.details.clicks,1);
     assert.equal(b.details.open,false);assert.equal(b.field.focuses,0);
     assert.equal(a.back.hidden,false);assert.equal(b.back.hidden,true);
     h.click(b.link);await h.flush();
@@ -34,10 +46,19 @@ test('one correction opens its outer and exact source disclosure and focuses its
     cleanup();assert.equal(h.app.listeners.size,0);
 });
 
+test('date correction resolves the native widget label without reading or changing its value',async()=>{
+    const h=fixture(),cleanup=h.install(),a=h.entries.second;
+    assert.equal(h.click(a.link).prevented,true);await h.flush();
+    assert.equal(a.field.focuses,1);assert.equal(a.field.scrolls,1);
+    assert.equal(a.details.inert,false);assert.equal(h.entries.first.details.open,false);
+    cleanup();
+});
+
 test('Return restores the same warning and accepts already-open disclosures',async()=>{
-    const h=fixture(),cleanup=h.install(),a=h.entries.first;a.outer.open=true;a.details.open=true;
+    const h=fixture(),cleanup=h.install(),a=h.entries.first;a.outer.summary.click();a.details.summary.click();
     h.click(a.link);await h.flush();a.link.top=100;
     h.click(a.back);assert.equal(h.scroll.scrollTop,500);assert.equal(a.link.focused,true);assert.equal(a.back.hidden,true);
+    assert.equal(a.outer.clicks,1);assert.equal(a.details.clicks,1);
     cleanup();
 });
 
