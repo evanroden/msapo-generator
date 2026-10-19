@@ -1,11 +1,13 @@
 """Scoped training requirements and report tables, without inferred completion."""
 from dataclasses import replace
 from datetime import date
+from hashlib import sha256
 import math
 import re
+from uuid import uuid4
 
 from app import monthly_report_library as library
-from app.monthly_report_model import ReportTable, ResolvedBlock
+from app.monthly_report_model import ReportTable, ResolvedBlock, TrainingSessionTable
 
 MATRIX_REF = "training:matrix:v1"
 EVENT_REF = "training:events:v1"
@@ -158,6 +160,43 @@ def matrix_differs_from_current_standing(profile, block, stored, directory=None)
     return seed_matrix(profile, block, stored, directory) != current
 
 
+def session_row_tokens(table):
+    """Read row snapshot identities without migrating or writing old reports.
+
+    Legacy rows have deterministic tokens bound to the exact old collection.
+    An explicit mutation retains those tokens for its untouched rows and uses
+    a fresh token for an added/changed row. A later removal/recreation therefore
+    cannot accidentally match an editor opened on the previous incarnation.
+    """
+    if table is None:
+        return ()
+    tokens = getattr(table, "row_tokens", ())
+    if (len(tokens) == len(table.rows)
+            and all(isinstance(token, str) and token for token in tokens)
+            and len(set(tokens)) == len(tokens)):
+        return tokens
+    baseline = sha256(library._json({"columns": table.columns, "rows": table.rows,
+        "reference": table.reference, "unverified_tokens": tokens})).hexdigest()
+    return tuple("legacy:" + sha256(f"{baseline}:{index}".encode()).hexdigest()
+                 for index in range(len(table.rows)))
+
+
+def remove_event(table, index):
+    tokens = session_row_tokens(table)
+    return TrainingSessionTable(table.columns,
+        tuple(row for n, row in enumerate(table.rows) if n != index), table.reference,
+        tuple(token for n, token in enumerate(tokens) if n != index))
+
+
+def replace_event(table, index, row):
+    if table.rows[index] == row:
+        return table
+    tokens = session_row_tokens(table)
+    return TrainingSessionTable(table.columns,
+        tuple(row if n == index else saved for n, saved in enumerate(table.rows)), table.reference,
+        tuple(uuid4().hex if n == index else token for n, token in enumerate(tokens)))
+
+
 def add_event(table, *, title, when, mode, participants, hours, period):
     title = title.strip()
     if not title or not participants:
@@ -176,7 +215,11 @@ def add_event(table, *, title, when, mode, participants, hours, period):
             raise ValueError("Hours must be a positive number, or left blank if unknown.")
     row = (title, when.isoformat(), mode, "; ".join(dict.fromkeys(participants)), value)
     rows = table.rows if table else ()
-    return ReportTable(EVENT_COLUMNS, rows if row in rows else (*rows, row), EVENT_REF)
+    if row in rows:
+        return table
+    return TrainingSessionTable(table.columns if table else EVENT_COLUMNS,
+        (*rows, row), table.reference if table else EVENT_REF,
+        (*session_row_tokens(table), uuid4().hex))
 
 
 def apply_tables(block, matrix, events):
@@ -201,12 +244,18 @@ def events_for_period(block, period):
     table = next((t for t in block.extra_tables if t.reference == EVENT_REF), None)
     if table is None:
         return None
-    rows = []
-    for row in table.rows:
+    indices = []
+    for index, row in enumerate(table.rows):
         try:
             when = date.fromisoformat(row[1])
         except (ValueError, IndexError):
             continue
         if period.start <= when <= period.end:
-            rows.append(row)
-    return replace(table, rows=tuple(rows))
+            indices.append(index)
+    if len(indices) == len(table.rows):
+        return table
+    changes = {"rows": tuple(table.rows[index] for index in indices)}
+    if isinstance(table, TrainingSessionTable):
+        tokens = session_row_tokens(table)
+        changes["row_tokens"] = tuple(tokens[index] for index in indices)
+    return replace(table, **changes)
