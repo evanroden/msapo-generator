@@ -1158,6 +1158,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # one fixed root position so native section controls below it retain their
     # delta paths while that first source is committed and reviewed.
     with st.container(key=prefix + "_source_metadata_corrections"):
+        # This stable sibling precedes the workspace so native widget paths
+        # do not move when a source appears. Bind navigation to the same
+        # hashed report identity used by workspace_layout.workspace.
+        from hashlib import sha256
+        st.markdown('<span class="enfra-source-correction-owner" data-report-identity="' +
+                    sha256(prefix.encode()).hexdigest()[:24] + '" aria-hidden="true"></span>',
+                    unsafe_allow_html=True)
         if draft.sources:
             from app.monthly_report_source_details import detail_problems
             from app.monthly_report_upload_ui import render_source_details
