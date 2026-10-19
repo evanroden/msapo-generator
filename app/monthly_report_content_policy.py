@@ -19,29 +19,48 @@ _PRICE_LABEL = re.compile(
     r"subtotal|(?:grand|invoice|proposal|quote|project)\s+total|total\s+(?:amount|charges?|due)|"
     r"balance\s+due|amount(?:\s+(?:due|quoted))?|labor\s+charges?|material\s+charges?|sales\s+tax|"
     r"(?:quoted|quotation|invoice|proposal|quote)\s+amount|(?:project|proposal|quote)\s+(?:budget|fee)|"
-    r"budget|fees?|quotation|quoted?|estimate|est\.?|NTE|not[\s-]+to[\s-]+exceed)(?!\w)", re.I)
+    r"budget|fees?|quotations?|quote[ds]?|estimates?|est\.?|NTE|not[\s-]+to[\s-]+exceed)(?!\w)", re.I)
 _NON_MONEY_LABEL_DETAIL = re.compile(
-    r"^\s*(?:[-/]?\s*(?:effective|free)\b|[(:]?\s*(?:no\.?|number|ref\.?|reference|identifier|id|date|status|"
-    r"decision|received|requested|submitted|expiry|expiration|duration|completion|flow|pressure)\b|#|"
-    r"(?:of\s+)?(?:refrigerant|water|fuel|energy)\b|(?:in\s+)?(?:hours?|days?|months?|years?)\b)", re.I)
+    r"^(?:(?:effective|free)\b|(?:no\.?|number|ref\.?|reference|identifier|id|date|status|"
+    r"decision|expiry|expiration|duration|completion)\b|#|"
+    r"(?:of\s+)?(?:the\s+)?(?:number|count|quantity)\s+of\b|"
+    r"(?:of\s+)?(?:refrigerant|water|fuel|energy|chemicals?|flow|pressure)\b|"
+    r"(?:in\s+)?(?:hours?|days?|months?|years?)\b)", re.I)
+_REFERENCE_METADATA = re.compile(r"^(?:received|requested|submitted)\b", re.I)
 _NUMBER = r"\(?[-+]?\d[\d,]*(?:\.\d+)?\)?(?:\s*[kmb](?!\w))?"
 _AMOUNT_AFTER_LABEL = re.compile(
     r"^[\s:=,–—-]*(?:(?:is|was|are|were|of|at|to|from|for|repair|repairs|replace|replacement|"
     r"reduced|increased|decreased|estimated|approximately|about|up|not|more|than|emergency|"
     r"including|labor|labour|materials?|parts|revised|limit|total|and|tax(?:es)?|remains)\b[\s:=,–—-]*)*"
     r"[\s:=,–—-]*(?P<amount>" + _NUMBER + r")(?!\w|[/-]\d|\.\d)", re.I)
+_AMOUNT_AFTER_PROSE = re.compile(
+    # A bounded phrase may identify the vendor or scope. Require an explicit
+    # value assignment after it; an arbitrary asset number is not an amount.
+    r"^(?:(?![.;](?:\s|$)).){1,160}?(?:[:=–—]\s*|\s(?:is|was|are|were|totals?|totaled|at|to|for)\s+)"
+    r"(?P<amount>" + _NUMBER + r")(?!\w|[/-]\d|\.\d)", re.I)
 _PRICE_PERIOD_PREFIX = re.compile(
     r"^\s*(?:for|in)\s+(?:(?:calendar|fiscal)\s+year\s+|FY\s*)?"
     r"(?:19|20|21)\d{2}(?![\d,.]|[/-]\d)(?=\s|[:=–—-]|$)[\s:=–—-]*", re.I)
 _TECHNICAL_VALUE_SUFFIX = re.compile(
     r"^\s*(?:%|percent\b|(?:psi|psig|psia|gpm|rpm|cfm|kw|kwh|mw|mwh|hp|btu|tons?|tonnes?|"
     r"gallons?|liters?|litres?|lb|lbs|kg|hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?|"
-    r"months?|years?|deg|degrees?|V|volts?|A|amps?|amperes?|F|C|Hz|kHz|bar|kPa|Pa|mm|cm|m|"
-    r"m3|L|g|uS/cm)\b|°)", re.I)
+    r"months?|years?|deg|degrees?|V|volts?|(?-i:A)|amps?|amperes?|F|C|Hz|kHz|bar|kPa|Pa|mm|cm|m|"
+    r"m3|L|g|uS/cm|phases?|starts?|cycles?|stops?|attempts?|pumps?|fans?|repairs?|events?)\b|°)", re.I)
 _TECHNICAL_HEADING_DETAIL = re.compile(
-    r"^\s*\(\s*(?:hours?|hrs?|days?|weeks?|months?|years?|kg|lb|lbs|g|gallons?|liters?|litres?|"
-    r"gpm|cfm|psi|kPa|bar|V|A|F|C|kW|kWh|tons?|m3|L)\s*\)", re.I)
+    r"^(?:hours?|hrs?|days?|weeks?|months?|years?|kg|lb|lbs|g|gallons?|liters?|litres?|"
+    r"gpm|cfm|psi|kPa|bar|V|(?-i:A)|F|C|kW|kWh|tons?|m3|L)\b", re.I)
 _LEGAL_TERMS = ("terms and conditions", "limitation of liability", "indemnif", "governing law", "entire agreement", "waiver", "arbitration", "force majeure", "consequential damages", "jurisdiction", "severability", "warranty disclaimer")
+
+
+def _nonmonetary_detail(label, tail, *, heading=False):
+    # Separators carry no semantic difference in imported table headings.
+    detail = tail.lstrip(" \t,:/–—-([")
+    if _NON_MONEY_LABEL_DETAIL.match(detail) or _TECHNICAL_HEADING_DETAIL.match(detail):
+        return True
+    # Quote dates/statuses are metadata; Amount Received remains financial.
+    # In narrative, "Quote received from Acme: 500" assigns an actual amount.
+    return bool(heading and re.fullmatch(r"quotations?|quote[ds]?|estimates?|est\.?", label, re.I)
+                and _REFERENCE_METADATA.match(detail))
 
 
 def contains_price(text):
@@ -51,7 +70,7 @@ def contains_price(text):
     for n, line in enumerate(lines):
         for match in _PRICE_LABEL.finditer(line):
             tail = line[match.end():]
-            if _NON_MONEY_LABEL_DETAIL.match(tail) or _TECHNICAL_HEADING_DETAIL.match(tail):
+            if _nonmonetary_detail(match.group(), tail):
                 continue
             # Bind the value to a monetary label, rather than to any digit in
             # the sentence. Dates, equipment identifiers and measurements in
@@ -59,9 +78,10 @@ def contains_price(text):
             # "Budget for 2026" names a period. Continue checking any actual
             # amount after that period; plain "Budget: 2026" remains monetary.
             value_tail = _PRICE_PERIOD_PREFIX.sub("", tail, count=1)
-            amount = _AMOUNT_AFTER_LABEL.match(value_tail)
-            if amount and not _TECHNICAL_VALUE_SUFFIX.match(value_tail[amount.end():]):
-                return True
+            for amount_pattern in (_AMOUNT_AFTER_LABEL, _AMOUNT_AFTER_PROSE):
+                amount = amount_pattern.match(value_tail)
+                if amount and not _TECHNICAL_VALUE_SUFFIX.match(value_tail[amount.end():]):
+                    return True
             if not tail.strip(" .:;") and re.search(
                     r"(?<![\w/.-])" + _NUMBER + r"\s*[:–-]?\s*$", line[:match.start()], re.I):
                 return True
@@ -74,8 +94,7 @@ def contains_price(text):
 
 
 def _price_heading(title):
-    return (any(not (_NON_MONEY_LABEL_DETAIL.match(title[match.end():])
-                    or _TECHNICAL_HEADING_DETAIL.match(title[match.end():]))
+    return (any(not _nonmonetary_detail(match.group(), title[match.end():], heading=True)
                 for match in _PRICE_LABEL.finditer(title))
             or bool(re.search(r"\b(?:tax|total charge)\b", title, re.I))
             or title.strip().casefold() == "rate")

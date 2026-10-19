@@ -94,6 +94,104 @@ def test_nonmonetary_headings_are_never_removed_as_prices(heading):
     assert not price_column(heading), heading
 
 
+@pytest.mark.parametrize("text", (
+    "Repair estimate from Acme is 6,875",
+    "Quote received from Acme: 18,675.50",
+    "Quotation for replacement of isolation valve is 8,640",
+    "Fee 500 a day", "Quote 500 a year", "Fee 500 a month",
+    "Repair estimates: 6,875", "Vendor quotes: 18,675.50",
+    "Amount received: 7,815.25", "Amount requested: 7,815.25",
+    "Amount submitted: 7,815.25",
+))
+def test_review_monetary_prose_is_preserved_but_generation_is_blocked(text):
+    original = _draft("activity", "activity_summary", ResolvedBlock(
+        "activity_summary", "This month", text=text))
+    working, removed = client_table_draft(original)
+    assert not removed and working.blocks[0].text == text
+    assert any(c.code == "pricing" and c.blocking for c in preflight(working)), text
+    with pytest.raises(ValueError, match="[Pp]ric"):
+        assemble_docx(working, acknowledged_fingerprint=working.fingerprint)
+
+
+@pytest.mark.parametrize("text", (
+    "NTE 3 phases at 480 V", "Not to exceed 2 starts per hour",
+    "Not to exceed 12 A", "Not to exceed 12 amps", "Estimate 2 cycles",
+    "Quote received from Acme: 2026-11-14",
+    "Quote received from Acme is pending; pressure was 125 psi.",
+    "Cost estimate for Chiller 2 remains pending.",
+    "Estimated cost analysis. The asset number is 8675309.",
+))
+def test_review_operating_limits_and_unpriced_metadata_remain_generatable(text):
+    original = _draft("activity", "activity_summary", ResolvedBlock(
+        "activity_summary", "This month", text=text))
+    assert not [c for c in preflight(original) if c.code == "pricing" and c.blocking]
+    raw = assemble_docx(original, acknowledged_fingerprint=original.fingerprint)
+    assert text in "\n".join(p.text for p in Document(BytesIO(raw)).paragraphs)
+
+
+def test_review_plural_and_amount_columns_exclude_prices_keep_metadata_and_units():
+    pricing = ("Repair Estimates", "Vendor Quotes", "Quotations", "Amount Received",
+               "Amount Requested", "Amount Submitted")
+    kept = ("Asset", "Estimate - Hours", "Amount / kg", "Quote / reference",
+            "Estimate: Hours", "Amount – kg", "Quote — reference", "Quote Received")
+    row = ("EF-9", "48", "50", "Q-18675", "48", "50", "Q-18675", "2026-11-14")
+    table = ReportTable(kept + pricing, (row + ("18,675.50",) * len(pricing),))
+    original = _draft("capital", "capital_renewal", ResolvedBlock(
+        "capital_renewal", "This month", extra_tables=(table,)))
+    working, removed = client_table_draft(original)
+    assert removed == pricing
+    assert working.blocks[0].extra_tables == (ReportTable(kept, (row,)),)
+    assert original.blocks[0].extra_tables == (table,)
+    raw = assemble_docx(working, acknowledged_fingerprint=working.fingerprint)
+    with ZipFile(BytesIO(raw)) as z:
+        assert not any(b"18,675.50" in z.read(name) for name in z.namelist())
+    actual = Document(BytesIO(raw)).tables[0]
+    assert tuple(cell.text for cell in actual.rows[0].cells) == kept
+    assert tuple(cell.text for cell in actual.rows[1].cells) == row
+
+
+@pytest.mark.parametrize("kind,value,monetary", (
+    ("prose", "Quote from Acme for 18,675.50", True),
+    ("prose", "Quotation Q-247, approved for 18,675.50", True),
+    ("prose", "Quote received from Acme — 18,675.50", True),
+    ("prose", "Quote received from Acme: 18,675.50", True),
+    ("prose", "NTE including labor and materials: 6,875", True),
+    ("prose", "Cost analysis: 3 repairs were completed.", False),
+    ("prose", "Cost optimization reduced unplanned outages to 3 events.", False),
+    ("prose", "Estimate of the number of required filters: 12", False),
+    ("prose", "The quote remains under review. Chiller 2 requires inspection.", False),
+    ("prose", "Estimate from Acme: 480 V", False),
+    ("prose", "Quote for Chiller 2: 6,875", True),
+    ("heading", "Estimate, hours", False),
+    ("heading", "Estimate [hours]", False),
+    ("heading", "Estimate of pressure (psi)", False),
+    ("heading", "Amount of chemical (kg)", False),
+    ("heading", "Amount of refrigerant (kg)", False),
+    ("heading", "Amount Requested", True),
+    ("heading", "Quotation Received", False),
+))
+def test_neighboring_phrase_review_reaches_client_boundary(kind, value, monetary):
+    if kind == "prose":
+        draft = _draft("activity", "activity_summary", ResolvedBlock(
+            "activity_summary", "This month", text=value))
+        assert bool([c for c in preflight(draft) if c.code == "pricing" and c.blocking]) == monetary
+        if monetary:
+            with pytest.raises(ValueError, match="[Pp]ric"):
+                assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)
+        else:
+            doc = Document(BytesIO(assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)))
+            assert value in "\n".join(p.text for p in doc.paragraphs)
+    else:
+        table = ReportTable(("Asset", value), (("EF-9", "48"),))
+        draft = _draft("capital", "capital_renewal", ResolvedBlock(
+            "capital_renewal", "This month", extra_tables=(table,)))
+        current, removed = client_table_draft(draft)
+        assert removed == ((value,) if monetary else ())
+        doc = Document(BytesIO(assemble_docx(current, acknowledged_fingerprint=current.fingerprint)))
+        cells = tuple(cell.text for row in doc.tables[0].rows for cell in row.cells)
+        assert cells == (("Asset", "EF-9") if monetary else ("Asset", value, "EF-9", "48"))
+
+
 def test_technical_quote_reference_and_quantity_cells_survive_client_transform():
     table = ReportTable(("Asset", "Quote ref.", "Estimate (hours)", "Amount (kg)"),
                         (("EF-9", "Q-18765", "48", "50"),))
