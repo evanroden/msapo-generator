@@ -21,7 +21,7 @@ original["org_chart"] = replace(original["org_chart"], asset_hashes=(), extra_ta
 st.session_state.setdefault("original", original)''').replace(
         '"test", assets, _field, editor)', '"test", assets, _field, editor, show_preview=False)')
     app = AppTest.from_string(script, default_timeout=30).run()
-    click(app, "Edit contacts" if part == "contact_matrix" else "Edit chart")
+    click(app, "Edit contact" if part == "contact_matrix" else "Edit chart")
     assert not app.exception
     return app
 
@@ -142,17 +142,22 @@ def test_source_linked_notes_have_no_competing_ordinary_editor(monkeypatch, tmp_
 
 
 @pytest.mark.parametrize("part", ["contact_matrix", "org_chart"])
-def test_same_action_done_keeps_delivered_note_before_editor_closes(monkeypatch, tmp_path, part):
+def test_same_action_close_keeps_delivered_note_before_editor_closes(monkeypatch, tmp_path, part):
     app = open_editor(monkeypatch, tmp_path, part)
     original = dict(app.session_state["blocks"])
-    notes(app).set_value("Note delivered with Done.")
-    click(app, "Done")
+    notes(app).set_value("Note delivered with Close editing.")
+    click(app, "Close editing")
     app.run()
-    assert not app.exception and not app.text_area
-    assert app.session_state["blocks"][part].text == "Note delivered with Done."
+    assert not app.exception and not app.text_input
+    assert not any(button.label == "Close editing" for button in app.button)
+    # Contact notes remain in their quiet, closed disclosure after a row
+    # closes; closing a chart removes only that chart's note editor.
+    assert len(app.text_area) == 1
+    assert not next(item for item in app.expander if item.label == "Contact notes").proto.expanded
+    assert app.session_state["blocks"][part].text == "Note delivered with Close editing."
     assert all(value == original[key] for key, value in app.session_state["blocks"].items() if key != part)
-    click(app, "Edit contacts" if part == "contact_matrix" else "Edit chart")
-    assert notes(app).value == "Note delivered with Done."
+    click(app, "Edit contact" if part == "contact_matrix" else "Edit chart")
+    assert notes(app).value == "Note delivered with Close editing."
 
 
 def test_closed_absent_parts_do_not_create_report_blocks(monkeypatch, tmp_path):
@@ -220,7 +225,7 @@ def test_same_action_linked_contact_and_notes_keep_standing_scope_and_history(mo
     app.session_state["draft"] = draft
     app.session_state["blocks"] = {block.key: block}
     app.run()
-    click(app, "Edit contacts")
+    click(app, "Edit contact")
     assert directory.load_directory(profile.contract) == state
     if outcome == "write failure":
         def fail(*args, **kwargs):
@@ -262,7 +267,7 @@ def test_same_action_linked_contact_and_notes_keep_standing_scope_and_history(mo
     reopened.session_state["draft"] = checkpoint.draft
     reopened.session_state["blocks"] = {item.key: item for item in checkpoint.draft.blocks}
     reopened.run()
-    click(reopened, "Edit contacts")
+    click(reopened, "Edit contact")
     assert not reopened.exception
     assert notes(reopened).value == result.text
     assert library.load_snapshot_version(profile.contract, profile.key, draft.period, 1) == saved

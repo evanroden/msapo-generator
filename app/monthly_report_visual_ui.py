@@ -403,7 +403,8 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
     left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
     updated = []
     with left:
-        from app.monthly_report_row_cards_ui import _edit_table
+        from app.monthly_report_row_cards_ui import _comparison_rows, _edit_table
+        group = p + "_active_row"
         for n, table in enumerate(tables):
             if len(tables) > 1:
                 st.write("Contact table " + str(n + 1))
@@ -411,8 +412,9 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
             table_key = p + f"_table_{n}_rows_" + _signature(table.columns)
             # Creating editable contacts is already an explicit add action.
             # Its one blank slot opens once; it is not a counted/exported row.
-            if table_key not in st.session_state and table.rows and not any(
-                    str(value).strip() for row in table.rows for value in row):
+            if (table_key not in st.session_state and table.rows and not any(
+                    str(value).strip() for row in table.rows for value in row)
+                    and not st.session_state.get(group, {}).get("active_table")):
                 token = uuid4().hex
                 st.session_state[table_key] = {"rows": (), "tokens": (), "active": token,
                     "draft_token": token, "draft_index": 0}
@@ -425,7 +427,8 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
                 labels={heading: "Agreement status (MSA)" for heading in table.columns
                         if vendor and heading.strip().casefold() == "msa"},
                 max_chars=500, scope_labels=scopes, allow_undo=True,
-                empty_label="No vendor contacts added" if vendor else "No contacts added")
+                empty_label="No vendor contacts added" if vendor else "No contacts added",
+                group=group)
             updated.append(replace(table, rows=changed_rows))
             if (len(changed_rows) > len(rows) and block.key == "contact_matrix" and has_primary
                     and (block.source == "Library" or
@@ -442,7 +445,7 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
             st.write("Contacts in this report")
             for table in updated:
                 st.dataframe(
-                    [dict(zip(table.columns, row)) for row in table.rows],
+                    _comparison_rows(table.columns, table.rows),
                     hide_index=True,
                     width="stretch",
                 )

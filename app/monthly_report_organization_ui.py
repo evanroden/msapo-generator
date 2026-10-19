@@ -199,7 +199,9 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         current_draft = replace(draft, blocks=tuple(updated.values()))
         native_contacts = key == "contact_matrix" and bool(block.rows or block.extra_tables or
             (spec.type == "table" and spec.columns))
-        if not native_contacts:
+        if native_contacts and block.source == "Omit":
+            _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=False)
+        elif not native_contacts:
             _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=show_preview)
         if not native_contacts and st.session_state.get(active_key) != key:
             action = {

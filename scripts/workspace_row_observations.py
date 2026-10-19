@@ -18,7 +18,8 @@ def row_state(draft):
                     'rows': block.rows, 'reference': ''}] if block.rows else [])
         tables.extend({'columns': table.columns, 'rows': table.rows, 'reference': table.reference}
                       for table in block.extra_tables)
-        result[block.key] = {'tables': tables, 'references': block.references}
+        result[block.key] = {'tables': tables, 'references': block.references,
+                             'source': block.source}
     return {'rows': result, 'fingerprint': draft.fingerprint,
             'unrelated': replace(draft, blocks=tuple(block for block in draft.blocks
                 if block.key not in ROW_KEYS)).fingerprint}

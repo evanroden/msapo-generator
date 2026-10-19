@@ -100,6 +100,7 @@ def browser_task(browser_type, name):
         page.goto(qa.URL,wait_until='domcontentloaded')
         live.load_fixture(page,'prefill')
         baseline=receipt(page)
+        assert baseline['working']['rows']['contact_matrix']['source']=='Library'
         proposal=page.locator(PROPOSALS)
         expect(proposal.get_by_text('Status: Pending',exact=True)).to_be_visible()
         proposal.get_by_role('button',name='Edit proposal',exact=True).click()
