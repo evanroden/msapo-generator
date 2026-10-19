@@ -249,7 +249,8 @@ def test_optional_text_and_spreadsheets_are_quiet_without_approving_them(include
     draft = replace(draft, sources=(content.source,))
     status = entry(draft, content)
     assert not status.resolved and not status.needs_correction
-    assert status.reason and status.source_id == content.source.id
+    assert status.reason == "" and status.summary == "Not included"
+    assert status.source_id == content.source.id
     # A real incomplete addition or missing original must still be actionable,
     # even when the file itself has no image-page review to complete.
     assert entry(draft, content, pending=True).needs_correction

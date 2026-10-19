@@ -554,6 +554,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         if draft is not None:
             from html import escape
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
+        from app.monthly_report_native_loading import reserve_text_area
+        reserve_text_area(editor_key, 140)
         st.text_area(
             spec.key.replace("_", " ").capitalize(),
             # The native protocol default must agree with the actual draft.
@@ -959,7 +961,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         contract = choose_contract(last_contract, field)
         if contract:
             period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
-            identity_slot = st.empty()
+            # Keep the prior identity line while the native site choices are
+            # being read. st.empty() clears it immediately on every rerun,
+            # shifting checkbox rows during a second pointer press.
+            identity_slot = st.container(key="monthly_report_identity_sites")
     if not contract:
         return
     profiles = library.list_profiles(contract)
@@ -974,11 +979,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
             render_details_action=lambda candidate, existing: _render_report_details_action(
                 candidate, existing, period, browser_token))
+    identity_slot.caption(identity_summary(existing or candidate) if candidate else "Select report sites.")
     if not candidate:
         return
-    with identity_slot.container():
-        with st.container(key="monthly_report_identity_sites"):
-            st.caption(identity_summary(existing or candidate))
     if not existing:
         starting_choice(candidate, profiles, period, "", field)
         return
@@ -1197,6 +1200,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[prefix + "_evidence"] = tuple(
                     replace(content, source=corrections.get(content.source.id, content.source))
                     for content in st.session_state.get(prefix + "_evidence", ()))
+                # A metadata correction does not restore missing original bytes.
+                # Keep the corrected record in that retained set as well, or the
+                # next source renderer would restore its pre-correction metadata.
+                st.session_state[prefix + "_unavailable_sources"] = tuple(
+                    corrections.get(source.id, source)
+                    for source in st.session_state.get(prefix + "_unavailable_sources", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",

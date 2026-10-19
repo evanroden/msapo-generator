@@ -114,7 +114,8 @@ def test_novice_can_choose_sentence_then_edit_without_page_or_destination_dropdo
     app = app_for()
     assert not app.exception and not app.selectbox and not app.multiselect
     assert app.session_state["status"].text == ""
-    next(b for b in app.button if b.label == "Reporting has not started").click().run()
+    assert {button.label for button in app.button} == {"Not started", "Awaiting this month’s report"}
+    next(b for b in app.button if b.label == "Not started").click().run()
     assert app.session_state["status"].text == "Monitoring-based commissioning reporting has not started."
     app.text_area[0].set_value("Synthetic monitoring starts after equipment setup.").run()
     app.run()
@@ -131,6 +132,34 @@ def test_returning_user_sees_exact_existing_update_and_shared_pages():
     assert any(c.value == "Shared page editor: 2 pages" for c in app.caption)
     app.text_area[0].set_value("Synthetic updated result.").run()
     assert app.session_state["pages"].asset_hashes == ("page0", "page1")
+
+
+def test_delivered_human_wording_is_not_replaced_by_an_earlier_empty_state_preset():
+    from app.monthly_report_mbcx_ui import STATUS_STARTERS
+    app = app_for()
+    app.text_area[0].set_value("Synthetic sensor investigation remains open; retain this exact finding.")
+    next(b for b in app.button if b.label == STATUS_STARTERS[0][0]).click().run()
+    assert not app.exception
+    assert app.session_state["status"].text == "Synthetic sensor investigation remains open; retain this exact finding."
+    assert app.text_area[0].value == app.session_state["status"].text
+    assert any("Your wording was kept" in item.value for item in app.info)
+
+
+def test_chosen_preset_has_concise_visible_state_until_the_wording_changes():
+    from app.monthly_report_mbcx_ui import STATUS_STARTERS
+    app = app_for()
+    identity = app.text_area[0].proto.id
+    label, sentence = STATUS_STARTERS[1]
+    next(b for b in app.button if b.label == label).click().run()
+    assert not app.exception and app.session_state["status"].text == sentence
+    assert app.text_area[0].proto.id == identity
+    assert any(item.value == "Status: " + label for item in app.caption)
+    assert not app.button
+    app.run()
+    assert any(item.value == "Status: " + label for item in app.caption)
+    app.text_area[0].set_value("Synthetic draft report received; findings are being reviewed.").run()
+    assert not any(item.value.startswith("Status: ") for item in app.caption)
+    assert not app.button
 
 
 def test_source_linked_update_has_one_editor_and_retains_its_review_and_evidence():

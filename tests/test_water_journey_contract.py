@@ -221,11 +221,12 @@ def test_cold_sampler_identifies_tables_among_other_lazy_native_inputs():
 const names=JSON.parse(process.argv[1]);
 const boxes=names.map(name=>({classList:['st-key-report_guided_scope_edit_'+name+'_stamp'],
  querySelector:sel=>sel.includes('stSkeleton')?{}:null,
+ querySelectorAll:()=>[],firstElementChild:{getAttribute:()=> 'stSkeleton'},
  compareDocumentPosition:()=>4,getBoundingClientRect:()=>({height:149})}));
 const root={querySelectorAll:sel=>sel.includes('stElementContainer')?boxes:[],dataset:{epcFullRender:'same'}};
 const button={getBoundingClientRect:()=>({x:16,y:298,width:115,height:44})};
 const pair={closest:()=>root,querySelector:()=>button};
-const document={querySelector:sel=>sel==='.water'?pair:{scrollTop:6357},documentElement:{clientWidth:545}};
+const document={querySelector:sel=>sel==='.water'?pair:{scrollTop:6357},documentElement:{clientWidth:545},fonts:{status:'loaded'}};
 const window={innerHeight:757};
 const Node={DOCUMENT_POSITION_FOLLOWING:4};
 const sample=eval('('+process.argv[2]+')');
@@ -238,3 +239,7 @@ console.log(JSON.stringify(sample({water:'.water',keys:null})));
         "st-key-report_guided_scope_edit_" + key + "_stamp" for key in
         ("work_orders_imported_0", "thermal_capacity_imported_0")]
     assert all(g["loading"] and not g["mounted"] for g in observed["grids"])
+    assert observed["fontStatus"] == "loaded"
+    assert len(observed["preceding"]) == len(keys)
+    assert all(item["height"] == 149 and item["images"] == []
+               and item["type"] == "stSkeleton" for item in observed["preceding"])
