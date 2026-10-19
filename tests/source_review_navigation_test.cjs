@@ -104,6 +104,26 @@ test('Return restores the same warning and accepts already-open disclosures',asy
     cleanup();
 });
 
+test('Return measures its warning after hiding its own return affordance',async()=>{
+    for(const keepWarning of [true,false]) {
+        const h=fixture(),cleanup=h.install(),a=h.entries.first;
+        h.click(a.link);await h.flush();
+        const target=keepWarning?a.link:h.review;
+        if(!keepWarning)a.link.isConnected=false;
+        target.top=100;
+        let hidden=false;
+        Object.defineProperty(a.back,'hidden',{get(){return hidden;},set(value){
+            if(value&&!hidden)target.top-=24;
+            hidden=value;
+        }});
+        h.click(a.back);
+        assert.equal(h.scroll.scrollTop,800+76-(keepWarning?400:80));
+        assert.equal(a.back.hidden,true);
+        assert.equal(h.state.sourceReviewReturn,null);
+        cleanup();
+    }
+});
+
 test('corrected warning/form may disappear across rerun without losing Return to review',async()=>{
     const h=fixture(),a=h.entries.first;let cleanup=h.install();
     h.click(a.link);await h.flush();cleanup();a.link.isConnected=false;a.field.isConnected=false;

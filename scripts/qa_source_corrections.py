@@ -97,9 +97,14 @@ def browser_task(browser_type, name):
             has=page.locator('[id="' + source_marker + '"]'))
         record["stage"] = "first date link and native focus"
         date_link.scroll_into_view_if_needed()
-        link_y = date_link.bounding_box()["y"]
         record["warning_before_pointer_action"] = date_link.bounding_box()
         date_link.click()
+        pointer_samples = page.evaluate("window.__sourceCorrectionNavigationObservations").copy()
+        pointer = next(sample for sample in reversed(pointer_samples)
+                       if sample["type"] == "pointerdown" and sample["source"].endswith("--date"))
+        record["warning_at_native_pointer_action"] = pointer
+        link_y = pointer["rect"]["y"]
+        assert 0 <= link_y < 900, "The native pointer must reach the visible warning."
         form = source_form(page)
         expect(form).to_have_count(1)
         date_input = form.get_by_test_id("stDateInput").locator("input")

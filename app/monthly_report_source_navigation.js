@@ -85,11 +85,14 @@ globalThis.ENFRASourceReviewNavigation = {
                 const original = prior.link?.isConnected ? prior.link : review;
                 const scroll = owner(original);
                 const top = original === review ? prior.reviewTop : prior.linkTop;
+                // Retire our own affordance before measuring the destination.
+                // Its removal can change the warning's document position;
+                // restoring first leaves WebKit one line above that position.
+                state.sourceReviewReturn = null;
+                returnLinks();
                 original.setAttribute('tabindex', '-1');
                 original.focus({preventScroll:true});
                 scroll.scrollTop += original.getBoundingClientRect().top - top;
-                state.sourceReviewReturn = null;
-                returnLinks();
                 return;
             }
             const match = /^#source-details-(.+)--(site|date)$/.exec(link.getAttribute('href') || '');

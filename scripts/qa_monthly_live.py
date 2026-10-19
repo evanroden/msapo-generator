@@ -294,8 +294,10 @@ def correct_replay_source_scope(page):
     # the current source. A site correction must not silently waive that gate.
     stale = page.get_by_text("A supporting source changed or is missing.", exact=True)
     expect(stale).to_have_count(1)
-    evidence = page.locator('[data-testid="stExpander"]').filter(has=
-        page.get_by_role("checkbox", name="Remove unavailable source links", exact=True))
+    # Locate the relevant native disclosure by its exact warning content.
+    # A collapsed details body is absent from the accessibility tree, so its
+    # checkbox cannot identify the disclosure until the user has opened it.
+    evidence = page.locator('[data-testid="stExpander"]').filter(has=stale)
     summary = evidence.locator("summary")
     if not summary.evaluate("el => el.parentElement.open"):
         summary.click()
