@@ -29,22 +29,22 @@ def two_sessions(training):
 
 def test_each_consecutive_remove_works_on_its_first_native_action(training):
     app, matrix, events = two_sessions(training)
-    buttons = [button for button in app.button if button.label.startswith("Remove session:")]
+    buttons = [button for button in app.button if " ".join(button.label.split()).startswith("Remove session:")]
     buttons[1].click().run()
     assert not app.exception and not app.error
     assert next(table.rows for table in current(app).extra_tables if table.reference == EVENT_REF) == events.rows[:1]
-    remaining = [button for button in app.button if button.label.startswith("Remove session:")]
+    remaining = [button for button in app.button if " ".join(button.label.split()).startswith("Remove session:")]
     assert len(remaining) == 1
     widget(app, "text_area", "Training notes").set_value("Keep the note delivered with the second removal.")
     remaining[0].click().run()
     assert_work(app, "Keep the note delivered with the second removal.")
     assert current(app).extra_tables == (matrix,)
-    assert not [button for button in app.button if button.label.startswith("Remove session:")]
+    assert not [button for button in app.button if " ".join(button.label.split()).startswith("Remove session:")]
 
 
 def test_same_day_session_remove_names_identify_the_distinct_sessions(training):
     app, _, _ = two_sessions(training)
-    labels = [button.label for button in app.button if button.label.startswith("Remove session:")]
+    labels = [button.label for button in app.button if " ".join(button.label.split()).startswith("Remove session:")]
     assert len(labels) == len(set(labels)) == 2
     assert "In person" in labels[0] and "Synthetic Hospital Tech" in labels[0]
     assert "Virtual" in labels[1] and "Other Hospital Tech" in labels[1]
@@ -53,7 +53,7 @@ def test_same_day_session_remove_names_identify_the_distinct_sessions(training):
 def test_queued_removal_rejects_a_changed_session_collection(training):
     from app.monthly_report_editor import _signature
     app, _, events = two_sessions(training)
-    key = next(button.key for button in app.button if button.label.startswith("Remove session:"))
+    key = next(button.key for button in app.button if " ".join(button.label.split()).startswith("Remove session:"))
     request_key = key.split("_remove_session_", 1)[0] + "_remove_session_request"
     before = current(app)
     # A delayed callback still carries the previous collection, not authority
@@ -91,11 +91,17 @@ def test_first_staff_row_uses_new_cell_defaults_without_display_writes(tmp_path,
 @pytest.mark.parametrize("event", ["pull_request", "push"])
 @pytest.mark.parametrize("dependency", [
     "scripts/workspace_browser_observations.py",
+    "tests/streamlit_static_fixture.py",
+    "tests/test_monthly_report_source_preview_lifetime.py",
+    "tests/test_monthly_report_native_loading.py",
     "scripts/qa_photo_action_observations.js",
     "tests/test_qa_photo_action_observations.py",
     "scripts/qa_training_form_observations.js",
     "tests/test_qa_training_form_observations.py",
     "scripts/qa_monthly_live.py",
+    "scripts/qa_source_corrections.py",
+    "tests/source_review_navigation_test.cjs",
+    "tests/test_monthly_report_identity_strip.py",
     "scripts/qa_workflow_route_observations.py",
     ".streamlit/config.toml",
     "run_web.py",

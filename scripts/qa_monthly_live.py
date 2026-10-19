@@ -272,8 +272,15 @@ def correct_replay_source_scope(page):
     expect(details).to_have_count(1)
     sites = details.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites")
     combo = sites.get_by_role("combobox")
+    expect(combo).to_be_focused()
     combo.fill("Demo North")
+    expect(combo).to_have_value("Demo North")
     page.get_by_role("option", name="Demo North", exact=True).click()
+    # Finish the native multiselect with one ordinary Tab. BaseWeb keeps its
+    # option portal open after selection and makes the surrounding workspace
+    # aria-hidden until the picker closes; a role lookup there is premature.
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("listbox")).to_have_count(0)
     details.get_by_role("button", name="Use these source details", exact=True).click()
     expect(warning).to_have_count(0, timeout=25000)
     changed = page.get_by_text(re.compile(r"^QA working report SHA256: (?!" + before + r"$)[0-9a-f]{64}$")).last
@@ -295,6 +302,8 @@ def correct_replay_source_scope(page):
     source_pages = evidence.locator('[data-testid="stMultiSelect"]').filter(has_text="Supporting source pages")
     source_pages.get_by_role("combobox").fill("synthetic-activity.txt")
     page.get_by_role("option", name="synthetic-activity.txt · page 1", exact=True).click()
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("listbox")).to_have_count(0)
     evidence.get_by_role("checkbox", name="Remove unavailable source links", exact=True).check()
     expect(stale).to_have_count(0, timeout=25000)
     final = page.get_by_text(re.compile(r"^QA working report SHA256: (?!" + after + r"$)[0-9a-f]{64}$")).last

@@ -108,7 +108,7 @@ st.session_state['blocks'] = render_training(st.session_state['draft'], st.sessi
     next(w for w in app.text_input if w.label == 'Training topic').set_value('Site safety')
     app.date_input[0].set_value(date(2026, 9, 1))
     next(w for w in app.multiselect if w.label == 'Participants').set_value(['Sam'])
-    next(w for w in app.button if w.label == 'Add training session').click().run()
+    next(w for w in app.button if w.label == 'Add completed training').click().run()
     assert not app.exception
     result = app.session_state['blocks']['training_summary']
     assert result.extra_tables[-1].reference == EVENT_REF

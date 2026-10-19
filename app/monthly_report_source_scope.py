@@ -1,10 +1,11 @@
 """Item-specific scope evidence; no filename, classification or blanket waiver.
 
-Source corrections bind the exact source revision and contract. Accepted
+Source corrections bind the scope-determining source revision and contract. Accepted
 mapping/totals receipts bind the particular contribution and reporting window.
 Neither changes original bytes or turns a report-only edit into standing data.
 """
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from collections import Counter
 from dataclasses import replace
 from hashlib import sha256
 import json
@@ -43,15 +44,26 @@ def revision(source):
                    client_page_reviews=(), client_page_exclusions=()).fingerprint
 
 
+def _site_revision(source):
+    # A site's explicit decision is independent of optional descriptive labels.
+    # Keep contribution_receipt's existing revision above: changing a source
+    # identity used by accepted work-order rows still needs factual review.
+    return revision(replace(source, vendor="", work_order=""))
+
+
 def source_review(source):
     return _decode(source.scope_review) if source.scope_review else {}
 
 
 def reviewed_scope(source, profile):
     record = source_review(source)
-    if (record.get("version") != 1 or record.get("source") != source.id
-            or record.get("sha256") != source.sha256 or record.get("revision") != revision(source)
+    version = record.get("version")
+    if (version not in (1, 2) or record.get("source") != source.id
+            or record.get("sha256") != source.sha256
             or record.get("contract") != profile.contract):
+        return None
+    expected = _site_revision(source) if version == 2 else revision(source)
+    if record.get("revision") != expected:
         return None
     sites = record.get("facilities")
     if not isinstance(sites, list) or any(not isinstance(key, str) for key in sites):
@@ -70,11 +82,29 @@ def correct_scope(source, profile, facilities=(), *, contract_artwork=False, art
             raise ValueError("Contract-wide scope is only available for this source's shared report artwork.")
     elif not selected or set(selected) - {site.key for site in profile.facilities}:
         raise ValueError("Choose the exact selected sites covered by this source.")
-    record = {"version": 1, "source": source.id, "sha256": source.sha256,
-              "revision": revision(source), "contract": profile.contract,
+    record = {"version": 2, "source": source.id, "sha256": source.sha256,
+              "revision": _site_revision(source), "contract": profile.contract,
               "kind": "contract_artwork" if contract_artwork else "sites",
               "facilities": list(selected)}
     return replace(source, scope_review=_encode(record))
+
+
+def preserve_descriptive_scope(previous, updated, profile):
+    """Carry a valid legacy site decision through a delivered vendor/job edit.
+
+    Browsing leaves historical records untouched. The old full revision must
+    validate before its descriptive edit, and every actual scope determinant
+    must still match afterwards. A stale or replaced receipt is never renewed.
+    """
+    if (previous.scope_review != updated.scope_review
+            or (previous.vendor, previous.work_order) == (updated.vendor, updated.work_order)
+            or _site_revision(previous) != _site_revision(updated)):
+        return updated
+    record = reviewed_scope(previous, profile)
+    if not record or record["version"] != 1:
+        return updated
+    return replace(updated, scope_review=_encode({**record, "version": 2,
+                                                  "revision": _site_revision(updated)}))
 
 
 def is_artwork_key(key):
@@ -131,6 +161,8 @@ def contribution_receipt(reference, profile, period, key, *, text="", columns=()
               "key": key, "kind": "text" if text else "rows", "text": text,
               "columns": list(columns),
               "table": _table_digest(columns, rows) if not text else ""}
+    if not text:
+        record["row_values"] = [list(row) for row in rows]
     if source is not None:
         if _source_id(reference) != source.id or reference.split(":")[-1] != source.fingerprint:
             raise ValueError("This source changed before its contribution was accepted.")
@@ -152,51 +184,96 @@ def _table_digest(columns, rows):
     return sha256(json.dumps([columns, rows], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
 
-def _table_sites_match(columns, rows, profile):
-    """Current explicit site cells remain geographic proof after a row edit.
-
-    A receipt still has to establish this source/revision, target and mapped
-    schema. It does not freeze independent descriptions or prevent valid
-    report-only row removal and merges of two accepted source mappings.
-    """
-    positions = [i for i, title in enumerate(columns) if title.strip().casefold() in {"facility", "site"}]
-    if len(positions) != 1:
+def _current_receipt(record, source, profile, period, key, kind):
+    origin = record.get("reference", "")
+    if not isinstance(origin, str):
         return False
-    names = {name.strip().casefold() for site in profile.facilities for name in (site.key, site.title, *site.aliases)}
-    index = positions[0]
-    return bool(rows) and all(index < len(row) and row[index].strip().casefold() in names
-                              for row in rows if any(cell.strip() for cell in row))
+    same_revision = (record["source_revision"] == revision(source) if record.get("source_revision")
+                     else origin.split(":")[-1] == source.fingerprint)
+    return (record.get("version") == 1 and _source_id(origin) == source.id and same_revision
+            and record.get("contract") == profile.contract
+            and record.get("facilities") == sorted(site.key for site in profile.facilities)
+            and record.get("period") == period.key and record.get("key") == key
+            and record.get("kind") == kind)
 
 
-def _covered_use(use, source, profile, period):
+def _accepted_rows_cover(key, columns, rows, records):
+    # Only the established service-description field is freely editable.
+    # Counts, dates, identity, area, tags and custom schemas remain bound.
+    service_columns = ("Facility", "WO #", "Finish Date", "Area", "Task Code-Description", "Tag #")
+    description = 4 if key == "service_calls" and tuple(columns) == service_columns else None
+
+    def facts(row):
+        return tuple("" if i == description else cell for i, cell in enumerate(row))
+
+    available = Counter()
+    for record in records:
+        accepted = record.get("row_values")
+        if (record.get("columns") != list(columns) or not isinstance(accepted, list)
+                or any(not isinstance(row, list) or len(row) != len(columns)
+                       or any(not isinstance(cell, str) for cell in row) for row in accepted)
+                or record.get("table") != _table_digest(columns, accepted)):
+            continue
+        # A repeated receipt/source cannot multiply an already accepted row.
+        available |= Counter(facts(row) for row in accepted if any(cell.strip() for cell in row))
+    by_cell = [{} for _ in columns]
+    for candidate in available:
+        for i, value in enumerate(candidate):
+            by_cell[i].setdefault(value, set()).add(candidate)
+    for row in rows:
+        if not any(cell.strip() for cell in row):
+            continue
+        wanted = facts(row)
+        if len(wanted) != len(columns):
+            return False
+        if not columns:
+            return False
+        # Start with the most selective cell so editing one large worksheet
+        # does not compare every current row against every accepted row.
+        index = min(range(len(columns)), key=lambda i:
+                    len(by_cell[i].get("", ())) + len(by_cell[i].get(wanted[i], ())))
+        candidates = set(by_cell[index].get("", ())) | set(by_cell[index].get(wanted[index], ()))
+        compatible = [candidate for candidate in candidates if available[candidate]
+                      and all(not value or value == wanted[i] for i, value in enumerate(candidate))]
+        # Existing report merges may fill blank cells from another accepted,
+        # current source. Every resulting fact must still have that evidence.
+        if not compatible or any(value and not any(candidate[i] == value for candidate in compatible)
+                                 for i, value in enumerate(wanted)):
+            return False
+        for candidate in compatible:
+            available[candidate] -= 1
+    return True
+
+
+def _covered_use(use, source, profile, period, *, sources=()):
     kind, key, value, references = use
     accepted_text, accepted_references, independent = set(), set(), []
+    current_sources = {item.id: item for item in sources}
+    current_sources[source.id] = source
+    records, own_records = [], []
     for ref in references:
         if not ref.startswith(USE_PREFIX):
             continue
         record = _decode(ref[len(USE_PREFIX):])
         origin = record.get("reference", "")
-        if not isinstance(origin, str):
+        owner = current_sources.get(_source_id(origin))
+        if owner is None or not _current_receipt(record, owner, profile, period, key, kind):
             continue
-        same_revision = (record["source_revision"] == revision(source) if record.get("source_revision")
-                         else origin.split(":")[-1] == source.fingerprint)
-        if (record.get("version") != 1 or _source_id(origin) != source.id
-                or not same_revision
-                or record.get("contract") != profile.contract
-                or record.get("facilities") != sorted(site.key for site in profile.facilities)
-                or record.get("period") != period.key or record.get("key") != key
-                or record.get("kind") != kind):
+        records.append(record)
+        if owner.id != source.id:
             continue
+        own_records.append(record)
         if kind == "text" and isinstance(record.get("text"), str) and record["text"] in value.split("\n\n"):
             accepted_text.add(record["text"])
             accepted_references.add(origin)
             independent.append(record.get("allows_independent_text") is True)
         if kind == "rows":
             columns, rows = value
-            if (record.get("columns") == list(columns) and
-                    (record.get("table") == _table_digest(columns, rows)
-                     or _table_sites_match(columns, rows, profile))):
+            if (record.get("columns") == list(columns)
+                    and record.get("table") == _table_digest(columns, rows)):
                 return True
+    if kind == "rows" and own_records:
+        return _accepted_rows_cover(key, *value, records)
     if kind == "text" and accepted_text:
         if set(filter(None, value.split("\n\n"))) <= accepted_text:
             return True
@@ -212,4 +289,4 @@ def included_scope_valid(draft, source):
     scope = reviewed_scope(source, draft.profile)
     if scope:
         return scope["kind"] == "sites" or all(use[0] == "artwork" for use in uses)
-    return all(_covered_use(use, source, draft.profile, draft.period) for use in uses)
+    return all(_covered_use(use, source, draft.profile, draft.period, sources=draft.sources) for use in uses)
