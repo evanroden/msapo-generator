@@ -24,6 +24,34 @@ CONTACTS = '.st-key-epc_pair_monthly_organization'
 VENDORS = '.st-key-epc_pair_monthly_subcontractors'
 
 
+ROW_OBSERVER = r'''(() => {
+  const identities=new WeakMap(), events=[];
+  let next=0;
+  const identity=node=>{
+    if(!identities.has(node))identities.set(node,++next);
+    return identities.get(node);
+  };
+  const describe=node=>{
+    const rect=node.getBoundingClientRect();
+    return {node:identity(node),connected:node.isConnected,disabled:node.disabled,
+      visible:Boolean(node.getClientRects().length),focused:document.activeElement===node,
+      caret:[node.selectionStart??null,node.selectionEnd??null],
+      rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height}};
+  };
+  for(const type of ['pointerdown','pointerup','click'])document.addEventListener(type,event=>{
+    const button=event.target?.closest?.('button');
+    const pair=button?.closest('.st-key-epc_pair_monthly_proposals,.st-key-epc_pair_monthly_maintenance');
+    if(!pair)return;
+    events.push({type,time:performance.now(),label:button.textContent.trim(),
+      point:{x:event.clientX,y:event.clientY},...describe(button),
+      running:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state'),
+      scroll:document.querySelector('[data-testid="stMain"]')?.scrollTop});
+    if(events.length>128)events.shift();
+  },true);
+  window.ENFRARowObservation={describe,events};
+})();'''
+
+
 def receipt(page, *, field=None, value=None):
     page.wait_for_function('''wanted => {
       const node=[...document.querySelectorAll('[data-enfra-row-receipt]')].at(-1);
@@ -75,6 +103,7 @@ def browser_task(browser_type, name):
     browser=browser_type.launch(headless=True)
     context=browser.new_context(viewport={'width':1365,'height':900})
     context.add_init_script(qa.CLIENT_INIT)
+    context.add_init_script(ROW_OBSERVER)
     context.add_cookies([{'name':'epc_device_id','value':secrets.token_hex(16),'url':qa.URL}])
     errors=[]; external=[]
     def route(request):
@@ -106,9 +135,13 @@ def browser_task(browser_type, name):
         proposal.get_by_role('button',name='Edit proposal',exact=True).click()
         field=proposal.get_by_role('textbox',name='Status',exact=True)
         field.fill(STATUS)
+        typed=field.evaluate('node=>window.ENFRARowObservation.describe(node)')
         # One ordinary blur followed by one structural Close; no rescue click.
         field.press('Tab')
         capture('status-durable',field='Status',value=STATUS)
+        acknowledged=field.evaluate('node=>window.ENFRARowObservation.describe(node)')
+        record['active_field_continuity']={'typed':typed,'acknowledged':acknowledged}
+        assert typed['node']==acknowledged['node'] and acknowledged['visible'] and not acknowledged['disabled']
         proposal.get_by_role('textbox',name='Technical Notes',exact=True).fill(NOTE)
         proposal.get_by_role('button',name='Close editing',exact=True).click()
         capture('pending-note-delivered-with-close',field='Technical Notes',value=NOTE)
@@ -156,10 +189,18 @@ def browser_task(browser_type, name):
         onsite.get_by_role('button',name='Edit onsite call',exact=True).click()
         expect(onsite.get_by_role('textbox',name='Asset',exact=True)).to_have_value(ASSET)
         expect(onsite.get_by_role('textbox',name='Task',exact=True)).to_have_value(TASK)
+        # Retain the original rapid native sequence. Waiting for the full
+        # report to settle here would hide the observed moving-button defect.
+        event_index=page.evaluate('window.ENFRARowObservation.events.length')
         onsite.get_by_role('button',name='Close editing',exact=True).click()
         proposal=page.locator(PROPOSALS)
         proposal.get_by_role('button',name='Edit proposal',exact=True).click()
         expect(proposal.get_by_role('textbox',name='Status',exact=True)).to_have_value(STATUS)
+        transition=page.evaluate('index=>window.ENFRARowObservation.events.slice(index)',event_index)
+        record['rapid_transition']=transition
+        activated=[event for event in transition if event['label']=='Edit proposal']
+        assert [event['type'] for event in activated]==['pointerdown','pointerup','click']
+        assert len({event['node'] for event in activated})==1
         proposal.get_by_role('button',name='Close editing',exact=True).click()
         capture('narrow-proposal-and-onsite-reentry')
         contacts=page.locator(CONTACTS)
@@ -187,6 +228,8 @@ def browser_task(browser_type, name):
         except Exception as capture_error:record['capture_error']=str(capture_error)[:500]
         raise
     finally:
+        try:record['native_events']=page.evaluate('window.ENFRARowObservation.events')
+        except Exception as observation_error:record['observation_error']=str(observation_error)[:500]
         (out/'task.json').write_text(json.dumps(record,indent=2))
         context.close();browser.close()
 

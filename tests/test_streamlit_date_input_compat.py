@@ -25,7 +25,8 @@ def bundle(tmp_path):
         raw = (installed / "static" / "js" / name).read_bytes()
         assert sha256(raw).hexdigest() == record["sha256"]
         (target.parent / name).write_bytes(raw)
-    (tmp_path / "index.html").write_bytes((installed / "index.html").read_bytes())
+    from streamlit_static_fixture import pristine_html
+    (tmp_path / "index.html").write_bytes(pristine_html(installed))
     return tmp_path, target
 
 
@@ -148,8 +149,8 @@ console.log(JSON.stringify({unpatched:message(before({isRange:false},one)),
 def test_real_metadata_then_date_install_sequence_preserves_entry_and_branding(bundle):
     from scripts import patch_streamlit_metadata as metadata
     root, target = bundle
-    installed_html = Path(streamlit.__file__).parent / "static" / "index.html"
-    (root / "index.html").write_bytes(installed_html.read_bytes())
+    # The fixture already paired native-entry HTML with pinned original files.
+    # Re-copying installed HTML here can select a derivative absent from it.
     branding = Path(__file__).resolve().parents[1] / "branding"
     before_entry = (target.parent / compat.INDEX_BUNDLE).read_bytes()
     metadata.install_branding(root, branding_dir=branding)

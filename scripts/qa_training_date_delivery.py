@@ -16,6 +16,11 @@ def _dates(values):
             "redacted_values": sum(not DATE.fullmatch(value) for value in selected)}
 
 
+def _participants(values):
+    selected = list(values)
+    return {"count": len(selected), "value_hashes": [sha256(value.encode()).hexdigest() for value in selected[:12]]}
+
+
 class TrainingDateDelivery:
     def __init__(self, record):
         self.record = record
@@ -35,11 +40,12 @@ class TrainingDateDelivery:
         if direction == "received" and kind == "delta":
             element = message.delta.new_element
             widget_type = element.WhichOneof("type")
-            if widget_type not in {"date_input", "button"}:
+            if widget_type not in {"date_input", "button", "multiselect"}:
                 return
             widget = getattr(element, widget_type)
             if ((widget_type == "date_input" and widget.label != "Training date") or
-                    (widget_type == "button" and widget.label != "Add training session")):
+                    (widget_type == "multiselect" and widget.label != "Participants") or
+                    (widget_type == "button" and widget.label != "Add completed training")):
                 return
             if len(self.known) >= 16 and widget.id not in self.known:
                 return
@@ -48,12 +54,18 @@ class TrainingDateDelivery:
             if widget_type == "date_input":
                 row.update(default=_dates(widget.default), value=_dates(widget.value),
                            set_value=widget.set_value, is_range=widget.is_range)
+            elif widget_type == "multiselect":
+                row.update(default=_participants([widget.options[index] for index in widget.default
+                                                  if 0 <= index < len(widget.options)]),
+                           value=_participants(widget.raw_values), set_value=widget.set_value)
         elif direction == "sent" and kind == "rerun_script":
             values = []
             for widget in list(message.rerun_script.widget_states.widgets)[:1024]:
                 widget_type = self.known.get(widget.id)
                 if widget_type == "date_input" and widget.WhichOneof("value") == "string_array_value":
                     values.append({"widget": widget_type, **_dates(widget.string_array_value.data)})
+                elif widget_type == "multiselect" and widget.WhichOneof("value") == "string_array_value":
+                    values.append({"widget": widget_type, **_participants(widget.string_array_value.data)})
                 elif widget_type == "button" and widget.WhichOneof("value") == "trigger_value":
                     values.append({"widget": widget_type, "pressed": widget.trigger_value})
             if not values:

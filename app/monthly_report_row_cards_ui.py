@@ -7,6 +7,7 @@ display changes alone cannot change the report.
 from dataclasses import replace
 from datetime import date
 from functools import partial
+import re
 from uuid import uuid4
 
 import streamlit as st
@@ -186,6 +187,33 @@ def _comparison_rows(columns, rows):
     return [dict(zip(labels, row)) for row in rows]
 
 
+def _finish_row(key):
+    """Retire this row's replaced elements when its native render is complete.
+
+    Streamlit 1.61.1 otherwise retains the former row's stale fields until the
+    entire report finishes rendering. Closing onsite work can then move an
+    already-visible proposal button between pointer down and up. Only direct
+    stale children of this one keyed row are hidden, and only after the last
+    current row element arrives. Active fields keep their original native
+    nodes; there is no scroll change, event replay or script-state shortcut.
+
+    Remove this compatibility rule when a pinned Streamlit upgrade retires
+    replaced row children before later native actions become available, with
+    the rapid Close/Edit WebKit journey and active-field continuity passing.
+    """
+    if st.__version__ != "1.61.1":
+        return
+    selector = ".st-key-" + re.sub(r"[^a-zA-Z0-9_-]", "-", key.strip())
+    child = ' > [data-testid="stElementContainer"]'
+    marker = '[data-enfra-row-finished]'
+    current = child + '[data-stale="false"] ' + marker
+    st.html('<span hidden data-enfra-row-finished="true"></span><style>'
+            + selector + ':has(' + current + ')' + child
+            + '[data-stale="true"]{display:none;}'
+            + selector + child + ':has(' + marker + '){display:none;}'
+            + '</style>')
+
+
 def _edit_table(columns, rows, types, key, noun, add_label, field, *, summary=None,
                 labels=None, max_chars=None, scope_labels=None, allow_undo=False, empty_label=None,
                 group=None):
@@ -276,7 +304,8 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, summary=No
     for index, (token, row) in enumerate(entries):
         if token != active and not any(value is not None and str(value).strip() for value in row):
             continue
-        with st.container(key=key + "_card_" + token, border=True):
+        card_key = key + "_card_" + token
+        with st.container(key=card_key, border=True):
             if token == active:
                 # Live summaries would grow/move the native fields as the
                 # first identifier or a long title is entered. Keep this
@@ -294,6 +323,7 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, summary=No
                 st.button("Remove " + noun, key=key + "_remove_" + token,
                           help="Removes only this row from this report; source files and saved versions remain.",
                           on_click=callback, args=(*args, "remove", token))
+            _finish_row(card_key)
     undo = record.get("undo")
     if allow_undo and undo and undo["result"] == rows:
         st.button("Undo remove " + noun, key=key + "_undo", on_click=callback, args=(*args, "undo"))
