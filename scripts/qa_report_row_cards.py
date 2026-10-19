@@ -40,7 +40,7 @@ ROW_OBSERVER = r'''(() => {
   };
   for(const type of ['pointerdown','pointerup','click'])document.addEventListener(type,event=>{
     const button=event.target?.closest?.('button');
-    const pair=button?.closest('.st-key-epc_pair_monthly_proposals,.st-key-epc_pair_monthly_maintenance');
+    const pair=button?.closest('.st-key-epc_pair_monthly_proposals,.st-key-epc_pair_monthly_maintenance,.st-key-epc_pair_monthly_organization,.st-key-epc_pair_monthly_subcontractors');
     if(!pair)return;
     events.push({type,time:performance.now(),label:button.textContent.trim(),
       point:{x:event.clientX,y:event.clientY},...describe(button),
@@ -151,12 +151,19 @@ def browser_task(browser_type, name):
         proposal.get_by_role('button',name='Close editing',exact=True).click()
         capture('desktop-proposal-reentry')
         contacts=page.locator(CONTACTS)
+        event_index=page.evaluate('window.ENFRARowObservation.events.length')
         contacts.get_by_role('button',name='Edit contact',exact=True).nth(0).click()
         expect(contacts.get_by_role('textbox',name='Name',exact=True)).to_have_value('Synthetic Person North')
         expect(contacts.get_by_role('textbox',name='Phone',exact=True)).to_have_count(1)
+        expect(contacts.get_by_text('Reused for this site in future reports. Changing the site keeps this report only.',exact=True)).to_be_visible()
         contacts.get_by_role('textbox',name='Phone',exact=True).fill(PHONE)
         contacts.get_by_role('button',name='Close editing',exact=True).click()
         contact_state=capture('contact-phone-delivered-with-close',field='Phone',value=PHONE)
+        transition=page.evaluate('index=>window.ENFRARowObservation.events.slice(index)',event_index)
+        record['contact_transition']=transition
+        activated=[event for event in transition if event['label']=='Edit contact']
+        assert [event['type'] for event in activated]==['pointerdown','pointerup','click']
+        assert len({event['node'] for event in activated})==1
         before_directory=baseline['directory']; after_directory=contact_state['directory']
         assert after_directory['revision']==before_directory['revision']+1
         assert after_directory['sites'][0]['contacts'][0]['phone']==PHONE
