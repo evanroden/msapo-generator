@@ -1005,6 +1005,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         # A replacement import/restart must not inherit unacknowledged text
         # callbacks even when the same sites, month and widget key are reused.
         st.session_state[prefix + "_rich_text_epoch"] = uuid4().hex
+        st.session_state.pop(prefix + "_pending_browser_save", None)
         active = None
         active_generation = ""
         if recovery_available:
@@ -1084,6 +1085,18 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.session_state[prefix + "_active_generation"] = active_generation
         if recovered_work:
             recovery_notice.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
+    from app import monthly_report_recovery_save as recovery_save
+    recovery_scope = (contract, selected, period.key, st.session_state[prefix + "_rich_text_epoch"],
+                      st.session_state.get("_monthly_qa_generation", ""))
+    recovery_ack_error = None
+    recovery_acknowledged = None
+    if recovery_available:
+        try:
+            recovery_acknowledged = recovery_save.acknowledge(st.session_state, prefix, recovery_scope, browser_token)
+        except (library.LibraryError, OSError) as exc:
+            # Keep rendering delivered edits; the ordinary save-status branch
+            # below reports this exact failure without adopting a newer head.
+            recovery_ack_error = exc
     from app.monthly_report_setup import normalize_mbcx
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
@@ -1379,16 +1392,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             save_status.shared_saved(snapshot.revision)
         elif recovery_available:
             try:
+                if recovery_ack_error is not None:
+                    raise recovery_ack_error
                 previous_sequence = st.session_state.get(prefix + "_active_sequence", 0)
-                recovered = active_work.save(browser_token, draft,
-                    expected_revision=previous_sequence,
-                    base_snapshot_revision=st.session_state[prefix + "_revision"],
-                    expected_generation=st.session_state.get(prefix + "_active_generation", ""),
-                    assets=assets)
-                st.session_state[prefix + "_active_sequence"] = recovered.revision
-                st.session_state[prefix + "_active_generation"] = recovered.generation
+                recovered = recovery_save.save(st.session_state, prefix, recovery_scope,
+                                               browser_token, draft, assets)
                 save_status.browser_saved(recovered.updated_at)
-                if recovered.revision != previous_sequence:
+                if recovered.revision != previous_sequence or recovery_acknowledged is not None:
                     record_report_preferences(browser_token, contract, selected)
                     if prepared.strip():
                         record_report_preparer(browser_token, contract, selected, prepared)
