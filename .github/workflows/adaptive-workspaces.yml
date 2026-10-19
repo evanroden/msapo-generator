@@ -336,6 +336,14 @@ jobs:
       - name: Source correction links reach native controls and persist after reload
         if: ${{ !cancelled() }}
         run: python scripts/qa_source_corrections.py
+      - name: Upload source correction evidence immediately, including first failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-correction-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/source-corrections/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Fresh ordinary Monthly site pointer and keyboard from zero
         if: ${{ !cancelled() }}
         run: python scripts/qa_monthly_site_pointer.py
