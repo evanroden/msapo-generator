@@ -57,8 +57,10 @@ def _rich_text_editor_key(prefix, block):
     # framework applies incoming widget state BEFORE invoking its currently
     # registered callback. Give a reset/import a distinct native widget ID.
     # Ordinary edits, journal writes, preview reruns and geometry keep this key.
+    # Source-reference changes are ordinary mutations of this same editor.
+    # They must not retire its delivered input or its recoverable receipt.
     return (prefix + "_edit_" + block.key + "_text_" +
-            _signature((block.references, _rich_text_scope(prefix))))
+            _signature(_rich_text_scope(prefix)))
 
 
 def _mark_explicit_rich_text_edit(marker, widget_key, block, scope, *, preserve_clear_undo=False):
@@ -154,6 +156,40 @@ def _pending_rich_text_edit(prefix, block):
     return None
 
 
+def _capture_pending_rich_text_edits(prefix, blocks):
+    """Apply exact delivered edits before a source or sibling structure changes.
+
+    The receipt still belongs to its exact original block/report incarnation.
+    Unmatched receipts remain available for explicit recovery in their editor.
+    """
+    captured = blocks
+    for key, block in blocks.items():
+        if block.ai_paragraphs:
+            continue
+        pending = _pending_rich_text_edit(prefix, block)
+        if pending is not None:
+            if captured is blocks:
+                captured = dict(blocks)
+            captured[key] = pending
+    return captured
+
+
+def _advance_rich_text_receipt(prefix, before, after):
+    """A known source merge may acknowledge only the input it actually used."""
+    if before is None or before == after:
+        return
+    widget_key = _rich_text_editor_key(prefix, before)
+    marker = widget_key + "_explicitly_edited"
+    receipt = st.session_state.get(marker)
+    if (isinstance(receipt, dict) and receipt.get("scope") == _rich_text_scope(prefix)
+            and receipt.get("result") == before.fingerprint
+            and receipt.get("text") == before.text
+            and receipt.get("text") == st.session_state.get(widget_key)):
+        # This transition consumed the complete delivered text as its input.
+        # The normal editor may acknowledge only this exact combined result.
+        st.session_state[marker] = {**receipt, "result": after.fingerprint}
+
+
 def _recover_rich_text_edit(marker, widget_key, block, scope):
     recovered = st.session_state.get(marker + "_recovery")
     if isinstance(recovered, dict) and recovered.get("scope") == scope:
@@ -214,12 +250,17 @@ def _render_rich_text_recovery(marker, widget_key, block, scope):
 
 def _forget_block_widgets(prefix, keys):
     starts = tuple(prefix + "_edit_" + key + "_" for key in keys)
+    text_starts = tuple(prefix + "_edit_" + key + "_text_" for key in keys)
+    def replaced(key):
+        # Native text reconciliation already refreshes canonical wording while
+        # retaining mismatched delivered input. Deleting it here loses both.
+        return key.startswith(starts) and not key.startswith(text_starts)
     for key in list(st.session_state):
-        if key.startswith(starts):
+        if replaced(key):
             del st.session_state[key]
     st.session_state["report_draft_mirror"] = {
         key: value for key, value in st.session_state.get("report_draft_mirror", {}).items()
-        if not key.startswith(starts)
+        if not replaced(key)
     }
 
 
@@ -239,6 +280,8 @@ def _apply_prepared(draft, blocks, additions, incoming_specs, prefix):
         st.caption("Nothing was added. Your current draft is retained; correct the source and try again.")
         return draft, blocks
     changed = {key for key in additions if proposed.get(key) != blocks.get(key)}
+    for key in changed:
+        _advance_rich_text_receipt(prefix, blocks.get(key), proposed[key])
     _forget_block_widgets(prefix, changed)
     sections = tuple(replace(s, included=s.included or any(b.key in additions for b in s.blocks),
                              blocks=tuple(incoming_specs.get(b.key, b) if b.key in additions else b for b in s.blocks))
@@ -449,7 +492,8 @@ def _has_request_rows(block):
 
 
 def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True,
-                  manage_saved_pictures=True, inline_photo_intake=False):
+                  manage_saved_pictures=True, inline_photo_intake=False,
+                  text_label=None, text_height=140):
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -551,7 +595,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             from html import escape
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
         st.text_area(
-            spec.key.replace("_", " ").capitalize(),
+            text_label or spec.key.replace("_", " ").capitalize(),
             # The native protocol default must agree with the actual draft.
             # A new browser mount initially reads this field; relying solely
             # on a one-shot set_value leaves an empty value it can echo on a
@@ -559,7 +603,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             # text area's ID excludes value (only max_chars is whitelisted),
             # so changing this default does not remount or reset current input.
             value=block.text,
-            key=field(editor_key, block.text), height=140,
+            key=field(editor_key, block.text), height=text_height,
             on_change=_mark_explicit_rich_text_edit,
             args=(changed_marker, editor_key, block, scope))
         if spec.key == "activity_summary":
@@ -700,6 +744,7 @@ def client_table_draft(draft):
 
 def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field):
     """Edit one report section without splitting standing and monthly content."""
+    blocks = _capture_pending_rich_text_edits(prefix, blocks)
     # Reserve the writing position before source tools. Populate it after
     # source callbacks have been reconciled so one native editor sees the
     # current result without changing the established mutation order.
@@ -753,7 +798,9 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             # attachment assets alone are incremental. Never append the prior
             # text/table a second time when applying a later upload.
             for key, block in additions.items():
+                previous = blocks.get(key)
                 blocks[key] = merge_blocks(blocks.get(key), block) if key == "improvements" else block
+                _advance_rich_text_receipt(prefix, previous, blocks[key])
             _forget_block_widgets(prefix, additions)
     local_destination = {"water": "water_reports", "mbcx": "mbcx_report", "scorecards": "utility_analysis"}.get(section.key)
     if local_destination:
@@ -1118,6 +1165,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_asset_review import refresh_asset_source_context
     from app.monthly_report_section_preview_ui import render_section_preview
     blocks = {b.key: refresh_asset_source_context(b, draft.sources) for b in draft.blocks}
+    captured = _capture_pending_rich_text_edits(prefix, blocks)
+    if captured is not blocks:
+        blocks = captured
+        # A setup/source control can request a subsequent frame before the
+        # final recovery save. That frame must start with the delivered text.
+        draft = replace(draft, blocks=tuple(blocks.values()))
+        st.session_state[draft_key] = draft
     specs = {b.key: b for s in draft.sections for b in s.blocks} | {b.key: b for b in layout_blocks()}
     from app.monthly_report_source_recovery import restore_sources, used_missing_sources, safe_source_name
     if prefix + "_evidence" not in st.session_state and draft.sources:

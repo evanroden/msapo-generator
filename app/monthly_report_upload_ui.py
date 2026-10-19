@@ -1302,8 +1302,11 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     # contribution; only new selected files need another reading.
     completed_ids = set(st.session_state.get(local_key + "_completed_ids", ()))
     scoped = tuple(c for c in contents if c.source.id in picked_ids and c.source.id not in completed_ids)
+    for notice in structured.reader_notices(scoped, destination):
+        st.warning(notice)
+    scoped = structured.reader_sources(scoped, destination)
     target = read_target()
-    digest = ai.digest(("section-upload-v4", destination, tuple(table_columns or ()),
+    digest = ai.digest(("section-upload-v5", destination, tuple(table_columns or ()),
                         sorted(c.source.id for c in scoped)))
     pending = st.session_state.get(local_key + "_pending")
     if pending and pending[0].get("request") != target:
