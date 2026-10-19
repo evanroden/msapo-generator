@@ -166,7 +166,7 @@ def test_supported_fact_date_reaches_actual_saved_word_and_pdf_once(monkeypatch,
     assert restored.draft == draft and restored.revision == saved.revision
     package = generate_report(restored.draft, acknowledged_fingerprint=restored.draft.fingerprint)
     assert package.docx and package.pdf, package.pdf_error
-    output = Path(os.environ.get('INDEPENDENT_OUTPUT', str(tmp_path)))
+    output = Path(os.environ.get('INDEPENDENT_OUTPUT', str(tmp_path))) / 'fact-dates'
     output.mkdir(exist_ok=True, parents=True)
     (output / 'verified_fact_date.docx').write_bytes(package.docx)
     (output / 'verified_fact_date.pdf').write_bytes(package.pdf)
