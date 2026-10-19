@@ -260,14 +260,24 @@ def safe_section_docx(path: Path, sections: tuple[int, ...]) -> bytes:
                     raise ImportError("A chart needs an external, missing or unsupported asset. Add a replacement picture instead.")
                 destination = target
                 if short == "image":
-                    # Decode and re-encode; don't feed SVG, WMF or EMF programs
-                    # or untrusted image metadata into the office converter.
-                    if Path(target).suffix.lower() not in (".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".webp") or archive.getinfo(target).file_size > 30 * 1024 * 1024:
+                    # Ordinary raster metadata is re-encoded. Static vectors
+                    # use the same closed record/dimension validation as native
+                    # export and the inspector, never arbitrary EMF/WMF programs.
+                    suffix = Path(target).suffix.lower()
+                    if suffix not in (".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".webp", ".emf", ".wmf") or archive.getinfo(target).file_size > 30 * 1024 * 1024:
                         raise ImportError("This drawing uses a picture format that needs a PNG/JPEG replacement.")
-                    destination = "word/media/" + hashlib.sha256(target.encode()).hexdigest() + ".png"
-                    if destination not in parts:
-                        image = normalize_report_image(archive.read(target), Path(target).suffix, line_art=True, dpi=150)
-                        put(destination, image.data, "image/png")
+                    if suffix in (".emf", ".wmf"):
+                        if target not in parts:
+                            from app.monthly_report_metafiles import supported_metafile
+                            raw = archive.read(target)
+                            if not supported_metafile(raw, suffix):
+                                raise ImportError("This drawing is not a supported static picture. Add a PNG/JPEG replacement.")
+                            put(target, raw, "image/x-" + suffix[1:])
+                    else:
+                        destination = "word/media/" + hashlib.sha256(target.encode()).hexdigest() + ".png"
+                        if destination not in parts:
+                            image = normalize_report_image(archive.read(target), suffix, line_art=True, dpi=150)
+                            put(destination, image.data, "image/png")
                 elif target not in parts:
                     if archive.getinfo(target).file_size > MAX_XML:
                         raise ImportError("Drawing XML exceeds the preparation budget.")

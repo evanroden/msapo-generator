@@ -612,6 +612,11 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
 
     source_path = Path(source_path)
     inspection = inspect_docx(source_path)
+    if any(item.note.startswith("Alternate Word representations") for item in inspection.items):
+        raise NativeLayoutError(
+            "The native source contains unresolved modern/legacy Word artwork. "
+            "A screenshot or replacement asset cannot approve a hidden alternate representation. "
+            "Correct the affected source drawing before building this native report.")
     if master:
         from app.monthly_report_master_tables import from_inspection
         master_shapes = from_inspection(inspection)
@@ -960,6 +965,9 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             # SmartArt there must not lend source client facts to a fresh report.
             _clear_diagrams(element)
             _clear_hyperlinks(element)
+            from app.monthly_report_native_design import clear_native_design_placeholders
+            clear_native_design_placeholders(element, cover=any(
+                item.kind == "native_layout" and item.note == "Native cover title and artwork" for item in group))
             if position <= (first_word_end or len(original)):
                 _cover(element, draft, preserve_issue_date=preserve_issue_date)
             cover_images(element, group)
@@ -967,6 +975,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         group = items[position]
         if position in headings:
             if _is_native_divider_background(element, _text(element)):
+                from app.monthly_report_native_design import clear_native_design_placeholders
+                clear_native_design_placeholders(element)
                 # Older saved mappings may have mistaken the images in a
                 # grouped divider for organization photos. Their proven native
                 # frames are already present; do not append another full-page
