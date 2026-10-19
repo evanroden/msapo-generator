@@ -21,7 +21,7 @@ import tempfile
 from app.memory import _data_dir
 from app.monthly_report_model import (
     BLOCK_SOURCES, BlockSpec, ColumnSpec, Facility, ReportDraft, ReportPeriod, ReportProfile,
-    ResolvedBlock, ReportTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
+    ResolvedBlock, ReportTable, TrainingSessionTable, OrgChartNode, ReportFollowUp, SectionSpec, ReportSource, EvidenceFact, DraftParagraph, default_sections, known_sections, layout_blocks, used_asset_references,
 )
 
 
@@ -214,6 +214,14 @@ def profile_from_dict(value: dict) -> ReportProfile:
         raise LibraryError("Invalid report profile.") from exc
 
 
+def _report_table_from_dict(value: dict) -> ReportTable:
+    columns, rows = tuple(value["columns"]), tuple(tuple(row) for row in value["rows"])
+    reference = value.get("reference", "")
+    if reference == "training:events:v1" and "row_tokens" in value:
+        return TrainingSessionTable(columns, rows, reference, tuple(value["row_tokens"]))
+    return ReportTable(columns, rows, reference)
+
+
 def block_from_dict(value: dict) -> ResolvedBlock:
     try:
         from app.monthly_report_asset_review import normalize_asset_reviews
@@ -224,7 +232,7 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             ai_written=value.get("ai_written", False), reviewed_fingerprint=value.get("reviewed_fingerprint", ""),
             pending_library_save=value.get("pending_library_save", False),
             asset_captions=tuple(value.get("asset_captions", ())),
-            extra_tables=tuple(ReportTable(tuple(t["columns"]), tuple(tuple(r) for r in t["rows"]), t.get("reference", "")) for t in value.get("extra_tables", ())),
+            extra_tables=tuple(_report_table_from_dict(t) for t in value.get("extra_tables", ())),
             client_reviewed_fingerprint=value.get("client_reviewed_fingerprint", ""),
             ai_evidence_fingerprint=value.get("ai_evidence_fingerprint", ""),
             ai_paragraphs=tuple(DraftParagraph(p["text"], tuple(p["fact_ids"]), tuple(p["references"]), tuple(p.get("flags", ()))) for p in value.get("ai_paragraphs", ())),
