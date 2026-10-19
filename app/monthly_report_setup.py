@@ -161,15 +161,11 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
     text = existing.text
     if incoming.text.strip() and incoming.text.strip() not in text:
         text = "\n\n".join(t for t in (text, incoming.text) if t)
-    images = list(existing.asset_hashes)
-    captions = list(existing.asset_captions) + [""] * (len(images) - len(existing.asset_captions))
-    for n, reference in enumerate(incoming.asset_hashes):
-        if reference not in images:
-            images.append(reference)
-            captions.append(incoming.asset_captions[n] if n < len(incoming.asset_captions) else "")
+    from app.monthly_report_asset_instances import merge_picture_occurrences, with_asset_instances
+    images, captions, instances = merge_picture_occurrences(existing, incoming)
     merged = replace(existing, source="This month", text=text,
                    rows=existing.rows + tuple(r for r in incoming.rows if r not in existing.rows),
-                   asset_hashes=tuple(images), asset_captions=tuple(captions),
+                   asset_hashes=images, asset_captions=captions,
                    references=tuple(dict.fromkeys((*existing.references, *incoming.references))),
                    extra_tables=existing.extra_tables + tuple(t for t in incoming.extra_tables if t not in existing.extra_tables),
                    org_nodes=existing.org_nodes or incoming.org_nodes,
@@ -182,21 +178,15 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
     for reviewed in (existing, incoming):
         reviewed_captions = reviewed.asset_captions + ("",) * (len(reviewed.asset_hashes) - len(reviewed.asset_captions))
         if (reviewed.client_reviewed_fingerprint == reviewed.fingerprint
-                and replace(merged, client_asset_reviews=(), asset_provenance=())
+                and replace(merged, client_asset_reviews=(), asset_provenance=(), asset_instances=())
                 == replace(reviewed, source=merged.source, asset_captions=reviewed_captions,
                            reviewed_fingerprint="", client_reviewed_fingerprint="",
-                           client_asset_reviews=(), asset_provenance=())):
+                           client_asset_reviews=(), asset_provenance=(), asset_instances=())):
             merged = replace(merged, client_reviewed_fingerprint=merged.fingerprint)
             break
-    # Each import names the provenance of its own pictures. Adding a different
-    # picture/table never broadens the context of previously reviewed pictures.
-    # The same bytes from a different source do acquire the combined provenance
-    # and must be checked again under that changed context.
-    contexts = {}
-    for block in (normalize_asset_reviews(existing), normalize_asset_reviews(incoming)):
-        for reference, context in block.asset_provenance:
-            contexts[reference] = tuple(sorted(set((*contexts.get(reference, ()), *context))))
-    merged = replace(merged, asset_provenance=tuple(contexts.items()))
+    # Each occurrence keeps only its own source/page context. The immutable
+    # bytes can be reused without transferring ownership of a human photograph.
+    merged = with_asset_instances(merged, instances)
     merged = preserve_asset_reviews(existing, merged)
     return preserve_asset_reviews(incoming, merged)
 

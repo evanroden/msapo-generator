@@ -171,6 +171,17 @@ class OrgChartNode:
 
 
 @dataclass(frozen=True)
+class AssetInstance:
+    """One report occurrence of immutable image bytes, with its own provenance."""
+    key: str
+    asset: str
+    references: tuple[str, ...] = ()
+    # None means an older/manual image has no established source-caption base.
+    # An explicit empty source caption is a real value, not missing metadata.
+    source_caption: str | None = None
+
+
+@dataclass(frozen=True)
 class ResolvedBlock:
     key: str
     source: str
@@ -192,6 +203,7 @@ class ResolvedBlock:
     # provenance map is keyed by content-addressed asset reference, not position.
     client_asset_reviews: tuple[str, ...] = ()
     asset_provenance: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    asset_instances: tuple[AssetInstance, ...] = ()
 
     @property
     def fingerprint(self) -> str:
@@ -203,6 +215,13 @@ class ResolvedBlock:
         # map changes the content represented by the original fields.
         value.pop("client_asset_reviews")
         value.pop("asset_provenance")
+        # A new occurrence is a structural edit even when bytes/caption match a
+        # removed image. Bind native callbacks to its incarnation while keeping
+        # unchanged pre-occurrence historical fingerprints exactly compatible.
+        if self.asset_instances:
+            value["asset_instances"] = tuple(item.key for item in self.asset_instances)
+        else:
+            value.pop("asset_instances")
         return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
     @property
@@ -318,6 +337,9 @@ def _digest(value: object) -> str:
     if isinstance(value, ReportSource) and not value.scope_review:
         record.pop("scope_review", None)
     if isinstance(value, ReportDraft):
+        for block in record["blocks"]:
+            if not block.get("asset_instances"):
+                block.pop("asset_instances", None)
         for source in record["sources"]:
             if not source.get("scope_review"):
                 source.pop("scope_review", None)

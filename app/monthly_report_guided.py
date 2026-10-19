@@ -623,10 +623,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                         normalized = normalize_report_image(photo.getvalue(), Path(photo.name).suffix)
                         reference = library.asset_reference(normalized.data, normalized.extension)
                         assets[reference] = normalized.data
-                        if reference not in block.asset_hashes:
-                            captions = (*block.asset_captions, *("" for _ in range(len(block.asset_hashes) - len(block.asset_captions))), "")
-                            block = replace(block, source="This month", asset_hashes=(*block.asset_hashes, reference), asset_captions=captions,
-                                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+                        from app.monthly_report_asset_instances import append_human_asset
+                        block = append_human_asset(block, reference)
                     except (ValueError, OSError):
                         st.error("This photo could not be read. Choose another image; the existing section is retained.")
         return block
@@ -647,7 +645,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         reference = library.asset_reference(image.data, image.extension)
         assets[reference] = image.data
         previous = block
-        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
+        from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
+        block = with_asset_instances(replace(block, source="Replace once", asset_hashes=(reference,),
+            asset_captions=(), references=(), client_asset_reviews=(), reviewed_fingerprint="",
+            client_reviewed_fingerprint=""), (new_asset_instance(reference),))
         if spec.type == "pdf_pages":
             st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
         st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")
