@@ -154,6 +154,14 @@ class ReportTable:
 
 
 @dataclass(frozen=True)
+class TrainingSessionTable(ReportTable):
+    # Identity of each accepted row snapshot. Only explicit session mutations
+    # add this metadata; plain/legacy tables keep their historical fingerprints.
+    # Tokens never become editable/exported columns.
+    row_tokens: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class OrgChartNode:
     key: str
     name: str = ""
