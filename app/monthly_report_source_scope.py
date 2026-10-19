@@ -1,6 +1,6 @@
 """Item-specific scope evidence; no filename, classification or blanket waiver.
 
-Source corrections bind the exact source revision and contract. Accepted
+Source corrections bind the scope-determining source revision and contract. Accepted
 mapping/totals receipts bind the particular contribution and reporting window.
 Neither changes original bytes or turns a report-only edit into standing data.
 """
@@ -44,15 +44,26 @@ def revision(source):
                    client_page_reviews=(), client_page_exclusions=()).fingerprint
 
 
+def _site_revision(source):
+    # A site's explicit decision is independent of optional descriptive labels.
+    # Keep contribution_receipt's existing revision above: changing a source
+    # identity used by accepted work-order rows still needs factual review.
+    return revision(replace(source, vendor="", work_order=""))
+
+
 def source_review(source):
     return _decode(source.scope_review) if source.scope_review else {}
 
 
 def reviewed_scope(source, profile):
     record = source_review(source)
-    if (record.get("version") != 1 or record.get("source") != source.id
-            or record.get("sha256") != source.sha256 or record.get("revision") != revision(source)
+    version = record.get("version")
+    if (version not in (1, 2) or record.get("source") != source.id
+            or record.get("sha256") != source.sha256
             or record.get("contract") != profile.contract):
+        return None
+    expected = _site_revision(source) if version == 2 else revision(source)
+    if record.get("revision") != expected:
         return None
     sites = record.get("facilities")
     if not isinstance(sites, list) or any(not isinstance(key, str) for key in sites):
@@ -71,11 +82,29 @@ def correct_scope(source, profile, facilities=(), *, contract_artwork=False, art
             raise ValueError("Contract-wide scope is only available for this source's shared report artwork.")
     elif not selected or set(selected) - {site.key for site in profile.facilities}:
         raise ValueError("Choose the exact selected sites covered by this source.")
-    record = {"version": 1, "source": source.id, "sha256": source.sha256,
-              "revision": revision(source), "contract": profile.contract,
+    record = {"version": 2, "source": source.id, "sha256": source.sha256,
+              "revision": _site_revision(source), "contract": profile.contract,
               "kind": "contract_artwork" if contract_artwork else "sites",
               "facilities": list(selected)}
     return replace(source, scope_review=_encode(record))
+
+
+def preserve_descriptive_scope(previous, updated, profile):
+    """Carry a valid legacy site decision through a delivered vendor/job edit.
+
+    Browsing leaves historical records untouched. The old full revision must
+    validate before its descriptive edit, and every actual scope determinant
+    must still match afterwards. A stale or replaced receipt is never renewed.
+    """
+    if (previous.scope_review != updated.scope_review
+            or (previous.vendor, previous.work_order) == (updated.vendor, updated.work_order)
+            or _site_revision(previous) != _site_revision(updated)):
+        return updated
+    record = reviewed_scope(previous, profile)
+    if not record or record["version"] != 1:
+        return updated
+    return replace(updated, scope_review=_encode({**record, "version": 2,
+                                                  "revision": _site_revision(updated)}))
 
 
 def is_artwork_key(key):

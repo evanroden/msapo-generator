@@ -319,7 +319,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             if len(candidates) == 1:
                 caption_defaults[number] = candidates[0]
     _sync_source_fields(source, p, field, caption_defaults=caption_defaults)
-    from app.monthly_report_source_scope import artwork_scope_keys
+    from app.monthly_report_source_scope import artwork_scope_keys, preserve_descriptive_scope
     artwork_keys = (artwork_scope_keys(scope_draft, source.id)
                     if scope_draft is not None and scope_draft.profile == profile
                     and scope_draft.period == period else ())
@@ -370,7 +370,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 if page in captions or page not in caption_defaults or caption != default_caption:
                     captions[page] = caption
         changes["captions"] = tuple(sorted(captions.items()))
-        source = replace(source, **changes)
+        source = preserve_descriptive_scope(source, replace(source, **changes), profile)
         if pages and page in sources.image_numbers(content):
             kind, reason = page_status(source.page_texts[page-1], unreadable=page in source.needs_vision)
             blocked_content = kind in ("pricing", "legal", "blank", "signature")
@@ -691,7 +691,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
             st.caption("File classification: " + source.classification)
             for attr, label in (("vendor", "Vendor"), ("work_order", "Job / work-order number")):
                 changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
-            source = replace(source, **changes)
+            from app.monthly_report_source_scope import preserve_descriptive_scope
+            source = preserve_descriptive_scope(source, replace(source, **changes), profile)
     for notice in source.notices:
         st.warning(notice)
     undecided = [n for n in _undecided_pages(content, source) if (source.id, n) not in existing]
