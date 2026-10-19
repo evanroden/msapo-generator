@@ -60,6 +60,11 @@ def browser_task(browser_type, name):
         date_warning = page.locator('[data-testid="stAlert"]').filter(has_text=
             "Confirm the reporting date for synthetic-activity.txt; no date has been established.")
         date_link = date_warning.get_by_role("link", name="Correct date", exact=True)
+        source_marker = date_link.get_attribute("href").rsplit("--", 1)[0].removeprefix("#")
+        assert re.fullmatch(r"source-details-[0-9a-f]{64}", source_marker)
+        source_panel = page.locator('[class*="st-key-source_detail_editor_"]').filter(
+            has=page.locator('[id="' + source_marker + '"]'))
+        record["stage"] = "first date link and native focus"
         date_link.scroll_into_view_if_needed()
         link_y = date_link.bounding_box()["y"]
         date_link.click()
@@ -70,6 +75,7 @@ def browser_task(browser_type, name):
         assert not date_input.evaluate("node => Boolean(node.closest('[inert]'))")
         assert date_input.input_value() == "", "Opening a correction must not invent a source date."
         qa.capture(page, name, "source-date-link")
+        record["stage"] = "return to the same warning without saving"
         page.get_by_role("link", name="Return to review", exact=True).filter(visible=True).press("Enter")
         expect(date_link).to_be_focused()
         assert abs(date_link.bounding_box()["y"] - link_y) <= qa.TOLERANCE
@@ -77,9 +83,15 @@ def browser_task(browser_type, name):
 
         # Close through the ordinary native summary. The next correction must
         # itself open a closed panel; an earlier date visit cannot mask it.
-        disclosure = form.locator("xpath=ancestor::details[1]")
+        record["stage"] = "close the native source panel"
+        disclosure = source_panel.locator("details")
+        expect(disclosure).to_have_count(1)
         disclosure.locator(":scope > summary").click()
-        assert not disclosure.evaluate("node => node.open")
+        # Native details.open stays true until the closing animation ends.
+        # Observe the same panel independently of its now-hidden form.
+        expect(disclosure).not_to_have_attribute("open", re.compile(r".*"))
+        expect(source_form(page)).to_have_count(0)
+        record["stage"] = "deliberate site correction and linked evidence"
         live.correct_replay_source_scope(page)
         corrected = fingerprint(page)
         assert corrected != before
@@ -88,12 +100,14 @@ def browser_task(browser_type, name):
 
         # This existing independent comparison includes original source-byte
         # digests. A reviewer choice is never described as extracted evidence.
+        record["stage"] = "independent fixture comparison"
         page.get_by_role("button", name="Compare fixture facts", exact=True).click()
         expect(page.get_by_text(re.compile(
             r"^QA comparison completed: source replay · 18/18 · action [0-9a-f]{12} · at "
         ))).to_have_count(1, timeout=25000)
 
         page.set_viewport_size({"width": 390, "height": 844})
+        record["stage"] = "narrow reload and keyboard date re-entry"
         page.reload(wait_until="domcontentloaded")
         expect(page.get_by_text("QA durable report SHA256: " + corrected, exact=True)).to_have_count(1, timeout=30000)
         assert fingerprint(page) == corrected

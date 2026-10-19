@@ -4,6 +4,53 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
+## Cold source controls and stable site selection — 2026-10-19 17:59 UTC
+
+PR260 head `22f94dcdc01c0ecf5663cfc56872144cfc680688` passes Required39294925429.
+Adaptive39294925470 fails the new source-correction journey and the existing WebKit
+first-site return-to-zero path; all Water steps and the Training, Progress photos and
+history jobs pass. Both earlier source review threads are resolved with their exact
+failing/passing evidence. Main/served remains `94b9f0f7f229906a49c603b46a4c35cf34b21ed7`.
+
+The first source artifact12208021766 is retained unchanged:111490517bytes, SHA256
+`7cb51bb515eb41a7dfa85218c78157e7fe9723b6a3dc17f7a7d0fe0ea8699a36`.
+Its screenshots, action logs and reconstructed main-frame DOM separate two findings:
+Chromium opens/focuses the native date, returns to the same warning/position and retains
+identical working/durable content, then the test checks details.open during the native
+closing animation. The harness now observes the same source panel until its open attribute
+is removed; one ordinary close and the subsequent correction assertions remain.
+WebKit clicks while that exact panel contains three loading skeletons and no inputs.
+The native date and site inputs appear afterward, but the old link guard has already
+fallen back and left the panel closed. The product now opens the native disclosure first,
+then hands focus to its actual loaded input. Its observer is limited to that source panel
+and five seconds, ignores endless loading animations, and cancels on return, a new input,
+another correction or disposal. It never reads/writes a source value or submits the form.
+
+The existing first-site failure reproduced on both1182e449 and22f94dc. During the final
+pointer press, the identity line is briefly cleared and restored, moving the site rows
+38px. The fixed identity container remains mounted from zero sites through reselection.
+Native checkbox identities, full-name clickable labels and zero standing writes remain.
+This small shared repair is being delivered in PR260 so its source and site gates can
+validate together; PR257 must retain the identical hunk when it reconciles.
+
+The cold-loading/navigation/identity set passes **72** local checks, including both
+workflow-filter cases (`source-cold-identity-final.xml`; zero failures/errors).
+The Node navigation file fails before and passes after cold-field handling; cancellation,
+modifier clicks, return location and value-access prohibitions remain covered. Both
+workflow filters now include the identity-strip test as well. These are local/code results,
+not a passing integrated browser journey or a deployed repair.
+
+PR261's retained first row failure is artifact12141053520
+(140695952bytes; SHA256 `181540934c32aa8bab6b34b84333fbb97fb4f864759e4b2c9ce1704a63990d00`).
+The failure occurs on narrow proposal re-entry after reload and closing the onsite editor;
+all earlier row edits, same-event notes and exact reload receipts passed. Its pointer lands
+on Edit proposal as an earlier editor's stale children collapse at full-run cleanup.
+A local explicit-mode subtree repair keeps all input identities during typing and retires
+the closed editor immediately. Two before cases fail; all20 row/editor tests pass after.
+Actual browser validation of that repair remains open. Fresh PR257 review also identifies
+missing pinned-design comparison and current-profile revision binding; those are unresolved
+implementation work, independently of its site-picker fix.
+
 ## Source correction and MBCx delivery — 2026-10-19 17:30 UTC
 
 Current main is `94b9f0f7f229906a49c603b46a4c35cf34b21ed7`, from PR265 head
