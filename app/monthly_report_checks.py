@@ -116,7 +116,15 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
              ("footer", draft.address_line)]
     texts.extend(("report_identity", f.title) for f in draft.profile.facilities)
     texts.append(("report_identity", draft.profile.contract))
-    from app.monthly_report_followups import problems, report_text
+    from app.monthly_report_followups import problems, report_text, followup_limit_message, output_followups
+    limit = followup_limit_message(draft)
+    if limit:
+        for category, key in (("issue", "equipment_issues"), ("proposal", "proposals")):
+            if any(item.category == category for item in output_followups(draft)):
+                checks.append(ReportCheck("follow_up_limit", limit, True, key))
+    followup_keys = [item.key for item in draft.follow_ups]
+    if len(followup_keys) != len(set(followup_keys)):
+        checks.append(ReportCheck("follow_up_identity", "Open the issue/proposal editor to repair colliding row identities before generating.", True))
     for item in draft.follow_ups:
         for message in problems(item, draft):
             checks.append(ReportCheck("follow_up", message, True, item.key))
