@@ -316,7 +316,9 @@ def test_schema_provenance_durable_rows_and_actual_word_output_remain_editable(m
     kept = active.save('f' * 32, draft, expected_revision=0, base_snapshot_revision=0)
     loaded = active.load('f' * 32, draft.profile.contract, draft.profile.key, draft.period)
     assert loaded.draft == draft and kept.revision == loaded.revision
-    document = Document(BytesIO(assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)))
+    word = assemble_docx(draft, acknowledged_fingerprint=draft.fingerprint)
+    (tmp_path / 'row-cards.docx').write_bytes(word)
+    document = Document(BytesIO(word))
     native = next(table for table in document.tables if 'Proposal #' in [cell.text for cell in table.rows[0].cells])
     assert tuple(cell.text for cell in native.rows[0].cells) == PROPOSAL_COLUMNS
     assert tuple(cell.text for cell in native.rows[1].cells)[0] == '0007'
