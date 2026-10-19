@@ -29,6 +29,36 @@ def source_form(page):
         page.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites")).filter(visible=True)
 
 
+def observe_correction_navigation(page):
+    """Read native event geometry without submitting, scrolling or moving nodes."""
+    page.evaluate("""() => {
+        const samples = [], ids = new WeakMap(); let nextId = 1;
+        const id = node => {
+            if (!node) return null;
+            if (!ids.has(node)) ids.set(node, nextId++);
+            return ids.get(node);
+        };
+        const owner = node => {
+            for (let p = node.parentElement; p; p = p.parentElement)
+                if (p.scrollHeight > p.clientHeight && /auto|scroll/.test(getComputedStyle(p).overflowY)) return p;
+            return document.scrollingElement;
+        };
+        for (const type of ['pointerdown', 'click', 'keydown', 'focusin'])
+            document.addEventListener(type, event => {
+                const link = event.target.closest?.('a');
+                if (!link || !(link.getAttribute('href')?.startsWith('#source-details-') ||
+                        link.classList.contains('enfra-source-review-return'))) return;
+                const rect = link.getBoundingClientRect(), scroll = owner(link);
+                samples.push({type, time:performance.now(), key:event.key || '',
+                    node:id(link), source:link.getAttribute('href'),
+                    rect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
+                    scroll:{node:id(scroll),top:scroll.scrollTop,height:scroll.scrollHeight,
+                        clientHeight:scroll.clientHeight}, focused:document.activeElement === link});
+            }, {capture:true,passive:true});
+        window.__sourceCorrectionNavigationObservations = samples;
+    }""")
+
+
 def browser_task(browser_type, name):
     from playwright.sync_api import expect
     from scripts import qa_monthly_adaptive as qa, qa_monthly_live as live
@@ -57,6 +87,7 @@ def browser_task(browser_type, name):
         page.goto(qa.URL, wait_until="domcontentloaded")
         live.load_fixture(page, "replay")
         before = fingerprint(page)
+        observe_correction_navigation(page)
         date_warning = page.locator('[data-testid="stAlert"]').filter(has_text=
             "Confirm the reporting date for synthetic-activity.txt; no date has been established.")
         date_link = date_warning.get_by_role("link", name="Correct date", exact=True)
@@ -67,6 +98,7 @@ def browser_task(browser_type, name):
         record["stage"] = "first date link and native focus"
         date_link.scroll_into_view_if_needed()
         link_y = date_link.bounding_box()["y"]
+        record["warning_before_pointer_action"] = date_link.bounding_box()
         date_link.click()
         form = source_form(page)
         expect(form).to_have_count(1)
@@ -78,6 +110,8 @@ def browser_task(browser_type, name):
         record["stage"] = "return to the same warning without saving"
         page.get_by_role("link", name="Return to review", exact=True).filter(visible=True).press("Enter")
         expect(date_link).to_be_focused()
+        record["warning_after_return"] = date_link.bounding_box()
+        record["navigation_samples"] = page.evaluate("window.__sourceCorrectionNavigationObservations")
         assert abs(date_link.bounding_box()["y"] - link_y) <= qa.TOLERANCE
         assert fingerprint(page) == before, "Display and navigation cannot save source details."
 
@@ -131,6 +165,11 @@ def browser_task(browser_type, name):
         qa.check(name, "Source links reach native fields; deliberate correction survives narrow reload", True)
     except Exception as exc:
         record.update(result="failed", failure={"type": type(exc).__name__, "message": str(exc)[:3000]})
+        try:
+            record["navigation_samples_at_failure"] = page.evaluate(
+                "window.__sourceCorrectionNavigationObservations || []")
+        except Exception as observation_error:
+            record["navigation_observation_failure"] = str(observation_error)[:500]
         try:
             qa.capture(page, name, "source-correction-first-failure")
         except Exception as capture_error:
