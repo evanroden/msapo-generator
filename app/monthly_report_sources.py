@@ -17,6 +17,7 @@ import hashlib
 from pathlib import Path
 import re
 from zipfile import BadZipFile
+import zlib
 
 import fitz
 from openpyxl import load_workbook
@@ -312,7 +313,10 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
                 or any(i.file_size > 32 * 1024 * 1024 for i in infos)
                 or len({i.filename for i in infos}) != len(infos)):
             raise ValueError("Expanded workbook exceeds the safe parsing budget.")
-    workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
+    try:
+        workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
+    except TypeError as exc:
+        raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     try:
         if len(workbook.worksheets) > 30:
             raise ValueError("Workbook exceeds 30 worksheets; upload the required sheets separately.")
@@ -333,6 +337,11 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
         if not tables:
             raise ValueError("Workbook has no nonempty worksheets.")
         return tuple(tables)
+    except TypeError as exc:
+        # openpyxl can reject malformed typed properties when reading either
+        # the package or its lazy rows. Keep this decoder boundary separate
+        # from TypeError in product source mapping or persistence code.
+        raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     finally:
         workbook.close()
 
@@ -461,7 +470,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             added = sum(map(len, content.source.page_texts))
             if text_size + added > MAX_REPORT_TEXT:
                 raise ValueError("Total extracted text exceeds 800,000 characters. Remove unused sources or split the report.")
-        except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile, RecursionError) as exc:
+        except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile,
+                zlib.error, fitz.mupdf.FzErrorBase) as exc:
             # Only newly rejected and content-addressed bytes may be cleaned.
             # Never remove accepted originals or any pre-existing library file.
             if not already_present:
@@ -477,8 +487,18 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                     pass
             if isinstance(exc, OSError):
                 reason = "Storage or file reader was unavailable; retry this file."
+            elif isinstance(exc, zlib.error):
+                reason = "Compressed file data is damaged. Export a fresh copy and upload it again."
+            elif isinstance(exc, fitz.mupdf.FzErrorBase):
+                reason = "PDF pages could not be decoded. Retry this file or export a fresh PDF copy."
+            elif isinstance(exc, (KeyError, IndexError)):
+                reason = "The file is missing required document data. Export a fresh copy and upload it again."
             elif isinstance(exc, LookupError):
                 reason = "The file uses an unknown text encoding; provide a UTF-8 copy."
+            elif isinstance(exc, BadZipFile):
+                reason = "The Word or workbook package is damaged. Export a fresh copy and upload it again."
+            elif isinstance(exc, RecursionError):
+                reason = "The file structure is too deeply nested. Export a simpler copy and upload it again."
             else:
                 reason = str(exc)[:300]
             messages.append(f"Not read: {filename}. {reason}")
