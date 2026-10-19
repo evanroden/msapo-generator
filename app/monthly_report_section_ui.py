@@ -556,12 +556,13 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         digest = hashlib.sha256(upload.getvalue()).hexdigest()
         staged = st.session_state.get(prefix + "_stage")
         loaded_hash = staged[2].sha256 if staged else ""
+        committed_hash = st.session_state.get(prefix + "_committed_upload_digest", "")
         failed_hash = st.session_state.get(prefix + "_failed_digest")
         retry = False
         if failed_hash == digest:
             st.warning("This starting report could not be analyzed. The previous draft remains unchanged.")
             retry = st.button("Retry report analysis", key=prefix + "_retry_analysis")
-        if digest != loaded_hash and (digest != failed_hash or retry):
+        if digest not in (loaded_hash, committed_hash) and (digest != failed_hash or retry):
             try:
                 with st.spinner("Reading sections and cover pictures…"):
                     incoming = _stage(upload)
@@ -576,6 +577,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 st.warning("This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved.")
     else:
         st.session_state.pop(prefix + "_failed_digest", None)
+        # Removing then selecting the same file is an explicit new import.
+        # An unchanged native uploader after a successful save is not.
+        st.session_state.pop(prefix + "_committed_upload_digest", None)
         previous = st.session_state.get(prefix + "_stage")
         if previous and previous[0]:
             # Removing the uploader's file cancels its unsaved review too.
@@ -886,6 +890,15 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                                           snapshot_revision=current.revision if current else 0, source_draft=source_draft)
                 st.session_state["report_resume_import"] = (contract, profile.key, period.key)
                 st.session_state["report_setup_done"] = profile.key
+                # Only durable success retires this exact source-review task.
+                # Keep the receipt scoped to report/sites/month so its still
+                # mounted uploader cannot immediately recreate unsaved review.
+                # Failures retain the original staged source and every choice.
+                if st.session_state.get(prefix + "_stage") is staged:
+                    st.session_state.pop(prefix + "_stage", None)
+                    if staged[0]:
+                        st.session_state[prefix + "_committed_upload_digest"] = inspection.sha256
+                        staged[0].cleanup()
             st.rerun()
         except (ValueError, OSError) as exc:
             st.error(str(exc))

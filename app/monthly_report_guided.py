@@ -641,7 +641,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     if upload and st.button("Add page to this report" if adding_page else "Use this replacement in this report", key=key + "_replace"):
         from pathlib import Path
         image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix,
-                                       line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"))
+                                       line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"),
+                                       preserve_transparency=spec.key in ("brand_logo", "client_logo"))
         reference = library.asset_reference(image.data, image.extension)
         assets[reference] = image.data
         previous = block
@@ -1216,19 +1217,21 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
-                # Contract, period, sites and preparer were already chosen at Start.
-                # Keep report-only photo changes reachable independently from the
-                # starting-report gallery and shared design administration.
-                from app.monthly_report_cover_ui import render_cover_photograph
-                blocks = render_cover_photograph(
-                    blocks, prefix, assets,
-                    lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
-                    scope=_rich_text_scope(prefix),
-                )
+                # A staged source owns the cover choice until it is committed
+                # or canceled. Showing the current-report uploader alongside
+                # its selected-source preview gave two competing photo tasks
+                # and an untruthful empty-cover message.
                 from app.monthly_report_section_ui import render_section_setup
-                render_section_setup(contract, period, prepared, field, state=state,
+                source_pending = render_section_setup(contract, period, prepared, field, state=state,
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),
                                      working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
+                if not source_pending:
+                    from app.monthly_report_cover_ui import render_cover_photograph
+                    blocks = render_cover_photograph(
+                        blocks, prefix, assets,
+                        lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
+                        scope=_rich_text_scope(prefix),
+                    )
                 with st.expander("About this report"):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)

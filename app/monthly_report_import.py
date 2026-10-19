@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import posixpath
 import re
+from collections import defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -69,6 +70,10 @@ class ImportItem:
     image_width: int = 0
     image_height: int = 0
     image_digest: str = ""
+    # Semantic role from explicit caption/alternative text or the same exact
+    # identified artwork elsewhere. "logo" keeps an unassigned mark out of
+    # the photograph gallery without inventing a company/client role.
+    image_role: str = ""
 
     @property
     def label(self) -> str:
@@ -291,6 +296,90 @@ def _suggest(kind: str, text: str, section: str, *, heading: bool = False, part:
         return "footer_text"
     return {"activity": "activity_summary", "scorecards": "utility_analysis", "issues": "equipment_issues",
             "training": "training_summary", "accounts_receivable": "accounts_receivable_notes"}.get(section, "")
+
+
+def _logo_label_role(text):
+    """Read an explicit artwork label, never a filename or a size guess.
+
+    A photograph may include a company sign. Mentioning that sign in its
+    caption is not a statement that the photograph itself is a logo.
+    """
+    text = text.strip()
+    if (not text or len(text) > 140 or len(text.split()) > 16
+            or re.search(r"\b(?:photo(?:graph)?s?|picture|building|shows?|showing|depicts?)\b", text, re.I)
+            or not re.search(r"\b(?:logo|wordmark|brand\s+mark)\b", text, re.I)):
+        return ""
+    if re.search(r"\b(?:client|customer)\b", text, re.I):
+        return "client_logo"
+    if re.search(r"\b(?:enfra|company|corporate|brand)\b", text, re.I):
+        return "brand_logo"
+    return "logo"  # The mark is identified, but its owner/slot is not.
+
+
+def is_logo_artwork(item):
+    """An identified mark cannot be offered or accepted as a cover photo."""
+    return item.kind == "image" and (item.image_role in ("logo", "brand_logo", "client_logo")
+                                     or item.suggested_slot in ("brand_logo", "client_logo"))
+
+
+def _classify_logo_items(items):
+    """Bind short caption labels and repeated exact artwork to their roles.
+
+    Captions can precede or follow pictures. Infer that convention only from
+    unambiguous neighboring captions in the same physical Word section;
+    otherwise leave an ambiguous mark unassigned and recoverable.
+    """
+    positions, roles = defaultdict(list), defaultdict(set)
+    for index, item in enumerate(items):
+        positions[(item.part, item.word_section, item.position)].append(index)
+        if item.kind == "image":
+            role = item.image_role or (item.suggested_slot if item.suggested_slot in ("brand_logo", "client_logo") else "")
+            if role:
+                roles[index].add(role)
+    labels, directions = [], defaultdict(set)
+    for item in items:
+        if item.kind != "text" or item.section not in ("", "cover"):
+            continue
+        role = _logo_label_role(item.text)
+        if not role:
+            continue
+        scope = (item.part, item.word_section)
+        adjacent = {delta: tuple(index for index in positions.get((*scope, item.position + delta), ())
+                                 if items[index].kind == "image") for delta in (-1, 0, 1)}
+        if adjacent[0]:
+            for index in adjacent[0]:
+                roles[index].add(role)
+            continue
+        if bool(adjacent[-1]) != bool(adjacent[1]):
+            directions[scope].add(-1 if adjacent[-1] else 1)
+        labels.append((scope, adjacent, role))
+    for scope, adjacent, role in labels:
+        sides = [delta for delta in (-1, 1) if adjacent[delta]]
+        if len(sides) == 2 and len(directions[scope]) == 1:
+            sides = list(directions[scope])
+        certain = len(sides) == 1 and len(adjacent[sides[0]]) == 1
+        for delta in sides:
+            for index in adjacent[delta]:
+                roles[index].add(role if certain else "logo")
+    digest_roles = defaultdict(set)
+    for index, choices in roles.items():
+        item = items[index]
+        if item.image_digest:
+            digest_roles[item.image_digest].update(choices)
+    result = []
+    for index, item in enumerate(items):
+        # Exact bytes corroborate an unlabelled cover mark. They do not own
+        # another section's independently mapped chart/page occurrence.
+        choices = set(roles[index]) if item.kind == "image" else set()
+        if item.kind == "image" and item.section in ("", "cover"):
+            choices.update(digest_roles[item.image_digest])
+        concrete = choices.intersection(("brand_logo", "client_logo"))
+        role = next(iter(concrete)) if len(concrete) == 1 else "logo" if choices else ""
+        if role:
+            item = replace(item, image_role=role,
+                           suggested_slot=role if role in ("brand_logo", "client_logo") else "")
+        result.append(item)
+    return result
 
 
 def _is_native_divider_background(element, text=""):
@@ -552,9 +641,19 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         ancestor = parents.get(ancestor)
                                     if ancestor is not None:
                                         caption = _text(ancestor)
+                                role = ""
+                                if len(image_nodes) == 1 and (section in ("", "cover") or part.startswith(("word/header", "word/footer"))):
+                                    labels = [text]
+                                    for descriptor in element.iter():
+                                        if descriptor.tag.rsplit("}", 1)[-1] in ("docPr", "cNvPr", "imagedata"):
+                                            labels.extend(descriptor.get(attr, "") for attr in ("descr", "title"))
+                                    roles = {_logo_label_role(label) for label in labels} - {""}
+                                    concrete = roles.intersection(("brand_logo", "client_logo"))
+                                    role = next(iter(concrete)) if len(concrete) == 1 else "logo" if roles else ""
                                 add("image" if supported else "unsupported", part, position, text=caption,
                                     image_part=target if safe else "", suggested_slot=_suggest("image", text, section, heading=bool(detected), part=part) if supported else "",
                                     note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
+                                    image_role=role if supported else "",
                                     **(metadata(target) if supported else {}))
                             graphics = [e for e in element.iter() if e.tag == A + "graphicData" and not e.get("uri", "").endswith("/picture")]
                             legacy_groups = element.findall(".//" + V + "group")
@@ -609,6 +708,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                 slot = "divider_" + target if item.kind == "image" else ""
                 items[index] = replace(item, section=target, suggested_slot=slot,
                                        note=item.note if item.note == "Native section heading" else "Native divider artwork")
+    items = _classify_logo_items(items)
     version = 0
     if revision_changes:
         from app.monthly_report_revision_view import VERSION
@@ -622,7 +722,8 @@ def inspect_docx(path: Path) -> DocxInspection:
     return DocxInspection(digest.hexdigest(), tuple(items), tuple(titles[:12]), tuple(notices), word_section, version)
 
 
-def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, preview: bool = False):
+def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, preview: bool = False,
+                      preserve_transparency: bool | None = None):
     if item.kind != "image" or not item.image_part.startswith("word/media/"):
         raise ImportError("Select an extractable image.")
     try:
@@ -637,7 +738,9 @@ def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, pr
     if suffix in {".emf", ".wmf"}:
         from app.monthly_report_metafiles import rasterize_metafile
         raw, suffix = rasterize_metafile(raw, suffix), ".png"
-    return normalize_report_image(raw, suffix, line_art=line_art,
+    if preserve_transparency is None:
+        preserve_transparency = item.suggested_slot in ("brand_logo", "client_logo")
+    return normalize_report_image(raw, suffix, line_art=line_art, preserve_transparency=preserve_transparency,
                                   frame=(4, 5) if preview else (7, 9), dpi=96 if preview else 200)
 
 
@@ -656,11 +759,15 @@ def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapp
         block = grouped.get(mapping.slot, ResolvedBlock(mapping.slot, "Library"))
         reference = f"docx:{inspection.sha256}:{item.id}"
         if item.kind == "image":
+            if mapping.slot == "cover_photo" and is_logo_artwork(item):
+                raise ImportError("This image is identified as a logo. Keep it in a branding slot and choose a photograph for the cover.")
             if spec.type not in ("image_page", "image_grid", "pdf_pages"):
                 raise ImportError("An image needs an image destination.")
             if spec.type == "image_page" and block.asset_hashes:
                 raise ImportError("Choose one image for each single-image destination.")
-            normalized = read_import_image(path, item, line_art=mapping.slot not in ("cover_photo", "improvements") and not mapping.slot.startswith("divider_"))
+            normalized = read_import_image(path, item,
+                line_art=mapping.slot not in ("cover_photo", "improvements") and not mapping.slot.startswith("divider_"),
+                preserve_transparency=mapping.slot in ("brand_logo", "client_logo"))
             digest = hashlib.sha256(normalized.data).hexdigest() + "." + normalized.extension
             if digest not in assets:
                 total += len(normalized.data)

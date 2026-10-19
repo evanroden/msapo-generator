@@ -47,11 +47,14 @@ class ReportImage:
 
 
 def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
-                           frame: tuple[float, float] = (7, 9), dpi: int = 200) -> ReportImage:
+                           frame: tuple[float, float] = (7, 9), dpi: int = 200,
+                           preserve_transparency: bool = False) -> ReportImage:
     """Print normalization; vision still uses the stricter OCR request budgets.
 
     Line art must stay lossless, so the JPEG-only vision encoder is unsuitable
     here. Share its formats and pixel limit, and check size BEFORE decoding.
+    Logos opt into their original alpha channel. Never infer transparency by
+    removing white or dark pixels: those can be intentional parts of a mark.
     """
     if suffix.lower() not in SUPPORTED_IMAGE_SUFFIXES or len(raw) > 30 * 1024 * 1024:
         raise ValueError("Choose a supported image no larger than 30 MB.")
@@ -68,12 +71,16 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
         oriented = ImageOps.exif_transpose(image)
         oriented.thumbnail((round(frame[0] * dpi), round(frame[1] * dpi)), Image.Resampling.LANCZOS)
         rgba = oriented.convert("RGBA")
-        flattened = Image.new("RGB", rgba.size, "white")
-        flattened.paste(rgba, mask=rgba.getchannel("A"))
+        if preserve_transparency:
+            normalized = rgba
+        else:
+            normalized = Image.new("RGB", rgba.size, "white")
+            normalized.paste(rgba, mask=rgba.getchannel("A"))
         output = BytesIO()
-        flattened.save(output, format="PNG" if line_art else "JPEG",
-                       **({"optimize": True} if line_art else {"quality": 82, "optimize": True}))
-        return ReportImage(output.getvalue(), "png" if line_art else "jpg", *flattened.size)
+        lossless = line_art or preserve_transparency
+        normalized.save(output, format="PNG" if lossless else "JPEG",
+                        **({"optimize": True} if lossless else {"quality": 82, "optimize": True}))
+        return ReportImage(output.getvalue(), "png" if lossless else "jpg", *normalized.size)
 
 
 @dataclass(frozen=True)

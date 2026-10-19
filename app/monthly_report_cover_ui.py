@@ -23,7 +23,8 @@ PICTURES = (
 
 def replace_cover_picture(block, data, suffix, assets):
     """Replace only the requested slot; identical artwork keeps its review."""
-    image = normalize_report_image(data, suffix, line_art=block.key != "cover_photo")
+    image = normalize_report_image(data, suffix, line_art=block.key != "cover_photo",
+                                   preserve_transparency=block.key in ("brand_logo", "client_logo"))
     reference = library.asset_reference(image.data, image.extension)
     assets[reference] = image.data
     if block.source != "Omit" and block.asset_hashes == (reference,):

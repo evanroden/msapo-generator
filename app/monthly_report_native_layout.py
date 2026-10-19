@@ -1361,7 +1361,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 raise NativeLayoutError("ENFRA branding requires the saved asset resolver.")
             source_brands = {item.image_part for item in inspection.items
                              if item.part == name.lstrip("/") and item.kind == "image"
-                             and item.image_height and item.image_width / item.image_height > 4}
+                             and item.suggested_slot == "brand_logo"}
             for node in part.element.iter(qn("a:blip")):
                 rel = part.rels.get(node.get(qn("r:embed")))
                 if rel and not rel.is_external and str(rel.target_part.partname).lstrip("/") in source_brands:

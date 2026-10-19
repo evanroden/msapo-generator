@@ -6,7 +6,7 @@ import streamlit as st
 
 from app import monthly_report_library as library
 from app.monthly_report_editor import _grid, _key, _signature
-from app.monthly_report_import import ImportMapping, imported_draft, map_items, read_import_image
+from app.monthly_report_import import ImportMapping, imported_draft, map_items, read_import_image, is_logo_artwork
 from app.monthly_report_import_ui import _stage
 from app.monthly_report_model import Facility, ReportProfile, known_sections, layout_blocks
 from app.monthly_report_setup import (
@@ -141,8 +141,14 @@ def render_legacy_setup(contract, period, prepared, field, *, state=None):
                    item.kind == "image" and b.type in ("image_page", "image_grid", "pdf_pages") or
                    item.kind == "text" and b.type in ("rich_text", "stock_text") or
                    item.kind == "table" and (b.type in ("table", "work_order_grid") or b.key == "contact_matrix")]
+        if is_logo_artwork(item):
+            allowed = [slot for slot in allowed if slot != "cover_photo"]
+            st.caption("This artwork is a logo. Choose its branding role; cover photographs are separate.")
+        destination_key = field(p + "_destination_" + item.id, mappings[item.id].slot if item.id in mappings else "")
+        if st.session_state.get(destination_key) not in ("", *allowed):
+            st.session_state[destination_key] = ""
         destination = st.selectbox("Where it belongs", ["", *allowed], format_func=lambda v: v.replace("_", " ").capitalize() if v else "Not placed",
-                                   key=field(p + "_destination_" + item.id, mappings[item.id].slot if item.id in mappings else ""))
+                                   key=destination_key)
         decision = st.selectbox("Use this item", DECISIONS, key=field(p + "_decision_" + item.id, decisions[item.id]))
         if st.button("Confirm item and continue", key=p + "_confirm_item", disabled=decision == "Needs review" or (decision == "Keep in report" and not destination)):
             decisions[item.id] = decision
