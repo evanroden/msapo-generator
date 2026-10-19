@@ -147,7 +147,8 @@ def test_body_copy_of_identified_header_mark_cannot_become_photo(tmp_path):
     doc.add_paragraph(synthetic_profiles()[0].facilities[0].title)
     doc.add_paragraph("November 2026")
     raw = mark()
-    doc.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(raw), width=Inches(2))
+    shape = doc.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(raw), width=Inches(2))
+    shape._inline.docPr.set("descr", "ENFRA company logo")
     doc.add_picture(BytesIO(raw), width=Inches(4))
     doc.add_picture(BytesIO(photograph()), width=Inches(5))
     path = tmp_path / "repeated-brand.docx"
@@ -162,7 +163,8 @@ def test_same_bytes_in_an_independent_body_chart_keep_that_section_role(tmp_path
     doc = Document()
     doc.add_paragraph(synthetic_profiles()[0].facilities[0].title)
     raw = mark()
-    doc.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(raw), width=Inches(2))
+    shape = doc.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(raw), width=Inches(2))
+    shape._inline.docPr.set("descr", "ENFRA company logo")
     doc.add_heading("Organizational Chart", 1)
     doc.add_picture(BytesIO(raw), width=Inches(4))
     path = tmp_path / "independent-body-art.docx"
@@ -267,7 +269,8 @@ def test_manual_import_lists_branding_destinations_without_a_cover_photo_option(
     library.save_profile(profile, expected_revision=0, actor="Synthetic Reviewer", confirmed=True)
     doc = Document()
     doc.add_paragraph(profile.facilities[0].title)
-    doc.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(mark()), width=Inches(2))
+    shape = doc.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(mark()), width=Inches(2))
+    shape._inline.docPr.set("descr", "ENFRA company logo")
     doc.add_picture(BytesIO(photograph()), width=Inches(5))
     source = tmp_path / "logo-and-photo.docx"
     doc.save(source)
@@ -418,7 +421,7 @@ st.session_state['result'] = editor._block_editor(spec, state, {}, 'Replace and 
 
 @pytest.mark.parametrize("master", [False, True])
 @pytest.mark.parametrize("aspect", [3, 6])
-def test_native_header_uses_identified_brand_without_a_shape_guess(tmp_path, master, aspect):
+def test_native_header_uses_explicit_company_evidence_without_a_shape_guess(tmp_path, master, aspect):
     from app.monthly_report_native_layout import build_native_docx
     old = Image.new("RGB", (140 * aspect, 140), "gray")
     stream = BytesIO()
@@ -427,14 +430,15 @@ def test_native_header_uses_identified_brand_without_a_shape_guess(tmp_path, mas
     doc.add_paragraph(synthetic_profiles()[0].facilities[0].title)
     doc.add_paragraph("November 2026")
     header = doc.sections[0].header.paragraphs[0]
-    header.add_run().add_picture(BytesIO(stream.getvalue()), width=Inches(2))
+    shape = header.add_run().add_picture(BytesIO(stream.getvalue()), width=Inches(2))
+    shape._inline.docPr.set("descr", "ENFRA company logo")
     doc.add_section(WD_SECTION.NEW_PAGE)
     doc.add_heading("Monthly Activity Summary", 1)
     doc.add_paragraph("Synthetic inspection completed.")
     source = tmp_path / "header-source.docx"
     doc.save(source)
-    # No alt text, adjacent logo caption or filename cue is supplied. The
-    # established native header role identifies the mark on both geometries.
+    # Geometry and generic header placement cannot identify a company mark.
+    # The per-picture source description establishes ownership at both sizes.
     inspected_header = next(item for item in inspect_docx(source).items
                             if item.kind == "image" and item.part.startswith("word/header"))
     assert inspected_header.suggested_slot == "brand_logo"
