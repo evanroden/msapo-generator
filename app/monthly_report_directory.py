@@ -8,7 +8,9 @@ restorable history; directory updates never mutate profiles or report snapshots.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
-from collections import Counter
+from collections import Counter, OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from io import BytesIO
 import hashlib
 import re
@@ -68,6 +70,66 @@ class DirectoryWorkbook:
     sha256: str
     sheets: tuple[DirectorySheet, ...]
     notices: tuple[str, ...]
+
+
+@dataclass
+class _BatchReads:
+    raw: bytes
+    workbook: DirectoryWorkbook | None = None
+    records: OrderedDict = field(default_factory=OrderedDict)
+    record_bytes: int = 0
+
+
+_BATCH_READS = ContextVar("directory_batch_reads", default=None)
+_BATCH_RECORD_LIMIT = 128
+_BATCH_RECORD_BYTES = 8 * 1024 * 1024
+
+
+@contextmanager
+def _batch_reads(raw):
+    """Reuse validation/discovery only within one synchronous batch save.
+
+    No global/session cache or caller-supplied 'validated' flag. Current heads,
+    locked revision checks and durable readback still use fresh storage reads.
+    """
+    token = _BATCH_READS.set(_BatchReads(raw))
+    try:
+        yield
+    finally:
+        _BATCH_READS.reset(token)
+
+
+def _inspect_import(raw):
+    batch = _BATCH_READS.get()
+    # Only immutable bytes from this exact invocation share validation.
+    if batch is None or not isinstance(raw, bytes) or raw is not batch.raw:
+        return inspect_workbook(raw)
+    if batch.workbook is None:
+        batch.workbook = inspect_workbook(raw)
+    return batch.workbook
+
+
+def _discovery_state(path):
+    batch = _BATCH_READS.get()
+    if batch is None:
+        return _state(library._read(path))
+    library._qa_path_guard(path)  # Never let reuse cross a namespace reset.
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise library.LibraryError("Saved report data could not be read; existing data was preserved.") from exc
+    fingerprint = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    cached = batch.records.pop(path, None)
+    if cached is not None:
+        batch.record_bytes -= cached[0][2]
+    state = cached[1] if cached is not None and cached[0] == fingerprint else _state(library._read(path))
+    if stat.st_size <= _BATCH_RECORD_BYTES:
+        batch.records[path] = (fingerprint, state)
+        batch.record_bytes += stat.st_size
+        while len(batch.records) > _BATCH_RECORD_LIMIT or batch.record_bytes > _BATCH_RECORD_BYTES:
+            _, evicted = batch.records.popitem(last=False)
+            batch.record_bytes -= evicted[0][2]
+    return state
 
 
 @dataclass(frozen=True)
@@ -546,7 +608,9 @@ def _directory_records(*, unavailable=None):
     records = []
     for path in sorted(root.glob("*/manifest.json")):
         try:
-            state = _state(library._read(path))
+            # Enumerate and stat current paths on every scan. Concurrent new,
+            # replaced, archived or damaged identities must remain visible.
+            state = _discovery_state(path)
             if library._contract_directory(state.contract) != path.parent.name:
                 raise library.LibraryError("Directory contract identity mismatch.")
         except library.LibraryError as exc:
@@ -686,7 +750,7 @@ def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=
     if sites:
         ReportProfile(contract, "directory-check", "Directory validation", tuple(s.facility for s in sites), "multi_site")
     if raw is not None:
-        inspection = inspect_workbook(raw)
+        inspection = _inspect_import(raw)
         if source_sha256 != inspection.sha256 or source_sheet not in {s.name for s in inspection.sheets}:
             raise ValueError("Directory source no longer matches the reviewed workbook.")
     elif source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
