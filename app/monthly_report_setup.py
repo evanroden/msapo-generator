@@ -11,7 +11,7 @@ import re
 from app.monthly_report_checks import stale_period_mentions
 from app.monthly_report_import import DocxInspection, ImportMapping, _heading
 from app.monthly_report_model import BlockSpec, ReportDraft, ReportPeriod, ResolvedBlock, default_sections, known_sections, layout_blocks
-from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews, preserve_asset_reviews
+from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews, pending_asset_indexes, preserve_asset_reviews
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
@@ -171,24 +171,28 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
                    org_nodes=existing.org_nodes or incoming.org_nodes,
                    photos_per_page=existing.photos_per_page if existing.asset_hashes else incoming.photos_per_page,
                    ai_written=existing.ai_written or incoming.ai_written, reviewed_fingerprint="", client_reviewed_fingerprint="")
+    # Each occurrence keeps only its own source/page context. The immutable
+    # bytes can be reused without transferring ownership of a human photograph.
+    merged = with_asset_instances(merged, instances)
+    merged = preserve_asset_reviews(existing, merged)
+    merged = preserve_asset_reviews(incoming, merged)
     # Empty placeholders and repeated imports must not demand another review of
     # an unchanged approved page. Transfer approval only for identical content,
     # allowing the internal carry-forward label to become "This month".
     # New references, text, captions or assets continue to invalidate approval.
+    # Stamp the final occurrence-bound fingerprint only after every retained
+    # picture's actual provenance and approval have been reconciled.
     for reviewed in (existing, incoming):
         reviewed_captions = reviewed.asset_captions + ("",) * (len(reviewed.asset_hashes) - len(reviewed.asset_captions))
         if (reviewed.client_reviewed_fingerprint == reviewed.fingerprint
+                and not pending_asset_indexes(merged)
                 and replace(merged, client_asset_reviews=(), asset_provenance=(), asset_instances=())
                 == replace(reviewed, source=merged.source, asset_captions=reviewed_captions,
                            reviewed_fingerprint="", client_reviewed_fingerprint="",
                            client_asset_reviews=(), asset_provenance=(), asset_instances=())):
             merged = replace(merged, client_reviewed_fingerprint=merged.fingerprint)
             break
-    # Each occurrence keeps only its own source/page context. The immutable
-    # bytes can be reused without transferring ownership of a human photograph.
-    merged = with_asset_instances(merged, instances)
-    merged = preserve_asset_reviews(existing, merged)
-    return preserve_asset_reviews(incoming, merged)
+    return merged
 
 
 def merge_report_block(existing: ResolvedBlock | None, incoming: ResolvedBlock,

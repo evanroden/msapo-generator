@@ -89,6 +89,7 @@ from app.expense_report import (
     receipt_preview_bytes,
     total_reimbursement,
     validate_expense_report,
+    usd_review_signature,
 )
 from app.job_numbers import job_numbers_for_contract
 from app.memory import (
@@ -109,7 +110,7 @@ from app.receipt_jobs import start_receipt
 from app.api_retry import OPERATION_BUDGET_SECONDS
 from app.ui_highlight import highlight_needed_fields
 from app.workspace_layout import workspace, workspace_section, workspace_columns
-from app.reference_preview import discard_reference_scope, render_reference
+from app.reference_preview import discard_reference_scope, discard_reference_entry, render_reference
 
 
 # These two strings ARE the workflow identity: they are the segmented-control
@@ -1118,6 +1119,8 @@ def _render_receipt(
         render_reference(key='expense_receipt_' + token,
                          owner_scope=str(st.session_state.get("expense_report_memory_context", "")),
                          title=f'Original receipt {index}', raw=file_bytes, filename=filename)
+    items: list[ExpenseItem] = []
+    with fields_column:
         if st.button(
             "Remove this receipt",
             key=f"expense_remove_receipt_{token}",
@@ -1128,7 +1131,7 @@ def _render_receipt(
         if automatic_error:
             st.warning(
                 "The tool could not read this receipt automatically. The fields "
-                "beside it are still required and can be completed manually."
+                "below are still required and can be completed manually."
             )
             if st.button("Try reading this receipt again", key=f"retry_receipt_{token}"):
                 st.session_state.pop(error_key, None)
@@ -1142,19 +1145,6 @@ def _render_receipt(
         if analysis.tax_amount:
             currency_prefix = f"{analysis.currency} " if _foreign_receipt(analysis) else "$"
             st.caption(f"Tax printed on receipt: {currency_prefix}{analysis.tax_amount}")
-        # A foreign-currency receipt is an ERROR, not a warning: the number
-        # printed on it is not the reimbursable amount, and every downstream
-        # total treats the entered value as dollars. Nothing converts rates
-        # here, deliberately -- the approved USD figure is the employee's to
-        # supply. Softening this to a caption reintroduces a silent, wrong total.
-        if analysis.currency and analysis.currency != "USD":
-            st.error(
-                f"Receipt currency appears to be {analysis.currency}. Enter the "
-                "approved U.S.-dollar reimbursement amount."
-            )
-
-    items: list[ExpenseItem] = []
-    with fields_column:
         merchant = st.text_input(
             "Merchant",
             key=merchant_key,
@@ -1284,8 +1274,23 @@ def _render_receipt(
                     allocation=allocation,
                     merchant_name=merchant,
                     contact_name=contact_name,
+                    source_currency=analysis.currency,
                 )
             )
+        if _foreign_receipt(analysis):
+            reviews = tuple(usd_review_signature(item) for item in items)
+            review_key = 'expense_usd_review_' + token + '_' + hashlib.sha256(repr(reviews).encode()).hexdigest()[:24]
+            valid_amounts = all(parse_expense_amount(item.amount) is not None for item in items)
+            approved = st.checkbox(
+                "I entered the approved U.S.-dollar amounts for this receipt",
+                key=review_key, disabled=not valid_amounts,
+                help="Use the approved USD reimbursement, such as the bank-converted charge. This tool does not calculate an exchange rate.")
+            if approved and valid_amounts:
+                items = [replace(item, usd_review_fingerprint=review) for item, review in zip(items, reviews)]
+                st.caption(f"{analysis.currency} receipt reviewed with the entered U.S.-dollar amounts.")
+            else:
+                st.error(f"Receipt currency appears to be {analysis.currency}. Enter the approved U.S.-dollar "
+                         "amount on each reimbursement line, then confirm the amounts above.")
 
     for line_index, item in enumerate(items, 1):
         receipt_problems = _receipt_visible_problems(index, item)
@@ -2680,18 +2685,36 @@ def _remove_receipt_from_draft(receipt_id: str) -> None:
     if job:
         job[0].cancel()
     retained = []
+    removed = False
     for filename, payload, mime_type in list(
         st.session_state.get("expense_receipt_files", []) or []
     ):
         if _receipt_digest(payload) != receipt_id:
             retained.append((filename, payload, mime_type))
+        else:
+            removed = True
     st.session_state["expense_receipt_files"] = retained
+    if removed:
+        _discard_removed_receipt_previews((receipt_id,))
     st.session_state["expense_uploader_nonce"] = int(
         st.session_state.get("expense_uploader_nonce", 0) or 0
     ) + 1
     st.session_state.pop("expense_generated_package", None)
     st.session_state.pop("expense_generated_eml", None)
     st.session_state.pop("expense_generated_signature", None)
+
+
+def _discard_removed_receipt_previews(receipt_ids) -> None:
+    owner_scope = st.session_state.get("expense_report_memory_context")
+    if owner_scope is None:
+        return
+    for receipt_id in receipt_ids:
+        discard_reference_entry(str(owner_scope), 'expense_receipt_' + receipt_id[:12],
+                                fingerprint=receipt_id)
+    # The previous generated packet contains the removed receipt too and is
+    # already invalidated by the report mutation. Individual retained receipt
+    # previews, including equal originals in another draft, remain available.
+    discard_reference_entry(str(owner_scope), 'expense_packet')
 
 
 def _clear_removed_receipts(active_ids: set[str]) -> None:
@@ -2738,6 +2761,7 @@ def _clear_removed_receipts(active_ids: set[str]) -> None:
             st.session_state.pop("expense_draft_snapshot", None)
     st.session_state["expense_active_receipt_ids"] = set(active_ids)
     if removed:
+        _discard_removed_receipt_previews(removed)
         st.session_state.pop("expense_generated_package", None)
         st.session_state.pop("expense_generated_eml", None)
         st.session_state.pop("expense_generated_signature", None)

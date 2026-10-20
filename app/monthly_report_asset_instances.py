@@ -124,24 +124,41 @@ def merge_picture_occurrences(existing, incoming):
     records = list(asset_instances(existing))
     images = list(existing.asset_hashes)
     captions = list(existing.asset_captions) + [""] * (len(images) - len(existing.asset_captions))
+    # Match each incoming legacy occurrence at most once against a picture
+    # already in the report, never against another new item in this batch.
+    legacy_indexes = set(range(len(records)))
     for index, item in enumerate(asset_instances(incoming)):
         caption = incoming.asset_captions[index] if index < len(incoming.asset_captions) else ""
         page = source_page_identity(item)
-        matches = ([n for n, prior in enumerate(records) if source_page_identity(prior) == page]
-                   if page is not None else [n for n, prior in enumerate(records) if prior.key == item.key])
-        if not matches and item.key.startswith("legacy:") and page is None:
-            # Unchanged legacy report imports have no explicit inclusion ID.
-            # Context and caption must agree as well as bytes; a new source is
-            # an independent occurrence even when its raster happens to match.
-            matches = [n for n, prior in enumerate(records)
-                       if prior.key.startswith("legacy:") and prior.asset == item.asset
-                       and prior.references == item.references and captions[n] == caption]
+        legacy_reimport = item.key.startswith("legacy:") and page is None
+        if page is not None:
+            matches = [n for n, prior in enumerate(records) if source_page_identity(prior) == page]
+        elif legacy_reimport:
+            # Old report images have no explicit inclusion ID. Their unchanged
+            # bytes and complete context can identify a single saved picture;
+            # a caption is mutable human wording, not a new occurrence. An
+            # explicit later upload still has its own nonlegacy key.
+            candidates = [n for n, prior in enumerate(records)
+                          if n in legacy_indexes and prior.key.startswith("legacy:") and prior.asset == item.asset
+                          and prior.references == item.references]
+            same_caption = [n for n in candidates if captions[n] == caption]
+            unchanged_key = [n for n in same_caption if records[n].key == item.key]
+            matches = unchanged_key or same_caption or candidates
+        else:
+            matches = [n for n, prior in enumerate(records) if prior.key == item.key]
         if len(matches) > 1:
-            raise ValueError("This source page has more than one report occurrence. Open its report pictures and identify the page before applying the source caption.")
+            raise ValueError("This picture matches more than one report occurrence. Open its report pictures and identify the page before applying the source caption.")
         if matches:
             n = matches[0]
             prior = records[n]
+            if legacy_reimport:
+                legacy_indexes.discard(n)
             if captions[n] != caption:
+                if legacy_reimport:
+                    # Reimport cannot rewrite or duplicate an already edited
+                    # legacy caption, including an explicit blank. Retaining
+                    # its current value also keeps the old approval invalid.
+                    continue
                 if prior.source_caption is None or captions[n] != prior.source_caption:
                     raise ValueError("The report page has an independent caption. In Manage source files, choose whether to keep the report caption or use the source caption; neither version was overwritten.")
                 captions[n] = caption

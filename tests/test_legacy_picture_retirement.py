@@ -92,4 +92,3 @@ def test_detailed_legacy_selector_removes_only_the_chosen_occurrence_and_saves(m
     assert next(block for block in saved.draft.blocks if block.key == combined.key).asset_hashes == (asset,)
     assert not app.session_state.filtered_state.get(retired_key)
     assert combined.asset_hashes == (asset, asset)
-

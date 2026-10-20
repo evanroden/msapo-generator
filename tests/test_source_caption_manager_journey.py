@@ -142,4 +142,3 @@ def test_exclude_attached_page_commits_delivered_caption_and_readd_after_reload(
     assert page(readded).asset_hashes == page(before).asset_hashes
     assert page(readded).asset_captions == ("Caption retained while excluded",)
     assert not pending_asset_indexes(page(readded), readded.sources)
-

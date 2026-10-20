@@ -43,7 +43,10 @@ def retire_contributions(block, contributions):
                            and (block.asset_captions[index] if index < len(block.asset_captions) else "") == caption]
             if len(matches) == 1:
                 remove.append(matches[0])
-        for index in reversed(remove):
+        # Accepted order can differ from the current report-picture order.
+        # Remove highest current positions first so earlier removals cannot
+        # shift a later owned occurrence onto an independent neighbour.
+        for index in sorted(set(remove), reverse=True):
             block = remove_saved_picture(block, index)
         # The detailed editor replaces a mapped table as one source-owned set.
         # Manual table entry drops these source references; changed/populated

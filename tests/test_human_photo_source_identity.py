@@ -92,4 +92,3 @@ def test_native_human_photo_add_preserves_equal_source_page_then_retirement(monk
     assert remaining.asset_captions == ("",)
     assert not asset_context(remaining, 0)
     assert sources.source_bytes(profile, source) == raw
-
