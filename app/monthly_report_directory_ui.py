@@ -1,5 +1,6 @@
 """Optional, reviewed directory administration and report-scoped contact updates."""
 
+from collections import Counter
 from dataclasses import asdict, replace
 import re
 
@@ -153,9 +154,25 @@ def _suggested_site(site, existing, site_aliases=None, saved_keys=()):
     return title, matches[0] if len(matches) == 1 else None
 
 
+def _site_labels(existing, saved_keys=()):
+    """A unique choice label per listed site; same-titled sites stay distinct.
+
+    A saved site and a catalog entry may share a display title, so the title
+    alone cannot carry the chosen identity through the editor.
+    """
+    counts = Counter(s.title for s in existing)
+    labels = {}
+    for site in existing:
+        label = site.title if counts[site.title] == 1 else (
+            f"{site.title} (saved)" if site.key in saved_keys else f"{site.title} ({site.key})")
+        labels[label if label not in labels else f"{site.title} ({site.key})"] = site
+    return labels
+
+
 def _site_editor(sites, existing, prefix, *, importing=False, site_aliases=None, saved_keys=()):
     by_id = {s.key: s for s in sites}
-    existing_by_title = {s.title: s for s in existing}
+    existing_by_title = _site_labels(existing, saved_keys)
+    label_of = {id(site): label for label, site in existing_by_title.items()}
     records = []
     for site in sites:
         title, matched = _suggested_site(site, existing, site_aliases, saved_keys)
@@ -164,7 +181,7 @@ def _site_editor(sites, existing, prefix, *, importing=False, site_aliases=None,
         records.append({"Include": True, "Identity": site.key, "Site": title,
                         "Aliases": "; ".join(aliases),
                         "Address": site.address or (matched.address if matched else ""), "Active": matched.active if matched else site.active,
-                        "Existing site": matched.title if matched else "New site",
+                        "Existing site": label_of[id(matched)] if matched else "New site",
                         "Source": site.source.split(":", 1)[-1]})
     edited = _grid(prefix + "_sites", records, hide_index=True,
                    disabled=["Identity", "Source"], column_config={"Identity": None,

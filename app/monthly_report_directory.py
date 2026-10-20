@@ -764,7 +764,7 @@ def _phone_identity(value):
         if len(found) < 7:
             return match.group()
         return found[1:] if len(found) == 11 and found.startswith("1") else found
-    text = re.sub(r"\+?\(?\d[\d\s().\-/]*\d", digits, number)
+    text = re.sub(r"\+?\(?\d[\d\s().\-/]*\d\)?", digits, number)
     return " ".join(text.casefold().split()) + ("x" + extension if extension else "")
 
 

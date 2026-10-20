@@ -150,3 +150,19 @@ def test_only_a_uniquely_retired_catalog_site_loses_ownership(monkeypatch, alias
         "old", "Synthetic Old North", aliases, active=False),), expected_revision=0, actor="Synthetic Editor", confirmed=True)
     column = directory.DirectorySite("column", "Synthetic North Campus")
     assert batch._owned(state, "Synthetic Contract", column, {}) is owned
+
+
+def test_a_bracketed_phone_number_ignores_its_brackets():
+    assert directory.same_contact_value("phone", "(202-555-0100) after hours", "202-555-0100 after hours")
+    assert not directory.same_contact_value("phone", "(202-555-0100) after hours", "202-555-0100 main desk")
+
+
+def test_same_titled_saved_and_catalog_sites_keep_distinct_choices():
+    from app.monthly_report_directory_ui import _site_labels, _suggested_site
+    saved = directory.DirectorySite("saved-north", "Synthetic North")
+    catalog = directory.DirectorySite("catalog-north", "Synthetic North")
+    labels = _site_labels((saved, catalog), {"saved-north"})
+    assert labels == {"Synthetic North (saved)": saved, "Synthetic North (catalog-north)": catalog}
+    _, matched = _suggested_site(directory.DirectorySite("column", "Synthetic North"), (saved, catalog),
+                                 saved_keys={"saved-north"})
+    assert matched is saved and labels["Synthetic North (saved)"].key == "saved-north"
