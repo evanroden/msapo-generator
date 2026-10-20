@@ -53,6 +53,8 @@ def main() -> None:
         (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         from scripts.qa_monthly_contact_outputs import export_contact_outputs
         export_contact_outputs(output / "contact-headers")
+        from scripts.qa_source_page_outputs import export_source_page_outputs
+        export_source_page_outputs(output / "source-pages")
 
 
 if __name__ == "__main__":

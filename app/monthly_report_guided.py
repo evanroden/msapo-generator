@@ -623,10 +623,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                         normalized = normalize_report_image(photo.getvalue(), Path(photo.name).suffix)
                         reference = library.asset_reference(normalized.data, normalized.extension)
                         assets[reference] = normalized.data
-                        if reference not in block.asset_hashes:
-                            captions = (*block.asset_captions, *("" for _ in range(len(block.asset_hashes) - len(block.asset_captions))), "")
-                            block = replace(block, source="This month", asset_hashes=(*block.asset_hashes, reference), asset_captions=captions,
-                                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+                        from app.monthly_report_asset_instances import append_human_asset
+                        block = append_human_asset(block, reference)
                     except (ValueError, OSError):
                         st.error("This photo could not be read. Choose another image; the existing section is retained.")
         return block
@@ -647,7 +645,10 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         reference = library.asset_reference(image.data, image.extension)
         assets[reference] = image.data
         previous = block
-        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
+        from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
+        block = with_asset_instances(replace(block, source="Replace once", asset_hashes=(reference,),
+            asset_captions=(), references=(), client_asset_reviews=(), reviewed_fingerprint="",
+            client_reviewed_fingerprint=""), (new_asset_instance(reference),))
         if spec.type == "pdf_pages":
             st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
         st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")
@@ -801,17 +802,18 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                 st.markdown("**" + label + "**")
                 if block_key == "equipment_issues":
                     st.caption("These photos belong to the section. Supporting source links above belong to the named issue.")
+                block = _review_carried_update(block, period, prefix)
                 current_blocks[block_key] = _edit_content(specs[block_key], block, state,
                     prefix, assets, field, current, edit_text=False, inline_photo_intake=True)
             return replace(current, blocks=tuple(current_blocks.values()))
         draft = render_issue_cards(replace(draft, blocks=tuple(blocks.values())), prefix, field,
-                                   defer_actions=True, evidence_pages=edit_issue_pages)
+                                   defer_actions=True, evidence_pages=edit_issue_pages, defer_commit=True)
         blocks = {block.key: block for block in draft.blocks}
         handled.update(("equipment_issues", "equipment_issues_evidence"))
     elif section.key == "proposals":
         from app.monthly_report_followups import render_followups
         draft = replace(draft, blocks=tuple(blocks.values()))
-        draft = render_followups(draft, prefix, field, category="proposal")
+        draft = render_followups(draft, prefix, field, category="proposal", defer_commit=True)
     if section.key == "training":
         from app.monthly_report_training_ui import render_training
         blocks = render_training(draft, blocks, prefix, field)
@@ -1292,6 +1294,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_issues import apply_issue_action
     draft = apply_issue_action(draft, prefix)
     st.session_state[draft_key] = draft
+    from app.monthly_report_followups import acknowledge_followup_controls
+    acknowledge_followup_controls(draft, prefix)
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
     if conflict:

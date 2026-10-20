@@ -116,7 +116,11 @@ def test_done_consumes_delivered_caption_before_retiring_its_native_control(monk
     assert not app.exception
     current=current_draft(app)
     assert dict(current.sources[0].captions)[1]=='New caption delivered with Done'
-    assert next(b for b in current.blocks if b.key=='utility_analysis').asset_captions==old.asset_captions
+    attached = next(b for b in current.blocks if b.key=='utility_analysis')
+    assert attached.asset_captions==('New caption delivered with Done',)
+    assert attached.asset_hashes==old.asset_hashes
+    from app.monthly_report_asset_review import pending_asset_indexes
+    assert pending_asset_indexes(attached,current.sources)==(0,), 'Done captures the caption but never approves the changed page.'
     assert not any(e.label=='Included files and pictures' for e in app.expander)
     assert button(app,'Manage source files')
 

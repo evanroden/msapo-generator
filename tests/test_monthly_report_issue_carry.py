@@ -21,7 +21,7 @@ def issue_report(text="", **kwargs):
 
 
 @pytest.mark.parametrize("status", ["ongoing", "updated"])
-def test_rollover_keeps_unresolved_followup_evidence_without_routine_reconfirmation(status):
+def test_rollover_keeps_evidence_but_requires_current_confirmation_for_an_updated_claim(status):
     source = ReportSource(
         "repair-evidence", "repair.pdf", "a" * 64, ".pdf",
         page_texts=("CH-2 bearing replaced and tested.",),
@@ -40,7 +40,9 @@ def test_rollover_keeps_unresolved_followup_evidence_without_routine_reconfirmat
         assert current.sources == (source,)
         assert carried.status == status
         assert carried.reviewed_fingerprint == ""
-        assert not problems(carried, current)
+        assert bool(problems(carried, current)) == (status == "updated")
+        if status == "updated":
+            assert all("current for" in message for message in problems(carried, current))
         confirmed = replace(carried, reviewed_fingerprint=confirmation(carried, current.period))
         assert not problems(confirmed, current)
         changed = replace(current, sources=(replace(source, findings="Corrected evidence"),))

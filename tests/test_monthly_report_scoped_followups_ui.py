@@ -90,6 +90,7 @@ def test_edit_survives_section_switch_without_repeated_issue_confirmation():
     next(value for value in app.text_area if value.label == "Issue update").set_value(
         "A vibration survey is scheduled."
     ).run()
+    button(app, "Confirm update for October 2026").click().run()
     original = app.session_state["draft"].follow_ups[0]
     app.radio[0].set_value("proposal").run()
     app.radio[0].set_value("issue").run()
@@ -99,7 +100,8 @@ def test_edit_survives_section_switch_without_repeated_issue_confirmation():
     app.run()
     draft = app.session_state["draft"]
     assert draft.follow_ups[0].reviewed_fingerprint != confirmation(draft.follow_ups[0], draft.period)
-    assert not problems(draft.follow_ups[0], draft)
+    assert any("current for November 2026" in message for message in problems(draft.follow_ups[0], draft))
+    assert button(app, "Confirm update for November 2026")
 
 
 def test_missing_source_cannot_be_silently_dropped_by_opening_editor():
@@ -116,6 +118,7 @@ def test_missing_source_cannot_be_silently_dropped_by_opening_editor():
     next(value for value in app.text_area if value.label == "Evidence or explanation for the status").set_value(
         "A site inspection verified the entered update."
     ).run()
+    button(app, "Confirm update for October 2026").click().run()
     draft = app.session_state["draft"]
     assert not problems(draft.follow_ups[0], draft)
 
