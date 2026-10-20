@@ -162,8 +162,25 @@ def _public_mapping(sheet, scope, mapping, targets):
         for g in groups if g.get("Use")), tuple(targets))
 
 
+_MAX_SOURCE_TEXT = 1000
+
+
 def _source_union(*sources):
-    return ";".join(dict.fromkeys(s for source in sources for s in source.split(";") if s))
+    """Join provenance references, bounded below the directory review budget.
+
+    The first reference and the newest ones that fit are kept; each saved
+    directory revision still holds the complete earlier chain.
+    """
+    parts = list(dict.fromkeys(s for source in sources for s in source.split(";") if s))
+    if len(";".join(parts)) <= _MAX_SOURCE_TEXT or len(parts) < 2:
+        return ";".join(parts)
+    first, kept, size = parts[0], [], len(parts[0])
+    for part in reversed(parts[1:]):
+        if size + 1 + len(part) > _MAX_SOURCE_TEXT:
+            break
+        kept.insert(0, part)
+        size += 1 + len(part)
+    return ";".join((first, *kept))
 
 
 def _merge_contacts(existing, incoming, context):
@@ -177,8 +194,8 @@ def _merge_contacts(existing, incoming, context):
         exact = [i for i in matches if all(_identity(getattr(result[i], f)) == _identity(getattr(contact, f))
                                          for f in ("name", "phone", "email"))]
         if len(exact) == 1:
-            i = exact[0]
-            result[i] = replace(result[i], source=_source_union(result[i].source, contact.source))
+            # The same values from a re-saved workbook are not new information:
+            # keep the saved record and its provenance so the import is a no-op.
             continue
         if len(matches) != 1:
             conflicts.append(f"{context}: more than one saved contact has role {contact.role}; review that role separately.")
@@ -195,8 +212,10 @@ def _merge_contacts(existing, incoming, context):
         if changed_fields:
             conflicts.append(f"{context}: {contact.role} differs in {', '.join(changed_fields)}. Saved values were retained.")
             continue
-        result[i] = replace(old, **{f: getattr(old, f) or getattr(contact, f) for f in ("name", "phone", "email")},
-                            source=_source_union(old.source, contact.source))
+        filled = {f: getattr(old, f) or getattr(contact, f) for f in ("name", "phone", "email")}
+        if all(filled[f] == getattr(old, f) for f in filled):
+            continue  # a subset of the saved values adds nothing; keep it as saved
+        result[i] = replace(old, **filled, source=_source_union(old.source, contact.source))
     return tuple(result), tuple(conflicts)
 
 
@@ -235,8 +254,10 @@ def _merge_sites(contract, existing, incoming, aliases):
                 conflicts.append(f"{old.title}: the workbook address differs from the saved address. Saved values were retained.")
             titles = tuple(dict.fromkeys((*old.aliases, *site.aliases, site.title, target)))
             merged = replace(old, aliases=tuple(n for n in titles if _identity(n) != _identity(old.title)),
-                             address=old.address or site.address, contacts=contacts,
-                             source=_source_union(old.source, site.source))
+                             address=old.address or site.address, contacts=contacts)
+            # Only a real change records the new workbook as provenance.
+            if merged != old:
+                merged = replace(merged, source=_source_union(old.source, site.source))
         else:
             # Source-based keys remain stable on exact re-import; later versions
             # match this explicit title/alias rather than manufacturing identities.
