@@ -451,6 +451,11 @@ def save_workbook_plan(plan, raw, *, actor, confirmed, contracts=None):
     selected = set(contracts) if contracts is not None else {e.contract for e in plan.entries}
     if selected - {e.contract for e in plan.entries}:
         raise ValueError("An unreviewed contract was selected. Refresh and review the preview.")
+    with directory._batch_reads(raw):
+        return _save_selected_entries(plan, raw, actor, selected)
+
+
+def _save_selected_entries(plan, raw, actor, selected):
     saved, unchanged, blocked, failed, revisions = [], [], [], [], []
     for entry in plan.entries:
         if entry.contract not in selected:
