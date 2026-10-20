@@ -42,6 +42,7 @@ def test_historical_fingerprint_and_snapshot_are_preserved_during_migration():
     value = asdict(original)
     value.pop("client_asset_reviews")
     value.pop("asset_provenance")
+    value.pop("asset_instances")
     historical = hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     value["client_reviewed_fingerprint"] = historical
     stored = json.dumps(value, sort_keys=True)
@@ -146,7 +147,9 @@ def test_merge_preserves_reviewed_images_and_only_flags_new_or_new_context():
     changed_context = ResolvedBlock(original.key, "This month", asset_hashes=("first.png",),
                                    asset_captions=("Pump inspection",), references=("new-origin",))
     merged = merge_blocks(original, changed_context)
-    assert pending_asset_indexes(merged) == (0,)
+    assert merged.asset_hashes == ("first.png", "second.png", "first.png")
+    assert pending_asset_indexes(merged) == (2,)
+    assert asset_reviewed(merged, 0), "A different source does not take ownership of the existing occurrence."
 
 
 def test_approved_incoming_pages_and_existing_pages_remain_independently_ready():

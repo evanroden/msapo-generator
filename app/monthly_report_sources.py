@@ -601,10 +601,10 @@ def prepare_pages(profile: ReportProfile, contents: tuple[SourceContent, ...],
         library._atomic_write(library._profile_path(profile.contract, profile.key) / "assets" / ref, normalized.data)
         caption = dict(content.source.captions).get(number, f"{content.source.filename} · page/item {number}")
         grouped.setdefault(slot, []).append((ref, caption, source_reference(content.source, number)))
-    blocks = tuple(ResolvedBlock(slot, "This month", asset_hashes=tuple(v[0] for v in values),
+    from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
+    blocks = tuple(with_asset_instances(ResolvedBlock(slot, "This month", asset_hashes=tuple(v[0] for v in values),
                                asset_captions=tuple(v[1] for v in values), references=tuple(v[2] for v in values),
-                               asset_provenance=tuple((reference, tuple(v[2] for v in values if v[0] == reference))
-                                                      for reference in dict.fromkeys(v[0] for v in values)))
+                               ), tuple(new_asset_instance(v[0], (v[2],), source_caption=v[1]) for v in values))
                  for slot, values in grouped.items())
     from app.monthly_report_asset_review import approve_all_assets, refresh_asset_source_context
     return tuple(approve_all_assets(refresh_asset_source_context(b, tuple(c.source for c in contents))) for b in blocks)
