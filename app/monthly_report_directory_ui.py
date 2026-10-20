@@ -163,9 +163,12 @@ def _site_labels(existing, saved_keys=()):
     counts = Counter(s.title for s in existing)
     labels = {}
     for site in existing:
-        label = site.title if counts[site.title] == 1 else (
+        base = site.title if counts[site.title] == 1 else (
             f"{site.title} (saved)" if site.key in saved_keys else f"{site.title} ({site.key})")
-        labels[label if label not in labels else f"{site.title} ({site.key})"] = site
+        label, number = base, 2
+        while label in labels:  # a literal title can equal a generated label
+            label, number = f"{base} [{number}]", number + 1
+        labels[label] = site
     return labels
 
 

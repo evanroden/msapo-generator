@@ -166,3 +166,19 @@ def test_same_titled_saved_and_catalog_sites_keep_distinct_choices():
     _, matched = _suggested_site(directory.DirectorySite("column", "Synthetic North"), (saved, catalog),
                                  saved_keys={"saved-north"})
     assert matched is saved and labels["Synthetic North (saved)"].key == "saved-north"
+
+
+@pytest.mark.parametrize(("saved", "incoming", "same"), [
+    ("202-555-0100 ext. 12 (after hours)", "(202) 555-0100 x12 (after hours)", True),
+    ("202-555-0100 ext. 12 (after hours)", "202-555-0100 x13 (after hours)", False),
+])
+def test_an_extension_before_a_note_is_still_phone_syntax(saved, incoming, same):
+    assert directory.same_contact_value("phone", saved, incoming) is same
+
+
+def test_generated_site_labels_never_collide_with_literal_titles():
+    from app.monthly_report_directory_ui import _site_labels
+    sites = (directory.DirectorySite("a", "Foo (foo)"), directory.DirectorySite("b", "Foo"),
+             directory.DirectorySite("foo", "Foo"))
+    labels = _site_labels(sites, {"a", "b"})
+    assert sorted(site.key for site in labels.values()) == ["a", "b", "foo"]
