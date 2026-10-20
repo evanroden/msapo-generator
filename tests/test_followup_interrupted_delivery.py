@@ -119,3 +119,24 @@ def test_native_source_default_matches_the_committed_selection_and_deliberate_cl
         assert picker.value == selection
         assert list(picker.proto.default) == ([1] if selection else []), 'Native default must agree with the accepted source selection.'
         assert picker.id == native_id, 'Selecting evidence must preserve the native input node.'
+
+
+@pytest.mark.parametrize('category', ['issue', 'proposal'])
+def test_new_deliberate_edit_keeps_the_earlier_conflict_visibly_recoverable(category):
+    app, source = workspace(category)
+    before = app.session_state['draft']
+    app.session_state['interrupt_once'] = True
+    source_picker(app).set_value([source_reference(source, 2)]).run()
+    app.session_state['draft'] = replace(before, follow_ups=(
+        replace(before.follow_ups[0], text='An independently saved newer finding.'),))
+    app.run()
+    assert not app.exception
+    label = 'Issue description' if category == 'issue' else 'Proposal scope'
+    next(widget for widget in app.text_area if widget.label == label).set_value('A fresh deliberate correction.').run()
+    app.run()
+    assert not app.exception
+    assert app.session_state['draft'].follow_ups[0].text == 'A fresh deliberate correction.'
+    earlier = [value.proto.code_text for value in app.get('code')
+               if 'Inspect intake damper.' in value.proto.code_text]
+    assert len(earlier) == 1, 'The preserved earlier edit must remain reachable after another accepted edit.'
+    assert 'independent-evidence.txt · page 2' in earlier[0]

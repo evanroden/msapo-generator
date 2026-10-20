@@ -153,14 +153,72 @@ def _followup_choice(draft, prefix, item, key, label, value, field):
     import streamlit as st
     identity = _followup_choice_identity(draft, prefix, item)
     receipt = st.session_state.get(key + "_choice")
-    if isinstance(receipt, dict) and receipt.get("identity") != identity:
+    captured = (isinstance(receipt, dict) and receipt.get("result") == identity
+                and type(receipt.get("value")) is bool)
+    if isinstance(receipt, dict) and not captured and receipt.get("identity") != identity:
         st.warning("The item changed before this choice reached it. Review the current row and repeat the choice if it still applies.")
-    # Valid delivered choices were captured before pagination. A stale mirror
-    # must not look checked while canonical data correctly rejects its action.
-    st.session_state[key] = value
-    st.checkbox(label, key=field(key, value), on_change=_record_followup_choice,
-                args=(key, identity, value))
-    return value
+    # Keep the completing control in this paint. Its warning can disappear
+    # immediately without replacing the native target during the click.
+    displayed = receipt["value"] if captured else value
+    st.session_state[key] = displayed
+    st.checkbox(label, key=field(key, displayed), on_change=_record_followup_choice,
+                args=(key, identity, displayed))
+    return displayed
+
+
+def _pending_followup_key(prefix, item):
+    return prefix + "_pending_followup_" + item.category + "_" + item.key
+
+
+def _render_followup_recovery(key, pending):
+    import streamlit as st
+    earlier = pending["after"]
+    with st.expander("Earlier item edit (not applied)", key=key):
+        st.caption(pending.get("context", "Earlier report editor") +
+                   ". Review these entered details against the current item before copying them.")
+        labels = pending.get("source_labels", {})
+        fields = [("Description", earlier.text), ("Status", _status_label(earlier.status)),
+                  ("Update", earlier.update), ("Evidence", earlier.evidence_note)]
+        fields += [("Supporting source", labels.get(ref, "Earlier source link: " + ref))
+                   for ref in earlier.references]
+        st.code("\n\n".join(label + ": " + value for label, value in fields if value),
+                language=None, wrap_lines=True)
+
+
+def _acknowledge_followup_record(key, pending):
+    import streamlit as st
+    for receipt_key, receipt in pending.get("receipts", {}).items():
+        if st.session_state.get(receipt_key) == receipt:
+            st.session_state.pop(receipt_key, None)
+    st.session_state.pop(key, None)
+
+
+def acknowledge_followup_controls(draft, prefix):
+    """Retire only the exact edits now present in the authoritative draft.
+
+    The full workspace calls this after assigning its canonical draft. A row
+    renderer's return, preview refresh or unrelated save is not that receipt.
+    """
+    import streamlit as st
+    for item in draft.follow_ups:
+        key = _pending_followup_key(prefix, item)
+        pending = st.session_state.get(key)
+        if (isinstance(pending, dict) and not pending.get("conflicted")
+                and pending.get("result") == _followup_choice_identity(draft, prefix, item)):
+            _acknowledge_followup_record(key, pending)
+    return draft
+
+
+def _followup_missing_links(draft, prefix, item, options):
+    import streamlit as st
+    missing = tuple(ref for ref in item.references if ref not in options)
+    if missing:
+        return missing
+    pending = st.session_state.get(_pending_followup_key(prefix, item))
+    if (isinstance(pending, dict) and not pending.get("conflicted")
+            and pending.get("result") == _followup_choice_identity(draft, prefix, item)):
+        return pending.get("unlinked", ())
+    return ()
 
 
 def _visible_followup_keys(items, prefix, label):
@@ -189,6 +247,29 @@ def _capture_followup_controls(draft, prefix, category, options):
         if item.category != category:
             result.append(item)
             continue
+        pending_key = _pending_followup_key(prefix, item)
+        for recovery_key in sorted(key for key in st.session_state
+                                   if key.startswith(pending_key + "_recovery_")):
+            _render_followup_recovery(recovery_key, st.session_state[recovery_key])
+        pending = st.session_state.get(pending_key)
+        current_identity = _followup_choice_identity(draft, prefix, item)
+        baseline = item
+        receipts, unlinked = {}, ()
+        if isinstance(pending, dict):
+            if not pending.get("conflicted") and pending.get("result") == current_identity:
+                _acknowledge_followup_record(pending_key, pending)
+            elif not pending.get("conflicted") and pending.get("identity") == current_identity:
+                # The renderer finished but its enclosing report did not.
+                # Reapply only this exact row in this exact report/source scope.
+                item = pending["after"]
+                receipts = dict(pending.get("receipts", {}))
+                unlinked = pending.get("unlinked", ())
+            else:
+                pending = {**pending, "conflicted": True}
+                st.session_state[pending_key] = pending
+                st.warning("An interrupted item edit belongs to an earlier row, report or source revision. "
+                           "The current item is kept; the entered details below remain available to copy.")
+                _render_followup_recovery(pending_key + "_current_conflict", pending)
         p = (prefix + "_issue_" + item.key if category == "issue"
              else prefix + "_follow_" + item.key + "_compact")
         changes = {}
@@ -202,7 +283,7 @@ def _capture_followup_controls(draft, prefix, category, options):
                     and isinstance(receipt.get("value"), str)
                     and receipt["value"] == st.session_state.get(key)):
                 changes[attr] = receipt["value"]
-                st.session_state.pop(key + "_change", None)
+                receipts[key + "_change"] = receipt
         key = p + "_sources_" + _digest(list(options))
         receipt = st.session_state.get(key + "_change")
         selected = [ref for ref in item.references if ref in options]
@@ -212,7 +293,7 @@ def _capture_followup_controls(draft, prefix, category, options):
                 and receipt["value"] == st.session_state.get(key)
                 and all(ref in options for ref in receipt["value"])):
             changes["references"] = (*receipt["value"], *(ref for ref in item.references if ref not in options))
-            st.session_state.pop(key + "_change", None)
+            receipts[key + "_change"] = receipt
         missing = tuple(ref for ref in item.references if ref not in options)
         for key, before, choice in ((p + "_excluded", not item.included, "exclude"),
                                     (p + "_remove_missing_" + _digest(missing), False, "unlink")):
@@ -226,10 +307,28 @@ def _capture_followup_controls(draft, prefix, category, options):
                 elif receipt["value"]:
                     changes["references"] = tuple(ref for ref in changes.get("references", item.references)
                                                    if ref in options)
-                st.session_state.pop(key + "_choice", None)
+                    unlinked = missing
+                receipts[key + "_choice"] = receipt
         revised = replace(item, **changes)
         if revised != item:
             revised = replace(revised, reviewed_fingerprint="")
+        if receipts:
+            after_identity = _followup_choice_identity(draft, prefix, revised)
+            receipts = {key: {**receipt, "result": after_identity}
+                        for key, receipt in receipts.items()}
+            for receipt_key, receipt in receipts.items():
+                st.session_state[receipt_key] = receipt
+            if isinstance(pending, dict) and pending.get("conflicted"):
+                # A later deliberate edit is not permission to discard the
+                # earlier conflict. Keep each distinct version reachable.
+                st.session_state[pending_key + "_recovery_" + pending["result"]] = pending
+            st.session_state[pending_key] = {
+                "identity": _followup_choice_identity(draft, prefix, baseline),
+                "result": after_identity, "after": revised,
+                "receipts": receipts, "unlinked": unlinked,
+                "context": draft.profile.title + " · " + draft.period.label,
+                "source_labels": {ref: options[ref] for ref in revised.references if ref in options},
+            }
         result.append(revised)
     return replace(draft, follow_ups=tuple(result))
 
@@ -345,7 +444,7 @@ def report_text(item):
     )
 
 
-def render_followups(draft, prefix, field, *, category=None, defer_issue_actions=False):
+def render_followups(draft, prefix, field, *, category=None, defer_issue_actions=False, defer_commit=False):
     """Edit carried items in their section, retaining every other category."""
     draft = unique_followup_keys(draft)
     if category is not None:
@@ -353,11 +452,15 @@ def render_followups(draft, prefix, field, *, category=None, defer_issue_actions
             raise ValueError("Choose equipment issues or proposals to review.")
         if category == "issue":
             from app.monthly_report_issues import render_issue_cards
-            return render_issue_cards(draft, prefix, field, defer_actions=defer_issue_actions)
-        return _render_section_followups(draft, prefix, field, category)
+            return render_issue_cards(draft, prefix, field, defer_actions=defer_issue_actions,
+                                      defer_commit=defer_commit)
+        result = _render_section_followups(draft, prefix, field, category)
+        return result if defer_commit else acknowledge_followup_controls(result, prefix)
     from app.monthly_report_issues import apply_issue_action, render_issue_cards
-    draft = _render_all_followups(render_issue_cards(draft, prefix, field, defer_actions=True), prefix, field)
-    return draft if defer_issue_actions else apply_issue_action(draft, prefix)
+    draft = _render_all_followups(render_issue_cards(draft, prefix, field, defer_actions=True,
+                                                   defer_commit=True), prefix, field)
+    draft = draft if defer_issue_actions else apply_issue_action(draft, prefix)
+    return draft if defer_commit else acknowledge_followup_controls(draft, prefix)
 
 
 def _render_section_followups(draft, prefix, field, category, *, initially_editing=False):
@@ -441,7 +544,7 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
                     [ref for ref in item.references if ref in options], field,
                     identity=identity, options=list(options), format_func=options.get,
                 ) if options else []
-                missing = tuple(ref for ref in item.references if ref not in options)
+                missing = _followup_missing_links(draft, prefix, item, options)
                 if missing:
                     notice = st.empty()
                     if _followup_choice(draft, prefix, item, p + "_remove_missing_" + _digest(missing),

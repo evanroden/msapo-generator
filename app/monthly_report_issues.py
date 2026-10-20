@@ -9,6 +9,7 @@ from app.monthly_report_followups import (
     _status_label, problems, unique_followup_keys, followup_limit_message,
     _capture_followup_controls, _visible_followup_keys, MAX_INCLUDED_FOLLOWUPS,
     FOLLOWUP_PAGE_SIZE, _followup_choice, _followup_choice_identity, output_followups,
+    acknowledge_followup_controls, _followup_missing_links,
 )
 from app.monthly_report_model import ReportFollowUp
 from app.monthly_report_sources import source_reference
@@ -248,7 +249,9 @@ def _issue_control(widget, label, key, value, field, *, identity, **kwargs):
     submitted = (isinstance(receipt, dict) and receipt.get("identity") == identity
                  and receipt.get("before") == value
                  and receipt.get("value") == st.session_state.get(key))
-    if isinstance(receipt, dict) and not submitted:
+    captured = (isinstance(receipt, dict) and receipt.get("result") == identity
+                and receipt.get("value") == value)
+    if isinstance(receipt, dict) and not submitted and not captured:
         st.warning(f"An earlier {label.lower()} edit belongs to a changed item or report. "
                    "The current value is kept. The entered value below has not been applied or saved.")
         if receipt.get("value") in ("", []):
@@ -262,9 +265,13 @@ def _issue_control(widget, label, key, value, field, *, identity, **kwargs):
         # issue, not the textarea's implicit empty default. Keep the existing
         # receipt guard and honor an explicitly submitted clear/update.
         kwargs["value"] = receipt["value"] if submitted else value
+    elif widget == st.multiselect:
+        # The Python mirror alone does not set a newly mounted native default.
+        # Keep real selection and explicit clear consistent in both protocols.
+        kwargs["default"] = receipt["value"] if submitted else value
     result = widget(label, key=field(key, value), on_change=_issue_changed,
                     args=(key, value, identity), **kwargs)
-    if submitted:
+    if submitted and not captured:
         st.session_state.pop(key + "_change", None)
     if submitted and result != value:
         return result
@@ -285,7 +292,7 @@ def _render_issue_evidence(item, draft, options, p, field, prefix):
             p + "_sources_" + _digest(list(options)),
             [ref for ref in references if ref in options], field,
             identity=identity, options=list(options), format_func=options.get) if options else []
-        missing = tuple(ref for ref in references if ref not in options)
+        missing = _followup_missing_links(draft, prefix, item, options)
         if missing:
             notice = st.empty()
             if _followup_choice(draft, prefix, item, p + "_remove_missing_" + _digest(missing),
@@ -299,7 +306,7 @@ def _render_issue_evidence(item, draft, options, p, field, prefix):
     return replace(item, update=update, evidence_note=note, references=references)
 
 
-def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pages=None):
+def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pages=None, defer_commit=False):
     import streamlit as st
 
     draft = canonical_issues(draft)
@@ -386,4 +393,5 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
                 st.caption(_status_label(item.status))
                 if st.button("Include again", key=prefix + "_issue_restore_" + item.key):
                     draft = issue_visibility(draft, item.key, True)
-    return draft if defer_actions else apply_issue_action(draft, prefix)
+    draft = draft if defer_actions else apply_issue_action(draft, prefix)
+    return draft if defer_commit else acknowledge_followup_controls(draft, prefix)
