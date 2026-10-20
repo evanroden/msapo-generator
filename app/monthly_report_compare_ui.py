@@ -30,6 +30,19 @@ def _sites(profile):
                   for f in profile.facilities)
 
 
+def _recorded_design(profile):
+    """Describe this copy's pin without consulting a mutable design default."""
+    template = profile.template
+    for prefix, label in (("enfra_master:", "ENFRA company master"),
+                          ("enfra_native:", "Reference report design"),
+                          ("enfra_builtin:", "Built-in report design")):
+        if template.startswith(prefix):
+            return label + " · " + (template[len(prefix):] or "Pin not recorded")
+    if profile.imported_from:
+        return "Legacy reference report design · " + profile.imported_from
+    return "Legacy report design · " + (template or "Not recorded")
+
+
 def _table(columns, rows):
     titles = [getattr(c, "title", c) for c in columns]
     return _lines("Row " + str(n + 1) + ": " + "; ".join(
@@ -111,6 +124,7 @@ def compare_drafts(working, saved):
     add("Sites and alternate names", _sites(saved.profile), _sites(working.profile),
         force=saved.profile.facilities != working.profile.facilities)
     add("Reporting month", saved.period.label, working.period.label)
+    add("Pinned report design", _recorded_design(saved.profile), _recorded_design(working.profile))
     add("Prepared by", saved.prepared_by, working.prepared_by)
     add("Address/footer", saved.address_line, working.address_line)
     add("Known equipment tags", _lines(saved.profile.asset_tags), _lines(working.profile.asset_tags))
@@ -255,6 +269,13 @@ def recovery_time(value):
         return "Time unavailable"
 
 
-def render_recovery_scope(draft):
+def render_recovery_scope(draft, other=None, *, label="This page", other_label="Saved report"):
     st.caption(" · ".join((draft.profile.contract, draft.profile.title, draft.period.label)))
     st.caption("Sites: " + (", ".join(site.title for site in draft.profile.facilities) or "Not recorded"))
+    design = _recorded_design(draft.profile)
+    if other is not None and design == _recorded_design(other.profile):
+        st.caption("Report design · both copies · " + design)
+    else:
+        st.caption("Report design · " + label + " · " + design)
+        if other is not None:
+            st.caption("Report design · " + other_label + " · " + _recorded_design(other.profile))
