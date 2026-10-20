@@ -13,12 +13,21 @@ from app.monthly_report_section_ui import _site_options
 from app.monthly_report_start import membership_key, matching_profiles, report_key, design_seed, save_design_start, recommended_designs
 
 
-def _logo(contract, state, images):
+def _logo(contract, state, images, *, unavailable=None):
     from app.monthly_report_branding import find_logo, read_logo, card_image
     logo = find_logo(contract, state=state) if state else None
     if logo:
         if logo.asset not in images:
-            images[logo.asset] = card_image(read_logo(logo))
+            try:
+                images[logo.asset] = card_image(read_logo(logo))
+            except library.LibraryError:
+                raise  # Storage isolation/reset failures are not bad artwork.
+            except (OSError, ValueError):
+                # This is a screen-only fallback. Never replace the stored
+                # image or suppress an error when it is needed for a report.
+                images[logo.asset] = None
+        if images[logo.asset] is None and unavailable is not None:
+            unavailable.add(contract)
         return images[logo.asset]
     for profile in library.list_profiles(contract):
         state = library.load_profile(contract, profile.key)
@@ -45,7 +54,7 @@ def _contract_tile(title):
     # UI-only placeholder. It never substitutes a fabricated image in DOCX.
     label = _fallback_initials(title)
     st.markdown(
-        '<div aria-label="No logo configured" style="width:8.5rem;height:3.5rem;'
+        '<div aria-label="Contract initials" style="width:8.5rem;height:3.5rem;'
         'background:#e9efed;border:1px solid #c3d1cc;border-radius:.35rem;'
         'display:flex;align-items:center;justify-content:center;'
         'font-weight:700;letter-spacing:.08em;color:#174237">' + label + '</div>',
@@ -53,16 +62,24 @@ def _contract_tile(title):
     )
 
 
+def _unavailable_logo_notice(unavailable):
+    if unavailable:
+        from app.monthly_report_admin_ui import admin_url
+        st.warning("A saved contract logo could not be read. Contract selection is still available; saved logos and reports were not changed.")
+        st.link_button("Review shared logos", admin_url("logos"), on_click="ignore")
+
+
 def choose_contract(last_contract, field):
     from app.monthly_report_branding import find_logo, load_branding
     state, images = load_branding(), {}
+    unavailable = set()
     names = contract_choices()
     current_key = field("report_contract", last_contract if last_contract in names else "")
     current = st.session_state[current_key]
     if current and not st.session_state.get("report_change_contract", False):
         selected_logo = find_logo(current, state=state) if state else None
         selected_title = _contract_label(current, selected_logo)
-        logo = _logo(current, state, images)
+        logo = _logo(current, state, images, unavailable=unavailable)
         if logo:
             picture, identity, action = st.columns((1, 5, 2), vertical_alignment="center")
             picture.image(logo, width=80)
@@ -75,6 +92,7 @@ def choose_contract(last_contract, field):
         if action.button("Change contract", key="report_change_contract_button", width="stretch"):
             st.session_state["report_change_contract"] = True
             st.rerun()
+        _unavailable_logo_notice(unavailable)
         return current
     st.subheader("Choose your contract")
     query = st.text_input("Find a contract", key=field("report_contract_search", ""), placeholder="Type part of the contract name")
@@ -89,7 +107,7 @@ def choose_contract(last_contract, field):
     for offset in range(0, len(visible), 3):
         for column, (name, title) in zip(st.columns(3), visible[offset:offset+3]):
             with column, st.container(border=True):
-                logo = _logo(name, state, images)
+                logo = _logo(name, state, images, unavailable=unavailable)
                 if logo:
                     st.image(logo, width=160)
                 else:
@@ -102,6 +120,7 @@ def choose_contract(last_contract, field):
                     st.session_state[current_key] = name
                     st.session_state["report_change_contract"] = False
                     st.rerun()
+    _unavailable_logo_notice(unavailable)
     return None
 
 

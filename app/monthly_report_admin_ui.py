@@ -3,7 +3,7 @@ from urllib.parse import urlencode
 
 import streamlit as st
 
-ADMIN_KINDS = ("directory", "storage", "master")
+ADMIN_KINDS = ("directory", "logos", "storage", "master")
 
 
 def report_url():
@@ -18,7 +18,7 @@ def report_url():
 def admin_url(kind="directory"):
     """Only public route selectors enter the URL, never a report identity."""
     if kind not in ADMIN_KINDS:
-        raise ValueError("Choose directory, storage or master administration.")
+        raise ValueError("Choose directory, logos, storage or master administration.")
     return report_url() + "&" + urlencode({"monthly_admin": kind})
 
 
@@ -27,6 +27,7 @@ def render_administration_links():
     with st.sidebar.expander("Administration", expanded=False):
         st.caption("Opens separately; your report tab stays available.")
         for kind, label in (("directory", "Contract and site directory"),
+                            ("logos", "Shared contract logos"),
                             ("storage", "Storage maintenance"),
                             ("master", "Master design administration")):
             st.link_button(label, admin_url(kind), on_click="ignore")
@@ -47,7 +48,7 @@ def render_administration(kind, field, *, mode):
         st.error("Choose a Monthly administration page.")
         return
     links = []
-    for choice, label in (("directory", "Directory"), ("storage", "Storage"), ("master", "Master design")):
+    for choice, label in (("directory", "Directory"), ("logos", "Logos"), ("storage", "Storage"), ("master", "Master design")):
         if choice == kind:
             links.append(escape(label))
         else:
@@ -56,6 +57,9 @@ def render_administration(kind, field, *, mode):
     if kind == "directory":
         from app.monthly_report_directory_ui import render_directory
         render_directory(field)
+    elif kind == "logos":
+        from app.monthly_report_branding_ui import render_branding
+        render_branding(field)
     elif kind == "storage":
         st.subheader("Storage maintenance — all contracts")
         render_storage_maintenance()

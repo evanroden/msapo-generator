@@ -54,7 +54,7 @@ def test_authoring_has_non_submitting_administration_links_and_no_inline_tools(m
     before = files(tmp_path)
     app.run()
     links = {link.label: link for link in app.sidebar.get('link_button')}
-    assert set(links) == {'Contract and site directory', 'Storage maintenance', 'Master design administration'}
+    assert set(links) == {'Contract and site directory', 'Shared contract logos', 'Storage maintenance', 'Master design administration'}
     assert all(link.proto.ignore_rerun for link in links.values())
     assert all(parse_qs(urlsplit(link.url).query)['workflow'] == ['monthly'] for link in links.values())
     assert not any(button.key in {'report_storage_check', 'report_storage_consolidate'} for button in app.button)

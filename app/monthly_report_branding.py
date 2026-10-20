@@ -78,7 +78,13 @@ def _logos(values):
     return tuple(result)
 
 
+@st.cache_data(max_entries=32, show_spinner=False)
 def _image(raw, reference):
+    """Cache only a successful validation result, keyed by the exact bytes/ref.
+
+    Decoding on every card rerun would undo the existing card-image cache.
+    No image bytes or decoded buffers are returned into this validation cache.
+    """
     if len(raw) > MAX_IMAGE_BYTES or library.asset_reference(raw, "png") != reference:
         raise ValueError("A logo is too large or does not match its fingerprint.")
     try:
@@ -86,7 +92,12 @@ def _image(raw, reference):
             if image.format != "PNG" or not 1 <= image.width <= 2400 or not 1 <= image.height <= 1600:
                 raise ValueError("Logos must be PNG images no larger than 2400 × 1600 pixels.")
             image.verify()
-    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        # PNG.verify checks framing/checksums, not the compressed pixel stream.
+        # Decode within the bounds checked above before these bytes can become
+        # shared artwork. Reopen because verify invalidates the first image.
+        with Image.open(BytesIO(raw)) as image:
+            image.load()
+    except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
         raise ValueError("A logo image could not be read.") from exc
 
 
