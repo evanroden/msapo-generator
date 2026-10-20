@@ -20,7 +20,8 @@ def bundle(tmp_path):
     for name in {**json.loads(compat.MANIFEST_PATH.read_bytes())["members"],
                  **json.loads(compat.FLOATING_MANIFEST_PATH.read_bytes())["members"]}:
         (scripts / name).write_bytes((installed / "static" / "js" / name).read_bytes())
-    (tmp_path / "index.html").write_bytes((installed / "index.html").read_bytes())
+    from streamlit_static_fixture import pristine_html
+    (tmp_path / "index.html").write_bytes(pristine_html(installed))
     return tmp_path, scripts
 
 

@@ -79,6 +79,15 @@ def set_history(page, opened, identity, activations):
         # before React handles it. This reads the existing preview gate; it
         # neither sets application state nor dispatches another gesture.
         summary.evaluate("""node => {
+          const previewCount=root=>{
+            if(!root)return 0;
+            let count=root.querySelectorAll('.report-preview').length;
+            // Streamlit v2 surfaces use open shadow roots. Read those too;
+            // counting only light DOM would misclassify every click as cold.
+            for(const host of root.querySelectorAll('*'))
+              if(host.shadowRoot)count+=previewCount(host.shadowRoot);
+            return count;
+          };
           const snapshot=()=>{
             const app=node.closest('[data-testid="stApp"]');
             const gate=window.__enfraPreviewNativeEditGates?.get(app);
@@ -87,7 +96,8 @@ def set_history(page, opened, identity, activations):
               const keys=[...item.classList].filter(name=>name.startsWith('st-key-'));
               if(keys.length)ancestors.push(keys);
             }
-            return {installed:Boolean(gate),pending:gate?.pending??null,
+            return {viewers:previewCount(app),
+              installed:Boolean(gate),pending:gate?.pending??null,
               blockAll:gate?.blockAll??null,before:gate?.before??null,
               fullRender:gate?.workspace?.dataset.epcFullRender??null,ancestors};
           };
@@ -101,12 +111,26 @@ def set_history(page, opened, identity, activations):
         activation = page.evaluate("window.__enfraHistoryDisclosureObservation")
         activations.append({"opening": opened, "sequence_before": before, **activation})
         clicked = activation["click"]
-        assert clicked and clicked["trusted"] and clicked["installed"], activation
-        assert clicked["pending"] and clicked["blockAll"], (
-            "The history disclosure must protect its actual native full rerun before preview fragments.", activation)
+        assert clicked and clicked["trusted"], activation
+        # Native History can be used before the optional preview components
+        # mount on a cold reload. No viewer can send a competing fragment yet.
+        # An existing gate still owes protection, even if its DOM just unmounted.
+        if clicked["viewers"] or clicked["installed"]:
+            assert clicked["installed"] and clicked["pending"] and clicked["blockAll"], (
+                "The history disclosure must protect its actual native full rerun before preview fragments.", activation)
         await_state(page, identity, after=before)
-    expect(panel.get_by_role("combobox", name="Inspect a saved version", exact=True)).to_have_count(1 if opened else 0)
+    control = panel.get_by_role("combobox", name="Inspect a saved version", exact=True)
+    expect(control).to_have_count(1 if opened else 0)
+    if opened:
+        expect(control).to_be_visible()
     return panel
+
+
+def assert_history_coverage(activations):
+    for opened in (True, False):
+        assert any(item["opening"] == opened and item["click"]["viewers"] > 0
+                   for item in activations), (
+            "History must exercise both opening and closing with mounted previews.", activations)
 
 
 def edit(page, label, value, identity, **expected):
@@ -133,9 +157,18 @@ def add_photo(page, number, identity):
         has=page.locator("summary").get_by_text("Add photos", exact=True))
     if not intake.evaluate("node => node.matches('details') ? node.open : node.querySelector('details').open"):
         intake.locator("summary").first.click()
-    activity.get_by_test_id("stFileUploader").filter(
-        has=page.get_by_text("Progress photos", exact=True)).locator('input[type="file"]').set_input_files(
+    uploader = activity.get_by_test_id("stFileUploader").filter(
+        has=page.get_by_text("Progress photos", exact=True))
+    before = receipt(page)["sequence"]
+    uploader.locator('input[type="file"]').set_input_files(
             {"name": f"synthetic-history-photo-{number}.png", "mimeType": "image/png", "buffer": photo(number)})
+    # set_input_files returns before the native upload has necessarily finished.
+    # The previous photo keeps Add enabled, so wait for this entire selected set
+    # and its fresh server render before the one intended Add gesture.
+    for index in range(1, number + 1):
+        expect(uploader.get_by_title(f"synthetic-history-photo-{index}.png", exact=True)).to_be_visible(timeout=30000)
+    expect(uploader.get_by_test_id("stFileChipIconSpinner")).to_have_count(0, timeout=30000)
+    await_state(page, identity, after=before)
     activity.get_by_role("button", name="Add these photos", exact=True).click()
     return await_state(page, identity, photos=number)
 
@@ -300,7 +333,7 @@ def browser_task(engine, name, base):
             other.close()
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
         expect(page.get_by_text("Connection error", exact=True)).not_to_be_visible()
-        assert any(item["opening"] for item in activations) and any(not item["opening"] for item in activations)
+        assert_history_coverage(activations)
         assert not errors and not attempts, {"browser_errors": errors, "external_requests": attempts}
         evidence["result"] = "passed"
     except Exception as exc:
