@@ -436,13 +436,26 @@ def _row_key(table, row, site):
     return site, _schema(table), _table_scope(table.title), dimensions
 
 
+def _same_table(old, new):
+    """The saved table an incoming table updates: same observed heading or same columns.
+
+    A site may keep separate Steam and Chilled-water tables with different
+    columns; neither is a changed version of the other.
+    """
+    return _table_scope(old.title) == _table_scope(new.title) or _schema(old) == _schema(new)
+
+
 def schema_conflicts(current, tables):
+    """Sites where a saved table's heading now arrives with different columns."""
     if current is None:
         return ()
     changed = []
     for new in tables:
         for site in set(new.site_keys):
-            if any(site in old.site_keys and _schema(old) != _schema(new) for old in current.tables):
+            saved = [old for old in current.tables if site in old.site_keys]
+            if any(_schema(old) == _schema(new) for old in saved):
+                continue  # an existing table with these columns: an ordinary update
+            if any(_table_scope(old.title) == _table_scope(new.title) for old in saved):
                 changed.append(site)
     return tuple(dict.fromkeys(changed))
 
@@ -495,11 +508,16 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
                 if key in incoming and incoming[key] != row:
                     raise ValueError("Two capacity rows have the same site and labels but different values. Add the missing plant/service label before saving.")
                 incoming[key] = row
-        changed_sites = {s for t in tables for s in t.site_keys}
+        def replaced(old, site):
+            # Replace only the saved tables an incoming table updates for that
+            # site; its other services (and other sites) stay in shared data.
+            return mode == "replace_sites" and any(
+                site in new.site_keys and _same_table(old, new) for new in tables)
+
         kept = []
         for old in current.tables if current else ():
             pairs = [(row, site) for row, site in zip(old.rows, old.site_keys)
-                     if not (mode == "replace_sites" and site in changed_sites)
+                     if not replaced(old, site)
                      and not (mode != "keep_both" and _row_key(old, row, site) in incoming)]
             if pairs:
                 kept.append(replace(old, rows=tuple(row for row, _ in pairs), site_keys=tuple(site for _, site in pairs)))
