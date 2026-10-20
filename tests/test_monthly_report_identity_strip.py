@@ -55,6 +55,33 @@ def test_one_details_disclosure_and_exact_identity_replace_repeated_site_prose(m
     assert library.list_profiles(RRH_CONTRACT) == ()
 
 
+def test_identity_strip_keeps_one_native_container_from_zero_sites_through_reselection(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path, saved=False)
+
+    def identity():
+        nodes = [node for node in app.main if node.type == 'flex_container'
+                 and node.proto.id.endswith('-monthly_report_identity_sites')]
+        assert len(nodes) == 1
+        return nodes[0].proto.id
+
+    initial = identity()
+    first, second = [item for item in app.checkbox if item.key.startswith('report_sites_')][:2]
+    keys, native = (first.key, second.key), (first.proto.id, second.proto.id)
+    assert any(item.value == 'Select report sites.' for item in app.caption)
+    app.checkbox(keys[0]).check().run()
+    assert identity() == initial
+    assert any(item.value == 'Site: ' + first.label for item in app.caption)
+    app.checkbox(keys[1]).check().run()
+    assert identity() == initial
+    assert any(first.label in item.value and second.label in item.value for item in app.caption)
+    app.checkbox(keys[1]).uncheck().run()
+    app.checkbox(keys[0]).uncheck().run()
+    assert identity() == initial
+    assert any(item.value == 'Select report sites.' for item in app.caption)
+    assert tuple(app.checkbox(key).proto.id for key in keys) == native
+    assert not app.exception and library.list_profiles(RRH_CONTRACT) == ()
+
+
 def test_explicit_details_save_preserves_working_design_content_and_immutable_history(monkeypatch, tmp_path):
     app, old, candidate, working = details_app(monkeypatch, tmp_path)
     previous = library.save_snapshot(working, expected_revision=0, entered_editor="Original editor")

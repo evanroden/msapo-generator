@@ -388,11 +388,17 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         inspected = inspect_docx(path)
         for number, item in enumerate(inspected.items, 1):
             page_texts.append(item.text or "\n".join("\t".join(r) for r in item.rows))
+            if item.kind == "unsupported":
+                notices.append(f"Item {number}: {item.note or 'This original item could not be read.'}")
+            elif item.note == "Unplaced package asset; confirm whether it belongs in this report.":
+                notices.append(f"Item {number}: {item.note}")
             if item.kind == "image":
                 image_items.append((number, item.id))
                 needs_vision.append(number)
         notices.extend(inspected.notices)
-        notices.append("DOCX selections are extracted items, not Word page numbers. Native vector objects remain in the original for review.")
+        # Only this new inspection route has retained every unsupported-item
+        # notice. Old cached records keep their broader artwork-review notice.
+        notices.append("DOCX selections are extracted items, not Word page numbers.")
     else:
         text, attachments, extra = _email(raw) if suffix == ".eml" else _msg(raw)
         page_texts = [text]
@@ -495,7 +501,10 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
     if number < 1 or number > len(source.page_texts):
         raise ValueError("Source page does not exist.")
     directory = _path(profile, source.sha256, source.suffix).parent / "prepared" / source.sha256
-    cache = directory / f"{number}-{'preview' if preview else 'print'}.json"
+    # Older DOCX previews were incorrectly prepared at print resolution.
+    # Keep those assets intact and give the corrected derivative its own key.
+    purpose = "preview-docx-v2" if preview and source.suffix == ".docx" else "preview" if preview else "print"
+    cache = directory / f"{number}-{purpose}.json"
     if cache.exists():
         saved = library._read(cache)
         if not re.fullmatch(r"[0-9a-f]{64}\.(?:jpg|png)", saved.get("asset", "")):
@@ -525,7 +534,7 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
         if inspected.sha256 != source.sha256:
             raise ValueError("A source file failed its integrity check.")
         item = next(i for i in inspected.items if i.id == item_id)
-        result = read_import_image(path, item)
+        result = read_import_image(path, item, preview=preview)
     else:
         raise ValueError("This source contains text/tables rather than image pages.")
     ref = library.asset_reference(result.data, result.extension)
