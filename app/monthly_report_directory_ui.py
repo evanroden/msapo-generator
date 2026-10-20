@@ -140,16 +140,19 @@ def render_selected_directory(contract, facilities, actor, prefix):
             st.caption("No contacts were replaced. Reload the current directory before trying again.")
 
 
-def _site_editor(sites, existing, prefix, *, importing=False):
+def _site_editor(sites, existing, prefix, *, importing=False, site_aliases=None):
     by_id = {s.key: s for s in sites}
     existing_by_title = {s.title: s for s in existing}
     records = []
     for site in sites:
-        matches = [s.title for s in existing if directory.facility_names(site) & directory.facility_names(s)]
+        # A reviewed alias suggests the same site name the batch import saves.
+        title = (site_aliases or {}).get(" ".join(site.title.casefold().split()), site.title)
+        names = directory.facility_names(site) | {" ".join(title.casefold().split())}
+        matches = [s.title for s in existing if names & directory.facility_names(s)]
         matched = existing_by_title[matches[0]] if len(matches) == 1 else None
-        aliases = tuple(dict.fromkeys((*site.aliases, *((matched.title, *matched.aliases) if matched else ()))))
-        aliases = tuple(n for n in aliases if n.casefold() != site.title.casefold())
-        records.append({"Include": True, "Identity": site.key, "Site": site.title,
+        aliases = tuple(dict.fromkeys((*site.aliases, site.title, *((matched.title, *matched.aliases) if matched else ()))))
+        aliases = tuple(n for n in aliases if n.casefold() != title.casefold())
+        records.append({"Include": True, "Identity": site.key, "Site": title,
                         "Aliases": "; ".join(aliases),
                         "Address": site.address or (matched.address if matched else ""), "Active": matched.active if matched else site.active,
                         "Existing site": matches[0] if len(matches) == 1 else "New site",
@@ -274,9 +277,12 @@ def _render_directory(field):
             return
         for notice in directory.sheet_findings(inspection, sheet):
             st.warning(literal(notice))
+        from app import monthly_report_directory_batch as batch
         contract_names = contract_choices()
         clean_title = re.sub(r"\s+Sites$", "", re.sub(r"^\d+\s*[-.]\s*", "", sheet.name), flags=re.I).strip()
-        default = next((n for n in contract_names if n.casefold() == clean_title.casefold()), "Add another contract")
+        # The same exact name or reviewed alias the batch import would use.
+        suggested = batch.worksheet_contract(sheet) or clean_title
+        default = next((n for n in contract_names if n.casefold() == suggested.casefold()), "Add another contract")
         selected_contract = st.selectbox("Save under contract", [*contract_names, "Add another contract"], key=field(p + "_contract_" + sheet.name, default))
         contract = st.text_input("Contract name", key=field(p + "_name_" + sheet.name, clean_title)) if selected_contract == "Add another contract" else selected_contract
         if not contract.strip():
@@ -298,7 +304,8 @@ def _render_directory(field):
         proposed = directory.matrix_sites(inspection, sheet, header, label, address, groups)
         edit_prefix = prefix + "_" + _signature([asdict(s) for s in proposed])
         st.subheader("Confirm sites, aliases and contacts")
-        incoming = _site_editor(proposed, _known_sites(contract, state), edit_prefix, importing=True)
+        incoming = _site_editor(proposed, _known_sites(contract, state), edit_prefix, importing=True,
+                                site_aliases=batch.site_alias_targets(contract))
         if not incoming:
             st.info("Select at least one site to save.")
             return

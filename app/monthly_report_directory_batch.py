@@ -150,6 +150,18 @@ def _canonical(name, aliases, known):
     return known.get(_identity(target), target)
 
 
+def worksheet_contract(sheet, *, contract_aliases=None):
+    """The catalog or saved contract a detail tab names exactly or by reviewed alias, else ""."""
+    aliases = {_identity(k): v for k, v in (CONTRACT_ALIASES | (contract_aliases or {})).items()}
+    known = {_identity(n): n for n in (*contract_catalog.contract_names(), *directory.directory_contracts())}
+    return known.get(_identity(_canonical(_sheet_title(sheet), aliases, known)), "")
+
+
+def site_alias_targets(contract):
+    """Reviewed workbook spellings of a contract's sites, keyed by normalized spelling."""
+    return {_identity(k): v for k, v in SITE_ALIASES.get(contract, {}).items()}
+
+
 def _mapping(sheet):
     header, label, address, groups = directory.suggest_matrix(sheet)
     return header, label, address, groups
