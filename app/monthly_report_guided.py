@@ -16,7 +16,7 @@ from app.monthly_report_checks import preflight
 from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image
 from app.monthly_report_editor import _grid, _signature, _typed_table
 from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
-                                     layout_blocks, profile_sections)
+                                     layout_blocks, profile_sections, picture_replacement_references)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
 from app.monthly_report_section_help import section_help
 
@@ -648,7 +648,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         reference = library.asset_reference(image.data, image.extension)
         assets[reference] = image.data
         previous = block
-        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
+        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(),
+                        references=picture_replacement_references(block))
+        if spec.key in ("brand_logo", "client_logo"):
+            block = replace(block, reviewed_fingerprint="", client_reviewed_fingerprint="",
+                            asset_provenance=((reference, ()),), client_asset_reviews=())
         if spec.type == "pdf_pages":
             st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
         st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")

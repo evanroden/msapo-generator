@@ -186,31 +186,34 @@ def _clear_source_drawing_metadata(document):
                         del node.attrib[attr]
 
 
-def _remove_unapproved_header_images(part, approved_digests):
+def _remove_unapproved_header_images(part, approved_digests, approved_occurrences=()):
     """Drop only image-backed old-client header/footer art on a fresh master.
 
     Pure native rules/rectangles and Word geometry are left intact; approved
-    current ENFRA logo bytes remain. All other image relationships are facts
-    about the imported source, even when PNG metadata is not visible on page.
+    current ENFRA logo bytes and explicitly preserved native occurrences remain.
+    An approved native occurrence does not authorize another use of equal bytes.
+    All other image relationships are facts about the imported source, even when
+    PNG metadata is not visible on page.
     The package sanitizer prunes dangling image parts after saving.
     """
     vml = "{urn:schemas-microsoft-com:vml}imagedata"
     for picture in list(part.element.iter()):
         if picture.tag not in (qn("w:drawing"), qn("w:pict")):
             continue
-        ids = [node.get(qn("r:embed")) or node.get(qn("r:id"))
-               for node in picture.iter()
-               if node.tag in (qn("a:blip"), vml)]
-        ids = [identity for identity in ids if identity]
-        if not ids:
+        images = [(node, node.get(qn("r:embed")) or node.get(qn("r:id")))
+                  for node in picture.iter()
+                  if node.tag in (qn("a:blip"), vml)]
+        images = [(node, identity) for node, identity in images if identity]
+        if not images:
             continue  # Pure vector decoration, without client media.
         trusted = True
-        for identity in ids:
+        for node, identity in images:
             rel = part.rels.get(identity)
             if rel is None or rel.is_external or not hasattr(rel.target_part, "blob"):
                 trusted = False
                 break
-            if hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests:
+            if (node not in approved_occurrences
+                    and hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests):
                 trusted = False
                 break
         if not trusted and picture.getparent() is not None:
@@ -1466,6 +1469,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
             continue
         header_occurrences = _header_image_occurrences(part, inspection)
+        preserved_header_nodes = set()
         _clear_diagrams(part.element)
         _clear_hyperlinks(part.element)
         for paragraph in part.element.iter(qn("w:p")):
@@ -1506,16 +1510,19 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                             source_item.image_role == "brand_logo")
                 if not is_brand:
                     continue
-                if unchanged_master_brand and not explicit_roles:
-                    # An unchanged, verified cover brand may have a distinct
-                    # native header variant. Preserve that variant unless this
-                    # exact header occurrence was deliberately mapped.
-                    continue
                 if source_item.id not in header_bindings:
                     raise NativeLayoutError(
                         "The selected header logo occurrence could not be matched safely. "
                         "Review its source artwork before generating this report.")
+                if unchanged_master_brand and not explicit_roles:
+                    # An unchanged, verified cover brand may have a distinct
+                    # native header variant. Preserve that variant unless this
+                    # exact header occurrence was deliberately mapped. Approval
+                    # belongs to these nodes, not independent uses of equal bytes.
+                    preserved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
+                    continue
                 if _source_image_digest(str(source_path), inspection.sha256, source_item, True) in brand.asset_hashes:
+                    preserved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
                     continue
                 rid, _ = part.get_or_add_image(BytesIO(asset_loader(brand.asset_hashes[0])))
                 for node, attr in header_bindings[source_item.id]:
@@ -1524,7 +1531,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
             approved = set()
             if brand and brand.source != "Omit" and brand.asset_hashes and asset_loader:
                 approved.add(hashlib.sha256(asset_loader(brand.asset_hashes[0])).hexdigest())
-            _remove_unapproved_header_images(part, approved)
+            _remove_unapproved_header_images(part, approved, preserved_header_nodes)
     page_plan.finish(document=document)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)

@@ -3,6 +3,7 @@
 import hashlib
 from dataclasses import asdict, replace
 from pathlib import Path
+from uuid import uuid4
 
 import streamlit as st
 
@@ -524,6 +525,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     # optional, but always render the uploader in the same widget container
     # across staged/review reruns so Streamlit cannot discard its bytes.
     optional_import = working_draft is not None
+    original_token_key = prefix + "_original_review_token"
 
     def _open_saved_original():
         if not state:
@@ -533,6 +535,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                                   key=prefix + "_original", disabled=not prepared.strip()):
             from app.monthly_report_import import inspect_docx
             st.session_state[prefix + "_stage"] = (None, original, inspect_docx(original))
+            st.session_state[original_token_key] = uuid4().hex
             st.rerun()
 
     if optional_import:
@@ -572,6 +575,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     incoming = _stage(upload)
                 previous = st.session_state.get(prefix + "_stage")
                 st.session_state[prefix + "_stage"] = incoming
+                st.session_state.pop(original_token_key, None)
                 st.session_state.pop(prefix + "_failed_digest", None)
                 if previous and previous[0]:
                     previous[0].cleanup()
@@ -598,12 +602,27 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         _open_saved_original()
     staged = st.session_state.get(prefix + "_stage")
     if not staged:
+        st.session_state.pop(original_token_key, None)
         return False
+    _, path, inspection = staged
+    p = prefix + "_" + inspection.sha256[:16]
+    cancel_original = False
+    if staged[0] is None:
+        # A later review of identical source bytes is a new action target.
+        token = st.session_state.setdefault(original_token_key, uuid4().hex)
+        cancel_original = st.button("Cancel saved-original review", key=p + "_cancel_original_" + token)
+    if cancel_original:
+        # This stage has no uploader to clear. Retire only its unsaved review
+        # choices, never the saved original or the current report's work.
+        st.session_state.pop(prefix + "_stage", None)
+        st.session_state.pop(original_token_key, None)
+        for key in list(st.session_state):
+            if key.startswith(p + "_"):
+                st.session_state.pop(key, None)
+        st.rerun()
     if state and staged[0] is None and not prepared.strip():
         st.info("Enter Prepared by above to review the saved original.")
         return True
-    _, path, inspection = staged
-    p = prefix + "_" + inspection.sha256[:16]
     if identity:
         candidate = identity
         actor = prepared.strip() or st.text_input(
@@ -905,6 +924,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 # Failures retain the original staged source and every choice.
                 if st.session_state.get(prefix + "_stage") is staged:
                     st.session_state.pop(prefix + "_stage", None)
+                    st.session_state.pop(original_token_key, None)
                     if staged[0]:
                         st.session_state[prefix + "_committed_upload_digest"] = inspection.sha256
                         staged[0].cleanup()

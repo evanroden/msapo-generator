@@ -341,7 +341,7 @@ def test_explicit_mapping_does_not_replace_another_equal_byte_header_occurrence(
     logo = replace_cover_picture(mapped.blocks[0], mark(), ".png", assets)
     # Replacement retains the deliberate source occurrence mapping, even
     # though its saved image bytes have changed.
-    logo = approve_all_assets(replace(logo, references=mapped.blocks[0].references))
+    logo = approve_all_assets(logo)
     raw = build_native_docx(_draft(logo), source, asset_loader=assets.__getitem__)
     result = _header_images(raw)
     assert len(result) == 2
@@ -381,7 +381,7 @@ def test_header_mapping_updates_equivalent_branches_not_independent_duplicate(tm
     mapped = map_items(source, inspection, (ImportMapping(items[0].id, "brand_logo"),))
     assets = {}
     logo = replace_cover_picture(mapped.blocks[0], mark(), ".png", assets)
-    logo = approve_all_assets(replace(logo, references=mapped.blocks[0].references))
+    logo = approve_all_assets(logo)
     result = _header_images(build_native_docx(_draft(logo), source,
                                              asset_loader=assets.__getitem__, master=master))
     assert len(result) == (2 if master else 3)

@@ -434,6 +434,17 @@ def profile_sections(profile: ReportProfile) -> tuple[SectionSpec, ...]:
     return tuple(sections[k] for k in profile.section_order or tuple(sections))
 
 
+def picture_replacement_references(block: ResolvedBlock) -> tuple[str, ...]:
+    """Keep explicit native logo placement when replacing its artwork bytes.
+
+    These DOCX item references identify where the logo belongs, not approval
+    or provenance for the replacement image. Other pictures keep their existing
+    replacement behavior and must not inherit stale source-content links.
+    """
+    return (tuple(ref for ref in block.references if ref.startswith("docx:"))
+            if block.key in ("brand_logo", "client_logo") else ())
+
+
 def layout_blocks() -> tuple[BlockSpec, ...]:
     """Layout assets use the same versioning and confirmation as section blocks."""
     return (tuple(BlockSpec(key, "image_page") for key in COVER_ASSET_KEYS)

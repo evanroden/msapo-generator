@@ -344,7 +344,10 @@ def _classify_logo_items(items):
                 roles[index].add(role)
     labels, directions = [], defaultdict(set)
     for item in items:
-        if item.kind != "text" or item.section not in ("", "cover"):
+        # Header/footer parts retain the last body's semantic section during
+        # inspection, but their explicit labels belong to their own artwork.
+        if (item.kind != "text" or (item.section not in ("", "cover")
+                                   and not item.part.startswith(("word/header", "word/footer")))):
             continue
         role = _logo_label_role(item.text)
         if not role:
