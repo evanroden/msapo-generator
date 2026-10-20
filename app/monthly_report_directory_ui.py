@@ -13,15 +13,32 @@ def contract_choices():
     # The synthetic test workspace cannot select a live catalog contract.
     # Only explicitly installed QA directory identities are offered.
     from app.monthly_report_testing import scope
+    unavailable = []
+    saved = directory.directory_contracts(unavailable=unavailable)
+    _directory_warning(unavailable)
     if scope() is not None:
-        return list(directory.directory_contracts())
+        return list(saved)
     # The catalog's display spelling wins; case/spacing variants are one choice.
     # A legacy saved name must not create duplicate landing-page button IDs.
     choices = {}
-    for name in (*contracts.contract_names(), *directory.directory_contracts()):
+    for name in (*contracts.contract_names(), *saved):
         identity = " ".join(name.casefold().split())
         choices.setdefault(identity, name)
     return list(choices.values())
+
+
+def _directory_warning(unavailable, *, details=False):
+    if not unavailable:
+        return
+    st.warning(f"{len(unavailable)} saved contact director{'y' if len(unavailable) == 1 else 'ies'} could not be read. "
+               "Other saved directories remain available. Unreadable records and their history were kept unchanged.")
+    if details:
+        with st.expander("Unavailable directory records"):
+            for problem in unavailable:
+                st.text(problem.storage_key + ": " + problem.message)
+    else:
+        from app.monthly_report_admin_ui import admin_url
+        st.link_button("Review contract directory", admin_url("directory"))
 
 
 def _known_sites(contract, state):
@@ -208,11 +225,14 @@ def _render_directory(field):
         st.info("Enter your name before viewing or changing saved contact lists.")
         return
     mode = st.radio("Directory task", ["Import a workbook", "Import all contract contacts", "Review saved directory"], key=field("report_directory_mode", "Import a workbook"), horizontal=True)
+    unavailable = []
+    names = directory.directory_contracts(include_archived=True, unavailable=unavailable)
+    _directory_warning(unavailable, details=True)
     contract_contacts = None
     if mode == "Review saved directory":
-        names = directory.directory_contracts(include_archived=True)
         if not names:
-            st.info("No directory has been saved yet. Import a workbook to begin.")
+            if not unavailable:
+                st.info("No directory has been saved yet. Import a workbook to begin.")
             return
         contract = st.selectbox("Saved contract directory", names, key="report_directory_existing")
         state = directory.load_directory(contract, include_archived=True)
