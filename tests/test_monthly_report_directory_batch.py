@@ -50,8 +50,13 @@ def prepared(*sheets):
     return raw, batch.prepare_workbook(directory.inspect_workbook(raw))
 
 
+def proposed(plan):
+    """Synthetic contracts are not catalog contracts; these cases opt in to creating them."""
+    return tuple(entry.contract for entry in plan.entries if entry.new_contract)
+
+
 def save(plan, raw):
-    return batch.save_workbook_plan(plan, raw, actor="Synthetic Editor", confirmed=True)
+    return batch.save_workbook_plan(plan, raw, actor="Synthetic Editor", confirmed=True, create=proposed(plan))
 
 
 def test_summary_contacts_remain_contract_wide_and_site_membership_is_explicit(tmp_path):

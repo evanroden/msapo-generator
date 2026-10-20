@@ -12,7 +12,7 @@ from app import monthly_report_directory as directory
 from app import monthly_report_directory_batch as batch
 from app import monthly_report_library as library
 from app import monthly_report_testing as testing
-from test_monthly_report_directory_batch import workbook
+from test_monthly_report_directory_batch import proposed, workbook
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +32,7 @@ def prepared(count):
 
 
 def save(plan, raw):
-    return batch.save_workbook_plan(plan, raw, actor="Synthetic Reviewer", confirmed=True)
+    return batch.save_workbook_plan(plan, raw, actor="Synthetic Reviewer", confirmed=True, create=proposed(plan))
 
 
 @pytest.mark.parametrize("count", [1, 10, 40])
