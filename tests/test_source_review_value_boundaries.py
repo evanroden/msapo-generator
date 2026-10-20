@@ -218,3 +218,119 @@ def test_advanced_artwork_does_not_reuse_previous_ownership_after_controls_chang
     assert any("shared report artwork" in e.value for e in app.error)
     assert sources.source_bytes(original.profile, source) == raw
     assert library.load_snapshot(original.profile.contract, original.profile.key, original.period).draft == original
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("service_description", [False, True])
+def test_exact_accepted_rows_do_not_consume_separate_blank_rows(reverse, service_description):
+    from app.monthly_report_source_scope import _accepted_rows_cover, _table_digest
+    columns = ("Facility", "WO #", "Finish Date", "Area", "Task Code-Description", "Tag #")
+    blank = ("Demo North", "001", "2026-09-02", "", "Inspected pump", "P-1")
+    populated = (*blank[:3], "Plant A", *blank[4:])
+    accepted = [list(blank), list(populated)]
+    record = {"columns": list(columns), "row_values": accepted,
+              "table": _table_digest(columns, accepted)}
+    rows = (populated, blank) if reverse else (blank, populated)
+    if service_description:
+        rows = tuple((*row[:4], "Human description correction", row[5]) for row in rows)
+    assert _accepted_rows_cover("service_calls", columns, rows, (record,))
+
+
+@pytest.mark.parametrize("selection", [(1, 1), (0, 0), (0, 1, 1), (1, 0, 0)])
+@pytest.mark.parametrize("repeat_receipt", [False, True])
+def test_exact_row_preference_does_not_invent_accepted_occurrences(selection, repeat_receipt):
+    from app.monthly_report_source_scope import _accepted_rows_cover, _table_digest
+    columns = ("Identity", "Optional detail")
+    accepted = [["001", ""], ["001", "Accepted detail"]]
+    record = {"columns": list(columns), "row_values": accepted,
+              "table": _table_digest(columns, accepted)}
+    rows = tuple(tuple(accepted[index]) for index in selection)
+    records = (record, record) if repeat_receipt else (record,)
+    assert not _accepted_rows_cover("custom_table", columns, rows, records)
+
+
+def test_exact_row_preference_keeps_accepted_duplicate_multiplicity():
+    from app.monthly_report_source_scope import _accepted_rows_cover, _table_digest
+    columns = ("Identity", "Optional detail")
+    accepted = [["001", ""], ["001", "Accepted detail"], ["001", "Accepted detail"]]
+    record = {"columns": list(columns), "row_values": accepted,
+              "table": _table_digest(columns, accepted)}
+    assert _accepted_rows_cover("custom_table", columns,
+        (tuple(accepted[1]), tuple(accepted[0]), tuple(accepted[2])), (record,))
+
+
+@pytest.mark.parametrize("selection,valid", [((0, 1), True), ((1, 0), True),
+                                            ((0, 0), False), ((1, 0, 1), False)])
+def test_reordered_current_mapped_receipts_keep_exact_scope_and_readiness(
+        monkeypatch, tmp_path, selection, valid):
+    from app.monthly_report_checks import preflight
+    from app.monthly_report_source_readiness import content_readiness
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    profile, period = synthetic_profiles()[1], ReportPeriod(2026, 9)
+    contents, results, originals = [], [], []
+    for name, tag in (("populated", "P-1"), ("blank", "")):
+        raw = ("ID,Finished,Facility,Task,Area,Tag\n"
+               f"001,2026-09-02,Demo North,Synthetic inspected pump,Plant A,{tag}\n").encode()
+        content, _ = sources.ingest(profile, "synthetic-" + name + ".csv", raw)
+        source = replace(content.source, facility="")
+        content = replace(content, source=source)
+        contents.append(content)
+        originals.append(raw)
+        results.append(map_cmms(content.tables[0], CMMSMapping("Finished", "ID",
+            facility="Facility", description="Task", area="Area", tag="Tag",
+            finish_date_means_completed=True), profile, period,
+            sources.source_reference(source, 1), scope_source=source))
+    blocks = [result.blocks[0] for result in results]
+    references = tuple(dict.fromkeys(ref for block in blocks for ref in block.references))
+    block = replace(blocks[0], rows=tuple(blocks[index].rows[0] for index in selection),
+                    references=references)
+    draft = ReportDraft(profile, period, "Synthetic reviewer",
+        (SectionSpec("maintenance", "5", "Onsite service calls", (results[0].specs[0],)),),
+        (block,), sources=tuple(content.source for content in contents), synthetic=True)
+    assert all(included_scope_valid(draft, content.source) == valid for content in contents)
+    assert all(content_readiness(draft, content.source).accepted == valid for content in contents)
+    statuses = source_manager_status(draft, tuple(contents))
+    assert all(status.resolved == valid and status.needs_correction != valid for status in statuses)
+    checks = [check for check in preflight(draft) if check.code.startswith("source_")]
+    assert bool(checks) != valid
+    if not valid:
+        assert all(check.blocking for check in checks)
+    assert all(sources.source_bytes(profile, content.source) == raw
+               for content, raw in zip(contents, originals))
+
+
+@pytest.mark.parametrize("accepted,rows", [
+    ((("id", "A", ""), ("id", "", "T"), ("id", "", "")),
+     (("id", "A", "T"), ("id", "", ""))),
+    ((("id", "a", "", ""), ("id", "", "b", ""),
+      ("id", "a", "", "c"), ("id", "", "b", "c")),
+     (("id", "a", "b", "c"), ("id", "a", "b", ""))),
+    ((("id", "a", "", ""), ("id", "", "b", ""),
+      ("id", "", "b", "c1"), ("id", "a", "", "c1"), ("id", "a", "", "c2")),
+     (("id", "a", "b", "c1"), ("id", "a", "b", "c2"))),
+])
+def test_complementary_evidence_uses_distinct_minimal_covers_in_every_order(accepted, rows):
+    from itertools import permutations
+    from app.monthly_report_source_scope import _accepted_rows_cover, _table_digest
+    columns = tuple("Column " + str(i) for i in range(len(accepted[0])))
+    for accepted_order in permutations(accepted):
+        values = [list(row) for row in accepted_order]
+        record = {"columns": list(columns), "row_values": values,
+                  "table": _table_digest(columns, values)}
+        for order in permutations(rows):
+            assert _accepted_rows_cover("custom_table", columns, order, (record,))
+            assert not _accepted_rows_cover("custom_table", columns, (*order, *order), (record,))
+            invented = (*order[0][:-1], "Unaccepted fact")
+            assert not _accepted_rows_cover("custom_table", columns, (invented, order[1]), (record,))
+
+
+def test_complementary_search_budget_fails_closed_without_limiting_exact_tables(monkeypatch):
+    from app import monthly_report_source_scope as scope
+    columns = ("ID", "Area", "Tag")
+    values = [["001", "Plant A", ""], ["001", "", "P-1"]]
+    record = {"columns": list(columns), "row_values": values,
+              "table": scope._table_digest(columns, values)}
+    monkeypatch.setattr(scope, "_ROW_COVER_WORK_LIMIT", 0)
+    assert not scope._accepted_rows_cover("custom_table", columns,
+                                         (("001", "Plant A", "P-1"),), (record,))
+    assert scope._accepted_rows_cover("custom_table", columns, tuple(reversed(values)), (record,))

@@ -30,6 +30,7 @@ class SourceContentReadiness:
     summary: str = "Not included"
     problem: str = ""
     destinations: tuple[str, ...] = ()
+    period_bound: bool = False
 
 
 def content_readiness(draft, source):
@@ -55,9 +56,12 @@ def content_readiness(draft, source):
     covered = tuple(_covered_use(use, source, draft.profile, draft.period, sources=draft.sources) for use in uses)
     reviewed = tuple(current_review(use) for use in uses)
     accepted = all(a or b for a, b in zip(covered, reviewed))
+    # Wording review is not a reporting-date decision. Only current report
+    # contribution receipts bind all of this source's included content to it.
+    period_bound = all(covered)
     kinds = {use[0] for use in uses}
-    label = ("Totals accepted" if all(covered) and kinds == {"text"} else
-             "Tables accepted" if all(covered) and kinds == {"rows"} else
+    label = ("Totals accepted" if period_bound and kinds == {"text"} else
+             "Tables accepted" if period_bound and kinds == {"rows"} else
              "Content reviewed" if accepted else "Included content")
     problem = ""
     if not accepted:
@@ -72,4 +76,4 @@ def content_readiness(draft, source):
                  and not current_review(use) for use in uses):
             problem = "Review the current suggested wording and its evidence."
     return SourceContentReadiness(True, accepted, label + " · " + locations,
-                                  problem, destinations)
+                                  problem, destinations, period_bound)

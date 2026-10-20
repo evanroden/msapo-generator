@@ -161,6 +161,13 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
             if reading.included:
                 # Accepted mapped dates/sites/totals are already bound to this
                 # report. Do not invent a second file-level review ritual.
+                # Reviewed wording alone does not accept a file date. Match
+                # preflight's existing applicability so reference-only and
+                # explicitly unselected historical sources stay available.
+                if not reading.period_bound and selected and source.classification != "Reference only":
+                    when = source_date(source.service_date)
+                    if when is None or not draft.period.start <= when <= draft.period.end:
+                        return result("Check the source reporting date.")
                 # Plain native text is described as included, not reviewed.
                 return result(resolved=reading.accepted, needs_correction=False)
             return result(resolved=False, needs_correction=False)

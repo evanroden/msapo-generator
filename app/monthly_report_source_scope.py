@@ -15,6 +15,7 @@ from app.monthly_report_model import included_sections, used_block_keys
 MULTIPLE_FACILITIES = "__source_multiple_facilities__"
 CONTRACT_ARTWORK = "__source_contract_artwork__"
 USE_PREFIX = "source-scope-use:v1:"
+_ROW_COVER_WORK_LIMIT = 200_000
 ARTWORK_KEYS = frozenset({"brand_logo", "client_logo", "business_hours_workflow", "after_hours_workflow"})
 
 
@@ -216,33 +217,111 @@ def _accepted_rows_cover(key, columns, rows, records):
             continue
         # A repeated receipt/source cannot multiply an already accepted row.
         available |= Counter(facts(row) for row in accepted if any(cell.strip() for cell in row))
-    by_cell = [{} for _ in columns]
-    for candidate in available:
-        for i, value in enumerate(candidate):
-            by_cell[i].setdefault(value, set()).add(candidate)
+    pending = []
     for row in rows:
         if not any(cell.strip() for cell in row):
             continue
         wanted = facts(row)
-        if len(wanted) != len(columns):
+        if len(wanted) != len(columns) or not columns:
             return False
-        if not columns:
-            return False
-        # Start with the most selective cell so editing one large worksheet
-        # does not compare every current row against every accepted row.
+        # Reserve every exact output occurrence before considering merged rows.
+        # A partial row must not be consumed merely because it is compatible.
+        if available[wanted]:
+            available[wanted] -= 1
+        else:
+            pending.append(wanted)
+    if not pending:
+        return True
+    pending.sort()  # Equivalent output permutations have the same search.
+    by_cell = [{} for _ in columns]
+    for candidate, count in available.items():
+        if count:
+            for i, value in enumerate(candidate):
+                by_cell[i].setdefault(value, set()).add(candidate)
+
+    class CoverageLimit(Exception):
+        pass
+
+    budget = _ROW_COVER_WORK_LIMIT
+
+    def spend(amount=1):
+        nonlocal budget
+        budget -= amount
+        if budget < 0:
+            raise CoverageLimit
+
+    def covers(wanted):
+        # Existing merges may fill blanks from other current accepted sources.
+        # Every resulting fact must have evidence; each occurrence is used once.
         index = min(range(len(columns)), key=lambda i:
                     len(by_cell[i].get("", ())) + len(by_cell[i].get(wanted[i], ())))
         candidates = set(by_cell[index].get("", ())) | set(by_cell[index].get(wanted[index], ()))
-        compatible = [candidate for candidate in candidates if available[candidate]
-                      and all(not value or value == wanted[i] for i, value in enumerate(candidate))]
-        # Existing report merges may fill blank cells from another accepted,
-        # current source. Every resulting fact must still have that evidence.
-        if not compatible or any(value and not any(candidate[i] == value for candidate in compatible)
-                                 for i, value in enumerate(wanted)):
-            return False
-        for candidate in compatible:
-            available[candidate] -= 1
-    return True
+        spend(len(candidates) * len(columns))
+        compatible = sorted(candidate for candidate in candidates if available[candidate]
+                            and all(not value or value == wanted[i]
+                                    for i, value in enumerate(candidate)))
+        required = [i for i, value in enumerate(wanted) if value]
+        full = sum(1 << i for i in required)
+        if not full:
+            return ()  # No exact occurrence remains to prove this empty fact row.
+        masks = [sum(1 << i for i in required if candidate[i]) for candidate in compatible]
+        providers = {i: [j for j, mask in enumerate(masks) if mask & (1 << i)] for i in required}
+        if any(not choices for choices in providers.values()):
+            return ()
+        stack, seen, options = [(0, ())], {()}, set()
+        while stack:
+            spend()
+            covered, chosen = stack.pop()
+            if covered == full:
+                # Keep only inclusion-minimal covers, not redundant partial rows.
+                spend(len(chosen) ** 2)
+                minimal = True
+                for omitted in chosen:
+                    remainder = 0
+                    for j in chosen:
+                        if j != omitted:
+                            remainder |= masks[j]
+                    if remainder == full:
+                        minimal = False
+                        break
+                if minimal:
+                    options.add(tuple(compatible[j] for j in chosen))
+                continue
+            cell = min((i for i in required if not covered & (1 << i)),
+                       key=lambda i: (len(providers[i]), i))
+            for j in providers[cell]:
+                next_chosen = tuple(sorted((*chosen, j)))
+                if next_chosen not in seen:
+                    spend()
+                    seen.add(next_chosen)
+                    stack.append((covered | masks[j], next_chosen))
+        return sorted(options, key=lambda option: (len(option), option))
+
+    try:
+        # Iterative backtracking lets a later row retain evidence needed by it.
+        # Exhaustion stays unresolved; there is no recursion or blanket waiver.
+        stack = [[0, iter(covers(pending[0])), None]]
+        while stack:
+            spend()
+            frame = stack[-1]
+            if frame[2] is not None:
+                for candidate in frame[2]:
+                    available[candidate] += 1
+                frame[2] = None
+            choice = next(frame[1], None)
+            if choice is None:
+                stack.pop()
+                continue
+            for candidate in choice:
+                available[candidate] -= 1
+            frame[2] = choice
+            following = frame[0] + 1
+            if following == len(pending):
+                return True
+            stack.append([following, iter(covers(pending[following])), None])
+    except CoverageLimit:
+        return False
+    return False
 
 
 def _covered_use(use, source, profile, period, *, sources=()):
