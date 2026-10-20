@@ -1,6 +1,7 @@
 """Upload a report, confirm its sites, then review recognizable report sections."""
 
 import hashlib
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from pathlib import Path
 from uuid import uuid4
@@ -536,6 +537,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             from app.monthly_report_import import inspect_docx
             st.session_state[prefix + "_stage"] = (None, original, inspect_docx(original))
             st.session_state[original_token_key] = uuid4().hex
+            st.session_state[prefix + "_image_conflict_incarnation"] = uuid4().hex
+            st.session_state.pop(prefix + "_image_replacements", None)
             st.rerun()
 
     if optional_import:
@@ -575,6 +578,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     incoming = _stage(upload)
                 previous = st.session_state.get(prefix + "_stage")
                 st.session_state[prefix + "_stage"] = incoming
+                st.session_state[prefix + "_image_conflict_incarnation"] = uuid4().hex
+                st.session_state.pop(prefix + "_image_replacements", None)
                 st.session_state.pop(original_token_key, None)
                 st.session_state.pop(prefix + "_failed_digest", None)
                 if previous and previous[0]:
@@ -849,6 +854,130 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                        "or open an existing report with a saved cover design. This upload would also supply a new report’s page design.")
             st.error(message)
             todo.append("Repair the source cover artwork before using it as a new report design.")
+    prepared_import = None
+    def _prepare_merge():
+        nonlocal prepared_import
+        if prepared_import is None:
+            # New eager preflight work shares the existing admission gate with
+            # previews/exports. Keep one normalized import only in this rerun,
+            # never a second decoded copy or a cross-rerun/session asset cache.
+            from app.monthly_report_render_jobs import work_slot
+            with work_slot(preview=True) if recovery_preflight else nullcontext():
+                prepared_import = build_starting_import(path, inspection, tuple(plans[s.key] for s in sections))
+        else:
+            # Continue may reuse immutable normalized bytes from this exact
+            # render, but source identity and mutable saved state are checked
+            # again, then profile/snapshot CAS protects final publication.
+            if path.stat().st_size > 128 * 1024 * 1024:
+                raise ValueError("Original DOCX exceeds the import limit.")
+            with path.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != inspection.sha256:
+                    raise ValueError("Original DOCX changed during review. Analyze it again.")
+        mapped, mappings = prepared_import
+        profile = candidate if state else design_profile(candidate, inspection, mappings, mapped.overrides)
+        profile = replace(profile, excluded_sections=())
+        draft = imported_draft(profile, period, actor, mapped)
+        draft = replace(draft, sections=tuple(replace(s, included=True) for s in draft.sections))
+        previous, verified = library.starting_contribution(
+            contract, profile.key, period, inspection.sha256) if state else (None, False)
+        from app.monthly_report_start_replay import retain_automatic_logo_contributions
+        incoming_keys = {block.key for block in draft.blocks}
+        draft = retain_automatic_logo_contributions(
+            draft, previous, verified=verified, inspection=inspection,
+            plans=plans.values(), preferred_logos=preferred_logos)
+        consumed_logo_slots = {block.key for block in draft.blocks
+                               if block.key in ("brand_logo", "client_logo") and block.key not in incoming_keys}
+        current = library.load_snapshot(contract, profile.key, period) if state else None
+        prior_import = library.load_imported_draft(contract, profile.key) if state else None
+        base = current.draft if current else None
+        if working_draft is not None:
+            if (working_draft.profile.contract, working_draft.profile.key, working_draft.period) != (contract, profile.key, period):
+                raise ValueError("The open draft belongs to different sites or a different month. Reopen the intended report before importing.")
+            if working_revision != (current.revision if current else 0):
+                raise ValueError("Another version was saved while you were working. Compare and accept that version using Save progress before adding this report. Your open draft and upload are preserved.")
+            base = working_draft
+        elif prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
+            # Bootstrap already includes this exact snapshot plus the
+            # last acknowledged import. Appending the snapshot again
+            # can resurrect its older text or duplicate edited tables.
+            base = prior_import
+        return mapped, profile, draft, previous, verified, consumed_logo_slots, current, base
+
+    from app.monthly_report_start_conflicts import LABELS, image_conflicts, apply_replacements, snapshot_guard
+    replacement_key = prefix + "_image_replacements"
+    incarnation_key = prefix + "_image_conflict_incarnation"
+    incarnation = st.session_state.setdefault(incarnation_key, uuid4().hex)
+    decisions = st.session_state.setdefault(replacement_key, {})
+    review_scope = _signature((inspection.sha256, tuple(plan_signature(plan) for plan in plans.values()),
+                               candidate, actor, working_draft, working_revision,
+                               state.revision if state else 0))
+    if st.session_state.get(prefix + "_image_review_scope") != review_scope:
+        decisions.clear()
+        incarnation = uuid4().hex
+        st.session_state[incarnation_key] = incarnation
+        st.session_state[prefix + "_image_review_scope"] = review_scope
+    def _conflict_context(current):
+        return dict(verified=verified, source_sha256=inspection.sha256,
+                    profile_revision=state.revision if state else 0,
+                    snapshot_revision=current.revision if current else 0,
+                    incarnation=incarnation)
+
+    has_page = any(slot in LABELS for plan in plans.values()
+                   for slot in (*plan.get("destinations", {}).values(),
+                                *(slot for slot, _ in plan.get("new_assets", ()))))
+    recovery_preflight = bool(state and not todo and has_page)
+    if recovery_preflight:
+        from app.monthly_report_render_jobs import RenderBusy
+        try:
+            mapped, profile, incoming_draft, previous, verified, _, current, base = _prepare_merge()
+            scope = _signature((base, incoming_draft, previous, verified, state.revision,
+                                current.revision if current else 0))
+            scope_key = prefix + "_image_conflict_scope"
+            if st.session_state.get(scope_key) != scope:
+                decisions.clear()
+                incarnation = uuid4().hex
+                st.session_state[incarnation_key] = incarnation
+                st.session_state[scope_key] = scope
+            conflicts = image_conflicts(base, incoming_draft, previous, **_conflict_context(current))
+            valid = {conflict.slot: conflict.binding for conflict in conflicts}
+            if any(valid.get(slot) != binding for slot, binding in decisions.items()):
+                decisions.clear()
+                st.warning("The report or incoming picture changed. Review both pictures again before replacing anything.")
+            if conflicts:
+                st.subheader("A report page already has a different picture")
+                st.caption("Your current report is unchanged. Compare the two pages before explicitly replacing one. This does not approve the incoming picture’s contents.")
+                assets = dict((*working_assets, *mapped.assets))
+                for conflict in conflicts:
+                    with st.container(border=True):
+                        st.markdown("**" + conflict.label + "**")
+                        for label, block in (("Current report", conflict.current), ("Incoming report", conflict.incoming)):
+                            reference = block.asset_hashes[0]
+                            raw = assets.get(reference) or library.read_asset(contract, profile.key, reference)
+                            if library.asset_reference(raw, reference.rsplit(".", 1)[-1]) != reference:
+                                raise ValueError("A preview picture changed. Review the source again; your report is unchanged.")
+                            st.image(raw, width="stretch", caption=label + " — " + conflict.label)
+                            st.caption("Picture caption: " + (block.asset_captions[0] if block.asset_captions else "(none)"))
+                        if decisions.get(conflict.slot) == conflict.binding:
+                            st.caption("Incoming page selected. Nothing changes until you continue and the import saves successfully.")
+                        if st.button("Use incoming " + conflict.label.lower(), key=p + "_replace_" + conflict.binding):
+                            decisions[conflict.slot] = conflict.binding
+                            st.rerun()
+                        if st.button("Keep current " + conflict.label.lower() + " and return to review", key=p + "_keep_" + conflict.binding):
+                            decisions.clear()
+                            st.session_state[incarnation_key] = uuid4().hex
+                            st.rerun()
+                if any(decisions.get(conflict.slot) != conflict.binding for conflict in conflicts):
+                    todo.append("Compare the different report pages above. Keeping the current page leaves this incoming report unimported.")
+        except (ValueError, OSError, RenderBusy) as exc:
+            decisions.clear()
+            st.session_state[incarnation_key] = uuid4().hex
+            st.error(str(exc))
+            if isinstance(exc, RenderBusy):
+                if st.button("Retry report page comparison", key=p + "_retry_page_comparison"):
+                    st.rerun()
+                todo.append("Report page comparison is waiting for capacity. Your report and upload are unchanged.")
+            else:
+                todo.append("Resolve the existing report conflict before continuing; your report and upload are unchanged.")
     for message in todo:
         st.info(message)
     if not todo:
@@ -859,36 +988,11 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             if todo:
                 raise ValueError("Resolve the remaining starting-report messages before continuing. Your draft and upload are unchanged.")
             with st.spinner("Saving your report and its reusable design…"):
-                mapped, mappings = build_starting_import(path, inspection, tuple(plans[s.key] for s in sections))
-                profile = candidate if state else design_profile(candidate, inspection, mappings, mapped.overrides)
-                profile = replace(profile, excluded_sections=())
-                draft = imported_draft(profile, period, actor, mapped)
-                draft = replace(draft, sections=tuple(replace(s, included=True) for s in draft.sections))
-                previous, verified = library.starting_contribution(
-                    contract, profile.key, period, inspection.sha256) if state else (None, False)
-                from app.monthly_report_start_replay import retain_automatic_logo_contributions
-                incoming_keys = {block.key for block in draft.blocks}
-                draft = retain_automatic_logo_contributions(
-                    draft, previous, verified=verified, inspection=inspection,
-                    plans=plans.values(), preferred_logos=preferred_logos)
-                consumed_logo_slots = {block.key for block in draft.blocks
-                                       if block.key in ("brand_logo", "client_logo") and block.key not in incoming_keys}
+                mapped, profile, draft, previous, verified, consumed_logo_slots, current, base = _prepare_merge()
                 source_draft = draft
-                current = library.load_snapshot(contract, profile.key, period) if state else None
-                prior_import = library.load_imported_draft(contract, profile.key) if state else None
-                base = current.draft if current else None
-                if working_draft is not None:
-                    if (working_draft.profile.contract, working_draft.profile.key, working_draft.period) != (contract, profile.key, period):
-                        raise ValueError("The open draft belongs to different sites or a different month. Reopen the intended report before importing.")
-                    if working_revision != (current.revision if current else 0):
-                        raise ValueError("Another version was saved while you were working. Compare and accept that version using Save progress before adding this report. Your open draft and upload are preserved.")
-                    base = working_draft
-                elif prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
-                    # Bootstrap already includes this exact snapshot plus the
-                    # last acknowledged import. Appending the snapshot again
-                    # can resurrect its older text or duplicate edited tables.
-                    base = prior_import
                 from app.monthly_report_start_replay import merge_starting_drafts
+                if decisions:
+                    base = apply_replacements(base, draft, previous, decisions, **_conflict_context(current))
                 draft = merge_starting_drafts(base, draft, previous, verified=verified)
                 # Existing reviewed logos belong to the selected sites/contract.
                 # A starting report must not replace them with older artwork.
@@ -913,9 +1017,16 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                           "section_plans": [{k: v for k, v in plan.items() if k not in ("new_assets", "preserved_assets")} for plan in plans.values()]}
                 # Normalize dataclass table values for the JSON audit record.
                 review["section_plans"] = [dict(plan, tables={k: asdict(v) for k, v in plan.get("tables", {}).items()}) for plan in review["section_plans"]]
-                library.save_report_setup(profile, draft, path, review, assets=tuple(assets.items()),
-                                          expected_revision=state.revision if state else 0, actor=actor, confirmed=True,
-                                          snapshot_revision=current.revision if current else 0, source_draft=source_draft)
+                if decisions:
+                    review["single_image_replacements"] = dict(decisions)
+                guard = snapshot_guard(profile, period, current.revision if current else 0,
+                                       current.draft.fingerprint if current else "") if decisions else nullcontext()
+                with guard:
+                    library.save_report_setup(profile, draft, path, review, assets=tuple(assets.items()),
+                                              expected_revision=state.revision if state else 0, actor=actor, confirmed=True,
+                                              snapshot_revision=current.revision if current else 0, source_draft=source_draft)
+                decisions.clear()
+                st.session_state[incarnation_key] = uuid4().hex
                 st.session_state["report_resume_import"] = (contract, profile.key, period.key)
                 st.session_state["report_setup_done"] = profile.key
                 # Only durable success retires this exact source-review task.
@@ -930,5 +1041,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                         staged[0].cleanup()
             st.rerun()
         except (ValueError, OSError) as exc:
+            decisions.clear()
+            st.session_state[incarnation_key] = uuid4().hex
             st.error(str(exc))
     return True
