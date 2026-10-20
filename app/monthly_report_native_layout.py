@@ -101,8 +101,35 @@ def _clear_hyperlinks(element):
 def _set_text(element, value):
     """Change run payloads while retaining paragraph/run/text-box properties."""
     _clear_hyperlinks(element)
-    if _text(element) == value:
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    # The import inspector deliberately normalizes whitespace; it cannot tell
+    # whether this payload already has the requested native line breaks. Keep
+    # unchanged runs only when their exact text and controls really match.
+    current, controls = [], []
+    seen_paragraph = raw_controls = False
+    for node in element.iter():
+        if node.tag == qn("w:p"):
+            if seen_paragraph:
+                current.append("\n")
+            seen_paragraph = True
+        elif node.tag == qn("w:t"):
+            text = node.text or ""
+            current.append(text)
+            raw_controls = raw_controls or any(char in text for char in "\r\n\t")
+        elif node.getparent() is not None and node.getparent().tag == qn("w:r"):
+            if (node.tag == qn("w:cr") or (node.tag == qn("w:br")
+                    and node.get(qn("w:type"), "textWrapping") == "textWrapping")):
+                current.append("\n")
+                controls.append(node)
+            elif node.tag == qn("w:tab"):
+                current.append("\t")
+                controls.append(node)
+    if not raw_controls and "".join(current) == value:
         return
+    # Run tabs and wrapping breaks are old text, while paragraph tab stops and
+    # page/column breaks belong to the retained native layout.
+    for node in controls:
+        node.getparent().remove(node)
     texts = list(element.iter(qn("w:t")))
     if not texts:
         paragraph = element if element.tag == qn("w:p") else next(element.iter(qn("w:p")), None)
@@ -121,8 +148,18 @@ def _set_text(element, value):
                                            "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback")), None)
         groups.setdefault(branch, []).append(node)
     for group in groups.values():
-        group[0].text = value
+        parts = re.split(r"([\n\t])", value)
+        group[0].text = parts[0]
         group[0].set(qn("xml:space"), "preserve")
+        previous = group[0]
+        for control, text in zip(parts[1::2], parts[2::2]):
+            marker = OxmlElement("w:br" if control == "\n" else "w:tab")
+            previous.addnext(marker)
+            node = OxmlElement("w:t")
+            node.text = text
+            node.set(qn("xml:space"), "preserve")
+            marker.addnext(node)
+            previous = node
         for node in group[1:]:
             node.text = ""
 
