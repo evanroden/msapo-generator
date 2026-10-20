@@ -94,6 +94,24 @@ class WorkbookExclusion:
 
 
 @dataclass(frozen=True)
+class ProposedChange:
+    """A saved detail the workbook changes; the saved value stays unless accepted.
+
+    A contact change replaces ``before`` with ``after`` in its scope; an
+    address change (``before`` is None) sets that site's address.
+    """
+    id: str
+    site_key: str
+    applies_to: str
+    detail: str
+    saved: str
+    workbook: str
+    before: directory.DirectoryContact | None = None
+    after: directory.DirectoryContact | None = None
+    address: str = ""
+
+
+@dataclass(frozen=True)
 class ContractPlan:
     contract: str
     expected_revision: int
@@ -106,10 +124,11 @@ class ContractPlan:
     imported_site_count: int = 0
     imported_contact_count: int = 0
     new_contract: bool = False
+    changes: tuple[ProposedChange, ...] = ()
 
     @property
     def can_save(self):
-        return self.changed and not self.conflicts
+        return (self.changed or bool(self.changes)) and not self.conflicts
 
 
 @dataclass(frozen=True)
@@ -242,17 +261,24 @@ def _coalesce_incoming_contacts(incoming, context):
     return tuple(result), tuple(conflicts)
 
 
+def _contact_text(contact):
+    return " · ".join(value for value in (contact.name, contact.phone, contact.email) if value.strip()) or "(blank)"
+
+
 def _merge_contacts(existing, incoming, context):
-    """Fill omissions for the same person; conflicting populated fields block.
+    """Fill omissions for the same person; differing populated fields are proposed changes.
 
     Rows for one named person are coalesced first. Distinct incoming people
     are compared with saved contacts only, so people sharing a role are kept.
     When a role repeats, people are matched by name. A new named person is an
     addition only while every saved person in that role is still listed;
-    otherwise it may be a replacement and needs review.
+    otherwise it may be a replacement and needs review. A saved contact whose
+    name, phone or email differs is kept, with the workbook version returned
+    as a (saved, workbook) change to accept explicitly; a different person
+    never inherits the saved phone or email.
     """
     incoming, incoming_conflicts = _coalesce_incoming_contacts(incoming, context)
-    result, conflicts = list(existing), list(incoming_conflicts)
+    result, conflicts, changes = list(existing), list(incoming_conflicts), []
     saved = len(result)
     for contact in incoming:
         role = _identity(contact.role)
@@ -287,13 +313,16 @@ def _merge_contacts(existing, incoming, context):
             if not matching_id:
                 changed_fields.append("contact identity")
         if changed_fields:
-            conflicts.append(f"{context}: {contact.role} differs in {', '.join(changed_fields)}. Saved values were retained.")
+            same_person = old.name.strip() and _same("name", old.name, contact.name)
+            after = (replace(old, **{f: getattr(contact, f) or getattr(old, f) for f in ("phone", "email")},
+                             source=_source_union(old.source, contact.source)) if same_person else contact)
+            changes.append((old, after))
             continue
         filled = {f: getattr(old, f) or getattr(contact, f) for f in ("name", "phone", "email")}
         if all(filled[f] == getattr(old, f) for f in filled):
             continue  # a subset of the saved values adds nothing; keep it as saved
         result[i] = replace(old, **filled, source=_source_union(old.source, contact.source))
-    return tuple(result), tuple(conflicts)
+    return tuple(result), tuple(conflicts), tuple(changes)
 
 
 def _catalog_sites(contract):
@@ -341,8 +370,18 @@ def _owned(contract, site, aliases):
     return any(names & directory.facility_names(s) for s in (*(current.sites if current else ()), *_catalog_sites(contract)))
 
 
+def _change(contract, site_key, applies_to, detail, saved, workbook, before=None, after=None, address=""):
+    identity = hashlib.sha256(repr((contract, site_key, detail, saved, workbook)).encode()).hexdigest()[:16]
+    return ProposedChange(identity, site_key, applies_to, detail, saved, workbook, before, after, address)
+
+
+def _contact_changes(contract, site_key, applies_to, pairs):
+    return [_change(contract, site_key, applies_to, before.role, _contact_text(before), _contact_text(after), before, after)
+            for before, after in pairs]
+
+
 def _merge_sites(contract, existing, incoming, aliases):
-    result, conflicts = list(existing), []
+    result, conflicts, changes = list(existing), [], []
     catalog = _catalog_sites(contract)
     used = set()
     for site in incoming:
@@ -361,10 +400,12 @@ def _merge_sites(contract, existing, incoming, aliases):
             continue
         used.add(key)
         if old:
-            contacts, contact_conflicts = _merge_contacts(old.contacts, site.contacts, old.title)
+            contacts, contact_conflicts, contact_changes = _merge_contacts(old.contacts, site.contacts, old.title)
             conflicts.extend(contact_conflicts)
+            changes.extend(_contact_changes(contract, old.key, old.title, contact_changes))
             if old.address and site.address and _identity(old.address) != _identity(site.address):
-                conflicts.append(f"{old.title}: the workbook address differs from the saved address. Saved values were retained.")
+                changes.append(_change(contract, old.key, old.title, "Address", old.address, site.address,
+                                       address=site.address))
             titles = tuple(dict.fromkeys((*old.aliases, *site.aliases, site.title, target)))
             merged = replace(old, aliases=tuple(n for n in titles if _identity(n) != _identity(old.title)),
                              address=old.address or site.address, contacts=contacts)
@@ -374,7 +415,7 @@ def _merge_sites(contract, existing, incoming, aliases):
         else:
             # Source-based keys remain stable on exact re-import; later versions
             # match this explicit title/alias rather than manufacturing identities.
-            contacts, contact_conflicts = _merge_contacts((), site.contacts, site.title)
+            contacts, contact_conflicts, _ = _merge_contacts((), site.contacts, site.title)
             conflicts.extend(contact_conflicts)
             merged = replace(site, contacts=contacts, title=target, aliases=tuple(dict.fromkeys((*site.aliases, site.title)))
                              if _identity(target) != _identity(site.title) else site.aliases)
@@ -388,7 +429,7 @@ def _merge_sites(contract, existing, incoming, aliases):
             ReportProfile(contract, "directory-plan", "Directory validation", tuple(s.facility for s in result), "multi_site")
         except ValueError as exc:
             conflicts.append(str(exc))
-    return tuple(result), tuple(conflicts)
+    return tuple(result), tuple(conflicts), tuple(changes)
 
 
 def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
@@ -497,21 +538,40 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
             conflicts.append("This directory is archived. Restore and review it before importing new contacts.")
         old_sites = current.sites if current else ()
         old_contacts = current.contract_contacts if current else ()
-        sites, site_conflicts = _merge_sites(contract, old_sites, tuple(item["sites"]), site_maps.get(contract, {}))
-        contacts, contact_conflicts = _merge_contacts(old_contacts, tuple(item["contacts"]), contract + " (contract-wide)")
+        sites, site_conflicts, site_changes = _merge_sites(contract, old_sites, tuple(item["sites"]), site_maps.get(contract, {}))
+        contacts, contact_conflicts, contact_changes = _merge_contacts(old_contacts, tuple(item["contacts"]),
+                                                                       contract + " (contract-wide)")
         conflicts.extend((*site_conflicts, *contact_conflicts))
         changed = sites != old_sites or contacts != old_contacts
         entries.append(ContractPlan(contract, current.revision if current else 0, sites, contacts, tuple(item["sheets"]),
                        tuple(conflicts), changed, current is not None, len(item["sites"]),
-                       len(item["contacts"]) + sum(len(s.contacts) for s in item["sites"]), contract in proposed))
+                       len(item["contacts"]) + sum(len(s.contacts) for s in item["sites"]), contract in proposed,
+                       (*_contact_changes(contract, "", "Contract-wide", contact_changes), *site_changes)))
     return WorkbookPlan(workbook.sha256, tuple(entries), workbook.notices, tuple(exclusions), tuple(mappings))
 
 
-def save_workbook_plan(plan, raw, *, actor, confirmed, contracts=None, create=()):
+def _apply_changes(entry, accepted):
+    """The reviewed plan with the accepted workbook values in place of the saved ones."""
+    def contacts(values, key):
+        result = list(values)
+        for change in accepted:
+            if change.site_key == key and change.before is not None:
+                if change.before not in result:
+                    raise ValueError("A selected change no longer matches the preview. Refresh and review it again.")
+                result[result.index(change.before)] = change.after
+        return tuple(result)
+    addresses = {c.site_key: c.address for c in accepted if c.before is None}
+    sites = tuple(replace(site, contacts=contacts(site.contacts, site.key), address=addresses.get(site.key, site.address))
+                  for site in entry.sites)
+    return sites, contacts(entry.contract_contacts, "")
+
+
+def save_workbook_plan(plan, raw, *, actor, confirmed, contracts=None, create=(), accept=()):
     """Apply the reviewed snapshot; each successful contract has its own revision.
 
     A proposed new contract is created only when it is also named in ``create``;
-    confirming the import alone never adds a contract to the directory.
+    confirming the import alone never adds a contract to the directory. A
+    proposed change replaces a saved value only when its id is in ``accept``.
     """
     actor = library._confirmation(actor, confirmed)
     if hashlib.sha256(raw).hexdigest() != plan.workbook_sha256:
@@ -519,11 +579,13 @@ def save_workbook_plan(plan, raw, *, actor, confirmed, contracts=None, create=()
     selected = set(contracts) if contracts is not None else {e.contract for e in plan.entries}
     if selected - {e.contract for e in plan.entries} or set(create) - {e.contract for e in plan.entries if e.new_contract}:
         raise ValueError("An unreviewed contract was selected. Refresh and review the preview.")
+    if set(accept) - {c.id for e in plan.entries for c in e.changes}:
+        raise ValueError("An unreviewed change was selected. Refresh and review the preview.")
     with directory._batch_reads(raw):
-        return _save_selected_entries(plan, raw, actor, selected, set(create))
+        return _save_selected_entries(plan, raw, actor, selected, set(create), set(accept))
 
 
-def _save_selected_entries(plan, raw, actor, selected, create):
+def _save_selected_entries(plan, raw, actor, selected, create, accept):
     saved, unchanged, blocked, failed, revisions, not_created = [], [], [], [], [], []
     for entry in plan.entries:
         if entry.contract not in selected:
@@ -538,10 +600,12 @@ def _save_selected_entries(plan, raw, actor, selected, create):
             current = directory.load_directory(entry.contract, include_archived=True)
             if entry.expected_revision != (current.revision if current else 0):
                 raise library.RevisionConflict("This directory changed after the preview. Refresh and review it again.")
-            if not entry.changed:
+            accepted = [change for change in entry.changes if change.id in accept]
+            if not entry.changed and not accepted:
                 unchanged.append(entry.contract)
                 continue
-            result = directory.save_directory(entry.contract, entry.sites, contract_contacts=entry.contract_contacts,
+            sites, contacts = _apply_changes(entry, accepted)
+            result = directory.save_directory(entry.contract, sites, contract_contacts=contacts,
                 expected_revision=entry.expected_revision, actor=actor, confirmed=True, raw=raw,
                 source_sha256=plan.workbook_sha256, source_sheet=entry.source_sheets[0], action="workbook-import")
             # Verify the just-written durable head rather than assuming all

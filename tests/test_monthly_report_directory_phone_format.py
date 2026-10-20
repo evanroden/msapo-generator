@@ -38,11 +38,12 @@ def test_batch_reimport_of_a_reformatted_phone_is_unchanged_not_blocked(phone):
 
 
 @pytest.mark.parametrize("phone", ["202-555-0199", "202-555-0100 x12"])
-def test_a_different_number_or_new_extension_still_needs_review(phone):
+def test_a_different_number_or_new_extension_is_a_change_to_review(phone):
     import_and_save(resaved(0, _sheets()))
     plan, result = import_and_save(resaved(1, _sheets(phone)))
-    assert any("differs in phone" in conflict for conflict in plan.entries[0].conflicts)
-    assert result.blocked and _saved_phone() == "202-555-0100"
+    change, = plan.entries[0].changes
+    assert change.after.phone == phone
+    assert result.unchanged == ("Synthetic Contract",) and _saved_phone() == "202-555-0100"
 
 
 def test_rows_for_one_person_that_differ_only_in_phone_punctuation_combine():
