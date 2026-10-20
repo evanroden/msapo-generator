@@ -9,9 +9,6 @@ from app.monthly_report_editor import _signature
 
 
 def render_branding(field):
-    if st.button("Back to monthly reports", key="report_branding_back"):
-        st.session_state["report_branding_manage"] = False
-        st.rerun()
     st.subheader("Shared contract logos")
     st.write("These logos appear on contract cards and fill empty logos in new reports. Existing report logos stay as saved; managers can choose a replacement in Site information.")
     current = branding.load_branding()
@@ -31,11 +28,14 @@ def render_branding(field):
         st.caption(f"{len(logos)} logos · {sum(len(v.contracts) for v in logos)} contract mappings")
         shown = st.selectbox("Logo to inspect", [v.key for v in logos], format_func=lambda key: next(v.title for v in logos if v.key == key), key="report_branding_preview_" + digest)
         logo = next(v for v in logos if v.key == shown)
-        st.image(assets.get(logo.asset) or branding.read_logo(logo), width=360)
-        st.write("Contracts: " + (", ".join(logo.contracts) or "ENFRA report branding"))
+        try:
+            st.image(assets.get(logo.asset) or branding.read_logo(logo), width=360)
+        except branding.LogoArtworkError:
+            st.warning("This saved logo could not be read. Upload a reviewed replacement collection or restore a readable collection below. The original was kept unchanged.")
+        st.text("Contracts: " + (", ".join(logo.contracts) or "ENFRA report branding"))
         st.caption("Source reviewed " + logo.checked_on)
         if logo.source_note:
-            st.caption(logo.source_note)
+            st.text(logo.source_note)
         st.link_button("Official source", logo.source_url)
         st.link_button("Artwork source", logo.asset_url)
         with st.expander("All logos and contract mappings"):
@@ -46,7 +46,8 @@ def render_branding(field):
         if current:
             removed = {c for v in current.logos for c in v.contracts} - {c for v in logos for c in v.contracts}
             if removed:
-                st.warning("These contracts would lose their shared default: " + ", ".join(sorted(removed)))
+                st.warning("These contracts would lose their shared default:")
+                st.text(", ".join(sorted(removed)))
         confirmed = st.checkbox("I reviewed the logos, official sources and contract mappings and confirm this shared update", key="report_branding_confirm_" + _signature((digest, revision, actor)))
         if st.button("Save shared logos", disabled=not (actor.strip() and confirmed), type="primary", key="report_branding_save"):
             try:
@@ -61,8 +62,8 @@ def render_branding(field):
         with st.expander("Logo history and restore"):
             selected = st.selectbox("Saved collection", list(range(current.revision, 0, -1)), key="report_branding_history")
             old = branding.load_branding(selected)
-            st.caption(f"Version {old.revision} · {old.actor} · {old.updated_at} · {old.action}")
-            st.write(", ".join(v.title for v in old.logos))
+            st.text(f"Version {old.revision} · {old.actor} · {old.updated_at} · {old.action}")
+            st.text(", ".join(v.title for v in old.logos))
             confirm = st.checkbox("Restore this collection as a new shared version", key="report_branding_restore_ok_" + _signature((selected, revision, actor)))
             if st.button("Restore logo collection", disabled=not (confirm and actor.strip()), key="report_branding_restore"):
                 try:
