@@ -172,10 +172,15 @@ def _canonical(name, aliases, known):
 
 
 def worksheet_contract(sheet, *, contract_aliases=None):
-    """The catalog or saved contract a detail tab names exactly or by reviewed alias, else ""."""
+    """The contract a detail tab names exactly or by reviewed alias, else "".
+
+    A reviewed alias gives its canonical name even before that contract has a
+    catalog entry or saved directory, as batch import saves it.
+    """
     aliases = {_identity(k): v for k, v in (CONTRACT_ALIASES | (contract_aliases or {})).items()}
     known = {_identity(n): n for n in (*contract_catalog.contract_names(), *directory.directory_contracts())}
-    return known.get(_identity(_canonical(_sheet_title(sheet), aliases, known)), "")
+    title = _sheet_title(sheet)
+    return _canonical(title, aliases, known) if _identity(title) in aliases or _identity(title) in known else ""
 
 
 def site_alias_targets(contract):
@@ -342,33 +347,43 @@ def _people(site):
 def _repeated_sites(details):
     """Site columns whose heading also appears on another contract's worksheet.
 
-    Copied headings carry the same people (or none to tell them apart);
-    same-named sites that list different people belong to their own contracts.
+    A copy lists the same people, or one side lists none to tell them apart;
+    same-named sites whose people differ belong to their own contracts.
+    Columns are grouped by heading and people, so a heading repeated across
+    many worksheets stays cheap to check.
     """
     by_title = {}
     for sheet, contract, _, sites in details:
         for site in sites:
-            by_title.setdefault(_identity(site.title), []).append((sheet.name, contract, site))
+            by_title.setdefault(_identity(site.title), []).append((sheet.name, contract, site, frozenset(_people(site))))
     repeated = {}
     for entries in by_title.values():
-        for name, contract, site in entries:
-            others = [other for other, owner, copy in entries if owner != contract
-                      and not (_people(site) and _people(copy) and not _people(site) & _people(copy))]
+        if len({contract for _, contract, _, _ in entries}) < 2:
+            continue
+        sheets, every = {}, {}
+        for name, contract, _, people in entries:
+            sheets.setdefault(people, {}).setdefault(contract, {})[name] = None
+            every.setdefault(contract, {})[name] = None
+        for name, contract, site, people in entries:
+            pools = (sheets[people], sheets.get(frozenset(), {})) if people else (every,)
+            others = dict.fromkeys(other for pool in pools for owner, names in pool.items()
+                                   if owner != contract for other in names)
             if others:
-                repeated[site.source] = tuple(dict.fromkeys(others))
+                repeated[site.source] = tuple(others)
     return repeated
 
 
-def _owned(contract, site, aliases):
-    """The catalog, the saved directory or a reviewed site alias already places this site in the contract."""
+def _owned(current, contract, site, aliases):
+    """The catalog, the saved directory or a reviewed site alias already places this site in the contract.
+
+    An inactive saved site, and the catalog entry it uniquely retires, is not
+    evidence; this is the directory's own available-sites rule.
+    """
     if _identity(site.title) in aliases:
         return True
-    try:
-        current = directory.load_directory(contract, include_archived=True)
-    except (ValueError, library.LibraryError):
-        current = None
+    catalog = tuple(s.facility for s in _catalog_sites(contract))
     names = directory.facility_names(site)
-    return any(names & directory.facility_names(s) for s in (*(current.sites if current else ()), *_catalog_sites(contract)))
+    return any(names & directory.facility_names(f) for f in directory.available_sites(catalog, current))
 
 
 def _change(contract, site_key, applies_to, detail, saved, workbook, before=None, after=None, address=""):
@@ -439,7 +454,17 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
     known = {_identity(n): n for n in (*contract_catalog.contract_names(), *directory.directory_contracts())}
     site_maps = {contract: {_identity(k): v for k, v in mapping.items()}
                  for contract, mapping in (SITE_ALIASES | (site_aliases or {})).items()}
-    records, exclusions, mappings, proposed = {}, [], [], set()
+    records, exclusions, mappings, proposed, states = {}, [], [], set(), {}
+
+    def saved_state(contract):
+        # One read per contract: ownership evidence and the plan's expected
+        # revision come from the same directory state.
+        if contract not in states:
+            try:
+                states[contract] = directory.load_directory(contract, include_archived=True), None
+            except (ValueError, library.LibraryError) as exc:
+                states[contract] = None, exc
+        return states[contract]
 
     def bucket(contract):
         return records.setdefault(contract, {"sites": [], "contacts": [], "sheets": []})
@@ -517,7 +542,7 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
         kept = []
         for site in sites:
             others = repeated.get(site.source)
-            if others and not _owned(contract, site, site_maps.get(contract, {})):
+            if others and not _owned(saved_state(contract)[0], contract, site, site_maps.get(contract, {})):
                 exclusions.append(WorkbookExclusion(sheet.name, f"{site.title} also appears on worksheet {', '.join(others)}. "
                     "Copied worksheet headings are not proof of membership; confirm which contract owns this site, "
                     "then import it separately.", site.source.rsplit("!", 1)[-1]))
@@ -530,11 +555,9 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
     entries = []
     for contract, item in sorted(records.items(), key=lambda pair: pair[0].casefold()):
         conflicts = []
-        try:
-            current = directory.load_directory(contract, include_archived=True)
-        except (ValueError, library.LibraryError) as exc:
-            current = None
-            conflicts.append(str(exc))
+        current, error = saved_state(contract)
+        if error:
+            conflicts.append(str(error))
         if current and current.archived:
             conflicts.append("This directory is archived. Restore and review it before importing new contacts.")
         old_sites = current.sites if current else ()

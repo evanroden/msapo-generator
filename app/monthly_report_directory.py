@@ -751,15 +751,23 @@ def sheet_findings(workbook, selected):
     return tuple(findings)
 
 
+_PHONE = re.compile(r"(?P<number>\+?\(?\d[\d\s().\-/]*\d\)?)(?:\s*(?:ext\.?|extension|x)\s*(?P<extension>\d+))?", re.I)
+
+
 def _phone_identity(value):
-    """A phone number's digits and extension; text that is not a number keeps its spelling."""
-    number, extension = re.fullmatch(r"(.*?)(?:\s*(?:ext\.?|extension|x)\s*(\d+))?", value.strip(), re.I | re.S).groups()
-    digits = re.sub(r"\D", "", number)
-    if len(digits) == 11 and digits.startswith("1"):
-        digits = digits[1:]
-    if len(digits) < 7:
-        return " ".join(value.casefold().split())
-    return digits + ("x" + extension if extension else "")
+    """A phone value with each number reduced to its digits and extension.
+
+    Only phone punctuation and extension syntax are ignored: a note such as
+    "(after hours)" stays part of the value, and a run of fewer than seven
+    digits keeps its spelling.
+    """
+    def digits(match):
+        found = re.sub(r"\D", "", match.group("number"))
+        if len(found) < 7:
+            return match.group()
+        found = found[1:] if len(found) == 11 and found.startswith("1") else found
+        return found + ("x" + match.group("extension") if match.group("extension") else "")
+    return " ".join(_PHONE.sub(digits, value.strip()).casefold().split())
 
 
 def same_contact_value(field, value, other):
