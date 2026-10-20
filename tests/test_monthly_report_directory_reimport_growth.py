@@ -10,7 +10,7 @@ import pytest
 
 from app import monthly_report_directory as directory
 from app import monthly_report_directory_batch as batch
-from test_monthly_report_directory_batch import detail, summary, workbook
+from test_monthly_report_directory_batch import detail, proposed, summary, workbook
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +31,7 @@ def resaved(variant, sheets=None):
 
 def import_and_save(raw):
     plan = batch.prepare_workbook(directory.inspect_workbook(raw))
-    return plan, batch.save_workbook_plan(plan, raw, actor="Synthetic Editor", confirmed=True)
+    return plan, batch.save_workbook_plan(plan, raw, actor="Synthetic Editor", confirmed=True, create=proposed(plan))
 
 
 def test_metadata_only_resaves_are_unchanged_and_never_exhaust_the_record_budget():

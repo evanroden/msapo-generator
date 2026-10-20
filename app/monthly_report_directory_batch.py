@@ -105,6 +105,7 @@ class ContractPlan:
     existing: bool = False
     imported_site_count: int = 0
     imported_contact_count: int = 0
+    new_contract: bool = False
 
     @property
     def can_save(self):
@@ -139,6 +140,7 @@ class BatchSaveResult:
     blocked: tuple[tuple[str, str], ...] = ()
     failed: tuple[tuple[str, str], ...] = ()
     revisions: tuple[tuple[str, int], ...] = ()
+    not_created: tuple[str, ...] = ()
 
 
 def _sheet_title(sheet):
@@ -343,7 +345,7 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
     known = {_identity(n): n for n in (*contract_catalog.contract_names(), *directory.directory_contracts())}
     site_maps = {contract: {_identity(k): v for k, v in mapping.items()}
                  for contract, mapping in (SITE_ALIASES | (site_aliases or {})).items()}
-    records, exclusions, mappings = {}, [], []
+    records, exclusions, mappings, proposed = {}, [], [], set()
 
     def bucket(contract):
         return records.setdefault(contract, {"sites": [], "contacts": [], "sheets": []})
@@ -381,6 +383,10 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
             elif not column.contacts:
                 exclusions.append(WorkbookExclusion(sheet.name, "No populated contact records in this contract column.", coordinate))
             else:
+                # A heading that is not a catalog, saved or reviewed-alias
+                # contract is only a proposal; saving never creates it implicitly.
+                if _identity(contract) not in known and _identity(column.title) not in aliases:
+                    proposed.add(contract)
                 known.setdefault(_identity(contract), contract)
                 record(contract, sheet, contacts=column.contacts)
                 targets.append((coordinate, contract))
@@ -439,26 +445,33 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
         changed = sites != old_sites or contacts != old_contacts
         entries.append(ContractPlan(contract, current.revision if current else 0, sites, contacts, tuple(item["sheets"]),
                        tuple(conflicts), changed, current is not None, len(item["sites"]),
-                       len(item["contacts"]) + sum(len(s.contacts) for s in item["sites"])))
+                       len(item["contacts"]) + sum(len(s.contacts) for s in item["sites"]), contract in proposed))
     return WorkbookPlan(workbook.sha256, tuple(entries), workbook.notices, tuple(exclusions), tuple(mappings))
 
 
-def save_workbook_plan(plan, raw, *, actor, confirmed, contracts=None):
-    """Apply the reviewed snapshot; each successful contract has its own revision."""
+def save_workbook_plan(plan, raw, *, actor, confirmed, contracts=None, create=()):
+    """Apply the reviewed snapshot; each successful contract has its own revision.
+
+    A proposed new contract is created only when it is also named in ``create``;
+    confirming the import alone never adds a contract to the directory.
+    """
     actor = library._confirmation(actor, confirmed)
     if hashlib.sha256(raw).hexdigest() != plan.workbook_sha256:
         raise ValueError("The uploaded workbook changed. Read it again and review a new preview.")
     selected = set(contracts) if contracts is not None else {e.contract for e in plan.entries}
-    if selected - {e.contract for e in plan.entries}:
+    if selected - {e.contract for e in plan.entries} or set(create) - {e.contract for e in plan.entries if e.new_contract}:
         raise ValueError("An unreviewed contract was selected. Refresh and review the preview.")
     with directory._batch_reads(raw):
-        return _save_selected_entries(plan, raw, actor, selected)
+        return _save_selected_entries(plan, raw, actor, selected, set(create))
 
 
-def _save_selected_entries(plan, raw, actor, selected):
-    saved, unchanged, blocked, failed, revisions = [], [], [], [], []
+def _save_selected_entries(plan, raw, actor, selected, create):
+    saved, unchanged, blocked, failed, revisions, not_created = [], [], [], [], [], []
     for entry in plan.entries:
         if entry.contract not in selected:
+            continue
+        if entry.new_contract and entry.contract not in create:
+            not_created.append(entry.contract)
             continue
         if entry.conflicts:
             blocked.append((entry.contract, " ".join(entry.conflicts)))
@@ -484,4 +497,5 @@ def _save_selected_entries(plan, raw, actor, selected):
             blocked.append((entry.contract, str(exc)))
         except (ValueError, OSError, library.LibraryError) as exc:
             failed.append((entry.contract, str(exc)))
-    return BatchSaveResult(tuple(saved), tuple(unchanged), tuple(blocked), tuple(failed), tuple(revisions))
+    return BatchSaveResult(tuple(saved), tuple(unchanged), tuple(blocked), tuple(failed), tuple(revisions),
+                           tuple(not_created))
