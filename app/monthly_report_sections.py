@@ -20,6 +20,8 @@ class ImportSection:
 
 
 def is_formatting(item):
+    if item.kind == "native_layout":
+        return True  # Retained native geometry; extracted text/images stay separate.
     if item.note in ("Native divider artwork", "Native section heading") and item.kind in ("text", "unsupported"):
         return True
     if item.kind != "text":

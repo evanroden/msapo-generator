@@ -550,6 +550,8 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         if draft is not None:
             from html import escape
             st.markdown('<span id="' + escape(editor_anchor, quote=True) + '"></span>', unsafe_allow_html=True)
+        from app.monthly_report_native_loading import reserve_text_area
+        reserve_text_area(editor_key, 140)
         st.text_area(
             spec.key.replace("_", " ").capitalize(),
             # The native protocol default must agree with the actual draft.
@@ -956,7 +958,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         contract = choose_contract(last_contract, field)
         if contract:
             period = month_selector(field, "report", suggested_period(operator_today(browser_timezone)))
-            identity_slot = st.empty()
+            # Keep the prior identity line while the native site choices are
+            # being read. st.empty() clears it immediately on every rerun,
+            # shifting checkbox rows during a second pointer press.
+            identity_slot = st.container(key="monthly_report_identity_sites")
     if not contract:
         return
     profiles = library.list_profiles(contract)
@@ -971,11 +976,9 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         candidate, existing = select_sites(contract, profiles, remembered, field, completed_setup,
             render_details_action=lambda candidate, existing: _render_report_details_action(
                 candidate, existing, period, browser_token))
+    identity_slot.caption(identity_summary(existing or candidate) if candidate else "Select report sites.")
     if not candidate:
         return
-    with identity_slot.container():
-        with st.container(key="monthly_report_identity_sites"):
-            st.caption(identity_summary(existing or candidate))
     if not existing:
         starting_choice(candidate, profiles, period, "", field)
         return
@@ -1003,6 +1006,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         # A replacement import/restart must not inherit unacknowledged text
         # callbacks even when the same sites, month and widget key are reused.
         st.session_state[prefix + "_rich_text_epoch"] = uuid4().hex
+        st.session_state.pop(prefix + "_pending_browser_save", None)
         active = None
         active_generation = ""
         if recovery_available:
@@ -1082,6 +1086,18 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         st.session_state[prefix + "_active_generation"] = active_generation
         if recovered_work:
             recovery_notice.success("Recovered your unfinished changes from this browser. Completed report history is unchanged.")
+    from app import monthly_report_recovery_save as recovery_save
+    recovery_scope = (contract, selected, period.key, st.session_state[prefix + "_rich_text_epoch"],
+                      st.session_state.get("_monthly_qa_generation", ""))
+    recovery_ack_error = None
+    recovery_acknowledged = None
+    if recovery_available:
+        try:
+            recovery_acknowledged = recovery_save.acknowledge(st.session_state, prefix, recovery_scope, browser_token)
+        except (library.LibraryError, OSError) as exc:
+            # Keep rendering delivered edits; the ordinary save-status branch
+            # below reports this exact failure without adopting a newer head.
+            recovery_ack_error = exc
     from app.monthly_report_setup import normalize_mbcx
     draft, removed_prices = client_table_draft(complete_guided_sections(normalize_mbcx(refresh_profile_identity(st.session_state[draft_key], profile))))
     if removed_prices:
@@ -1156,6 +1172,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # one fixed root position so native section controls below it retain their
     # delta paths while that first source is committed and reviewed.
     with st.container(key=prefix + "_source_metadata_corrections"):
+        # This stable sibling precedes the workspace so native widget paths
+        # do not move when a source appears. Bind navigation to the same
+        # hashed report identity used by workspace_layout.workspace.
+        from hashlib import sha256
+        st.markdown('<span class="enfra-source-correction-owner" data-report-identity="' +
+                    sha256(prefix.encode()).hexdigest()[:24] + '" aria-hidden="true"></span>',
+                    unsafe_allow_html=True)
         if draft.sources:
             from app.monthly_report_source_details import detail_problems
             from app.monthly_report_upload_ui import render_source_details
@@ -1194,6 +1217,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.session_state[prefix + "_evidence"] = tuple(
                     replace(content, source=corrections.get(content.source.id, content.source))
                     for content in st.session_state.get(prefix + "_evidence", ()))
+                # A metadata correction does not restore missing original bytes.
+                # Keep the corrected record in that retained set as well, or the
+                # next source renderer would restore its pre-correction metadata.
+                st.session_state[prefix + "_unavailable_sources"] = tuple(
+                    corrections.get(source.id, source)
+                    for source in st.session_state.get(prefix + "_unavailable_sources", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
@@ -1366,16 +1395,13 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
             save_status.shared_saved(snapshot.revision)
         elif recovery_available:
             try:
+                if recovery_ack_error is not None:
+                    raise recovery_ack_error
                 previous_sequence = st.session_state.get(prefix + "_active_sequence", 0)
-                recovered = active_work.save(browser_token, draft,
-                    expected_revision=previous_sequence,
-                    base_snapshot_revision=st.session_state[prefix + "_revision"],
-                    expected_generation=st.session_state.get(prefix + "_active_generation", ""),
-                    assets=assets)
-                st.session_state[prefix + "_active_sequence"] = recovered.revision
-                st.session_state[prefix + "_active_generation"] = recovered.generation
+                recovered = recovery_save.save(st.session_state, prefix, recovery_scope,
+                                               browser_token, draft, assets)
                 save_status.browser_saved(recovered.updated_at)
-                if recovered.revision != previous_sequence:
+                if recovered.revision != previous_sequence or recovery_acknowledged is not None:
                     record_report_preferences(browser_token, contract, selected)
                     if prepared.strip():
                         record_report_preparer(browser_token, contract, selected, prepared)
@@ -1434,8 +1460,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
+        from app.monthly_report_source_review_ui import render_source_check
         for check in checks:
-            (st.error if check.blocking else st.warning)(review_message(check, draft))
+            if not render_source_check(check, draft, prefix):
+                (st.error if check.blocking else st.warning)(review_message(check, draft))
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:
             warnings_ok = st.checkbox("I checked these specific warnings", key=prefix + "_warnings_" + draft.fingerprint)
