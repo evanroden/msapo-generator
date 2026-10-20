@@ -752,16 +752,20 @@ def sheet_findings(workbook, selected):
 
 
 def _phone_identity(value):
-    """A phone number's digits and extension; text that is not a number keeps its spelling."""
+    """A phone value with each number reduced to its digits, plus any extension.
+
+    Only phone punctuation is ignored: a note such as "(after hours)" stays
+    part of the value, and a run of fewer than seven digits keeps its spelling.
+    """
     number, extension = re.fullmatch(r"(.*?)(?:\s*(?:ext\.?|extension|x)\s*(\d+))?", value.strip(), re.I | re.S).groups()
-    if not re.fullmatch(r"[\d\s+().\-/]*", number):
-        return " ".join(value.casefold().split())  # a note such as "(after hours)" is information
-    digits = re.sub(r"\D", "", number)
-    if len(digits) == 11 and digits.startswith("1"):
-        digits = digits[1:]
-    if len(digits) < 7:
-        return " ".join(value.casefold().split())
-    return digits + ("x" + extension if extension else "")
+
+    def digits(match):
+        found = re.sub(r"\D", "", match.group())
+        if len(found) < 7:
+            return match.group()
+        return found[1:] if len(found) == 11 and found.startswith("1") else found
+    text = re.sub(r"\+?\(?\d[\d\s().\-/]*\d", digits, number)
+    return " ".join(text.casefold().split()) + ("x" + extension if extension else "")
 
 
 def same_contact_value(field, value, other):

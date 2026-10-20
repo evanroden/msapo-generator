@@ -376,16 +376,14 @@ def _repeated_sites(details):
 def _owned(current, contract, site, aliases):
     """The catalog, the saved directory or a reviewed site alias already places this site in the contract.
 
-    An inactive saved site, and the catalog entry it retires, is not evidence.
+    An inactive saved site, and the catalog entry it uniquely retires, is not
+    evidence; this is the directory's own available-sites rule.
     """
     if _identity(site.title) in aliases:
         return True
-    saved = current.sites if current else ()
-    retired = set().union(*(directory.facility_names(s) for s in saved if not s.active))
-    candidates = (*(s for s in saved if s.active),
-                  *(s for s in _catalog_sites(contract) if not directory.facility_names(s) & retired))
+    catalog = tuple(s.facility for s in _catalog_sites(contract))
     names = directory.facility_names(site)
-    return any(names & directory.facility_names(s) for s in candidates)
+    return any(names & directory.facility_names(f) for f in directory.available_sites(catalog, current))
 
 
 def _change(contract, site_key, applies_to, detail, saved, workbook, before=None, after=None, address=""):

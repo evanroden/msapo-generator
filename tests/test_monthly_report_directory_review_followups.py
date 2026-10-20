@@ -129,3 +129,24 @@ def test_a_saved_site_wins_over_the_catalog_site_in_single_sheet_import():
     aliases = {"synth raw site": "Synthetic Canonical Site"}
     assert _suggested_site(column, (saved, catalog), aliases, {"saved-raw"}) == ("Synthetic Canonical Site", saved)
     assert _suggested_site(column, (saved, catalog), aliases)[1] is None  # unknown saved state stays ambiguous
+
+
+@pytest.mark.parametrize(("saved", "incoming", "same"), [
+    ("202-555-0100 (after hours)", "(202) 555-0100 (after hours)", True),
+    ("202-555-0100 (after hours)", "202-555-0100 (main desk)", False),
+])
+def test_a_shared_phone_note_still_ignores_number_punctuation(saved, incoming, same):
+    assert directory.same_contact_value("phone", saved, incoming) is same
+
+
+@pytest.mark.parametrize(("aliases", "owned"), [
+    (("Synthetic North Campus", "Synthetic North Annex"), True),  # ambiguous: the catalog sites stay available
+    (("Synthetic North Campus",), False),  # uniquely retired
+])
+def test_only_a_uniquely_retired_catalog_site_loses_ownership(monkeypatch, aliases, owned):
+    monkeypatch.setattr(batch.contract_catalog, "sites_for_contract",
+                        lambda contract: ["Synthetic North Campus", "Synthetic North Annex"])
+    state = directory.save_directory("Synthetic Contract", (directory.DirectorySite(
+        "old", "Synthetic Old North", aliases, active=False),), expected_revision=0, actor="Synthetic Editor", confirmed=True)
+    column = directory.DirectorySite("column", "Synthetic North Campus")
+    assert batch._owned(state, "Synthetic Contract", column, {}) is owned
