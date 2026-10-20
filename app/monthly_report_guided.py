@@ -744,8 +744,10 @@ def client_table_draft(draft):
     return replace(draft, sections=tuple(sections), blocks=tuple(blocks.values())), tuple(dict.fromkeys(removed))
 
 
-def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field):
+def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field,
+                            *, capture_baselines=None):
     """Edit one report section without splitting standing and monthly content."""
+    capture_baselines = blocks if capture_baselines is None else capture_baselines
     blocks = _capture_pending_rich_text_edits(prefix, blocks)
     # Reserve the writing position before source tools. Populate it after
     # source callbacks have been reconciled so one native editor sees the
@@ -765,10 +767,15 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             matches = (request["contract"] == draft.profile.contract
                        and request["profile"] == draft.profile.key
                        and request["month"] == draft.period.key
+                       and request.get("scope") == _rich_text_scope(prefix)
                        and any(source.id == request["source_id"]
                                and request["reference"].split(":")[-1] == source.fingerprint
                                for source in draft.sources))
-            if (matches and request["expected"] == current.fingerprint
+            before_capture = capture_baselines.get("activity_summary", current)
+            captured_expected = (request["expected"] == before_capture.fingerprint
+                                 and current != before_capture
+                                 and _pending_rich_text_edit(prefix, before_capture) == current)
+            if (matches and (request["expected"] == current.fingerprint or captured_expected)
                     and not _pending_rich_text_edit(prefix, current)):
                 if request["text"] not in current.text:
                     updated = replace(current, source="This month",
@@ -777,6 +784,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                                                         *([request["scope_receipt"]] if request.get("scope_receipt") else [])))),
                         reviewed_fingerprint="", client_reviewed_fingerprint="")
                     blocks["activity_summary"] = updated
+                    _advance_rich_text_receipt(prefix, current, updated)
                     _forget_block_widgets(prefix, {"activity_summary"})
             else:
                 st.warning("The report changed after you reviewed the work-order totals. "
@@ -1181,6 +1189,7 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_asset_review import refresh_asset_source_context
     from app.monthly_report_section_preview_ui import render_section_preview
     blocks = {b.key: refresh_asset_source_context(b, draft.sources) for b in draft.blocks}
+    capture_baselines = blocks
     captured = _capture_pending_rich_text_edits(prefix, blocks)
     if captured is not blocks:
         blocks = captured
@@ -1331,7 +1340,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                 st.caption(section_help(section.key).guidance)
                 editor_column, preview_column = workspace_columns("monthly_" + section.key)
                 with editor_column:
-                    draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field)
+                    draft, blocks = _render_ordered_section(draft, section, blocks, specs, state, prefix, assets, field,
+                                                           capture_baselines=capture_baselines)
                 with preview_column:
                     if section.key in {"organization", "subcontractors", "training"} and not prepared.strip():
                         st.caption("Saved team and contact pages are kept. "

@@ -163,22 +163,31 @@ _ACTIVITY_LABEL = re.compile(
     r"(?i)^\s*(?:vendor|contractor|service company|client|customer|technician|"
     r"prepared by|phone|telephone|e-?mail|fax|(?:service|report|completed|work|inspection) date|"
     r"job(?: number)?|work order)\s*[:=]")
+_ACTIVITY_CONTINUATION = re.compile(
+    r"(?i)^\s*(?:(?:did|does|do|would|could|will|had|has|have)\s+not\b|"
+    r"can(?:not|\s+not)\b|not\s+(?:yet|been|returned|completed|started)\b|"
+    r"failed\b|locked\s+out\b|out\s+of\s+service\b|"
+    r"under\s+(?:observation|repair)\b|"
+    r"(?:and|but|because|although|while|with|without|at|after|before)\b)")
 
 
 def _logical_activity_lines(lines):
     """Rejoin physical wraps before deciding whether a passage is useful.
 
-    A short negative tail is part of its preceding event. Blank separators,
-    bullets, event headers, and metadata labels remain boundaries; joining
-    never changes words or turns a separate bullet into another event's work.
+    A dependent continuation, including an unfinished-service tail, belongs to
+    its preceding event. Missing punctuation alone is not continuation evidence:
+    independent PDF lines, Word rows and email/TXT entries remain separate.
+    Blank separators, bullets, metadata and price lines are always boundaries.
     """
     result, pending = [], ""
     for original in lines:
         line = original.strip()
         boundary = bool(_ACTIVITY_BULLET.match(line) or _ACTIVITY_LABEL.match(line)
-                        or _EVENT_START.match(line))
+                        or _EVENT_START.match(line) or contains_price(line))
         ended = bool(re.search(r"[.!?][\"')\]]*$", pending))
-        if pending and (not line or boundary or ended or _ACTIVITY_LABEL.match(pending)):
+        continuation = bool(_ACTIVITY_CONTINUATION.match(line))
+        if pending and (not line or boundary or ended or not continuation
+                        or _ACTIVITY_LABEL.match(pending) or contains_price(pending)):
             result.append(pending)
             pending = ""
         if line:
@@ -327,7 +336,8 @@ _ACTIVITY_PHONE = re.compile(
     r"(?<!\w)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}(?!\w)")
 _ACTIVITY_ID_LABEL = re.compile(
     r"(?i)\b(?:asset|serial|model|tag|identifier|part|work order|job)"
-    r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*$")
+    r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*"
+    r"(?:[A-Za-z][A-Za-z0-9/_-]{0,63}[-_/])?$")
 _ACTIVITY_PHONE_LABEL = re.compile(
     r"(?i)\b(?:phone|telephone|tel|fax|mobile|call)\b[^;\n]*$")
 
@@ -384,7 +394,7 @@ def _csv_activity_entries(content):
             narrative = _activity_text(cell(action))
             if _date_only_source_label(narrative) or not useful_activity(narrative) or contains_price(narrative):
                 continue
-            status_text = cell(status)
+            status_text = _activity_text(cell(status))
             if status_text and not contains_price(status_text):
                 narrative += " (Status: " + status_text + ")"
             date_text = cell(dated) if dated is not None else content.source.service_date

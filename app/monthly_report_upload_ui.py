@@ -1261,12 +1261,14 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                               facility_choice(current_source, profile) in {site.key for site in profile.facilities}))
                 if not confirmed:
                     st.caption("Choose this file's sites in Source details before inserting its totals.")
+            action_scope = _rich_text_scope(prefix)
             def accept_workorders(report=report, profile=profile, period=period, previous=previous, prefix=prefix,
-                                  current_source=current_source):
+                                  current_source=current_source, action_scope=action_scope):
                 from app.monthly_report_source_scope import contribution_receipt
                 st.session_state[prefix + "_pending_accepted_workorders"] = {
                     "contract": profile.contract, "profile": profile.key,
                     "month": period.key, "expected": previous.fingerprint,
+                    "scope": action_scope,
                     "source_id": report.source_id, "reference": report.reference,
                     "text": report.text,
                     "scope_receipt": contribution_receipt(report.reference, profile, period,
@@ -1274,7 +1276,7 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                                                           prior_block=previous),
                 }
             st.button("Add totals to summary",
-                      key=local_key + "_accept_work_orders_" + report.source_id[:16],
+                      key=local_key + "_accept_work_orders_" + report.source_id[:16] + "_" + action_scope,
                       on_click=accept_workorders, disabled=not confirmed)
 
     def render_current_source_details():
