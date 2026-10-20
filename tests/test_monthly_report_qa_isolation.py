@@ -374,6 +374,8 @@ def test_complete_synthetic_qa_fixture_generates_native_word_and_application_pdf
                 draft.profile.key, draft.period).draft.sources if item.id == source.id).scope_review
         result = generate_report(draft, acknowledged_fingerprint=draft.fingerprint)
         assert result.docx and result.pdf, result.pdf_error
+        (tmp_path / f"{route}-report.docx").write_bytes(result.docx)
+        (tmp_path / f"{route}-report.pdf").write_bytes(result.pdf)
         doc = Document(BytesIO(result.docx))
         cells = "\\n".join(cell.text for table in doc.tables for row in table.rows
                              for cell in row.cells)

@@ -50,8 +50,11 @@ def test_four_current_parts_need_no_keep_or_change_questions():
         "#### Team chart", "#### Business-hours outage procedure",
         "#### After-hours outage procedure", "#### Facility contacts",
     }
-    assert not at.text_area and not at.checkbox and not at.radio and not at.selectbox
-    assert len(at.button) == 4
+    assert [w.label for w in at.text_area] == ["Notes included with this part"]
+    assert not next(e for e in at.expander if e.label == "Contact notes").proto.expanded
+    assert not at.text_input and not at.checkbox and not at.radio and not at.selectbox
+    assert {b.label for b in at.button} >= {"Edit contact", "Add contact"}
+    assert not any(b.label == "Edit contacts" for b in at.button)
     procedures = next(item for item in at.expander if item.label == "ENFRA outage procedures")
     assert procedures.proto.expanded is False
     assert {item.label for item in procedures.button} == {
@@ -60,7 +63,7 @@ def test_four_current_parts_need_no_keep_or_change_questions():
     assert at.session_state["editor_calls"] == []
     assert at.session_state["blocks"] == at.session_state["original"]
     assert any("1 table row · 1 page" in c.value for c in at.caption)
-    assert any(c.value == "1 contact" for c in at.caption)
+    assert any(c.value == "Synthetic Person · Operator" for c in at.markdown)
     assert not any("Current report content" in c.value for c in at.caption)
     # Duplicate or blank headings must not erase a custom imported cell.
     assert any("Keep this custom cell" in frame.value.to_string() for frame in at.dataframe)
@@ -72,7 +75,7 @@ def test_opening_and_closing_editor_is_not_a_data_mutation():
     click(at, "Edit chart")
     assert not at.exception
     assert {key: block.fingerprint for key, block in at.session_state["blocks"].items()} == initial
-    click(at, "Done")
+    click(at, "Close editing")
     assert not at.exception
     assert {key: block.fingerprint for key, block in at.session_state["blocks"].items()} == initial
 
@@ -92,10 +95,10 @@ def test_after_hours_change_preserves_other_three_parts_and_provenance():
     click(at, "Edit after-hours outage procedure")
     assert not at.exception
     assert at.session_state["editor_calls"] == ["after_hours_workflow"]
-    assert [w.label for w in at.text_area] == ["Edit after_hours_workflow"]
-    at.text_area[0].input("Call the updated on-call operator.").run()
-    click(at, "Done")
-    assert not at.text_area
+    assert [w.label for w in at.text_area if w.label.startswith("Edit ")] == ["Edit after_hours_workflow"]
+    next(w for w in at.text_area if w.label == "Edit after_hours_workflow").input("Call the updated on-call operator.").run()
+    click(at, "Close editing")
+    assert not any(w.label.startswith("Edit ") for w in at.text_area)
     blocks = at.session_state["blocks"]
     original = at.session_state["original"]
     assert blocks["after_hours_workflow"].text == "Call the updated on-call operator."
@@ -109,7 +112,7 @@ def test_changing_another_part_closes_previous_editor():
     click(at, "Edit after-hours outage procedure")
     click(at, "Edit business-hours outage procedure")
     assert at.session_state["editor_calls"] == ["business_hours_workflow"]
-    assert [w.label for w in at.text_area] == ["Edit business_hours_workflow"]
+    assert [w.label for w in at.text_area if w.label.startswith("Edit ")] == ["Edit business_hours_workflow"]
     assert at.session_state["blocks"] == at.session_state["original"]
 
 
@@ -120,13 +123,13 @@ def test_opening_complex_imported_chart_never_converts_it():
     assert "Build an editable team chart (optional)" in [expander.label for expander in at.expander]
     assert at.session_state["blocks"]["org_chart"] == at.session_state["original"]["org_chart"]
     assert not at.session_state["blocks"]["org_chart"].org_nodes
-    click(at, "Done")
+    click(at, "Close editing")
     assert at.session_state["blocks"] == at.session_state["original"]
 
 
 def test_editing_one_contact_retains_notes_and_other_parts():
     at = app()
-    click(at, "Edit contacts")
+    click(at, "Edit contact")
     assert not at.exception
     assert at.session_state["blocks"] == at.session_state["original"]
     next(w for w in at.text_input if w.label == "Name").input("Updated Synthetic Person").run()
@@ -208,6 +211,6 @@ st.session_state.setdefault("original", original)''',
     )
     at = AppTest.from_string(script).run()
     assert not at.exception
-    assert any(c.value == "No entries recorded" for c in at.caption)
+    assert any(c.value == "No contacts added" for c in at.caption)
     # Other organization parts legitimately include notes; this deliberately
     # empty contact table must nevertheless have a truthful empty status.

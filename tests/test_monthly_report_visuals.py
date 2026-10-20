@@ -248,7 +248,9 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
         b for b in app.button if b.label == "Add contact" and "contact_matrix" in b.key
     ).click().run()
     emails = [w for w in app.text_input if w.label == "Email"]
-    emails[1].set_value("retained@example.invalid").run()
+    assert len(emails) == 1, "Only the newly added contact is open for editing"
+    emails[0].set_value("retained@example.invalid").run()
+    assert not app.exception
     next(b for b in app.button if b.label == "Remove contact").click().run()
     assert (
         next(w for w in app.text_input if w.label == "Email").value
@@ -261,7 +263,8 @@ def test_org_and_contacts_are_editable_and_survive_navigation(monkeypatch, tmp_p
     assert [
         w.value for w in app.text_input if w.label == "Name" and "_org_person_" in w.key
     ] == ["Synthetic Lead", "Synthetic Technician"]
-    next(b for b in app.button if b.label == "Edit contacts").click().run()
+    next(b for b in app.button if b.label == "Close editing" and "contact_matrix" in b.key).click().run()
+    next(b for b in app.button if b.label == "Edit contact").click().run()
     assert (
         next(w for w in app.text_input if w.label == "Email").value
         == "retained@example.invalid"
