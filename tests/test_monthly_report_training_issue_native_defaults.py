@@ -206,7 +206,7 @@ def test_retained_issue_edit_never_clears_a_native_editor_ancestor(
             value.run()
 
 
-def test_guided_remove_keeps_same_packet_text_then_retires_controls_after_commit(monkeypatch, tmp_path):
+def test_guided_remove_and_include_again_refresh_controls_after_committing_same_packet_text(monkeypatch, tmp_path):
     from app import monthly_report_active_work as active
     from app import monthly_report_library as library
     from app import monthly_report_qa_fixture as fixture
@@ -229,8 +229,8 @@ def test_guided_remove_keeps_same_packet_text_then_retires_controls_after_commit
     with qa.isolated(ACTOR_COOKIE):
         shared = library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
 
-    def control(kind, label):
-        return next(widget for widget in kind if widget.label == label and target.key in widget.key)
+    def control(kind, label, issue_key=target.key):
+        return next(widget for widget in kind if widget.label == label and issue_key in widget.key)
 
     control(value.text_area, "Issue description").set_value("Delivered description before removal.")
     control(value.text_area, "Issue update").set_value("Delivered evidence update before removal.")
@@ -252,6 +252,34 @@ def test_guided_remove_keeps_same_packet_text_then_retires_controls_after_commit
     with qa.isolated(ACTOR_COOKIE):
         assert active.load(ACTOR_COOKIE, fixture.CONTRACT, fixture.profile().key, fixture.PERIOD).draft == after
         assert library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD) == shared
+
+    assert [widget.label for widget in value.expander
+            if widget.label.startswith("Removed from this report")] == ["Removed from this report (1)"]
+    revised_sibling = replace(sibling, text="Delivered sibling description during restore.",
+                              update="Delivered sibling update during restore.")
+    control(value.text_area, "Issue description", sibling.key).set_value(revised_sibling.text)
+    control(value.text_area, "Issue update", sibling.key).set_value(revised_sibling.update)
+    control(value.button, "Include again").click().run()
+    assert not value.exception
+    restored = value.session_state[prefix + "_draft"]
+    # The restored item's text/status/history and sources stay intact; the
+    # sibling's edits delivered with the same click must commit as well.
+    expected_items = {target.key: replace(removed, included=True), sibling.key: revised_sibling}
+    assert restored == replace(after, follow_ups=tuple(
+        expected_items.get(item.key, item) for item in after.follow_ups))
+    with qa.isolated(ACTOR_COOKIE):
+        assert active.load(ACTOR_COOKIE, fixture.CONTRACT, fixture.profile().key, fixture.PERIOD).draft == restored
+        assert library.load_snapshot(fixture.CONTRACT, fixture.profile().key, fixture.PERIOD) == shared
+    # No neutral run/reload may be needed after Include again. The guided
+    # post-commit hook must mount the restored controls and retire its old row.
+    for label, expected in (("Issue description", [removed.text, revised_sibling.text]),
+                            ("Issue update", [removed.update, revised_sibling.update])):
+        widgets = [widget for widget in value.text_area if widget.label == label]
+        assert [widget.value for widget in widgets] == expected
+        assert [widget.proto.default for widget in widgets] == expected
+    assert not any(widget.label == "Include again" for widget in value.button)
+    assert not any(widget.label.startswith("Removed from this report") for widget in value.expander)
+    assert prefix + "_period_editor_refresh" not in value.session_state.filtered_state
 
 
 def test_issue_stale_mirror_without_receipt_does_not_replace_canonical_wording(tmp_path, monkeypatch):
