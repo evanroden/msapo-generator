@@ -107,7 +107,7 @@ def test_review_requires_selecting_a_proposed_contract_before_save(proposal_app)
     confirm(app).check().run()
     save_button(app).click().run()
     assert not app.exception
-    assert calls == [{"actor": "Synthetic Editor", "confirmed": True, "create": ("Synthetic New Account",)}]
+    assert calls == [{"actor": "Synthetic Editor", "confirmed": True, "create": ("Synthetic New Account",), "accept": ()}]
 
 
 def test_changing_the_selection_requires_a_fresh_confirmation(proposal_app):
