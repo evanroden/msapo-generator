@@ -102,7 +102,10 @@
         // A trusted assistive-technology activation may deliver click without
         // pointerdown or keydown. Document capture cancels the former intent
         // before this root's native Add capture can arm its own new one.
-        for (const type of ['pointerdown','keydown','click','wheel','touchstart']) listen(document, type, moved);
+        // Paste, dictation and IME can deliver input while the previously
+        // focused field stays active, without another key or pointer event.
+        for (const type of ['pointerdown','keydown','click','wheel','touchstart',
+            'beforeinput','input','compositionstart','compositionupdate','compositionend']) listen(document, type, moved);
         listen(document, 'focusin', focusMoved);
         listen(document, 'visibilitychange', visibility);
         listen(window, 'pagehide', cancel);

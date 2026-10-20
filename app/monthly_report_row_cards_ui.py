@@ -166,10 +166,20 @@ def _field_default(value, kind):
     return value
 
 
+def _request_content_columns(columns):
+    """Recognize whole content headings without relabeling imported metadata."""
+    headings = {"requested item", "requested items", "requested details", "question", "questions"}
+    return tuple(index for index, column in enumerate(columns)
+                 if " ".join(column.casefold().split()).removesuffix(":").strip() in headings)
+
+
 def _summary(columns, row, noun, index):
     values = tuple((column, row[n] if n < len(row) else "") for n, column in enumerate(columns))
-    main = next((value for column, value in values if value and any(
-        word in column.casefold() for word in ("description", "scope", "title", "task", "recommendation", "requested", "question"))), "")
+    if noun == "request":
+        main = next((values[n][1] for n in _request_content_columns(columns) if values[n][1]), "")
+    else:
+        main = next((value for column, value in values if value and any(
+            word in column.casefold() for word in ("description", "scope", "title", "task", "recommendation", "requested", "question"))), "")
     st.write(main or f"{noun.capitalize()} {index + 1}")
     identifiers = [(column, value) for column, value in values if value and (any(
         word in column.casefold() for word in ("number", "#", "identifier", "facility", "site", "vendor", "area", "asset"))
@@ -387,13 +397,14 @@ def edit_row_cards(spec, block, prefix, field):
     def entry_options(columns):
         if spec.key != "rfi_matrix":
             return {}
-        request_column = next((index for index, column in enumerate(columns)
-                               if any(word in column.casefold() for word in ("requested", "question"))), None)
+        content_columns = _request_content_columns(columns)
+        request_column = content_columns[0] if len(content_columns) == 1 else None
         # Source schemas keep their own labels and ordering. Focus a recognized
-        # request field, never reinterpret an unknown column as a question.
+        # content field only when unambiguous; author, date and identifier
+        # headings are metadata, even when they include Requested or Question.
         return {"placeholders": {request_column: "What information is needed?"} if request_column is not None else {},
                 "focus_column": request_column,
-                "multiline_columns": (request_column,) if request_column is not None else (),
+                "multiline_columns": content_columns,
                 "group": key + "_request_group"}
     tables = []
     for index, table in enumerate(block.extra_tables):
