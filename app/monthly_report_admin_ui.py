@@ -55,6 +55,9 @@ def render_administration(kind, field, *, mode):
             links.append('<a href="' + escape(admin_url(choice), quote=True) + '" target="_self">' + label + '</a>')
     st.markdown(" · ".join(links), unsafe_allow_html=True)
     if kind == "directory":
+        if mode == "isolated":
+            from app.monthly_report_directory_recovery_sample import render_sample
+            render_sample()
         from app.monthly_report_directory_ui import render_directory
         render_directory(field)
     elif kind == "logos":
