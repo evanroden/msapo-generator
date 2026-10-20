@@ -14,7 +14,10 @@ def _invalidate(activate):
     with activate():
         owner = st.session_state.get(_PREFIX + 'owner')
         if owner:
-            st.session_state[_PREFIX + 'epoch'] = preview.retire(owner)
+            try:
+                st.session_state[_PREFIX + 'epoch'] = preview.retire(owner)
+            except (ValueError, OSError):
+                return  # A reset invalidated this captured namespace; normal rerun rebuilds it.
         for name in ('pending', 'request', 'receipt', 'error'):
             st.session_state.pop(_PREFIX + name, None)
 
@@ -36,6 +39,17 @@ def _clear(activate, owner, epoch):
         for name in ('pending', 'request', 'receipt', 'error'):
             st.session_state.pop(_PREFIX + name, None)
         st.session_state[_PREFIX + 'uploader_epoch'] = uuid4().hex
+
+
+def _clear_earlier(activate, owner, epoch, snapshot):
+    with activate():
+        if (st.session_state.get(_PREFIX + 'owner') != owner
+                or st.session_state.get(_PREFIX + 'epoch') != epoch):
+            return
+        try:
+            preview.clear_earlier(owner, epoch, snapshot)
+        except (ValueError, OSError):
+            return
 
 
 def _queue(activate, request, upload_key):
@@ -62,9 +76,34 @@ def render():
                    'Prices and unfinished content may remain visible. Files stay in this browser’s isolated QA storage; '
                    'nothing is added to the shared fixture catalog. No authentication or confidentiality guarantee is added.')
         owner_key = _PREFIX + 'owner'
+        if owner_key in st.session_state:
+            try:
+                current = preview.session_current(st.session_state[owner_key], st.session_state.get(_PREFIX + 'epoch'))
+            except (ValueError, OSError):
+                st.error('Source-preview storage is unavailable. Report data is unchanged.')
+                return
+            if not current:
+                for key in tuple(st.session_state):
+                    if key.startswith(_PREFIX):
+                        st.session_state.pop(key, None)
+                st.info('The earlier source-preview files expired or were cleared. Choose a fresh upload; no automatic render occurred.')
         if owner_key not in st.session_state:
-            st.session_state[owner_key] = uuid4().hex
-            st.session_state[_PREFIX + 'epoch'] = preview.retire(st.session_state[owner_key])
+            owner = uuid4().hex
+            try:
+                epoch = preview.retire(owner)
+            except (ValueError, OSError):
+                st.error('Source-preview storage is unavailable or full. Diagnostic files expire after six hours; report data is unchanged.')
+                try:
+                    earlier = preview.earlier_previews(None)
+                except (ValueError, OSError):
+                    earlier = ()
+                if earlier:
+                    st.button('Clear earlier source-preview files in this browser (including other tabs)',
+                              key=_PREFIX + 'recover_at_capacity', on_click=_clear_earlier,
+                              args=(testing.capture_namespace(), None, None, earlier))
+                return
+            st.session_state[owner_key] = owner
+            st.session_state[_PREFIX + 'epoch'] = epoch
         activate = testing.capture_namespace()
         upload_key = _PREFIX + 'upload_' + st.session_state.setdefault(_PREFIX + 'uploader_epoch', uuid4().hex)
         upload = st.file_uploader('Fresh source DOCX for inspection', type=['docx'], key=upload_key,
@@ -87,6 +126,17 @@ def render():
         st.button('Clear source-preview files / start a new attempt',
                   key=_PREFIX + 'clear_' + st.session_state[owner_key] + '_' + st.session_state[_PREFIX + 'epoch'],
                   on_click=_clear, args=(activate, st.session_state[owner_key], st.session_state[_PREFIX + 'epoch']))
+        try:
+            earlier = preview.earlier_previews(st.session_state[owner_key])
+        except (ValueError, OSError):
+            earlier = ()
+        if earlier:
+            st.button('Clear earlier source-preview files in this browser (including other tabs)',
+                      key=_PREFIX + 'earlier_' + st.session_state[owner_key] + '_' + st.session_state[_PREFIX + 'epoch'],
+                      on_click=_clear_earlier,
+                      args=(activate, st.session_state[owner_key], st.session_state[_PREFIX + 'epoch'], earlier))
+        st.caption('Download wanted evidence before clearing or reloading. Diagnostics expire after six hours. '
+                   'The earlier-files action affects only source-preview artifacts, never report edits or fixtures; active attempts are protected.')
         if pending := st.session_state.pop(_PREFIX + 'pending', None):
             st.session_state[_PREFIX + 'request'] = pending  # Consume before work; no rerun retry.
             try:

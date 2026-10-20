@@ -1,5 +1,6 @@
 """Optional, reviewed directory administration and report-scoped contact updates."""
 
+from collections import Counter
 from dataclasses import asdict, replace
 import re
 
@@ -140,22 +141,50 @@ def render_selected_directory(contract, facilities, actor, prefix):
             st.caption("No contacts were replaced. Reload the current directory before trying again.")
 
 
-def _site_editor(sites, existing, prefix, *, importing=False, site_aliases=None):
+def _suggested_site(site, existing, site_aliases=None, saved_keys=()):
+    """The suggested name and listed match for one workbook site column.
+
+    A reviewed alias suggests the same site name the batch import saves, and a
+    saved site wins over a catalog entry, as in batch import.
+    """
+    title = (site_aliases or {}).get(" ".join(site.title.casefold().split()), site.title)
+    names = directory.facility_names(site) | {" ".join(title.casefold().split())}
+    matches = [s for s in existing if names & directory.facility_names(s)]
+    matches = [s for s in matches if s.key in saved_keys] or matches
+    return title, matches[0] if len(matches) == 1 else None
+
+
+def _site_labels(existing, saved_keys=()):
+    """A unique choice label per listed site; same-titled sites stay distinct.
+
+    A saved site and a catalog entry may share a display title, so the title
+    alone cannot carry the chosen identity through the editor.
+    """
+    counts = Counter(s.title for s in existing)
+    labels = {}
+    for site in existing:
+        base = site.title if counts[site.title] == 1 else (
+            f"{site.title} (saved)" if site.key in saved_keys else f"{site.title} ({site.key})")
+        label, number = base, 2
+        while label in labels:  # a literal title can equal a generated label
+            label, number = f"{base} [{number}]", number + 1
+        labels[label] = site
+    return labels
+
+
+def _site_editor(sites, existing, prefix, *, importing=False, site_aliases=None, saved_keys=()):
     by_id = {s.key: s for s in sites}
-    existing_by_title = {s.title: s for s in existing}
+    existing_by_title = _site_labels(existing, saved_keys)
+    label_of = {id(site): label for label, site in existing_by_title.items()}
     records = []
     for site in sites:
-        # A reviewed alias suggests the same site name the batch import saves.
-        title = (site_aliases or {}).get(" ".join(site.title.casefold().split()), site.title)
-        names = directory.facility_names(site) | {" ".join(title.casefold().split())}
-        matches = [s.title for s in existing if names & directory.facility_names(s)]
-        matched = existing_by_title[matches[0]] if len(matches) == 1 else None
+        title, matched = _suggested_site(site, existing, site_aliases, saved_keys)
         aliases = tuple(dict.fromkeys((*site.aliases, site.title, *((matched.title, *matched.aliases) if matched else ()))))
         aliases = tuple(n for n in aliases if n.casefold() != title.casefold())
         records.append({"Include": True, "Identity": site.key, "Site": title,
                         "Aliases": "; ".join(aliases),
                         "Address": site.address or (matched.address if matched else ""), "Active": matched.active if matched else site.active,
-                        "Existing site": matches[0] if len(matches) == 1 else "New site",
+                        "Existing site": label_of[id(matched)] if matched else "New site",
                         "Source": site.source.split(":", 1)[-1]})
     edited = _grid(prefix + "_sites", records, hide_index=True,
                    disabled=["Identity", "Source"], column_config={"Identity": None,
@@ -287,7 +316,7 @@ def _render_directory(field):
         suggested = batch.worksheet_contract(sheet) or clean_title
         default = next((n for n in contract_names if n.casefold() == suggested.casefold()), "Add another contract")
         selected_contract = st.selectbox("Save under contract", [*contract_names, "Add another contract"], key=field(p + "_contract_" + sheet.name, default))
-        contract = st.text_input("Contract name", key=field(p + "_name_" + sheet.name, clean_title)) if selected_contract == "Add another contract" else selected_contract
+        contract = st.text_input("Contract name", key=field(p + "_name_" + sheet.name, suggested)) if selected_contract == "Add another contract" else selected_contract
         if not contract.strip():
             return
         state = directory.load_directory(contract, include_archived=True)
@@ -308,7 +337,8 @@ def _render_directory(field):
         edit_prefix = prefix + "_" + _signature([asdict(s) for s in proposed])
         st.subheader("Confirm sites, aliases and contacts")
         incoming = _site_editor(proposed, _known_sites(contract, state), edit_prefix, importing=True,
-                                site_aliases=batch.site_alias_targets(contract))
+                                site_aliases=batch.site_alias_targets(contract),
+                                saved_keys={s.key for s in state.sites} if state else set())
         if not incoming:
             st.info("Select at least one site to save.")
             return

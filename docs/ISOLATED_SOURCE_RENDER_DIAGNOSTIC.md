@@ -33,14 +33,27 @@ One fresh request is consumed once. Failure is recorded without automatic retry;
 **Clear source-preview files / start a new attempt** is explicit and affects only
 this session's diagnostic artifacts. A changed file, label or kind invalidates
 the old attempt. Save wanted diagnostic downloads before changing selection.
-The raw file can be reselected for a deliberate new attempt. A QA namespace
+The raw file can be reselected for a deliberate new attempt. After a browser
+reload, **Clear earlier source-preview files in this browser (including other
+tabs)** can reclaim old diagnostic owners without resetting the editor. This
+explicit action is bound to the displayed owner incarnations and cannot delete
+a reopened selection or another browser's artifacts. Active attempts are
+protected by a ten-minute diagnostic lease; expired attempts cannot publish. A QA namespace
 reset or newer selection cannot publish an older result. These controls do not
 clear the report editor or modify an existing Demo draft.
 
 Files live only under the existing browser-isolated QA namespace, not the live
 output directory or shared fixture catalog. This adds no authentication or new
 confidentiality guarantee. The helper reserves a bounded 128 MiB diagnostic
-store per isolated browser, uses the existing low-priority heavy-work admission,
+store per isolated browser, a 384 MiB disk-wide diagnostic budget (including
+pending artifact/scratch reservations), 128 diagnostic owners, and a 256 MiB
+free-disk floor. A short cross-process lock serializes accounting across cookies.
+Only diagnostic folders inside marker-verified QA namespaces are eligible for
+six-hour inactivity expiry; editor data, shared fixtures and live storage are
+never pruned. Downloads renew retention. Package-change and font inventories are
+bounded before conversion/publication; over-budget package inventories produce
+a small explicit failure receipt with source/input downloads, not a hidden
+success. The helper uses the existing low-priority heavy-work admission,
 conversion lease and process-tree cleanup, and rejects a non-24.2 engine or
 unexpected production font resolution. Each attempt has a 120-second conversion
 wall limit, 90-second CPU limit, 1.5 GiB virtual-address limit, 32 MiB file/output

@@ -209,7 +209,7 @@ def test_reset_during_render_cannot_recreate_removed_namespace(isolated, source,
     req = request(source)
     with pytest.raises(OSError, match='reset'):
         p.execute(req, source, upload_id=req.upload_id)
-    assert not any((isolated / qa._BUCKET).iterdir())
+    assert {item.name for item in (isolated / qa._BUCKET).iterdir()} == {'.source-preview-lock'}
 
 
 def test_byte_limit_and_storage_budget_fail_before_converter(isolated, source, monkeypatch):
@@ -370,3 +370,205 @@ def test_identical_bytes_fresh_requests_are_independent_renders_not_cache_hits(i
     assert result_a['source_sha256'] == result_b['source_sha256']
     assert result_a['pdf_sha256'] != result_b['pdf_sha256']
     assert receipt_a != p.artifact(second, 'receipt.json')
+
+
+def test_cookie_churn_cannot_escape_global_budget(isolated, source, monkeypatch):
+    monkeypatch.setattr(p, '_render', fake_render)
+    first = request(source)
+    p.execute(first, source, upload_id=first.upload_id)
+    before = p.artifact(first, 'receipt.json')
+    monkeypatch.setattr(p, 'MAX_GLOBAL_BYTES', p.RESERVE_BYTES + p.SCRATCH_RESERVE_BYTES + 1)
+    with qa.isolated('c' * 32):
+        memory._data_dir()
+        other = request(source)
+        with pytest.raises(p.SourcePreviewError, match='storage is full'):
+            p.execute(other, source, upload_id=other.upload_id)
+        assert not (p._folder(OWNER) / 'attempt.json').exists()
+    assert p.artifact(first, 'receipt.json') == before
+
+
+def test_low_free_disk_and_owner_count_fail_closed(isolated, source, monkeypatch):
+    from types import SimpleNamespace
+    req = request(source)
+    monkeypatch.setattr(p.shutil, 'disk_usage', lambda _p: SimpleNamespace(free=1))
+    with pytest.raises(p.SourcePreviewError, match='storage is full'):
+        p.execute(req, source, upload_id=req.upload_id)
+    monkeypatch.setattr(p, 'MAX_OWNERS', 1)
+    with pytest.raises(p.SourcePreviewError, match='storage is full'):
+        p.retire('c' * 32)
+    assert not (p._root() / ('c' * 32)).exists()
+
+
+def test_expiry_removes_only_diagnostics_and_preserves_bounded_active_lease(isolated, source, monkeypatch):
+    import os
+    req = request(source)
+    folder = p._folder(OWNER)
+    marker = folder / 'active.json'
+    active = json.loads(marker.read_text())
+    active['deadline'] = p.time.time() + p.ABANDONED_SECONDS
+    marker.write_text(json.dumps(active))
+    (folder / 'attempt.json').write_text('{}')
+    (folder / 'source.docx').write_bytes(source)
+    report = p.library._root() / 'keep-editor.json'
+    report.write_text('keep me')
+    old = p.time.time() - p.RETENTION_SECONDS - 1
+    os.utime(marker, (old, old))
+    with p._storage_lock():
+        rows = p._catalog(prune=True)
+    assert folder.exists() and rows[0][1] >= p.RESERVE_BYTES
+    active['deadline'] = p.time.time() - 1
+    marker.write_text(json.dumps(active)); os.utime(marker, (old, old))
+    with p._storage_lock():
+        p._catalog(prune=True)
+    assert not folder.exists() and report.read_text() == 'keep me'
+    assert not (isolated / 'monthly_reports').exists()
+
+
+def test_reload_recovery_is_browser_local_and_incarnation_bound(isolated, source, monkeypatch):
+    monkeypatch.setattr(p, '_render', fake_render)
+    old = request(source)
+    p.execute(old, source, upload_id=old.upload_id)
+    owner = 'c' * 32
+    epoch = p.retire(owner)  # Simulate the new Streamlit session after reload.
+    snapshot = p.earlier_previews(owner)
+    assert snapshot == ((OWNER, old.epoch),)
+    fresh = request(source)  # Old same-source tab reopened before stale cleanup.
+    p.clear_earlier(owner, epoch, snapshot)
+    assert p._active(OWNER)['epoch'] == fresh.epoch
+    latest = p.earlier_previews(owner)
+    p.clear_earlier(owner, epoch, latest)
+    assert not (p._root() / OWNER).exists()
+    assert p._active(owner)['epoch'] == epoch
+
+
+def test_recovery_cannot_remove_pending_attempt_or_other_browser(isolated, source, monkeypatch):
+    def during(path, directory):
+        current = 'c' * 32
+        epoch = p.retire(current)
+        assert p.earlier_previews(current) == ()
+        p.clear_earlier(current, epoch, ((OWNER, req.epoch),))
+        assert path.exists()
+        return fake_render(path, directory)
+    monkeypatch.setattr(p, '_render', during)
+    req = request(source)
+    assert p.execute(req, source, upload_id=req.upload_id)['status'] == 'rendered'
+    with qa.isolated('d' * 32):
+        memory._data_dir()
+        epoch = p.retire('e' * 32)
+        assert p.earlier_previews('e' * 32) == ()
+        p.clear_earlier('e' * 32, epoch, ((OWNER, req.epoch),))
+    assert p.artifact(req, 'source.docx') == source
+
+
+def test_oversized_inventory_fails_before_render_with_downloadable_failure(isolated, source, monkeypatch):
+    def extra(parts):
+        for i in range(2600):
+            parts[f'word/unused/{i}-' + 'x' * 310 + '.bin'] = b'ordinary unused bytes'
+    raw = rewrite(source, extra)
+    monkeypatch.setattr(p, '_render', lambda *_: pytest.fail('over-budget inventory rendered'))
+    req = request(raw)
+    result = p.execute(req, raw, upload_id=req.upload_id)
+    assert result['status'] == 'failed' and 'inventory' in result['error']
+    assert len(p.artifact(req, 'receipt.json')) < p.MAX_RECEIPT_BYTES
+    assert p.artifact(req, 'source.docx') == raw
+    assert p.artifact(req, 'render-input.docx')
+    assert 'pdf_sha256' not in result
+
+
+def test_disappearing_accounting_file_does_not_consume_request(isolated, source, monkeypatch):
+    monkeypatch.setattr(p, '_render', fake_render)
+    req = request(source)
+    p.retire('c' * 32)
+    vanished = p._folder('c' * 32) / 'vanished.tmp'
+    vanished.write_bytes(b'invented temporary')
+    real = Path.stat
+    count = []
+    def racing(path, *args, **kwargs):
+        if path == vanished:
+            count.append(1)
+            if len(count) == 2:
+                vanished.unlink()
+                raise FileNotFoundError(str(path))
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(Path, 'stat', racing)
+    assert p.execute(req, source, upload_id=req.upload_id)['status'] == 'rendered'
+    assert count and p.artifact(req, 'receipt.json')
+
+
+def test_capacity_recovery_needs_no_new_owner_and_rejects_reopened_snapshot(isolated, source):
+    old = request(source)
+    snapshot = p.earlier_previews(None)
+    p.clear_earlier(None, None, snapshot)
+    assert not (p._root() / OWNER).exists()
+    newer = request(source)
+    p.clear_earlier(None, None, snapshot)
+    assert p._active(OWNER)['epoch'] == newer.epoch
+
+
+def test_expired_deadline_does_not_make_live_execution_safe_to_delete(isolated, source):
+    import os
+    req = request(source)
+    folder = p._folder(OWNER)
+    active = folder / 'active.json'
+    state = json.loads(active.read_text()); state['deadline'] = p.time.time() - 1
+    active.write_text(json.dumps(state)); (folder / 'attempt.json').write_text('{}')
+    old = p.time.time() - p.RETENTION_SECONDS - 1
+    os.utime(active, (old, old))
+    with p._execution_lease(folder):
+        with p._storage_lock():
+            assert p._catalog(prune=True)
+        assert folder.exists()
+        p.clear_earlier(None, None, ((OWNER, req.epoch),))
+        assert folder.exists()
+    with p._storage_lock():
+        p._catalog(prune=True)
+    assert not folder.exists()
+
+
+def test_expired_validation_never_starts_converter(isolated, source, monkeypatch):
+    real = p._safe_source
+    def expire(path):
+        result = real(path)
+        active = p._folder(OWNER) / 'active.json'
+        state = json.loads(active.read_text()); state['deadline'] = p.time.time() - 1
+        active.write_text(json.dumps(state))
+        return result
+    monkeypatch.setattr(p, '_safe_source', expire)
+    monkeypatch.setattr(p, '_render', lambda *_: pytest.fail('expired job started converter'))
+    req = request(source)
+    with pytest.raises(p.SourcePreviewError, match='expired'):
+        p.execute(req, source, upload_id=req.upload_id)
+    assert not list(p._root().rglob('*.pdf'))
+
+
+def test_global_scan_is_bounded_and_rejects_symlinked_peer(isolated, source, monkeypatch):
+    request(source)
+    monkeypatch.setattr(p, 'MAX_SCAN_ENTRIES', 1)
+    with p._storage_lock(), pytest.raises(p.SourcePreviewError, match='inventory'):
+        p._catalog()
+    monkeypatch.setattr(p, 'MAX_SCAN_ENTRIES', 4096)
+    link = p._root().parents[2] / ('f' * 32)
+    link.symlink_to(isolated / 'outside', target_is_directory=True)
+    with p._storage_lock(), pytest.raises(p.SourcePreviewError, match='unavailable'):
+        p._catalog(prune=True)
+    assert link.is_symlink()
+
+
+def test_missing_owner_does_not_hide_later_valid_siblings_from_quota(isolated, source):
+    owners = {char * 32 for char in '23456'}
+    for owner in owners:
+        p.retire(owner)
+        (p._folder(owner) / 'source.docx').write_bytes(source)
+    first = next(folder for folder in p._entries(p._root()) if folder.name in owners)
+    (first / 'active.json').unlink()
+    (first / 'source.docx').unlink()  # Model interrupted empty-owner initialization.
+    with p._storage_lock():
+        rows = p._catalog()
+    assert {folder.name for folder, _size, _ in rows} == owners - {first.name}
+    assert all(size >= len(source) for _folder, size, _ in rows)
+    (first / 'source.docx').write_bytes(source)  # Orphaned payload must instead fail closed.
+    with p._storage_lock(), pytest.raises(p.SourcePreviewError, match='metadata'):
+        p._catalog()
+    assert not p.session_current(first.name, 'a' * 32)
+    missing = p._root() / ('1' * 32)
+    assert not p.session_current('1' * 32, 'a' * 32) and not missing.exists()

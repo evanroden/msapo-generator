@@ -146,3 +146,75 @@ def test_clear_rejects_disk_incarnation_change_without_touching_state(setup):
     ui._clear(activate, owner, old_epoch)
     assert state == before
     assert preview._active(owner)['epoch'] == newer
+
+
+def test_stale_reset_invalidation_is_harmless_and_keeps_draft(setup, tmp_path):
+    _raw, state, activate = setup
+    before = dict(state)
+    qa.reset(tmp_path)
+    ui._invalidate(activate)
+    assert state == before
+
+
+def test_stale_earlier_cleanup_cannot_touch_new_selection(setup, monkeypatch):
+    _raw, state, activate = setup
+    owner, epoch = state[P + 'owner'], state[P + 'epoch']
+    ui._invalidate(activate)
+    before = dict(state)
+    monkeypatch.setattr(preview, 'clear_earlier', lambda *_: pytest.fail('stale cleanup executed'))
+    ui._clear_earlier(activate, owner, epoch, ())
+    assert state == before
+
+
+def test_owner_capacity_still_offers_browser_recovery(tmp_path, monkeypatch):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    monkeypatch.setattr(preview, 'MAX_OWNERS', 1)
+    with qa.isolated('a' * 32):
+        memory._data_dir()
+        preview.retire('b' * 32)
+    app = AppTest.from_string('''
+import streamlit as st
+from app import memory, monthly_report_testing as qa
+from app.monthly_report_source_preview_ui import render
+st.query_params['monthly_qa'] = 'isolated'
+st.session_state['report_existing'] = 'untouched'
+with qa.isolated('a' * 32):
+    memory._data_dir()
+    render()
+''').run()
+    assert not app.exception
+    app.button(key=P + 'recover_at_capacity').click().run()
+    assert not app.exception and len(app.get('file_uploader')) == 1
+    assert app.session_state['report_existing'] == 'untouched'
+
+
+def test_peer_expiry_recovers_idle_session_without_render_or_draft_reset(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    app = AppTest.from_string('''
+import streamlit as st
+from app import memory, monthly_report_testing as qa
+from app.monthly_report_source_preview_ui import render
+st.query_params['monthly_qa'] = 'isolated'
+st.session_state['report_existing'] = 'untouched'
+with qa.isolated('a' * 32):
+    memory._data_dir()
+    render()
+''').run()
+    old_owner = app.session_state[P + 'owner']
+    old_epoch = app.session_state[P + 'epoch']
+    app.session_state[P + 'request'] = 'expired request'
+    with qa.isolated('a' * 32):
+        memory._data_dir()
+        active = preview._folder(old_owner) / 'active.json'
+        old = preview.time.time() - preview.RETENTION_SECONDS - 1
+        os.utime(active, (old, old))
+    with qa.isolated('d' * 32):
+        memory._data_dir()
+        preview.retire('e' * 32)  # Another browser expires the idle owner.
+    app.run()
+    assert not app.exception and app.session_state[P + 'owner'] != old_owner
+    assert app.session_state[P + 'epoch'] != old_epoch
+    assert P + 'request' not in app.session_state
+    assert app.button(key=P + 'render').disabled
+    assert app.session_state['report_existing'] == 'untouched'
