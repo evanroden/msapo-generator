@@ -9,9 +9,10 @@ import streamlit as st
 from app import monthly_report_library as library
 from app.monthly_report_editor import _grid, _signature
 from app.monthly_report_model import ReportTable
-from app.monthly_report_training import (FORMATS, MATRIX_REF, STATUSES,
+from app.monthly_report_training import (EVENT_COLUMNS, FORMATS, MATRIX_REF, STATUSES,
     add_event, apply_tables, events_for_period, load_training, save_training, seed_matrix,
-    training_block, hospital_matrix, matrix_differs_from_current_standing)
+    training_block, hospital_matrix, matrix_differs_from_current_standing,
+    session_row_tokens, remove_event, replace_event)
 
 
 def _queue_session_removal(key, revision, index, scope):
@@ -23,8 +24,8 @@ def _queue_session_action(key, action):
     st.session_state[key] = action
 
 
-def _queue_session_submit(key, scope, token, revision, index, fields):
-    st.session_state[key] = {"kind": "submit", "scope": scope, "token": token,
+def _queue_session_submit(key, scope, token, revision, index, fields, kind="submit"):
+    st.session_state[key] = {"kind": kind, "scope": scope, "token": token,
         "revision": revision, "index": index,
         "values": {name: st.session_state.get(widget) for name, widget in fields.items()}}
 
@@ -53,6 +54,26 @@ def _session_errors(values, period):
 
 def _new_session_editor(scope, *, editing=None, seed=None):
     return {"scope": scope, "token": uuid4().hex, "editing": editing, "seed": seed}
+
+
+def _sessions_revision(events):
+    # apply_tables omits a genuinely empty session table. Its acknowledged
+    # removal and that canonical absence are the same collection state.
+    return (_signature((events.columns, events.rows, session_row_tokens(events)))
+            if events and events.rows else _signature(()))
+
+
+def _edited_session_index(editing, events):
+    """Rebase only the unchanged row snapshot, never a coincident position."""
+    if (not isinstance(editing, dict) or events is None
+            or events.columns != editing.get("columns")):
+        return None
+    tokens = session_row_tokens(events)
+    token = editing.get("row_token")
+    if token not in tokens:
+        return None
+    index = tokens.index(token)
+    return index if events.rows[index] == editing.get("row") else None
 
 
 def _session_description(row):
@@ -104,15 +125,14 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
     if not isinstance(state, dict) or state.get("scope") != scope:
         state = _new_session_editor(scope)
     rows = events.rows if events else ()
-    canonical_rows = rows
-    canonical_revision = _signature(rows)
+    canonical_revision = _sessions_revision(events)
     pending_key = key + "_pending_sessions"
     pending = st.session_state.get(pending_key)
     blocked = False
     if isinstance(pending, dict) and pending.get("scope") == scope:
         proposed = pending["events"]
         proposed_rows = proposed.rows if proposed else ()
-        if proposed_rows == rows:
+        if _sessions_revision(proposed) == canonical_revision:
             st.session_state.pop(pending_key, None)
         elif pending.get("baseline") == canonical_revision:
             events, rows = proposed, proposed_rows
@@ -135,12 +155,12 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
     if removal is not None:
         revision, index, removal_scope = removal if len(removal) == 3 else (*removal, None)
         if (not blocked and events and removal_scope == scope
-                and revision == _signature(events.rows) and 0 <= index < len(events.rows)):
-            events = replace(events, rows=tuple(row for n, row in enumerate(events.rows) if n != index))
+                and revision == _sessions_revision(events) and 0 <= index < len(events.rows)):
+            events = remove_event(events, index)
             rows = events.rows
         else:
             st.warning("Training sessions changed. Review the current sessions before removing one.")
-    revision = _signature(rows)
+    revision = _sessions_revision(events)
     errors, outcome = {}, None
     request = st.session_state.pop(request_key, None)
     if not blocked and isinstance(request, dict) and request.get("scope") == scope:
@@ -150,18 +170,30 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
         elif kind == "edit":
             index = request.get("index", -1)
             if request.get("revision") == revision and 0 <= index < len(rows):
-                state = _new_session_editor(scope, editing=(revision, index), seed=rows[index])
+                state = _new_session_editor(scope, editing={"revision": revision, "index": index,
+                    "row_token": session_row_tokens(events)[index], "row": rows[index],
+                    "columns": events.columns}, seed=rows[index])
             else:
                 st.warning("Training sessions changed. Choose the current session to edit.")
-        elif kind == "submit" and request.get("token") == state["token"]:
+        elif kind in {"submit", "submit_new"} and request.get("token") == state["token"]:
             values = request["values"]
             errors = _session_errors(values, period)
-            if request.get("revision") != revision:
+            editing = state.get("editing")
+            index = _edited_session_index(editing, events) if editing else None
+            valid = (index is not None and request.get("revision") == editing.get("revision")
+                     and request.get("index") == editing.get("index")) if isinstance(editing, dict) else (
+                not editing and request.get("revision") == revision and request.get("index") is None)
+            if kind == "submit_new":
+                # This distinct native form submission is an explicit new row,
+                # not an automatic resurrection or rebind of the old editor.
+                valid = bool(editing and index is None and request.get("index") is None
+                             and request.get("revision") == revision
+                             and (events is None or events.columns == EVENT_COLUMNS))
+            if not valid:
                 st.warning("Training sessions changed. Your entered details are kept. Review the current sessions before saving.")
             elif not errors:
                 proposed = add_event(None, period=period, **values)
                 row = proposed.rows[0]
-                index = request.get("index")
                 if index is None:
                     events = add_event(events, period=period, **values)
                     outcome = (row, "Training added to this report." if row not in rows else "This session is already in this report.")
@@ -170,13 +202,13 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
                 elif row in rows[:index] + rows[index + 1:]:
                     errors["title"] = "This session is already in this report"
                 else:
-                    events = replace(events, rows=tuple(row if n == index else saved for n, saved in enumerate(rows)))
+                    events = replace_event(events, index, row)
                     outcome = (row, "Training session updated.")
                 if outcome:
                     state = _new_session_editor(scope)
     st.session_state[state_key] = state
     rows = events.rows if events else ()
-    revision = _signature(rows)
+    revision = _sessions_revision(events)
     editing = state["editing"]
     seed = state["seed"] or ("", "", FORMATS[0], "", "")
     editor_key = key + "_event_" + state["token"]
@@ -208,8 +240,17 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
                 st.error(errors["hours"])
             st.form_submit_button("Save session" if editing else "Add completed training",
                 disabled=blocked, on_click=_queue_session_submit,
-                args=(request_key, scope, state["token"], editing[0] if editing else revision,
-                      editing[1] if editing else None, fields))
+                args=(request_key, scope, state["token"],
+                      editing.get("revision") if isinstance(editing, dict) else revision,
+                      editing.get("index") if isinstance(editing, dict) else None, fields))
+            if editing and _edited_session_index(editing, events) is None:
+                st.caption("The original session changed or was removed. Your entered details are kept. "
+                           "Compare the current sessions below before choosing what to keep.")
+                if events is None or events.columns == EVENT_COLUMNS:
+                    st.form_submit_button("Add as new session", disabled=blocked,
+                        help="Add the entered details as a separate session in this report. Existing sessions stay unchanged.",
+                        on_click=_queue_session_submit,
+                        args=(request_key, scope, state["token"], revision, None, fields, "submit_new"))
         if editing:
             st.button("Cancel editing", key=editor_key + "_cancel", on_click=_queue_session_action,
                       args=(request_key, {"kind": "cancel", "scope": scope, "token": state["token"]}))
@@ -242,7 +283,7 @@ def _render_monthly_sessions(events, matrix, period, key, scope):
     else:
         st.caption("No training sessions added this month.")
     if not blocked:
-        if (events.rows if events else ()) != canonical_rows:
+        if _sessions_revision(events) != canonical_revision:
             # Rendering a successful action is not its final canonical commit.
             # Replay only this exact collection transition if a preview interrupts
             # the enclosing report render; acknowledge only the matching result.
