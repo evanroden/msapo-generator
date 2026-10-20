@@ -287,6 +287,42 @@ def _catalog_sites(contract):
                  for key, value in FACILITIES.items() if not (key == "st_marys" and "unity_specialty" in FACILITIES))
 
 
+def _people(site):
+    return {_identity(c.name) for c in site.contacts if c.name.strip()}
+
+
+def _repeated_sites(details):
+    """Site columns whose heading also appears on another contract's worksheet.
+
+    Copied headings carry the same people (or none to tell them apart);
+    same-named sites that list different people belong to their own contracts.
+    """
+    by_title = {}
+    for sheet, contract, _, sites in details:
+        for site in sites:
+            by_title.setdefault(_identity(site.title), []).append((sheet.name, contract, site))
+    repeated = {}
+    for entries in by_title.values():
+        for name, contract, site in entries:
+            others = [other for other, owner, copy in entries if owner != contract
+                      and not (_people(site) and _people(copy) and not _people(site) & _people(copy))]
+            if others:
+                repeated[site.source] = tuple(dict.fromkeys(others))
+    return repeated
+
+
+def _owned(contract, site, aliases):
+    """The catalog, the saved directory or a reviewed site alias already places this site in the contract."""
+    if _identity(site.title) in aliases:
+        return True
+    try:
+        current = directory.load_directory(contract, include_archived=True)
+    except (ValueError, library.LibraryError):
+        current = None
+    names = directory.facility_names(site)
+    return any(names & directory.facility_names(s) for s in (*(current.sites if current else ()), *_catalog_sites(contract)))
+
+
 def _merge_sites(contract, existing, incoming, aliases):
     result, conflicts = list(existing), []
     catalog = _catalog_sites(contract)
@@ -386,11 +422,7 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
                 targets.append((coordinate, contract))
         mappings.append(_public_mapping(sheet, "contract", mapping, targets))
 
-    detail_headers = {}
-    for sheet in workbook.sheets:
-        if not sheet.summary:
-            header, label, _, _ = _mapping(sheet)
-            detail_headers[sheet.name] = {_identity(c.value) for c in sheet.cells if c.row == header and c.column > label and c.value.strip()}
+    details = []
     for sheet in workbook.sheets:
         if sheet.summary:
             continue
@@ -413,13 +445,23 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
         if not any(s.contacts for s in sites):
             exclusions.append(WorkbookExclusion(sheet.name, "No populated contact records; this appears to be an unfinished template."))
             continue
-        overlaps = [name for name, titles in detail_headers.items() if name != sheet.name
-                    and titles and titles == detail_headers[sheet.name]]
-        if overlaps:
-            exclusions.append(WorkbookExclusion(sheet.name, "All site headings repeat another worksheet (" + ", ".join(overlaps) + "). Review contract ownership separately."))
-            continue
-        record(contract, sheet, sites=sites)
-        mappings.append(_public_mapping(sheet, "site", mapping, [(s.source.rsplit("!", 1)[-1], s.title) for s in sites]))
+        details.append((sheet, contract, mapping, sites))
+    # A copied heading is not proof of membership: exclude that site column
+    # unless the contract already owns the site, and keep the tab's other sites.
+    repeated = _repeated_sites(details)
+    for sheet, contract, mapping, sites in details:
+        kept = []
+        for site in sites:
+            others = repeated.get(site.source)
+            if others and not _owned(contract, site, site_maps.get(contract, {})):
+                exclusions.append(WorkbookExclusion(sheet.name, f"{site.title} also appears on worksheet {', '.join(others)}. "
+                    "Copied worksheet headings are not proof of membership; confirm which contract owns this site, "
+                    "then import it separately.", site.source.rsplit("!", 1)[-1]))
+            else:
+                kept.append(site)
+        if kept:
+            record(contract, sheet, sites=kept)
+            mappings.append(_public_mapping(sheet, "site", mapping, [(s.source.rsplit("!", 1)[-1], s.title) for s in kept]))
 
     entries = []
     for contract, item in sorted(records.items(), key=lambda pair: pair[0].casefold()):
