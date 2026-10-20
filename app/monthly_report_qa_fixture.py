@@ -77,8 +77,15 @@ def _training_tables():
 
 def _standing_blocks(chosen):
     selected = directory.load_directory(CONTRACT)
-    contacts, missing = directory.contact_block(selected, chosen.facilities)
-    if missing or contacts is None:
+    expected_contacts, missing = directory.contact_block(selected, chosen.facilities)
+    # The fixture declares these exact saved site contacts as standing data.
+    # Use the ordinary verified first-fill path so its source identity agrees
+    # with that promise; a contact_block result alone is a report-only copy.
+    standing = directory.apply_defaults(ReportDraft(chosen, PERIOD, ACTOR,
+        profile_sections(chosen), ()))
+    contacts = next((block for block in standing.blocks if block.key == "contact_matrix"), None)
+    if (missing or contacts is None or contacts.rows != expected_contacts.rows
+            or contacts.references != expected_contacts.references):
         raise ValueError("Synthetic QA contact fixture did not resolve its exact sites.")
     return (
         ResolvedBlock("org_chart", "This month", org_nodes=(

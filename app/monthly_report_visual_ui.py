@@ -246,6 +246,60 @@ def _contact_rows(columns, rows, p, field, *, vendor=False):
     return tuple(edited), remove_index
 
 
+def _person_summary(columns, row, noun, index):
+    st.write(_contact_label(columns, row, index))
+
+
+def _vendor_summary(columns, row, noun, index):
+    fields = {str(key).strip().casefold(): str(value).strip() for key, value in zip(columns, row)}
+    def pick(names):
+        return next((fields[name] for name in names if fields.get(name)), "")
+    company = pick(("vendor", "contractor", "company", "supplier"))
+    discipline = pick(("discipline", "role", "trade"))
+    site = pick(("facility", "site", "location"))
+    st.write(" · ".join(value for value in (company, discipline, site) if value) or f"Vendor contact {index + 1}")
+    person = pick(("contact", "contact name", "name", "person"))
+    agreement = pick(("msa", "agreement status", "agreement status (msa)"))
+    detail = ["Contact: " + person] if person else []
+    if agreement:
+        detail.append("MSA: " + agreement)
+    if detail:
+        st.caption(" · ".join(detail))
+
+
+def _contact_scope_labels(draft, block, table_index, rows, *, has_primary):
+    """Describe only verified current site copies; never infer scope by a name."""
+    labels = ["This report only" for _ in rows]
+    if block.key != "contact_matrix" or table_index != 0 or not has_primary or block.extra_tables or block.source != "Library":
+        return labels
+    from app import monthly_report_directory as directory
+    import re
+    refs = tuple(ref for ref in block.references if ref != f"directory-add-intent:{draft.profile.key}")
+    versions = [match for ref in refs if (match := re.fullmatch(r"directory:([^:]+):([1-9][0-9]*)", ref))]
+    bindings = {}
+    for ref in refs:
+        match = re.fullmatch(r"directory-site:([^:]+):([^:]+)", ref)
+        if match:
+            if match[1] in bindings:
+                return labels
+            bindings[match[1]] = match[2]
+    if len(versions) != 1 or len(bindings) != len(draft.profile.facilities):
+        return labels
+    try:
+        saved = directory.load_directory(draft.profile.contract, int(versions[0][2]))
+        if not saved or library._contract_directory(saved.contract) != versions[0][1]:
+            return labels
+        expected, missing = directory.contact_block(saved, draft.profile.facilities, bindings)
+    except (OSError, ValueError):
+        return labels
+    if missing or expected.rows != tuple(rows) or expected.references != refs:
+        return labels
+    # Contract-wide rows are deliberately not edited through the site editor.
+    for index in range(len(saved.contract_contacts), len(labels)):
+        labels[index] = "Reused for this site in future reports. Changing the site keeps this report only."
+    return labels
+
+
 def _contact_widget_prefix(prefix, block_key):
     """Mount report fields under the current report incarnation, not an old one.
 
@@ -349,55 +403,49 @@ def edit_contacts(draft, spec, block, prefix, assets, field, *, show_preview=Tru
     left, right = st.columns([1, 1]) if show_preview else (st.container(), None)
     updated = []
     with left:
-        st.caption(
-            "Vendor contacts for this report. Removing one leaves earlier report versions intact."
-            if block.key == "subcontractor_matrix"
-            else "Verified site-contact corrections are kept for future reports; unmatched entries stay in this report. Removing a contact here leaves the shared directory intact."
-        )
+        from app.monthly_report_row_cards_ui import _comparison_rows, _edit_table
+        group = p + "_active_row"
         for n, table in enumerate(tables):
             if len(tables) > 1:
                 st.write("Contact table " + str(n + 1))
-            rows, removed = _contact_rows(
-                table.columns, table.rows, p + f"_table_{n}", field,
-                vendor=(block.key == "subcontractor_matrix"),
-            )
-            changed = replace(table, rows=rows)
-            updated.append(changed)
-            add = st.button("Add vendor contact" if block.key == "subcontractor_matrix" else "Add contact",
-                            key=p + f"_add_{n}")
-            if add or removed is not None:
-                updated[-1] = replace(
-                    changed,
-                    rows=(*changed.rows, tuple("" for _ in table.columns))
-                    if add
-                    else tuple(r for i, r in enumerate(changed.rows) if i != removed),
-                )
-                updated.extend(tables[n + 1 :])
-                new = replace(
-                    block,
-                    source="This month",
-                    rows=updated[0].rows if has_primary else (),
-                    extra_tables=tuple(updated[1:] if has_primary else updated),
-                    reviewed_fingerprint="",
-                    client_reviewed_fingerprint="",
-                )
-                # Add contact is an explicit directory-intent action only
-                # when the current table is linked to a saved site directory.
-                # Ordinary manually appended report-only rows have no marker.
-                if (add and block.key == "contact_matrix" and has_primary
-                        and (block.source == "Library" or
-                             f"directory-add-intent:{draft.profile.key}" in block.references)
-                        and any(ref.startswith("directory:") for ref in block.references)
-                        and any(ref.startswith("directory-site:") for ref in block.references)):
-                    marker = f"directory-add-intent:{draft.profile.key}"
-                    new = replace(new, references=tuple(dict.fromkeys((*block.references, marker))))
-                _install(draft, prefix, new, clear=p + "_table_")
+            vendor = block.key == "subcontractor_matrix"
+            table_key = p + f"_table_{n}_rows_" + _signature(table.columns)
+            # Creating editable contacts is already an explicit add action.
+            # Its one blank slot opens once; it is not a counted/exported row.
+            if (table_key not in st.session_state and table.rows and not any(
+                    str(value).strip() for row in table.rows for value in row)
+                    and not st.session_state.get(group, {}).get("active_table")):
+                token = uuid4().hex
+                st.session_state[table_key] = {"rows": (), "tokens": (), "active": token,
+                    "draft_token": token, "draft_index": 0}
+            rows = tuple(row for row in table.rows if any(str(value).strip() for value in row))
+            scopes = _contact_scope_labels(draft, block, n, rows, has_primary=has_primary)
+            changed_rows = _edit_table(table.columns, rows, (), table_key,
+                "vendor contact" if vendor else "contact",
+                "Add vendor contact" if vendor else "Add contact", field,
+                summary=_vendor_summary if vendor else _person_summary,
+                labels={heading: "Agreement status (MSA)" for heading in table.columns
+                        if vendor and heading.strip().casefold() == "msa"},
+                max_chars=500, scope_labels=scopes, allow_undo=True,
+                empty_label="No vendor contacts added" if vendor else "No contacts added",
+                group=group)
+            updated.append(replace(table, rows=changed_rows))
+            if (len(changed_rows) > len(rows) and block.key == "contact_matrix" and has_primary
+                    and (block.source == "Library" or
+                         f"directory-add-intent:{draft.profile.key}" in block.references)
+                    and any(ref.startswith("directory:") for ref in block.references)
+                    and any(ref.startswith("directory-site:") for ref in block.references)):
+                # This editor adds rows only through the explicit Add contact
+                # action. Existing exact site/role/name/conflict checks still
+                # decide whether the addition can be reused.
+                marker = f"directory-add-intent:{draft.profile.key}"
+                block = replace(block, references=tuple(dict.fromkeys((*block.references, marker))))
     if show_preview:
         with right:
             st.write("Contacts in this report")
             for table in updated:
                 st.dataframe(
-                    [dict(zip(table.columns, row)) for row in table.rows],
+                    _comparison_rows(table.columns, table.rows),
                     hide_index=True,
                     width="stretch",
                 )

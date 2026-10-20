@@ -22,6 +22,14 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_report_row_cards.py'
+      - 'scripts/qa_rfi_entry.py'
+      - 'tests/rfi_entry_focus_test.cjs'
+      - 'tests/test_monthly_report_rfi_ui.py'
+      - 'tests/test_monthly_report_empty_table_ui.py'
+      - 'tests/test_rfi_entry_journey.py'
+      - 'scripts/workspace_row_observations.py'
+      - 'tests/test_report_row_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
       - 'scripts/qa_fresh_native_errors.js'
       - 'scripts/qa_fresh_native_error_checks.py'
@@ -136,6 +144,14 @@ on:
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_report_row_cards.py'
+      - 'scripts/qa_rfi_entry.py'
+      - 'tests/rfi_entry_focus_test.cjs'
+      - 'tests/test_monthly_report_rfi_ui.py'
+      - 'tests/test_monthly_report_empty_table_ui.py'
+      - 'tests/test_rfi_entry_journey.py'
+      - 'scripts/workspace_row_observations.py'
+      - 'tests/test_report_row_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
       - 'scripts/qa_fresh_native_errors.js'
       - 'scripts/qa_fresh_native_error_checks.py'
@@ -323,6 +339,7 @@ jobs:
           node --test tests/workspace_geometry_test.cjs
           node --test tests/preview_view_lifecycle_test.cjs
           node --test tests/preview_commit_gate_test.cjs
+          node --test tests/rfi_entry_focus_test.cjs
           python scripts/qa_adaptive_workspaces.py
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
@@ -361,9 +378,19 @@ jobs:
         env:
           EPC_MONTHLY_WATER_TASK: '1'
         run: python scripts/qa_water_page_journey.py
+      - name: Native proposal and onsite row editing with actual output
+        if: ${{ !cancelled() }}
+        env:
+          EPC_MONTHLY_ROW_TASK: '1'
+        run: python scripts/qa_report_row_cards.py
       - name: Fresh ordinary Water page review from empty omitted state
         if: ${{ !cancelled() }}
         run: python scripts/qa_water_fresh_page_journey.py
+      - name: Native RFI first-action focus and editable Word/PDF after durable reload
+        if: ${{ !cancelled() }}
+        env:
+          EPC_MONTHLY_ROW_TASK: '1'
+        run: python scripts/qa_rfi_entry.py
       - name: Select explicitly requested one-shot native owner diagnostic
         id: native_owner_request
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.number == 249 && github.run_attempt == 1 }}
@@ -387,6 +414,8 @@ jobs:
             test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
             test-artifacts/water-page-journey/
+            test-artifacts/report-row-cards/
+            test-artifacts/rfi-entry/
             test-artifacts/water-fresh-page-journey/
           retention-days: 7
           if-no-files-found: warn
