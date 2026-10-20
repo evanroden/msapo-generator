@@ -402,7 +402,9 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
     from app.monthly_report_followups import seed_followups
     follow_ups = seed_followups(draft)
     carried_keys = {"equipment_issues", "proposals"}
+    from app.monthly_report_training import new_month_training
     blocks = tuple(
+        new_month_training(b) if b.key == "training_summary" else
         _carry_period_content(b, draft.period)
         if b.key == "equipment_issues" and (b.ai_written or b.ai_paragraphs) else
         preserve_asset_reviews(b, ResolvedBlock(b.key, "This month", photos_per_page=b.photos_per_page,
