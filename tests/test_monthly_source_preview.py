@@ -813,3 +813,19 @@ def test_raster_refusal_receipt_retains_complete_inventory_and_required_headroom
     assert evidence['required_headroom_bytes'] == evidence['estimated_decoded_bytes'] + 96 * 1024**2
     assert json.loads(p.artifact(req, 'receipt.json')) == result
     assert p.artifact(req, 'render-input.docx') and p.artifact(req, 'source.docx') == raw
+
+
+def test_expired_raster_admission_never_starts_converter(isolated, source, monkeypatch):
+    real = p._raster_budget
+    def expire(path, **kwargs):
+        result = real(path, **kwargs)
+        active = p._folder(OWNER) / 'active.json'
+        state = json.loads(active.read_text()); state['deadline'] = p.time.time() - 1
+        active.write_text(json.dumps(state))
+        return result
+    monkeypatch.setattr(p, '_raster_budget', expire)
+    monkeypatch.setattr(p, '_render', lambda *_: pytest.fail('expired raster admission started converter'))
+    req = request(source)
+    with pytest.raises(p.SourcePreviewError, match='expired'):
+        p.execute(req, source, upload_id=req.upload_id)
+    assert not list(p._root().rglob('*.pdf'))

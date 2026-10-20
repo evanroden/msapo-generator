@@ -643,6 +643,7 @@ def execute(request, raw, *, upload_id):
             receipt['stage'] = 'raster memory admission'
             receipt['raster_memory_admission'] = {}
             _raster_budget(render_input, budget_report=receipt['raster_memory_admission'])
+            _check(request)  # A cancellation/deadline during header admission also wins.
             receipt['stage'] = 'LibreOffice conversion'
             with tempfile.TemporaryDirectory(prefix='.conversion-', dir=folder) as temporary:
                 output, renderer, pages = _render(render_input, Path(temporary))
