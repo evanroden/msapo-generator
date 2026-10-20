@@ -183,23 +183,44 @@ def _source_union(*sources):
     return ";".join((first, *kept))
 
 
+def _same_values(old, contact):
+    return all(_identity(getattr(old, f)) == _identity(getattr(contact, f)) for f in ("name", "phone", "email"))
+
+
 def _merge_contacts(existing, incoming, context):
-    """Fill omissions for the same person; conflicting populated fields block."""
+    """Fill omissions for the same person; conflicting populated fields block.
+
+    Incoming rows are compared with saved contacts only, never with earlier
+    rows of the same import, so two people who share a role are both kept.
+    When a role repeats, people are matched by name. A new named person is an
+    addition only while every saved person in that role is still listed;
+    otherwise it may be a replacement and needs review.
+    """
     result, conflicts = list(existing), []
+    saved = len(result)
     for contact in incoming:
-        matches = [i for i, old in enumerate(result) if _identity(old.role) == _identity(contact.role)]
-        if not matches:
-            result.append(contact)
-            continue
-        exact = [i for i in matches if all(_identity(getattr(result[i], f)) == _identity(getattr(contact, f))
-                                         for f in ("name", "phone", "email"))]
-        if len(exact) == 1:
+        role = _identity(contact.role)
+        if any(_identity(c.role) == role and _same_values(c, contact) for c in result):
             # The same values from a re-saved workbook are not new information:
             # keep the saved record and its provenance so the import is a no-op.
             continue
-        if len(matches) != 1:
-            conflicts.append(f"{context}: more than one saved contact has role {contact.role}; review that role separately.")
+        matches = [i for i in range(saved) if _identity(result[i].role) == role]
+        if not matches:
+            result.append(contact)
             continue
+        listed = [c for c in incoming if _identity(c.role) == role]
+        if len(matches) > 1 or len(listed) > 1:
+            name = _identity(contact.name)
+            people = [i for i in matches if name and _identity(result[i].name) == name]
+            still_listed = all(any(_identity(c.name) == _identity(result[i].name) for c in listed)
+                               for i in matches if result[i].name.strip())
+            if not people and name and still_listed:
+                result.append(contact)
+                continue
+            if len(people) != 1:
+                conflicts.append(f"{context}: more than one saved contact has role {contact.role}; review that role separately.")
+                continue
+            matches = people
         i, old = matches[0], result[matches[0]]
         changed_fields = [f for f in ("name", "phone", "email") if getattr(old, f).strip() and getattr(contact, f).strip()
                           and _identity(getattr(old, f)) != _identity(getattr(contact, f))]

@@ -474,17 +474,35 @@ def sheet_findings(workbook, selected):
 
 
 def proposed_contacts(existing, incoming):
-    """Blank updates cannot erase saved details or attach an old phone to a new person."""
+    """Blank updates cannot erase saved details or attach an old phone to a new person.
+
+    Identical values keep the saved record (and its provenance). When a role
+    repeats, each person is matched by name, so re-importing the same people
+    never duplicates them; an unmatched person is added for review.
+    """
+    def same(value, other):
+        return " ".join(value.casefold().split()) == " ".join(other.casefold().split())
+
     result = list(existing)
+    saved = len(result)
     for contact in incoming:
-        matches = [i for i, c in enumerate(result) if c.role.casefold() == contact.role.casefold()]
-        if len(matches) == 1 and sum(c.role.casefold() == contact.role.casefold() for c in incoming) == 1:
+        if any(same(c.role, contact.role) and all(same(getattr(c, f), getattr(contact, f))
+                                                  for f in ("name", "phone", "email")) for c in result):
+            continue
+        matches = [i for i in range(saved) if same(result[i].role, contact.role)]
+        repeated = len(matches) > 1 or sum(same(c.role, contact.role) for c in incoming) > 1
+        if repeated:
+            matches = [i for i in matches if contact.name.strip() and same(result[i].name, contact.name)]
+        if len(matches) == 1:
             index = matches[0]
             old = result[index]
-            same_person = not contact.name or contact.name.casefold() == old.name.casefold()
+            same_person = not contact.name or same(contact.name, old.name)
             if same_person:
-                contact = replace(contact, name=contact.name or old.name, phone=contact.phone or old.phone,
-                                  email=contact.email or old.email,
+                merged = {"name": contact.name or old.name, "phone": contact.phone or old.phone,
+                          "email": contact.email or old.email}
+                if all(merged[f] == getattr(old, f) for f in merged):
+                    continue  # nothing new for this person; keep the saved record
+                contact = replace(contact, **merged,
                                   source=";".join(dict.fromkeys(s for s in (contact.source, old.source) if s)))
             result[index] = contact
         else:
