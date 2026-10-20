@@ -485,6 +485,12 @@ def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
 
 def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
     docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader)
+    # Retained native PNGs may still contain erased artwork under alpha zero.
+    # This bounded derivative pass is separate from pixel-preserving metadata
+    # stripping; neither operation changes the saved source/design/assets.
+    from app.monthly_report_media_privacy import sanitize_package_media, sanitize_package_transparency
+    docx = sanitize_package_transparency(docx)
+    docx = sanitize_package_media(docx)
     pdf, error = _convert_report_pdf(draft, docx)
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error)
 
@@ -527,6 +533,10 @@ def _convert_report_pdf(draft, docx):
             if pinned_source is not None:
                 converted_copy = compact_native_photos_for_pdf(
                     converted_copy, pinned_source=pinned_source)
+            # A retry can hold Word bytes created before this privacy boundary
+            # existed. Clean only its disposable PDF input, not that download.
+            from app.monthly_report_media_privacy import sanitize_package_transparency
+            converted_copy = sanitize_package_transparency(converted_copy)
             input_path.write_bytes(converted_copy)
             del converted_copy
             release_transient_word_memory()

@@ -1469,7 +1469,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
             continue
         header_occurrences = _header_image_occurrences(part, inspection)
-        preserved_header_nodes = set()
+        approved_header_nodes = set()
         _clear_diagrams(part.element)
         _clear_hyperlinks(part.element)
         for paragraph in part.element.iter(qn("w:p")):
@@ -1494,9 +1494,11 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     and not re.fullmatch(r"(?:enfra|author:|client utility rate analysis)(?:\s+(?:author:|client utility rate analysis))*", text.strip(), re.IGNORECASE)
                     and not text.strip().isdigit()):
                 _set_text(paragraph, "")
-        if brand and brand.source != "Omit" and brand.asset_hashes:
+        header_logos = {key: blocks[key] for key in ("brand_logo", "client_logo")
+                        if key in blocks and blocks[key].source != "Omit" and blocks[key].asset_hashes}
+        if header_logos:
             if asset_loader is None:
-                raise NativeLayoutError("ENFRA branding requires the saved asset resolver.")
+                raise NativeLayoutError("Report branding requires the saved asset resolver.")
             header_bindings = defaultdict(list)
             for node, attr, item in header_occurrences:
                 header_bindings[item.id].append((node, attr))
@@ -1506,32 +1508,36 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                 reference = reference_prefix + source_item.id
                 explicit_roles = {block.key for block in draft.blocks
                                   if reference in block.references}
-                is_brand = (explicit_roles == {"brand_logo"} if explicit_roles else
-                            source_item.image_role == "brand_logo")
-                if not is_brand:
+                role = (next(iter(explicit_roles)) if len(explicit_roles) == 1 else
+                        "" if explicit_roles else source_item.image_role)
+                logo = header_logos.get(role)
+                if logo is None:
                     continue
                 if source_item.id not in header_bindings:
                     raise NativeLayoutError(
                         "The selected header logo occurrence could not be matched safely. "
                         "Review its source artwork before generating this report.")
-                if unchanged_master_brand and not explicit_roles:
+                if role == "brand_logo" and unchanged_master_brand and not explicit_roles:
                     # An unchanged, verified cover brand may have a distinct
                     # native header variant. Preserve that variant unless this
                     # exact header occurrence was deliberately mapped. Approval
                     # belongs to these nodes, not independent uses of equal bytes.
-                    preserved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
+                    approved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
                     continue
-                if _source_image_digest(str(source_path), inspection.sha256, source_item, True) in brand.asset_hashes:
-                    preserved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
+                if _source_image_digest(str(source_path), inspection.sha256, source_item, True) in logo.asset_hashes:
+                    approved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
                     continue
-                rid, _ = part.get_or_add_image(BytesIO(asset_loader(brand.asset_hashes[0])))
+                rid, _ = part.get_or_add_image(BytesIO(asset_loader(logo.asset_hashes[0])))
                 for node, attr in header_bindings[source_item.id]:
                     node.set(attr, rid)
+                    # Current client artwork is authorized at this occurrence,
+                    # not at every source location containing equal bytes.
+                    approved_header_nodes.add(node)
         if master:
             approved = set()
             if brand and brand.source != "Omit" and brand.asset_hashes and asset_loader:
                 approved.add(hashlib.sha256(asset_loader(brand.asset_hashes[0])).hexdigest())
-            _remove_unapproved_header_images(part, approved, preserved_header_nodes)
+            _remove_unapproved_header_images(part, approved, approved_header_nodes)
     page_plan.finish(document=document)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)

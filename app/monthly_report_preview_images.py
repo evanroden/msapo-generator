@@ -6,6 +6,8 @@ from zipfile import ZipFile, ZIP_DEFLATED
 
 from PIL import Image
 
+from app.monthly_report_media_privacy import clear_transparent_png_rgb
+
 
 MAX_PIXELS = 2_500_000
 MAX_EDGE = 1800
@@ -44,6 +46,9 @@ def write_preview_docx(raw, path):
             if info.filename.startswith('word/media/') and Path(info.filename).suffix.lower() in ('.png', '.jpg', '.jpeg'):
                 try:
                     data = _smaller_image(data)
+                    # This disposable conversion derivative must not expose
+                    # hidden RGB; stored/normalized asset identity stays exact.
+                    data = clear_transparent_png_rgb(data)
                 except (OSError, SyntaxError, Image.DecompressionBombError) as exc:
                     raise ValueError('A picture cannot be read safely for this preview.') from exc
             target.writestr(info, data)

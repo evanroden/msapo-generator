@@ -171,9 +171,12 @@ def _cover_photo_window(items):
     earliest = min((item.word_section for item in cover), default=None)
     if earliest is None:
         return (), 0
+    # A contents heading closes the cover, not incidental prose such as
+    # "The contents of this report are confidential." Allow a wrapped title.
     stop = min((item.position for item in body
                 if item.section not in ("", "cover")
-                or (item.kind == "text" and re.search(r"\b(?:table\s+of\s+contents|contents)\b", item.text, re.I))),
+                or (item.kind == "text" and re.search(
+                    r"^\s*(?:table\s+of\s+)?contents[ \t]*:?[ \t]*(?:\n|$)", item.text, re.I | re.M))),
                default=max((item.position for item in body), default=0) + 1)
     first = tuple(item for item in cover if item.word_section == earliest and item.position < stop)
     # An existing photograph or unassigned drawing on the first cover stays
