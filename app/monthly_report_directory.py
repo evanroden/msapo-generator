@@ -754,6 +754,8 @@ def sheet_findings(workbook, selected):
 def _phone_identity(value):
     """A phone number's digits and extension; text that is not a number keeps its spelling."""
     number, extension = re.fullmatch(r"(.*?)(?:\s*(?:ext\.?|extension|x)\s*(\d+))?", value.strip(), re.I | re.S).groups()
+    if not re.fullmatch(r"[\d\s+().\-/]*", number):
+        return " ".join(value.casefold().split())  # a note such as "(after hours)" is information
     digits = re.sub(r"\D", "", number)
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]
