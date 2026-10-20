@@ -9,6 +9,8 @@ from app.monthly_report_followups import (
     _status_label, problems, unique_followup_keys, followup_limit_message,
     _capture_followup_controls, _visible_followup_keys, MAX_INCLUDED_FOLLOWUPS,
     FOLLOWUP_PAGE_SIZE, _followup_choice, _followup_choice_identity, output_followups,
+    confirmation, needs_issue_period_confirmation,
+    acknowledge_followup_controls, _followup_missing_links,
 )
 from app.monthly_report_model import ReportFollowUp
 from app.monthly_report_sources import source_reference
@@ -241,6 +243,52 @@ def _issue_changed(key, before, identity):
     }
 
 
+def _queue_issue_period_confirmation(prefix, row_key, identity):
+    import streamlit as st
+    st.session_state[prefix + "_pending_issue_period_confirmation"] = {
+        "row_key": row_key, "identity": identity,
+    }
+
+
+def _apply_issue_period_confirmation(before, captured, prefix):
+    """Approve only the rendered row, after its delivered native edits land."""
+    import streamlit as st
+    key = prefix + "_pending_issue_period_confirmation"
+    request = st.session_state.get(key)
+    if not request:
+        return captured
+    original = next((item for item in before.follow_ups
+                     if item.category == "issue" and item.key == request.get("row_key")), None)
+    if (original is None
+            or _followup_choice_identity(before, prefix, original)
+            not in (request.get("identity"), request.get("result"))):
+        st.session_state.pop(key, None)
+        st.warning("The issue or report changed before this confirmation arrived. Review the current issue and confirm again if the update still applies.")
+        return captured
+    current = next((item for item in captured.follow_ups if item.key == original.key), None)
+    if (current is None or (request.get("result")
+            and request["result"] != _followup_choice_identity(captured, prefix, current))):
+        st.session_state.pop(key, None)
+        st.warning("The entered issue changed after the earlier confirmation. Its current details are kept; confirm the current update if it still applies.")
+        return captured
+    if not needs_issue_period_confirmation(current, captured.period):
+        if not request.get("result"):
+            st.session_state.pop(key, None)
+        return captured
+    confirmed = replace(current, reviewed_fingerprint=confirmation(current, captured.period))
+    remaining = problems(confirmed, captured)
+    if remaining:
+        st.session_state.pop(key, None)
+        st.warning("The update has not been confirmed: " + " ".join(remaining))
+        return captured
+    st.session_state[key] = {
+        **request, "result": _followup_choice_identity(captured, prefix, current),
+        "reviewed_fingerprint": confirmed.reviewed_fingerprint,
+    }
+    return replace(captured, follow_ups=tuple(
+        confirmed if item.key == current.key else item for item in captured.follow_ups))
+
+
 def _issue_control(widget, label, key, value, field, *, identity, **kwargs):
     """An untouched widget mirror cannot undo a replaced canonical issue."""
     import streamlit as st
@@ -248,7 +296,9 @@ def _issue_control(widget, label, key, value, field, *, identity, **kwargs):
     submitted = (isinstance(receipt, dict) and receipt.get("identity") == identity
                  and receipt.get("before") == value
                  and receipt.get("value") == st.session_state.get(key))
-    if isinstance(receipt, dict) and not submitted:
+    captured = (isinstance(receipt, dict) and receipt.get("result") == identity
+                and receipt.get("value") == value)
+    if isinstance(receipt, dict) and not submitted and not captured:
         st.warning(f"An earlier {label.lower()} edit belongs to a changed item or report. "
                    "The current value is kept. The entered value below has not been applied or saved.")
         if receipt.get("value") in ("", []):
@@ -262,9 +312,13 @@ def _issue_control(widget, label, key, value, field, *, identity, **kwargs):
         # issue, not the textarea's implicit empty default. Keep the existing
         # receipt guard and honor an explicitly submitted clear/update.
         kwargs["value"] = receipt["value"] if submitted else value
+    elif widget == st.multiselect:
+        # The Python mirror alone does not set a newly mounted native default.
+        # Keep real selection and explicit clear consistent in both protocols.
+        kwargs["default"] = receipt["value"] if submitted else value
     result = widget(label, key=field(key, value), on_change=_issue_changed,
                     args=(key, value, identity), **kwargs)
-    if submitted:
+    if submitted and not captured:
         st.session_state.pop(key + "_change", None)
     if submitted and result != value:
         return result
@@ -285,7 +339,7 @@ def _render_issue_evidence(item, draft, options, p, field, prefix):
             p + "_sources_" + _digest(list(options)),
             [ref for ref in references if ref in options], field,
             identity=identity, options=list(options), format_func=options.get) if options else []
-        missing = tuple(ref for ref in references if ref not in options)
+        missing = _followup_missing_links(draft, prefix, item, options)
         if missing:
             notice = st.empty()
             if _followup_choice(draft, prefix, item, p + "_remove_missing_" + _digest(missing),
@@ -296,16 +350,23 @@ def _render_issue_evidence(item, draft, options, p, field, prefix):
         references = (*selected, *missing)
     if item.carried_from != draft.period.key:
         st.caption("Carried from " + item.carried_from)
+    if needs_issue_period_confirmation(item, draft.period):
+        st.button("Confirm update for " + draft.period.label,
+                  key=p + "_confirm_period_" + identity,
+                  on_click=_queue_issue_period_confirmation,
+                  args=(prefix, item.key, identity))
     return replace(item, update=update, evidence_note=note, references=references)
 
 
-def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pages=None):
+def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pages=None, defer_commit=False):
     import streamlit as st
 
     draft = canonical_issues(draft)
     options = {source_reference(source, n): f"{source.filename} · page {n}"
                for source in draft.sources for n in range(1, len(source.page_texts) + 1)}
+    before = draft
     draft = _capture_followup_controls(draft, prefix, "issue", options)
+    draft = _apply_issue_period_confirmation(before, draft, prefix)
     message = followup_limit_message(draft)
     if message:
         st.error(message)
@@ -386,4 +447,5 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
                 st.caption(_status_label(item.status))
                 if st.button("Include again", key=prefix + "_issue_restore_" + item.key):
                     draft = issue_visibility(draft, item.key, True)
-    return draft if defer_actions else apply_issue_action(draft, prefix)
+    draft = draft if defer_actions else apply_issue_action(draft, prefix)
+    return draft if defer_commit else acknowledge_followup_controls(draft, prefix)
