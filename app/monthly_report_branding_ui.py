@@ -84,9 +84,11 @@ def offer_logo(block, contract, prefix, assets):
         st.image(branding.read_logo(logo), width=240)
         label = "Use this logo in this report" if block.asset_hashes else "Add this logo to this report"
         if st.button(label, key=prefix + "_official_" + block.key + "_" + logo.asset):
+            from app.monthly_report_model import picture_replacement_references
             assets[logo.asset] = branding.read_logo(logo)
-            block = replace(block, source="Replace once", asset_hashes=(logo.asset,), asset_captions=(), references=(),
-                            client_reviewed_fingerprint="", client_asset_reviews=(), asset_provenance=())
+            block = replace(block, source="Replace once", asset_hashes=(logo.asset,), asset_captions=(),
+                            references=picture_replacement_references(block),
+                            client_reviewed_fingerprint="", client_asset_reviews=(), asset_provenance=((logo.asset, ()),))
             # Selecting verified artwork from the reviewed shared collection
             # does not require another pricing/page review in this report.
             from app.monthly_report_asset_review import approve_all_assets

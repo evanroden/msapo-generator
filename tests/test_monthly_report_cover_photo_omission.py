@@ -37,7 +37,9 @@ def cover_source(tmp_path):
     document.add_heading(synthetic_profiles()[0].facilities[0].title, 0)
     document.add_paragraph("September 2026")
     document.add_picture(BytesIO(photo), width=Inches(4))
-    document.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(logo), width=Inches(2))
+    shape = document.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(logo), width=Inches(2))
+    # The no-photo flow must retain this identified mark, not infer it from placement.
+    shape._inline.docPr.set("descr", "ENFRA company logo")
     document.add_heading("Monthly Activity Summary", 1)
     document.add_paragraph("Synthetic current pump inspection.")
     path = tmp_path / "invented-cover-source.docx"

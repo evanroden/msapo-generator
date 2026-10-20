@@ -345,7 +345,8 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
             if st.session_state.get(once_key + "_digest") != digest:
                 try:
                     normalized = normalize_report_image(uploaded.getvalue(), Path(uploaded.name).suffix,
-                                                        line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"))
+                                                        line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"),
+                                                        preserve_transparency=spec.key in ("brand_logo", "client_logo"))
                     reference = library.asset_reference(normalized.data, normalized.extension)
                     assets[reference] = normalized.data
                     st.session_state[once_key] = reference
@@ -357,7 +358,10 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
                     st.session_state.pop(once_key, None)
         reference = st.session_state.get(once_key)
         text = st.text_input("Caption", key=field(key + "_caption", starting.text))
-        block = (ResolvedBlock(spec.key, source, text=text, asset_hashes=(reference,) if reference else ())
+        from app.monthly_report_model import picture_replacement_references
+        block = (ResolvedBlock(spec.key, source, text=text, asset_hashes=(reference,) if reference else (),
+                               references=picture_replacement_references(starting),
+                               asset_provenance=((reference, ()),) if reference and spec.key in ("brand_logo", "client_logo") else ())
                  if reference or uploaded else replace(starting, source=source, text=text))
     elif spec.type in ("table", "work_order_grid"):
         columns = [c.title for c in spec.columns] or ["Facility", "Item", "Status"]
