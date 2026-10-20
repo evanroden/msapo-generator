@@ -29,10 +29,14 @@ RATES = ('Cost / kg', 'Unit Price / kWh', 'Fee / hour', 'Labor rate / hour')
 METADATA = ('Date Quoted', 'Reference Quote', 'Number of Quotes', 'Count of Estimates')
 MONEY = ('Repair estimate 5000-10000', 'Quote: 5k-10k',
          'Estimated repair: 6875', 'Estimated replacement: 18675.50',
-         'Quote 5000–10000', 'Repair estimate 5,000–10,000')
+         'Quote 5000–10000', 'Repair estimate 5,000–10,000',
+         'Budget for 2026-2027: 8,640')
 OPERATING = ('Quote received from Acme: 2026-11-14', 'Quote date 09/01/2026',
              'Estimated repair time: 48 hours', 'Estimated replacement flow: 125 gpm',
-             'Not to exceed 3-4 starts per hour', 'Estimated replacement: 480 V')
+             'Not to exceed 3-4 starts per hour', 'Estimated replacement: 480 V',
+             'Budget for 2026-2027 remains under review.',
+             'Estimate for 2026–2027 remains pending.',
+             'Date Quoted: 2026-09-17; Number of Quotes: 2')
 
 
 def output_dir(tmp_path):
