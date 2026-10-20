@@ -193,8 +193,12 @@ def _source_union(*sources):
     return ";".join((first, *kept))
 
 
+def _same(field, value, other):
+    return directory.same_contact_value(field, value, other)
+
+
 def _same_values(old, contact):
-    return all(_identity(getattr(old, f)) == _identity(getattr(contact, f)) for f in ("name", "phone", "email"))
+    return all(_same(f, getattr(old, f), getattr(contact, f)) for f in ("name", "phone", "email"))
 
 
 def _coalesce_incoming_contacts(incoming, context):
@@ -211,7 +215,7 @@ def _coalesce_incoming_contacts(incoming, context):
         old = result[index]
         changed = [field for field in ("phone", "email")
                    if getattr(old, field).strip() and getattr(contact, field).strip()
-                   and _identity(getattr(old, field)) != _identity(getattr(contact, field))]
+                   and not _same(field, getattr(old, field), getattr(contact, field))]
         if changed:
             conflicts.append(
                 f"{context}: {old.role} ({old.name}) has conflicting {', '.join(changed)} "
@@ -261,10 +265,10 @@ def _merge_contacts(existing, incoming, context):
             matches = people
         i, old = matches[0], result[matches[0]]
         changed_fields = [f for f in ("name", "phone", "email") if getattr(old, f).strip() and getattr(contact, f).strip()
-                          and _identity(getattr(old, f)) != _identity(getattr(contact, f))]
+                          and not _same(f, getattr(old, f), getattr(contact, f))]
         # A phone-only record is not proof of the incoming named person's identity.
         if contact.name and not old.name and (old.phone or old.email):
-            matching_id = any(getattr(contact, f) and _identity(getattr(contact, f)) == _identity(getattr(old, f))
+            matching_id = any(getattr(contact, f) and _same(f, getattr(contact, f), getattr(old, f))
                               for f in ("phone", "email"))
             if not matching_id:
                 changed_fields.append("contact identity")
