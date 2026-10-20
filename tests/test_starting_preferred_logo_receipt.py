@@ -26,8 +26,10 @@ def source_with_header_logo(tmp_path):
     document.add_heading(synthetic_profiles()[0].facilities[0].title, 0)
     document.add_paragraph("September 2026")
     document.add_picture(BytesIO(photo.getvalue()), width=Inches(4))
-    document.sections[0].header.paragraphs[0].add_run().add_picture(
+    shape = document.sections[0].header.paragraphs[0].add_run().add_picture(
         BytesIO(logo.getvalue()), width=Inches(2))
+    # Receipt replay begins with a positively identified company mark.
+    shape._inline.docPr.set("descr", "ENFRA company logo")
     document.add_heading("Monthly Activity Summary", 1)
     document.add_paragraph("Synthetic September inspection completed.")
     path = tmp_path / "invented-header-logo.docx"

@@ -202,7 +202,9 @@ def foreign_cover_report(tmp_path, *, logo=True):
     if logo:
         stream = BytesIO()
         Image.new("RGB", (300, 70), "teal").save(stream, "PNG")
-        document.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(stream.getvalue()), width=Inches(2))
+        shape = document.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(stream.getvalue()), width=Inches(2))
+        # This scenario carries recognized company art, not arbitrary header art.
+        shape._inline.docPr.set("descr", "ENFRA company logo")
     document.add_heading("Activity Summary", 1)
     document.add_paragraph("Foreign site motor work must not reach the target report.")
     document.save(source)
