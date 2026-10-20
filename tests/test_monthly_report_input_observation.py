@@ -61,7 +61,7 @@ const mount = new Function('document','Element','queueMicrotask','requestAnimati
 const dispose = mount({parentElement:{querySelector(){return panel;}}});
 const handler = registrations.find(item=>item.type==='click').handler;
 const event = {type:'click',target:label,isTrusted:true,pointerType:'mouse',button:0,buttons:0,
- detail:1,width:1,height:1,defaultPrevented:false,
+ detail:1,width:1,height:1,pressure:0.5,defaultPrevented:false,
  get key(){throw Error('private key read');},
  preventDefault(){throw Error('input interference');},stopPropagation(){throw Error('input interference');}};
 const first = panel.textContent;
@@ -72,9 +72,12 @@ event.defaultPrevented = true;
 tasks.splice(0).forEach(fn=>fn());
 let receipts = JSON.parse(panel.textContent);
 assert.equal(receipts[1].defaultPrevented,false);
+assert.equal(receipts[1].pressure,0.5);
 assert.equal(receipts[2].defaultPrevented,true);
 assert.equal(receipts[2].state.checked,false);
 assert.equal(receipts[2].state.focusedControl,'restore-confirmation');
+const pendingFrames = Array.from(frames.values()); frames.clear(); pendingFrames.forEach(fn=>fn());
+assert.equal(JSON.parse(panel.textContent).at(-1).defaultPrevented,true);
 for(let i=0;i<100;i++)handler(event);
 receipts = JSON.parse(panel.textContent);
 assert.equal(receipts.length,80);
@@ -84,4 +87,5 @@ dispose(); tasks.splice(0).forEach(fn=>fn());
 assert.equal(panel.textContent,before);
 assert.equal(registrations.length,0); assert.equal(frames.size,0);
 '''
-    subprocess.run(['node', '-e', code, json.dumps(source)], check=True, capture_output=True, text=True)
+    result = subprocess.run(['node', '-e', code, json.dumps(source)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
