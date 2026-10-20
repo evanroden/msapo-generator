@@ -181,9 +181,11 @@ def _cover_photo_window(items):
     first = tuple(item for item in cover if item.word_section == earliest and item.position < stop)
     # An existing photograph or unassigned drawing on the first cover stays
     # authoritative. Do not promote another illustration when that art needs
-    # a specific recovery of its own.
+    # a specific recovery of its own. Known branding is not an independent
+    # photograph; its unresolved owner remains a separate review requirement.
     independent_art = any(item.kind in ("image", "unsupported")
-                          and item.suggested_slot not in ("brand_logo", "client_logo") for item in first)
+                          and item.suggested_slot not in ("brand_logo", "client_logo")
+                          and not is_logo_artwork(item) and not is_header_artwork(item) for item in first)
     following = tuple(item for item in cover if item.word_section == earliest + 1 and item.position < stop)
     photo_panel = (following and any(item.kind == "image" for item in following)
                    and all(item.kind == "image" or (item.kind == "text"
