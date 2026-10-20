@@ -12,8 +12,9 @@ if TYPE_CHECKING:
 _CURRENCIES = r"USD|CAD|EUR|GBP|CHF|AUD|NZD|JPY|CNY|HKD|SGD|SEK|NOK|DKK|INR|ILS|AED|SAR|MXN|ZAR|BRL|KRW"
 _CURRENCY_SYMBOLS = r"[$€£¥₹₪₩₽₺₴₦₱฿₫]"
 _MONEY = re.compile(
-    rf"(?:{_CURRENCY_SYMBOLS}\s*(?:~\s*)?\(?[-+]?\d|\b(?:{_CURRENCIES})\b[\s():]*(?:~\s*)?\(?[-+]?\d|"
-    rf"\d[\d,.]*(?:\s*[kmb])?\s*(?:{_CURRENCY_SYMBOLS}|(?:{_CURRENCIES}|dollars?)\b))", re.I)
+    rf"(?:{_CURRENCY_SYMBOLS}\s*(?:~\s*)?\(?\s*(?:~\s*)?[-+]?\d|"
+    rf"\b(?:{_CURRENCIES})\b[\s():]*(?:~\s*)?\(?\s*(?:~\s*)?[-+]?\d|"
+    rf"\d[\d,.]*(?:\s*\))?(?:\s*[kmb])?\s*\)?\s*(?:{_CURRENCY_SYMBOLS}|(?:{_CURRENCIES}|dollars?)\b))", re.I)
 _PRICE_LABEL = re.compile(
     r"\b(?:unit\s+price|pricing|prices?|costs?|(?:hourly|billing|labor|labour)\s+rates?|"
     r"subtotal|(?:grand|invoice|proposal|quote|project)\s+total|total\s+(?:amount|charges?|due)|"
@@ -36,11 +37,16 @@ _QUANTITY_LABEL = re.compile(
 _LEADING_REFERENCE_METADATA = re.compile(
     r"\b(?:date|reference|ref\.?|identifier|id|(?:number|count|quantity)\s+of)\s*$", re.I)
 _REFERENCE_METADATA = re.compile(r"^(?:received|requested|submitted)\b", re.I)
-# Approximation changes precision, not a value's financial context. Keep the
-# marker on each number so a technical range is consumed before checking units.
-_NUMBER = r"(?:~\s*)?\(?[-+]?\d[\d,]*(?:\.\d+)?\)?(?:\s*[kmb](?!\w))?"
+# Approximation and parentheses do not change a value's financial context.
+# Consume each complete range endpoint before checking its trailing units.
+# Keep the earlier extracted forms (3.2)k and unmatched (3200 recognized too.
+_NUMBER = (r"(?:~\s*)?\(?\s*(?:~\s*)?[-+]?\d[\d,]*(?:\.\d+)?"
+           r"(?:\s*\))?(?:\s*[kmb](?!\w))?(?:\s*\))?")
 _AMOUNT_VALUE = _NUMBER + r"(?:\s*(?:[-–—]|\bto\b)\s*" + _NUMBER + r")?"
-_AMOUNT_END = r"(?!\w|[/–—-]\s*\d|\.\d)"
+# Do not backtrack to the first number of a date or technical range, nor stop
+# inside a closing parenthesis before the following unit.
+_NUMERIC_CONTINUATION = r"\s*(?:[/–—-]|\bto\b)\s*(?:~\s*)?\(?\s*(?:~\s*)?[-+]?\d"
+_AMOUNT_END = r"(?!\w|\s*\)|" + _NUMERIC_CONTINUATION + r"|\.\d)"
 _AMOUNT_AFTER_LABEL = re.compile(
     r"^[\s:=,–—-]*(?:(?:is|was|are|were|of|at|to|from|for|repair|repairs|replace|replacement|"
     r"reduced|increased|decreased|estimated|approximately|about|up|not|more|than|emergency|"
@@ -53,8 +59,10 @@ _AMOUNT_AFTER_PROSE = re.compile(
     r"(?P<amount>" + _AMOUNT_VALUE + r")" + _AMOUNT_END, re.I)
 _PRICE_PERIOD_PREFIX = re.compile(
     r"^\s*(?:for|in)\s+(?:(?:calendar|fiscal)\s+year\s+|FY\s*)?"
-    r"(?:~\s*)?(?:19|20|21)\d{2}(?:\s*[-–—/]\s*(?:~\s*)?(?:19|20|21)\d{2})?"
-    r"(?![\d,.]|[/-]\d)(?=\s|[:=–—-]|$)[\s:=–—-]*", re.I)
+    r"(?:~\s*)?\(?\s*(?:~\s*)?(?:19|20|21)\d{2}(?:\s*\))?"
+    r"(?:\s*[-–—/]\s*(?:~\s*)?\(?\s*(?:~\s*)?(?:19|20|21)\d{2})?(?:\s*\))?"
+    r"(?![\d,.]|" + _NUMERIC_CONTINUATION + r"|\s*[kmb](?!\w))"
+    r"(?=\s|[:=–—-]|$)[\s:=–—-]*", re.I)
 _TECHNICAL_VALUE_SUFFIX = re.compile(
     r"^\s*(?:%|percent\b|(?:psi|psig|psia|gpm|rpm|cfm|kw|kwh|mw|mwh|hp|btu|tons?|tonnes?|"
     r"gallons?|liters?|litres?|lb|lbs|kg|hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?|"
