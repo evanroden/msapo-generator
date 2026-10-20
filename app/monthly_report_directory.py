@@ -505,12 +505,37 @@ def canonical_contract(contract):
                 " ".join(contract.split()))
 
 
-def _directory_records():
+@dataclass(frozen=True)
+class DirectoryReadProblem:
+    storage_key: str
+    message: str
+
+
+def _directory_records(*, unavailable=None):
+    """Contain a damaged manifest without treating it as an empty directory.
+
+    Direct reads/writes still fail for that record. Discovery may skip it, but
+    callers rendering choices can show the scoped problems from the same scan.
+    """
     root = library._root() / "directory"
-    return tuple((path.parent, _state(library._read(path))) for path in sorted(root.glob("*/manifest.json")))
+    records = []
+    for path in sorted(root.glob("*/manifest.json")):
+        try:
+            state = _state(library._read(path))
+            if library._contract_directory(state.contract) != path.parent.name:
+                raise library.LibraryError("Directory contract identity mismatch.")
+        except library.LibraryError as exc:
+            # A reset/foreign QA path is not a corrupt record. Revalidate the
+            # isolation boundary outside the containment handler and propagate.
+            library._qa_path_guard(path)
+            if unavailable is not None:
+                unavailable.append(DirectoryReadProblem(path.parent.name, str(exc)))
+            continue
+        records.append((path.parent, state))
+    return tuple(records)
 
 
-def _path(contract):
+def _path(contract, *, creating=False):
     """Reuse old case-sensitive storage paths, keeping history in place.
 
     Exact legacy names remain addressable if pre-existing directories collide.
@@ -522,7 +547,9 @@ def _path(contract):
         if _state(library._read(direct / "manifest.json")).contract != contract:
             raise library.LibraryError("Directory contract identity mismatch.")
         return direct
-    matches = [(path, state) for path, state in _directory_records() if _contract_identity(state.contract) == identity]
+    unavailable = []
+    matches = [(path, state) for path, state in _directory_records(unavailable=unavailable)
+               if _contract_identity(state.contract) == identity]
     if len(matches) == 1:
         return matches[0][0]
     if matches:
@@ -531,18 +558,46 @@ def _path(contract):
             if len(exact) == 1:
                 return exact[0]
         raise library.LibraryError("More than one saved contact list uses this contract name. Open the saved directory and archive the duplicate by its original name.")
+    if creating and unavailable:
+        # An unreadable legacy manifest may have used another spelling of this
+        # contract. Never create a competing identity merely because discovery
+        # could not read it. Existing healthy records can still be updated.
+        raise library.LibraryError("A saved directory could not be read. Recover its contract identity before creating another shared directory; existing data was preserved.")
     return library._root() / "directory" / library._contract_directory(canonical_contract(contract))
 
 
 def _state(value):
     try:
+        # Dataclasses do not validate types. Check the shapes used by directory
+        # selection/editing before allowing one record into a shared catalog.
+        def text_fields(record, names):
+            if any(not isinstance(getattr(record, name), str) for name in names):
+                raise ValueError("Invalid directory text field.")
+
+        if (not isinstance(value["sites"], (list, tuple))
+                or not isinstance(value.get("contract_contacts", ()), (list, tuple))):
+            raise ValueError("Invalid directory sites or contacts.")
         sites = tuple(DirectorySite(**(s | {"aliases": tuple(s.get("aliases", ())),
                       "contacts": tuple(DirectoryContact(**c) for c in s.get("contacts", ())) })) for s in value["sites"])
-        return DirectoryState(value["contract"], value["revision"], sites, value["actor"], value["updated_at"],
-                              value.get("source_sha256", ""), value.get("source_sheet", ""), value.get("action", "save"),
-                              value.get("archived", False),
-                              tuple(DirectoryContact(**c) for c in value.get("contract_contacts", ())))
-    except (KeyError, TypeError, ValueError) as exc:
+        state = DirectoryState(value["contract"], value["revision"], sites, value["actor"], value["updated_at"],
+                               value.get("source_sha256", ""), value.get("source_sheet", ""), value.get("action", "save"),
+                               value.get("archived", False),
+                               tuple(DirectoryContact(**c) for c in value.get("contract_contacts", ())))
+        text_fields(state, ("contract", "actor", "updated_at", "source_sha256", "source_sheet", "action"))
+        _contract_identity(state.contract)
+        if type(state.revision) is not int or state.revision < 1 or type(state.archived) is not bool:
+            raise ValueError("Invalid directory revision or archive state.")
+        for raw, site in zip(value["sites"], sites):
+            text_fields(site, ("key", "title", "address", "source"))
+            library._valid_key(site.key)
+            if (type(site.active) is not bool or not isinstance(raw.get("aliases", ()), (list, tuple))
+                    or not isinstance(raw.get("contacts", ()), (list, tuple))
+                    or any(not isinstance(alias, str) for alias in site.aliases)):
+                raise ValueError("Invalid directory site aliases or active state.")
+        for contact in (*state.contract_contacts, *(c for site in sites for c in site.contacts)):
+            text_fields(contact, ("role", "name", "phone", "email", "source"))
+        return state
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise library.LibraryError("Saved site directory could not be read; existing data was preserved.") from exc
 
 
@@ -566,8 +621,8 @@ def load_directory(contract, revision=None, *, include_archived=False):
     return state
 
 
-def directory_contracts(*, include_archived=False):
-    states = [state for _, state in _directory_records()]
+def directory_contracts(*, include_archived=False, unavailable=None):
+    states = [state for _, state in _directory_records(unavailable=unavailable)]
     if include_archived:
         # Keep legacy colliding records individually reachable for recovery.
         return tuple(sorted({state.contract for state in states}, key=lambda name: (name.casefold(), name)))
@@ -615,7 +670,7 @@ def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=
     # One lock covers every casing, including concurrent first saves.
     lock = library._root() / "directory_locks" / library._contract_directory(identity)
     with library._locked(lock):
-        path = _path(contract)
+        path = _path(contract, creating=True)
         current = load_directory(contract, include_archived=True)
         if expected_revision != (current.revision if current else 0):
             raise library.RevisionConflict("Someone changed this directory. Reload and review the new version before saving.")
