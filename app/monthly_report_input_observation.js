@@ -45,13 +45,14 @@ export default function(component) {
             trusted: event.isTrusted, pointerType: event.pointerType || null,
             button: event.button ?? null, buttons: event.buttons ?? null,
             detail: event.detail ?? null, width: event.width ?? null, height: event.height ?? null,
+            pressure: event.pressure ?? null,
             defaultPrevented: event.defaultPrevented};
         append(receipt);
-        queueMicrotask(() => append({type: event.type + ':settled',
+        queueMicrotask(() => append({type: event.type + ':microtask',
             control: target, defaultPrevented: event.defaultPrevented}));
         const frame = requestAnimationFrame(() => {
             frames.delete(frame);
-            append({type: event.type + ':frame', control: target});
+            append({type: event.type + ':frame', control: target, defaultPrevented: event.defaultPrevented});
         });
         frames.add(frame);
     }
