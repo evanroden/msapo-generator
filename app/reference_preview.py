@@ -59,6 +59,24 @@ def discard_reference_scope(owner_scope: str) -> None:
                 STORE.discard(state['owner'], entry['ticket'])
 
 
+def discard_reference_entry(owner_scope: str, key: str, *, fingerprint: str | None = None) -> bool:
+    """Retire one derived view before any retained callback can run again.
+
+    A supplied content fingerprint prevents a late removal from matching a
+    different source which happens to reuse the same display key. Other views
+    and the workflow's original bytes remain owned by their current scopes.
+    """
+    owners = st.session_state.get('_workspace_reference_owners', {})
+    state = owners.get(_scope_key(owner_scope))
+    entry = state['entries'].get(key) if state is not None else None
+    if entry is None or fingerprint is not None and entry['fingerprint'] != fingerprint:
+        return False
+    state['entries'].pop(key)
+    if entry.get('ticket'):
+        STORE.discard(state['owner'], entry['ticket'])
+    return True
+
+
 def _owner(scope: str):
     owners = st.session_state.setdefault('_workspace_reference_owners', {})
     scope = _scope_key(scope)
@@ -97,8 +115,9 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
     if entry is None or entry['fingerprint'] != fingerprint:
         if entry and entry.get('ticket'):
             STORE.discard(state['owner'],entry['ticket'])
-        entry = {'fingerprint':fingerprint,'ticket':None,'error':''}
+        entry = {'fingerprint':fingerprint,'ticket':None,'error':'','incarnation':uuid4().hex}
         state['entries'][key] = entry
+    incarnation = entry.setdefault('incarnation', uuid4().hex)
     # Tiny metadata is bounded as well as STORE's shared PDF/raster bytes.
     while len(state['entries']) > 64:
         old_key=next(iter(state['entries']))
@@ -108,7 +127,7 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
         if old.get('ticket'):
             STORE.discard(state['owner'],old['ticket'])
     widget_key='workspace_reference_' + key
-    generation=sha256((state['owner']+'|'+key+'|'+fingerprint).encode()).hexdigest()
+    generation=sha256((state['owner']+'|'+key+'|'+fingerprint+'|'+incarnation).encode()).hexdigest()
 
     def current():
         owners = st.session_state.get('_workspace_reference_owners', {})
@@ -173,5 +192,5 @@ def render_reference(*, key: str, owner_scope: str, title: str, raw: bytes = b''
         render_view(key=widget_key,generation=generation,title=title,ticket=ticket,
                     images=images,status=status,on_change=changed,
                     acknowledged_viewport=view,
-                    view_scope=state['owner']+'|'+key+'|'+fingerprint)
+                    view_scope=state['owner']+'|'+key+'|'+fingerprint+'|'+incarnation)
     surface()

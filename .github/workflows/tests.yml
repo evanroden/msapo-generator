@@ -58,7 +58,7 @@ jobs:
       - name: Run tests
         env:
           ANTHROPIC_API_KEY: test-key-not-used
-          INDEPENDENT_OUTPUT: ${{ github.workspace }}/test-artifacts/independent-output
+          INDEPENDENT_OUTPUT: ${{ github.workspace }}/test-artifacts/independent-synthetic
           MSAPO_SHA: ${{ github.sha }}
         run: python -m pytest -q --junitxml=test-results.xml
       - name: Retain independent synthetic output, including first failures
@@ -66,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: independent-synthetic-output
-          path: test-artifacts/independent-output/
+          path: test-artifacts/independent-synthetic/
           if-no-files-found: warn
           retention-days: 7
       - name: Export real synthetic Word/PDF for acceptance
