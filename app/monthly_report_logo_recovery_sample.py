@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, replace
 from hashlib import sha256
 from io import BytesIO
+from pathlib import Path
 import re
 import struct
 from uuid import uuid4
@@ -178,6 +179,21 @@ def render_sample():
                     (st.success if passed else st.warning)(label if passed else label + ": not yet verified")
             except (ValueError, OSError) as exc:
                 st.error(literal(exc))
+    with st.expander("Input observations (synthetic only)"):
+        st.caption("Optional local observations of the restore checkbox and Saved collection control. Records event types and checkbox state only; no field text is collected or sent to the server. Reload to stop.")
+        if st.button("Observe input events", key="report_logo_sample_observe"):
+            st.session_state["report_logo_sample_observing"] = True
+        if st.session_state.get("report_logo_sample_observing"):
+            _input_observer()(key="report_logo_sample_input_observer", height=180)
+
+
+def _input_observer():
+    """Observation is available only after the separate sample scope check."""
+    import streamlit as st
+    _path()
+    return st.components.v2.component("enfra_logo_sample_input_observer",
+        html='<pre data-input-observations style="white-space:pre-wrap;font-size:11px;max-height:170px;overflow:auto"></pre>',
+        js=Path(__file__).with_name("monthly_report_input_observation.js").read_text())
 
 
 def render(browser_token, browser_timezone, field, move, live_root):
