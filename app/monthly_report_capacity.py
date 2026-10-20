@@ -253,7 +253,7 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
     if Path(filename).suffix.casefold() == ".xlsx":
         # The sparse SAX directory reader bounds XML tokens before allocating
         # them; openpyxl's object graph is unnecessary for capacity cells.
-        workbook = directory.inspect_workbook(raw)
+        workbook = directory.inspect_workbook(raw, number_formats=True)
         native_tables = []
         # Directory's bounded XLSX inspector marks hidden/veryHidden sheets.
         # Such sheets may contain stale or unrelated values; they must not
@@ -268,7 +268,8 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
             row_numbers = sorted({cell.row for cell in sheet.cells})
             if len(columns) > 100 or len(row_numbers) > MAX_ROWS or len(columns) * len(row_numbers) > MAX_CELLS:
                 raise ValueError("Capacity worksheet exceeds the review budget.")
-            values = sheet.values()
+            # Cells read as their number formats show them: 1,200 tons, 75%, dates.
+            values = {(c.row, c.column): directory.formatted_value(c, date1904=workbook.date1904) for c in sheet.cells}
             records = tuple(tuple(values.get((row, column), "") for column in columns) for row in row_numbers)
             native_tables.append(SourceTable(sheet.name, records[0], records[1:]))
         source = ReportSource(workbook.sha256, Path(filename).name, workbook.sha256, ".xlsx",

@@ -11,8 +11,10 @@ from dataclasses import asdict, dataclass, field, replace
 from collections import Counter, OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime, timedelta
 from io import BytesIO
 import hashlib
+import math
 import re
 from zipfile import BadZipFile, ZipFile
 from xml.parsers import expat
@@ -48,6 +50,7 @@ class DirectoryCell:
     column: int
     value: str
     formula: bool = False
+    number_format: str = ""
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,7 @@ class DirectoryWorkbook:
     sha256: str
     sheets: tuple[DirectorySheet, ...]
     notices: tuple[str, ...]
+    date1904: bool = False
 
 
 @dataclass
@@ -332,19 +336,183 @@ def _workbook_metadata(archive, names, budget):
             target = "" if value.get("TargetMode", "").casefold() == "external" else _resolve("xl/workbook.xml", value.get("Target", ""))
             relations[identity] = target, value.get("Type", "")
 
+    date1904 = False
+
     def worksheet(event, path, value):
+        nonlocal date1904
         if event == "start" and path == (S + "workbook", S + "sheets", S + "sheet"):
             if len(sheets) >= 50:
                 raise ValueError("Directory exceeds 50 worksheets; split it before importing.")
             sheets.append(dict(value))
+        elif event == "start" and path == (S + "workbook", S + "workbookPr"):
+            date1904 = value.get("date1904", "").casefold() in ("1", "true")
 
     if "xl/_rels/workbook.xml.rels" in names:
         _stream_xml(archive, "xl/_rels/workbook.xml.rels", budget, relationship)
     _stream_xml(archive, "xl/workbook.xml", budget, worksheet)
-    return relations, sheets
+    return relations, sheets, date1904
 
 
-def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
+# Built-in number formats that change how a stored number reads. Built-in 14
+# is the reader's locale short date; it is shown as an ISO date.
+_BUILTIN_FORMATS = {1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9: "0%", 10: "0.00%",
+                    14: "yyyy-mm-dd", 15: "d-mmm-yy", 16: "d-mmm", 17: "mmm-yy", 18: "h:mm AM/PM",
+                    19: "h:mm:ss AM/PM", 20: "h:mm", 21: "h:mm:ss", 22: "m/d/yy h:mm",
+                    37: "#,##0 ;(#,##0)", 38: "#,##0 ;[Red](#,##0)", 39: "#,##0.00;(#,##0.00)",
+                    40: "#,##0.00;[Red](#,##0.00)", 45: "mm:ss", 46: "[h]:mm:ss", 47: "mmss.0", 49: "@"}
+
+
+def _cell_formats(archive, names):
+    """Number-format codes by cell style index; styles never block reading values.
+
+    Read under their own budget: an unreadable or oversized styles part leaves
+    every cell with its stored value, as before formats were read.
+    """
+    if "xl/styles.xml" not in names:
+        return ()
+    custom, styles = {}, []
+
+    def style(event, path, value):
+        if event != "start":
+            return
+        if path == (S + "styleSheet", S + "numFmts", S + "numFmt") and len(custom) < 1000:
+            custom[value.get("numFmtId", "")] = value.get("formatCode", "")[:255]
+        elif path == (S + "styleSheet", S + "cellXfs", S + "xf"):
+            if len(styles) >= 65536:
+                raise ValueError("Workbook styles exceed the review budget.")
+            styles.append(value.get("numFmtId", "0"))
+
+    try:
+        _stream_xml(archive, "xl/styles.xml", _XmlBudget(), style)
+    except (ValueError, KeyError, ET.ParseError, DefusedXmlException):
+        return ()
+    return tuple(custom.get(number) or _BUILTIN_FORMATS.get(int(number), "") if number.isdigit() else ""
+                 for number in styles)
+
+
+def _format_sections(code):
+    """Positive; negative; zero; text sections, splitting only outside quoted text."""
+    sections, current, quoted = [], [], False
+    for char in code:
+        quoted ^= char == '"'
+        if char == ";" and not quoted:
+            sections.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    return [*sections, "".join(current)]
+
+
+def _format_parts(section):
+    """Literal text and pattern characters of one format section, or None if unsupported."""
+    parts, index = [], 0
+    while index < len(section):
+        char = section[index]
+        if char == '"':
+            end = section.find('"', index + 1)
+            if end < 0:
+                return None
+            parts.append(("text", section[index + 1:end]))
+            index = end + 1
+        elif char == "\\" and index + 1 < len(section):
+            parts.append(("text", section[index + 1]))
+            index += 2
+        elif char in "_*" and index + 1 < len(section):
+            parts.append(("text", " " if char == "_" else ""))
+            index += 2
+        elif char == "[":
+            end = section.find("]", index)
+            # Colours and currency/locale tags only decorate; conditions and
+            # elapsed time change the meaning, so those keep the stored value.
+            if end < 0 or not re.fullmatch(r"(?i)red|black|blue|green|white|yellow|magenta|cyan|color\s*\d+|\$[^\]]*",
+                                           section[index + 1:end]):
+                return None
+            index = end + 1
+        elif section[index:index + 7].casefold() == "general":
+            parts.append(("general", ""))
+            index += 7
+        elif section[index:index + 5].upper() == "AM/PM" or section[index:index + 3].upper() == "A/P":
+            parts.append(("date", "p"))
+            index += 5 if section[index:index + 5].upper() == "AM/PM" else 3
+        elif char in "0#?.,%":
+            parts.append(("number", char))
+            index += 1
+        elif char.casefold() in "ymdhs":
+            parts.append(("date", char.casefold()))
+            index += 1
+        elif char.casefold() in "e@":
+            return None  # scientific and text formats
+        else:
+            parts.append(("text", char))
+            index += 1
+    if any(kind == "number" for kind, _ in parts) and ("text", "/") in parts:
+        return None  # fractions
+    return parts
+
+
+def formatted_value(cell, *, date1904=False):
+    """A numeric cell as its saved number format shows it.
+
+    Grouping, decimals, percentages and literal units are applied; dates and
+    times are shown in ISO form. Unsupported or ambiguous formats, text and
+    formulas without a stored value keep the stored value unchanged.
+    """
+    code = cell.number_format
+    try:
+        number = float(cell.value)
+    except ValueError:
+        return cell.value
+    if not math.isfinite(number):
+        return cell.value
+    sections = _format_sections(code)
+    # Negative and zero sections may use their own text; keep those values.
+    if not code or (number < 0 and len(sections) > 1) or (number == 0 and len(sections) > 2):
+        return cell.value
+    parts = _format_parts(sections[0])
+    if not parts:
+        return cell.value
+    kinds = {kind for kind, _ in parts}
+    letters = {value for kind, value in parts if kind == "date"}
+    if "date" in kinds:
+        if number < 0 or number > 2958465:
+            return cell.value
+        base = datetime(1904, 1, 1) if date1904 else datetime(1899, 12, 31 if number < 60 else 30)
+        moment = base + timedelta(seconds=round(number * 86400))
+        has_date = bool(letters & {"y", "d"}) or ("m" in letters and not letters & {"h", "s", "p"})
+        has_time = bool(letters & {"h", "s", "p"})
+        time = moment.strftime("%H:%M:%S" if "s" in letters else "%H:%M")
+        if has_date and has_time:
+            return moment.strftime("%Y-%m-%d") + " " + time
+        return moment.strftime("%Y-%m-%d") if has_date else time
+    pattern = "".join(value for kind, value in parts if kind == "number")
+    if "general" in kinds:
+        if pattern:
+            return cell.value
+        shown = cell.value
+    elif pattern:
+        if pattern.rstrip("%").endswith(",") or ",." in pattern:
+            return cell.value  # thousands scaling
+        percent = "%" in pattern
+        decimals = pattern.split(".", 1)[1].replace("%", "").replace(",", "") if "." in pattern else ""
+        required = decimals.count("0")
+        value = number * 100 if percent else number
+        shown = f"{value:{',' if ',' in pattern else ''}.{len(decimals)}f}"
+        if len(decimals) > required:  # "#" decimals are optional digits
+            whole, _, fraction = shown.partition(".")
+            fraction = fraction.rstrip("0").ljust(required, "0")
+            shown = whole + ("." + fraction if fraction else "")
+        shown += "%" if percent else ""
+    else:
+        return cell.value
+    first = next(i for i, (kind, _) in enumerate(parts) if kind in ("number", "general"))
+    last = max(i for i, (kind, _) in enumerate(parts) if kind in ("number", "general"))
+    prefix = "".join(value for kind, value in parts[:first] if kind == "text")
+    suffix = "".join(value for kind, value in parts[last + 1:] if kind == "text")
+    return (prefix + shown + suffix).strip()
+
+
+def inspect_workbook(raw: bytes, *, number_formats=False) -> DirectoryWorkbook:
+    """Bounded cell values; number_formats also records each numeric cell's format code."""
     if not raw or len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError("Choose a nonempty XLSX directory up to 30 MB.")
     try:
@@ -383,7 +551,8 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
 
             if "xl/sharedStrings.xml" in names:
                 _stream_xml(archive, "xl/sharedStrings.xml", budget, shared_text)
-            relations, sheet_nodes = _workbook_metadata(archive, names, budget)
+            relations, sheet_nodes, date1904 = _workbook_metadata(archive, names, budget)
+            formats = _cell_formats(archive, names) if number_formats else ()
             sheets, total_cells, formulas = [], 0, 0
             for node in sheet_nodes:
                 target, kind = relations.get(node.get(R + "id"), ("", ""))
@@ -405,7 +574,7 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                         total_cells += 1
                         if total_cells > MAX_CELLS:
                             raise ValueError("Workbook exceeds 100,000 stored cells. Remove unused formatting or split it.")
-                        cell, cell_path = (coordinate, value.get("t", "")), path
+                        cell, cell_path = (coordinate, value.get("t", ""), value.get("s", "")), path
                         cached, inline, cell_length, is_formula = [], [], 0, False
                     elif cell is not None:
                         if event == "start" and path == (*cell_path, S + "f"):
@@ -416,7 +585,7 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                                 raise ValueError("Workbook cell text exceeds the review budget.")
                             (cached if path[-1] == S + "v" else inline).append(value)
                         elif event == "end" and path == cell_path:
-                            coordinate, kind = cell
+                            coordinate, kind, style = cell
                             value = "".join(cached)
                             if kind == "s":
                                 try:
@@ -437,8 +606,10 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                             if len(value) > 10000 or total_text > MAX_TEXT:
                                 raise ValueError("Workbook cell text exceeds the review budget.")
                             formulas += int(is_formula)
+                            number_format = (formats[int(style)] if kind in ("", "n") and style.isdigit()
+                                             and int(style) < len(formats) else "")
                             if value or is_formula:
-                                cells.append(DirectoryCell(*coordinate, value, is_formula))
+                                cells.append(DirectoryCell(*coordinate, value, is_formula, number_format))
                             cell = None
 
                 _stream_xml(archive, target, budget, worksheet_cell)
@@ -450,7 +621,7 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                 notices.append(f"{formulas} formula cells use their last saved values, which may be stale or blank. Check the proposed sites and contacts.")
             if any(s.hidden for s in sheets):
                 notices.append("Hidden worksheets are marked and not selected automatically.")
-            return DirectoryWorkbook(hashlib.sha256(raw).hexdigest(), tuple(sheets), tuple(notices))
+            return DirectoryWorkbook(hashlib.sha256(raw).hexdigest(), tuple(sheets), tuple(notices), date1904)
     except (BadZipFile, KeyError, ET.ParseError, DefusedXmlException) as exc:
         raise ValueError("Workbook is invalid or contains unsafe XML; nothing was saved.") from exc
 
