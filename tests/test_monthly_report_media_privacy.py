@@ -232,6 +232,11 @@ def test_package_sanitizer_changes_only_picture_metadata():
     assert sanitize_package_media(clean) == clean
 
 
+def test_bytes_that_are_not_a_package_pass_through_unchanged():
+    for data in (b"native-download", b"", b"PK\x03\x04truncated"):
+        assert sanitize_package_media(data) == data
+
+
 def _draft_with_canary_logo():
     draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
     from app.monthly_report_asset_review import approve_all_assets

@@ -19,7 +19,7 @@ from __future__ import annotations
 import struct
 import zlib
 from io import BytesIO
-from zipfile import ZipFile, ZipInfo
+from zipfile import BadZipFile, ZipFile, ZipInfo
 
 _ORIENTATION_TAG = 0x0112
 _EXIF_PREFIX = b"Exif\x00\x00"
@@ -249,11 +249,16 @@ def sanitize_package_media(package: bytes) -> bytes:
     """Strip picture metadata in a DOCX/ZIP package; other parts are untouched.
 
     Entry order, names, timestamps and compression are preserved. When no
-    picture carries removable metadata the original bytes are returned as-is.
+    picture carries removable metadata, or the bytes are not a ZIP package,
+    the original bytes are returned as-is.
     """
+    try:
+        source = ZipFile(BytesIO(package))
+    except BadZipFile:
+        return package
     output = BytesIO()
     changed = False
-    with ZipFile(BytesIO(package)) as source, ZipFile(output, "w") as target:
+    with source, ZipFile(output, "w") as target:
         for info in source.infolist():
             data = source.read(info)
             if not info.is_dir():
