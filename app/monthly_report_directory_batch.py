@@ -155,6 +155,16 @@ def _mapping(sheet):
     return header, label, address, groups
 
 
+def _sites_or_exclusion(workbook, sheet, mapping, exclusions):
+    """One unreadable worksheet is excluded by name; the rest of the batch continues."""
+    try:
+        return directory.matrix_sites(workbook, sheet, *mapping)
+    except ValueError as exc:
+        exclusions.append(WorkbookExclusion(
+            sheet.name, f"Could not read this worksheet's site or contract columns ({exc}) Review it separately."))
+        return None
+
+
 def _public_mapping(sheet, scope, mapping, targets):
     header, label, address, groups = mapping
     return WorksheetMapping(sheet.name, scope, header, label, address, tuple(
@@ -162,27 +172,93 @@ def _public_mapping(sheet, scope, mapping, targets):
         for g in groups if g.get("Use")), tuple(targets))
 
 
+_MAX_SOURCE_TEXT = 1000
+
+
 def _source_union(*sources):
-    return ";".join(dict.fromkeys(s for source in sources for s in source.split(";") if s))
+    """Join provenance references, bounded below the directory review budget.
+
+    The first reference and the newest ones that fit are kept; each saved
+    directory revision still holds the complete earlier chain.
+    """
+    parts = list(dict.fromkeys(s for source in sources for s in source.split(";") if s))
+    if len(";".join(parts)) <= _MAX_SOURCE_TEXT or len(parts) < 2:
+        return ";".join(parts)
+    first, kept, size = parts[0], [], len(parts[0])
+    for part in reversed(parts[1:]):
+        if size + 1 + len(part) > _MAX_SOURCE_TEXT:
+            break
+        kept.insert(0, part)
+        size += 1 + len(part)
+    return ";".join((first, *kept))
+
+
+def _same_values(old, contact):
+    return all(_identity(getattr(old, f)) == _identity(getattr(contact, f)) for f in ("name", "phone", "email"))
+
+
+def _coalesce_incoming_contacts(incoming, context):
+    """Join complementary rows for one named person; contradictions need review."""
+    result, positions, conflicts = [], {}, []
+    for contact in incoming:
+        identity = (_identity(contact.role), _identity(contact.name))
+        index = positions.get(identity) if identity[1] else None
+        if index is None:
+            if identity[1]:
+                positions[identity] = len(result)
+            result.append(contact)
+            continue
+        old = result[index]
+        changed = [field for field in ("phone", "email")
+                   if getattr(old, field).strip() and getattr(contact, field).strip()
+                   and _identity(getattr(old, field)) != _identity(getattr(contact, field))]
+        if changed:
+            conflicts.append(
+                f"{context}: {old.role} ({old.name}) has conflicting {', '.join(changed)} "
+                "values in this workbook. Review that person before saving.")
+            continue
+        filled = {field: getattr(old, field) if getattr(old, field).strip() else getattr(contact, field)
+                  for field in ("phone", "email")}
+        if any(filled[field] != getattr(old, field) for field in filled):
+            result[index] = replace(old, **filled, source=_source_union(old.source, contact.source))
+    return tuple(result), tuple(conflicts)
 
 
 def _merge_contacts(existing, incoming, context):
-    """Fill omissions for the same person; conflicting populated fields block."""
-    result, conflicts = list(existing), []
+    """Fill omissions for the same person; conflicting populated fields block.
+
+    Rows for one named person are coalesced first. Distinct incoming people
+    are compared with saved contacts only, so people sharing a role are kept.
+    When a role repeats, people are matched by name. A new named person is an
+    addition only while every saved person in that role is still listed;
+    otherwise it may be a replacement and needs review.
+    """
+    incoming, incoming_conflicts = _coalesce_incoming_contacts(incoming, context)
+    result, conflicts = list(existing), list(incoming_conflicts)
+    saved = len(result)
     for contact in incoming:
-        matches = [i for i, old in enumerate(result) if _identity(old.role) == _identity(contact.role)]
+        role = _identity(contact.role)
+        if any(_identity(c.role) == role and _same_values(c, contact) for c in result):
+            # The same values from a re-saved workbook are not new information:
+            # keep the saved record and its provenance so the import is a no-op.
+            continue
+        matches = [i for i in range(saved) if _identity(result[i].role) == role]
         if not matches:
             result.append(contact)
             continue
-        exact = [i for i in matches if all(_identity(getattr(result[i], f)) == _identity(getattr(contact, f))
-                                         for f in ("name", "phone", "email"))]
-        if len(exact) == 1:
-            i = exact[0]
-            result[i] = replace(result[i], source=_source_union(result[i].source, contact.source))
-            continue
-        if len(matches) != 1:
-            conflicts.append(f"{context}: more than one saved contact has role {contact.role}; review that role separately.")
-            continue
+        listed = [c for c in incoming if _identity(c.role) == role]
+        if len(matches) > 1 or len(listed) > 1:
+            name = _identity(contact.name)
+            people = [i for i in matches if name and _identity(result[i].name) == name]
+            still_listed = all(any(_identity(c.name) == _identity(result[i].name) for c in listed)
+                               for i in matches if result[i].name.strip())
+            if not people and name and still_listed:
+                result.append(contact)
+                continue
+            if len(people) != 1:
+                conflicts.append(f"{context}: more than one saved contact has role {contact.role}; review that role separately.")
+                continue
+            matches = people
         i, old = matches[0], result[matches[0]]
         changed_fields = [f for f in ("name", "phone", "email") if getattr(old, f).strip() and getattr(contact, f).strip()
                           and _identity(getattr(old, f)) != _identity(getattr(contact, f))]
@@ -195,8 +271,10 @@ def _merge_contacts(existing, incoming, context):
         if changed_fields:
             conflicts.append(f"{context}: {contact.role} differs in {', '.join(changed_fields)}. Saved values were retained.")
             continue
-        result[i] = replace(old, **{f: getattr(old, f) or getattr(contact, f) for f in ("name", "phone", "email")},
-                            source=_source_union(old.source, contact.source))
+        filled = {f: getattr(old, f) or getattr(contact, f) for f in ("name", "phone", "email")}
+        if all(filled[f] == getattr(old, f) for f in filled):
+            continue  # a subset of the saved values adds nothing; keep it as saved
+        result[i] = replace(old, **filled, source=_source_union(old.source, contact.source))
     return tuple(result), tuple(conflicts)
 
 
@@ -235,12 +313,16 @@ def _merge_sites(contract, existing, incoming, aliases):
                 conflicts.append(f"{old.title}: the workbook address differs from the saved address. Saved values were retained.")
             titles = tuple(dict.fromkeys((*old.aliases, *site.aliases, site.title, target)))
             merged = replace(old, aliases=tuple(n for n in titles if _identity(n) != _identity(old.title)),
-                             address=old.address or site.address, contacts=contacts,
-                             source=_source_union(old.source, site.source))
+                             address=old.address or site.address, contacts=contacts)
+            # Only a real change records the new workbook as provenance.
+            if merged != old:
+                merged = replace(merged, source=_source_union(old.source, site.source))
         else:
             # Source-based keys remain stable on exact re-import; later versions
             # match this explicit title/alias rather than manufacturing identities.
-            merged = replace(site, title=target, aliases=tuple(dict.fromkeys((*site.aliases, site.title)))
+            contacts, contact_conflicts = _merge_contacts((), site.contacts, site.title)
+            conflicts.extend(contact_conflicts)
+            merged = replace(site, contacts=contacts, title=target, aliases=tuple(dict.fromkeys((*site.aliases, site.title)))
                              if _identity(target) != _identity(site.title) else site.aliases)
         index = next((i for i, s in enumerate(result) if s.key == key), None)
         if index is None:
@@ -285,7 +367,9 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
         if not mapping[3]:
             exclusions.append(WorkbookExclusion(sheet.name, "No contact-role rows were found."))
             continue
-        extracted = directory.matrix_sites(workbook, sheet, *mapping)
+        extracted = _sites_or_exclusion(workbook, sheet, mapping, exclusions)
+        if extracted is None:
+            continue
         targets = []
         for column in extracted:
             contract = _canonical(column.title, aliases, known)
@@ -323,7 +407,9 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
         if not mapping[3]:
             exclusions.append(WorkbookExclusion(sheet.name, "No contact-role rows were found."))
             continue
-        sites = directory.matrix_sites(workbook, sheet, *mapping)
+        sites = _sites_or_exclusion(workbook, sheet, mapping, exclusions)
+        if sites is None:
+            continue
         if not any(s.contacts for s in sites):
             exclusions.append(WorkbookExclusion(sheet.name, "No populated contact records; this appears to be an unfinished template."))
             continue

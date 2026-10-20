@@ -196,6 +196,35 @@ def _candidate(table, source, page, facilities, context=""):
                          source.filename, source.suffix, page, site_column)
 
 
+def _docx_tables(profile, source):
+    """Native Word table rows, numbered like ingest's items; a cell stays one cell.
+
+    Flattened item text splits a two-paragraph cell (a units line, a second
+    plant line) into separate rows and shifts every later value. Short text
+    items between tables supply only the following table's title/site context.
+    """
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_sources import _path
+    try:
+        inspected = inspect_docx(_path(profile, source.sha256, source.suffix))
+    except (ImportError, OSError, ValueError):
+        return ()
+    found, headings = [], []
+    for number, item in enumerate(inspected.items, 1):
+        if item.kind == "table" and item.rows:
+            rows = tuple(tuple(" ".join(str(cell).split()) for cell in row) for row in item.rows)
+            if len(rows) > 1:
+                title = " / ".join(headings[-2:]) or f"Page {number}"
+                flat = "\n".join("\t".join(row) for row in rows)
+                found.append((number, SourceTable(title, rows[0], rows[1:]), "\n".join((*headings[-2:], flat))))
+            # A preceding service/site must not become part of the next
+            # table's identity or make its site ambiguous on a partial update.
+            headings = []
+        elif item.text and item.text.strip() and len(item.text) < 250:
+            headings.append(item.text.strip())
+    return tuple(found)
+
+
 def _text_tables(text, name):
     """Only delimiters with an observable column structure qualify as a table."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -262,6 +291,11 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
         candidate = _candidate(table, source, number, facilities)
         if candidate:
             found.append(candidate)
+    if source.suffix == ".docx":
+        for number, table, context in _docx_tables(profile, source):
+            candidate = _candidate(table, source, number, facilities, context)
+            if candidate:
+                found.append(candidate)
     if source.suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as document:
             for number, page in enumerate(document, 1):
@@ -279,7 +313,8 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
                                            source, number, facilities, page.get_text())
                     if candidate:
                         found.append(candidate)
-    # DOCX native table rows already have tab-separated item text from ingest.
+    # Text tables remain the fallback for TXT and for Word files whose native
+    # tables could not be read; DOCX tables above keep whole cells.
     if not found:
         recent_headings = []
         for number, text in enumerate(source.page_texts, 1):
@@ -436,13 +471,32 @@ def _row_key(table, row, site):
     return site, _schema(table), _table_scope(table.title), dimensions
 
 
+def _saved_table_candidates(current, new, site):
+    """Resolve within an observed heading before considering column shape.
+
+    Distinct named services remain distinct even when their columns match.
+    Unnamed/default-sheet tables can use an existing shape; if it changed,
+    only one saved unnamed shape can be replaced without guessing identity.
+    """
+    scope = _table_scope(new.title)
+    saved = tuple(old for old in (current.tables if current else ())
+                  if site in old.site_keys and _table_scope(old.title) == scope)
+    if not scope:
+        matching = tuple(old for old in saved if _schema(old) == _schema(new))
+        if matching:
+            return matching
+    return saved
+
+
 def schema_conflicts(current, tables):
+    """Sites where a saved table's heading now arrives with different columns."""
     if current is None:
         return ()
     changed = []
     for new in tables:
         for site in set(new.site_keys):
-            if any(site in old.site_keys and _schema(old) != _schema(new) for old in current.tables):
+            saved = _saved_table_candidates(current, new, site)
+            if saved and not any(_schema(old) == _schema(new) for old in saved):
                 changed.append(site)
     return tuple(dict.fromkeys(changed))
 
@@ -495,11 +549,22 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
                 if key in incoming and incoming[key] != row:
                     raise ValueError("Two capacity rows have the same site and labels but different values. Add the missing plant/service label before saving.")
                 incoming[key] = row
-        changed_sites = {s for t in tables for s in t.site_keys}
+        replaced = set()
+        if mode == "replace_sites":
+            for new in tables:
+                for site in set(new.site_keys):
+                    candidates = _saved_table_candidates(current, new, site)
+                    if not _table_scope(new.title) and len({_schema(old) for old in candidates}) > 1:
+                        raise ValueError("These unnamed capacity tables have several saved layouts. "
+                                         "Add a service or plant heading before replacing them, or keep both sets.")
+                    # Keep the resolved saved objects, not a broad same-column
+                    # rule that can also remove another named service.
+                    replaced.update((id(old), site) for old in candidates)
+
         kept = []
         for old in current.tables if current else ():
             pairs = [(row, site) for row, site in zip(old.rows, old.site_keys)
-                     if not (mode == "replace_sites" and site in changed_sites)
+                     if (id(old), site) not in replaced
                      and not (mode != "keep_both" and _row_key(old, row, site) in incoming)]
             if pairs:
                 kept.append(replace(old, rows=tuple(row for row, _ in pairs), site_keys=tuple(site for _, site in pairs)))

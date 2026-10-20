@@ -405,7 +405,14 @@ def suggest_matrix(sheet: DirectorySheet):
     boundary = min([*roles, *([address] if address else [])], default=50)
     counts = Counter(r for (r, c), value in values.items() if c > label_col and value)
     candidates = [r for r in rows if r < boundary and counts[r]]
-    header = max(candidates, key=lambda r: (counts[r], -r), default=rows[0] if rows else 1)
+    # A row labelled as the contract/site names wins over an earlier, equally
+    # filled metadata row (Region, account code). Unlabelled sheets keep the
+    # count-then-earliest rule; single-sheet import still allows an override.
+    labelled = [r for r in candidates
+                if re.match(r"\s*(contracts?|accounts?|clients?|facilit(?:y|ies)|sites?|hospitals?|locations?|"
+                            r"buildings?|campus(?:es)?|propert(?:y|ies))\b", labels[r], re.I)
+                and not re.search(r"\b(code|number|no\.?|id|region|area|zone|district)\b|#", labels[r], re.I)]
+    header = max(labelled or candidates, key=lambda r: (counts[r], -r), default=rows[0] if rows else 1)
     groups = []
     for row in roles:
         next_role = next((r for r in roles if r > row), row + 5)
@@ -474,17 +481,35 @@ def sheet_findings(workbook, selected):
 
 
 def proposed_contacts(existing, incoming):
-    """Blank updates cannot erase saved details or attach an old phone to a new person."""
+    """Blank updates cannot erase saved details or attach an old phone to a new person.
+
+    Identical values keep the saved record (and its provenance). When a role
+    repeats, each person is matched by name, so re-importing the same people
+    never duplicates them; an unmatched person is added for review.
+    """
+    def same(value, other):
+        return " ".join(value.casefold().split()) == " ".join(other.casefold().split())
+
     result = list(existing)
+    saved = len(result)
     for contact in incoming:
-        matches = [i for i, c in enumerate(result) if c.role.casefold() == contact.role.casefold()]
-        if len(matches) == 1 and sum(c.role.casefold() == contact.role.casefold() for c in incoming) == 1:
+        if any(same(c.role, contact.role) and all(same(getattr(c, f), getattr(contact, f))
+                                                  for f in ("name", "phone", "email")) for c in result):
+            continue
+        matches = [i for i in range(saved) if same(result[i].role, contact.role)]
+        repeated = len(matches) > 1 or sum(same(c.role, contact.role) for c in incoming) > 1
+        if repeated:
+            matches = [i for i in matches if contact.name.strip() and same(result[i].name, contact.name)]
+        if len(matches) == 1:
             index = matches[0]
             old = result[index]
-            same_person = not contact.name or contact.name.casefold() == old.name.casefold()
+            same_person = not contact.name or same(contact.name, old.name)
             if same_person:
-                contact = replace(contact, name=contact.name or old.name, phone=contact.phone or old.phone,
-                                  email=contact.email or old.email,
+                merged = {"name": contact.name or old.name, "phone": contact.phone or old.phone,
+                          "email": contact.email or old.email}
+                if all(merged[f] == getattr(old, f) for f in merged):
+                    continue  # nothing new for this person; keep the saved record
+                contact = replace(contact, **merged,
                                   source=";".join(dict.fromkeys(s for s in (contact.source, old.source) if s)))
             result[index] = contact
         else:
