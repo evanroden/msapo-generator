@@ -67,6 +67,9 @@ def _preview_part(draft, spec, block, prefix, assets, title, *, show_preview=Tru
     else:
         st.caption("Not added yet")
     if not show_preview:
+        if block.org_nodes:
+            for node in block.org_nodes:
+                st.caption(" · ".join(value for value in (node.name, node.role, node.team) if value) or "Position details not entered")
         return
     if block.text.strip():
         st.text(block.text)
@@ -194,8 +197,13 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
             updated[key] = block
         st.markdown("#### " + title)
         current_draft = replace(draft, blocks=tuple(updated.values()))
-        _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=show_preview)
-        if st.session_state.get(active_key) != key:
+        native_contacts = key == "contact_matrix" and bool(block.rows or block.extra_tables or
+            (spec.type == "table" and spec.columns))
+        if native_contacts and block.source == "Omit":
+            _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=False)
+        elif not native_contacts:
+            _preview_part(current_draft, spec, block, prefix, assets, title, show_preview=show_preview)
+        if not native_contacts and st.session_state.get(active_key) != key:
             action = {
                 "org_chart": "Edit chart",
                 "contact_matrix": "Edit contacts",
@@ -205,11 +213,13 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
             st.button(action, key=prefix + "_organization_open_" + key,
                       on_click=st.session_state.__setitem__, args=(active_key, key))
             return
-        st.button("Done", key=prefix + "_organization_close_" + key,
-                  on_click=st.session_state.__setitem__, args=(active_key, ""))
+        if not native_contacts:
+            st.button("Close editing", key=prefix + "_organization_close_" + key,
+                      on_click=st.session_state.__setitem__, args=(active_key, ""))
         if key == "contact_matrix":
             changed = edit_contacts(current_draft, spec, block, prefix, assets, field, show_preview=show_preview)
-            changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
+            with st.expander("Contact notes", expanded=False):
+                changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
             if changed != canonical_before:
                 from app import monthly_report_directory as directory
                 try:
@@ -217,7 +227,7 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
                         draft.profile, canonical_before, changed, draft.prepared_by)
                     if shared is not None:
                         changed = shared
-                        st.caption("Updated site contacts are kept for future reports. Earlier completed reports are unchanged.")
+                        st.caption("Site contact updated for future reports.")
                 except (ValueError, OSError):
                     st.warning("The shared contact record could not be updated. "
                                "Your current report edits remain available; review the latest site contacts.")

@@ -93,10 +93,12 @@ def cold_open():
 class ColdPage:
     """Model only the harness contract; real browser coverage remains in CI."""
     def __init__(self, *, prior_url="about:blank", shift=0, count=2, no_request=False,
-                 scroll_shift=0, render_changed=False, cards=True, card_shift=0):
+                 scroll_shift=0, render_changed=False, cards=True, card_shift=0,
+                 initial_button_y=298):
         from types import SimpleNamespace
         self.url, self.shift, self.count = prior_url, shift, count
         self.scroll_shift, self.render_changed = scroll_shift, render_changed
+        self.initial_button_y = initial_button_y
         self.no_request = no_request
         self.cards, self.card_shift = cards, card_shift
         self.saved = {"working_fingerprint": "from UI", "durable_fingerprint": "from UI"}
@@ -139,8 +141,9 @@ class ColdPage:
     def evaluate(self, sample, wanted):
         assert wanted["water"] == ".water"
         mounted = self.releases > 0
-        return {"button": {"x": 16, "y": 298 + (self.shift if mounted else 0),
+        return {"button": {"x": 16, "y": self.initial_button_y + (self.shift if mounted else 0),
                            "width": 114, "height": 44},
+                "viewport": {"width": 545, "height": 757},
                 "scrollTop": 6484 + (self.scroll_shift if mounted else 0),
                 "fullRender": "changed" if mounted and self.render_changed else "same render",
                 "cards": [{"key": "onsite-card", "height": 160 + (self.card_shift if mounted else 0)}] if self.cards else [],
@@ -184,6 +187,15 @@ def test_missing_request_is_not_replaced_with_a_warm_mount_or_timeout_extension(
     assert page.navigations == 1 and page.releases == 0 and page.handler is None
 
 
+def test_cold_check_rejects_recorded_offscreen_precondition_before_measuring_module_release():
+    page = ColdPage(initial_button_y=-3862.96875)
+    observations = {}
+    with pytest.raises(AssertionError, match="must be in view before releasing"):
+        cold_open()(page, cold_qa(), observations)
+    assert "after" not in observations["cold_table_layout"]
+    assert page.releases == 1 and page.handler is None, "Failure cleanup releases the original response once."
+
+
 @pytest.mark.parametrize("options", [
     {"shift": 327}, {"count": 1}, {"scroll_shift": 327}, {"render_changed": True}, {"cards": False}, {"card_shift": 50},
 ])
@@ -209,11 +221,13 @@ def test_cold_sampler_identifies_tables_among_other_lazy_native_inputs():
 const names=JSON.parse(process.argv[1]);
 const boxes=names.map(name=>({classList:['st-key-report_guided_scope_edit_'+name+'_stamp'],
  querySelector:sel=>sel.includes('stSkeleton')?{}:null,
+ querySelectorAll:()=>[],firstElementChild:{getAttribute:()=> 'stSkeleton'},
  compareDocumentPosition:()=>4,getBoundingClientRect:()=>({height:149})}));
 const root={querySelectorAll:sel=>sel.includes('stElementContainer')?boxes:[],dataset:{epcFullRender:'same'}};
 const button={getBoundingClientRect:()=>({x:16,y:298,width:115,height:44})};
 const pair={closest:()=>root,querySelector:()=>button};
-const document={querySelector:sel=>sel==='.water'?pair:{scrollTop:6357}};
+const document={querySelector:sel=>sel==='.water'?pair:{scrollTop:6357},documentElement:{clientWidth:545},fonts:{status:'loaded'}};
+const window={innerHeight:757};
 const Node={DOCUMENT_POSITION_FOLLOWING:4};
 const sample=eval('('+process.argv[2]+')');
 console.log(JSON.stringify(sample({water:'.water',keys:null})));
@@ -225,3 +239,7 @@ console.log(JSON.stringify(sample({water:'.water',keys:null})));
         "st-key-report_guided_scope_edit_" + key + "_stamp" for key in
         ("work_orders_imported_0", "thermal_capacity_imported_0")]
     assert all(g["loading"] and not g["mounted"] for g in observed["grids"])
+    assert observed["fontStatus"] == "loaded"
+    assert len(observed["preceding"]) == len(keys)
+    assert all(item["height"] == 149 and item["images"] == []
+               and item["type"] == "stSkeleton" for item in observed["preceding"])

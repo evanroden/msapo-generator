@@ -30,6 +30,7 @@ class ActiveWork:
     base_snapshot_revision: int
     assets: tuple[tuple[str, bytes], ...] = ()
     generation: str = ""
+    updated_at: str = ""
 
 
 def enabled(token: str) -> bool:
@@ -93,7 +94,8 @@ def load(token: str, contract: str, key: str, period: ReportPeriod) -> ActiveWor
         if library.asset_reference(raw, name.rsplit(".", 1)[-1]) != name:
             raise library.LibraryError("An unfinished report picture failed its integrity check.")
         result.append((name, raw))
-    return ActiveWork(draft, value["revision"], value["base_snapshot_revision"], tuple(result), _generation(value))
+    return ActiveWork(draft, value["revision"], value["base_snapshot_revision"], tuple(result), _generation(value),
+                      value.get("updated_at", "") if isinstance(value.get("updated_at"), str) else "")
 
 
 def save(token: str, draft: ReportDraft, *, expected_revision: int,
@@ -140,7 +142,8 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
                     and tuple(previous.get("assets", ())) == asset_names)
         missing = any(not (folder / "assets" / name).is_file() for name in asset_names)
         if same and not missing:
-            return ActiveWork(draft, revision, base_snapshot_revision, generation=generation)
+            return ActiveWork(draft, revision, base_snapshot_revision, generation=generation,
+                              updated_at=previous.get("updated_at", ""))
         for name, raw in pending.items():
             target = folder / "assets" / name
             if not target.is_file():
@@ -152,7 +155,8 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
                  "updated_at": library._now(), "assets": asset_names,
                  "draft": asdict(draft)}
         library._atomic_write(path, library._json(value))
-        return ActiveWork(draft, next_revision, base_snapshot_revision, generation=next_generation)
+        return ActiveWork(draft, next_revision, base_snapshot_revision, generation=next_generation,
+                          updated_at=value["updated_at"])
 
 
 def discard(token: str, contract: str, key: str, period: ReportPeriod, *,

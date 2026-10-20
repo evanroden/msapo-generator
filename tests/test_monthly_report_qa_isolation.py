@@ -350,8 +350,32 @@ def test_complete_synthetic_qa_fixture_generates_native_word_and_application_pdf
         draft = fixtures.prepare(route)
         checked = fixtures.compare(draft)
         assert all(checked["checks"].values()), checked
+        if route == "replay":
+            from dataclasses import asdict
+            from app.monthly_report_checks import preflight
+            from app.monthly_report_source_scope import correct_scope
+            source = next(source for source in draft.sources if source.filename == "synthetic-activity.txt")
+            original = sources.source_bytes(draft.profile, source)
+            assert any(check.code == "source_facility" and check.blocking
+                       and check.block_key == source.id for check in preflight(draft))
+            with pytest.raises(ValueError, match="Establish the site scope"):
+                generate_report(draft, acknowledged_fingerprint=draft.fingerprint)
+            # Explicit reviewer intent for this invented scenario: the TXT is
+            # Demo North work. Its bytes deliberately do not state a site; this
+            # is a test action after import, never an extraction/fixture default.
+            corrected = correct_scope(source, draft.profile, ("qa-north",))
+            draft = replace(draft, sources=tuple(corrected if item.id == source.id else item
+                                                 for item in draft.sources))
+            draft = library.draft_from_dict(asdict(draft))
+            assert sources.source_bytes(draft.profile, corrected) == original == fixtures.ACTIVITY_TXT
+            assert not any(check.code == "source_facility" and check.blocking for check in preflight(draft))
+            assert all(fixtures.compare(draft)["checks"].values())
+            assert not next(item for item in library.load_snapshot(draft.profile.contract,
+                draft.profile.key, draft.period).draft.sources if item.id == source.id).scope_review
         result = generate_report(draft, acknowledged_fingerprint=draft.fingerprint)
         assert result.docx and result.pdf, result.pdf_error
+        (tmp_path / f"{route}-report.docx").write_bytes(result.docx)
+        (tmp_path / f"{route}-report.pdf").write_bytes(result.pdf)
         doc = Document(BytesIO(result.docx))
         cells = "\\n".join(cell.text for table in doc.tables for row in table.rows
                              for cell in row.cells)

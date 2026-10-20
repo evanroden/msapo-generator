@@ -7,6 +7,8 @@ display changes alone cannot change the report.
 from dataclasses import replace
 from datetime import date
 from html import escape
+from functools import partial
+import re
 from uuid import uuid4
 
 import streamlit as st
@@ -49,7 +51,16 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
             identities.insert(index, active)
             draft_token = None
             changed_fields = True
-    if action == "open":
+    if action == "edit" or changed_fields or action in {"add", "remove"}:
+        record.pop("undo", None)
+    removed_version = None
+    if action == "undo":
+        undo = record.get("undo")
+        if undo and undo["result"] == expected:
+            rows, identities = list(undo["rows"]), list(undo["tokens"])
+            active, draft_token = None, None
+        record.pop("undo", None)
+    elif action == "open":
         active = target if target in identities else None
     elif action == "add":
         draft_token = draft_token or uuid4().hex
@@ -61,6 +72,8 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
             draft_token = None
         active = None
     elif action == "remove" and target in identities:
+        if record.get("allow_undo"):
+            removed_version = (tuple(rows), tuple(identities))
         index = identities.index(target)
         del rows[index]
         del identities[index]
@@ -74,6 +87,8 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
         retained = [(row, token) for row, token in zip(rows, identities)
                     if any(value is not None and str(value).strip() for value in row)]
         rows, identities = [row for row, _ in retained], [token for _, token in retained]
+    if removed_version is not None:
+        record["undo"] = {"rows": removed_version[0], "tokens": removed_version[1], "result": tuple(rows)}
     # Consecutive callbacks may arrive before the parent commits. Collapse
     # only an exact acknowledged result, never an unrelated current table.
     previous = record.get("pending")
@@ -88,6 +103,46 @@ def _choose_conflict(key, expected, result, tokens):
     record["pending"] = {"baseline": expected, "expected": expected, "result": result, "tokens": tokens,
                          "active": None, "draft_token": None, "draft_index": len(result)}
     st.session_state[key] = record
+
+
+def _queue_in_group(group, key, expected, tokens, active, fields, action="edit", target=None):
+    """Keep one active row in this block without losing another table's input.
+
+    The previous table keeps its own rendered snapshot and pending result.
+    Its ordinary conflict comparison still decides whether that edit applies;
+    switching rows never rebinds a stale table to a newer canonical revision.
+    """
+    record = st.session_state.get(key, {})
+    if record.get("group") != group:
+        return
+    selection = dict(st.session_state.get(group, {}))
+    previous_key = selection.get("active_table")
+    switching = action == "add" or action == "open" and target in tokens
+    if previous_key and previous_key != key and (switching or action in {"remove", "undo"}):
+        previous = st.session_state.get(previous_key, {})
+        rendered = previous.get("rendered")
+        if previous.get("group") == group and rendered and rendered[0] == previous_key:
+            prior_rows, prior_tokens, prior_active, prior_fields = rendered[1:]
+            original = (prior_rows[prior_tokens.index(prior_active)] if prior_active in prior_tokens
+                        else tuple("" for _ in prior_fields))
+            if switching or prior_fields and _values(prior_fields) != original:
+                _queue(*rendered, "close" if switching else "edit")
+    _queue(key, expected, tokens, active, fields, action, target)
+    record = dict(st.session_state[key])
+    pending = dict(record["pending"])
+    if switching:
+        selection["active_table"] = key if pending["active"] else None
+    elif previous_key == key and not pending["active"]:
+        selection["active_table"] = None
+    elif previous_key != key and pending["active"]:
+        # An old field's on_change can follow the other table's Open callback
+        # in the same delivery. Keep its text, but do not reopen its editor.
+        pending["active"] = None
+        if pending["draft_token"] not in pending["tokens"]:
+            pending["draft_token"] = None
+        record["pending"] = pending
+        st.session_state[key] = record
+    st.session_state[group] = selection
 
 
 def _sync_tokens(previous_rows, previous_tokens, rows):
@@ -130,15 +185,56 @@ def _summary(columns, row, noun, index):
 def _comparison_rows(columns, rows):
     # Duplicate source headings remain separate fields in the comparison.
     # These display-only labels never replace the exported original schema.
-    labels = tuple(f"{index + 1}. {column}" if columns.count(column) > 1 else column
-                   for index, column in enumerate(columns))
+    names = tuple(column if column.strip() else f"Detail {index + 1}"
+                  for index, column in enumerate(columns))
+    labels = tuple(f"{index + 1}. {name}" if names.count(name) > 1 else name
+                   for index, name in enumerate(names))
     return [dict(zip(labels, row)) for row in rows]
 
 
-def _edit_table(columns, rows, types, key, noun, add_label, field, *, placeholders=None, focus_column=None):
+def _finish_row(key):
+    """Retire this row's replaced elements when its native render is complete.
+
+    Streamlit 1.61.1 otherwise retains the former row's stale fields until the
+    entire report finishes rendering. Closing onsite work can then move an
+    already-visible proposal button between pointer down and up. Only direct
+    stale children of this one keyed row are hidden, and only after the last
+    current row element arrives. Active fields keep their original native
+    nodes; there is no scroll change, event replay or script-state shortcut.
+
+    Remove this compatibility rule when a pinned Streamlit upgrade retires
+    replaced row children before later native actions become available, with
+    the rapid Close/Edit WebKit journey and active-field continuity passing.
+    """
+    if st.__version__ != "1.61.1":
+        return
+    selector = ".st-key-" + re.sub(r"[^a-zA-Z0-9_-]", "-", key.strip())
+    child = ' > [data-testid="stElementContainer"]'
+    marker = '[data-enfra-row-finished]'
+    current = child + '[data-stale="false"] ' + marker
+    st.html('<span hidden data-enfra-row-finished="true"></span><style>'
+            + selector + ':has(' + current + ')' + child
+            + '[data-stale="true"]{display:none;}'
+            + selector + child + ':has(' + marker + '){display:none;}'
+            + '</style>')
+
+
+def _edit_table(columns, rows, types, key, noun, add_label, field, *, summary=None,
+                labels=None, max_chars=None, scope_labels=None, allow_undo=False, empty_label=None,
+                group=None, placeholders=None, focus_column=None):
     record = dict(st.session_state.get(key, {}))
+    record["allow_undo"] = allow_undo
+    if group is not None:
+        record["group"] = group
     pending = record.get("pending")
     incoming = tuple(tuple(row) for row in rows)
+    # Labels describe the supplied canonical rows. A delivered add/remove can
+    # change their positions before the parent commits; bind by row identity,
+    # not the new positional index. Ambiguous copies remain report-scoped.
+    row_scopes = {}
+    if scope_labels:
+        for row, scope in zip(incoming, scope_labels):
+            row_scopes[row] = scope if incoming.count(row) == 1 else "This report only"
     rows = incoming
     if pending and incoming in (pending["baseline"], pending["expected"], pending["result"]):
         rows = pending["result"]
@@ -170,6 +266,11 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, placeholde
     draft_token = record.get("draft_token")
     st.session_state[key] = record
 
+    if empty_label:
+        with st.container(key=key + "_empty_state"):
+            if not rows and not active:
+                st.caption(empty_label)
+
     active_values = (rows[tokens.index(active)] if active in tokens else
                      tuple("" for _ in columns) if active and active == draft_token else ())
     input_kinds = dict(record.get("input_kinds", {}))
@@ -192,6 +293,15 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, placeholde
                                    kinds[index]))
                    for index in range(len(columns))) if active else ()
     args = (key, rows, tokens, active, fields)
+    callback = partial(_queue_in_group, group) if group is not None else _queue
+    if group is not None:
+        record["rendered"] = args
+        selection = dict(st.session_state.get(group, {}))
+        if active and not selection.get("active_table"):
+            # An explicitly created first blank contact row starts active.
+            selection["active_table"] = key
+        st.session_state[group] = selection
+        st.session_state[key] = record
     entries = list(zip(tokens, rows))
     if active and active == draft_token:
         entries.insert(min(record.get("draft_index", len(entries)), len(entries)),
@@ -199,46 +309,58 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, placeholde
     for index, (token, row) in enumerate(entries):
         if token != active and not any(value is not None and str(value).strip() for value in row):
             continue
-        with st.container(key=key + "_card_" + token, border=True):
+        card_key = key + "_card_" + token
+        with st.container(key=card_key, border=True):
             if token == active:
                 # Live summaries would grow/move the native fields as the
                 # first identifier or a long title is entered. Keep this
                 # active heading the same height until explicit closure.
                 st.write("Edit " + noun)
-                _render_fields(columns, fields, args, field, placeholders=placeholders)
+                if scope_labels is not None:
+                    st.caption(row_scopes.get(row, "This report only"))
+                _render_fields(columns, fields, args, field, labels=labels, max_chars=max_chars,
+                               callback=callback, placeholders=placeholders)
                 focus = record.get("entry_focus", {})
                 if focus_column is not None and focus.get("row") == token:
                     st.html('<span hidden data-epc-entry-focus="' + escape(focus["token"], quote=True)
                             + '" data-epc-field-key="' + escape(fields[focus_column][0], quote=True)
                             + '" data-epc-origin-key="' + escape(key + "_add", quote=True) + '"></span>')
-                st.button("Close editing", key=key + "_close_" + token, on_click=_queue, args=(*args, "close"))
+                st.button("Close editing", key=key + "_close_" + token, on_click=callback, args=(*args, "close"))
             else:
-                _summary(columns, row, noun, index)
+                (summary or _summary)(columns, row, noun, index)
                 st.button("Edit " + noun, key=key + "_open_" + token,
-                          on_click=_queue, args=(*args, "open", token))
+                          on_click=callback, args=(*args, "open", token))
             if token != draft_token:
                 st.button("Remove " + noun, key=key + "_remove_" + token,
                           help="Removes only this row from this report; source files and saved versions remain.",
-                          on_click=_queue, args=(*args, "remove", token))
-    st.button(add_label, key=key + "_add", on_click=_queue, args=(*args, "add"),
+                          on_click=callback, args=(*args, "remove", token))
+            _finish_row(card_key)
+    undo = record.get("undo")
+    if allow_undo and undo and undo["result"] == rows:
+        st.button("Undo remove " + noun, key=key + "_undo", on_click=callback, args=(*args, "undo"))
+    st.button(add_label, key=key + "_add", on_click=callback, args=(*args, "add"),
               disabled=bool(active and active == draft_token))
     return rows
 
 
-def _render_fields(columns, fields, args, field, *, placeholders=None):
+def _render_fields(columns, fields, args, field, *, labels=None, max_chars=None,
+                   callback=_queue, placeholders=None):
     for index, (title, (key, original, kind, default)) in enumerate(zip(columns, fields)):
-        options = dict(key=field(key, default), value=default, on_change=_queue, args=args)
+        label = (labels or {}).get(title, title) or f"Detail {index + 1}"
+        if not label.strip():
+            label = f"Detail {index + 1}"
+        options = dict(key=field(key, default), value=default, on_change=callback, args=args)
         placeholder = (placeholders or {}).get(index)
         if placeholder and kind == "text":
             options["placeholder"] = placeholder
         if kind == "date" and (isinstance(default, date) or default is None):
-            st.date_input(title, format="YYYY-MM-DD", **options)
+            st.date_input(label, format="YYYY-MM-DD", **options)
         elif kind in {"number", "currency"} and (isinstance(default, float) or default is None):
-            st.number_input(title, **options)
+            st.number_input(label, **options)
         elif any(word in title.casefold() for word in ("description", "scope", "notes", "recommendation")):
-            st.text_area(title, height=100, **options)
+            st.text_area(label, height=100, max_chars=max_chars, **options)
         else:
-            st.text_input(title, **options)
+            st.text_input(label, max_chars=max_chars, **options)
 
 
 def edit_row_cards(spec, block, prefix, field):

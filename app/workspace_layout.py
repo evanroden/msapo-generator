@@ -33,6 +33,7 @@ def _key(value: str) -> str:
 def _adapter(runtime):
     # Register once, not once per section/fragment. No user data enters code.
     source = (_ASSETS / "workspace_geometry.js").read_text() + "\n" + (
+        _ASSETS / "monthly_report_source_navigation.js").read_text() + "\n" + (
         _ASSETS / "workspace_layout.js").read_text()
     return st.components.v2.component("enfra_workspace_layout", js=source,
                                       css=(_ASSETS / "workspace_layout.css").read_text(),

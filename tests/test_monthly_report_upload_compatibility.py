@@ -64,6 +64,10 @@ def accepted_water(monkeypatch, tmp_path):
     app.run()
     button(app, "Read monthly files").click().run()
     select(app, "Classification").set_value("Water treatment").run()
+    # This synthetic PDF has no printed site. Use the real item correction;
+    # the warning acknowledgment is no longer a site-scope authorization.
+    select(app, "Source facility").set_value(profile.facilities[0].key)
+    button(app, "Use these source details").click().run()
     button(app, "Include page and continue").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     next(w for w in app.selectbox if w.key.endswith("_water_reports_source")).set_value("This month").run()
@@ -243,6 +247,8 @@ def test_detailed_editor_keeps_accepted_pages_through_generation_rerun(monkeypat
     app.run()
     button(app, "Read monthly files").click().run()
     select(app, "Classification").set_value("Water treatment").run()
+    select(app, "Source facility").set_value(profile.facilities[0].key)
+    button(app, "Use these source details").click().run()
     button(app, "Include page and continue").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
