@@ -98,6 +98,9 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
                         if key.startswith(("report_", "report_guided_", "monthly_qa_", "_shared_fixture_")) and key != "_shared_fixture_pending":
                             del st.session_state[key]
                 st.session_state["_monthly_qa_generation"] = current
+                if administration is None and mode in {"isolated", "fixtures"}:
+                    from app.monthly_report_source_preview_ui import render as render_source_preview
+                    render_source_preview()
                 if administration is not None:
                     from app.monthly_report_admin_ui import render_administration
                     render_administration(administration, _field, mode=mode)
