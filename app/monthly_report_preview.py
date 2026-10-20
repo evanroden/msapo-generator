@@ -29,6 +29,20 @@ class ReportPreview:
     pages: int
     fingerprint: str
     period: str
+    initial_page: int = 0
+
+
+def section_initial_page(pdf, section):
+    """Start past a proved title-only divider, keeping every PDF page intact.
+
+    Do not guess that an image-only first page or an unfamiliar native layout
+    is a divider. A content-first report keeps its real first page.
+    """
+    if section is None or len(pdf) < 2:
+        return 0
+    normalize = lambda value: ''.join(c.casefold() for c in value if c.isalnum())
+    expected = normalize(('Appendix ' if section.appendix else 'Section ') + section.number + ' ' + section.title)
+    return int(normalize(pdf[0].get_text()) == expected)
 
 
 MAX_PREVIEW_PAGES = 150
@@ -339,7 +353,9 @@ def _preview_section(draft, section_key, asset_loader=None):
                 result = pdf.tobytes(garbage=3, deflate=True)
                 if len(result) > MAX_PREVIEW_BYTES:
                     raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
-                return ReportPreview(result, len(pdf), section_preview_fingerprint(draft, section_key), draft.period.label)
+                _, section = _section_scope(draft, section_key)
+                return ReportPreview(result, len(pdf), section_preview_fingerprint(draft, section_key),
+                                     draft.period.label, section_initial_page(pdf, section))
     finally:
         for path in {actual, expected} - {None}:
             try:

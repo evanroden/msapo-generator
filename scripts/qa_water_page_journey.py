@@ -159,7 +159,7 @@ def open_water_with_cold_tables(page, qa, observations):
     Open the already-saved draft in a fresh browser context and hold only its
     real local DataFrame module on the first navigation,
     measure the loading page, then release its unchanged response. The button
-    and scroll position must stay put as the three preceding editors mount.
+    and scroll position must stay put as the two preceding grids mount; the onsite row cards must stay put too.
     No report state, input, geometry or control event is injected.
     """
     assert page.url == "about:blank", "Cold table coverage requires an unused browser page."
@@ -174,10 +174,13 @@ def open_water_with_cold_tables(page, qa, observations):
       const button=pair.querySelector('.epc-compact-open');
       const boxes=wanted.keys? wanted.keys.map(key=>root.querySelector('.'+CSS.escape(key))) :
         [...root.querySelectorAll('[data-testid="stElementContainer"]')].filter(node=>
-          [...node.classList].some(key=>/^st-key-report_guided_.+_edit_(work_orders|thermal_capacity|service_calls)_imported_0_/.test(key)) &&
+          [...node.classList].some(key=>/^st-key-report_guided_.+_edit_(work_orders|thermal_capacity)_imported_0_/.test(key)) &&
           node.querySelector(':scope > [data-testid="stSkeleton"]') &&
           (node.compareDocumentPosition(pair)&Node.DOCUMENT_POSITION_FOLLOWING) &&
           node.getBoundingClientRect().height>0);
+      const cards=[...root.querySelectorAll('[class*="st-key-"][class*="_row_cards_"][class*="_card_"]')].filter(node=>
+        node.closest('.st-key-epc_edit_monthly_maintenance') &&
+        [...node.classList].some(key=>/_card_[a-f0-9]{32}$/.test(key)));
       const b=button.getBoundingClientRect();
       // Passive first-failure context for late content above the three grids.
       // Keep the original scroll/button assertions; never restore their values.
@@ -194,6 +197,8 @@ def open_water_with_cold_tables(page, qa, observations):
         viewport:{width:document.documentElement.clientWidth,height:window.innerHeight},
         scrollTop:document.querySelector('[data-testid="stMain"]').scrollTop,
         fullRender:root.dataset.epcFullRender,preceding,fontStatus:document.fonts.status,
+        cards:cards.map(node=>({key:[...node.classList].find(k=>k.startsWith('st-key-')),
+          height:node.getBoundingClientRect().height})),
         grids:boxes.map(node=>({key:[...node.classList].find(k=>k.startsWith('st-key-')),
           height:node.getBoundingClientRect().height,
           loading:!!node.querySelector(':scope > [data-testid="stSkeleton"]'),
@@ -214,7 +219,8 @@ def open_water_with_cold_tables(page, qa, observations):
                 and button["y"] + button["height"] <= viewport["height"]), (
                     "Water's actual preview action must be in view before releasing the held module.", before)
         assert len(held) == 1, "Expected one held DataFrame module request: " + str(len(held))
-        assert len(before["grids"]) == 3, "Observe all three imported editors preceding Water."
+        assert len(before["grids"]) == 2, "Observe both imported native grids preceding Water."
+        assert before["cards"] and all(card["height"] > 0 for card in before["cards"]), "Observe the onsite row cards."
         keys = [item["key"] for item in before["grids"]]
         assert all(keys) and all(item["loading"] for item in before["grids"])
         result["module"] = held[0].request.url.rsplit("/", 1)[-1]
@@ -229,6 +235,9 @@ def open_water_with_cold_tables(page, qa, observations):
         assert after["fullRender"] == before["fullRender"]
         assert after["scrollTop"] == before["scrollTop"], "Do not hide a shift by restoring scroll."
         assert all(item["mounted"] for item in after["grids"])
+        assert [card["key"] for card in before["cards"]] == [card["key"] for card in after["cards"]]
+        for old, current in zip(before["cards"], after["cards"]):
+            assert abs(current["height"] - old["height"]) <= 2, (old, current)
         for old, current in zip(before["grids"], after["grids"]):
             assert abs(current["height"] - old["height"]) <= 2, (old, current)
         for axis in ("x", "y", "width", "height"):
@@ -546,7 +555,7 @@ def browser_task(browser_type, name):
             assert not attempts and not errors and not page.evaluate("window.__waterShareAttempts.length")
             expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
             cold["result"] = "passed"
-            qa.check(name, "Cold saved Water session keeps all three table heights and one preview click", True)
+            qa.check(name, "Cold saved Water session keeps both grid heights, onsite cards and one preview click", True)
         except Exception as exc:
             cold["result"] = "failed"
             cold["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
