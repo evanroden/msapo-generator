@@ -805,13 +805,13 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                     prefix, assets, field, current, edit_text=False, inline_photo_intake=True)
             return replace(current, blocks=tuple(current_blocks.values()))
         draft = render_issue_cards(replace(draft, blocks=tuple(blocks.values())), prefix, field,
-                                   defer_actions=True, evidence_pages=edit_issue_pages)
+                                   defer_actions=True, evidence_pages=edit_issue_pages, defer_commit=True)
         blocks = {block.key: block for block in draft.blocks}
         handled.update(("equipment_issues", "equipment_issues_evidence"))
     elif section.key == "proposals":
         from app.monthly_report_followups import render_followups
         draft = replace(draft, blocks=tuple(blocks.values()))
-        draft = render_followups(draft, prefix, field, category="proposal")
+        draft = render_followups(draft, prefix, field, category="proposal", defer_commit=True)
     if section.key == "training":
         from app.monthly_report_training_ui import render_training
         blocks = render_training(draft, blocks, prefix, field)
@@ -1292,6 +1292,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     from app.monthly_report_issues import apply_issue_action
     draft = apply_issue_action(draft, prefix)
     st.session_state[draft_key] = draft
+    from app.monthly_report_followups import acknowledge_followup_controls
+    acknowledge_followup_controls(draft, prefix)
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
     if conflict:

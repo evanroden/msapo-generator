@@ -6,7 +6,10 @@ from uuid import uuid4
 from app.monthly_report_content_policy import table_price_columns
 from app.monthly_report_followups import (
     ISSUE_STATUSES, _digest, _followup_text_items, _no_equipment_issues,
-    _status_label, problems,
+    _status_label, problems, unique_followup_keys, followup_limit_message,
+    _capture_followup_controls, _visible_followup_keys, MAX_INCLUDED_FOLLOWUPS,
+    FOLLOWUP_PAGE_SIZE, _followup_choice, _followup_choice_identity, output_followups,
+    acknowledge_followup_controls, _followup_missing_links,
 )
 from app.monthly_report_model import ReportFollowUp
 from app.monthly_report_sources import source_reference
@@ -27,6 +30,7 @@ def canonical_issues(draft):
     Explicit no-issue declarations stay statements, rather than false issues.
     A source-linked draft remains in its evidence editor until reviewed there.
     """
+    draft = unique_followup_keys(draft)
     block = next((b for b in draft.blocks if b.key == "equipment_issues"), None)
     if block is None or block.source == "Omit":
         return draft
@@ -73,8 +77,6 @@ def canonical_issues(draft):
                             if not ref.startswith(("report-period:", "report-origin:", "docx:", _REMOVED_STATEMENT))))
         items.append(ReportFollowUp(key, "issue", text, draft.period.key,
                                     references=references))
-    if len(items) > 200:
-        raise ValueError("More than 200 issues/proposals need review; no items were discarded.")
     revised = replace(block, text="\n\n".join(dict.fromkeys(statements)), rows=(),
                       extra_tables=(), ai_paragraphs=(), ai_written=False,
                       ai_evidence_fingerprint="", reviewed_fingerprint="",
@@ -233,17 +235,29 @@ def _render_issue_actions(draft, prefix):
                 st.caption("The report changed after Clear. Use Include again for individual issues.")
 
 
-def _issue_changed(key, before):
+def _issue_changed(key, before, identity):
     import streamlit as st
-    st.session_state[key + "_change"] = {"before": before, "value": st.session_state.get(key)}
+    st.session_state[key + "_change"] = {
+        "identity": identity, "before": before, "value": st.session_state.get(key),
+    }
 
 
-def _issue_control(widget, label, key, value, field, **kwargs):
+def _issue_control(widget, label, key, value, field, *, identity, **kwargs):
     """An untouched widget mirror cannot undo a replaced canonical issue."""
     import streamlit as st
     receipt = st.session_state.get(key + "_change")
-    submitted = (isinstance(receipt, dict) and receipt.get("before") == value
+    submitted = (isinstance(receipt, dict) and receipt.get("identity") == identity
+                 and receipt.get("before") == value
                  and receipt.get("value") == st.session_state.get(key))
+    captured = (isinstance(receipt, dict) and receipt.get("result") == identity
+                and receipt.get("value") == value)
+    if isinstance(receipt, dict) and not submitted and not captured:
+        st.warning(f"An earlier {label.lower()} edit belongs to a changed item or report. "
+                   "The current value is kept. The entered value below has not been applied or saved.")
+        if receipt.get("value") in ("", []):
+            st.caption("The earlier edit cleared this field.")
+        else:
+            st.code(str(receipt.get("value", "")), language=None, wrap_lines=True)
     if st.session_state.get(key, value) != value and not submitted:
         st.session_state[key] = value
     if widget == st.text_area:
@@ -251,32 +265,38 @@ def _issue_control(widget, label, key, value, field, **kwargs):
         # issue, not the textarea's implicit empty default. Keep the existing
         # receipt guard and honor an explicitly submitted clear/update.
         kwargs["value"] = receipt["value"] if submitted else value
+    elif widget == st.multiselect:
+        # The Python mirror alone does not set a newly mounted native default.
+        # Keep real selection and explicit clear consistent in both protocols.
+        kwargs["default"] = receipt["value"] if submitted else value
     result = widget(label, key=field(key, value), on_change=_issue_changed,
-                    args=(key, value), **kwargs)
+                    args=(key, value, identity), **kwargs)
+    if submitted and not captured:
+        st.session_state.pop(key + "_change", None)
     if submitted and result != value:
         return result
-    st.session_state.pop(key + "_change", None)
     return value
 
 
-def _render_issue_evidence(item, draft, options, p, field):
+def _render_issue_evidence(item, draft, options, p, field, prefix):
     import streamlit as st
+    identity = _followup_choice_identity(draft, prefix, item)
     update = _issue_control(st.text_area, "Issue update", p + "_update", item.update,
-                            field, height=90, max_chars=4000)
+                            field, identity=identity, height=90, max_chars=4000)
     note, references = item.evidence_note, item.references
     if item.status in ("updated", "resolved") or note:
         note = _issue_control(st.text_area, "Evidence or explanation for the status",
-                              p + "_note", note, field, height=90, max_chars=4000)
+                              p + "_note", note, field, identity=identity, height=90, max_chars=4000)
     if options or references:
         selected = _issue_control(st.multiselect, "Supporting source pages",
             p + "_sources_" + _digest(list(options)),
             [ref for ref in references if ref in options], field,
-            options=list(options), format_func=options.get) if options else []
-        missing = tuple(ref for ref in references if ref not in options)
+            identity=identity, options=list(options), format_func=options.get) if options else []
+        missing = _followup_missing_links(draft, prefix, item, options)
         if missing:
             notice = st.empty()
-            if st.checkbox("Remove unavailable source links",
-                           key=field(p + "_remove_missing_" + _digest(missing), False)):
+            if _followup_choice(draft, prefix, item, p + "_remove_missing_" + _digest(missing),
+                                "Remove unavailable source links", False, field):
                 missing = ()
             else:
                 notice.warning("A supporting source changed or is missing.")
@@ -286,18 +306,27 @@ def _render_issue_evidence(item, draft, options, p, field):
     return replace(item, update=update, evidence_note=note, references=references)
 
 
-def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pages=None):
+def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pages=None, defer_commit=False):
     import streamlit as st
 
     draft = canonical_issues(draft)
     options = {source_reference(source, n): f"{source.filename} · page {n}"
                for source in draft.sources for n in range(1, len(source.page_texts) + 1)}
+    draft = _capture_followup_controls(draft, prefix, "issue", options)
+    message = followup_limit_message(draft)
+    if message:
+        st.error(message)
     issues = [item for item in draft.follow_ups if item.category == "issue"]
-    if st.button("Add issue", key=prefix + "_issue_add", disabled=len(draft.follow_ups) >= 200):
+    if st.button("Add issue", key=prefix + "_issue_add",
+                 disabled=len(output_followups(draft)) >= MAX_INCLUDED_FOLLOWUPS):
         item = ReportFollowUp("issue-" + uuid4().hex, "issue", "", draft.period.key)
         draft = replace(draft, follow_ups=(*draft.follow_ups, item))
         issues.append(item)
+        st.session_state[prefix + "_issues_page"] = (
+            sum(issue.included for issue in issues) + FOLLOWUP_PAGE_SIZE - 1) // FOLLOWUP_PAGE_SIZE
     _render_issue_actions(draft, prefix)
+    visible = _visible_followup_keys([item for item in issues if item.included],
+                                    prefix + "_issues", "Issue page")
     block = next((b for b in draft.blocks if b.key == "equipment_issues"), None)
     if block and block.text and not block.ai_written and not block.ai_paragraphs:
         st.text(block.text)
@@ -305,17 +334,18 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
             draft = remove_issue_statement(draft)
     items, evidence_controls = [], {}
     for original in draft.follow_ups:
-        if original.category != "issue" or not original.included:
+        if original.category != "issue" or not original.included or original.key not in visible:
             items.append(original)
             continue
         item = original
         p = prefix + "_issue_" + item.key
+        identity = _followup_choice_identity(draft, prefix, item)
         surface = st.empty()
         with surface.container(border=True):
             text = _issue_control(st.text_area, "Issue description", p + "_text", item.text,
-                                  field, height=90, max_chars=4000)
+                                  field, identity=identity, height=90, max_chars=4000)
             status = _issue_control(st.selectbox, "Issue status", p + "_status", item.status,
-                                    field, options=ISSUE_STATUSES, format_func=_status_label)
+                                    field, identity=identity, options=ISSUE_STATUSES, format_func=_status_label)
             item = replace(item, text=text, status=status)
             warnings = st.empty()
             removed = st.button("Remove from this report", key=p + "_remove")
@@ -338,7 +368,7 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
                     # A Remove click can deliver the last native evidence edit
                     # in the same packet. Read it before retiring the controls;
                     # omission must preserve that wording and its source links.
-                    item = _render_issue_evidence(item, draft, options, p, field)
+                    item = _render_issue_evidence(item, draft, options, p, field, prefix)
                 if not item.included:
                     evidence_surface.empty()
                 else:
@@ -355,9 +385,13 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
     if omitted:
         with st.expander(f"Removed from this report ({len(omitted)})"):
             st.caption("Unresolved issues remain available for future reports.")
+            visible = _visible_followup_keys(omitted, prefix + "_omitted_issues", "Removed issue page")
             for item in omitted:
+                if item.key not in visible:
+                    continue
                 st.write(item.text or "Unfinished issue")
                 st.caption(_status_label(item.status))
                 if st.button("Include again", key=prefix + "_issue_restore_" + item.key):
                     draft = issue_visibility(draft, item.key, True)
-    return draft if defer_actions else apply_issue_action(draft, prefix)
+    draft = draft if defer_actions else apply_issue_action(draft, prefix)
+    return draft if defer_commit else acknowledge_followup_controls(draft, prefix)
