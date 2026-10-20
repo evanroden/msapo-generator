@@ -287,10 +287,12 @@ def _render_issue_evidence(item, draft, options, p, field, prefix):
             identity=identity, options=list(options), format_func=options.get) if options else []
         missing = tuple(ref for ref in references if ref not in options)
         if missing:
-            st.warning("A supporting source changed or is missing.")
+            notice = st.empty()
             if _followup_choice(draft, prefix, item, p + "_remove_missing_" + _digest(missing),
                                 "Remove unavailable source links", False, field):
                 missing = ()
+            else:
+                notice.warning("A supporting source changed or is missing.")
         references = (*selected, *missing)
     if item.carried_from != draft.period.key:
         st.caption("Carried from " + item.carried_from)

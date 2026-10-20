@@ -70,6 +70,8 @@ def render_mbcx(status, pages, prefix, field, edit_pages):
             selected = next((label for label, sentence in STATUS_STARTERS if sentence == current_text), None)
             if selected:
                 st.caption("Status: " + selected)
+        from app.monthly_report_native_loading import reserve_text_area
+        reserve_text_area(key, 120)
         text = st.text_area("Status or findings", key=key, value=status.text, height=120,
                             help="This is the exact wording that will print when included. Leave it empty if your attached pages need no introduction.")
         choice = st.session_state.pop(choice_key, None)

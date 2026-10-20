@@ -360,7 +360,7 @@ def render_followups(draft, prefix, field, *, category=None, defer_issue_actions
     return draft if defer_issue_actions else apply_issue_action(draft, prefix)
 
 
-def _render_section_followups(draft, prefix, field, category):
+def _render_section_followups(draft, prefix, field, category, *, initially_editing=False):
     import streamlit as st
     from app.monthly_report_issues import _issue_control
 
@@ -388,7 +388,7 @@ def _render_section_followups(draft, prefix, field, category):
             continue
         item = normalize_proposal(original)
         p = prefix + "_follow_" + item.key + "_compact"
-        edit_key = field(p + "_editing", False)
+        edit_key = field(p + "_editing", initially_editing)
         confirmed = replace(item, reviewed_fingerprint=confirmation(item, draft.period))
         needs_correction = problems(confirmed, draft)
         if needs_correction:
@@ -443,10 +443,12 @@ def _render_section_followups(draft, prefix, field, category):
                 ) if options else []
                 missing = tuple(ref for ref in item.references if ref not in options)
                 if missing:
-                    st.warning("Some saved source links are unavailable. Replace them with current evidence, or explicitly remove them.")
+                    notice = st.empty()
                     if _followup_choice(draft, prefix, item, p + "_remove_missing_" + _digest(missing),
                                         "Remove unavailable source links", False, field):
                         missing = ()
+                    else:
+                        notice.warning("Some saved source links are unavailable. Replace them with current evidence, or explicitly remove them.")
                 excluded = not item.included
                 if proposal or status == "resolved":
                     excluded = _followup_choice(draft, prefix, item, p + "_excluded",
@@ -482,4 +484,4 @@ def _render_section_followups(draft, prefix, field, category):
 
 def _render_all_followups(draft, prefix, field):
     """Detailed entry uses the same bounded, receipt-aware proposal editor."""
-    return _render_section_followups(draft, prefix, field, "proposal")
+    return _render_section_followups(draft, prefix, field, "proposal", initially_editing=True)
