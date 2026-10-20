@@ -64,3 +64,29 @@ _show_result(BatchSaveResult(saved=(name,), unchanged=(name,)))
     results = [c.value for c in app.caption if "Synthetic" in c.value]
     assert len(results) == 2
     assert all(ESCAPED_NAME in value for value in results)
+
+
+def test_site_summary_keeps_group_and_site_names_literal_after_selection():
+    app = AppTest.from_string('''
+import streamlit as st
+from app.monthly_report_model import Facility, ReportProfile
+from app.monthly_report_start_ui import identity_summary, select_sites
+from app.monthly_report_ui import _field
+name = '[Synthetic](https://example.invalid) **Account**'
+profile = ReportProfile('Synthetic Contract', 'synthetic-group', name,
+                        (Facility('synthetic-site', name),
+                         Facility('synthetic-south', 'Synthetic South')), 'multi_site')
+candidate, existing = select_sites(profile.contract, (profile,), profile.key, _field)
+if candidate:
+    st.caption(identity_summary(candidate))
+    st.session_state['selected_site_titles'] = tuple(site.title for site in candidate.facilities)
+''').run()
+    assert not app.exception
+    assert app.caption[0].value == (
+        ESCAPED_NAME + " · Combined report · Sites: " + ESCAPED_NAME + "; Synthetic South")
+    assert app.session_state["selected_site_titles"] == (NAME, "Synthetic South")
+    next(box for box in app.checkbox if box.label == "Synthetic South").uncheck().run()
+    assert not app.exception
+    assert app.caption[0].value == "Site: " + ESCAPED_NAME
+    assert app.session_state["selected_site_titles"] == (NAME,)
+    assert next(box for box in app.checkbox if box.label == ESCAPED_NAME).value

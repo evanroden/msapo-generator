@@ -121,12 +121,12 @@ def site_choices(contract, profiles):
 
 
 def identity_summary(profile):
-    """One exact site/scope summary for the stable contract/month strip."""
+    """One literal site/scope caption for the stable contract/month strip."""
     facilities = profile.facilities
     label = "Site: " if len(facilities) == 1 else "Sites: "
-    sites = label + "; ".join(site.title for site in facilities)
+    sites = label + "; ".join(literal(site.title) for site in facilities)
     ordinary_title = facilities[0].title if len(facilities) == 1 else " / ".join(site.title for site in facilities)
-    name = profile.title + " · " if profile.title != ordinary_title else ""
+    name = literal(profile.title) + " · " if profile.title != ordinary_title else ""
     scope = {"individual": "", "multi_site": "Combined report · ", "regional": "Regional report · "}[profile.scope_type]
     return name + scope + sites
 
