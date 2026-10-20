@@ -13,6 +13,7 @@ from io import BytesIO
 import json
 import math
 import os
+import posixpath
 from pathlib import Path
 import re
 import shutil
@@ -20,16 +21,18 @@ import subprocess
 import sys
 import tempfile
 import time
+import warnings
 from threading import RLock
 from uuid import uuid4
 from zipfile import ZipFile
 
 import fitz
+from PIL import Image, UnidentifiedImageError
 
 from app import monthly_report_testing as testing
 from app import monthly_report_library as library
 from app import monthly_report_render_jobs as jobs
-from app.monthly_report_import import ImportError, _package
+from app.monthly_report_import import ImportError, _package, _resolve
 from app.monthly_report_native_package import passive_docx, _xml
 from app.office_limits import prepare_profile
 from app.office_process import run_office
@@ -40,7 +43,6 @@ MAX_STORE_BYTES = 128 * 1024 * 1024
 MAX_GLOBAL_BYTES = 384 * 1024 * 1024
 MIN_FREE_BYTES = 256 * 1024 * 1024
 MAX_OWNERS = 128
-MAX_SCAN_ENTRIES = 4096
 RETENTION_SECONDS = 6 * 60 * 60
 ABANDONED_SECONDS = 10 * 60
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
@@ -161,64 +163,102 @@ def _entries(folder):
             yield Path(entry.path)
 
 
+def _index():
+    path = _root().parents[2] / '.source-preview-index'
+    if path.is_symlink():
+        raise SourcePreviewError('Source preview storage is unavailable.')
+    path.mkdir(mode=0o700, exist_ok=True)
+    return path
+
+
+def _record_path(folder):
+    return _index() / (folder.parents[2].name + '-' + folder.name + '.json')
+
+
+def _register(folder, epoch):
+    # Reserve before any payload/claim write. Atomic index records carry their
+    # own deadline, including a crash before active.json or attempt.json updates.
+    path = _record_path(folder)
+    pending = path.with_suffix('.pending')
+    _write(pending, {'scope': testing.scope(), 'generation': testing.generation(),
+                     'owner': folder.name, 'epoch': epoch,
+                     'deadline': time.time() + ABANDONED_SECONDS})
+    pending.replace(path)
+    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)  # Persist admission before any payload write.
+    finally:
+        os.close(descriptor)
+
+
+def _record(folder):
+    path = _record_path(folder)
+    if path.is_symlink() or path.stat().st_size > 4096:
+        raise SourcePreviewError('Source preview reservation is unavailable.')
+    state = json.loads(path.read_text())
+    if (not all(isinstance(state.get(key), str) and _TOKEN.fullmatch(state[key])
+                for key in ('scope', 'generation', 'owner', 'epoch'))
+            or not isinstance(state.get('deadline'), (int, float))
+            or not math.isfinite(state['deadline'])):
+        raise SourcePreviewError('Source preview reservation is unavailable.')
+    return state
+
+
 def _catalog(*, prune=False, keep=None):
-    """Only this helper's folders in marker-verified QA namespaces are touched."""
-    current = _root()
+    """Bounded diagnostic index; never enumerate unrelated QA namespaces."""
     rows = []
-    entries = 0
-    for namespace in _entries(current.parents[2]):
-        entries += 1
-        if entries > MAX_SCAN_ENTRIES:
+    for number, entry in enumerate(_entries(_index())):
+        if number > MAX_OWNERS * 2:
             raise SourcePreviewError('Source preview storage inventory exceeds its safety bound.')
-        if not _TOKEN.fullmatch(namespace.name):
-            continue
-        if namespace.is_symlink():
+        if entry.is_symlink():
             raise SourcePreviewError('Source preview storage is unavailable.')
+        if re.fullmatch(r'[0-9a-f]{32}-[0-9a-f]{32}\.pending', entry.name):
+            entry.unlink()  # The global lock proves no index writer is active.
+            continue
+        if not re.fullmatch(r'[0-9a-f]{32}-[0-9a-f]{32}\.json', entry.name):
+            raise SourcePreviewError('Source preview reservation is unavailable.')
+        identity, owner = entry.stem.split('-')
+        namespace = testing._location(_root().parents[3], identity)
+        folder = namespace / 'monthly_reports/source-previews' / owner
         try:
-            testing._marker(namespace / testing._SENTINEL, namespace.name)
-            parent = namespace / 'monthly_reports'
-            root = parent / 'source-previews'
-            if parent.is_symlink() or root.is_symlink():
+            record = _record(folder)
+            if record['scope'] != identity or record['owner'] != owner:
+                raise SourcePreviewError('Source preview reservation is unavailable.')
+            if not namespace.exists():
+                entry.unlink(); continue
+            if testing._marker(namespace / testing._SENTINEL, identity) != record['generation']:
+                entry.unlink(); continue  # A reset retired the recorded generation.
+            if any(path.is_symlink() for path in (folder.parents[1], folder.parent, folder)):
                 raise SourcePreviewError('Source preview storage is unavailable.')
-            if not root.exists():
-                continue
-            for folder in _entries(root):
-                entries += 1
-                if entries > MAX_SCAN_ENTRIES:
-                    raise SourcePreviewError('Source preview storage inventory exceeds its safety bound.')
-                if not _TOKEN.fullmatch(folder.name):
-                    continue
-                try:
-                    if folder.is_symlink():
-                        raise SourcePreviewError('Source preview storage is unavailable.')
-                    active = folder / 'active.json'
-                    if active.is_symlink():
-                        raise SourcePreviewError('Source preview storage is unavailable.')
-                    if active.stat().st_size > 4096:
-                        raise SourcePreviewError('Source preview storage is unavailable.')
-                    state = json.loads(active.read_text())
-                    age = time.time() - active.stat().st_mtime
-                    pending = (folder / 'attempt.json').exists() and not (folder / 'receipt.json').exists()
-                    running = pending and time.time() < state.get('deadline', float('inf'))
-                    if prune and folder != keep and age > RETENTION_SECONDS and not running:
-                        if _remove(folder):
-                            continue
-                    size = _size(folder)
-                    if not pending and any(item.is_dir() for item in folder.iterdir()):
-                        size += SCRATCH_RESERVE_BYTES  # Retain a failed-cleanup scratch reservation.
-                    rows.append((folder, max(size, RESERVE_BYTES) if pending else size, pending))
-                except FileNotFoundError:
-                    # A missing owner must not hide valid siblings from quota
-                    # accounting. Only an actually empty/disappeared folder is
-                    # ignorable; orphaned payloads without metadata fail closed.
-                    try:
-                        if any(folder.iterdir()):
-                            raise SourcePreviewError('Source preview owner metadata is unavailable.')
-                    except FileNotFoundError:
-                        pass
-                    continue
+            if not folder.exists():
+                entry.unlink(); continue
+            active = folder / 'active.json'
+            if active.is_symlink():
+                raise SourcePreviewError('Source preview owner metadata is unavailable.')
+            try:
+                modified = active.stat().st_mtime
+                if active.stat().st_size > 4096:
+                    raise SourcePreviewError('Source preview owner metadata is unavailable.')
+                state = json.loads(active.read_text())
+                if state.get('epoch') != record['epoch']:
+                    raise SourcePreviewError('Source preview owner metadata is unavailable.')
+            except FileNotFoundError:
+                # Interrupted explicit cleanup remains indexed and reserved; it
+                # cannot hide siblings or become permanently unrecoverable.
+                modified = record['deadline'] - ABANDONED_SECONDS
+            pending = not active.exists() or not (folder / 'receipt.json').exists()
+            running = pending and time.time() < record['deadline']
+            if prune and folder != keep and time.time() - modified > RETENTION_SECONDS and not running:
+                if _remove(folder):
+                    entry.unlink(); continue
+            size = _size(folder)
+            if not pending and any(item.is_dir() for item in folder.iterdir()):
+                size += SCRATCH_RESERVE_BYTES
+            rows.append((folder, max(size, RESERVE_BYTES) if pending else size, pending))
         except FileNotFoundError:
-            continue  # A verified QA reset may remove this namespace concurrently.
+            if folder.exists():
+                raise SourcePreviewError('Source preview owner metadata is unavailable.')
+            entry.unlink(missing_ok=True)
     return rows
 
 
@@ -236,7 +276,9 @@ def clear_earlier(owner, epoch, snapshot):
         current = set(earlier_previews_unlocked(owner))
         for old_owner, old_epoch in snapshot:
             if (old_owner, old_epoch) in current:
-                _remove(_folder(old_owner))
+                folder = _folder(old_owner)
+                if _remove(folder):
+                    _record_path(folder).unlink(missing_ok=True)
 
 
 def earlier_previews_unlocked(owner):
@@ -244,10 +286,9 @@ def earlier_previews_unlocked(owner):
     result = []
     for folder, _size_bytes, pending in _catalog(prune=True, keep=(_root() / owner if owner else None)):
         if folder.parent == _root() and folder.name != owner:
-            active = folder / 'active.json'
-            state = json.loads(active.read_text())
-            if not pending or time.time() >= state.get('deadline', float('inf')):
-                result.append((folder.name, state['epoch']))
+            record = _record(folder)
+            if not pending or time.time() >= record['deadline']:
+                result.append((folder.name, record['epoch']))
     return result
 
 
@@ -292,17 +333,19 @@ def retire(owner, *, expected_epoch=None):
     if not isinstance(owner, str) or not _TOKEN.fullmatch(owner):
         raise SourcePreviewError('Invalid source preview session.')
     with _storage_lock():
-        rows = _catalog(prune=True, keep=_root() / owner)
-        if not (_root() / owner).exists() and len(rows) >= MAX_OWNERS:
-            raise SourcePreviewError('QA source-preview storage is full. Earlier diagnostics expire after six hours.')
+        _catalog(prune=True, keep=_root() / owner)
         folder = _folder(owner)
         if expected_epoch is not None and _active(owner).get('epoch') != expected_epoch:
             raise SourcePreviewError('This source-preview clear request is stale.')
         for child in folder.rglob('*'):
             if child.is_symlink():
                 raise SourcePreviewError('Source preview storage is unavailable.')
-        for child in tuple(folder.iterdir()):
+        # Explicit cancellation may interrupt this owner's running converter.
+        # Keep its reservation through payload cleanup (active metadata last),
+        # so a process crash cannot strand unaccounted source files.
+        for child in sorted(folder.iterdir(), key=lambda path: path.name == 'active.json'):
             shutil.rmtree(child) if child.is_dir() else child.unlink()
+        _record_path(folder).unlink(missing_ok=True)
         epoch = uuid4().hex
         _write(folder / 'active.json', {'epoch': epoch})
         return epoch
@@ -334,11 +377,48 @@ def _check(request):
     return active
 
 
-def _safe_source(path):
+def _package_budget(package, source_bytes, *, budget_report=None):
+    available = jobs.memory_headroom()
+    origin = 'container headroom'
+    if available is None:
+        available = os.sysconf('SC_AVPHYS_PAGES') * os.sysconf('SC_PAGE_SIZE')
+        origin = 'available physical memory (no finite container limit reported)'
+    budget = min(320 * 1024 * 1024, available) - 32 * 1024 * 1024
+    members = package.infolist()
+    expanded = sum(member.file_size for member in members)
+    # Account raw/passive buffers and resident expanded copies, then stream all
+    # parts BEFORE any XML parser. Counting binary punctuation too is deliberate:
+    # a relationship-selected XML part cannot evade admission by renaming it.
+    estimate = 2 * source_bytes + 4 * expanded
+    evidence = budget_report if budget_report is not None else {}
+    evidence.update(policy='bounded conservative admission, not hard process-memory isolation',
+                    headroom_source=origin, headroom_bytes=available, budget_bytes=budget,
+                    estimated_bytes=estimate, expanded_bytes=expanded, markup_tokens=0,
+                    attribute_tokens=0, complete_inventory=False,
+                    required_headroom_bytes=estimate + 32 * 1024 * 1024)
+    if estimate > budget or any(member.file_size > 24 * 1024 * 1024 for member in members):
+        raise SourcePreviewError('The source package exceeds the current diagnostic memory budget.')
+    markup = attributes = 0
+    for member in members:
+        with package.open(member) as stream:
+            while chunk := stream.read(64 * 1024):
+                nodes, attrs = chunk.count(b'<'), chunk.count(b'=')
+                markup += nodes; attributes += attrs
+                estimate += 512 * nodes + 256 * attrs
+                evidence.update(estimated_bytes=estimate, markup_tokens=markup, attribute_tokens=attributes,
+                                required_headroom_bytes=estimate + 32 * 1024 * 1024)
+                if estimate > budget:
+                    raise SourcePreviewError('The source XML exceeds the current diagnostic memory budget.')
+    evidence['complete_inventory'] = True
+    return evidence
+
+
+def _safe_source(path, *, budget_report=None):
     # The normal native sanitizer validates the reachable graph. Additionally
     # reject macros/active binary payloads even when unreachable, and external
     # resource relationships even when the sanitizer would discard them.
     with _package(path) as package:
+        _package_budget(package, path.stat().st_size, budget_report=budget_report)
         for name in package.namelist():
             if re.search(r'(?i)(vbaproject|vbadata|activex|embeddings)(?:[/.]|$)', name):
                 raise SourcePreviewError('Active or embedded content is not supported for source preview.')
@@ -352,10 +432,67 @@ def _safe_source(path):
                     if (relation.get('TargetMode', '').casefold() == 'external'
                             and not relation.get('Type', '').endswith('/hyperlink')):
                         raise SourcePreviewError('External document resources cannot be previewed.')
-    result = passive_docx(path)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', Image.DecompressionBombWarning)
+            result = passive_docx(path)
+    except Image.DecompressionBombWarning:
+        raise SourcePreviewError('The source image dimensions exceed the diagnostic safety budget.') from None
     if len(result) > MAX_BYTES:
         raise SourcePreviewError('The passive render input exceeds 32 MiB.')
     return result
+
+
+def _raster_budget(path, *, budget_report=None):
+    """Header-only admission on the exact passive input, never image reduction."""
+    available = jobs.memory_headroom()
+    if available is None:
+        available = os.sysconf('SC_AVPHYS_PAGES') * os.sysconf('SC_PAGE_SIZE')
+    budget = min(1024 * 1024 * 1024, available) - 96 * 1024 * 1024
+    evidence = budget_report if budget_report is not None else {}
+    evidence.update(policy='header-only estimate: two 4-byte-per-pixel copies, single-frame rasters only',
+                    images=0, pixels=0, largest_image_pixels=0, estimated_decoded_bytes=0,
+                    headroom_bytes=available, budget_bytes=budget, complete_inventory=False,
+                    reserved_renderer_bytes=96 * 1024 * 1024, required_headroom_bytes=96 * 1024 * 1024)
+    if budget <= 0:
+        raise SourcePreviewError('The renderer lacks the current diagnostic memory budget.')
+    pixels = images = largest = 0
+    with _package(path) as package:
+        types = _xml(package.read('[Content_Types].xml'))
+        defaults = {item.get('Extension'): item.get('ContentType', '') for item in types if item.tag.endswith('}Default')}
+        overrides = {item.get('PartName', '').lstrip('/'): item.get('ContentType', '') for item in types if item.tag.endswith('}Override')}
+        image_targets = set()
+        for name in package.namelist():
+            if name.endswith('.rels'):
+                part = posixpath.join(posixpath.dirname(posixpath.dirname(name)), posixpath.basename(name)[:-5])
+                for relation in _xml(package.read(name)):
+                    if relation.get('Type', '').rsplit('/', 1)[-1] in {'image', 'hdphoto'}:
+                        image_targets.add(_resolve(part, relation.get('Target', '')))
+        for member in package.infolist():
+            kind = overrides.get(member.filename, defaults.get(Path(member.filename).suffix.lstrip('.'), ''))
+            if not kind.startswith('image/') and member.filename not in image_targets:
+                continue
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter('error', Image.DecompressionBombWarning)
+                    with package.open(member) as stream, Image.open(stream) as picture:
+                        if (picture.format not in {'PNG', 'JPEG', 'GIF', 'TIFF', 'BMP', 'WEBP'}
+                                or getattr(picture, 'n_frames', 1) != 1):
+                            raise ValueError('unsupported image')
+                        count = picture.width * picture.height
+                        evidence['last_image_pixels'] = count
+                        if not 0 < count <= 16_000_000:
+                            raise ValueError('oversized image')
+            except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+                raise SourcePreviewError('Source inspection requires bounded single-frame raster images; oversized images or metafiles are unsupported.') from None
+            images += 1; pixels += count; largest = max(largest, count)
+            evidence.update(images=images, pixels=pixels, largest_image_pixels=largest,
+                            estimated_decoded_bytes=8 * pixels,
+                            required_headroom_bytes=8 * pixels + 96 * 1024 * 1024)
+    evidence['complete_inventory'] = True
+    if 8 * pixels > budget:
+        raise SourcePreviewError('The decoded source images exceed the current diagnostic memory budget.')
+    return evidence
 
 
 def _transform_inventory(source, passive):
@@ -365,8 +502,14 @@ def _transform_inventory(source, passive):
         changes = []
         inventory_bytes = 2
         for name in sorted(old | new):
-            a = sha256(before.read(name)).hexdigest() if name in old else None
-            b = sha256(after.read(name)).hexdigest() if name in new else None
+            def digest(package):
+                result = sha256()
+                with package.open(name) as stream:
+                    while chunk := stream.read(64 * 1024):
+                        result.update(chunk)
+                return result.hexdigest()
+            a = digest(before) if name in old else None
+            b = digest(after) if name in new else None
             if a != b:
                 row = {'part': name, 'source_sha256': a, 'render_sha256': b}
                 inventory_bytes += len(json.dumps(row).encode()) + 2
@@ -448,7 +591,8 @@ def execute(request, raw, *, upload_id):
     """One attempt only. A failure is retained, never silently retried."""
     with _storage_lock():
         active = _check(request)
-        if (active.get('attempt') or str(upload_id) != request.upload_id
+        if (active.get('attempt') or _record_path(_folder(request.owner)).exists()
+                or str(upload_id) != request.upload_id
                 or sha256(raw).hexdigest() != request.source_sha256 or len(raw) > MAX_BYTES):
             raise SourcePreviewError('This submission is stale or was already attempted. Choose a fresh upload.')
         folder = _folder(request.owner)
@@ -459,17 +603,21 @@ def execute(request, raw, *, upload_id):
         global_used = sum(size + (SCRATCH_RESERVE_BYTES if pending else 0)
                           for _saved, size, pending in rows)
         reservation = RESERVE_BYTES + SCRATCH_RESERVE_BYTES
-        if (used + RESERVE_BYTES > MAX_STORE_BYTES
-                or global_used + reservation > MAX_GLOBAL_BYTES
-                or shutil.disk_usage(_root()).free < MIN_FREE_BYTES + reservation):
+        disk = shutil.disk_usage(_root())
+        global_limit = min(MAX_GLOBAL_BYTES, disk.total // 4)
+        free_floor = min(MIN_FREE_BYTES, disk.total // 8)
+        if (len(rows) >= MAX_OWNERS or used + RESERVE_BYTES > MAX_STORE_BYTES
+                or global_used + reservation > global_limit
+                or disk.free < free_floor + reservation):
             raise SourcePreviewError('QA source-preview storage is full. Clear earlier source-preview files; diagnostics expire after six hours.')
         # Exclusive claim survives reruns/replays even if the office process fails.
-        _write(folder / 'attempt.json', asdict(request))
+        _register(folder, request.epoch)
         active['attempt'] = request.request_id
-        active['deadline'] = time.time() + ABANDONED_SECONDS
+        active['deadline'] = _record(folder)['deadline']
         temporary = folder / 'active-next.json'
         _write(temporary, active)
         temporary.replace(folder / 'active.json')
+        _write(folder / 'attempt.json', asdict(request))
     receipt = {**asdict(request), 'purpose': 'SOURCE PREVIEW ONLY — not a completed report',
                'source_bytes': len(raw), 'created_at': datetime.now(timezone.utc).isoformat(),
                'transforms': ['current passive_docx sanitation; full-resolution media; no report assembly'],
@@ -482,7 +630,8 @@ def execute(request, raw, *, upload_id):
                 source.write(raw)
             (folder / 'source.docx').chmod(0o400)
             receipt['stage'] = 'passive package validation'
-            passive = _safe_source(folder / 'source.docx')
+            receipt['package_memory_admission'] = {}
+            passive = _safe_source(folder / 'source.docx', budget_report=receipt['package_memory_admission'])
             render_input = folder / 'render-input.docx'
             with render_input.open('xb') as source:
                 source.write(passive)
@@ -491,6 +640,9 @@ def execute(request, raw, *, upload_id):
             receipt['changed_package_parts'] = _transform_inventory(folder / 'source.docx', passive)
             del passive
             _check(request)  # Do not start Office after an expired/cancelled validation.
+            receipt['stage'] = 'raster memory admission'
+            receipt['raster_memory_admission'] = {}
+            _raster_budget(render_input, budget_report=receipt['raster_memory_admission'])
             receipt['stage'] = 'LibreOffice conversion'
             with tempfile.TemporaryDirectory(prefix='.conversion-', dir=folder) as temporary:
                 output, renderer, pages = _render(render_input, Path(temporary))

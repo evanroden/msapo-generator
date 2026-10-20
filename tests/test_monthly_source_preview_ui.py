@@ -28,6 +28,7 @@ def setup(tmp_path, monkeypatch):
     with qa.isolated('a' * 32):
         memory._data_dir()
         state[P + 'epoch'] = preview.retire(state[P + 'owner'])
+        state[P + 'initialized'] = True
         yield source, state, qa.capture_namespace()
 
 
@@ -166,12 +167,9 @@ def test_stale_earlier_cleanup_cannot_touch_new_selection(setup, monkeypatch):
     assert state == before
 
 
-def test_owner_capacity_still_offers_browser_recovery(tmp_path, monkeypatch):
+def test_empty_page_load_does_not_allocate_an_owner_or_quota(tmp_path, monkeypatch):
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
-    monkeypatch.setattr(preview, 'MAX_OWNERS', 1)
-    with qa.isolated('a' * 32):
-        memory._data_dir()
-        preview.retire('b' * 32)
+    monkeypatch.setattr(preview, 'MAX_OWNERS', 0)
     app = AppTest.from_string('''
 import streamlit as st
 from app import memory, monthly_report_testing as qa
@@ -182,10 +180,12 @@ with qa.isolated('a' * 32):
     memory._data_dir()
     render()
 ''').run()
-    assert not app.exception
-    app.button(key=P + 'recover_at_capacity').click().run()
     assert not app.exception and len(app.get('file_uploader')) == 1
     assert app.session_state['report_existing'] == 'untouched'
+    with qa.isolated('a' * 32):
+        memory._data_dir()
+        assert not (preview._root() / app.session_state[P + 'owner']).exists()
+        assert preview._catalog() == []
 
 
 def test_peer_expiry_recovers_idle_session_without_render_or_draft_reset(tmp_path, monkeypatch):
@@ -201,12 +201,17 @@ with qa.isolated('a' * 32):
     memory._data_dir()
     render()
 ''').run()
+    app.text_input(key=P + 'label').set_value('Synthetic selection').run()
     old_owner = app.session_state[P + 'owner']
     old_epoch = app.session_state[P + 'epoch']
     app.session_state[P + 'request'] = 'expired request'
     with qa.isolated('a' * 32):
         memory._data_dir()
-        active = preview._folder(old_owner) / 'active.json'
+        folder = preview._folder(old_owner)
+        with preview._storage_lock():
+            preview._register(folder, old_epoch)
+        (folder / 'receipt.json').write_text('{}')
+        active = folder / 'active.json'
         old = preview.time.time() - preview.RETENTION_SECONDS - 1
         os.utime(active, (old, old))
     with qa.isolated('d' * 32):

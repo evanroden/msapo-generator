@@ -16,6 +16,7 @@ def _invalidate(activate):
         if owner:
             try:
                 st.session_state[_PREFIX + 'epoch'] = preview.retire(owner)
+                st.session_state[_PREFIX + 'initialized'] = True
             except (ValueError, OSError):
                 return  # A reset invalidated this captured namespace; normal rerun rebuilds it.
         for name in ('pending', 'request', 'receipt', 'error'):
@@ -29,7 +30,8 @@ def _clear(activate, owner, epoch):
                 or st.session_state.get(_PREFIX + 'epoch') != epoch):
             return
         try:
-            next_epoch = preview.retire(owner, expected_epoch=epoch)
+            next_epoch = (preview.retire(owner, expected_epoch=epoch)
+                          if st.session_state.get(_PREFIX + 'initialized') else uuid4().hex)
         except (ValueError, OSError):
             return  # A reset/newer incarnation wins; mutate no session state.
         if (st.session_state.get(_PREFIX + 'owner') != owner
@@ -47,7 +49,10 @@ def _clear_earlier(activate, owner, epoch, snapshot):
                 or st.session_state.get(_PREFIX + 'epoch') != epoch):
             return
         try:
-            preview.clear_earlier(owner, epoch, snapshot)
+            if st.session_state.get(_PREFIX + 'initialized'):
+                preview.clear_earlier(owner, epoch, snapshot)
+            else:
+                preview.clear_earlier(None, None, snapshot)
         except (ValueError, OSError):
             return
 
@@ -76,7 +81,7 @@ def render():
                    'Prices and unfinished content may remain visible. Files stay in this browser’s isolated QA storage; '
                    'nothing is added to the shared fixture catalog. No authentication or confidentiality guarantee is added.')
         owner_key = _PREFIX + 'owner'
-        if owner_key in st.session_state:
+        if owner_key in st.session_state and st.session_state.get(_PREFIX + 'initialized'):
             try:
                 current = preview.session_current(st.session_state[owner_key], st.session_state.get(_PREFIX + 'epoch'))
             except (ValueError, OSError):
@@ -88,22 +93,8 @@ def render():
                         st.session_state.pop(key, None)
                 st.info('The earlier source-preview files expired or were cleared. Choose a fresh upload; no automatic render occurred.')
         if owner_key not in st.session_state:
-            owner = uuid4().hex
-            try:
-                epoch = preview.retire(owner)
-            except (ValueError, OSError):
-                st.error('Source-preview storage is unavailable or full. Diagnostic files expire after six hours; report data is unchanged.')
-                try:
-                    earlier = preview.earlier_previews(None)
-                except (ValueError, OSError):
-                    earlier = ()
-                if earlier:
-                    st.button('Clear earlier source-preview files in this browser (including other tabs)',
-                              key=_PREFIX + 'recover_at_capacity', on_click=_clear_earlier,
-                              args=(testing.capture_namespace(), None, None, earlier))
-                return
-            st.session_state[owner_key] = owner
-            st.session_state[_PREFIX + 'epoch'] = epoch
+            st.session_state[owner_key] = uuid4().hex
+            st.session_state[_PREFIX + 'epoch'] = uuid4().hex
         activate = testing.capture_namespace()
         upload_key = _PREFIX + 'upload_' + st.session_state.setdefault(_PREFIX + 'uploader_epoch', uuid4().hex)
         upload = st.file_uploader('Fresh source DOCX for inspection', type=['docx'], key=upload_key,

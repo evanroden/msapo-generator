@@ -22,7 +22,8 @@ owner of privacy/style sanitation; this diagnostic does not duplicate it.
 Per-session downloads provide the untouched source, exact passive render input,
 source-inspection PDF if successful, and an immutable JSON attempt receipt. The
 receipt includes source/input/PDF hashes and sizes, per-part sanitation changes,
-page count, actual LibreOffice version, deployed commit when available, font
+page count, the estimated package-memory admission budget and actual available
+headroom/counters, actual LibreOffice version, deployed commit when available, font
 inventory and hashes of the production-resolved expected fonts. Bounded Office
 stdout/stderr presence, byte counts and hashes are retained without their text;
 success does not claim that Office emitted no warnings. No watermark is
@@ -45,9 +46,15 @@ clear the report editor or modify an existing Demo draft.
 Files live only under the existing browser-isolated QA namespace, not the live
 output directory or shared fixture catalog. This adds no authentication or new
 confidentiality guarantee. The helper reserves a bounded 128 MiB diagnostic
-store per isolated browser, a 384 MiB disk-wide diagnostic budget (including
-pending artifact/scratch reservations), 128 diagnostic owners, and a 256 MiB
-free-disk floor. A short cross-process lock serializes accounting across cookies.
+store per isolated browser, at most 384 MiB disk-wide (also capped at one quarter
+of actual filesystem capacity, including pending artifact/scratch reservations),
+128 data-bearing/pending attempts, and a free-disk floor of the smaller of
+256 MiB or one eighth of filesystem capacity. Empty page visits do not allocate
+owners or consume attempt slots. A bounded helper-owned index tracks attempts
+without scanning unrelated QA namespaces. Its atomic reservation precedes
+source/claim writes, has a finite deadline after crashes, and remains until
+payload cleanup finishes. A short cross-process lock serializes accounting
+across cookies; index metadata contains only opaque identities and deadlines.
 Only diagnostic folders inside marker-verified QA namespaces are eligible for
 six-hour inactivity expiry; editor data, shared fixtures and live storage are
 never pruned. Downloads renew retention. Package-change and font inventories are
@@ -58,8 +65,22 @@ conversion lease and process-tree cleanup, and rejects a non-24.2 engine or
 unexpected production font resolution. Each attempt has a 120-second conversion
 wall limit, 90-second CPU limit, 1.5 GiB virtual-address limit, 32 MiB file/output
 limits and a 150-page PDF limit. Production's existing container memory limit
-still applies; a full-resolution source that cannot fit fails rather than being
-silently reduced. Diagnostic conversion does not use another backend or service.
+still applies. Before any XML parser or passive sanitizer, admission streams all
+package parts (including renamed XML), accounts two compressed-source buffers,
+four expanded-package copies, and conservative markup/attribute overhead, and
+limits every expanded part to 24 MiB. Its estimated allowance is the smaller of
+actual available memory and 320 MiB, less a 32 MiB margin. This is conservative
+admission, not hard process-memory isolation or a universal no-OOM guarantee.
+Valid large/dense sources or low-headroom attempts can be refused unchanged;
+media are never silently reduced. Immediately before Office, header-only checks
+on the exact passive input additionally limit each raster to 16 million pixels
+and budget two four-byte-per-pixel copies across all images, with a 96 MiB
+renderer reserve. This separate allowance is capped by current headroom and
+1 GiB; it is not a claim that every source fits every service plan. Multi-frame
+images, decompression warnings, and metafiles without a supported raster budget
+are explicitly unsupported by this diagnostic. Receipt evidence records the
+actual dimensions aggregate and admission budget, without decoding or resizing
+images. Diagnostic conversion does not use another backend or service.
 
 Synthetic unit/UI checks can prove request identity, isolation, safety rejection,
 cleanup and command bounds; mocked conversions are **not** render/fidelity
