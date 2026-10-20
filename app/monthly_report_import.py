@@ -300,6 +300,9 @@ def _is_native_divider_background(element, text=""):
     dividers carry the lime/green shape palette and only a heading or numerals.
     """
     text = text + " " + _text(element)
+    from app.monthly_report_native_design import mint_divider_background
+    if mint_divider_background(element, text):
+        return True
     if any(char.isalpha() and not char.isascii() for char in text):
         return False
     if any(node.tag in (W + "object", W + "altChunk")
@@ -354,6 +357,8 @@ def inspect_docx(path: Path) -> DocxInspection:
             digest.update(chunk)
     items, titles, notices = [], [], []
     background_positions = []
+    mint_background_positions = set()
+    alternate_positions = set()
     revision_changes = comment_changes = 0
     content_slot = ""
     note_owners = {}
@@ -427,6 +432,15 @@ def inspect_docx(path: Path) -> DocxInspection:
                         is_unit = parent is not None and parent.tag in (W + "body", W + "hdr", W + "ftr", W + "footnote", W + "endnote")
                         if is_unit:
                             position += 1
+                            from app.monthly_report_native_design import equivalent_native_alternatives
+                            def image_identity(identity):
+                                target, kind = relations.get(identity, ("", ""))
+                                if (target not in names or not kind.endswith("/image")
+                                        or not target.startswith("word/media/")
+                                        or archive.getinfo(target).file_size > 30 * 1024 * 1024):
+                                    return None
+                                return metadata(target)["image_digest"]
+                            alternatives_equivalent = equivalent_native_alternatives(element, image_identity)
                             old_pictures = {relations.get(node.get(R + "embed") or node.get(R + "id"), ("", ""))[0]
                                             for node in element.iter() if node.tag in (A + "blip", V + "imagedata")}
                             normalized = _visible(element)
@@ -478,7 +492,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                                     if previous.part == part and previous.position in positions:
                                                         items[index] = replace(previous, section=combined,
                                                                                suggested_slot="divider_" + combined if previous.kind == "image" else "",
-                                                                               note="Native section heading")
+                                                                               note=previous.note if (previous.part, previous.position) in alternate_positions else "Native section heading")
                                                 break
                                     heading_positions = [*heading_positions, position][-3:]
                                     heading_fragments = [*heading_fragments, fragment][-3:]
@@ -510,8 +524,12 @@ def inspect_docx(path: Path) -> DocxInspection:
                             picture_table = element.tag == W + "tbl" and section == "activity" and content_slot == "improvements" and any(
                                 node.tag in (A + "blip", V + "imagedata") for node in element.iter())
                             parents = {child: parent for parent in element.iter() for child in parent} if picture_table else {}
-                            if part == "word/document.xml" and _is_native_divider_background(element, text):
+                            from app.monthly_report_native_design import mint_divider_background
+                            if (part == "word/document.xml" and _is_native_divider_background(element, text)
+                                    and (alternatives_equivalent or not mint_divider_background(element, text))):
                                 background_positions.append((position, word_section))
+                                if mint_divider_background(element, text):
+                                    mint_background_positions.add((position, word_section))
                             if element.tag == W + "tbl":
                                 rows = []
                                 for row in element.findall(W + "tr"):
@@ -567,8 +585,17 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         note="Validated native SmartArt text")
                                 else:
                                     diagram = any(e.get("uri", "").endswith("/diagram") for e in graphics)
-                                    add("unsupported", part, position, text=text,
-                                        note=("Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
+                                    from app.monthly_report_native_design import native_layout_role
+                                    native_role = native_layout_role(element, text, part=part, section=section,
+                                                                     word_section=word_section) if not legacy_groups and not legacy_text else ""
+                                    from app.monthly_report_native_design import mint_divider_background
+                                    divergent_native = not alternatives_equivalent and (native_role or mint_divider_background(element, text))
+                                    if divergent_native:
+                                        alternate_positions.add((part, position))
+                                        native_role = ""
+                                    add("native_layout" if native_role else "unsupported", part, position, text=text,
+                                        note=native_role or ("Alternate Word representations contain different or unsupported content. Review and replace this exact drawing; every original representation is retained." if divergent_native else
+                                              "Unmapped native SmartArt: complete local text-only drawing could not be established." if diagram else
                                               "Native divider artwork" if detected and detected != "unmatched" else
                                               "Native Word drawing: preserve and review its complete page layout, or add a replacement picture. Nothing is executed during inspection."))
                             if element.find(".//" + W + "altChunk") is not None or element.tag == W + "altChunk":
@@ -591,6 +618,10 @@ def inspect_docx(path: Path) -> DocxInspection:
     # Full-page native divider art can precede its title (and many empty anchor
     # paragraphs). Associate it with the next heading in that same Word section.
     for position, word_number in background_positions:
+        if any(item.part == "word/document.xml" and item.position == position
+               and item.kind == "unsupported"
+               and item.note.startswith(("External,", "Embedded", "Unmapped native")) for item in items):
+            continue  # A broken/external picture never becomes approved page furniture.
         heading = next((item for item in items if item.part == "word/document.xml"
                         and item.word_section == word_number and item.position >= position
                         and item.kind == "text" and (item.note == "Native section heading"
@@ -599,9 +630,15 @@ def inspect_docx(path: Path) -> DocxInspection:
             continue
         between = [item for item in items if item.part == "word/document.xml"
                    and position < item.position < heading.position]
+        if any(part == "word/document.xml" and position <= blocked <= heading.position
+               for part, blocked in alternate_positions):
+            continue  # Heading recovery cannot erase an alternate-content safety finding.
         if any(item.kind == "table" or (item.kind == "text"
                and item.note != "Native section heading"
-               and not re.fullmatch(r"(?:\d{1,3}[.)]?\s*)*", heading_fragment(item.text))) for item in between):
+               and not re.fullmatch(r"(?:\d{1,3}[.)]?\s*)*", heading_fragment(item.text)))
+               or ((position, word_number) in mint_background_positions and item.kind == "unsupported"
+                   and item.note not in ("Native divider artwork", "Native section heading"))
+               for item in between):
             continue  # A real narrative/table interrupts the decorative canvas.
         target = heading.section if heading.note == "Native section heading" else _heading(heading.text)
         for index, item in enumerate(items):

@@ -2,7 +2,8 @@
 
 This is a display decision, not an import, review, save or export gate. Optional
 references stay available without a routine warning; specific problems remain
-actionable. Only current included image pages can earn resolved status.
+actionable. Accepted text/table contributions and original-page reviews are
+separate tasks; neither approves the other.
 Originals receive only a bounded stat; their bytes are still verified by the
 existing readers and output paths.
 """
@@ -34,10 +35,11 @@ class SourceManagerStatus:
     pages: int
     destinations: tuple[str, ...]
     needs_correction: bool = True
+    summary: str = ""
 
 
 def source_manager_status(draft, contents, *, unavailable=(), pending=False):
-    """Describe only fully reviewed, currently included image-page sources.
+    """Describe current source tasks without changing their acceptance state.
 
     Text, spreadsheets, reference-only files and retained-but-omitted pages
     retain their existing management route. References in narrative alone do
@@ -106,18 +108,22 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
         return block.key, ""
 
     def status(source, content):
+        from app.monthly_report_source_readiness import content_readiness
+        reading = content_readiness(draft, source)
+        summary = (reading.summary if reading.included else "Pages included"
+                   if any(identity == source.id for identity, _ in owners) else "Not included")
         selected = tuple(source.selected_pages)
-        attached, destinations = [], set()
+        attached, destinations = [], set(reading.destinations)
         for number in set(selected):
             destination, _ = attached_page(source, number)
             if destination:
                 attached.append(number)
                 destinations.add(destination)
 
-        def result(reason="", *, needs_correction=True):
-            return SourceManagerStatus(source.id, source.filename, not reason, reason,
+        def result(reason="", *, needs_correction=True, resolved=None, summary=summary):
+            return SourceManagerStatus(source.id, source.filename, not reason if resolved is None else resolved, reason,
                                        len(attached), tuple(sorted(destinations)),
-                                       bool(reason) and needs_correction)
+                                       bool(reason) and needs_correction, summary)
 
         if pending:
             return result("Finish adding the current file selection to the report.")
@@ -138,25 +144,49 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
                 return result("Restore the original source file within its size limit.")
         except (ValueError, OSError):
             return result("Restore the original source file.")
-        if source.notices:
+        from app.monthly_report_source_readiness import unresolved_reading_notices
+        if unresolved_reading_notices(source):
             return result("Resolve the source reading notices.")
+        from app.monthly_report_source_scope import included_scope_valid, reviewed_scope
+        if reading.included:
+            site = facility_choice(source, draft.profile)
+            if site == KEEP_FACILITY:
+                return result("Check the source facility.")
+            if reading.problem:
+                return result(reading.problem)
+            if (not source.facility or source.scope_review) and not included_scope_valid(draft, source):
+                return result("Check the source facility.")
+        numbers = tuple(sources.image_numbers(content))
+        if not numbers:
+            if reading.included:
+                # Accepted mapped dates/sites/totals are already bound to this
+                # report. Do not invent a second file-level review ritual.
+                # Reviewed wording alone does not accept a file date. Match
+                # preflight's existing applicability so reference-only and
+                # explicitly unselected historical sources stay available.
+                if not reading.period_bound and selected and source.classification != "Reference only":
+                    when = source_date(source.service_date)
+                    if when is None or not draft.period.start <= when <= draft.period.end:
+                        return result("Check the source reporting date.")
+                # Plain native text is described as included, not reviewed.
+                return result(resolved=reading.accepted, needs_correction=False)
+            return result(resolved=False, needs_correction=False)
+        # Accepted text/tables do not approve the separate image-page use.
+        # Sources without image pages already returned above.
         if source.classification not in CLASSIFICATION_DESTINATIONS:
             return result("Review this file's use in the report.", needs_correction=False)
-        numbers = tuple(sources.image_numbers(content))
-        if (content.tables or not numbers
-                or set(numbers) != set(range(1, len(source.page_texts) + 1))
-                or len(numbers) != len(set(numbers))):
-            return result("Review the extracted text or spreadsheet content.", needs_correction=False)
+        if (len(numbers) != len(set(numbers))
+                or any(type(number) is not int or not 1 <= number <= len(source.page_texts) for number in numbers)):
+            return result("Resolve the original-page identities.")
         when = source_date(source.service_date)
         if when is None or not draft.period.start <= when <= draft.period.end:
             return result("Check the source reporting date.")
-        from app.monthly_report_source_scope import included_scope_valid, reviewed_scope
         if (facility_choice(source, draft.profile) in ("", KEEP_FACILITY)
                 or source.scope_review and (reviewed_scope(source, draft.profile) is None
                                            or not included_scope_valid(draft, source))):
             return result("Check the source facility.")
-        if (not selected or len(selected) != len(set(selected))
-                or any(type(number) is not int or number not in numbers for number in selected)):
+        if ((not selected and not reading.accepted) or len(selected) != len(set(selected))
+                or any(type(number) is not int or not 1 <= number <= len(source.page_texts) for number in selected)):
             return result("Review which pages belong in the report.")
         exclusions = dict(source.client_page_exclusions)
         for number in numbers:
@@ -169,7 +199,8 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
             elif (exclusions.get(number) != page_fingerprint(source, number)
                   or owners.get((source.id, number))):
                 return result("Decide whether to include or leave out each page.")
-        return result()
+        return result(resolved=not reading.included or reading.accepted,
+                      summary=(reading.summary + " · Pages reviewed" if reading.included else "Pages reviewed"))
 
     entries, seen = [], set()
     for content in contents:
