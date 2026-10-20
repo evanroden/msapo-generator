@@ -11,8 +11,8 @@ from test_monthly_report_directory_access_ui import DIRECTORY_APP, enter_directo
 
 NAME = "[Synthetic](https://example.invalid) **Account**"
 EDITOR = "[Reviewer](https://example.invalid) _Synthetic_"
-ESCAPED_NAME = r"\[Synthetic\]\(https\:\/\/example\.invalid\) \*\*Account\*\*"
-ESCAPED_EDITOR = r"\[Reviewer\]\(https\:\/\/example\.invalid\) \_Synthetic\_"
+ESCAPED_NAME = r"\[Synthetic\]\(https" + "\u2060" + r"\:\/\/example\.invalid\) \*\*Account\*\*"
+ESCAPED_EDITOR = r"\[Reviewer\]\(https" + "\u2060" + r"\:\/\/example\.invalid\) \_Synthetic\_"
 
 
 def seed(monkeypatch, tmp_path):

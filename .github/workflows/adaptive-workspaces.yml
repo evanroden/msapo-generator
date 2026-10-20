@@ -19,6 +19,7 @@ on:
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
+      - 'scripts/qa_monthly_literal_labels.py'
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
@@ -133,6 +134,7 @@ on:
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
+      - 'scripts/qa_monthly_literal_labels.py'
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
@@ -318,6 +320,8 @@ jobs:
           python -m playwright install --with-deps chromium webkit
       - name: Apply exact locked scalar date compatibility repair
         run: python scripts/patch_streamlit_date_input.py
+      - name: Literal imported labels have no automatic links or formatting
+        run: python scripts/qa_monthly_literal_labels.py
       - name: Pure geometry and real Streamlit DOM
         run: |
           node --test tests/workspace_geometry_test.cjs
@@ -381,6 +385,7 @@ jobs:
             test-artifacts/expense-adaptive/
             test-artifacts/po-adaptive/
             test-artifacts/monthly-adaptive/
+            test-artifacts/monthly-literal-labels/
             test-artifacts/source-corrections/
             test-artifacts/monthly-first-site/
             test-artifacts/monthly-preparer-navigation/
