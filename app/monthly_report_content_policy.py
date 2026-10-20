@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 _CURRENCIES = r"USD|CAD|EUR|GBP|CHF|AUD|NZD|JPY|CNY|HKD|SGD|SEK|NOK|DKK|INR|ILS|AED|SAR|MXN|ZAR|BRL|KRW"
 _CURRENCY_SYMBOLS = r"[$€£¥₹₪₩₽₺₴₦₱฿₫]"
 _MONEY = re.compile(
-    rf"(?:{_CURRENCY_SYMBOLS}\s*\(?[-+]?\d|\b(?:{_CURRENCIES})\b[\s():]*\(?[-+]?\d|"
+    rf"(?:{_CURRENCY_SYMBOLS}\s*(?:~\s*)?\(?[-+]?\d|\b(?:{_CURRENCIES})\b[\s():]*(?:~\s*)?\(?[-+]?\d|"
     rf"\d[\d,.]*(?:\s*[kmb])?\s*(?:{_CURRENCY_SYMBOLS}|(?:{_CURRENCIES}|dollars?)\b))", re.I)
 _PRICE_LABEL = re.compile(
     r"\b(?:unit\s+price|pricing|prices?|costs?|(?:hourly|billing|labor|labour)\s+rates?|"
@@ -36,7 +36,9 @@ _QUANTITY_LABEL = re.compile(
 _LEADING_REFERENCE_METADATA = re.compile(
     r"\b(?:date|reference|ref\.?|identifier|id|(?:number|count|quantity)\s+of)\s*$", re.I)
 _REFERENCE_METADATA = re.compile(r"^(?:received|requested|submitted)\b", re.I)
-_NUMBER = r"\(?[-+]?\d[\d,]*(?:\.\d+)?\)?(?:\s*[kmb](?!\w))?"
+# Approximation changes precision, not a value's financial context. Keep the
+# marker on each number so a technical range is consumed before checking units.
+_NUMBER = r"(?:~\s*)?\(?[-+]?\d[\d,]*(?:\.\d+)?\)?(?:\s*[kmb](?!\w))?"
 _AMOUNT_VALUE = _NUMBER + r"(?:\s*(?:[-–—]|\bto\b)\s*" + _NUMBER + r")?"
 _AMOUNT_END = r"(?!\w|[/–—-]\s*\d|\.\d)"
 _AMOUNT_AFTER_LABEL = re.compile(
@@ -51,7 +53,7 @@ _AMOUNT_AFTER_PROSE = re.compile(
     r"(?P<amount>" + _AMOUNT_VALUE + r")" + _AMOUNT_END, re.I)
 _PRICE_PERIOD_PREFIX = re.compile(
     r"^\s*(?:for|in)\s+(?:(?:calendar|fiscal)\s+year\s+|FY\s*)?"
-    r"(?:19|20|21)\d{2}(?:\s*[-–—/]\s*(?:19|20|21)\d{2})?"
+    r"(?:~\s*)?(?:19|20|21)\d{2}(?:\s*[-–—/]\s*(?:~\s*)?(?:19|20|21)\d{2})?"
     r"(?![\d,.]|[/-]\d)(?=\s|[:=–—-]|$)[\s:=–—-]*", re.I)
 _TECHNICAL_VALUE_SUFFIX = re.compile(
     r"^\s*(?:%|percent\b|(?:psi|psig|psia|gpm|rpm|cfm|kw|kwh|mw|mwh|hp|btu|tons?|tonnes?|"
