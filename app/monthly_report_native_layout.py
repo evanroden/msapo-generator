@@ -47,6 +47,42 @@ _DEFAULT_TEXT = {"organization": "contact_matrix", "activity": "activity_summary
 _MONTH = re.compile(r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+20\d\d\b", re.IGNORECASE)
 
 
+def _work_order_table_labels(original, items, section_by_pos):
+    """Bind plain annual-table labels to their next physical source table."""
+    labels, pending = {}, None
+    for position, element in enumerate(original, 1):
+        group = items[position]
+        if (section_by_pos[position] != "activity"
+                or element.tag == qn("w:sectPr")
+                or element.find(".//" + qn("w:sectPr")) is not None):
+            pending = None
+            continue
+        text = _text(element).casefold().strip()
+        if text in ("work order status", "pm status"):
+            # Never retain pictures, fields, alternate branches or uninspected
+            # glyphs merely because their extracted words resemble a label.
+            formatting = {qn("w:" + name) for name in (
+                "p", "pPr", "pStyle", "r", "rPr", "t", "rFonts", "b", "bCs", "i", "iCs",
+                "color", "sz", "szCs", "spacing", "ind", "outlineLvl", "jc", "keepNext",
+                "keepLines", "contextualSpacing", "caps", "smallCaps", "u", "lang", "noProof")}
+            plain = (element.tag == qn("w:p")
+                     and all(node.tag in formatting for node in element.iter())
+                     and all(child.tag in (qn("w:pPr"), qn("w:r")) for child in element)
+                     and all(child.tag in (qn("w:rPr"), qn("w:t"))
+                             for run in element.findall(qn("w:r")) for child in run))
+            pending = element if plain and any(
+                item.kind == "text" and item.suggested_slot == "work_orders" for item in group) else None
+        elif element.tag == qn("w:tbl"):
+            source_table = next((item for item in group if item.kind == "table"
+                                 and item.suggested_slot == "work_orders"), None)
+            if pending is not None and source_table is not None:
+                labels[element] = (pending, source_table.id)
+            pending = None
+        elif _heading(text):
+            pending = None
+    return labels
+
+
 def _clear_hyperlinks(element):
     """Source click destinations are facts, not reusable text formatting."""
     for link in list(element.iter(qn("w:hyperlink"))):
@@ -926,6 +962,7 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
     unchanged_positions = {item.position for item in inspection.items
                            if item.part == "word/document.xml" and item.id in unchanged_items}
     page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master)
+    work_order_labels = _work_order_table_labels(original, items, section_by_pos)
     from app.monthly_report_native_text import (narrative_prototype, write_narrative,
                                                  header_contains_label)
     narrative_styles = {style.style_id: style.element for style in document.styles}
@@ -1240,6 +1277,12 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                        continuation=bool(shape and shape.continuation),
                        keep_all_rows_intact=(block.key == "contact_matrix"))
                 page_plan.emitted(anchor, kind="table")
+                label = work_order_labels.get(anchor)
+                if label is not None and table_reference == reference_prefix + label[1]:
+                    # Empty-row normalization can re-emit an otherwise unchanged
+                    # imported grid. Its exact source label remains useful, but
+                    # an omitted/relocated table must not leave that label behind.
+                    page_plan.support.add(label[0])
                 from app.monthly_report_training_style import style_training_table
                 style_training_table(anchor, table_reference)
                 last = anchor

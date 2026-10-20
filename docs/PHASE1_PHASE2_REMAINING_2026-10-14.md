@@ -4,6 +4,213 @@ This is the single current remaining-work ledger. Historical evidence and failur
 `PHASE1_PHASE2_EXECUTION_2026-10-13.md` and the linked PR comments; they are not fresh defect counts.
 Neither phase is accepted. Do not merge a stacked cleanup PR into its parent feature branch.
 
+## Cold source controls and stable site selection — 2026-10-19 17:59 UTC
+
+PR260 head `22f94dcdc01c0ecf5663cfc56872144cfc680688` passes Required39294925429.
+Adaptive39294925470 fails the new source-correction journey and the existing WebKit
+first-site return-to-zero path; all Water steps and the Training, Progress photos and
+history jobs pass. Both earlier source review threads are resolved with their exact
+failing/passing evidence. Main/served remains `94b9f0f7f229906a49c603b46a4c35cf34b21ed7`.
+
+The first source artifact12208021766 is retained unchanged:111490517bytes, SHA256
+`7cb51bb515eb41a7dfa85218c78157e7fe9723b6a3dc17f7a7d0fe0ea8699a36`.
+Its screenshots, action logs and reconstructed main-frame DOM separate two findings:
+Chromium opens/focuses the native date, returns to the same warning/position and retains
+identical working/durable content, then the test checks details.open during the native
+closing animation. The harness now observes the same source panel until its open attribute
+is removed; one ordinary close and the subsequent correction assertions remain.
+WebKit clicks while that exact panel contains three loading skeletons and no inputs.
+The native date and site inputs appear afterward, but the old link guard has already
+fallen back and left the panel closed. The product now opens the native disclosure first,
+then hands focus to its actual loaded input. Its observer is limited to that source panel
+and five seconds, ignores endless loading animations, and cancels on return, a new input,
+another correction or disposal. It never reads/writes a source value or submits the form.
+
+The existing first-site failure reproduced on both1182e449 and22f94dc. During the final
+pointer press, the identity line is briefly cleared and restored, moving the site rows
+38px. The fixed identity container remains mounted from zero sites through reselection.
+Native checkbox identities, full-name clickable labels and zero standing writes remain.
+This small shared repair is being delivered in PR260 so its source and site gates can
+validate together; PR257 must retain the identical hunk when it reconciles.
+
+The cold-loading/navigation/identity set passes **72** local checks, including both
+workflow-filter cases (`source-cold-identity-final.xml`; zero failures/errors).
+The Node navigation file fails before and passes after cold-field handling; cancellation,
+modifier clicks, return location and value-access prohibitions remain covered. Both
+workflow filters now include the identity-strip test as well. These are local/code results,
+not a passing integrated browser journey or a deployed repair.
+
+PR261's retained first row failure is artifact12141053520
+(140695952bytes; SHA256 `181540934c32aa8bab6b34b84333fbb97fb4f864759e4b2c9ce1704a63990d00`).
+The failure occurs on narrow proposal re-entry after reload and closing the onsite editor;
+all earlier row edits, same-event notes and exact reload receipts passed. Its pointer lands
+on Edit proposal as an earlier editor's stale children collapse at full-run cleanup.
+A local explicit-mode subtree repair keeps all input identities during typing and retires
+the closed editor immediately. Two before cases fail; all20 row/editor tests pass after.
+Actual browser validation of that repair remains open. Fresh PR257 review also identifies
+missing pinned-design comparison and current-profile revision binding; those are unresolved
+implementation work, independently of its site-picker fix.
+
+## Source correction and MBCx delivery — 2026-10-19 17:30 UTC
+
+Current main is `94b9f0f7f229906a49c603b46a4c35cf34b21ed7`, from PR265 head
+`31a04d13b4750600018529cab416faa2f9a13fa9`. Required39137069565 and
+Adaptive39137069697 passed on that exact head, and the refreshed review had no open
+threads. The October18 merge request did not execute because the connector catalog
+changed; the October19 request succeeded. A new isolated public browser session read the
+full served94b9 SHA and the content-named frontend entry `index.enfra-frontend-4cf97569e258.js`.
+This is fresh served-UI evidence, not a claim that all release acceptance passed.
+Merged Tests39289718565 passes; Adaptive39289718645 fails its Chromium cold-Water
+scroll assertion ("Do not hide a shift by restoring scroll"). WebKit Water and both
+engines' ordinary fresh Water pass, as do Training, Progress photos and history jobs.
+The source branch's native-loading repair is still awaiting main integration; the first
+failed run remains evidence and is not replaced with an unexamined rerun.
+
+Training's merged f8ebbc4 Tests39135964448 and Adaptive39135964543 both passed.
+Live39137926288 reached exact served f8ebbc4, generated actual files and passed Activity
+edit/clear/reentry/reload, then failed at the synthetic source-site selection. The second
+live session and Prepared-by follow-on were not reached. The retained artifact12140745901
+is465827bytes, SHA256 `3e5184207439882fdfb209ccb0238f322c49fa00afcada9b2f6c9a19c34f4415`;
+its original end-state screenshot and summary were inspected after independent download.
+
+| Requirement / existing IDs | Current implementation and tested scope | Served evidence / remaining action |
+| --- | --- | --- |
+| Mixed source reading and page use; SRC01/06, SIM-G07, ADP-A18 | PR260 head715b567 passed Required39138347990 (**3779**) and Adaptive39138347923. A subsequent review4307452765 was still valid: an accepted table could waive the separate page-classification task. Three real mixed-DOCX cases fail before the correction; accepted content now exempts only sources with no image pages. The affected source/thumbnail/native-loading set passes **86** locally after repair. | This additional fix is branch work, not yet merged or served. Keep exact-head integrated CI and review resolution distinct. |
+| DOCX thumbnails and cold Water; SRC04, SIM-W, CONT09, ADP-A02/A03/A12/A20 | The exact715b567 Required/Adaptive runs validate the reconstructed native-loading adapter and forwarded DOCX preview flag/cache key. Local October19 checks also pass the actual image-sized thumbnail, both native review panels and all eleven loading cases. Original/print bytes and the pinned frontend graph remain unchanged. | Neither the full phase nor physical/native output acceptance is inferred from these passes. |
+| Exact-item source correction; SRC06, ADP-A08/A17/A20 | On served94b9, one Correct site click followed by one fill left the native field empty and unfocused. Its visible details body still had `inert`; the ordinary summary action cleared it and the same typing then worked. Correct date also failed to identify the native scalar input, whose input label is Select a date. The repair activates native summaries and resolves the date through its actual Source date widget label. | Retained private screenshot/DOM facts distinguish this reproduced product defect from a locator hypothesis. The link repair is not live. Added Chromium/WebKit pointer/keyboard, unchanged-navigation, deliberate correction, source-byte comparison and narrow reload coverage using the existing isolated fixture; both workflow filters include it. No new generation, paid reader or business send is added by that journey. |
+| MBCx simplicity; SIM-MBCx | The merged short status choices preserve same-event human findings. PR260 reconciliation keeps both that behavior and the fixed-height native loading placeholder. | The browser shows the short labels on94b9. A complete new MBCx editing walkthrough and merged-head release result remain separate. |
+
+Local source-link and workflow checks pass **43**; the source-navigation Node file failed
+before native-disclosure repair and passes afterward. The new browser journey has not yet
+run on this follow-up. Its live helper retains every correction/durable/source assertion and
+adds actual focus/typed-value checks so a merely visible but inactive form cannot pass.
+Source and MBCx overlap was explicitly reconciled; no sibling work was dropped.
+The reconciled MBCx, novice workspace, native loading, navigation and workflow set passes
+**78** locally (`pr260-integrated-mbcx-navigation.xml`); `git diff --check` also passes.
+PR261 Required39139077468 passes, but Adaptive39139077464 now fails its actual WebKit
+proposal-row journey: the Status textbox is absent after the editor's reopen action.
+Chromium's complete row/output journey and that run's Water steps pass. This is a separate
+current failure to inspect, not the older cold-Water failure and not accepted row behavior.
+
+The runtime became available again after workspace maintenance removed local copies.
+The existing canonical TXT and retained private evidence ZIP were recovered with their
+recorded sizes/digests unchanged. The separate administrator-denied original-archive
+transfer and managed localhost-browser operation remain denied; no alternate transfer or
+local browser was used. Authentic scenarios, independent non-OpenAI retention, all-page
+named-renderer output inspection, physical/native checks and combined-art approval remain
+open. Contacts, preview/recovery, source/capacity, proposal/RFI and remaining simplicity
+implementation are still work to finish, not relabeled external acceptance.
+
+## Training integration and DOCX preview repair — 2026-10-18 14:40 UTC
+
+PR255 head `b884a259785e34a09d6f612284361785dbb4c7d6` passed Required39130827545
+and Adaptive39130827485 with no unresolved inline reviews. It merged directly into main
+as `f8ebbc48f6d9e30354ae7ef0c80673d86c24b0a0`. Merged Tests39135964448 and
+Adaptive39135964543 are separate merged-head gates: Adaptive passes; Tests is still running.
+A fresh deployed browser check is not
+claimed: the runtime and browser returned environment_offline during this continuation.
+
+PR260 review4307196679 reproduced a real large embedded-DOCX preview failure: two
+thumbnail-bound cases and both native review-panel cases fail on the prior implementation.
+The correction forwards the actual preview flag and uses a new DOCX-preview cache key,
+leaving the original and print derivatives intact. Focused tests cover a 1600×2200 source
+image, old print-sized preview caches, unchanged original/print bytes, decoded bounded
+thumbnails, and deliberate inclusion in both source panels. The final UI assertions inspect
+the actual image rather than demanding that unrelated whole-report blockers disappear.
+The local runtime disconnected before the repair could run; this published follow-up
+therefore requires exact-head CI before its review can be closed. Its first published
+head05ac54a could not start PR checks while conflicted with merged Training. This follow-up
+reconciles directly with main f8ebbc4, keeping both sets of workflow dependencies, the honest
+save status, unavailable-source corrections and cold-button visibility assertions. The
+passive sampler fixture now supplies the native image/font properties it observes.
+
+The cold-Water repair was committed locally as `9011abf0beef8d3ff46acc14e61c4a0dd1d23f8d`
+with 81 focused checks passing before the environment disconnected. Its retained measurements
+identify 366.390625px of preceding native-control growth: Activity and Utility textareas
+40→140px each, MBCx 40→120px, and Activity's uploader 40→126.390625px. Both fonts and the
+full-render identity were stable. The original artifact 12137718350 is 106672239bytes,
+SHA256 `f6f1229c3c2413e011d07d11facbb33e7571945465a75ed684d032db6ae9b5a0`.
+
+Because that local commit is currently inaccessible, the narrow adapter is reconstructed
+here from those measurements and the existing pinned grid adapter. This is not claimed
+byte-identical to 9011abf or locally retested. It reserves only existing aria-hidden loading
+placeholders: fixed textarea heights and responsive empty-uploader label/dropzone geometry,
+bound to Streamlit 1.61.1. Native widget arguments/IDs, original assets, frontend graph,
+scroll position, preview scheduling and external-reading behavior are unchanged. Eleven
+new focused cases cover real native identity, same-action text and clear, scoped/escaped
+CSS, populated upload state and unsupported runtime/height. Both workflow filters include
+them. Exact integrated browser/Required checks must validate this reconstructed revision;
+all cold scroll/button, move, caption, density, reload and actual output assertions remain.
+
+Recovery PR257 passed Required39131487053 and Adaptive39131487046 on 0497bad, then was
+reconciled directly with main f8 as 1182e449a391fddec33696e91f825588c0bf1194. Its integrated
+delta retains exactly the recovery changes and all Training work. MBCx PR265 similarly
+passed both suites on d894853 and now checks 31a04d13b4750600018529cab416faa2f9a13fa9;
+its three MBCx blobs are byte-identical after reconciliation. PR261's latest Adaptive
+39132107221 fails only cold Chromium Water scroll; Required39132107234 passes. None of
+these branches is described as live. The canonical TXT version9 and its saved evidence
+bundle predate the environment outage; this ledger retains the later repository milestones.
+
+Neither phase is accepted. Original transfer permission, authentic scenarios, independent
+retention, all-page output inspection, physical/native checks and artwork approval remain open.
+
+## Current implementation milestone — 2026-10-18 13:20 UTC
+
+Main and the dated served evidence remain `738233289aa5995058fd51d65f6c0f4530ff8985`.
+No new main merge or public browser walkthrough is claimed in this milestone.
+Normal GitHub publication was renewed by the owner's October18 continuation; updates to
+the existing PRs now succeed. The separate administrator-denied archive transfer and
+managed localhost-browser operation remain denied.
+
+| Requirement / existing IDs | Implementation and tested scope | Review / delivery / next action |
+| --- | --- | --- |
+| Training entry and participant identity; SIM-T, ADP-A08/A16/A17 | PR255 `b884a259785e34a09d6f612284361785dbb4c7d6`, reconciled with main. Prior `b507bb7` passed Required39128475832 and Adaptive39128475816, then a new delimiter-name review prevented merge. Exact roster names and uniquely recoverable lists now reopen intact; ambiguous legacy text is preserved without guessing. Four corrected-fixture cases fail on b507; all five pass through Edit/Save, real snapshot bytes and a fresh session. The focused Training set passes **87**. | Review4307071438 replied/resolved with this code and evidence. Fresh exact-head Required/Adaptive still required. Branch-only; not merged/deployed/owner accepted. |
+| Preview reading position and current gates; CONT01/02, ADP-A02/A08/A12 | PR254 `961c4d408668faf401a53c27e4ca3bde9c86f6e7`, reconciled directly with main, retaining source-return navigation and compact reading positions. Integrated focused set **83 pass**; initial-page set **10 pass/2 LibreOffice skips**; both Node harness files pass. The full changed-file delta was reviewed. | New exact-head CI started. Its source-notice review remains dependent on PR260 integration. Local initial-page checks are not physical-device or actual-renderer acceptance. |
+| Truthful accepted-source readiness; SRC01/06, SIM-G07, ADP-A11/A18 | Published PR260 `8be22f42413d7705ab41194887cd733e58b12953` passed Required39128845065. The three current source-review fixes passed **137** integrated checks; their original failures and review replies are retained. | Adaptive39128845081: Training/history/Photos pass; both fresh Water engines reproduce a native IMG error, and full Water Chromium has a separate cold reading-position failure. This is not overall green CI. |
+| Source thumbnail lifetime; SRC04, SIM-W, CONT09, ADP-A12/A20 | Current PR260 follow-up puts only the bounded prepared thumbnail in its native image element; original and print bytes are unchanged. Real page-one/page-two transitions through both source panels reproduce the old media-retirement failure on 8be and pass after repair. The missing historical d09e0f3acbab474eec2f7e08bdb71cfa JPG is independently identified as source page-one's prepared preview. The fresh browser journey now decodes each actual visible native image before reviewing it. | Initial fixed set:84 pass/3 fixture failures. Pinned frontend/date set:87 pass/1 remaining fixture failure; the final affected set passes37 after correcting both fixtures to pair native-entry HTML with their copied original assets. Production graph/integrity checks remain unchanged. Fresh browser CI on this follow-up is required; this is a supported lifecycle repair, not proof of the sole historical server ordering. |
+| Cold Water geometry; ADP-A02/A03/A20 | Retained 8be cold Chromium evidence has identical full-render token and all three grid heights. Button y299.03125→299.421875 stays visible while native scrollTop6207→6573 changes. Existing strict scroll and button assertions remain intact. | Cause remains open. Added bounded passive geometry/image/font observations for preceding content; no scroll restoration, extra click, timeout increase or waived assertion. Retain this first failure and inspect the next actual transition. |
+| Recovery choice races; CONT01/02/08, ADP-A10 | PR257 remains remotely117cc75; reconstructed follow-up is committed locally and reconciled with main. **59** integrated checks pass, including both explicit choices when history advances just after the browser save. Expense's first failure artifact is independently retained; it is not a recovery assertion failure. | Publish the reviewed integrated delta after correcting the Expense split-editor observation boundary. No live recovered report was resolved for QA. |
+
+Private evidence: original fbb Water ZIP120785460bytes/SHA256
+`0615f3166808ebefc1b77d2d880b6c035f1b59b46e9e9b0007d1afa6a9bbbf9e`;
+8be Adaptive first-failure ZIP117254073bytes/SHA256
+`bf28234b2def099b72a3a188f7679ca80526d2c0d520fa1c2b0f477c37057e18`;
+PR257 Expense first-failure ZIP116446078bytes/SHA256
+`9eac3f514f37da99ce1e6df9d66c2305dcb7f603e4b8de636ccbe846631e8edb`.
+All were size/digest/ZIP-CRC verified. The canonical TXT retains precise private locations.
+Original archives, AUTH01–03, independent retention after chat deletion, native Word,
+physical Safari/assistive listening and combined-art approval remain open. Neither phase
+is accepted; existing97/113 and ADP-A01–20 retain their original traceability and limits.
+
+## Prior continuation checkpoint — 2026-10-18 12:46 UTC
+
+Main remains `738233289aa5995058fd51d65f6c0f4530ff8985` (documentation PR268).
+Its exact Tests run39080067152 passed; isolated live run39082513461 failed while selecting
+Demo North in a replay source's native Source sites menu. The retained screenshot shows that
+menu closed; the option timeout does not prove extraction or Activity retention failed.
+This run verified full served738 and completed the known-value prefill and re-entry Word/PDF
+paths before that failure. This is dated CI browser evidence, not a fresh hands-on review.
+
+Workspace maintenance removed the previous local worktrees and unpublished commits. The
+canonical TXT and private evidence archives remain available. The deltas below were reconstructed
+from the current published heads and retested; old local commit IDs/results are not reused as
+current implementation evidence. Evan's October18 Continue instruction renewed publication
+authorization after the historical GitHub user-rejection receipt; no denied original-file transfer,
+managed localhost browser operation, genuine one-shot diagnostic or business send was retried.
+
+| Requirement / retained IDs | Current implementation | Tested scope / first failure | Next action / owner / acceptance |
+| --- | --- | --- | --- |
+| Training completion, honest save status and browser gates; SIM-T, ADP-A08/A16/A17/A19 | PR255 published `b507bb702ff8eeb7fc4c0fee00c0a3fe15c1bc90`; tree `3b6c0d65ff34f4b37c40af90160bc3a54ab3efe0`, parents83aebd8 and main738. Both workflow filters contain both passive observation helpers and their tests. Positive DOM fixtures describe mounted geometry; semantic shared-save assertions retain actual history/reload outcomes. | Reconstructed filter baseline:8failed/16passed. Integrated60focused and48Training/edit/save tests passed. Exact Required39128475832 and Adaptive39128475816 are running. Complete changed-file diff reviewed; no current inline thread. | Require exact-head CI and normal main integration, then served completion/save geometry. Branch published, not merged/deployed/accepted. Engineer. |
+| Source acceptance and exact corrections; SRC01/06, SIM-A/G07 | PR260 local integrated tree includes current main plus accepted row-value evidence, current-source complementary merges, follow-up/organization use visibility, AI evidence identity and current advanced-editor artwork ownership. The native correction container keeps main's identity and preserves corrected unavailable-source records. | Corrected fbb baseline25tests:21assertion failures/4passes. Integrated137tests passed after resolving the guided-file merge conflict. Earlier invalid test fixture and merge-marker collection errors are retained separately, not described as product failures. Current28 value-boundary cases preserve originals and shared snapshots. | Publish this tested delta to existing PR260 and resolve its three current threads with exact code/tests. Main/browser/output acceptance remains open. Engineer. |
+| Fresh Water image loading; SRC04, SIM-W, ADP-A12/A20 | Current fbb artifact 12117734857, run39078447713: full Water and output paths passed; both fresh paths record one IMG resource failure after correct one-page atomic inclusion. | Exact request in both traces: media/d09e0f3acbab474eec2f7e08bdb71cfa.jpg returned404 with File not found. Original artifact120785460bytes/SHA0615f3166808ebefc1b77d2d880b6c035f1b59b46e9e9b0007d1afa6a9bbbf9e retained privately. Failed image identity/lifecycle still under investigation; no blanket native-error suppression. | Repair the proved image lifecycle/precondition, preserve first failure and rerun changed exact-head browser journeys. Engineer; OPEN. |
+| Remaining cleanup / Phase1 and Phase2; existing97/113 and ADP-A01–20 | PR254/257/261–267 remain open; PR266 remains draft. Their dated pending rows below are superseded by current CI:254 has no current-head run;255/257/261/262/264/265/266 Required failed;260/263/267 Required passed. Only255/266 Adaptive passed on their old heads. | Other current failures include five obsolete positive preview fixtures, PR264 contact edit paths, PR265 renamed preset, PR266 incomplete RFI entry, actual PR257 Expense Chromium and PR262 Monthly DOM failures. Open source routing/contact/capacity reviews remain engineering work. | Finish independent code, integration and hands-on simplicity acceptance. AUTH01–03, independent non-OpenAI archive retention, native Word, physical Safari/listening and combined-art approval remain precisely scoped external checks. Neither phase accepted. |
+
+Current private restart evidence: the single ENFRA_Fresh_Chat_Handoff_2026-10-17.txt (retained
+version8,95111bytes/SHAa632a0af307a5a132f3b696fc66464a701fbb79bcafd293f6424c96df72c56be);
+new local regression XML/logs and publication manifest under private-evidence. Repository-backed
+changes are published to existing branches; no customer originals or screenshots are added here.
+The remaining entries below retain their original dated scope and traceability.
+
 ## Current implementation checkpoint — 2026-10-17 23:40 UTC
 
 Main is `09b9dee8984d0970610df527bfa6b05d4b23abaa` after the normal merge of PR256.
@@ -59,7 +266,7 @@ The earlier cold predicate repair excludes5 text skeletons and keeps3 actual gri
 new admission/root-class loss. Current row cards intentionally replace one grid with native cards.
 No original timeout was extended, error suppressed, repeat action substituted or backend browser state injected.
 
-Previously inspected exact8d Training outputs remain bounded evidence: artifact12116705100,
+Previously inspected exact8d Training outputs remain bounded evidence: artifact 12116705100,
 1304770bytes/SHA4c91445dda7d8ea1bbe6aea20c7410069cc0d4cce34ea67781a56c38affb34b3. Added/removed DOCX
 138564bytes/SHA3e7a5348b7b947f96f6e13412a131d6ffb3a22955882e0d95aa2d0cf57c4437f and
 138521bytes/SHAd659f57d0d0acbb296d627268acb894f2723e4778adcb8d58982bdb7c9057af0 match reviewed e6 bytes.
@@ -69,9 +276,9 @@ Poppler26.05.0. Actual8d rasters match corresponding reviewed e6 rasters;9 nativ
 no comments/embeddings/hidden text in this synthetic package. Not native Word/approved master/authentic graphic privacy.
 
 
-Additional retained originals: PR260 fresh Water artifact12117734857,120785460bytes,
+Additional retained originals: PR260 fresh Water artifact 12117734857,120785460bytes,
 SHA2560615f3166808ebefc1b77d2d880b6c035f1b59b46e9e9b0007d1afa6a9bbbf9e;
-PR261 artifact12117239914,128086222bytes,
+PR261 artifact 12117239914,128086222bytes,
 SHA256dc10ef9e183800ede5099d03083251291ecbcd08d09d9808ff00f92a7095b8ef.
 Both downloaded and verified unchanged in private-evidence. Their CI expiry is October24.
 PR261 Chromium/WebKit actual row DOCX138582bytes/SHA256bb1d83aa75d0d4edee045043d248fff9794e0bbfad694f5b993c6a36dd13d560;
@@ -170,7 +377,7 @@ Current follow-up combined command uses the existing review venv:
 regressions:70passed/3.84s. Earlier gate:81passed/1LibreOffice-dependent skip; that skip is not output proof.
 All first failures and the harness-only signature error are retained with their precise scopes.
 
-713 Adaptive artifact12112444589 was independently retrieved unchanged:112959737bytes,
+713 Adaptive artifact 12112444589 was independently retrieved unchanged:112959737bytes,
 SHA256f10d75145ad0af4996aff32b9f61a39f55da53385a87888d9df830b204292e31.
 The original a961 failure114016713bytes/SHA2565d1b925ec837afa724f766903ce77dab2e9fef3572759f7e7d8902fc31c08017
 also remains local. These new receipts, actual files and the668 browser screenshot await the
@@ -194,7 +401,7 @@ is local on a961 and awaiting publication, with no further production code chang
 | Simpler source/copy/capacity path; SIM-A01–04/A10–11/A14, SIM-M01–03, SIM-G04/A06/SC04 | a961 carries the prior104-case and105-case focused evidence, complete bounded work-order detail, removed competing vendor checkbox, quiet MBCx help, compact Activity copy and truthful capacity limits. | Old duplicate Activity controls/paragraphs and old source metadata still visible on de651cb. | Complete delivered before/after review, selected-spreadsheet source consolidation and remaining97/113/ADP20 states. Engineer. | Implementation not yet live |
 | Exact delivery, originals and remaining acceptance | The full83 derivative asset proof at19:13 and full browser de651cb identity at19:13–19:14 remain dated evidence. The routine final-review warning acknowledgment is under current-code investigation; no new gate fix or acceptance is claimed. | All83 derivative JS files match pinned bytes; actual About screenshot retained at19:30. | Exact merged/served verification after eligible integration; finish independent source/output/standing/privacy work. Original transfer/one-shot/device/native-Word/combined-art/Render-workspace boundaries remain unchanged. Engineer/owner as scoped. | OPEN / NOT ACCEPTED |
 
-Current a961 first-failure artifact12112292568 was independently downloaded unchanged:
+Current a961 first-failure artifact 12112292568 was independently downloaded unchanged:
 114016713bytes/SHA2565d1b925ec837afa724f766903ce77dab2e9fef3572759f7e7d8902fc31c08017.
 The screenshot shows the correct narrow Water section, Report pages(2), Edit pages and View
 preview; the control is present. Working/durable page order[2,1], caption hashes, original3500
@@ -239,7 +446,7 @@ No original-file, managed-localhost, Render-workspace or other denied operation 
 | Capacity upload limits; SIM-G04/A06/SC04, ADP-A11/A19 | Current native picker falsely permits200MB in empty/report-only/standing states. Local picker now enforces128MB maximum and explains DOCX128MB/other30MB limits. Actual bounded source/directory readers remain unchanged. The three native protocol cases retain report values and standing revision. | Current main200MB reproduced; after-delivery128MB and format help pending. | Branch/served check. Actual authentic28.5MB extraction still requires its existing permitted replay boundary. Engineer/access owner. | Local4baseline failures→105affected passes/30.17s |
 | Actual output and remaining phase coverage; VIS, CONT07, ADP-A01–A20, AUTH01–03 | Earlier229 actual files and all87 named-renderer rasters are retained and exactly match previously inspected synthetic pixel groups. Current1a photo outputs pass their browser assertions but have no new all-page review claim. Original97/113/ADP20 IDs remain; original-file, named-renderer, standing/concurrency, privacy and physical/native limits remain as below. | Read-only public HTML plus all83 derivative assets match the pinned generation at19:13UTC (7504154 total JS bytes); full de651cb independently reread in browser About at19:13–19:14. No Render control-plane read; workspace selection remains unconfirmed. | Finish all independent interface/output/scope work, then smallest exact access/device/artwork/Render selection actions. Engineer/owner as scoped. | OPEN / NOT ACCEPTED |
 
-The1a first-failure artifact12111061764 (run39058741444) was independently downloaded:
+The1a first-failure artifact 12111061764 (run39058741444) was independently downloaded:
 115400499bytes/SHA2568bab5e4b169d0ebe752a31ab3df74de6a754e5cd0084995d5e7d4842204aaaa7.
 Its original ZIP, screenshot, task receipt and trace remain private. The WebKit module response
 has the first response's date on both subsequent reloads and no continued-route marker; all3
@@ -293,7 +500,7 @@ into252 before adding the shared layout regression paths. Neither phase is accep
 
 The original229 Water failure ZIP is116714110bytes, SHA256
 a4bb2a9ab28ce1115470ff2476235e1a8e69a387644bd1bc3289032b2d5aad09,
-artifact12109285737. The final WebKit Water generation was unreached. Browser errors/external
+artifact 12109285737. The final WebKit Water generation was unreached. Browser errors/external
 requests were empty. No page-state injection, second click, retry-until-green, error suppression
 or timeout inflation was used. The focused CSS does not patch or replace Streamlit assets.
 Its selectors and sizing are guarded for the installed1.61.1 dependency. The model tests are
