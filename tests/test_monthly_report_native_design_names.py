@@ -108,3 +108,24 @@ def test_document_defaults_keep_referenced_custom_styles_and_their_dependencies(
     assert etree.tostring(root.find(f"{{{W}}}docDefaults")) == etree.tostring(
         etree.fromstring(f'<w:styles xmlns:w="{W}">{defaults}</w:styles>'.encode())[0])
     assert output["word/settings.xml"] == original_settings
+
+
+def test_the_office_2013_theme_family_name_is_neutral_too():
+    theme = (b'<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme">'
+             b'<a:extLst><a:ext uri="{05A4C25C-085E-4340-85A3-A5531E510DB2}">'
+             b'<thm15:themeFamily xmlns:thm15="http://schemas.microsoft.com/office/thememl/2012/main" '
+             b'name="OTHER CLIENT ZX918 Family" id="{00000000-0000-0000-0000-000000000000}"/></a:ext></a:extLst></a:theme>')
+    output = {"word/theme/theme1.xml": theme}
+    _neutral_design_names(output)
+    assert CANARY.encode() not in output["word/theme/theme1.xml"]
+    assert b'name="Office Theme" id=' in output["word/theme/theme1.xml"]
+
+
+def test_a_click_and_type_style_from_settings_is_kept():
+    output = {
+        "word/settings.xml": f'<w:settings xmlns:w="{W}"><w:clickAndTypeStyle w:val="ClickStyle"/></w:settings>'.encode(),
+        "word/styles.xml": _styles(_style("Normal", custom=False, default=True), _style("ClickStyle"), _style("Unused")),
+    }
+    _neutral_design_names(output)
+    kept = [node.get(f"{{{W}}}styleId") for node in etree.fromstring(output["word/styles.xml"])]
+    assert kept == ["Normal", "ClickStyle"]
