@@ -357,3 +357,54 @@ def test_explicit_page_replacement_is_never_a_pricing_waiver():
     checks = preflight(delivered)
     assert any(check.code == "pricing" and check.block_key == "org_chart" and check.blocking for check in checks)
     assert any(check.code == "client_pages" and check.block_key == "org_chart" and check.blocking for check in checks)
+
+
+def test_native_preserved_single_page_gets_same_explicit_recovery(collision, monkeypatch, tmp_path):
+    from app import monthly_report_visual_preservation as preservation
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_word_pages import WordPage
+    from tests.test_monthly_report_word_pages import drawing_report
+    initial, _, _, upload, app = collision
+    source = drawing_report(tmp_path)
+    document = Document(source)
+    document.paragraphs[0].text = initial.profile.facilities[0].title + " — September 2026"
+    from docx.oxml.ns import qn
+    for node in document.element.body.iter(qn("w:t")):
+        if node.text in ("Synthetic Lead", "Synthetic Technician"):
+            node.text = ""  # Image-only native drawing, with no separately mapped text.
+    document.save(source)
+    data = BytesIO(); Image.new("RGB", (640, 480), "green").save(data, "PNG")
+    # Stub only native conversion. Actual source inspection, section proof,
+    # preserved-page records, mapping, UI, commit and replay stay real.
+    monkeypatch.setattr(preservation, "preserve_word_pages", lambda *_: (
+        WordPage(1, data.getvalue(), 640, 480, "", False),))
+    upload["raw"] = source.read_bytes(); app.run()
+    assert not app.exception and not app.error
+    assert any(b.label == "Use incoming organization chart" for b in app.button)
+    assert button(app, "Continue to this month’s updates").disabled
+    plan = next(value["organization"] for key, value in app.session_state.filtered_state.items()
+                if key.endswith("_section_plans") and value.get("organization", {}).get("auto_native_diagrams"))
+    assert plan["preserved_assets"] and not plan.get("new_assets") and not plan.get("destinations")
+    assert len(app.image) == 2
+    before = manifest(initial).read_bytes()
+    button(app, "Use incoming organization chart").click().run()
+    assert manifest(initial).read_bytes() == before
+    from app import monthly_report_start_import as importer
+    from app import monthly_report_render_jobs as jobs
+    mapped = []
+    real_import = importer.build_starting_import
+    def counted(*args, **kwargs):
+        assert getattr(jobs._WORK_LOCAL, "active", False)
+        mapped.append(1)
+        return real_import(*args, **kwargs)
+    monkeypatch.setattr(importer, "build_starting_import", counted)
+    saved = save_start(app)
+    assert mapped == [1]
+    monkeypatch.setattr(importer, "build_starting_import", real_import)
+    assert block(saved).asset_hashes != block(initial).asset_hashes
+    assert block(saved).references == (f"docx:{inspect_docx(source).sha256}:word-sections:2:page:1",)
+    assert pending_asset_indexes(block(saved)) == (0,)
+    assert library.load_snapshot(initial.profile.contract, initial.profile.key, PERIOD).draft == initial
+
+    replayed = save_start(repeat_saved_start())
+    assert block(replayed) == block(saved)

@@ -924,7 +924,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
 
     has_page = any(slot in LABELS for plan in plans.values()
                    for slot in (*plan.get("destinations", {}).values(),
-                                *(slot for slot, _ in plan.get("new_assets", ()))))
+                                *(slot for slot, _ in plan.get("new_assets", ())),
+                                *(slot for slot, _ in plan.get("preserved_assets", ()))))
     recovery_preflight = bool(state and not todo and has_page)
     if recovery_preflight:
         from app.monthly_report_render_jobs import RenderBusy
