@@ -100,7 +100,7 @@ def load(token: str, contract: str, key: str, period: ReportPeriod) -> ActiveWor
 
 def save(token: str, draft: ReportDraft, *, expected_revision: int,
          base_snapshot_revision: int, assets: dict[str, bytes] | None = None,
-         expected_generation: str | None = None) -> ActiveWork:
+         expected_generation: str | None = None, operation_id: str = "") -> ActiveWork:
     """Atomically retain active input without creating report-history revisions.
 
     Content-addressed pictures are published before the journal manifest. If a
@@ -114,6 +114,8 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
     if expected_generation is not None and (not isinstance(expected_generation, str) or
                                            (expected_generation and not enabled(expected_generation))):
         raise library.LibraryError("Invalid active report recovery identity.")
+    if operation_id != "" and (not enabled(operation_id) or expected_generation is None):
+        raise library.LibraryError("Invalid active report save identity.")
     if len(pending) > 100:
         raise library.LibraryError("There are too many unsaved pictures to retain automatically.")
     for name, raw in pending.items():
@@ -129,17 +131,46 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
             raise library.LibraryError("The unfinished browser journal could not be read safely.")
         generation = _generation(previous) if previous else ""
         revision = previous["revision"] if previous and previous["kind"] == "browser_active_work_v1" else 0
+        asset_names = tuple(sorted(pending))
+        same = bool(previous and previous["kind"] == "browser_active_work_v1"
+                    and previous.get("fingerprint") == draft.fingerprint
+                    and previous.get("base_snapshot_revision") == base_snapshot_revision
+                    and tuple(previous.get("assets", ())) == asset_names)
+        operation = {"id": operation_id, "parent_revision": expected_revision,
+                     "parent_generation": expected_generation}
+        prior_operation = previous.get("save_operation") if previous else None
+        if prior_operation is not None:
+            if (not isinstance(prior_operation, dict)
+                    or set(prior_operation) != {"id", "parent_revision", "parent_generation", "revision", "generation"}
+                    or not enabled(prior_operation.get("id"))
+                    or type(prior_operation.get("parent_revision")) is not int
+                    or prior_operation["parent_revision"] < 0
+                    or not isinstance(prior_operation.get("parent_generation"), str)
+                    or prior_operation["parent_generation"] and not enabled(prior_operation["parent_generation"])
+                    or prior_operation.get("revision") != revision
+                    or prior_operation.get("generation") != generation
+                    or prior_operation["parent_generation"] and prior_operation["parent_generation"] != generation):
+                raise library.LibraryError("The browser save operation could not be read safely.")
+        if operation_id and prior_operation and prior_operation.get("id") == operation_id:
+            # A rerun can interrupt local acknowledgment AFTER the atomic
+            # write. Only this exact last operation may replay its receipt;
+            # equal content from another tab is never authority to adopt it.
+            if prior_operation != {**operation, "revision": revision, "generation": generation} or not same:
+                raise ActiveWorkConflict("The pending browser save no longer matches its committed operation.")
+            if library.draft_from_dict(previous.get("draft", {})) != draft:
+                raise ActiveWorkConflict("The pending browser save no longer matches its committed report.")
+            for name, raw in pending.items():
+                target = folder / "assets" / name
+                if not target.is_file() or target.stat().st_size > library.MAX_ASSET_BYTES or target.read_bytes() != raw:
+                    raise library.LibraryError("A committed browser-save picture failed its integrity check.")
+            return ActiveWork(draft, revision, base_snapshot_revision, generation=generation,
+                              updated_at=previous.get("updated_at", ""))
         if revision != expected_revision or (expected_generation is not None
                                              and generation != expected_generation):
             raise ActiveWorkConflict(
                 "Another tab or a new working copy changed this browser's unfinished report. "
                 "Your current edits remain on this page; reload and compare before continuing.")
         next_revision = (previous["revision"] if previous else 0) + 1
-        asset_names = tuple(sorted(pending))
-        same = bool(previous and previous["kind"] == "browser_active_work_v1"
-                    and previous.get("fingerprint") == draft.fingerprint
-                    and previous.get("base_snapshot_revision") == base_snapshot_revision
-                    and tuple(previous.get("assets", ())) == asset_names)
         missing = any(not (folder / "assets" / name).is_file() for name in asset_names)
         if same and not missing:
             return ActiveWork(draft, revision, base_snapshot_revision, generation=generation,
@@ -154,6 +185,8 @@ def save(token: str, draft: ReportDraft, *, expected_revision: int,
                  "fingerprint": draft.fingerprint,
                  "updated_at": library._now(), "assets": asset_names,
                  "draft": asdict(draft)}
+        if operation_id:
+            value["save_operation"] = {**operation, "revision": next_revision, "generation": next_generation}
         library._atomic_write(path, library._json(value))
         return ActiveWork(draft, next_revision, base_snapshot_revision, generation=next_generation,
                           updated_at=value["updated_at"])

@@ -155,7 +155,14 @@ def test_supported_fact_date_reaches_actual_saved_word_and_pdf_once(monkeypatch,
     fact = ai.normalize_facts({'facts': [{'page': 1, 'kind': 'action', 'text': FACT_TEXT,
         'quote': full, 'date': '2026-09-17'}]}, reviewed, (1,), profile, PERIOD)[0]
     assert fact.date == '2026-09-17' and not fact.flags
-    source = replace(reviewed, facts=(fact,))
+    # Facts are part of the scope-bound source revision. The initial before
+    # output run stopped at a stale site receipt after appending this fact;
+    # establish this synthetic fixture's exact site on the final source so the
+    # date/output assertion is actually reachable. No scope rule is bypassed.
+    source = correct_source_details(replace(reviewed, facts=(fact,)),
+        profile, None, profile.facilities[0].key)
+    from app.monthly_report_source_scope import reviewed_scope
+    assert reviewed_scope(source, profile) is not None
     block = ai.normalize_draft({'paragraphs': [{'text': full, 'fact_ids': [fact.id]}]},
         'activity_summary', (fact,), (source,))
     block = ai.reviewed_block(block, (source,))
