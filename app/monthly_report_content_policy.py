@@ -9,9 +9,81 @@ if TYPE_CHECKING:
     from app.monthly_report_model import BlockSpec, ResolvedBlock
 
 
-_MONEY = re.compile(r"(?:[$€£]\s*\d|\b(?:USD|CAD|EUR|GBP)\s*\d|\d[\d,.]*\s*(?:USD|CAD|EUR|GBP|dollars?)\b)", re.I)
-_PRICE_LABEL = re.compile(r"\b(?:unit\s+price|pricing|prices?|costs?|(?:hourly|billing|labor|labour)\s+rates?|subtotal|total\s+(?:amount|charges?|due)|amount\s+(?:due|quoted)|labor\s+charges?|material\s+charges?|sales\s+tax|(?:quoted|quotation|invoice|proposal|quote)\s+amount|(?:project|proposal|quote)\s+(?:budget|fee|total)|budget|fee)\b", re.I)
+_CURRENCIES = r"USD|CAD|EUR|GBP|CHF|AUD|NZD|JPY|CNY|HKD|SGD|SEK|NOK|DKK|INR|ILS|AED|SAR|MXN|ZAR|BRL|KRW"
+_CURRENCY_SYMBOLS = r"[$€£¥₹₪₩₽₺₴₦₱฿₫]"
+_MONEY = re.compile(
+    rf"(?:{_CURRENCY_SYMBOLS}\s*\(?[-+]?\d|\b(?:{_CURRENCIES})\b[\s():]*\(?[-+]?\d|"
+    rf"\d[\d,.]*(?:\s*[kmb])?\s*(?:{_CURRENCY_SYMBOLS}|(?:{_CURRENCIES}|dollars?)\b))", re.I)
+_PRICE_LABEL = re.compile(
+    r"\b(?:unit\s+price|pricing|prices?|costs?|(?:hourly|billing|labor|labour)\s+rates?|"
+    r"subtotal|(?:grand|invoice|proposal|quote|project)\s+total|total\s+(?:amount|charges?|due)|"
+    r"balance\s+due|amount(?:\s+(?:due|quoted))?|labor\s+charges?|material\s+charges?|sales\s+tax|"
+    r"(?:quoted|quotation|invoice|proposal|quote)\s+amount|(?:project|proposal|quote)\s+(?:budget|fee)|"
+    r"budget|fees?|quotations?|quote[ds]?|estimated\s+(?:repair|replacement)|estimates?|est\.?|"
+    r"NTE|not[\s-]+to[\s-]+exceed)(?!\w)", re.I)
+_NON_MONEY_LABEL_DETAIL = re.compile(
+    r"^(?:(?:effective|free)\b|(?:no\.?|number|ref\.?|reference|identifier|id|date|status|"
+    r"decision|expiry|expiration|duration|time|completion)\b|#)", re.I)
+_QUANTITY_LABEL_DETAIL = re.compile(
+    r"^(?:"
+    r"(?:of\s+)?(?:the\s+)?(?:number|count|quantity)\s+of\b|"
+    r"(?:of\s+)?(?:refrigerant|water|fuel|energy|chemicals?|flow|pressure)\b|"
+    r"(?:in\s+)?(?:hours?|days?|months?|years?)\b)", re.I)
+_REFERENCE_LABEL = re.compile(r"quotations?|quote[ds]?|estimates?|est\.?", re.I)
+_QUANTITY_LABEL = re.compile(
+    r"quotations?|quote[ds]?|estimates?|est\.?|estimated\s+(?:repair|replacement)|amount|"
+    r"NTE|not[\s-]+to[\s-]+exceed", re.I)
+_LEADING_REFERENCE_METADATA = re.compile(
+    r"\b(?:date|reference|ref\.?|identifier|id|(?:number|count|quantity)\s+of)\s*$", re.I)
+_REFERENCE_METADATA = re.compile(r"^(?:received|requested|submitted)\b", re.I)
+_NUMBER = r"\(?[-+]?\d[\d,]*(?:\.\d+)?\)?(?:\s*[kmb](?!\w))?"
+_AMOUNT_VALUE = _NUMBER + r"(?:\s*(?:[-–—]|\bto\b)\s*" + _NUMBER + r")?"
+_AMOUNT_END = r"(?!\w|[/–—-]\s*\d|\.\d)"
+_AMOUNT_AFTER_LABEL = re.compile(
+    r"^[\s:=,–—-]*(?:(?:is|was|are|were|of|at|to|from|for|repair|repairs|replace|replacement|"
+    r"reduced|increased|decreased|estimated|approximately|about|up|not|more|than|emergency|"
+    r"including|labor|labour|materials?|parts|revised|limit|total|and|tax(?:es)?|remains)\b[\s:=,–—-]*)*"
+    r"[\s:=,–—-]*(?P<amount>" + _AMOUNT_VALUE + r")" + _AMOUNT_END, re.I)
+_AMOUNT_AFTER_PROSE = re.compile(
+    # A bounded phrase may identify the vendor or scope. Require an explicit
+    # value assignment after it; an arbitrary asset number is not an amount.
+    r"^(?:(?![.;](?:\s|$)).){1,160}?(?:[:=–—]\s*|\s(?:is|was|are|were|totals?|totaled|at|to|for)\s+)"
+    r"(?P<amount>" + _AMOUNT_VALUE + r")" + _AMOUNT_END, re.I)
+_PRICE_PERIOD_PREFIX = re.compile(
+    r"^\s*(?:for|in)\s+(?:(?:calendar|fiscal)\s+year\s+|FY\s*)?"
+    r"(?:19|20|21)\d{2}(?:\s*[-–—/]\s*(?:19|20|21)\d{2})?"
+    r"(?![\d,.]|[/-]\d)(?=\s|[:=–—-]|$)[\s:=–—-]*", re.I)
+_TECHNICAL_VALUE_SUFFIX = re.compile(
+    r"^\s*(?:%|percent\b|(?:psi|psig|psia|gpm|rpm|cfm|kw|kwh|mw|mwh|hp|btu|tons?|tonnes?|"
+    r"gallons?|liters?|litres?|lb|lbs|kg|hours?|hrs?|minutes?|mins?|seconds?|secs?|days?|weeks?|"
+    r"months?|years?|deg|degrees?|V|volts?|(?-i:A)|amps?|amperes?|F|C|Hz|kHz|bar|kPa|Pa|mm|cm|m|"
+    r"m3|L|g|uS/cm|phases?|starts?|cycles?|stops?|attempts?|pumps?|fans?|repairs?|events?)\b|°)", re.I)
+_TECHNICAL_HEADING_DETAIL = re.compile(
+    r"^(?:hours?|hrs?|days?|weeks?|months?|years?|kg|lb|lbs|g|gallons?|liters?|litres?|"
+    r"gpm|cfm|psi|kPa|bar|V|(?-i:A)|F|C|kW|kWh|tons?|m3|L)\b", re.I)
 _LEGAL_TERMS = ("terms and conditions", "limitation of liability", "indemnif", "governing law", "entire agreement", "waiver", "arbitration", "force majeure", "consequential damages", "jurisdiction", "severability", "warranty disclaimer")
+
+
+def _nonmonetary_detail(label, tail, *, heading=False):
+    # Separators carry no semantic difference in imported table headings.
+    detail = tail.lstrip(" \t,:/–—-([")
+    if _NON_MONEY_LABEL_DETAIL.match(detail):
+        return True
+    # Units qualify quantities and estimates. They do not make Cost / kg,
+    # Unit Price / kWh or Fee / hour nonfinancial: those are monetary rates.
+    if (_QUANTITY_LABEL.fullmatch(label)
+            and (_QUANTITY_LABEL_DETAIL.match(detail) or _TECHNICAL_HEADING_DETAIL.match(detail))):
+        return True
+    # Quote dates/statuses are metadata; Amount Received remains financial.
+    # In narrative, "Quote received from Acme: 500" assigns an actual amount.
+    return bool(heading and _REFERENCE_LABEL.fullmatch(label)
+                and _REFERENCE_METADATA.match(detail))
+
+
+def _reference_metadata_prefix(label, prefix):
+    # Imported schemas may put Date/Reference/Count before the quote label.
+    # Quote Amount and financial labels still describe monetary values.
+    return bool(_REFERENCE_LABEL.fullmatch(label) and _LEADING_REFERENCE_METADATA.search(prefix))
 
 
 def contains_price(text):
@@ -19,23 +91,38 @@ def contains_price(text):
         return True
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for n, line in enumerate(lines):
-        if _PRICE_LABEL.search(line):
-            # A date elsewhere in an operational sentence does not turn the
-            # word "cost" into a price. Require a value after the price label,
-            # or a bare amount immediately before it.
-            if any(re.search(r"\d", line[match.end():])
-                   or re.search(r"\d[\d,.]*\s*[:–-]?\s*$", line[:match.start()])
-                   for match in _PRICE_LABEL.finditer(line)):
+        for match in _PRICE_LABEL.finditer(line):
+            tail = line[match.end():]
+            if (_nonmonetary_detail(match.group(), tail)
+                    or _reference_metadata_prefix(match.group(), line[:match.start()])):
+                continue
+            # Bind the value to a monetary label, rather than to any digit in
+            # the sentence. Dates, equipment identifiers and measurements in
+            # maintenance discussions are not prices.
+            # "Budget for 2026" names a period. Continue checking any actual
+            # amount after that period; plain "Budget: 2026" remains monetary.
+            value_tail = _PRICE_PERIOD_PREFIX.sub("", tail, count=1)
+            for amount_pattern in (_AMOUNT_AFTER_LABEL, _AMOUNT_AFTER_PROSE):
+                amount = amount_pattern.match(value_tail)
+                if amount and not _TECHNICAL_VALUE_SUFFIX.match(value_tail[amount.end():]):
+                    return True
+            if not tail.strip(" .:;") and re.search(
+                    r"(?<![\w/.-])" + _AMOUNT_VALUE + r"\s*[:–-]?\s*$", line[:match.start()], re.I):
                 return True
             # PDF text often puts a monetary table heading and its bare amount
-            # on separate lines, without a repeated currency symbol.
-            if n + 1 < len(lines) and re.fullmatch(r"[\d,.()\s+-]+", lines[n+1]) and re.search(r"\d", lines[n+1]):
+            # on separate lines. Only a heading may claim the next line's value.
+            if (not tail.strip(" .:;") and n + 1 < len(lines)
+                    and re.fullmatch(r"\s*" + _AMOUNT_VALUE + r"\s*", lines[n+1], re.I)):
                 return True
     return False
 
 
 def _price_heading(title):
-    return bool(re.search(r"\b(?:price|pricing|cost|subtotal|tax|total charge|(?:quoted|invoice|charge|proposal|quote) amount|amount due|(?:project|proposal|quote) (?:budget|total|fee)|budget|fee|(?:hourly|billing|labor|labour) rate)\b", title, re.I)) or title.strip().casefold() in ("amount", "rate")
+    return (any(not _nonmonetary_detail(match.group(), title[match.end():], heading=True)
+                and not _reference_metadata_prefix(match.group(), title[:match.start()])
+                for match in _PRICE_LABEL.finditer(title))
+            or bool(re.search(r"\b(?:tax|total charge)\b", title, re.I))
+            or title.strip().casefold() == "rate")
 
 
 def _mixed_price_heading(title):

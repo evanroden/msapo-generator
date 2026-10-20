@@ -42,6 +42,7 @@ _REVIEW_CODES = {
     "client_pages",
     "ai_evidence",
     "ai_number",
+    "ai_date",
     "follow_up",
     "follow_up_section",
     "library_save",
