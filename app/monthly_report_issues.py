@@ -246,13 +246,17 @@ def _issue_control(widget, label, key, value, field, **kwargs):
                  and receipt.get("value") == st.session_state.get(key))
     if st.session_state.get(key, value) != value and not submitted:
         st.session_state[key] = value
+    accepted_value = receipt["value"] if submitted else value
     if widget == st.text_area:
         # The first native mount needs the same wording as the canonical
         # issue, not the textarea's implicit empty default. Keep the existing
         # receipt guard and honor an explicitly submitted clear/update.
-        kwargs["value"] = receipt["value"] if submitted else value
+        kwargs["value"] = accepted_value
+    # This render will commit the accepted value after drawing the controls.
+    # The next native edit must name that value, without needing another run
+    # merely to refresh its callback's former canonical baseline.
     result = widget(label, key=field(key, value), on_change=_issue_changed,
-                    args=(key, value), **kwargs)
+                    args=(key, accepted_value), **kwargs)
     if submitted and result != value:
         return result
     st.session_state.pop(key + "_change", None)

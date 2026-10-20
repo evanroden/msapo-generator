@@ -190,6 +190,30 @@ def export_and_check(page, stage):
         live.checkpoint(stage + " " + label + " present in actual Word/PDF", text in words and text in printed)
 
 
+def exercise_text_edits(page):
+    for label, wording in EXPECTED.items():
+        phase(label + ' clear and save')
+        commit_text(page, label, "", expected_before=wording)
+        phase(label + ' clear reload')
+        page.reload(wait_until="domcontentloaded")
+        await_text(page, label, "")
+        live.checkpoint(label + " deliberate clear survives reload", True)
+        phase(label + ' reentry and save')
+        commit_text(page, label, wording, expected_before="")
+        if label == 'Issue description':
+            # A reload or another business action can refresh a stale callback
+            # baseline. Keep these native edits consecutive in one session.
+            phase(label + ' consecutive clear and save')
+            commit_text(page, label, "", expected_before=wording)
+            phase(label + ' consecutive reentry and save')
+            commit_text(page, label, wording, expected_before="")
+            live.checkpoint(label + " consecutive clear and reentry without reload", True)
+        phase(label + ' reentry reload')
+        page.reload(wait_until="domcontentloaded")
+        await_text(page, label, wording)
+        live.checkpoint(label + " reentry survives reload", True)
+
+
 def exercise(browser_type, name):
     live.ROOT = OUT / name
     live.ROOT.mkdir(parents=True, exist_ok=True)
@@ -226,19 +250,7 @@ def exercise(browser_type, name):
         expect(page.get_by_text("known-value prefill: 18/18 independent content/provenance checks.", exact=False)).to_be_visible(timeout=45000)
         export_and_check(page, "first-native-hydration")
         activity = page.get_by_role("textbox", name="Activity summary", exact=True).input_value()
-        for label, wording in EXPECTED.items():
-            phase(label + ' clear and save')
-            commit_text(page, label, "", expected_before=wording)
-            phase(label + ' clear reload')
-            page.reload(wait_until="domcontentloaded")
-            await_text(page, label, "")
-            live.checkpoint(label + " deliberate clear survives reload", True)
-            phase(label + ' reentry and save')
-            commit_text(page, label, wording, expected_before="")
-            phase(label + ' reentry reload')
-            page.reload(wait_until="domcontentloaded")
-            await_text(page, label, wording)
-            live.checkpoint(label + " reentry survives reload", True)
+        exercise_text_edits(page)
         expect(page.get_by_role("textbox", name="Activity summary", exact=True)).to_have_value(activity)
         export_and_check(page, "restored-native-text")
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()

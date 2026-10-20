@@ -81,6 +81,81 @@ def test_deliberate_clear_reentry_and_noop_keep_canonical_values_without_remount
         assert area(value, label).proto.id == identity, "Editing must not remount the native textarea."
 
 
+def repeat_issue_app(tmp_path, monkeypatch):
+    from app.monthly_report_model import ReportSource
+    from app.monthly_report_sources import source_reference
+
+    value = app(tmp_path, monkeypatch)
+    draft = value.session_state["report_test_draft"]
+    source = ReportSource("synthetic-repeat-evidence", "synthetic-evidence.pdf", "a" * 64, ".pdf",
+                          page_texts=("Synthetic first inspection.", "Synthetic second inspection."))
+    value.session_state["report_test_draft"] = replace(draft, sources=(source,), follow_ups=tuple(
+        replace(item, status="updated", evidence_note="Initial synthetic evidence.") if item.category == "issue" else item
+        for item in draft.follow_ups))
+    value.run()  # Establish the fixture before the consecutive native edits.
+    assert not value.exception
+    return value, [source_reference(source, page) for page in (1, 2)]
+
+
+@pytest.mark.parametrize("label,kind,attribute", [
+    ("Issue description", "text_area", "text"),
+    ("Issue update", "text_area", "update"),
+    ("Evidence or explanation for the status", "text_area", "evidence_note"),
+    ("Issue status", "selectbox", "status"),
+    ("Supporting source pages", "multiselect", "references"),
+])
+def test_consecutive_issue_edits_accept_the_previous_result_without_a_settling_run(
+        tmp_path, monkeypatch, label, kind, attribute):
+    value, references = repeat_issue_app(tmp_path, monkeypatch)
+    changes = {
+        "text": ("", "Synthetic repeated issue wording.", "", "Synthetic final issue wording."),
+        "update": ("Synthetic inspection completed on October 20, 2026.", "", "Synthetic next inspection."),
+        "evidence_note": ("", "Synthetic reviewed evidence.", "", "Synthetic final evidence."),
+        "status": ("resolved", "ongoing", "updated", "resolved"),
+        "references": ([references[0]], [references[1]], [], references),
+    }[attribute]
+
+    def control():
+        return next(widget for widget in getattr(value, kind) if widget.label == label)
+
+    identity = control().proto.id
+    for expected in changes:
+        assert control().value != expected
+        control().set_value(expected).run()
+        assert not value.exception
+        item = next(item for item in value.session_state["report_test_draft"].follow_ups
+                    if item.category == "issue")
+        assert getattr(item, attribute) == (tuple(expected) if attribute == "references" else expected)
+        assert control().value == expected
+        assert control().proto.id == identity
+        if kind == "text_area":
+            assert control().proto.default == expected
+        # The next edit is the next run. A neutral run here would register a
+        # fresh callback baseline and hide rejection of an immediate edit.
+
+
+@pytest.mark.parametrize("label,attribute", [("Issue description", "text"), ("Issue update", "update")])
+@pytest.mark.parametrize("delivered", ["", "Stale native correction."])
+def test_consecutive_issue_edit_cannot_replace_a_newer_canonical_value(
+        tmp_path, monkeypatch, label, attribute, delivered):
+    value, _ = repeat_issue_app(tmp_path, monkeypatch)
+    area(value, label).set_value("Accepted native wording.").run()
+    assert not value.exception
+    draft = value.session_state["report_test_draft"]
+    newer = "Newer canonical wording from another operation."
+    value.session_state["report_test_draft"] = replace(draft, follow_ups=tuple(
+        replace(item, **{attribute: newer}) if item.category == "issue" else item
+        for item in draft.follow_ups))
+    # Deliver through the still-rendered control, with no intervening run to
+    # rebind its callback to the externally replaced canonical value.
+    area(value, label).set_value(delivered).run()
+    assert not value.exception
+    current = next(item for item in value.session_state["report_test_draft"].follow_ups
+                   if item.category == "issue")
+    assert getattr(current, attribute) == area(value, label).value == newer
+    assert area(value, label).key + "_change" not in value.session_state.filtered_state
+
+
 @pytest.mark.parametrize("label,attribute,initial", [
     ("Issue description", "text", ISSUE),
     ("Issue update", "update", "Synthetic inspection scheduled."),

@@ -82,6 +82,86 @@ def test_replaced_input_event_node_still_fails_after_acknowledgment():
     assert 'continuity'in calls and 'acknowledged'in calls
 
 
+def native_edit_journey(*, fail_phase=None):
+    """Check the real harness sequence, not the app's callback correctness.
+
+    Product AppTests cover consecutive callbacks and browser CI must provide
+    native input, receipt, visible-value and original-node acceptance.
+    """
+    calls = []
+    expected = {'Training notes': 'Saved training', 'Issue description': 'Saved issue'}
+    values = dict(expected)
+    current_phase = ''
+
+    def phase(name):
+        nonlocal current_phase
+        current_phase = name
+
+    def commit_text(page, label, text, *, expected_before):
+        assert page is target
+        assert values[label] == expected_before
+        calls.append(('edit', label, expected_before, text))
+        if current_phase == fail_phase:
+            raise AssertionError('The exact requested edit was not acknowledged.')
+        values[label] = text
+
+    def await_text(page, label, text):
+        assert page is target and values[label] == text
+        calls.append(('reload acknowledgment', label, text))
+
+    def checkpoint(name, passed):
+        assert passed is True
+        calls.append(('check', name))
+
+    target = SimpleNamespace(reload=lambda **kwargs: calls.append(('reload', kwargs)))
+    nodes = [node for node in ast.parse(SOURCE.read_text()).body
+             if isinstance(node, ast.FunctionDef) and node.name == 'exercise_text_edits']
+    assert len(nodes) == 1, 'The native edit journey must expose its exact action sequence.'
+    ns = {'EXPECTED': expected, 'phase': phase, 'commit_text': commit_text,
+          'await_text': await_text, 'live': SimpleNamespace(checkpoint=checkpoint)}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), str(SOURCE), 'exec'), ns)
+    return lambda: ns['exercise_text_edits'](target), calls
+
+
+def test_native_edit_journey_retains_reload_checks_and_adds_consecutive_issue_edits():
+    run, calls = native_edit_journey()
+    run()
+    reload = ('reload', {'wait_until': 'domcontentloaded'})
+    assert calls == [
+        ('edit', 'Training notes', 'Saved training', ''),
+        reload,
+        ('reload acknowledgment', 'Training notes', ''),
+        ('check', 'Training notes deliberate clear survives reload'),
+        ('edit', 'Training notes', '', 'Saved training'),
+        reload,
+        ('reload acknowledgment', 'Training notes', 'Saved training'),
+        ('check', 'Training notes reentry survives reload'),
+        ('edit', 'Issue description', 'Saved issue', ''),
+        reload,
+        ('reload acknowledgment', 'Issue description', ''),
+        ('check', 'Issue description deliberate clear survives reload'),
+        ('edit', 'Issue description', '', 'Saved issue'),
+        ('edit', 'Issue description', 'Saved issue', ''),
+        ('edit', 'Issue description', '', 'Saved issue'),
+        ('check', 'Issue description consecutive clear and reentry without reload'),
+        reload,
+        ('reload acknowledgment', 'Issue description', 'Saved issue'),
+        ('check', 'Issue description reentry survives reload'),
+    ]
+
+
+def test_unacknowledged_consecutive_edit_stops_without_retry_or_reload():
+    run, calls = native_edit_journey(fail_phase='Issue description consecutive clear and save')
+    with pytest.raises(AssertionError, match='not acknowledged'):
+        run()
+    assert calls[-2:] == [
+        ('edit', 'Issue description', '', 'Saved issue'),
+        ('edit', 'Issue description', 'Saved issue', ''),
+    ]
+    assert sum(call[0] == 'reload' for call in calls) == 3
+    assert sum(call[0] == 'edit' for call in calls) == 5
+
+
 def observer_script():
     for node in ast.parse(SOURCE.read_text()).body:
         if isinstance(node, ast.Assign) and any(
