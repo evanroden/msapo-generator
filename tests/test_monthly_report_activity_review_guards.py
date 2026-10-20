@@ -116,13 +116,16 @@ def workorder_app(monkeypatch, tmp_path):
     return app, profile, original
 
 
-def test_accepted_totals_acknowledge_the_manual_edit_and_survive_recovery_reload(monkeypatch, tmp_path):
+@pytest.mark.parametrize('precommitted', [False, True])
+def test_accepted_totals_acknowledge_the_manual_edit_and_survive_recovery_reload(monkeypatch, tmp_path, precommitted):
     import streamlit as st
     from app import monthly_report_active_work as active_work
     from test_monthly_report_activity_intake_commit import APP, TOKEN, editor, activity
     app, profile, original_uploader = workorder_app(monkeypatch, tmp_path)
     manual = 'Operator verified the actuator remains locked out.'
-    editor(app).set_value(manual).run()
+    editor(app).set_value(manual)
+    if precommitted:
+        app.run()
     identity = editor(app).proto.id
     next(button for button in app.button if button.label == 'Add totals to summary').click().run()
     assert not app.exception
