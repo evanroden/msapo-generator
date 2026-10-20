@@ -55,6 +55,17 @@ def button(app, label, index=0):
     return [item for item in app.button if item.label == label][index]
 
 
+def deliver_retired_row_packet(app, old_field, text, old_action):
+    # The current tree no longer owns these intentionally retired widgets.
+    # Send their original frontend identities alongside the current tree's
+    # native state; serializing the entire retired AppTest tree fails before
+    # Streamlit can deliver the stale packet to the guarded application.
+    states = app.button[0].root.get_widget_states()
+    states.widgets.add(id=old_field.proto.id, string_value=text)
+    states.widgets.add().CopyFrom(old_action.click()._widget_state)
+    return app._run(states)
+
+
 def field(app, label):
     return next(item for kind in (app.text_input, app.text_area) for item in kind if item.label == label)
 
@@ -202,8 +213,7 @@ def test_replaced_report_ignores_old_actions_and_native_field_values(generation_
     assert not app.exception and not row_fields(app) and block(app) == incoming
     # A late value under the previous native identity cannot populate this
     # replacement report, even if the old browser still sends its field value.
-    app.session_state[old_key] = "Late old widget value."
-    old_close.click().run()
+    deliver_retired_row_packet(app, old_field, "Late old widget value.", old_close)
     assert not app.exception and not row_fields(app) and block(app) == incoming
     add_request(app)
     assert not app.exception and block(app) == incoming
@@ -217,14 +227,14 @@ def test_source_replacement_with_the_same_report_has_fresh_native_row_identity()
                              references=("source-a",))
     install(app, original)
     button(app, "Edit request").click().run()
-    old_key = field(app, "Requested item").key
+    old_field = field(app, "Requested item")
+    old_key = old_field.key
     old_close = button(app, "Close editing")
     incoming = replace(original, rows=(("Demo North", "Replacement-source request", ""),), references=("source-b",))
     install(app, incoming)
     assert not app.exception and block(app) == incoming
     assert not row_fields(app)
-    app.session_state[old_key] = "Late old-source request"
-    old_close.click().run()
+    deliver_retired_row_packet(app, old_field, "Late old-source request", old_close)
     assert not app.exception and block(app) == incoming
     button(app, "Edit request").click().run()
     assert field(app, "Requested item").key != old_key
@@ -278,6 +288,61 @@ def test_unrecognized_schema_keeps_custom_fields_without_guessing_a_focus_destin
     assert block(app) == incoming
 
 
+@pytest.mark.parametrize("columns, requested", (
+    (("Requested by", "Requested item", "Status"), "Requested item"),
+    (("Requested date", "Question", "Status"), "Question"),
+    (("Question #", "Requested details", "Requested by"), "Requested details"),
+    (("Requested item #", "Requested\nItems:", "Status"), "Requested\nItems:"),
+))
+def test_imported_request_content_gets_focus_without_reinterpreting_author_date_or_identifier(columns, requested):
+    frame = ReportTable(columns, (), "request-content-schema")
+    incoming = ResolvedBlock("rfi_matrix", "Omit", extra_tables=(frame,), references=("kept-source",))
+    app = install(workspace(), incoming)
+    add_request(app)
+    assert not app.exception and block(app) == incoming
+    assert {item.label for item in row_fields(app)} == set(columns)
+    assert len(focus_markers(app)) == 1
+    assert field(app, requested).key in focus_markers(app)[0]
+    assert any(item.label == requested for item in app.text_area)
+    assert field(app, requested).proto.placeholder == "What information is needed?"
+    for label in columns:
+        if label != requested:
+            assert any(item.label == label for item in app.text_input)
+            assert not field(app, label).proto.placeholder
+            field(app, label).set_value("2026-10-19" if "date" in label.lower() else "0042")
+    field(app, requested).set_value("Confirm the drawing revision.\nThe response remains pending.")
+    expected = tuple(field(app, label).value for label in columns)
+    button(app, "Close editing").click().run()
+    assert not app.exception
+    assert block(app).extra_tables == (replace(frame, rows=(expected,)),)
+    assert block(app).references == incoming.references
+    assert any(item.value == expected[columns.index(requested)] for item in app.markdown)
+    app.run()
+    button(app, "Edit request").click().run()
+    assert {item.label: item.value for item in row_fields(app)} == dict(zip(columns, expected))
+
+
+@pytest.mark.parametrize("columns", (
+    ("Requested by", "Requested date", "Question #", "Status"),
+    ("Requested item #", "Question ID", "Date requested", "Status"),
+    ("Requested item", "Question", "Status"),
+))
+def test_metadata_only_or_ambiguous_request_columns_have_no_guessed_focus(columns):
+    incoming = ResolvedBlock("rfi_matrix", "Omit", extra_tables=(
+        ReportTable(columns, (), "unresolved-content-schema"),))
+    app = install(workspace(), incoming)
+    add_request(app)
+    assert not app.exception and not focus_markers(app) and block(app) == incoming
+    assert {item.label for item in row_fields(app)} == set(columns)
+    assert not any(item.proto.placeholder for item in row_fields(app))
+    if columns[0] == "Requested item":
+        assert {item.label for item in app.text_area if "_row_cards_" in item.key} == {"Requested item", "Question"}
+    else:
+        assert all(any(item.label == label for item in app.text_input) for label in columns)
+    button(app, "Close editing").click().run()
+    assert not app.exception and block(app) == incoming
+
+
 @requires_libreoffice
 def test_native_edits_preserve_continuation_schema_links_and_unknowns_in_durable_word_pdf(monkeypatch, tmp_path):
     from app import monthly_report_active_work as active, pdf_converter
@@ -328,5 +393,9 @@ def test_native_edits_preserve_continuation_schema_links_and_unknowns_in_durable
         assert text.count('Confirm the current sequence. Response remains pending.') == 1
         assert text.count('Confirm the drawing revision') == 1
         assert '0007' in text and '0008' in text and 'NR' in text
-        assert 'https://example.com/rfi-first' in text and 'https://example.com/rfi-second' in text
+        # PDF text extraction inserts whitespace at legitimate cell wrapping
+        # points. The editable DOCX cells above remain exact, including URLs.
+        unwrapped = ''.join(text.split())
+        assert unwrapped.count('https://example.com/rfi-first') == 1
+        assert unwrapped.count('https://example.com/rfi-second') == 1
         assert 'What information is needed?' not in text and 'No requests added.' not in text

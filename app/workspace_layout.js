@@ -21,6 +21,8 @@ export default function(component) {
     const controlsOwner = {};
     if (data.workflow === 'monthly' && globalThis.ENFRASourceReviewNavigation)
         subscriptions.push(globalThis.ENFRASourceReviewNavigation.install(app, state));
+    if (data.workflow === 'monthly' && globalThis.ENFRAEntryFocus)
+        subscriptions.push(globalThis.ENFRAEntryFocus.install(root, state));
     root.classList.add('epc-workspace');
     // This stamp changes only on a real top-level Python workspace render.
     // Layout measurement, preview fragments and viewport changes do not change

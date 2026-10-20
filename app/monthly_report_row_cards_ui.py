@@ -221,7 +221,7 @@ def _finish_row(key):
 
 def _edit_table(columns, rows, types, key, noun, add_label, field, *, summary=None,
                 labels=None, max_chars=None, scope_labels=None, allow_undo=False, empty_label=None,
-                group=None, placeholders=None, focus_column=None):
+                group=None, placeholders=None, focus_column=None, multiline_columns=()):
     record = dict(st.session_state.get(key, {}))
     record["allow_undo"] = allow_undo
     if group is not None:
@@ -319,7 +319,7 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, summary=No
                 if scope_labels is not None:
                     st.caption(row_scopes.get(row, "This report only"))
                 _render_fields(columns, fields, args, field, labels=labels, max_chars=max_chars,
-                               callback=callback, placeholders=placeholders)
+                               callback=callback, placeholders=placeholders, multiline_columns=multiline_columns)
                 focus = record.get("entry_focus", {})
                 if focus_column is not None and focus.get("row") == token:
                     st.html('<span hidden data-epc-entry-focus="' + escape(focus["token"], quote=True)
@@ -338,13 +338,25 @@ def _edit_table(columns, rows, types, key, noun, add_label, field, *, summary=No
     undo = record.get("undo")
     if allow_undo and undo and undo["result"] == rows:
         st.button("Undo remove " + noun, key=key + "_undo", on_click=callback, args=(*args, "undo"))
-    st.button(add_label, key=key + "_add", on_click=callback, args=(*args, "add"),
-              disabled=bool(active and active == draft_token))
+    if focus_column is not None:
+        # This inert marker identifies only this native Add action. The client
+        # consumes a later focus nonce only after observing its trusted click;
+        # a restored draft or a layout change cannot request focus on its own.
+        with st.container(key=key + "_entry_action"):
+            selector = ".st-key-" + re.sub(r"[^a-zA-Z0-9_-]", "-", (key + "_entry_action").strip())
+            st.html('<span hidden data-epc-entry-origin="' + escape(key + "_add", quote=True) + '"></span><style>'
+                    + selector + ' > [data-testid="stElementContainer"]:has([data-epc-entry-origin]){display:none;}'
+                    + '</style>')
+            st.button(add_label, key=key + "_add", on_click=callback, args=(*args, "add"),
+                      disabled=bool(active and active == draft_token))
+    else:
+        st.button(add_label, key=key + "_add", on_click=callback, args=(*args, "add"),
+                  disabled=bool(active and active == draft_token))
     return rows
 
 
 def _render_fields(columns, fields, args, field, *, labels=None, max_chars=None,
-                   callback=_queue, placeholders=None):
+                   callback=_queue, placeholders=None, multiline_columns=()):
     for index, (title, (key, original, kind, default)) in enumerate(zip(columns, fields)):
         label = (labels or {}).get(title, title) or f"Detail {index + 1}"
         if not label.strip():
@@ -357,7 +369,7 @@ def _render_fields(columns, fields, args, field, *, labels=None, max_chars=None,
             st.date_input(label, format="YYYY-MM-DD", **options)
         elif kind in {"number", "currency"} and (isinstance(default, float) or default is None):
             st.number_input(label, **options)
-        elif any(word in title.casefold() for word in ("description", "scope", "notes", "recommendation")):
+        elif index in multiline_columns or any(word in title.casefold() for word in ("description", "scope", "notes", "recommendation")):
             st.text_area(label, height=100, max_chars=max_chars, **options)
         else:
             st.text_input(label, max_chars=max_chars, **options)
@@ -380,7 +392,9 @@ def edit_row_cards(spec, block, prefix, field):
         # Source schemas keep their own labels and ordering. Focus a recognized
         # request field, never reinterpret an unknown column as a question.
         return {"placeholders": {request_column: "What information is needed?"} if request_column is not None else {},
-                "focus_column": request_column}
+                "focus_column": request_column,
+                "multiline_columns": (request_column,) if request_column is not None else (),
+                "group": key + "_request_group"}
     tables = []
     for index, table in enumerate(block.extra_tables):
         if len(block.extra_tables) > 1:

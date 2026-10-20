@@ -24,6 +24,7 @@ on:
       - 'scripts/qa_water_page_journey.py'
       - 'scripts/qa_report_row_cards.py'
       - 'scripts/qa_rfi_entry.py'
+      - 'tests/rfi_entry_focus_test.cjs'
       - 'tests/test_monthly_report_rfi_ui.py'
       - 'tests/test_monthly_report_empty_table_ui.py'
       - 'tests/test_rfi_entry_journey.py'
@@ -145,6 +146,7 @@ on:
       - 'scripts/qa_water_page_journey.py'
       - 'scripts/qa_report_row_cards.py'
       - 'scripts/qa_rfi_entry.py'
+      - 'tests/rfi_entry_focus_test.cjs'
       - 'tests/test_monthly_report_rfi_ui.py'
       - 'tests/test_monthly_report_empty_table_ui.py'
       - 'tests/test_rfi_entry_journey.py'
@@ -337,6 +339,7 @@ jobs:
           node --test tests/workspace_geometry_test.cjs
           node --test tests/preview_view_lifecycle_test.cjs
           node --test tests/preview_commit_gate_test.cjs
+          node --test tests/rfi_entry_focus_test.cjs
           python scripts/qa_adaptive_workspaces.py
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
@@ -350,6 +353,14 @@ jobs:
       - name: Source correction links reach native controls and persist after reload
         if: ${{ !cancelled() }}
         run: python scripts/qa_source_corrections.py
+      - name: Upload source correction evidence immediately, including first failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-correction-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/source-corrections/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Fresh ordinary Monthly site pointer and keyboard from zero
         if: ${{ !cancelled() }}
         run: python scripts/qa_monthly_site_pointer.py
