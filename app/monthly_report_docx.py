@@ -478,6 +478,10 @@ def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
 
 def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
     docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader)
+    # Pictures kept from a design, source report or logo can carry EXIF/XMP
+    # authoring metadata. Strip it from the export (Word and PDF) only.
+    from app.monthly_report_media_privacy import sanitize_package_media
+    docx = sanitize_package_media(docx)
     pdf, error = _convert_report_pdf(draft, docx)
     return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error)
 
