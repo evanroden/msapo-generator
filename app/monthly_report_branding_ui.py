@@ -4,7 +4,7 @@ import hashlib
 
 import streamlit as st
 
-from app import monthly_report_branding as branding, monthly_report_library as library
+from app import monthly_report_branding as branding
 from app.monthly_report_editor import _signature
 
 
@@ -30,9 +30,7 @@ def render_branding(field):
         logo = next(v for v in logos if v.key == shown)
         try:
             st.image(assets.get(logo.asset) or branding.read_logo(logo), width=360)
-        except library.LibraryError:
-            raise
-        except (OSError, ValueError):
+        except branding.LogoArtworkError:
             st.warning("This saved logo could not be read. Upload a reviewed replacement collection or restore a readable collection below. The original was kept unchanged.")
         st.text("Contracts: " + (", ".join(logo.contracts) or "ENFRA report branding"))
         st.caption("Source reviewed " + logo.checked_on)

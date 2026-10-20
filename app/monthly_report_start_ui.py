@@ -14,15 +14,13 @@ from app.monthly_report_start import membership_key, matching_profiles, report_k
 
 
 def _logo(contract, state, images, *, unavailable=None):
-    from app.monthly_report_branding import find_logo, read_logo, card_image
+    from app.monthly_report_branding import find_logo, read_logo, card_image, LogoArtworkError
     logo = find_logo(contract, state=state) if state else None
     if logo:
         if logo.asset not in images:
             try:
                 images[logo.asset] = card_image(read_logo(logo))
-            except library.LibraryError:
-                raise  # Storage isolation/reset failures are not bad artwork.
-            except (OSError, ValueError):
+            except LogoArtworkError:
                 # This is a screen-only fallback. Never replace the stored
                 # image or suppress an error when it is needed for a report.
                 images[logo.asset] = None

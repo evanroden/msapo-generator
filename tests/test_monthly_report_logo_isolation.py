@@ -88,9 +88,13 @@ choose_contract('', _field)
 '''
 
 
-@pytest.mark.parametrize("missing", [False, True])
-def test_bad_shared_logo_keeps_healthy_and_affected_contract_selectable(logos, missing):
-    seed_legacy(logos, missing=missing)
+@pytest.mark.parametrize("damage", ["undecodable", "missing", "empty"])
+def test_bad_shared_logo_keeps_healthy_and_affected_contract_selectable(logos, damage):
+    seed_legacy(logos, missing=damage == "missing")
+    if damage == "empty":
+        path = branding._path() / "assets" / logos[1].asset
+        path.unlink()  # Replace this synthetic link, never mutate the object pool.
+        path.write_bytes(b"")
     manifest = (branding._path() / "manifest.json").read_bytes()
     # Catalog additions use the real directory path; no mocked card supplier.
     from app import monthly_report_directory as directory
@@ -110,8 +114,13 @@ def test_bad_shared_logo_keeps_healthy_and_affected_contract_selectable(logos, m
     assert (branding._path() / "manifest.json").read_bytes() == manifest
 
 
-def test_bad_logo_preview_keeps_existing_history_restore_controls(logos):
+@pytest.mark.parametrize("empty", [False, True])
+def test_bad_logo_preview_keeps_existing_history_restore_controls(logos, empty):
     initial, current = seed_legacy(logos)
+    if empty:
+        path = branding._path() / "assets" / logos[1].asset
+        path.unlink()
+        path.write_bytes(b"")
     damaged_bytes = (branding._path() / "assets" / logos[1].asset).read_bytes()
     app = AppTest.from_string('''
 from app.monthly_report_branding_ui import render_branding
@@ -158,6 +167,53 @@ def test_card_fallback_does_not_swallow_storage_isolation_failure(logos, monkeyp
     monkeypatch.setattr(branding, "read_logo", forbidden)
     with pytest.raises(library.LibraryError, match="outside its isolated storage"):
         _logo("Damaged Contract", state, {})
+
+
+def test_card_fallback_does_not_swallow_real_namespace_reset(logos, tmp_path):
+    from app.monthly_report_start_ui import _logo
+    from app import monthly_report_testing as qa
+    with qa.isolated("d" * 32):
+        _, state = seed_legacy(logos)
+        qa.reset(tmp_path)
+        with pytest.raises(OSError, match="reset"):
+            _logo("Healthy Contract", state, {})
+
+
+def test_admin_preview_does_not_continue_after_namespace_reset(logos, tmp_path, monkeypatch):
+    import streamlit as st
+    from app import monthly_report_testing as qa
+    from app.monthly_report_branding_ui import render_branding
+    from app.monthly_report_ui import _field
+    load = branding.load_branding
+    warnings = []
+    monkeypatch.setattr(st, "warning", warnings.append)
+    def reset_after_load(*args, **kwargs):
+        state = load(*args, **kwargs)
+        qa.reset(tmp_path)
+        return state
+    with qa.isolated("e" * 32):
+        seed_legacy(logos)
+        monkeypatch.setattr(branding, "load_branding", reset_after_load)
+        with pytest.raises(OSError, match="reset"):
+            render_branding(_field)
+    assert not warnings, "A namespace reset must not be reported as damaged artwork."
+
+
+def test_read_logo_rechecks_namespace_after_read(logos, tmp_path, monkeypatch):
+    from pathlib import Path
+    from app import monthly_report_testing as qa
+    read = Path.read_bytes
+    with qa.isolated("f" * 32):
+        seed_legacy(logos)
+        target = branding._path() / "assets" / logos[0].asset
+        def reset_after_read(path):
+            raw = read(path)
+            if path == target:
+                qa.reset(tmp_path)
+            return raw
+        monkeypatch.setattr(Path, "read_bytes", reset_after_read)
+        with pytest.raises(OSError, match="reset"):
+            branding.read_logo(logos[0])
 
 
 @pytest.mark.parametrize("mode", ["isolated", "fixtures"])
