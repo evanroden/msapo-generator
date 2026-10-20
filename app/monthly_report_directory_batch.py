@@ -155,6 +155,16 @@ def _mapping(sheet):
     return header, label, address, groups
 
 
+def _sites_or_exclusion(workbook, sheet, mapping, exclusions):
+    """One unreadable worksheet is excluded by name; the rest of the batch continues."""
+    try:
+        return directory.matrix_sites(workbook, sheet, *mapping)
+    except ValueError as exc:
+        exclusions.append(WorkbookExclusion(
+            sheet.name, f"Could not read this worksheet's site or contract columns ({exc}) Review it separately."))
+        return None
+
+
 def _public_mapping(sheet, scope, mapping, targets):
     header, label, address, groups = mapping
     return WorksheetMapping(sheet.name, scope, header, label, address, tuple(
@@ -285,7 +295,9 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
         if not mapping[3]:
             exclusions.append(WorkbookExclusion(sheet.name, "No contact-role rows were found."))
             continue
-        extracted = directory.matrix_sites(workbook, sheet, *mapping)
+        extracted = _sites_or_exclusion(workbook, sheet, mapping, exclusions)
+        if extracted is None:
+            continue
         targets = []
         for column in extracted:
             contract = _canonical(column.title, aliases, known)
@@ -323,7 +335,9 @@ def prepare_workbook(workbook, *, contract_aliases=None, site_aliases=None):
         if not mapping[3]:
             exclusions.append(WorkbookExclusion(sheet.name, "No contact-role rows were found."))
             continue
-        sites = directory.matrix_sites(workbook, sheet, *mapping)
+        sites = _sites_or_exclusion(workbook, sheet, mapping, exclusions)
+        if sites is None:
+            continue
         if not any(s.contacts for s in sites):
             exclusions.append(WorkbookExclusion(sheet.name, "No populated contact records; this appears to be an unfinished template."))
             continue

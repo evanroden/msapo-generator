@@ -405,7 +405,14 @@ def suggest_matrix(sheet: DirectorySheet):
     boundary = min([*roles, *([address] if address else [])], default=50)
     counts = Counter(r for (r, c), value in values.items() if c > label_col and value)
     candidates = [r for r in rows if r < boundary and counts[r]]
-    header = max(candidates, key=lambda r: (counts[r], -r), default=rows[0] if rows else 1)
+    # A row labelled as the contract/site names wins over an earlier, equally
+    # filled metadata row (Region, account code). Unlabelled sheets keep the
+    # count-then-earliest rule; single-sheet import still allows an override.
+    labelled = [r for r in candidates
+                if re.match(r"\s*(contracts?|accounts?|clients?|facilit(?:y|ies)|sites?|hospitals?|locations?|"
+                            r"buildings?|campus(?:es)?|propert(?:y|ies))\b", labels[r], re.I)
+                and not re.search(r"\b(code|number|no\.?|id|region|area|zone|district)\b|#", labels[r], re.I)]
+    header = max(labelled or candidates, key=lambda r: (counts[r], -r), default=rows[0] if rows else 1)
     groups = []
     for row in roles:
         next_role = next((r for r in roles if r > row), row + 5)
