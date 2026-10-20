@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 
 import pytest
+from streamlit.testing.v1 import AppTest
 
 from app import monthly_report_logo_recovery_sample as sample
 
@@ -11,6 +12,20 @@ from app import monthly_report_logo_recovery_sample as sample
 def test_observer_registration_rejects_non_sample_context():
     with pytest.raises(ValueError, match="separate test area"):
         sample._input_observer()
+
+
+def test_observer_can_be_enabled_and_rerendered_without_creating_records(tmp_path, monkeypatch):
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
+    app = AppTest.from_string('''
+from app import monthly_report_logo_recovery_sample as sample
+with sample.sample_scope('a'*32):
+    sample.render_sample()
+''').run()
+    app.button('report_logo_sample_observe').click().run()
+    assert not app.exception
+    app.run()
+    assert not app.exception
+    assert not list(tmp_path.rglob('*.json'))
 
 
 def test_observer_receipts_are_bounded_passive_and_disposed():

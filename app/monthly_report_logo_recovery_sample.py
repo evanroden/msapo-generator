@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, replace
 from hashlib import sha256
 from io import BytesIO
+from pathlib import Path
 import re
 import struct
 from uuid import uuid4
