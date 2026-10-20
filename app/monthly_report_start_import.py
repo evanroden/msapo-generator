@@ -14,7 +14,7 @@ from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_import import MappedImport, is_logo_artwork, is_header_artwork
 from app.monthly_report_model import known_sections, layout_blocks
 from app.monthly_report_sections import (
-    build_section_import,
+    build_section_import, _build_section_import,
     default_slot,
     section_reviews,
     small_artwork,
@@ -194,13 +194,14 @@ def _cover_photo_window(items):
     return ((earliest, earliest + 1) if not independent_art and photo_panel else (earliest,)), stop
 
 
-def cover_photo_candidates(items):
+def cover_photo_candidates(items, *, native_furniture_ids=()):
     """Only cover photographs, not logos, dividers or package leftovers."""
     from app.monthly_report_sections import small_artwork
     items = tuple(items)
     cover_sections, stop = _cover_photo_window(items)
     possible = tuple(item for item in items
-                     if item.kind == "image" and item.part == "word/document.xml"
+                     if item.kind == "image" and item.id not in native_furniture_ids
+                     and item.part == "word/document.xml"
                      and item.section in ("", "cover")
                      and not is_logo_artwork(item) and not is_header_artwork(item)
                      and not item.suggested_slot.startswith("divider_")
@@ -210,7 +211,7 @@ def cover_photo_candidates(items):
     return tuple(item for item in possible if item.word_section in cover_sections and item.position < stop)
 
 
-def unresolved_cover_artwork(items):
+def unresolved_cover_artwork(items, *, native_furniture_ids=()):
     """Visible cover rasters with neither a photo choice nor a known logo role.
 
     Later Contents art stays in its original Word section. Small artwork and
@@ -218,7 +219,7 @@ def unresolved_cover_artwork(items):
     an empty or decorative image; keep their specific recovery reachable.
     """
     items = tuple(items)
-    photo_ids = {item.id for item in cover_photo_candidates(items)}
+    photo_ids = {item.id for item in cover_photo_candidates(items, native_furniture_ids=native_furniture_ids)}
     cover_sections, stop = _cover_photo_window(items)
     return tuple(item for item in items if item.kind == "image" and item.position
                  and item.id not in photo_ids
@@ -228,14 +229,14 @@ def unresolved_cover_artwork(items):
                       or (item.word_section in cover_sections and item.position < stop)))
 
 
-def suggested_cover_photo(items):
+def suggested_cover_photo(items, *, native_furniture_ids=()):
     """Default to a uniquely plausible large cover picture, never a logo.
 
     The user can replace the suggestion in the thumbnail gallery. A tie or
     missing size proof leaves the optional cover photo unset instead of
     guessing from arbitrary client artwork.
     """
-    candidates = tuple(item for item in cover_photo_candidates(items)
+    candidates = tuple(item for item in cover_photo_candidates(items, native_furniture_ids=native_furniture_ids)
                        if not item.image_width or not item.image_height
                        or 0.42 <= item.image_width / item.image_height <= 2.9)
     if not candidates:
@@ -252,22 +253,35 @@ def suggested_cover_photo(items):
     return first if area > 40000 and area >= 1.6 * max(1, runner_up) else None
 
 
-def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False):
+def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_design=False, source_view=None,
+                            native_art_review=None, source_path=None, profile=None, period=None):
     """Pre-fill recognizable content; ask only about unresolved source content.
 
     'approved' satisfies the existing import builder's structural validation.
     It does not mean the writer reviewed automatically routed pictures; that
     distinction is enforced by build_starting_import below.
     """
+    from app.monthly_report_native_art_review import native_cover_furniture_ids
+    furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
+    kept_native = set()
+    if native_art_review is not None:
+        if source_view is None or source_path is None or profile is None or period is None or analysis.site_relation != "same":
+            raise ValueError("Native artwork preservation requires a verified same-site source and report scope.")
+        from app.monthly_report_native_art_review import verify_native_art_review
+        preserved = verify_native_art_review(source_path, source_view, profile, period, native_art_review)
+        if preserved is not None:
+            kept_native = {item.original_id for item in preserved.inventory.occurrences}
     known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
     result = {}
-    for section in section_reviews(inspection):
-        cover_default = suggested_cover_photo(section.items) if section.key == "cover" else None
-        cover_unknown = {item.id for item in unresolved_cover_artwork(section.items)} if section.key == "cover" else set()
+    for section in section_reviews(inspection, source_view=source_view):
+        cover_default = suggested_cover_photo(section.items, native_furniture_ids=furniture_ids) if section.key == "cover" else None
+        cover_unknown = {item.id for item in unresolved_cover_artwork(section.items, native_furniture_ids=furniture_ids)} if section.key == "cover" else set()
         plan = {"key": section.key, "action": "Keep and review", "target": section.key,
                 "omit": False, "selected": [], "texts": {}, "tables": {}, "destinations": {},
                 "new_assets": [], "image_notes": {}, "automatic": True, "approved": True,
                 "source_sha256": inspection.sha256, "source_site_relation": analysis.site_relation}
+        if section.key == "cover" and native_art_review is not None:
+            plan["native_art_review"] = native_art_review
         if analysis.site_relation != "same":
             plan["unsupported_reviewed"] = True
         questions = []
@@ -315,6 +329,8 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
                 questions.append("Choose where the additional content belongs.")
                 continue
             if item.kind == "image":
+                if item.id in kept_native:
+                    continue  # Exact reviewed native preservation, not a mapped or approved image asset.
                 if analysis.site_relation == "same" and item.id in cover_unknown:
                     questions.append("Other cover artwork has no confirmed photograph or logo role.")
                     continue
@@ -372,20 +388,47 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
     return result
 
 
-def build_starting_import(path, inspection, plans):
+def build_starting_import(path, inspection, plans, *, source_view=None, profile=None, period=None):
     """Build auto-routed content without forging a human picture approval."""
+    if source_view is not None:
+        from app.monthly_report_operational_source import verified_operation
+        with verified_operation(path, source_view, inspection) as operation:
+            return _build_starting_import(path, inspection, plans, source_view=operation.view, _operation=operation,
+                                          profile=profile, period=period)
+    return _build_starting_import(path, inspection, plans, profile=profile, period=period)
+
+
+def _build_starting_import(path, inspection, plans, *, source_view=None, _operation=None, profile=None, period=None):
+    if source_view is not None:
+        from app.monthly_report_operational_source import checked_operation
+        checked_operation(path, source_view, _operation)
     plans = tuple(plans)
     if not all(p.get("approved") for p in plans):
         raise ValueError("Resolve the remaining starting-report questions before continuing.")
+    # Check before contribution filtering: Omit cannot erase its conflicting
+    # preservation record or move an exact target into an inactive plan.
+    for plan in plans:
+        review = plan.get("native_art_review")
+        if review is not None:
+            if source_view is None or profile is None or period is None:
+                raise ValueError("Native artwork preservation requires its verified source view and report scope.")
+            from app.monthly_report_native_art_review import _verify_native_art_review
+            context = _verify_native_art_review(path, source_view, profile, period, review)
+            ids = {item.original_id for item in context.inventory.occurrences} if context else set()
+            if plan.get("omit") or any(ids.intersection(other.get("selected", ())) for other in plans):
+                raise ValueError("Native artwork preservation conflicts with this exact occurrence's omission or mapping.")
     def contributes(plan):
         return not plan.get("omit") and bool(plan.get("selected") or plan.get("new_assets")
-                                             or plan.get("preserved_assets") or plan.get("cover_photo_omitted"))
+                                             or plan.get("preserved_assets") or plan.get("cover_photo_omitted")
+                                             or plan.get("native_art_review"))
     if not any(contributes(plan) for plan in plans):
         return MappedImport((), (), (), ()), ()
     # Unrelated/old sections intentionally carry no data. The original keeps
     # their unsupported objects, but they are not new target-site exceptions.
     active = tuple(p for p in plans if contributes(p))
-    mapped, mappings = build_section_import(path, inspection, active)
+    mapped, mappings = (build_section_import(path, inspection, active, profile=profile, period=period) if source_view is None else
+                        _build_section_import(path, inspection, active, source_view=source_view, _operation=_operation,
+                                              profile=profile, period=period))
     automatic_refs = {f"docx:{inspection.sha256}:{identity}" for p in active if p.get("automatic")
                       for identity in p.get("selected", ())}
     # A source-bound Word diagram screenshot was rendered, not human-certified

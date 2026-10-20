@@ -7,7 +7,7 @@ import re
 
 from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing, logical_table_columns
 from app.monthly_report_checks import placeholder_matches
-from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, MAX_NORMALIZED_BYTES, is_logo_artwork, is_header_artwork
+from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, _read_import_image, MAX_NORMALIZED_BYTES, is_logo_artwork, is_header_artwork
 from app.monthly_report_model import ReportTable, ResolvedBlock, known_sections, layout_blocks
 from app.monthly_report_asset_review import approve_all_assets
 
@@ -34,15 +34,17 @@ def is_formatting(item):
     return bool(_heading(text) and _heading(text) != "unmatched")
 
 
-def section_reviews(inspection):
+def section_reviews(inspection, *, source_view=None):
+    from app.monthly_report_operational_source import operational_items
+    source_items = operational_items(inspection, source_view)
     titles = {s.key: s.title for s in known_sections()}
     groups, seen_shared = {}, set()
     appearances = defaultdict(set)
-    for item in inspection.items:
+    for item in source_items:
         if item.kind == "image" and item.position:
             appearances[item.image_digest or item.image_part].add(item.section)
     repeated_design = {part for part, sections in appearances.items() if len(sections) >= 3}
-    for item in inspection.items:
+    for item in source_items:
         if item.position == 0:
             continue  # Unused package assets are preserved, not visible report pages.
         if is_formatting(item):
@@ -98,19 +100,46 @@ def table_without_prices(item):
     return ReportTable(columns, values), removed
 
 
-def build_section_import(path, inspection, plans):
-    """Build explicitly approved sections; keep every other item in the original.
+def build_section_import(path, inspection, plans, *, source_view=None, profile=None, period=None):
+    """Build explicitly approved sections after independent view verification."""
+    if source_view is not None:
+        from app.monthly_report_operational_source import verified_operation
+        with verified_operation(path, source_view, inspection) as operation:
+            return _build_section_import(path, inspection, plans, source_view=operation.view, _operation=operation,
+                                         profile=profile, period=period)
+    return _build_section_import(path, inspection, plans, profile=profile, period=period)
 
-    A plan names included images/text/tables and optional edited text. Its saved
-    record preserves exclusions and review decisions without exposing item IDs
-    in the UI. Multiple tables retain their own schemas instead of being dropped.
-    """
+
+def _build_section_import(path, inspection, plans, *, source_view=None, _operation=None, profile=None, period=None):
     known = {b.key for s in known_sections() for b in s.blocks} | {b.key for b in layout_blocks()}
+    from app.monthly_report_operational_source import checked_operation, operational_items
+    if source_view is not None:
+        checked_operation(path, source_view, _operation)
+    def read_image(item, **options):
+        if source_view is None:
+            return read_import_image(path, item, **options)
+        return _read_import_image(path, item, source_view=source_view, _operation=_operation, **options)
+    source_items = operational_items(inspection, source_view)
     grouped, assets, mappings, total = {}, {}, [], 0
-    items = {i.id: i for i in inspection.items}
-    image_references = {f"docx:{inspection.sha256}:{i.id}" for i in inspection.items if i.kind == "image"}
+    items = {i.id: i for i in source_items}
+    image_references = {f"docx:{inspection.sha256}:{i.id}" for i in source_items if i.kind == "image"}
     preserved_page_prefix = f"docx:{inspection.sha256}:word-sections:"
-    sections = {s.key: s for s in section_reviews(inspection)}
+    sections = {s.key: s for s in section_reviews(inspection, source_view=source_view)}
+    plans = tuple(plans)
+    from app.monthly_report_native_art_review import native_cover_furniture_ids
+    furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
+    kept_native = set()
+    reviews = [plan for plan in plans if plan.get("native_art_review") is not None]
+    if reviews:
+        if (len(reviews) != 1 or source_view is None or reviews[0].get("key") != "cover"
+                or profile is None or period is None):
+            raise ValueError("Native artwork preservation requires its verified source view and report scope.")
+        from app.monthly_report_native_art_review import _verify_native_art_review
+        preserved = _verify_native_art_review(path, source_view, profile, period, reviews[0]["native_art_review"])
+        if preserved is not None:
+            kept_native = {item.original_id for item in preserved.inventory.occurrences}
+        if reviews[0].get("omit") or any(kept_native.intersection(plan.get("selected", ())) for plan in plans):
+            raise ValueError("Native artwork preservation conflicts with this exact occurrence's omission or mapping.")
     for plan in plans:
         if not plan.get("approved"):
             raise ValueError("Review each included section before continuing.")
@@ -141,11 +170,11 @@ def build_section_import(path, inspection, plans):
                 # exists here; only explicit omission can keep an existing
                 # report's design without certifying that source artwork.
                 raise ValueError("Unread cover artwork must be repaired in the original Word file, or left out using the existing report’s saved cover design. A new cover photograph cannot replace it.")
-            if not foreign_excluded and unresolved_cover_artwork(cover.items):
+            if not foreign_excluded and any(item.id not in kept_native for item in unresolved_cover_artwork(cover.items, native_furniture_ids=furniture_ids)):
                 raise ValueError("Cover artwork has no confirmed photograph or logo role. Repair the original Word file or use the existing report’s saved cover design.")
             if plan.get("cover_photo_omitted"):
                 from app.monthly_report_start_import import cover_photo_candidates
-                candidates = tuple(item.id for item in cover_photo_candidates(cover.items))
+                candidates = tuple(item.id for item in cover_photo_candidates(cover.items, native_furniture_ids=furniture_ids))
                 if (not candidates or plan.get("source_sha256") != inspection.sha256
                         or tuple(plan.get("cover_photo_source_ids", ())) != candidates
                         or any(plan.get("destinations", {}).get(identity) == "cover_photo"
@@ -219,7 +248,7 @@ def build_section_import(path, inspection, plans):
                 notes = plan.get("image_notes", {}).get(item.image_part, "")
                 if page_status(notes, unreadable=not notes.strip())[0] in ("pricing", "legal", "blank", "signature"):
                     raise ValueError("Leave out pages with pricing, legal terms or no report content.")
-                image = read_import_image(path, item, line_art=slot not in ("cover_photo", "improvements"),
+                image = read_image(item, line_art=slot not in ("cover_photo", "improvements"),
                                           preserve_transparency=slot in ("brand_logo", "client_logo"))
                 digest = hashlib.sha256(image.data).hexdigest() + "." + image.extension
                 if digest not in assets:

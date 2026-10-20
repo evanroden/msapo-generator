@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 import logging
+import hashlib
 import tempfile
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
@@ -91,6 +92,9 @@ class ReportPackage:
     pdf_name: str
     fingerprint: str
     pdf_error: str = ""
+    source_view_digest: str = ""
+    source_view_docx_sha256: str = ""
+    source_view_art_digest: str = ""
 
 
 def canonical_docx(raw: bytes) -> bytes:
@@ -317,23 +321,31 @@ def _format_table(table, has_header):
 
 
 def assemble_docx(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
-                  asset_loader: Callable[[str], bytes] | None = None) -> bytes:
+                  asset_loader: Callable[[str], bytes] | None = None, source_view=None) -> bytes:
     checks = preflight(draft, estimate_bytes(draft, asset_loader))
     blocking = [c.message for c in checks if c.blocking]
     if blocking:
         raise ValueError(" ".join(blocking))
     if any(not c.blocking for c in checks) and acknowledged_fingerprint != draft.fingerprint:
         raise ValueError("Acknowledge the warnings for this version of the report.")
-    return _build_docx(draft, asset_loader=asset_loader)
+    return _build_docx(draft, asset_loader=asset_loader, source_view=source_view)
 
 
-def _build_docx(draft, *, asset_loader=None):
+def _build_docx(draft, *, asset_loader=None, source_view=None):
     """Internal layout assembler. Final output always uses assemble_docx's gate."""
+    from app.monthly_report_source_view_runtime import render_operation
+    with render_operation(draft, source_view) as operation:
+        return _build_verified_docx(draft, asset_loader=asset_loader, source_view=operation.view)
+
+
+def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
     from app.monthly_report_designs import source_for, is_master
     source = source_for(draft.profile)
     if source is not None:
         from app.monthly_report_native_layout import build_native_docx
-        return build_native_docx(draft, source, asset_loader=asset_loader, master=is_master(draft.profile))
+        return build_native_docx(draft, source, asset_loader=asset_loader, master=is_master(draft.profile), source_view=source_view)
+    if source_view is not None:
+        raise ValueError("A compatibility source view requires its pinned original native design.")
     document = Document(SHELL_PATH)
     # Override the shell's stock blue theme without modifying the content-free
     # shell or importing any private branding into git.
@@ -475,16 +487,24 @@ def _build_docx(draft, *, asset_loader=None):
 
 
 def generate_report(draft: ReportDraft, *, acknowledged_fingerprint: str = "",
-                    asset_loader: Callable[[str], bytes] | None = None) -> ReportPackage:
+                    asset_loader: Callable[[str], bytes] | None = None, source_view=None) -> ReportPackage:
     try:
         with monthly_render_jobs.work_slot():
-            return _generate_report(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader)
+            return _generate_report(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
     except monthly_render_jobs.RenderBusy as exc:
         raise ValueError(str(exc)) from exc
 
 
-def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
-    docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader)
+def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None, source_view=None):
+    from app.monthly_report_source_view_runtime import render_operation
+    with render_operation(draft, source_view) as operation:
+        return _generate_verified_report(draft, acknowledged_fingerprint=acknowledged_fingerprint,
+                                          asset_loader=asset_loader, operation=operation)
+
+
+def _generate_verified_report(draft, *, acknowledged_fingerprint, asset_loader, operation):
+    source_view = operation.view
+    docx = assemble_docx(draft, acknowledged_fingerprint=acknowledged_fingerprint, asset_loader=asset_loader, source_view=source_view)
     # Retained native PNGs may still contain erased artwork under alpha zero.
     # This bounded derivative pass is separate from pixel-preserving metadata
     # stripping; neither operation changes the saved source/design/assets.
@@ -492,20 +512,50 @@ def _generate_report(draft, *, acknowledged_fingerprint='', asset_loader=None):
     docx = sanitize_package_transparency(docx)
     docx = sanitize_package_media(docx)
     pdf, error = _convert_report_pdf(draft, docx)
-    return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error)
+    return ReportPackage(docx, pdf, report_filename(draft, "docx"), report_filename(draft, "pdf"), draft.fingerprint, error,
+                         source_view.receipt_sha256 if source_view is not None else "",
+                         hashlib.sha256(docx).hexdigest() if source_view is not None else "",
+                         operation.art_digest)
 
 
-def retry_report_pdf(draft: ReportDraft, package: ReportPackage) -> ReportPackage:
+def retry_report_pdf(draft: ReportDraft, package: ReportPackage, *, source_view=None) -> ReportPackage:
     """Retry only conversion of the same current native Word bytes. Never save."""
     if package.fingerprint != draft.fingerprint:
         raise ValueError("This Word file belongs to an earlier draft. Create files for the current report first.")
-    if package.pdf:
+    from app.monthly_report_source_view_runtime import cache_identity, render_operation
+    # Preserve the legacy cached no-work path only when no scoped evidence
+    # exists. Recorded/malformed evidence and even partial package tags must
+    # still pass the independently verified operation below.
+    if (package.pdf and source_view is None and not package.source_view_digest
+            and not package.source_view_docx_sha256 and not package.source_view_art_digest
+            and not cache_identity(draft)):
         return package
     try:
         with monthly_render_jobs.work_slot():
-            pdf, error = _convert_report_pdf(draft, package.docx)
+            with render_operation(draft, source_view) as operation:
+                return _retry_verified_report_pdf(draft, package, operation)
     except monthly_render_jobs.RenderBusy as exc:
         raise ValueError(str(exc)) from exc
+
+
+def _retry_verified_report_pdf(draft, package, operation):
+    source_view = operation.view
+    if package.fingerprint != draft.fingerprint:
+        raise ValueError("This Word file belongs to an earlier draft. Create files for the current report first.")
+    if package.source_view_digest or package.source_view_docx_sha256 or package.source_view_art_digest or source_view is not None:
+        from app.monthly_report_compatibility_view import CompatibilityView
+        if (not package.source_view_digest or not isinstance(source_view, CompatibilityView)
+                or package.source_view_digest != source_view.receipt_sha256
+                or package.source_view_docx_sha256 != hashlib.sha256(package.docx).hexdigest()
+                or package.source_view_art_digest != operation.art_digest):
+            raise ValueError("PDF retry requires the exact expected native source view and unchanged Word bytes.")
+        from app.monthly_report_designs import source_for, is_master
+        source = source_for(draft.profile)
+        if source is None or is_master(draft.profile):
+            raise ValueError("PDF retry requires the source view's pinned original design.")
+    if package.pdf:
+        return package
+    pdf, error = _convert_report_pdf(draft, package.docx)
     return replace(package, pdf=pdf, pdf_error=error)
 
 

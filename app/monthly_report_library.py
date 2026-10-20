@@ -381,10 +381,301 @@ def save_profile(profile: ReportProfile, *, expected_revision: int, actor: str, 
         return _state(value)
 
 
+def _verified_source_view(original: Path, expected):
+    """A persisted receipt is evidence, never authority to select a rendition."""
+    from app.monthly_report_operational_source import verify_source_view
+    try:
+        return verify_source_view(original, expected)
+    except (OSError, TypeError, ValueError) as exc:
+        raise LibraryError("The expected source view could not be verified against the original.") from exc
+
+
+def _source_view_scope(view, contract: str, key: str, period: ReportPeriod) -> dict:
+    from app.monthly_report_operational_source import receipt_record
+    receipt = receipt_record(view)
+    return {
+        "schema": 1, "contract": contract, "profile_key": key, "period": period.key,
+        "original_sha256": view.original_inspection.sha256,
+        "receipt_sha256": view.receipt_sha256, "policy": receipt["policy"],
+    }
+
+
+def _source_view_key(scope: dict) -> str:
+    return ":".join(scope[key] for key in ("period", "original_sha256", "policy", "receipt_sha256"))
+
+
+def _source_view_record(scope: dict, native_art_digest: str = "") -> dict:
+    result = {"scope": scope, "scope_sha256": hashlib.sha256(_json(scope)).hexdigest()}
+    if native_art_digest:
+        result["native_art_review_sha256"] = native_art_digest
+    return result
+
+
+def _source_view_is_recorded(value, digest):
+    index = value.get("source_views", {})
+    if not isinstance(index, dict):
+        raise LibraryError("Saved source-view index is invalid.")
+    return any(isinstance(record, dict) and isinstance(record.get("scope"), dict)
+               and record["scope"].get("original_sha256") == digest
+               or isinstance(name, str) and isinstance(digest, str) and (":" + digest + ":") in name
+               for name, record in index.items())
+
+
+def source_view_replay_recorded(contract, key, period, digest):
+    """Discovery only, never approval: existing scoped records must be verified.
+
+    A new incoming view cannot supply the expected view for a prior import.
+    Malformed records identifiable by their exact source/month key still count
+    as recorded, ensuring the caller verifies/refuses rather than downgrades.
+    """
+    value = _read(_profile_path(contract, key) / 'manifest.json')
+    index = value.get('source_views', {})
+    if not isinstance(index, dict):
+        raise LibraryError('Saved source-view index is invalid.')
+    prefix = period.key + ':' + digest + ':'
+    return any(isinstance(name, str) and name.startswith(prefix)
+               or isinstance(record, dict) and isinstance(record.get('scope'), dict)
+               and record['scope'].get('original_sha256') == digest
+               and record['scope'].get('period') == period.key
+               for name, record in index.items())
+
+
+def _source_view_receipt_path(path: Path, scope: dict) -> Path:
+    return path / "imports" / (scope["original_sha256"] + "." + scope["receipt_sha256"] + ".source-view.json")
+
+
+def _receipt_matches(path: Path, raw: bytes) -> bool:
+    _qa_path_guard(path)
+    if (len(raw) > MAX_JSON_BYTES or path.is_symlink() or not path.is_file()
+            or path.stat().st_size != len(raw)):
+        return False
+    with path.open("rb") as stream:
+        return stream.read(len(raw) + 1) == raw
+
+
+def _immutable_receipt(path: Path, raw: bytes) -> None:
+    _qa_path_guard(path)
+    if len(raw) > MAX_JSON_BYTES:
+        raise LibraryError("Source-view receipt exceeds the storage limit.")
+    if path.exists() or path.is_symlink():
+        if not _receipt_matches(path, raw):
+            raise LibraryError("Saved source-view receipt changed; existing data was preserved.")
+    else:
+        _atomic_write(path, raw)
+
+
+def _saved_source_view(value: dict, path: Path, contract: str, key: str,
+                       period: ReportPeriod, digest: str, expected, *, head: bool = False,
+                       discover: bool = False):
+    # Recorded source preparation shares the existing process-wide admission.
+    # Ordinary no-record reads do not acquire a slot or change serialization.
+    if _source_view_is_recorded(value, digest) or "import_source_view" in value or expected is not None:
+        from app.monthly_report_render_jobs import work_slot
+        with work_slot():
+            return _read_saved_source_view(value, path, contract, key, period, digest,
+                                           expected, head=head, discover=discover)
+    return _read_saved_source_view(value, path, contract, key, period, digest,
+                                   expected, head=head, discover=discover)
+
+
+def _read_saved_source_view(value: dict, path: Path, contract: str, key: str,
+                            period: ReportPeriod, digest: str, expected, *, head=False, discover=False):
+    """Validate the on-disk original, canonical receipt and separate report scope.
+
+    Discovery is allowed only from an already scoped immutable saved original.
+    It never bootstraps a legacy record or trusts a stored receipt as authority.
+    """
+    index = value.get("source_views", {})
+    if not isinstance(index, dict):
+        raise LibraryError("Saved source-view index is invalid.")
+    source_is_scoped = any(
+        isinstance(record, dict) and isinstance(record.get("scope"), dict)
+        and record["scope"].get("original_sha256") == digest
+        or isinstance(name, str) and isinstance(digest, str) and (":" + digest + ":") in name
+        for name, record in index.items()
+    )
+    if head:
+        saved_key = value.get("import_source_view")
+        if "import_source_view" in value and (not isinstance(saved_key, str) or saved_key not in index):
+            raise LibraryError("Saved source-view head is invalid.")
+        if saved_key is None and source_is_scoped:
+            raise LibraryError("Saved source-view head is missing; no legacy fallback is permitted.")
+        scoped = saved_key is not None
+    else:
+        # Refuse no-view replay of this original even for a different month;
+        # it must not fall through to a legacy approval/bootstrap branch.
+        scoped = source_is_scoped
+    if expected is None:
+        if scoped and not discover:
+            raise LibraryError("This import requires its explicitly verified source view.")
+        if not scoped:
+            return None
+    if not scoped:
+        raise LibraryError("This import has no saved source-view receipt; legacy records remain unchanged.")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise LibraryError("Source-view original identity is invalid.")
+    original = path / "imports" / (digest + ".docx")
+    if expected is None:
+        matches = [(name, record) for name, record in index.items()
+                   if isinstance(record, dict) and isinstance(record.get("scope"), dict)
+                   and record["scope"].get("original_sha256") == digest
+                   and record["scope"].get("period") == period.key]
+        if len(matches) != 1 or head and matches[0][0] != saved_key:
+            raise LibraryError("Saved source-view ownership is missing or ambiguous for this report month.")
+        saved_scope = matches[0][1]["scope"]
+        receipt_digest = saved_scope.get("receipt_sha256")
+        if (saved_scope.get("contract") != contract or saved_scope.get("profile_key") != key
+                or not isinstance(receipt_digest, str) or not re.fullmatch(r"[0-9a-f]{64}", receipt_digest)):
+            raise LibraryError("Saved source-view identity is invalid.")
+        receipt_path = _source_view_receipt_path(path, saved_scope)
+        _qa_path_guard(receipt_path)
+        if receipt_path.is_symlink() or not receipt_path.is_file() or receipt_path.stat().st_size > MAX_JSON_BYTES:
+            raise LibraryError("Saved source-view receipt is unavailable.")
+        from app.monthly_report_compatibility_view import rederive_compatibility_view
+        from zipfile import BadZipFile
+        try:
+            fresh = rederive_compatibility_view(original, receipt_path.read_bytes())
+        except (OSError, ValueError, BadZipFile) as exc:
+            raise LibraryError("Saved source view no longer matches its immutable original and current policy.") from exc
+    else:
+        fresh = _verified_source_view(original, expected)
+    if fresh.original_inspection.sha256 != digest:
+        raise LibraryError("Source-view original does not match the saved source identity.")
+    scope = _source_view_scope(fresh, contract, key, period)
+    replay_key = _source_view_key(scope)
+    from app.monthly_report_native_art_review import _verify_native_art_review
+    art_index = value.get("source_view_art_reviews", {})
+    if not isinstance(art_index, dict):
+        raise LibraryError("Saved native artwork review index is invalid.")
+    art_context = _verify_native_art_review(
+        path / "imports" / (digest + ".docx"), fresh, _state(value).profile,
+        period, art_index.get(replay_key))
+    record = _source_view_record(scope, art_context.digest if art_context else "")
+    if index.get(replay_key) != record or head and saved_key != replay_key:
+        raise LibraryError("Saved source-view receipt belongs to a different report scope or policy.")
+    receipt_path = _source_view_receipt_path(path, scope)
+    try:
+        if not _receipt_matches(receipt_path, fresh.receipt_bytes):
+            raise LibraryError("Saved source-view receipt changed; existing data was preserved.")
+    except OSError as exc:
+        raise LibraryError("Saved source-view receipt is unavailable.") from exc
+    return replay_key, record, art_context, fresh
+
+
+def verified_render_source_view(draft: ReportDraft, original_path: Path, expected_view=None, *, section_key=None, with_native_art=False):
+    """Permit native preservation only from an explicitly saved same-site view.
+
+    Rehash the caller's original, then independently rederive once from the
+    immutable stored original. A scope receipt or a manual review string alone
+    cannot establish source identity or facility ownership.
+    """
+    from app.monthly_report_compatibility_view import CompatibilityView
+    from app.monthly_report_import import MAX_DOCX_BYTES
+    from app.monthly_report_start_import import source_sites
+
+    profile = draft.profile
+    path = _profile_path(profile.contract, profile.key)
+    manifest = path / "manifest.json"
+    value = _read(manifest) if manifest.exists() else {}
+    if (expected_view is None and not _source_view_is_recorded(value, profile.imported_from)
+            and "import_source_view" not in value):
+        return (None, None) if with_native_art else None
+    digest = (getattr(getattr(expected_view, "original_inspection", None), "sha256", None)
+              if expected_view is not None else profile.imported_from)
+    if (expected_view is not None and not isinstance(expected_view, CompatibilityView)
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or draft.profile.imported_from != digest):
+        raise LibraryError("Native source-view rendering requires the original profile pin and explicit view.")
+    if "import_source_view" in value and value.get("import_review") != digest:
+        raise LibraryError("Saved source-view original differs from the current profile pin.")
+    try:
+        original_path = Path(original_path)
+        if original_path.stat().st_size > MAX_DOCX_BYTES:
+            raise LibraryError("Native source-view original exceeds the import limit.")
+        hasher, size = hashlib.sha256(), 0
+        with original_path.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_DOCX_BYTES:
+                    raise LibraryError("Native source-view original exceeds the import limit.")
+                hasher.update(chunk)
+        if hasher.hexdigest() != digest:
+            raise LibraryError("Native source-view original does not match its immutable source pin.")
+    except (OSError, TypeError) as exc:
+        raise LibraryError("Native source-view original could not be read.") from exc
+    saved_view = _saved_source_view(value, path, profile.contract, profile.key, draft.period,
+                                    digest, expected_view, discover=True)
+    if saved_view is None:
+        raise LibraryError("The saved source-view scope is unavailable; no legacy fallback is permitted.")
+    expected_view = expected_view if expected_view is not None else saved_view[3]
+    # _saved_source_view compares the whole independently rederived view,
+    # including both inspections, bytes and occurrence map, with expected_view.
+    persisted = _state(value).profile
+    if (persisted.contract, persisted.key, persisted.imported_from, persisted.facilities, persisted.scope_type) != (
+            profile.contract, profile.key, profile.imported_from, profile.facilities, profile.scope_type):
+        raise LibraryError("Native source-view ownership does not match the persisted profile membership and source pin.")
+    from app.monthly_report_site_catalog import site_options
+    from app.monthly_report_start_import import _words
+    # A caller cannot hide another known site by supplying only its preferred
+    # facility. Merge aliases only where an existing identity is unambiguous.
+    known = {site.key: site for site in persisted.facilities}
+    for site in (*site_options(profile.contract),
+                 *(s for p in list_profiles(profile.contract) for s in p.facilities)):
+        names = {_words(n) for n in (site.title, *site.aliases)}
+        overlaps = [prior for prior in known.values()
+                    if names.intersection(_words(n) for n in (prior.title, *prior.aliases))]
+        if len(overlaps) > 1:
+            raise LibraryError("Native source-view facility catalog has ambiguous ownership.")
+        if overlaps:
+            prior = overlaps[0]
+            known[prior.key] = replace(prior, aliases=tuple(dict.fromkeys(
+                (*prior.aliases, *(n for n in (site.title, *site.aliases) if n != prior.title)))))
+        elif site.key in known and known[site.key] != site:
+            raise LibraryError("Native source-view facility catalog has conflicting identity.")
+        else:
+            known[site.key] = site
+    recognized = source_sites(expected_view.original_inspection, known.values())
+    if {site.key for site in recognized} != {site.key for site in persisted.facilities}:
+        raise LibraryError("Native source-view preservation requires independently recognized same-site ownership.")
+    if section_key in (None, "cover"):
+        # Removal/replacement UI intentionally clears photograph references.
+        # Do not silently preserve a formerly mapped photo when its placement
+        # authority has been lost. V1 refuses this operation rather than guessing
+        # or changing global artwork approval/reference semantics.
+        index = value.get("starting_contributions", {})
+        reference = index.get(saved_view[0]) if isinstance(index, dict) else None
+        if not isinstance(reference, str) or not re.fullmatch(r"[0-9a-f]{64}", reference):
+            raise LibraryError("Native source-view rendering requires its acknowledged source contribution.")
+        payload = _read(path / "imports" / (reference + ".contribution.json"))
+        if (hashlib.sha256(_json(payload)).hexdigest() != reference
+                or payload.get("source_view") != saved_view[1]
+                or not isinstance(payload.get("draft"), dict)):
+            raise LibraryError("Native source-view contribution changed or lost its report scope.")
+        baseline = draft_from_dict(payload["draft"])
+        if (baseline.profile.contract, baseline.profile.key, baseline.profile.imported_from, baseline.period) != (
+                profile.contract, profile.key, digest, draft.period):
+            raise LibraryError("Native source-view contribution has different original/report ownership.")
+        prior_photo = next((b for b in baseline.blocks if b.key == "cover_photo"), None)
+        current_photo = next((b for b in draft.blocks if b.key == "cover_photo"), None)
+        old_refs = set(prior_photo.references) if prior_photo is not None else set()
+        if old_refs and (current_photo is None or not old_refs <= set(current_photo.references)):
+            raise LibraryError("The cover-photo decision lost its exact source placement; this experimental rendering is unsupported.")
+    art_context = saved_view[2]
+    if art_context is not None:
+        from app.monthly_report_native_art_review import _scope as native_art_scope
+        if native_art_scope(expected_view, profile, draft.period) != art_context.inventory.scope_bytes:
+            raise LibraryError("Native artwork preservation belongs to a different current profile or template scope.")
+        kept_refs = {f"docx:{digest}:{item.original_id}" for item in art_context.inventory.occurrences}
+        if any(kept_refs.intersection(block.references) for block in draft.blocks):
+            raise LibraryError("Native artwork preservation conflicts with an exact mapped or omitted occurrence.")
+    return (expected_view, art_context) if with_native_art else expected_view
+
+
 def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, review: dict, *,
                       assets: tuple[tuple[str, bytes], ...], expected_revision: int,
                       actor: str, confirmed: bool, snapshot_revision: int = 0,
-                      source_draft: ReportDraft | None = None) -> LibraryState:
+                      source_draft: ReportDraft | None = None, source_view=None) -> LibraryState:
     """Publish design, original, review decisions and working seed in one manifest.
 
     New profiles become visible only after every immutable asset and the original
@@ -405,11 +696,38 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     if digest != review.get("sha256"):
         raise LibraryError("Original DOCX changed during review. Analyze it again.")
+    fresh_view = _verified_source_view(source, source_view) if source_view is not None else None
+    art_context = None
+    if fresh_view is None and review.get("native_art_review") is not None:
+        raise LibraryError("Native artwork review requires its explicitly verified source view.")
+    if fresh_view is not None:
+        if (fresh_view.original_inspection.sha256 != digest or profile.imported_from != digest
+                or draft.profile.imported_from != digest
+                or source_draft is not None and source_draft.profile.imported_from != digest
+                or review.get("period") != draft.period.key):
+            raise LibraryError("Source-view import must retain its original source and report-month pins.")
+        view_scope = _source_view_scope(fresh_view, profile.contract, profile.key, draft.period)
+        from app.monthly_report_native_art_review import _verify_native_art_review
+        art_context = _verify_native_art_review(source, fresh_view, profile, draft.period,
+                                               review.get("native_art_review"))
+        if art_context is not None:
+            kept_refs = {f"docx:{digest}:{item.original_id}" for item in art_context.inventory.occurrences}
+            if any(kept_refs.intersection(block.references)
+                   for candidate in (draft, source_draft) if candidate is not None for block in candidate.blocks):
+                raise LibraryError("Native artwork preservation conflicts with an exact mapped or omitted occurrence.")
+        view_key = _source_view_key(view_scope)
+        view_record = _source_view_record(view_scope, art_context.digest if art_context else "")
     path = _profile_path(profile.contract, profile.key)
     with _locked(path):
         manifest = path / "manifest.json"
         value = _read(manifest) if manifest.exists() else {"schema": 1, "revision": 0, "versions": [], "current": [], "audit": []}
         _expected(value, expected_revision)
+        if art_context is not None and art_context.receipt["visual_review"]["actor"] != actor:
+            prior = value.get("source_view_art_reviews", {})
+            if not isinstance(prior, dict) or prior.get(view_key) != art_context.receipt:
+                raise LibraryError("Native artwork visual-review actor does not match this saved review.")
+        if fresh_view is None:
+            _saved_source_view(value, path, profile.contract, profile.key, draft.period, digest, None)
         if expected_revision == 0:
             # New uploaded designs receive the same empty-logo defaults as the
             # template route. Existing designs, imported logos and omissions
@@ -428,7 +746,30 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
         original = path / "imports" / (digest + ".docx")
         from app.monthly_report_objects import store_file
         store_file(original, source)
-        _atomic_write(path / "imports" / (digest + ".json"), _json({"schema": 1, **review, "actor": actor, "at": _now()}))
+        saved_review = {"schema": 1, **review, "actor": actor, "at": _now()}
+        if fresh_view is not None:
+            # Verify the durable original too, not just a caller-owned path.
+            _verified_source_view(original, fresh_view)
+            _immutable_receipt(_source_view_receipt_path(path, view_scope), fresh_view.receipt_bytes)
+            index = value.setdefault("source_views", {})
+            if not isinstance(index, dict) or view_key in index and index[view_key] != view_record:
+                raise LibraryError("Saved source-view scope changed; existing data was preserved.")
+            index[view_key] = view_record
+            art_index = value.setdefault("source_view_art_reviews", {})
+            if not isinstance(art_index, dict):
+                raise LibraryError("Saved native artwork review index is invalid.")
+            if art_context is not None:
+                if view_key in art_index and art_index[view_key] != art_context.receipt:
+                    raise LibraryError("Saved native artwork review changed; existing data was preserved.")
+                art_index[view_key] = art_context.receipt
+            elif view_key in art_index:
+                raise LibraryError("Saved native artwork review cannot be silently removed.")
+            value["import_source_view"] = view_key
+            value["import_source_view_review"] = saved_review
+        else:
+            value.pop("import_source_view", None)
+            value.pop("import_source_view_review", None)
+            _atomic_write(path / "imports" / (digest + ".json"), _json(saved_review))
         # Only first setup seeds standing defaults. A partial report cannot
         # silently change everyone else's org chart or contact matrix.
         if expected_revision == 0:
@@ -445,10 +786,14 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
             # Publish this immutable contribution only through the same atomic
             # manifest as the import. An interrupted write cannot acknowledge
             # content that was never saved. No artwork bytes are duplicated.
-            contribution = _json({"schema": 1, "draft": asdict(source_draft)})
+            payload = {"schema": 1, "draft": asdict(source_draft)}
+            if fresh_view is not None:
+                payload["source_view"] = view_record
+            contribution = _json(payload)
             reference = hashlib.sha256(contribution).hexdigest()
             _atomic_write(path / "imports" / (reference + ".contribution.json"), contribution)
-            value.setdefault("starting_contributions", {})[draft.period.key + ":" + digest] = reference
+            replay_key = view_key if fresh_view is not None else draft.period.key + ":" + digest
+            value.setdefault("starting_contributions", {})[replay_key] = reference
         value["profile"] = asdict(profile)
         value["bootstrap"] = asdict(draft)
         value["bootstrap_snapshot_revision"] = snapshot_revision
@@ -456,6 +801,8 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
         value["revision"] += 1
         value["audit"].append({"action": "report_import", "actor": actor, "at": _now(), "source": digest,
                                "period": draft.period.key, "intent": review.get("intent", "")})
+        if fresh_view is not None:
+            value["audit"][-1]["source_view"] = view_record
         raw = _json(value)
         _atomic_write(path / "history" / f'{value["revision"]:08d}.json', raw)
         _atomic_write(manifest, raw)
@@ -463,7 +810,7 @@ def save_report_setup(profile: ReportProfile, draft: ReportDraft, source: Path, 
 
 
 def starting_contribution(contract: str, key: str, period: ReportPeriod,
-                          digest: str) -> tuple[ReportDraft | None, bool]:
+                          digest: str, *, source_view=None) -> tuple[ReportDraft | None, bool]:
     """Read only an acknowledged contribution for these source bytes and month.
 
     Older installations may have only a merged bootstrap. It can prove an
@@ -473,11 +820,13 @@ def starting_contribution(contract: str, key: str, period: ReportPeriod,
         raise LibraryError("Invalid Starting report source identity.")
     path = _profile_path(contract, key)
     value = _read(path / "manifest.json")
+    saved_view = _saved_source_view(value, path, contract, key, period, digest, source_view, discover=True)
     index = value.get("starting_contributions", {})
     if not isinstance(index, dict):
         raise LibraryError("Starting report replay index is invalid; your current report is unchanged.")
-    reference = index.get(period.key + ":" + digest)
-    if period.key + ":" + digest in index:
+    replay_key = saved_view[0] if saved_view is not None else period.key + ":" + digest
+    reference = index.get(replay_key)
+    if replay_key in index:
         if not isinstance(reference, str) or not re.fullmatch(r"[0-9a-f]{64}", reference):
             raise LibraryError("Starting report replay record has an invalid identity.")
         payload = _read(path / "imports" / (reference + ".contribution.json"))
@@ -485,8 +834,13 @@ def starting_contribution(contract: str, key: str, period: ReportPeriod,
             raise LibraryError("Starting report replay record changed; your current report is unchanged.")
         if not isinstance(payload.get("draft"), dict):
             raise LibraryError("Starting report replay record has no valid draft.")
+        if (saved_view is not None and payload.get("source_view") != saved_view[1]
+                or saved_view is None and "source_view" in payload):
+            raise LibraryError("Starting report replay source-view scope changed.")
         result = draft_from_dict(payload["draft"])
         verified = True
+    elif saved_view is not None:
+        raise LibraryError("This source-view import has no separately acknowledged Starting contribution.")
     elif value.get("import_review") == digest and value.get("bootstrap"):
         result = draft_from_dict(value["bootstrap"])
         if result.period != period:
@@ -502,12 +856,26 @@ def starting_contribution(contract: str, key: str, period: ReportPeriod,
         return None, False
     if (result.profile.contract, result.profile.key, result.period) != (contract, key, period):
         raise LibraryError("Starting report replay record belongs to different sites or a different month.")
+    if saved_view is not None and result.profile.imported_from != digest:
+        raise LibraryError("Starting report replay lost its original source identity.")
     return result, verified
 
 
-def load_imported_draft(contract: str, key: str) -> ReportDraft | None:
-    value = _read(_profile_path(contract, key) / "manifest.json")
-    return draft_from_dict(value["bootstrap"]) if value.get("bootstrap") else None
+def load_imported_draft(contract: str, key: str, *, source_view=None) -> ReportDraft | None:
+    path = _profile_path(contract, key)
+    value = _read(path / "manifest.json")
+    draft = draft_from_dict(value["bootstrap"]) if value.get("bootstrap") else None
+    if draft is None:
+        if source_view is not None or "import_source_view" in value:
+            raise LibraryError("Source-view import has no saved working draft.")
+        return None
+    saved_view = _saved_source_view(value, path, contract, key, draft.period,
+                                    value.get("import_review", ""), source_view, head=True, discover=True)
+    if saved_view is not None and (
+            (draft.profile.contract, draft.profile.key) != (contract, key)
+            or draft.profile.imported_from != value["import_review"]):
+        raise LibraryError("Source-view working draft lost its original report identity.")
+    return draft
 
 
 def imported_snapshot_revision(contract: str, key: str) -> int:
@@ -523,11 +891,30 @@ def imported_original(contract: str, key: str) -> Path | None:
     return _profile_path(contract, key) / "imports" / (digest + ".docx")
 
 
-def imported_review_scope(contract: str, key: str, period: ReportPeriod) -> str:
-    original = imported_original(contract, key)
-    if not original:
+def imported_native_art_review(contract: str, key: str, period: ReportPeriod, *, source_view):
+    """Reuse only an independently verified immutable source-art disposition."""
+    path = _profile_path(contract, key)
+    value = _read(path / "manifest.json")
+    saved = _saved_source_view(value, path, contract, key, period,
+                               value.get("import_review", ""), source_view)
+    return saved[2].receipt if saved is not None and saved[2] is not None else None
+
+
+def imported_review_scope(contract: str, key: str, period: ReportPeriod, *, source_view=None) -> str:
+    path = _profile_path(contract, key)
+    value = _read(path / "manifest.json")
+    digest = value.get("import_review", "")
+    if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        if source_view is not None or "import_source_view" in value:
+            raise LibraryError("Source-view original identity is unavailable.")
         return ""
-    review = _read(original.with_suffix(".json"))
+    saved_view = _saved_source_view(value, path, contract, key, period, digest, source_view, head=True, discover=True)
+    if saved_view is not None:
+        review = value.get("import_source_view_review")
+        if not isinstance(review, dict) or review.get("sha256") != digest or review.get("period") != period.key:
+            raise LibraryError("Saved source-view review belongs to a different source or month.")
+    else:
+        review = _read(path / "imports" / (digest + ".json"))
     return review.get("image_review_scope", "") if review.get("period") == period.key else ""
 
 
