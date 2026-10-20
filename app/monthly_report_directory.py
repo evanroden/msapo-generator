@@ -722,33 +722,40 @@ def directory_contracts(*, include_archived=False, unavailable=None):
     return tuple(sorted(result.values(), key=str.casefold))
 
 
+def _validate_contacts(contacts):
+    if len(contacts) > MAX_CONTACTS or any(
+        len(getattr(c, field)) > 2000
+        for c in contacts for field in ("role", "name", "phone", "email", "source")
+    ):
+        raise ValueError("Contact record exceeds its review budget.")
+    if any(not c.role.strip() for c in contacts):
+        raise ValueError("Every contact needs a role.")
+
+
+def _validate_records(contract, sites, contract_contacts):
+    """Use the same current record limits for normal saves and recovery."""
+    if len(sites) > MAX_SITES:
+        raise ValueError("Confirm no more than 500 sites.")
+    if contract_contacts is not None:
+        _validate_contacts(contract_contacts)
+    for site in sites:
+        library._valid_key(site.key)
+        if len(site.title) > 200 or len(site.address) > 2000 or len(site.contacts) > MAX_CONTACTS or len(site.aliases) > 30:
+            raise ValueError("Site record exceeds its review budget.")
+        _validate_contacts(site.contacts)
+    # Reuse the explicit facility identity/alias ambiguity checks without inferring scope.
+    if sites:
+        ReportProfile(contract, "directory-check", "Directory validation", tuple(s.facility for s in sites), "multi_site")
+
+
 def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=None,
                    source_sha256="", source_sheet="", action="save", _archived=False,
                    contract_contacts=None):
     actor = library._confirmation(actor, confirmed)
     sites = tuple(sites)
-    if len(sites) > MAX_SITES:
-        raise ValueError("Confirm no more than 500 sites.")
-    def validate_contacts(contacts):
-        if len(contacts) > MAX_CONTACTS or any(
-            len(getattr(c, field)) > 2000
-            for c in contacts for field in ("role", "name", "phone", "email", "source")
-        ):
-            raise ValueError("Contact record exceeds its review budget.")
-        if any(not c.role.strip() for c in contacts):
-            raise ValueError("Every contact needs a role.")
-
     if contract_contacts is not None:
         contract_contacts = tuple(contract_contacts)
-        validate_contacts(contract_contacts)
-    for site in sites:
-        library._valid_key(site.key)
-        if len(site.title) > 200 or len(site.address) > 2000 or len(site.contacts) > MAX_CONTACTS or len(site.aliases) > 30:
-            raise ValueError("Site record exceeds its review budget.")
-        validate_contacts(site.contacts)
-    # Reuse the explicit facility identity/alias ambiguity checks without inferring scope.
-    if sites:
-        ReportProfile(contract, "directory-check", "Directory validation", tuple(s.facility for s in sites), "multi_site")
+    _validate_records(contract, sites, contract_contacts)
     if raw is not None:
         inspection = _inspect_import(raw)
         if source_sha256 != inspection.sha256 or source_sheet not in {s.name for s in inspection.sheets}:
@@ -764,7 +771,7 @@ def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=
         if expected_revision != (current.revision if current else 0):
             raise library.RevisionConflict("Someone changed this directory. Reload and review the new version before saving.")
         contacts = contract_contacts if contract_contacts is not None else (current.contract_contacts if current else ())
-        validate_contacts(contacts)
+        _validate_contacts(contacts)
         if not sites and not contacts:
             raise ValueError("Confirm at least one site or contract-wide contact.")
         # Preserve legacy spelling when updating its existing history so a

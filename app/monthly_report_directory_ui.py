@@ -229,6 +229,9 @@ def _render_directory(field):
     unavailable = []
     names = directory.directory_contracts(include_archived=True, unavailable=unavailable)
     _directory_warning(unavailable, details=True)
+    if unavailable:
+        from app.monthly_report_directory_recovery_ui import render_recovery
+        render_recovery(unavailable, actor)
     contract_contacts = None
     if mode == "Review saved directory":
         if not names:
