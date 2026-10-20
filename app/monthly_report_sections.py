@@ -7,7 +7,7 @@ import re
 
 from app.monthly_report_content_policy import contains_price, page_status, table_price_columns, table_has_pricing, logical_table_columns
 from app.monthly_report_checks import placeholder_matches
-from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, MAX_NORMALIZED_BYTES
+from app.monthly_report_import import MappedImport, ImportMapping, _heading, read_import_image, MAX_NORMALIZED_BYTES, is_logo_artwork, is_header_artwork
 from app.monthly_report_model import ReportTable, ResolvedBlock, known_sections, layout_blocks
 from app.monthly_report_asset_review import approve_all_assets
 
@@ -116,6 +116,10 @@ def build_section_import(path, inspection, plans):
             raise ValueError("Review each included section before continuing.")
         if plan.get("omit"):
             continue
+        if any(items[identity].kind == "image" and is_header_artwork(items[identity])
+               and plan.get("destinations", {}).get(identity) == "cover_photo"
+               for identity in plan.get("selected", ())):
+            raise ValueError("Header artwork has no confirmed photograph role. Keep it out of the cover photo and confirm its identity first.")
         if plan["key"] == "cover":
             from app.monthly_report_start_import import unresolved_cover_artwork
             cover = sections["cover"]
@@ -208,10 +212,15 @@ def build_section_import(path, inspection, plans):
             block = grouped.get(slot, ResolvedBlock(slot, "Last month"))
             reference = f"docx:{inspection.sha256}:{item.id}"
             if item.kind == "image":
+                if slot == "cover_photo" and is_header_artwork(item):
+                    raise ValueError("Header artwork has no confirmed photograph role. Keep it out of the cover photo and confirm its identity first.")
+                if slot == "cover_photo" and is_logo_artwork(item):
+                    raise ValueError("This image is identified as a logo. Keep it in a branding slot and choose a photograph for the cover.")
                 notes = plan.get("image_notes", {}).get(item.image_part, "")
                 if page_status(notes, unreadable=not notes.strip())[0] in ("pricing", "legal", "blank", "signature"):
                     raise ValueError("Leave out pages with pricing, legal terms or no report content.")
-                image = read_import_image(path, item, line_art=slot not in ("cover_photo", "improvements"))
+                image = read_import_image(path, item, line_art=slot not in ("cover_photo", "improvements"),
+                                          preserve_transparency=slot in ("brand_logo", "client_logo"))
                 digest = hashlib.sha256(image.data).hexdigest() + "." + image.extension
                 if digest not in assets:
                     total += len(image.data)

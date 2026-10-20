@@ -16,7 +16,7 @@ from app.monthly_report_checks import preflight
 from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image
 from app.monthly_report_editor import _grid, _signature, _typed_table
 from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
-                                     layout_blocks, profile_sections)
+                                     layout_blocks, profile_sections, picture_replacement_references)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
 from app.monthly_report_section_help import section_help
 
@@ -643,11 +643,16 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     if upload and st.button("Add page to this report" if adding_page else "Use this replacement in this report", key=key + "_replace"):
         from pathlib import Path
         image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix,
-                                       line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"))
+                                       line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"),
+                                       preserve_transparency=spec.key in ("brand_logo", "client_logo"))
         reference = library.asset_reference(image.data, image.extension)
         assets[reference] = image.data
         previous = block
-        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
+        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(),
+                        references=picture_replacement_references(block))
+        if spec.key in ("brand_logo", "client_logo"):
+            block = replace(block, reviewed_fingerprint="", client_reviewed_fingerprint="",
+                            asset_provenance=((reference, ()),), client_asset_reviews=())
         if spec.type == "pdf_pages":
             st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
         st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")
@@ -1245,19 +1250,21 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
-                # Contract, period, sites and preparer were already chosen at Start.
-                # Keep report-only photo changes reachable independently from the
-                # starting-report gallery and shared design administration.
-                from app.monthly_report_cover_ui import render_cover_photograph
-                blocks = render_cover_photograph(
-                    blocks, prefix, assets,
-                    lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
-                    scope=_rich_text_scope(prefix),
-                )
+                # A staged source owns the cover choice until it is committed
+                # or canceled. Showing the current-report uploader alongside
+                # its selected-source preview gave two competing photo tasks
+                # and an untruthful empty-cover message.
                 from app.monthly_report_section_ui import render_section_setup
-                render_section_setup(contract, period, prepared, field, state=state,
+                source_pending = render_section_setup(contract, period, prepared, field, state=state,
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),
                                      working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
+                if not source_pending:
+                    from app.monthly_report_cover_ui import render_cover_photograph
+                    blocks = render_cover_photograph(
+                        blocks, prefix, assets,
+                        lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
+                        scope=_rich_text_scope(prefix),
+                    )
                 with st.expander("About this report"):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)
