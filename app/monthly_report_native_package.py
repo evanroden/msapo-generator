@@ -258,7 +258,9 @@ def _passive_markup(root):
 
 
 DRAWING = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-_STYLE_REFERENCES = {'pStyle', 'rStyle', 'tblStyle', 'numStyleLink', 'styleLink', 'defaultTableStyle'}
+THEME_FAMILY = '{http://schemas.microsoft.com/office/thememl/2012/main}themeFamily'
+_STYLE_REFERENCES = {'pStyle', 'rStyle', 'tblStyle', 'numStyleLink', 'styleLink', 'defaultTableStyle',
+                     'clickAndTypeStyle'}
 
 
 def _neutral_design_names(output):
@@ -272,9 +274,10 @@ def _neutral_design_names(output):
     """
     for name in [n for n in output if n.startswith('word/theme/') and n.endswith('.xml')]:
         root, renamed = _xml(output[name]), False
-        for local in ('theme', 'clrScheme', 'fontScheme', 'fmtScheme'):
-            neutral = 'Office Theme' if local == 'theme' else 'Office'
-            for node in root.iter('{' + DRAWING + '}' + local):
+        # Office 2013+ also records the applied theme's name in thm15:themeFamily.
+        for tag, neutral in (('{' + DRAWING + '}theme', 'Office Theme'), (THEME_FAMILY, 'Office Theme'),
+                             *(('{' + DRAWING + '}' + local, 'Office') for local in ('clrScheme', 'fontScheme', 'fmtScheme'))):
+            for node in root.iter(tag):
                 if node.get('name') not in (None, neutral):
                     node.set('name', neutral)
                     renamed = True
