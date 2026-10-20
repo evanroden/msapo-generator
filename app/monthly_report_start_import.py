@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, replace
 
 from app.monthly_report_content_policy import contains_price, table_has_pricing
-from app.monthly_report_import import MappedImport
+from app.monthly_report_import import MappedImport, is_logo_artwork, is_header_artwork
 from app.monthly_report_model import known_sections, layout_blocks
 from app.monthly_report_sections import (
     build_section_import,
@@ -159,30 +159,55 @@ def analyze_starting_report(inspection, profile, period, known_sites=(), *, conf
     return StartingReportAnalysis(sites, relation, tuple(current), tuple(older), tuple(uncertain), source_period)
 
 
+def _cover_photo_window(items):
+    """The first cover section and its one immediately adjacent photo panel.
+
+    Some reports put the title/logo and building photo in separate Word
+    sections. Only an adjoining picture-only panel can extend the cover;
+    Contents, report content and later unlabelled image pages cannot do so.
+    """
+    body = tuple(item for item in items if item.part == "word/document.xml" and item.position)
+    cover = tuple(item for item in body if item.section in ("", "cover"))
+    earliest = min((item.word_section for item in cover), default=None)
+    if earliest is None:
+        return (), 0
+    # A contents heading closes the cover, not incidental prose such as
+    # "The contents of this report are confidential." Allow a wrapped title.
+    stop = min((item.position for item in body
+                if item.section not in ("", "cover")
+                or (item.kind == "text" and re.search(
+                    r"^\s*(?:table\s+of\s+)?contents[ \t]*:?[ \t]*(?:\n|$)", item.text, re.I | re.M))),
+               default=max((item.position for item in body), default=0) + 1)
+    first = tuple(item for item in cover if item.word_section == earliest and item.position < stop)
+    # An existing photograph or unassigned drawing on the first cover stays
+    # authoritative. Do not promote another illustration when that art needs
+    # a specific recovery of its own. Known branding is not an independent
+    # photograph; its unresolved owner remains a separate review requirement.
+    independent_art = any(item.kind in ("image", "unsupported")
+                          and item.suggested_slot not in ("brand_logo", "client_logo")
+                          and not is_logo_artwork(item) and not is_header_artwork(item) for item in first)
+    following = tuple(item for item in cover if item.word_section == earliest + 1 and item.position < stop)
+    photo_panel = (following and any(item.kind == "image" for item in following)
+                   and all(item.kind == "image" or (item.kind == "text"
+                           and len(item.text) <= 140 and re.search(r"\b(?:cover|photo(?:graph)?|exterior)\b", item.text, re.I))
+                           for item in following))
+    return ((earliest, earliest + 1) if not independent_art and photo_panel else (earliest,)), stop
+
+
 def cover_photo_candidates(items):
-    """Only cover-page photographs, not logos, dividers or package leftovers."""
+    """Only cover photographs, not logos, dividers or package leftovers."""
     from app.monthly_report_sections import small_artwork
     items = tuple(items)
-    cover_sections = tuple(item.word_section for item in items
-                           if item.part == "word/document.xml"
-                           and item.section in ("", "cover") and item.position)
+    cover_sections, stop = _cover_photo_window(items)
     possible = tuple(item for item in items
                      if item.kind == "image" and item.part == "word/document.xml"
                      and item.section in ("", "cover")
-                     and item.suggested_slot not in ("brand_logo", "client_logo")
+                     and not is_logo_artwork(item) and not is_header_artwork(item)
                      and not item.suggested_slot.startswith("divider_")
                      and not small_artwork(item))
     if not possible:
         return ()
-    # A Word cover can be followed by a long Contents page whose pictures
-    # still get classified as 'cover' by the text inspector. The first actual
-    # cover Word section is authoritative for choosing a photograph; later
-    # Contents/other section artwork is not another cover-photo option.
-    # A cover with only small/unknown artwork still establishes the first
-    # physical Word section. Filtering those items first would promote a
-    # later Contents illustration into a newly invented cover-photo choice.
-    earliest = min(cover_sections, default=min(item.word_section for item in possible))
-    return tuple(item for item in possible if item.word_section == earliest)
+    return tuple(item for item in possible if item.word_section in cover_sections and item.position < stop)
 
 
 def unresolved_cover_artwork(items):
@@ -194,15 +219,13 @@ def unresolved_cover_artwork(items):
     """
     items = tuple(items)
     photo_ids = {item.id for item in cover_photo_candidates(items)}
-    cover_sections = tuple(item.word_section for item in items
-                           if item.part == "word/document.xml"
-                           and item.section in ("", "cover") and item.position)
-    earliest = min(cover_sections, default=None)
+    cover_sections, stop = _cover_photo_window(items)
     return tuple(item for item in items if item.kind == "image" and item.position
                  and item.id not in photo_ids
                  and item.suggested_slot not in ("brand_logo", "client_logo")
                  and not item.suggested_slot.startswith("divider_")
-                 and (item.part != "word/document.xml" or item.word_section == earliest))
+                 and (item.part != "word/document.xml"
+                      or (item.word_section in cover_sections and item.position < stop)))
 
 
 def suggested_cover_photo(items):

@@ -13,6 +13,10 @@ the export derivative only:
 
 When a JPEG or PNG declares a non-default orientation, a minimal EXIF record
 holding only that orientation is kept so the picture still displays upright.
+
+The separate transparency export pass below has a narrower, explicit support
+contract. It clears hidden RGB only in bounded, static 8-bit RGBA PNGs; it does
+not change the pixel-preserving contract of the metadata-only functions.
 """
 from __future__ import annotations
 
@@ -33,6 +37,92 @@ _JPEG_KEEP_APP = {
 }
 _PNG_DROP = {b"tEXt", b"zTXt", b"iTXt", b"tIME", b"eXIf"}
 _GIF_XMP = b"XMP DataXMP"
+_MAX_TRANSPARENT_PNG_BYTES = 30 * 1024 * 1024
+_MAX_TRANSPARENT_PNG_PIXELS = 4_000_000
+_MAX_TRANSPARENT_PNG_CHUNKS = 1024
+
+
+def _supported_rgba_png_chunks(raw: bytes):
+    """Validated chunks for the narrow transparency path, otherwise None."""
+    if not raw.startswith(b"\x89PNG\r\n\x1a\n") or len(raw) > _MAX_TRANSPARENT_PNG_BYTES:
+        return None
+    chunks, pos = [], 8
+    while pos + 12 <= len(raw):
+        if len(chunks) >= _MAX_TRANSPARENT_PNG_CHUNKS:
+            return None
+        length = int.from_bytes(raw[pos:pos + 4], "big")
+        end = pos + 12 + length
+        if end > len(raw):
+            return None
+        kind, data = raw[pos + 4:pos + 8], raw[pos + 8:pos + 8 + length]
+        if zlib.crc32(kind + data) & 0xFFFFFFFF != int.from_bytes(raw[end - 4:end], "big"):
+            return None
+        chunks.append((kind, data, raw[pos:end]))
+        pos = end
+        if kind == b"IEND":
+            break
+    if (pos != len(raw) or not chunks or chunks[0][0] != b"IHDR"
+            or len(chunks[0][1]) != 13 or chunks[-1][:2] != (b"IEND", b"")
+            or sum(kind == b"IHDR" for kind, _, _ in chunks) != 1
+            or any(kind in (b"acTL", b"fcTL", b"fdAT", b"tRNS") for kind, _, _ in chunks)):
+        return None
+    width, height, depth, colour, compression, filtering, interlace = struct.unpack(">IIBBBBB", chunks[0][1])
+    if (not width or not height or width * height > _MAX_TRANSPARENT_PNG_PIXELS
+            or (depth, colour, compression, filtering, interlace) != (8, 6, 0, 0, 0)):
+        return None
+    ids = [index for index, (kind, _, _) in enumerate(chunks) if kind == b"IDAT"]
+    if not ids or ids != list(range(ids[0], ids[-1] + 1)):
+        return None
+    return chunks
+
+
+def supports_transparent_png_sanitization(raw: bytes) -> bool:
+    """Whether this input has the supported transparency container/size.
+
+    Supported: static, non-interlaced RGBA PNG, 8 bits/channel, at most 4M
+    pixels, 30 MiB compressed and 1024 chunks. Palette/gray-alpha/16-bit/interlaced/APNG,
+    other formats and malformed containers are unsupported and unchanged.
+    This identifies support, not a claim that arbitrary IDAT data decodes.
+    """
+    return _supported_rgba_png_chunks(raw) is not None
+
+
+def clear_transparent_png_rgb(raw: bytes) -> bytes:
+    """Clear alpha-zero RGB in a supported PNG export derivative only.
+
+    Pillow handles the existing PNG codec; no custom scanline decoder or
+    colour/orientation conversion is used. Only newly encoded IDAT chunks
+    replace old IDAT chunks. IHDR, ICC, eXIf, pHYs and all other original
+    chunks remain exact. Unsupported or undecodable data passes unchanged.
+    """
+    chunks = _supported_rgba_png_chunks(raw)
+    if chunks is None:
+        return raw
+    from PIL import Image, ImageStat
+    try:
+        with Image.open(BytesIO(raw)) as image:
+            if image.mode != "RGBA" or getattr(image, "n_frames", 1) != 1:
+                return raw
+            hidden = image.getchannel("A").point([255] + [0] * 255)
+            if not hidden.getbbox() or not any(high for _, high in ImageStat.Stat(image, hidden).extrema[:3]):
+                return raw
+            image.paste((0, 0, 0, 0), mask=hidden)
+            output = BytesIO()
+            image.save(output, "PNG")
+    except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+        return raw
+    encoded = _supported_rgba_png_chunks(output.getvalue())
+    if encoded is None or encoded[0][1] != chunks[0][1]:
+        return raw
+    replacement = b"".join(chunk for kind, _, chunk in encoded if kind == b"IDAT")
+    result, inserted = bytearray(raw[:8]), False
+    for kind, _, chunk in chunks:
+        if kind != b"IDAT":
+            result += chunk
+        elif not inserted:
+            result += replacement
+            inserted = True
+    return bytes(result)
 
 
 def _orientation(tiff: bytes) -> int:
@@ -252,6 +342,20 @@ def sanitize_package_media(package: bytes) -> bytes:
     picture carries removable metadata, or the bytes are not a ZIP package,
     the original bytes are returned as-is.
     """
+    return _transform_package_media(package, strip_image_metadata)
+
+
+def sanitize_package_transparency(package: bytes) -> bytes:
+    """Clear hidden RGB only for supported PNG entries in an export copy.
+
+    See supports_transparent_png_sanitization for the intentionally narrow
+    format/size contract. Unsupported images remain unchanged, not certified.
+    Saved source packages and assets are never written by this operation.
+    """
+    return _transform_package_media(package, clear_transparent_png_rgb)
+
+
+def _transform_package_media(package: bytes, transform) -> bytes:
     try:
         source = ZipFile(BytesIO(package))
     except BadZipFile:
@@ -262,7 +366,7 @@ def sanitize_package_media(package: bytes) -> bytes:
         for info in source.infolist():
             data = source.read(info)
             if not info.is_dir():
-                clean = strip_image_metadata(data)
+                clean = transform(data)
                 if clean != data:
                     changed, data = True, clean
             entry = ZipInfo(info.filename, info.date_time)

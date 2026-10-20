@@ -70,13 +70,16 @@ def _preview_report(draft, asset_loader=None):
 
     photo_assets = {ref for block in draft.blocks if block.key in ('cover_photo', 'improvements')
                     for ref in block.asset_hashes}
+    logo_assets = {ref for block in draft.blocks if block.key in ('brand_logo', 'client_logo')
+                   for ref in block.asset_hashes}
 
     @lru_cache(maxsize=4)
     def small_asset(ref):
         if asset_loader is None:
             raise ValueError("Preview needs the saved report images.")
         image = normalize_report_image(
-            asset_loader(ref), Path(ref).suffix, line_art=ref not in photo_assets, dpi=96
+            asset_loader(ref), Path(ref).suffix, line_art=ref not in photo_assets, dpi=96,
+            preserve_transparency=ref in logo_assets,
         )
         return image.data
 
@@ -280,11 +283,17 @@ def section_preview_docx(draft, section_key, asset_loader=None):
         from app.monthly_report_native_layout import build_native_docx
         return build_native_docx(scope, source, asset_loader=asset_loader, section_key=section_key, master=is_master(draft.profile))
 
+    logo_assets = {ref for block in scope.blocks if block.key in ('brand_logo', 'client_logo')
+                   for ref in block.asset_hashes}
+
     @lru_cache(maxsize=12)
     def image_asset(ref):
         if asset_loader is None:
             raise ValueError("The saved picture is not available for this preview.")
-        return normalize_report_image(asset_loader(ref), Path(ref).suffix, line_art=True, dpi=150).data
+        return normalize_report_image(
+            asset_loader(ref), Path(ref).suffix, line_art=True, dpi=150,
+            preserve_transparency=ref in logo_assets,
+        ).data
 
     raw = _build_docx(scope, asset_loader=image_asset if asset_loader else None)
     index = next((n for n, value in enumerate(scope.sections) if value.key == section_key), 0)

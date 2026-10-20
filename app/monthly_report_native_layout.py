@@ -186,35 +186,118 @@ def _clear_source_drawing_metadata(document):
                         del node.attrib[attr]
 
 
-def _remove_unapproved_header_images(part, approved_digests):
+def _remove_unapproved_header_images(part, approved_digests, approved_occurrences=()):
     """Drop only image-backed old-client header/footer art on a fresh master.
 
     Pure native rules/rectangles and Word geometry are left intact; approved
-    current ENFRA logo bytes remain. All other image relationships are facts
-    about the imported source, even when PNG metadata is not visible on page.
+    current ENFRA logo bytes and explicitly preserved native occurrences remain.
+    An approved native occurrence does not authorize another use of equal bytes.
+    All other image relationships are facts about the imported source, even when
+    PNG metadata is not visible on page.
     The package sanitizer prunes dangling image parts after saving.
     """
     vml = "{urn:schemas-microsoft-com:vml}imagedata"
     for picture in list(part.element.iter()):
         if picture.tag not in (qn("w:drawing"), qn("w:pict")):
             continue
-        ids = [node.get(qn("r:embed")) or node.get(qn("r:id"))
-               for node in picture.iter()
-               if node.tag in (qn("a:blip"), vml)]
-        ids = [identity for identity in ids if identity]
-        if not ids:
+        images = [(node, node.get(qn("r:embed")) or node.get(qn("r:id")))
+                  for node in picture.iter()
+                  if node.tag in (qn("a:blip"), vml)]
+        images = [(node, identity) for node, identity in images if identity]
+        if not images:
             continue  # Pure vector decoration, without client media.
         trusted = True
-        for identity in ids:
+        for node, identity in images:
             rel = part.rels.get(identity)
             if rel is None or rel.is_external or not hasattr(rel.target_part, "blob"):
                 trusted = False
                 break
-            if hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests:
+            if (node not in approved_occurrences
+                    and hashlib.sha256(rel.target_part.blob).hexdigest() not in approved_digests):
                 trusted = False
                 break
         if not trusted and picture.getparent() is not None:
             picture.getparent().remove(picture)
+
+
+def _header_image_occurrences(part, inspection):
+    """Bind inspected image IDs to their own header/footer XML occurrence.
+
+    Media parts (and relationship IDs) are reusable: two independent pictures
+    can contain exactly the same bytes. Never let a mapping for one occurrence
+    authorize replacing every use of that media part.
+    """
+    name = str(part.partname).lstrip("/")
+    by_position = defaultdict(list)
+    for item in inspection.items:
+        if item.kind == "image" and item.part == name:
+            by_position[item.position].append(item)
+    vml = "{urn:schemas-microsoft-com:vml}imagedata"
+    mc = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+
+    def image_identity(identity):
+        rel = part.rels.get(identity)
+        if rel and not rel.is_external and hasattr(rel.target_part, "blob"):
+            return hashlib.sha256(rel.target_part.blob).hexdigest()
+        return None
+
+    def logical_pictures(element):
+        if element.tag in (qn("a:blip"), vml):
+            attr = qn("r:embed") if element.tag == qn("a:blip") else qn("r:id")
+            rel = part.rels.get(element.get(attr))
+            if rel and not rel.is_external:
+                return [[(element, attr, str(rel.target_part.partname).lstrip("/"))]]
+            return []
+        if element.tag == mc + "AlternateContent":
+            selected = next((child for child in element if child.tag == mc + "Choice"), None)
+            if selected is None:
+                selected = next((child for child in element if child.tag == mc + "Fallback"), None)
+            if selected is None:
+                raise ValueError("No visible header artwork branch")
+            pictures = logical_pictures(selected)
+            for branch in element:
+                if branch is selected:
+                    continue
+                alternatives = defaultdict(list)
+                for group in logical_pictures(branch):
+                    node, attr, _ = group[0]
+                    alternatives[image_identity(node.get(attr))].append(group)
+                for group in pictures:
+                    node, attr, _ = group[0]
+                    matches = alternatives[image_identity(node.get(attr))]
+                    if not matches:
+                        raise ValueError("Header artwork branches have different occurrences")
+                    group.extend(matches.pop(0))
+                if any(alternatives.values()):
+                    raise ValueError("Header artwork branch has additional occurrences")
+            return pictures
+        return [group for child in element for group in logical_pictures(child)]
+
+    bindings = []
+    from app.monthly_report_native_design import equivalent_native_alternatives
+    for position, element in enumerate(part.element, 1):
+        # Validated Choice/Fallback pictures are representations of ONE logical
+        # occurrence. Independent equal-byte drawings outside that wrapper are
+        # still separate. Update every retained equivalent representation.
+        if not equivalent_native_alternatives(element, image_identity):
+            continue
+        try:
+            pictures = logical_pictures(element)
+        except ValueError:
+            continue  # A selected unresolved occurrence fails explicitly below.
+        groups_by_target = defaultdict(list)
+        for group in pictures:
+            groups_by_target[group[0][2]].append(group)
+        items_by_target = defaultdict(list)
+        for item in by_position[position]:
+            items_by_target[item.image_part].append(item)
+        for target, groups in groups_by_target.items():
+            source_items = items_by_target[target]
+            if len(groups) != len(source_items):
+                continue
+            bindings.extend((node, attr, item) for group, item in zip(groups, source_items)
+                            for node, attr, _ in group)
+    return bindings
 
 
 def _clear_diagrams(element):
@@ -1385,6 +1468,8 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
         name = str(part.partname)
         if not name.startswith(("/word/header", "/word/footer")) or not hasattr(part, "element"):
             continue
+        header_occurrences = _header_image_occurrences(part, inspection)
+        approved_header_nodes = set()
         _clear_diagrams(part.element)
         _clear_hyperlinks(part.element)
         for paragraph in part.element.iter(qn("w:p")):
@@ -1409,29 +1494,50 @@ def build_native_docx(draft, source_path, *, asset_loader=None, section_key=None
                     and not re.fullmatch(r"(?:enfra|author:|client utility rate analysis)(?:\s+(?:author:|client utility rate analysis))*", text.strip(), re.IGNORECASE)
                     and not text.strip().isdigit()):
                 _set_text(paragraph, "")
-        if brand and brand.source != "Omit" and brand.asset_hashes:
+        header_logos = {key: blocks[key] for key in ("brand_logo", "client_logo")
+                        if key in blocks and blocks[key].source != "Omit" and blocks[key].asset_hashes}
+        if header_logos:
             if asset_loader is None:
-                raise NativeLayoutError("ENFRA branding requires the saved asset resolver.")
-            source_brands = {item.image_part for item in inspection.items
-                             if item.part == name.lstrip("/") and item.kind == "image"
-                             and item.image_height and item.image_width / item.image_height > 4}
-            for node in part.element.iter(qn("a:blip")):
-                rel = part.rels.get(node.get(qn("r:embed")))
-                if rel and not rel.is_external and str(rel.target_part.partname).lstrip("/") in source_brands:
-                    if unchanged_master_brand:
-                        continue
-                    source_item = next((item for item in inspection.items
-                                        if item.kind == "image" and item.part == name.lstrip("/")
-                                        and item.image_part == str(rel.target_part.partname).lstrip("/")), None)
-                    if source_item is not None and _source_image_digest(str(source_path), inspection.sha256, source_item, True) in brand.asset_hashes:
-                        continue
-                    rid, _ = part.get_or_add_image(BytesIO(asset_loader(brand.asset_hashes[0])))
-                    node.set(qn("r:embed"), rid)
+                raise NativeLayoutError("Report branding requires the saved asset resolver.")
+            header_bindings = defaultdict(list)
+            for node, attr, item in header_occurrences:
+                header_bindings[item.id].append((node, attr))
+            for source_item in inspection.items:
+                if source_item.kind != "image" or source_item.part != name.lstrip("/"):
+                    continue
+                reference = reference_prefix + source_item.id
+                explicit_roles = {block.key for block in draft.blocks
+                                  if reference in block.references}
+                role = (next(iter(explicit_roles)) if len(explicit_roles) == 1 else
+                        "" if explicit_roles else source_item.image_role)
+                logo = header_logos.get(role)
+                if logo is None:
+                    continue
+                if source_item.id not in header_bindings:
+                    raise NativeLayoutError(
+                        "The selected header logo occurrence could not be matched safely. "
+                        "Review its source artwork before generating this report.")
+                if role == "brand_logo" and unchanged_master_brand and not explicit_roles:
+                    # An unchanged, verified cover brand may have a distinct
+                    # native header variant. Preserve that variant unless this
+                    # exact header occurrence was deliberately mapped. Approval
+                    # belongs to these nodes, not independent uses of equal bytes.
+                    approved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
+                    continue
+                if _source_image_digest(str(source_path), inspection.sha256, source_item, True) in logo.asset_hashes:
+                    approved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
+                    continue
+                rid, _ = part.get_or_add_image(BytesIO(asset_loader(logo.asset_hashes[0])))
+                for node, attr in header_bindings[source_item.id]:
+                    node.set(attr, rid)
+                    # Current client artwork is authorized at this occurrence,
+                    # not at every source location containing equal bytes.
+                    approved_header_nodes.add(node)
         if master:
             approved = set()
             if brand and brand.source != "Omit" and brand.asset_hashes and asset_loader:
                 approved.add(hashlib.sha256(asset_loader(brand.asset_hashes[0])).hexdigest())
-            _remove_unapproved_header_images(part, approved)
+            _remove_unapproved_header_images(part, approved, approved_header_nodes)
     page_plan.finish(document=document)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)
