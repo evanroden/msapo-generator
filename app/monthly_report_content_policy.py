@@ -12,9 +12,9 @@ if TYPE_CHECKING:
 _CURRENCIES = r"USD|CAD|EUR|GBP|CHF|AUD|NZD|JPY|CNY|HKD|SGD|SEK|NOK|DKK|INR|ILS|AED|SAR|MXN|ZAR|BRL|KRW"
 _CURRENCY_SYMBOLS = r"[$€£¥₹₪₩₽₺₴₦₱฿₫]"
 _MONEY = re.compile(
-    rf"(?:{_CURRENCY_SYMBOLS}\s*(?:~\s*)?\(?\s*(?:~\s*)?[-+]?\d|"
-    rf"\b(?:{_CURRENCIES})\b[\s():]*(?:~\s*)?\(?\s*(?:~\s*)?[-+]?\d|"
-    rf"\d[\d,.]*(?:\s*\))?(?:\s*[kmb])?\s*\)?\s*(?:{_CURRENCY_SYMBOLS}|(?:{_CURRENCIES}|dollars?)\b))", re.I)
+    rf"(?:{_CURRENCY_SYMBOLS}\s*(?:~\s*)?(?:\(\s*)?(?:~\s*)?[-+]?\d|"
+    rf"\b(?:{_CURRENCIES})\b[\s():]*(?:~\s*)?(?:\(\s*)?(?:~\s*)?[-+]?\d|"
+    rf"\d[\d,.]*(?:\s*\))?(?:\s*[kmb])?(?:\s*\))?\s*(?:{_CURRENCY_SYMBOLS}|(?:{_CURRENCIES}|dollars?)\b))", re.I)
 _PRICE_LABEL = re.compile(
     r"\b(?:unit\s+price|pricing|prices?|costs?|(?:hourly|billing|labor|labour)\s+rates?|"
     r"subtotal|(?:grand|invoice|proposal|quote|project)\s+total|total\s+(?:amount|charges?|due)|"
@@ -40,18 +40,21 @@ _REFERENCE_METADATA = re.compile(r"^(?:received|requested|submitted)\b", re.I)
 # Approximation and parentheses do not change a value's financial context.
 # Consume each complete range endpoint before checking its trailing units.
 # Keep the earlier extracted forms (3.2)k and unmatched (3200 recognized too.
-_NUMBER = (r"(?:~\s*)?\(?\s*(?:~\s*)?[-+]?\d[\d,]*(?:\.\d+)?"
+# Bind whitespace to its token so a missing amount cannot repartition a long
+# extracted gap between this matcher and the preceding label separators.
+_NUMBER = (r"(?:~\s*)?(?:\(\s*)?(?:~\s*)?[-+]?\d[\d,]*(?:\.\d+)?"
            r"(?:\s*\))?(?:\s*[kmb](?!\w))?(?:\s*\))?")
 _AMOUNT_VALUE = _NUMBER + r"(?:\s*(?:[-–—]|\bto\b)\s*" + _NUMBER + r")?"
 # Do not backtrack to the first number of a date or technical range, nor stop
 # inside a closing parenthesis before the following unit.
-_NUMERIC_CONTINUATION = r"\s*(?:[/–—-]|\bto\b)\s*(?:~\s*)?\(?\s*(?:~\s*)?[-+]?\d"
+_NUMERIC_CONTINUATION = r"\s*(?:[/–—-]|\bto\b)\s*(?:~\s*)?(?:\(\s*)?(?:~\s*)?[-+]?\d"
 _AMOUNT_END = r"(?!\w|\s*\)|" + _NUMERIC_CONTINUATION + r"|\.\d)"
+# The leading matcher and each optional word already consume their separators.
 _AMOUNT_AFTER_LABEL = re.compile(
     r"^[\s:=,–—-]*(?:(?:is|was|are|were|of|at|to|from|for|repair|repairs|replace|replacement|"
     r"reduced|increased|decreased|estimated|approximately|about|up|not|more|than|emergency|"
     r"including|labor|labour|materials?|parts|revised|limit|total|and|tax(?:es)?|remains)\b[\s:=,–—-]*)*"
-    r"[\s:=,–—-]*(?P<amount>" + _AMOUNT_VALUE + r")" + _AMOUNT_END, re.I)
+    r"(?P<amount>" + _AMOUNT_VALUE + r")" + _AMOUNT_END, re.I)
 _AMOUNT_AFTER_PROSE = re.compile(
     # A bounded phrase may identify the vendor or scope. Require an explicit
     # value assignment after it; an arbitrary asset number is not an amount.
@@ -59,8 +62,8 @@ _AMOUNT_AFTER_PROSE = re.compile(
     r"(?P<amount>" + _AMOUNT_VALUE + r")" + _AMOUNT_END, re.I)
 _PRICE_PERIOD_PREFIX = re.compile(
     r"^\s*(?:for|in)\s+(?:(?:calendar|fiscal)\s+year\s+|FY\s*)?"
-    r"(?:~\s*)?\(?\s*(?:~\s*)?(?:19|20|21)\d{2}(?:\s*\))?"
-    r"(?:\s*[-–—/]\s*(?:~\s*)?\(?\s*(?:~\s*)?(?:19|20|21)\d{2})?(?:\s*\))?"
+    r"(?:~\s*)?(?:\(\s*)?(?:~\s*)?(?:19|20|21)\d{2}(?:\s*\))?"
+    r"(?:\s*[-–—/]\s*(?:~\s*)?(?:\(\s*)?(?:~\s*)?(?:19|20|21)\d{2})?(?:\s*\))?"
     r"(?![\d,.]|" + _NUMERIC_CONTINUATION + r"|\s*[kmb](?!\w))"
     r"(?=\s|[:=–—-]|$)[\s:=–—-]*", re.I)
 _TECHNICAL_VALUE_SUFFIX = re.compile(
