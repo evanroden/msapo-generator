@@ -317,14 +317,16 @@ import_ui.render_import(library.load_profile(profile.contract, profile.key), fie
     assert source.read_bytes() == original
 
 
-def test_explicit_mapping_does_not_replace_another_equal_byte_header_occurrence(tmp_path):
+@pytest.mark.parametrize("same_paragraph", [False, True])
+def test_explicit_mapping_does_not_replace_another_equal_byte_header_occurrence(tmp_path, same_paragraph):
     document = Document()
     document.add_paragraph(synthetic_profiles()[0].facilities[0].title)
     document.add_paragraph("November 2026")
     original_image = mark((80, 130, 170, 255))
     header = document.sections[0].header
     header.paragraphs[0].add_run().add_picture(BytesIO(original_image), width=Inches(2))
-    header.add_paragraph().add_run().add_picture(BytesIO(original_image), width=Inches(1))
+    second = header.paragraphs[0] if same_paragraph else header.add_paragraph()
+    second.add_run().add_picture(BytesIO(original_image), width=Inches(1))
     document.add_section()
     document.add_heading("Monthly Activity Summary", 1)
     document.add_paragraph("Synthetic inspection completed.")
@@ -332,7 +334,8 @@ def test_explicit_mapping_does_not_replace_another_equal_byte_header_occurrence(
     document.save(source)
     inspection = inspect_docx(source)
     items = tuple(item for item in inspection.items if item.kind == "image" and item.part.startswith("word/header"))
-    assert len(items) == 2 and items[0].position != items[1].position
+    assert len(items) == 2 and items[0].id != items[1].id
+    assert (items[0].position == items[1].position) == same_paragraph
     mapped = map_items(source, inspection, (ImportMapping(items[0].id, "brand_logo"),))
     assets = {}
     logo = replace_cover_picture(mapped.blocks[0], mark(), ".png", assets)
@@ -344,3 +347,82 @@ def test_explicit_mapping_does_not_replace_another_equal_byte_header_occurrence(
     assert len(result) == 2
     assert_mark_preserved(result[0])
     assert result[1] == original_image, "An independently mapped equal-byte header occurrence must survive"
+
+
+@pytest.mark.parametrize("master", [False, True])
+def test_header_mapping_updates_equivalent_branches_not_independent_duplicate(tmp_path, master):
+    from copy import deepcopy
+    from lxml import etree
+
+    document = Document()
+    document.add_paragraph(synthetic_profiles()[0].facilities[0].title)
+    document.add_paragraph("November 2026")
+    original_image = mark((80, 130, 170, 255))
+    paragraph = document.sections[0].header.paragraphs[0]
+    shape = paragraph.add_run().add_picture(BytesIO(original_image), width=Inches(2))
+    drawing = shape._inline.getparent()
+    run = drawing.getparent()
+    mc = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+    wrapper = etree.Element(mc + "AlternateContent")
+    run.replace(drawing, wrapper)
+    etree.SubElement(wrapper, mc + "Choice", Requires="w").append(drawing)
+    etree.SubElement(wrapper, mc + "Fallback").append(deepcopy(drawing))
+    paragraph.add_run().add_picture(BytesIO(original_image), width=Inches(1))
+    document.add_section()
+    document.add_heading("Monthly Activity Summary", 1)
+    document.add_paragraph("Synthetic inspection completed.")
+    source = tmp_path / "equivalent-header-occurrences.docx"
+    document.save(source)
+    original = source.read_bytes()
+    inspection = inspect_docx(source)
+    items = tuple(item for item in inspection.items if item.kind == "image"
+                  and item.part.startswith("word/header"))
+    assert len(items) == 2, "Choice and Fallback are one inspected logical image"
+    mapped = map_items(source, inspection, (ImportMapping(items[0].id, "brand_logo"),))
+    assets = {}
+    logo = replace_cover_picture(mapped.blocks[0], mark(), ".png", assets)
+    logo = approve_all_assets(replace(logo, references=mapped.blocks[0].references))
+    result = _header_images(build_native_docx(_draft(logo), source,
+                                             asset_loader=assets.__getitem__, master=master))
+    assert len(result) == (2 if master else 3)
+    assert_mark_preserved(result[0])
+    assert result[0] == result[1] != original_image
+    if not master:
+        assert result[2] == original_image
+    assert source.read_bytes() == original
+
+
+def test_repeated_image_occurrences_preserve_later_saved_source_ids(tmp_path, monkeypatch):
+    document = Document()
+    document.add_paragraph(synthetic_profiles()[0].facilities[0].title)
+    document.add_paragraph("November 2026")
+    first = mark((80, 130, 170, 255))
+    later = mark((140, 90, 50, 255))
+    header = document.sections[0].header
+    paragraph = header.paragraphs[0]
+    paragraph.add_run().add_picture(BytesIO(first), width=Inches(2))
+    paragraph.add_run().add_picture(BytesIO(first), width=Inches(1))
+    header.add_paragraph().add_run().add_picture(BytesIO(later), width=Inches(2))
+    source = tmp_path / "historical-image-ids.docx"
+    document.save(source)
+    inspection = inspect_docx(source)
+    images = tuple(item for item in inspection.items if item.kind == "image")
+    assert tuple(item.id for item in images) == (
+        "item-0003", "item-0003-occurrence-2", "item-0004")
+    # item-0004 was the later distinct mark before duplicate occurrences were
+    # exposed. The persisted reference must never silently switch to its sibling.
+    assets = {}
+    logo = approve_all_assets(replace_cover_picture(ResolvedBlock("brand_logo", "Omit"), mark(), ".png", assets))
+    logo = replace(logo, references=(f"docx:{inspection.sha256}:item-0004",))
+    draft = replace(_draft(logo), blocks=(logo,))
+    raw = build_native_docx(draft, source, asset_loader=assets.__getitem__)
+    actual = _header_images(raw)
+    assert actual[:2] == (first, first)
+    assert actual[2] != later
+    assert_mark_preserved(actual[2])
+
+    # Safety budgets count actual occurrences, not just legacy primary IDs.
+    from app import monthly_report_import as importer
+    monkeypatch.setattr(importer, "MAX_ITEMS", 4)
+    with pytest.raises(ValueError, match="item/text/table review budget"):
+        inspect_docx(source)

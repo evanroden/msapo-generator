@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, replace
 
 from app.monthly_report_content_policy import contains_price, table_has_pricing
-from app.monthly_report_import import MappedImport, is_logo_artwork
+from app.monthly_report_import import MappedImport, is_logo_artwork, is_header_artwork
 from app.monthly_report_model import known_sections, layout_blocks
 from app.monthly_report_sections import (
     build_section_import,
@@ -197,7 +197,7 @@ def cover_photo_candidates(items):
     possible = tuple(item for item in items
                      if item.kind == "image" and item.part == "word/document.xml"
                      and item.section in ("", "cover")
-                     and not is_logo_artwork(item)
+                     and not is_logo_artwork(item) and not is_header_artwork(item)
                      and not item.suggested_slot.startswith("divider_")
                      and not small_artwork(item))
     if not possible:

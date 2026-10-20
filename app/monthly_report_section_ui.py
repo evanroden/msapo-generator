@@ -562,7 +562,11 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         if failed_hash == digest:
             st.warning("This starting report could not be analyzed. The previous draft remains unchanged.")
             retry = st.button("Retry report analysis", key=prefix + "_retry_analysis")
-        if digest not in (loaded_hash, committed_hash) and (digest != failed_hash or retry):
+        # A committed upload still mounted after saving must not reopen itself.
+        # Once another source is staged, however, reselecting that committed
+        # file is a new choice and must replace the superseded review.
+        unchanged_committed_upload = not staged and digest == committed_hash
+        if digest != loaded_hash and not unchanged_committed_upload and (digest != failed_hash or retry):
             try:
                 with st.spinner("Reading sections and cover pictures…"):
                     incoming = _stage(upload)

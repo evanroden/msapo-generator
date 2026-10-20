@@ -73,6 +73,7 @@ class ImportItem:
     # Semantic role from explicit caption/alternative text or the same exact
     # identified artwork elsewhere. "logo" keeps an unassigned mark out of
     # the photograph gallery without inventing a company/client role.
+    # "header_artwork" records placement without asserting that it is a logo.
     image_role: str = ""
 
     @property
@@ -276,7 +277,7 @@ def _suggest(kind: str, text: str, section: str, *, heading: bool = False, part:
     compact = re.sub(r"[^a-z]", "", text.casefold())
     if kind == "image":
         if part.startswith("word/header"):
-            return "brand_logo"
+            return ""  # Placement alone does not identify a company's mark.
         if heading and section not in ("", "unmatched"):
             return "divider_" + section
         for term, slot in (("afterhours", "after_hours_workflow"), ("businesshours", "business_hours_workflow"), ("contact", "contact_matrix")):
@@ -322,6 +323,11 @@ def is_logo_artwork(item):
                                      or item.suggested_slot in ("brand_logo", "client_logo"))
 
 
+def is_header_artwork(item):
+    """Unidentified header art (and exact cover copies) is not a photograph."""
+    return item.kind == "image" and item.image_role == "header_artwork"
+
+
 def _classify_logo_items(items):
     """Bind short caption labels and repeated exact artwork to their roles.
 
@@ -348,7 +354,7 @@ def _classify_logo_items(items):
                                  if items[index].kind == "image") for delta in (-1, 0, 1)}
         if adjacent[0]:
             for index in adjacent[0]:
-                roles[index].add(role)
+                roles[index].add(role if len(adjacent[0]) == 1 else "logo")
             continue
         if bool(adjacent[-1]) != bool(adjacent[1]):
             directions[scope].add(-1 if adjacent[-1] else 1)
@@ -374,7 +380,9 @@ def _classify_logo_items(items):
         if item.kind == "image" and item.section in ("", "cover"):
             choices.update(digest_roles[item.image_digest])
         concrete = choices.intersection(("brand_logo", "client_logo"))
-        role = next(iter(concrete)) if len(concrete) == 1 else "logo" if choices else ""
+        role = (next(iter(concrete)) if len(concrete) == 1 else
+                "logo" if choices - {"header_artwork"} else
+                "header_artwork" if choices else "")
         if role:
             item = replace(item, image_role=role,
                            suggested_slot=role if role in ("brand_logo", "client_logo") else "")
@@ -452,16 +460,21 @@ def inspect_docx(path: Path) -> DocxInspection:
     content_slot = ""
     note_owners = {}
     word_section, section, text_total, cell_total = 1, "", 0, 0
+    primary_item_count = 0
     toc_section = 0
     toc_headings = set()
 
-    def add(kind, part, position, **kwargs):
-        nonlocal text_total, cell_total
+    def add(kind, part, position, *, item_id=None, **kwargs):
+        nonlocal text_total, cell_total, primary_item_count
         text_total += len(kwargs.get("text", "")) + sum(len(c) for row in kwargs.get("rows", ()) for c in row)
         cell_total += sum(len(row) for row in kwargs.get("rows", ()))
         if len(items) >= MAX_ITEMS or text_total > MAX_TEXT or cell_total > MAX_CELLS:
             raise ImportError("Document exceeds the item/text/table review budget. Split it and retry; nothing was saved.")
-        items.append(ImportItem(f"item-{len(items) + 1:04d}", kind, part, position, word_section, section, **kwargs))
+        if item_id is None:
+            primary_item_count += 1
+            item_id = f"item-{primary_item_count:04d}"
+        items.append(ImportItem(item_id, kind, part, position, word_section, section, **kwargs))
+        return item_id
 
     try:
         with _package(path) as archive:
@@ -612,7 +625,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         note_owners[(kind, reference.get(W + "id", ""))] = (section, content_slot)
                             picture_table = element.tag == W + "tbl" and section == "activity" and content_slot == "improvements" and any(
                                 node.tag in (A + "blip", V + "imagedata") for node in element.iter())
-                            parents = {child: parent for parent in element.iter() for child in parent} if picture_table else {}
+                            parents = {child: parent for parent in element.iter() for child in parent}
                             from app.monthly_report_native_design import mint_divider_background
                             if (part == "word/document.xml" and _is_native_divider_background(element, text)
                                     and (alternatives_equivalent or not mint_divider_background(element, text))):
@@ -643,13 +656,10 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if part == "word/document.xml" and not section and len(titles) < 12:
                                     titles.extend(line for line in text.splitlines() if 3 < len(line) < 180 and line not in titles)
                             image_nodes = [e for e in element.iter() if e.tag in (A + "blip", V + "imagedata")]
-                            seen = set()
+                            image_occurrences = {}
                             for node in image_nodes:
                                 rid = node.get(R + "embed") or node.get(R + "id") or node.get(R + "link") or ""
                                 target, kind = relations.get(rid, ("", ""))
-                                if target in seen and target:
-                                    continue
-                                seen.add(target)
                                 safe = target in names and kind.endswith("/image") and target.startswith("word/media/")
                                 supported = safe and supported_image(target)
                                 caption = ""
@@ -659,20 +669,39 @@ def inspect_docx(path: Path) -> DocxInspection:
                                         ancestor = parents.get(ancestor)
                                     if ancestor is not None:
                                         caption = _text(ancestor)
-                                role = ""
-                                if len(image_nodes) == 1 and (section in ("", "cover") or part.startswith(("word/header", "word/footer"))):
-                                    labels = [text]
-                                    for descriptor in element.iter():
+                                role = "header_artwork" if part.startswith("word/header") else ""
+                                if section in ("", "cover") or part.startswith(("word/header", "word/footer")):
+                                    # A descriptor belongs to its drawing, not every picture
+                                    # sharing the paragraph. Only a single-picture paragraph
+                                    # can also use the paragraph's caption as identity proof.
+                                    labels = [text] if len(image_nodes) == 1 else []
+                                    drawing = node
+                                    while drawing in parents:
+                                        if drawing.tag.rsplit("}", 1)[-1] in ("inline", "anchor", "shape"):
+                                            break
+                                        drawing = parents[drawing]
+                                    if drawing is element and len(image_nodes) != 1:
+                                        drawing = node
+                                    for descriptor in drawing.iter():
                                         if descriptor.tag.rsplit("}", 1)[-1] in ("docPr", "cNvPr", "imagedata"):
                                             labels.extend(descriptor.get(attr, "") for attr in ("descr", "title"))
-                                    roles = {_logo_label_role(label) for label in labels} - {""}
-                                    concrete = roles.intersection(("brand_logo", "client_logo"))
-                                    role = next(iter(concrete)) if len(concrete) == 1 else "logo" if roles else ""
-                                add("image" if supported else "unsupported", part, position, text=caption,
+                                    label_roles = {_logo_label_role(label) for label in labels} - {""}
+                                    concrete = label_roles.intersection(("brand_logo", "client_logo"))
+                                    if label_roles:
+                                        role = next(iter(concrete)) if len(concrete) == 1 else "logo"
+                                # Previously repeated targets in one paragraph were
+                                # collapsed. Expose each occurrence without renumbering
+                                # later items referenced by already-saved source mappings.
+                                prior_id, occurrence = image_occurrences.get(target, ("", 0))
+                                item_id = f"{prior_id}-occurrence-{occurrence + 1}" if target and prior_id else None
+                                added_id = add("image" if supported else "unsupported", part, position, text=caption,
+                                    item_id=item_id,
                                     image_part=target if safe else "", suggested_slot=_suggest("image", text, section, heading=bool(detected), part=part) if supported else "",
                                     note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
                                     image_role=role if supported else "",
                                     **(metadata(target) if supported else {}))
+                                if target:
+                                    image_occurrences[target] = (prior_id or added_id, occurrence + 1)
                             graphics = [e for e in element.iter() if e.tag == A + "graphicData" and not e.get("uri", "").endswith("/picture")]
                             legacy_groups = element.findall(".//" + V + "group")
                             legacy_text = any(node.find(".//" + W + "txbxContent") is not None for node in element.iter() if node.tag in (V + "shape", V + "rect"))
@@ -796,6 +825,8 @@ def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapp
         block = grouped.get(mapping.slot, ResolvedBlock(mapping.slot, "Library"))
         reference = f"docx:{inspection.sha256}:{item.id}"
         if item.kind == "image":
+            if mapping.slot == "cover_photo" and is_header_artwork(item):
+                raise ImportError("Header artwork has no confirmed photograph role. Keep it out of the cover photo and confirm its identity first.")
             if mapping.slot == "cover_photo" and is_logo_artwork(item):
                 raise ImportError("This image is identified as a logo. Keep it in a branding slot and choose a photograph for the cover.")
             if spec.type not in ("image_page", "image_grid", "pdf_pages"):
