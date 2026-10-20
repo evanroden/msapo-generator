@@ -4,6 +4,7 @@ Every fixture is synthetic. Canary strings stand in for an author, a device, an
 editing tool or a comment that a retained design/source picture could carry.
 """
 from dataclasses import replace
+from functools import lru_cache
 from io import BytesIO
 import struct
 from zipfile import ZipFile
@@ -54,7 +55,10 @@ def _segment(marker: int, payload: bytes) -> bytes:
     return bytes((0xFF, marker)) + struct.pack(">H", len(payload) + 2) + payload
 
 
+@lru_cache(maxsize=1)
 def _icc() -> bytes:
+    # LittleCMS stamps each new profile with its creation time; build it once
+    # so comparisons never depend on which second the test reached.
     return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
 
 
