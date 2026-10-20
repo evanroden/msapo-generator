@@ -115,7 +115,7 @@ def test_logical_diagram_section_never_routes_to_unrelated_content(section, slot
 
 def test_word_section_shared_with_another_report_section_does_not_cross_route():
     inspection, section = scene("organization", other=True)
-    with pytest.raises(DiagramPreservationError, match="shares a Word page"):
+    with pytest.raises(DiagramPreservationError, match="shares a Word section"):
         diagram_source_sections(inspection, section)
 
 
@@ -153,6 +153,16 @@ def test_image_only_native_diagram_is_carried_without_inventing_visual_approval(
     assert chart.client_asset_reviews == ()
     assert chart.client_reviewed_fingerprint == ""
     assert mapped.assets[0][1] == raw
+
+
+def test_priced_native_art_names_the_specific_recovery_without_approving_it(monkeypatch):
+    import app.monthly_report_visual_preservation as visuals
+    inspection, section = scene("capital")
+    monkeypatch.setattr(visuals, "preserve_word_pages",
+                        lambda _path, numbers: (WordPage(1, raster(), 640, 480,
+                            "Replacement value $63,202; Equipment pump TP-1", False),))
+    with pytest.raises(DiagramPreservationError, match=r"page 1 \(source Word section 2\) contains pricing.*price-free replacement"):
+        preserve_section_diagrams(Path("not-opened.docx"), inspection, section)
 
 
 def test_renderer_failure_is_explicit_and_original_is_not_changed(monkeypatch, tmp_path):
