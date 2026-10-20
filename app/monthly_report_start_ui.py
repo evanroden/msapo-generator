@@ -9,6 +9,7 @@ from app import monthly_report_library as library
 from app.monthly_report_directory_ui import contract_choices
 from app.monthly_report_editor import _key, _signature
 from app.monthly_report_model import Facility, ReportProfile
+from app.monthly_report_ui_text import literal
 from app.monthly_report_section_ui import _site_options
 from app.monthly_report_start import membership_key, matching_profiles, report_key, design_seed, save_design_start, recommended_designs
 
@@ -69,9 +70,9 @@ def choose_contract(last_contract, field):
         else:
             identity, action = st.columns((6, 2), vertical_alignment="center")
         with identity:
-            st.subheader(selected_title, anchor=False)
+            st.subheader(literal(selected_title), anchor=False)
             if selected_title.casefold() != current.casefold():
-                st.caption("Account code: " + current)
+                st.caption("Account code: " + literal(current))
         if action.button("Change contract", key="report_change_contract_button", width="stretch"):
             st.session_state["report_change_contract"] = True
             st.rerun()
@@ -95,10 +96,10 @@ def choose_contract(last_contract, field):
                 else:
                     _contract_tile(title)
                 if title.casefold() != name.casefold():
-                    st.caption("Account code: " + name)
+                    st.caption("Account code: " + literal(name))
                 # Exact source code is the selection identity. The approved
                 # full client title is the primary visual label and searchable.
-                if st.button(title, key="report_contract_card_" + _signature(name), width="stretch"):
+                if st.button(literal(title), key="report_contract_card_" + _signature(name), width="stretch"):
                     st.session_state[current_key] = name
                     st.session_state["report_change_contract"] = False
                     st.rerun()
@@ -164,7 +165,7 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
             if completed:
                 st.session_state[key] = bool(seed and f.key in membership_key(seed.facilities))
             detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
-            if st.checkbox(f.title, key=key, help=detail, width="stretch"):
+            if st.checkbox(literal(f.title), key=key, help=literal(detail), width="stretch"):
                 selected.append(f)
     selection_notice = st.empty()
     with st.expander("More report details"):
@@ -189,13 +190,13 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
             return None, None
         amended = []
         for f in facilities:
-            aliases = st.text_input("Other names for " + f.title, key=field(prefix + "_aliases_" + f.key, "; ".join(f.aliases)))
+            aliases = st.text_input("Other names for " + literal(f.title), key=field(prefix + "_aliases_" + f.key, "; ".join(f.aliases)))
             amended.append(replace(f, aliases=tuple(v.strip() for v in aliases.split(";") if v.strip())))
         facilities = tuple(amended)
         matches = matching_profiles(profiles, facilities)
         existing = next((p for p in matches if p.key == remembered), matches[0] if matches else None)
         if len(matches) > 1:
-            selected_key = st.radio("Saved designs for these same sites", [p.key for p in matches], format_func=lambda key: next(p.title for p in matches if p.key == key), key=prefix + "_matches_" + _signature(membership_key(facilities)))
+            selected_key = st.radio("Saved designs for these same sites", [p.key for p in matches], format_func=lambda key: literal(next(p.title for p in matches if p.key == key)), key=prefix + "_matches_" + _signature(membership_key(facilities)))
             existing = next(p for p in matches if p.key == selected_key)
         identity = _signature(membership_key(facilities))
         title = (existing.title if existing else facilities[0].title) if len(facilities) == 1 else " / ".join(f.title for f in facilities)
@@ -242,10 +243,10 @@ def starting_choice(profile, profiles, period, prepared, field):
     if selected.startswith("Use another"):
         st.caption("Suggested order: shared sites first, then the same report scope, then the most recent saved month. This copies the design; it does not add sites to your report.")
         if len(available) == 1:
-            st.write("Starting design: " + available[0].title)
+            st.write("Starting design: " + literal(available[0].title))
             source = library.load_profile(profile.contract, available[0].key)
         else:
-            key = st.radio("Report design to reuse", [p.key for p in available], format_func=lambda k: next(p.title for p in available if p.key == k), key="report_start_from_" + profile.key)
+            key = st.radio("Report design to reuse", [p.key for p in available], format_func=lambda k: literal(next(p.title for p in available if p.key == k)), key="report_start_from_" + profile.key)
             source = library.load_profile(profile.contract, key)
         st.caption("Reuses the section layout, table headings and saved contract logos. You’ll supply this site's org chart, contacts, photos and current work.")
     else:
@@ -266,6 +267,6 @@ def starting_choice(profile, profiles, period, prepared, field):
             st.session_state["report_resume_import"] = (profile.contract, profile.key, period.key)
             st.rerun()
         except (ValueError, OSError) as exc:
-            st.error(str(exc))
+            st.error(literal(exc))
         finally:
             st.session_state.pop(pending_key, None)

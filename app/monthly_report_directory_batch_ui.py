@@ -6,6 +6,7 @@ import streamlit as st
 
 from app import monthly_report_directory_batch as batch
 from app.monthly_report_editor import _signature
+from app.monthly_report_ui_text import literal
 
 
 def _summary_rows(plan):
@@ -83,11 +84,11 @@ def _show_result(result):
     if result.saved:
         quantity = f"{len(result.saved)} contract" + ("s" if len(result.saved) != 1 else "")
         st.success(f"Saved contacts for {quantity}. Existing reports and their selected sites were not changed.")
-        st.caption("Saved: " + "; ".join(result.saved))
+        st.caption("Saved: " + literal("; ".join(result.saved)))
     if result.unchanged:
         quantity = f"{len(result.unchanged)} contract" + ("s already match" if len(result.unchanged) != 1 else " already matches")
         st.info(f"{quantity} the saved directory; no new revisions were created for these records.")
-        st.caption("Already current: " + "; ".join(result.unchanged))
+        st.caption("Already current: " + literal("; ".join(result.unchanged)))
     if result.blocked:
         st.warning("These contracts were not saved because they need review.")
         st.dataframe([{"Contract": contract, "Reason": reason} for contract, reason in result.blocked],
@@ -126,7 +127,7 @@ def render_batch(inspection, raw, actor, prefix):
     st.write("Save the usable contract and site contacts together. Missing values are not invented; ambiguous records below are left out.")
     st.caption("The preview includes existing records retained from the saved directory. This import does not change report membership or replace contacts inside existing reports.")
     for notice in plan.notices:
-        st.caption(notice)
+        st.caption(literal(notice))
     if plan.entries:
         st.dataframe(_summary_rows(plan), hide_index=True, width="stretch")
     else:
@@ -165,7 +166,7 @@ def render_batch(inspection, raw, actor, prefix):
         try:
             result = batch.save_workbook_plan(plan, raw, actor=actor.strip(), confirmed=confirmed)
         except (ValueError, OSError) as exc:
-            st.error(str(exc))
+            st.error(literal(exc))
             st.caption("Refresh the preview and review the current directory before trying again.")
             return
         st.session_state[result_key] = (signature, result)
