@@ -292,6 +292,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         if ((not facility or facility not in names) and not foreign_included and not unknown_included
                 and not (source.id in included_sources and included_scope_valid(draft, source))):
             checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id))
+    from app.monthly_report_layout_checks import layout_checks
+    checks.extend(layout_checks(draft))
     # Same issue can be reached through the cover and a repeated section
     # binding. Preserve distinct fields/messages but show each exact concern once.
     return tuple(dict.fromkeys(checks))
