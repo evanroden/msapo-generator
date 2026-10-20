@@ -146,9 +146,17 @@ def org_groups(nodes):
     return tuple(groups)
 
 
-def org_page(nodes, index=0):
-    groups = org_groups(nodes)
-    group = groups[index]
+_ORG_TEXT_LIMIT = "This chart has too much text for readable pages. Shorten roles/team labels."
+_CAPTION_LINES = 4
+
+
+def _measure():
+    """A drawing context for text measurement only; page size does not matter."""
+    return ImageDraw.Draw(Image.new("RGB", (1, 1), "white"))
+
+
+def _org_layout(group, draw):
+    """Card geometry for one chart page, shared by rendering and preflight."""
     children = {n.key: [c for c in group if c.reports_to == n.key] for n in group}
     widths = {}
 
@@ -167,18 +175,7 @@ def org_page(nodes, index=0):
             left += widths[child.key]
 
     place(root, 0, 0)
-    page = Image.new("RGB", PAGE, "white")
-    draw = ImageDraw.Draw(page)
-    draw.text((40, 25), "Organization & reporting lines", font=font(36, True), fill=INK)
-    draw.rectangle((40, 88, PAGE[0] - 40, 95), fill=LIME)
-    draw.text(
-        (40, PAGE[1] - 48),
-        f"Team chart · {index + 1} of {len(groups)}",
-        font=font(22),
-        fill=MUTED,
-    )
     width = min(520, (PAGE[0] - 100) / total - 28)
-    boxes = {}
     # Every field wraps in full. Card height uses the actual text, no truncation.
     texts = {}
     heights = {}
@@ -197,10 +194,42 @@ def org_page(nodes, index=0):
     for level in sorted(heights):
         tops[level] = y
         y += heights[level] + 80
-    if y > PAGE[1] - 40:
-        raise ValueError(
-            "This chart has too much text for readable pages. Shorten roles/team labels."
-        )
+    return total, positions, width, texts, heights, tops, y <= PAGE[1] - 40
+
+
+def org_chart_problem(nodes):
+    """The renderer's readable-page limit, checked before Generate is offered.
+
+    Identity, count and reporting-line errors stay with ``validate_org`` and
+    return None here so the same problem is not reported twice.
+    """
+    try:
+        groups = org_groups(nodes)
+    except ValueError:
+        return None
+    draw = _measure()
+    if any(not _org_layout(group, draw)[-1] for group in groups):
+        return _ORG_TEXT_LIMIT
+    return None
+
+
+def org_page(nodes, index=0):
+    groups = org_groups(nodes)
+    group = groups[index]
+    page = Image.new("RGB", PAGE, "white")
+    draw = ImageDraw.Draw(page)
+    draw.text((40, 25), "Organization & reporting lines", font=font(36, True), fill=INK)
+    draw.rectangle((40, 88, PAGE[0] - 40, 95), fill=LIME)
+    draw.text(
+        (40, PAGE[1] - 48),
+        f"Team chart · {index + 1} of {len(groups)}",
+        font=font(22),
+        fill=MUTED,
+    )
+    total, positions, width, texts, heights, tops, fits = _org_layout(group, draw)
+    if not fits:
+        raise ValueError(_ORG_TEXT_LIMIT)
+    boxes = {}
     for node in group:
         unit, level = positions[node.key]
         center = 50 + unit * (PAGE[0] - 100) / total
@@ -245,15 +274,34 @@ def photo_count(block):
     ) // block.photos_per_page
 
 
+def _photo_grid(per_page):
+    columns = 1 if per_page <= 2 else 2
+    rows = (per_page + columns - 1) // columns
+    return columns, (PAGE[0] - 40) // columns, (PAGE[1] - 40) // rows
+
+
+def photo_caption_problems(block):
+    """Indexes of included photo captions that exceed the page's caption lines.
+
+    Uses the same grid and wrapping as ``photo_page`` so preflight can name the
+    caption before Generate; returns () when the layout itself is invalid.
+    """
+    if type(block.photos_per_page) is not int or not 1 <= block.photos_per_page <= 6:
+        return ()
+    _, cell_w, _ = _photo_grid(block.photos_per_page)
+    draw, face = _measure(), font(24)
+    count = min(len(block.asset_hashes), len(block.asset_captions))
+    return tuple(index for index in range(count)
+                 if len(wrapped(block.asset_captions[index], face, cell_w - 44, draw)) > _CAPTION_LINES)
+
+
 def photo_page(block, loader, index=0):
     count = photo_count(block)
     if not 0 <= index < count:
         raise ValueError("That photo page does not exist.")
     page = Image.new("RGB", PAGE, "white")
     draw = ImageDraw.Draw(page)
-    columns = 1 if block.photos_per_page <= 2 else 2
-    rows = (block.photos_per_page + columns - 1) // columns
-    cell_w, cell_h = (PAGE[0] - 40) // columns, (PAGE[1] - 40) // rows
+    columns, cell_w, cell_h = _photo_grid(block.photos_per_page)
     start = index * block.photos_per_page
     for offset, ref in enumerate(
         block.asset_hashes[start : start + block.photos_per_page]
@@ -265,7 +313,7 @@ def photo_page(block, loader, index=0):
             else ""
         )
         lines = wrapped(caption, font(24), cell_w - 44, draw)
-        if len(lines) > 4:
+        if len(lines) > _CAPTION_LINES:
             raise ValueError(
                 "Shorten a photo caption or choose fewer photos per page (maximum four caption lines)."
             )
