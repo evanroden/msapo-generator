@@ -18,6 +18,8 @@ maintained: manually, pinned by tests/test_docs_index.py
 
 [Adaptive workspace architecture and checks](ADAPTIVE_WORKSPACES_2026-10-13.md) — shared geometry resolver, stable keyed sections, bounded preview sizing, synthetic browser harness, and rollback scope.
 
+[RFI entry checkpoint](WIP_RFI_ENTRY.md) — existing draft request cards, preserved imported schemas, and the unfinished native focus/migration/output acceptance. This is not a merge-ready or live acceptance claim.
+
 [Dated report item resolution](MONTHLY_PERIOD_ITEM_RESOLUTION_2026-10-13.md) — exact manual-item historical labeling, report-only exclusion and explicit restore, preserving source and required safety gates.
 
 [Stage-one Monthly Report closure ledger](MONTHLY_REPORT_STAGE1_CLOSURE_2026-10-10.md) — statuses for F01–F16, #101 P1–P12, U01–U06 and explicit mapping of all 113 proposed acceptance checks. This tracks exact CI separately from deployed build, authentic exports and owner acceptance.

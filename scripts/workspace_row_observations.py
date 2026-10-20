@@ -5,7 +5,7 @@ import json
 
 from scripts.workspace_history_observations import namespace
 
-ROW_KEYS = {'proposals', 'service_calls', 'contact_matrix', 'subcontractor_matrix'}
+ROW_KEYS = {'proposals', 'service_calls', 'contact_matrix', 'subcontractor_matrix', 'rfi_matrix'}
 
 
 def row_state(draft):

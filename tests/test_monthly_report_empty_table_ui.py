@@ -11,7 +11,7 @@ from app.monthly_report_checks import preflight
 from app.monthly_report_docx import assemble_docx
 from app.monthly_report_model import ReportTable, ResolvedBlock
 from app.monthly_report_table_entry_ui import EMPTY_TABLES
-from test_monthly_report_rfi_ui import SCRIPT, edit_grid
+from test_monthly_report_rfi_ui import SCRIPT, edit_grid, field, row_fields, button
 
 
 def workspace(key):
@@ -37,7 +37,8 @@ def test_open_request_removes_the_empty_sentence_and_none_cell_placeholders():
     open_entry(app, 'rfi_matrix')
     assert not app.exception and app.session_state['draft'] == before
     assert not any(item.value in {'No requests added.', 'No information requests added.'} for item in app.caption)
-    assert set(app.session_state[grid(app, 'rfi_matrix') + '_data'][0].values()) == {''}
+    assert {item.label: item.value for item in row_fields(app)} == {
+        'Facility':'', 'Requested item':'', 'Status':''}
 
 
 @pytest.mark.parametrize('key', tuple(EMPTY_TABLES))
@@ -47,14 +48,21 @@ def test_fresh_entry_opens_blank_native_cells_without_stale_empty_copy_or_data(k
     assert not app.exception and not app.dataframe
     assert any(item.value == EMPTY_TABLES[key][0] for item in app.caption)
     open_entry(app, key)
-    assert not app.exception and len(app.dataframe) == 1
-    identity = grid(app, key)
+    assert not app.exception
+    if key == 'rfi_matrix':
+        assert not app.dataframe and row_fields(app)
+        identity = field(app, 'Requested item').proto.id
+        assert all(item.value == '' for item in row_fields(app))
+        assert button(app, 'Add request').disabled
+    else:
+        assert len(app.dataframe) == 1
+        identity = grid(app, key)
+        assert set(app.session_state[identity + '_data'][0].values()) == {''}
+        assert not any(button.label == EMPTY_TABLES[key][1] for button in app.button)
     assert app.session_state['draft'] == original
-    assert set(app.session_state[identity + '_data'][0].values()) == {''}
     assert not any(item.value == EMPTY_TABLES[key][0] for item in app.caption)
-    assert not any(button.label == EMPTY_TABLES[key][1] for button in app.button)
     app.run()
-    assert grid(app, key) == identity
+    assert (field(app, 'Requested item').proto.id if key == 'rfi_matrix' else grid(app, key)) == identity
     assert app.session_state['draft'] == original
 
 
@@ -63,14 +71,24 @@ def test_blank_and_removed_rows_do_not_enter_durable_data_or_actual_word_output(
     monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path))
     app = workspace(key)
     open_entry(app, key)
-    identity = grid(app, key)
-    columns = tuple(app.session_state[identity + '_data'][0])
-    edit_grid(app, identity, edited={0: {columns[1]: '   '}})
-    assert not app.exception and not current(app, key).rows
-    edit_grid(app, identity, edited={0: {columns[1]: 'Synthetic item to remove.'}})
-    assert current(app, key).rows[0][1] == 'Synthetic item to remove.'
-    assert grid(app, key) == identity
-    edit_grid(app, identity, removed=[0])
+    if key == 'rfi_matrix':
+        identity = field(app, 'Requested item').proto.id
+        field(app, 'Requested item').set_value('   ').run()
+        assert not app.exception and not current(app, key).rows
+        field(app, 'Requested item').set_value('Synthetic item to remove.').run()
+        assert field(app, 'Requested item').proto.id == identity
+        assert current(app, key).rows[0][1] == 'Synthetic item to remove.'
+        button(app, 'Close editing').click().run()
+        button(app, 'Remove request').click().run()
+    else:
+        identity = grid(app, key)
+        columns = tuple(app.session_state[identity + '_data'][0])
+        edit_grid(app, identity, edited={0: {columns[1]: '   '}})
+        assert not app.exception and not current(app, key).rows
+        edit_grid(app, identity, edited={0: {columns[1]: 'Synthetic item to remove.'}})
+        assert current(app, key).rows[0][1] == 'Synthetic item to remove.'
+        assert grid(app, key) == identity
+        edit_grid(app, identity, removed=[0])
     assert not app.exception and not current(app, key).rows
     draft = app.session_state['draft']
     kept = active.save('e' * 32, draft, expected_revision=0, base_snapshot_revision=0)
