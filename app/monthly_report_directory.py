@@ -12,6 +12,7 @@ from collections import Counter, OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from io import BytesIO
 import hashlib
 import math
@@ -386,14 +387,23 @@ def _cell_formats(archive, names):
         _stream_xml(archive, "xl/styles.xml", _XmlBudget(), style)
     except (ValueError, KeyError, ET.ParseError, DefusedXmlException):
         return ()
-    return tuple(custom.get(number) or _BUILTIN_FORMATS.get(int(number), "") if number.isdigit() else ""
+    return tuple(custom.get(number) or _BUILTIN_FORMATS.get(int(number), "")
+                 if number.isdigit() and len(number) <= 10 else ""
                  for number in styles)
 
 
 def _format_sections(code):
     """Positive; negative; zero; text sections, splitting only outside quoted text."""
-    sections, current, quoted = [], [], False
+    sections, current, quoted, escaped = [], [], False, False
     for char in code:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char in "\\_*" and not quoted:
+            current.append(char)
+            escaped = True
+            continue
         quoted ^= char == '"'
         if char == ";" and not quoted:
             sections.append("".join(current))
@@ -422,10 +432,15 @@ def _format_parts(section):
             index += 2
         elif char == "[":
             end = section.find("]", index)
-            # Colours and currency/locale tags only decorate; conditions and
-            # elapsed time change the meaning, so those keep the stored value.
-            if end < 0 or not re.fullmatch(r"(?i)red|black|blue|green|white|yellow|magenta|cyan|color\s*\d+|\$[^\]]*",
-                                           section[index + 1:end]):
+            # Currency tags carry visible text; colours and locale codes do
+            # not. Conditions and elapsed time keep the stored value.
+            if end < 0:
+                return None
+            tag = section[index + 1:end]
+            currency = re.fullmatch(r"\$([^-]*)(?:-[0-9a-fA-F]+)?", tag)
+            if currency:
+                parts.append(("text", currency[1]))
+            elif not re.fullmatch(r"(?i)red|black|blue|green|white|yellow|magenta|cyan|color\s*\d+", tag):
                 return None
             index = end + 1
         elif section[index:index + 7].casefold() == "general":
@@ -440,7 +455,7 @@ def _format_parts(section):
         elif char.casefold() in "ymdhs":
             parts.append(("date", char.casefold()))
             index += 1
-        elif char.casefold() in "e@":
+        elif char.casefold() in "e@" or char in "\\_*":
             return None  # scientific and text formats
         else:
             parts.append(("text", char))
@@ -474,10 +489,13 @@ def formatted_value(cell, *, date1904=False):
     kinds = {kind for kind, _ in parts}
     letters = {value for kind, value in parts if kind == "date"}
     if "date" in kinds:
-        if number < 0 or number > 2958465:
+        if "number" in kinds or number < 0 or number > 2958465:
             return cell.value
         base = datetime(1904, 1, 1) if date1904 else datetime(1899, 12, 31 if number < 60 else 30)
-        moment = base + timedelta(seconds=round(number * 86400))
+        try:
+            moment = base + timedelta(seconds=round(number * 86400))
+        except OverflowError:
+            return cell.value
         has_date = bool(letters & {"y", "d"}) or ("m" in letters and not letters & {"h", "s", "p"})
         has_time = bool(letters & {"h", "s", "p"})
         time = moment.strftime("%H:%M:%S" if "s" in letters else "%H:%M")
@@ -490,13 +508,31 @@ def formatted_value(cell, *, date1904=False):
             return cell.value
         shown = cell.value
     elif pattern:
-        if pattern.rstrip("%").endswith(",") or ",." in pattern:
-            return cell.value  # thousands scaling
+        first = next(i for i, (kind, _) in enumerate(parts) if kind == "number")
+        last = max(i for i, (kind, _) in enumerate(parts) if kind == "number")
+        if (any(kind != "number" for kind, _ in parts[first:last + 1])
+                or not re.fullmatch(r"(?:#*0+|#+|#,##0)(?:\.0*#*)?%?", pattern)):
+            return cell.value  # Interior literals, scaling, and other unsupported patterns.
         percent = "%" in pattern
         decimals = pattern.split(".", 1)[1].replace("%", "").replace(",", "") if "." in pattern else ""
         required = decimals.count("0")
-        value = number * 100 if percent else number
-        shown = f"{value:{',' if ',' in pattern else ''}.{len(decimals)}f}"
+        # Excel display rounding is decimal half-up, not Python float's
+        # ties-to-even rounding. Keep the stored decimal through scaling.
+        try:
+            with localcontext() as context:
+                context.prec = 400  # Bound work while retaining normal workbook precision.
+                value = Decimal(cell.value) * (100 if percent else 1)
+                value = value.quantize(Decimal(1).scaleb(-len(decimals)), rounding=ROUND_HALF_UP)
+                if value == 0:
+                    value = abs(value)
+                shown = f"{value:{',' if ',' in pattern else ''}.{len(decimals)}f}"
+        except InvalidOperation:
+            return cell.value
+        if "," not in pattern:
+            whole, point, fraction = shown.partition(".")
+            integer = pattern.split(".", 1)[0].rstrip("%")
+            whole = ("-" if whole.startswith("-") else "") + whole.lstrip("-").zfill(integer.count("0"))
+            shown = whole + point + fraction
         if len(decimals) > required:  # "#" decimals are optional digits
             whole, _, fraction = shown.partition(".")
             fraction = fraction.rstrip("0").ljust(required, "0")
@@ -508,7 +544,8 @@ def formatted_value(cell, *, date1904=False):
     last = max(i for i, (kind, _) in enumerate(parts) if kind in ("number", "general"))
     prefix = "".join(value for kind, value in parts[:first] if kind == "text")
     suffix = "".join(value for kind, value in parts[last + 1:] if kind == "text")
-    return (prefix + shown + suffix).strip()
+    sign, shown = ("-", shown[1:]) if shown.startswith("-") else ("", shown)
+    return (sign + prefix + shown + suffix).strip()
 
 
 def inspect_workbook(raw: bytes, *, number_formats=False) -> DirectoryWorkbook:
@@ -606,7 +643,8 @@ def inspect_workbook(raw: bytes, *, number_formats=False) -> DirectoryWorkbook:
                             if len(value) > 10000 or total_text > MAX_TEXT:
                                 raise ValueError("Workbook cell text exceeds the review budget.")
                             formulas += int(is_formula)
-                            number_format = (formats[int(style)] if kind in ("", "n") and style.isdigit()
+                            number_format = (formats[int(style)] if formats and kind in ("", "n")
+                                             and style.isdigit() and len(style) <= 5
                                              and int(style) < len(formats) else "")
                             if value or is_formula:
                                 cells.append(DirectoryCell(*coordinate, value, is_formula, number_format))
@@ -715,7 +753,7 @@ def sheet_findings(workbook, selected):
 
 def _phone_identity(value):
     """A phone number's digits and extension; text that is not a number keeps its spelling."""
-    number, extension = re.fullmatch(r"(.*?)(?:\s*(?:ext\.?|extension|x)\s*(\d+))?", value.strip(), re.I).groups()
+    number, extension = re.fullmatch(r"(.*?)(?:\s*(?:ext\.?|extension|x)\s*(\d+))?", value.strip(), re.I | re.S).groups()
     digits = re.sub(r"\D", "", number)
     if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]

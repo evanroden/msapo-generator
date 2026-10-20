@@ -258,7 +258,7 @@ def _passive_markup(root):
 
 
 DRAWING = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-_STYLE_REFERENCES = {'pStyle', 'rStyle', 'tblStyle', 'numStyleLink', 'styleLink'}
+_STYLE_REFERENCES = {'pStyle', 'rStyle', 'tblStyle', 'numStyleLink', 'styleLink', 'defaultTableStyle'}
 
 
 def _neutral_design_names(output):
@@ -291,6 +291,12 @@ def _neutral_design_names(output):
                                          no_network=True, load_dtd=False):
                 used.add(node.get('{' + W + '}val'))
     root = _xml(output['word/styles.xml'])
+    # Document-wide defaults live alongside individual style definitions.
+    # Their references are roots, just like references from document/settings.
+    for node in root:
+        if isinstance(node.tag, str) and _local(node) != 'style':
+            used.update(child.get('{' + W + '}val') for child in node.iter()
+                        if child.tag in tags)
     styles = {node.get('{' + W + '}styleId'): node for node in root if isinstance(node.tag, str) and _local(node) == 'style'}
     pending = [identity for identity, node in styles.items()
                if identity in used or node.get('{' + W + '}customStyle') not in {'1', 'true', 'on'}

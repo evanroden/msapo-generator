@@ -285,6 +285,10 @@ def review_message(check, draft):
         location = "Equipment Performance Issues" if key == "issues" else "Pending & Declined Proposals"
     if check.code == "required":
         return f"Add {label.lower()} in {location}."
+    if check.code == "ai_date":
+        return (check.message + f" Open Help write this summary in {location} above "
+                "to read the cited page again. Accept the corrected facts with Use these facts "
+                "before updating and reviewing the paragraph.")
     if check.code in {"review", "ai_evidence", "ai_number"}:
         return f"Check the wording and linked evidence for {label.lower()} above, then confirm its review." + (" Correct any unsupported numbers." if check.code == "ai_number" else "")
     if check.code == "client_pages":

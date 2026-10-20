@@ -54,9 +54,9 @@ def _styles(*styles):
     return f'<w:styles xmlns:w="{W}">{body}</w:styles>'.encode()
 
 
-def _style(identity, *children, custom=True, default=False):
+def _style(identity, *children, custom=True, default=False, kind="paragraph"):
     flags = (' w:customStyle="1"' if custom else "") + (' w:default="1"' if default else "")
-    return f'<w:style w:type="paragraph" w:styleId="{identity}"{flags}><w:name w:val="{identity} name"/>{"".join(children)}</w:style>'
+    return f'<w:style w:type="{kind}" w:styleId="{identity}"{flags}><w:name w:val="{identity} name"/>{"".join(children)}</w:style>'
 
 
 def test_only_unreferenced_custom_styles_are_removed():
@@ -81,3 +81,30 @@ def test_unchanged_parts_keep_their_bytes():
     output = {"word/styles.xml": styles, "word/theme/theme1.xml": theme}
     _neutral_design_names(output)
     assert output == {"word/styles.xml": styles, "word/theme/theme1.xml": theme}
+
+
+def test_document_defaults_keep_referenced_custom_styles_and_their_dependencies():
+    """Implicit document defaults are live references, even without body uses."""
+    defaults = ('<w:docDefaults><w:rPrDefault><w:rPr>'
+                '<w:rStyle w:val="DefaultRun"/>'
+                '</w:rPr></w:rPrDefault></w:docDefaults>')
+    output = {
+        "word/document.xml": f'<w:document xmlns:w="{W}"><w:body/></w:document>'.encode(),
+        "word/settings.xml": (f'<w:settings xmlns:w="{W}">'
+                              '<w:defaultTableStyle w:val="DefaultTable"/></w:settings>').encode(),
+        "word/styles.xml": _styles(
+            defaults,
+            _style("DefaultRun", '<w:basedOn w:val="RunBase"/>', kind="character"),
+            _style("RunBase", kind="character"),
+            _style("DefaultTable", '<w:basedOn w:val="TableBase"/>', kind="table"),
+            _style("TableBase", kind="table"),
+            _style("Unused")),
+    }
+    original_settings = output["word/settings.xml"]
+    _neutral_design_names(output)
+    root = etree.fromstring(output["word/styles.xml"])
+    kept = {node.get(f"{{{W}}}styleId") for node in root.iter(f"{{{W}}}style")}
+    assert kept == {"DefaultRun", "RunBase", "DefaultTable", "TableBase"}
+    assert etree.tostring(root.find(f"{{{W}}}docDefaults")) == etree.tostring(
+        etree.fromstring(f'<w:styles xmlns:w="{W}">{defaults}</w:styles>'.encode())[0])
+    assert output["word/settings.xml"] == original_settings
