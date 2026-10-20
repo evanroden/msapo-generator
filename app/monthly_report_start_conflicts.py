@@ -73,8 +73,13 @@ def image_conflicts(existing: ReportDraft | None, incoming: ReportDraft,
         present = old.get(block.key)
         if (block.key not in LABELS or not present or not _picture_only(present)
                 or not _picture_only(block) or present.asset_hashes == block.asset_hashes
-                or specs.get(block.key) != new_specs.get(block.key)
-                or specs.get(block.key) is None or specs[block.key].type != "image_page"):
+                or specs.get(block.key) is None or new_specs.get(block.key) is None
+                or specs[block.key].type != "image_page"
+                # Guided working copies make content optional. That display
+                # flag is not a different image destination; every other spec
+                # field and the complete original draft binding still matter.
+                or replace(specs[block.key], required=False)
+                   != replace(new_specs[block.key], required=False)):
             continue
         # Reuse the actual three-way policy: unchanged consumed source content
         # must not prompt again merely because a human edited the report later.
