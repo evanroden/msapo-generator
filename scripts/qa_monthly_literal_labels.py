@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -44,16 +45,27 @@ def exercise(browser, name):
             expect(case.locator("h3")).to_be_visible()
             # U+2060 is a presentation-only anti-autolink delimiter. Raw input
             # values and the selected identity below must contain no delimiter.
-            assert case.locator("h3").inner_text().replace("\u2060", "") == raw
-            assert case.locator("[data-testid=stCaptionContainer]").inner_text().replace("\u2060", "") == raw
-            expect(case.locator("a, strong, em, del, code, img")).to_have_count(0)
+            # Compare DOM text, not browser-specific innerText block/newline
+            # layout. Native expect assertions also wait for lazy hydration.
+            visible_text = re.compile("^" + "\u2060?".join(re.escape(c) for c in raw) + "$")
+            expect(case.locator("h3")).to_have_text(visible_text)
+            expect(case.locator("[data-testid=stCaptionContainer]")).to_have_text(visible_text)
             expect(case.get_by_role("textbox")).to_have_value(raw)
+            expect(case.get_by_role("radio")).to_be_visible()
+            expect(case.locator("a, strong, em, del, code, img")).to_have_count(0)
         page.locator(".st-key-literal_case_0").get_by_role("button", exact=False).press("Enter")
         expect(page.get_by_text("Selected value: " + VALUES[0], exact=True)).to_be_visible()
         page.screenshot(path=str(OUT / f"{name}.png"), full_page=True)
         return {"engine": name, "cases": len(VALUES), "unwanted_links_or_formatting": 0,
                 "raw_input_and_selected_identity_preserved": True}
     except Exception:
+        text_state = page.evaluate("""() => Array.from(document.querySelectorAll(
+            '[class*="st-key-literal_case_"]')).map(node => ({
+            heading: node.querySelector('h3')?.textContent,
+            caption: node.querySelector('[data-testid="stCaptionContainer"]')?.textContent,
+            input: node.querySelector('input[type="text"]')?.value,
+            links: node.querySelectorAll('a').length}))""")
+        (OUT / f"{name}-failure-text.json").write_text(json.dumps(text_state, indent=2))
         page.screenshot(path=str(OUT / f"{name}-failure.png"), full_page=True)
         raise
     finally:
