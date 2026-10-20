@@ -59,6 +59,8 @@ def _expected_overlay(static_dir=None):
     selected = compat.selected_frontend(root)
     if not selected["queued_scroll"]:
         raise RuntimeError("The pinned frontend lacks queued-scroll overlay compatibility.")
+    if not selected["latest_scroll_close"]:
+        raise RuntimeError("The pinned frontend lacks committed scroll-close compatibility.")
     raw = (root / "static/js" / selected["overlay_bundle"]).read_bytes()
     if sha256(raw).hexdigest() != selected["overlay_sha256"]:
         raise RuntimeError("Pinned overlay frontend changed after validation.")
