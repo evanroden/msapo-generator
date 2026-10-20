@@ -365,4 +365,7 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
                 st.caption(_status_label(item.status))
                 if st.button("Include again", key=prefix + "_issue_restore_" + item.key):
                     draft = issue_visibility(draft, item.key, True)
+                    # Cards were drawn before this restoration. Use the normal
+                    # post-commit refresh after the complete recovery attempt.
+                    st.session_state[prefix + "_period_editor_refresh"] = True
     return draft if defer_actions else apply_issue_action(draft, prefix)
