@@ -542,12 +542,31 @@ def sheet_findings(workbook, selected):
     return tuple(findings)
 
 
+def _phone_identity(value):
+    """A phone number's digits and extension; text that is not a number keeps its spelling."""
+    number, extension = re.fullmatch(r"(.*?)(?:\s*(?:ext\.?|extension|x)\s*(\d+))?", value.strip(), re.I).groups()
+    digits = re.sub(r"\D", "", number)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) < 7:
+        return " ".join(value.casefold().split())
+    return digits + ("x" + extension if extension else "")
+
+
+def same_contact_value(field, value, other):
+    """Contact fields compare by case and spacing; a phone number also ignores its punctuation."""
+    if field == "phone":
+        return _phone_identity(value) == _phone_identity(other)
+    return " ".join(value.casefold().split()) == " ".join(other.casefold().split())
+
+
 def proposed_contacts(existing, incoming):
     """Blank updates cannot erase saved details or attach an old phone to a new person.
 
-    Identical values keep the saved record (and its provenance). When a role
-    repeats, each person is matched by name, so re-importing the same people
-    never duplicates them; an unmatched person is added for review.
+    Identical values keep the saved record (and its provenance); a reformatted
+    phone number is the same value. When a role repeats, each person is matched
+    by name, so re-importing the same people never duplicates them; an
+    unmatched person is added for review.
     """
     def same(value, other):
         return " ".join(value.casefold().split()) == " ".join(other.casefold().split())
@@ -555,7 +574,7 @@ def proposed_contacts(existing, incoming):
     result = list(existing)
     saved = len(result)
     for contact in incoming:
-        if any(same(c.role, contact.role) and all(same(getattr(c, f), getattr(contact, f))
+        if any(same(c.role, contact.role) and all(same_contact_value(f, getattr(c, f), getattr(contact, f))
                                                   for f in ("name", "phone", "email")) for c in result):
             continue
         matches = [i for i in range(saved) if same(result[i].role, contact.role)]
@@ -567,8 +586,9 @@ def proposed_contacts(existing, incoming):
             old = result[index]
             same_person = not contact.name or same(contact.name, old.name)
             if same_person:
-                merged = {"name": contact.name or old.name, "phone": contact.phone or old.phone,
-                          "email": contact.email or old.email}
+                merged = {"name": contact.name or old.name, "email": contact.email or old.email,
+                          "phone": old.phone if old.phone and same_contact_value("phone", old.phone, contact.phone)
+                          else contact.phone or old.phone}
                 if all(merged[f] == getattr(old, f) for f in merged):
                     continue  # nothing new for this person; keep the saved record
                 contact = replace(contact, **merged,
