@@ -190,3 +190,17 @@ def test_standard_facility_prefixed_cmms_schema_keeps_all_six_call_fields(extra)
         assert result.references == original.references
         rows = result.rows
     assert rows == ((row[0], row[1], row[2], 'Synthetic CMMS annex', row[4], row[5]),)
+
+
+def test_existing_native_journey_onsite_schema_retains_original_alias_fields():
+    columns = ('WO #', 'Date', 'Area', 'Task', 'Asset')
+    app, original = workspace((CALL,), columns)
+    assert not app.exception
+    button(app, 'Edit onsite call').click().run()
+    assert {f.label for kind in ('text_input', 'text_area') for f in getattr(app, kind)} == set(columns)
+    field(app, 'Asset').set_value('SYNTHETIC-ASSET-02')
+    button(app, 'Close editing').click().run()
+    table = app.session_state['result'].extra_tables[0]
+    assert table.columns == columns and table.reference == original.extra_tables[0].reference
+    assert table.rows == ((*CALL[:4], 'SYNTHETIC-ASSET-02'),)
+    assert not app.exception

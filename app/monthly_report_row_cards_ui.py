@@ -172,7 +172,8 @@ def _onsite_projection(columns, rows):
     Unrecognized layouts retain neutral, fully editable source rows.
     """
     context = {}
-    canonical = tuple(columns) in (_ONSITE_COLUMNS, ("Facility", *_ONSITE_COLUMNS))
+    canonical = tuple(columns) in (_ONSITE_COLUMNS, ("Facility", *_ONSITE_COLUMNS),
+                                   ("WO #", "Date", "Area", "Task", "Asset"))
     title_frame = (len(columns) == 5
                    and re.fullmatch(_MONTH + r" \d{4} Service Calls", columns[0])
                    and tuple(columns[1:]) == ("Column 2", "Column 3", "Column 4", "Column 5")
