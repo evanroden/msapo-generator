@@ -474,3 +474,35 @@ def test_mapped_native_grid_append_keeps_mapped_photo_bytes_and_body_document(tm
         assert new_part.blob == assets[original.asset_hashes[0]]
     assert output.inline_shapes[-1].width > Inches(5)
     assert output.inline_shapes[-1]._inline.getparent().getparent().getparent().getparent() is output._element.body
+
+
+def test_section_preview_tracks_review_only_document_geometry_not_unrelated_consent():
+    from app.monthly_report_preview import section_preview_fingerprint
+    from app.monthly_report_page_controls import revise_included_page
+    from app.monthly_report_asset_review import approve_all_assets, refresh_asset_source_context
+    from app.monthly_report_content_policy import page_fingerprint
+    from tests.test_monthly_report_native_layout import draft
+    block, source, _ = payload()
+    source = replace(source, client_page_reviews=((1, page_fingerprint(source, 1)),))
+    reference = f'{source.id}:1:{source.fingerprint}'
+    block = replace(block, references=(reference,), asset_provenance=tuple(
+        (asset, (reference,) if i == 1 else ()) for i, asset in enumerate(block.asset_hashes)))
+    block = approve_all_assets(refresh_asset_source_context(block, (source,)))
+    pending, changed = revise_included_page(block, source, 1, 'caption',
+                                           caption='Updated service page', all_sources=(source,))
+    reviewed, current = revise_included_page(pending, changed, 1, 'review', all_sources=(changed,))
+    assert pending.asset_hashes == reviewed.asset_hashes
+    assert pending.asset_captions == reviewed.asset_captions
+    assert pending.references == reviewed.references
+    assert document_page_indexes(pending, (changed,)) == set()
+    assert document_page_indexes(reviewed, (current,)) == {1}
+    before = replace(draft(pending), sources=(changed,))
+    after = replace(draft(reviewed), sources=(current,))
+    fingerprint = section_preview_fingerprint(after, 'activity')
+    assert section_preview_fingerprint(before, 'activity') != fingerprint
+    # Revoking the exact current image receipt changes the layout back, too.
+    revoked = replace(after, blocks=(replace(reviewed, client_asset_reviews=()),))
+    assert section_preview_fingerprint(revoked, 'activity') != fingerprint
+    assert section_preview_fingerprint(before, 'training') == section_preview_fingerprint(after, 'training')
+    unrelated = replace(after, blocks=(replace(reviewed, reviewed_fingerprint='unrelated'),))
+    assert section_preview_fingerprint(unrelated, 'activity') == fingerprint

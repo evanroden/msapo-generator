@@ -225,7 +225,8 @@ def _section_scope(draft, section_key):
 
 
 def section_preview_fingerprint(draft, section_key):
-    """Review toggles and changes to another section do not rerender this one."""
+    """Track visible geometry; unrelated review toggles do not rerender it."""
+    from app.monthly_report_asset_layout import document_page_indexes
     scope, section = _section_scope(draft, section_key)
     blocks = []
     for block in scope.blocks:
@@ -236,10 +237,11 @@ def section_preview_fingerprint(draft, section_key):
         blocks.append({name: getattr(block, name) for name in (
             "key", "text", "rows", "asset_hashes", "asset_captions", "photos_per_page", "references",
         )} | {"org_nodes": [asdict(node) for node in block.org_nodes],
-             "extra_tables": [asdict(table) for table in block.extra_tables]})
+             "extra_tables": [asdict(table) for table in block.extra_tables],
+             "document_pages": sorted(document_page_indexes(block, scope.sources))})
     from app.monthly_report_followups import report_text
     value = {
-        "version": 5,
+        "version": 6,
         "period": draft.period.key,
         "title": draft.profile.title,
         "contract": draft.profile.contract,
