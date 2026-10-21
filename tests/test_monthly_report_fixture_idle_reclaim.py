@@ -114,21 +114,41 @@ def test_a_returning_stale_task_fails_closed_and_new_work_starts_fresh(root):
         assert fresh.generation != abandoned.generation and fresh.data_root.exists()
 
 
-def test_an_interrupted_removal_is_finished_once_per_admission(root, monkeypatch):
-    leftover = root / testing._BUCKET / (".reclaimed-" + "c" * 32 + "-synthetic")
-    (leftover / "nested").mkdir(parents=True)
-    (leftover / "nested" / "file.bin").write_bytes(b"SYNTHETIC leftover")
-    for token in ("d" * 32, "e" * 32):
-        with run(token) as context:
-            with admission.admit_run_copy(context, 1024):
-                pass
+def test_an_interrupted_admission_restores_set_aside_copies_once(root, monkeypatch):
+    abandoned = full_copy(A)
+    age(abandoned.data_root, 25)
+    tombstone = testing.set_aside_idle(root, abandoned.scope, abandoned.generation)
+    assert tombstone is not None and not abandoned.data_root.exists()  # crash before commit
+    doomed = root / testing._BUCKET / (".discarding-" + "c" * 32 + "-synthetic")
+    (doomed / "nested").mkdir(parents=True)
     calls = []
-    clear = testing.clear_reclaimed
-    monkeypatch.setattr(testing, "clear_reclaimed", lambda base: calls.append(base) or clear(base))
-    with run(B) as other:
+    recover = testing.recover_set_aside
+    monkeypatch.setattr(testing, "recover_set_aside", lambda base: calls.append(base) or recover(base))
+    monkeypatch.setattr(testing, "set_aside_idle", lambda *args, **kwargs: None)  # observe recovery only
+    with run(B) as other, pytest.raises(storage.VaultQuotaExceeded):
+        with admission.admit_run_copy(other, 1):
+            pytest.fail("The restored copy still holds its budget")
+    assert len(calls) == 1 and abandoned.data_root.exists() and not doomed.exists()
+
+
+def test_a_failed_admission_puts_set_aside_copies_back(root, monkeypatch):
+    abandoned = full_copy(A)
+    age(abandoned.data_root, 25)
+    monkeypatch.setattr(admission.os, "fstatvfs", lambda _: SimpleNamespace(f_bavail=1, f_frsize=1))
+    with run(B) as other, pytest.raises(storage.VaultQuotaExceeded, match="free space"):
         with admission.admit_run_copy(other, 1024):
-            pass
-    assert len(calls) == 1 and not leftover.exists()
+            pytest.fail("Admission without free space reached the install")
+    assert (abandoned.data_root / "synthetic-copy.bin").exists()
+    assert not list((root / testing._BUCKET).glob(".reclaimed-*"))
+    assert [item["scope"] for item in reservations(root)] == [abandoned.scope]
+
+
+def test_a_recent_marker_skips_the_full_scan(root, monkeypatch):
+    recent = full_copy(A)
+    age(recent.data_root, 25)
+    os.utime(recent.data_root / testing._SENTINEL)  # just visited
+    monkeypatch.setattr(testing, "_last_change", lambda target: pytest.fail("scanned a recently used namespace"))
+    assert testing.set_aside_idle(root, recent.scope, recent.generation) is None
 
 
 def test_activity_during_the_check_puts_the_namespace_back(root, monkeypatch):

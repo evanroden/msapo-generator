@@ -140,21 +140,45 @@ def admit_run_copy(context, added_bytes: int):
             with storage._admission_lock(directory):
                 validate_run(context)  # A waiting caller may have been reset.
                 existing = _load(directory)
-                testing.clear_reclaimed(root.parent.parent)
-                retained = tuple(item for item in existing if _generation_exists(base, item)
-                                 and (item.scope == context.scope
-                                      or not testing.reclaim_idle(root.parent.parent, item.scope, item.generation)))
-                if any((item.scope, item.generation) == (reservation.scope, reservation.generation) for item in retained):
-                    raise storage.VaultIntegrityError("This fixture generation already reserved a copy; reset this run before retrying.")
-                if (len(retained) >= _MAX_RESERVATIONS
-                        or sum(item.added_bytes for item in retained) + added_bytes > MAX_ACTIVE_COPY_BYTES):
-                    raise storage.VaultQuotaExceeded("Active fixture copies use the 128 MiB budget; reset completed test runs "
-                                                     "before staging another. Copies unused for 24 hours are cleared automatically.")
-                available = os.fstatvfs(directory)
-                if available.f_bavail * available.f_frsize < MIN_FREE_BYTES + added_bytes:
-                    raise storage.VaultQuotaExceeded("Fixture staging needs 256 MiB of free space after the new source copy.")
-                _save(directory, (*retained, reservation))
+                testing.recover_set_aside(root.parent.parent)
+                retained, set_aside = [], []
+                for item in existing:
+                    if not _generation_exists(base, item):
+                        continue
+                    # Idle copies are only set aside here; they are deleted once
+                    # this admission is committed and restored if it fails.
+                    tombstone = (None if item.scope == context.scope
+                                 else testing.set_aside_idle(root.parent.parent, item.scope, item.generation))
+                    if tombstone is None:
+                        retained.append(item)
+                    else:
+                        set_aside.append(tombstone)
+                try:
+                    _admit(directory, context, reservation, retained)
+                except BaseException:
+                    for tombstone in set_aside:
+                        try:
+                            testing.restore_set_aside(root.parent.parent, tombstone)
+                        except OSError:
+                            pass  # recovered by the next admission
+                    raise
+                for tombstone in set_aside:
+                    testing.discard_set_aside(tombstone)
                 # A stale lease cannot begin its write, including if reset
                 # occurred while durable reservation metadata was installed.
                 validate_run(context)
                 yield reservation
+
+
+def _admit(directory, context, reservation, retained):
+    """Check the generation, budget and free space, then commit the reservation."""
+    if any((item.scope, item.generation) == (reservation.scope, reservation.generation) for item in retained):
+        raise storage.VaultIntegrityError("This fixture generation already reserved a copy; reset this run before retrying.")
+    if (len(retained) >= _MAX_RESERVATIONS
+            or sum(item.added_bytes for item in retained) + reservation.added_bytes > MAX_ACTIVE_COPY_BYTES):
+        raise storage.VaultQuotaExceeded("Active fixture copies use the 128 MiB budget; reset completed test runs "
+                                         "before staging another. Copies unused for 24 hours are cleared automatically.")
+    available = os.fstatvfs(directory)
+    if available.f_bavail * available.f_frsize < MIN_FREE_BYTES + reservation.added_bytes:
+        raise storage.VaultQuotaExceeded("Fixture staging needs 256 MiB of free space after the new source copy.")
+    _save(directory, (*retained, reservation))

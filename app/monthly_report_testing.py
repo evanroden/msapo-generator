@@ -159,48 +159,88 @@ def _last_change(target: Path) -> float | None:
     return None if unreadable else newest
 
 
-def clear_reclaimed(base: Path) -> None:
-    """Finish removals that an earlier reclaim was interrupted during."""
+_SET_ASIDE = ".reclaimed-"
+_DISCARDING = ".discarding-"
+
+
+def set_aside_idle(base: Path, identity: str, generation: str, *, now: float | None = None,
+                   idle_seconds: float = IDLE_SECONDS) -> Path | None:
+    """Rename another browser's namespace aside after a day without changes.
+
+    Returns the set-aside path, or None when the namespace must stay: this
+    request's own namespace, a mismatched or invalid marker, any link, anything
+    that cannot be measured, or any change seen while it was being checked.
+    The caller then calls ``discard_set_aside`` or ``restore_set_aside``; a
+    returning browser's stale work fails closed meanwhile. Shared originals
+    live outside this bucket and are never touched.
+    """
+    if identity == scope() or not _COOKIE.fullmatch(identity):
+        return None
+    clock = time.time() if now is None else now
+    try:
+        target = _location(base, identity)
+        if not target.is_dir() or _marker(target / _SENTINEL, identity) != generation:
+            return None
+        if clock - (target / _SENTINEL).lstat().st_mtime < idle_seconds:
+            return None  # recent use seen on the marker; no walk needed
+        newest = _last_change(target)
+        if newest is None or clock - newest < idle_seconds:
+            return None
+        tombstone = target.parent / (_SET_ASIDE + identity + "-" + uuid4().hex)
+        os.rename(target, tombstone)
+        # Requests resolve the namespace path each time, so nothing new lands in
+        # the set-aside copy; activity during the check above shows up here.
+        if _last_change(tombstone) != newest:
+            restore_set_aside(base, tombstone)
+            return None
+    except (OSError, UnicodeError):
+        return None  # anything unexpected keeps the namespace
+    return tombstone
+
+
+def restore_set_aside(base: Path, tombstone: Path) -> None:
+    """Put a set-aside namespace back, unless its browser already started a fresh one."""
+    target = _location(base, tombstone.name[len(_SET_ASIDE):].split("-", 1)[0])
+    if target.exists() or target.is_symlink():
+        discard_set_aside(tombstone)
+    else:
+        os.rename(tombstone, target)
+
+
+def discard_set_aside(tombstone: Path) -> None:
+    """Delete a set-aside namespace; it is renamed first so it is never restored half-deleted."""
+    doomed = tombstone.with_name(_DISCARDING + tombstone.name[len(_SET_ASIDE):])
+    try:
+        os.rename(tombstone, doomed)
+    except OSError:
+        doomed = tombstone  # still delete it rather than leave it to be restored
+    shutil.rmtree(doomed, ignore_errors=True)
+
+
+def recover_set_aside(base: Path) -> None:
+    """After an interrupted admission, restore set-aside namespaces and finish deletions."""
     bucket = Path(base) / _BUCKET
     if bucket.is_symlink() or not bucket.is_dir():
         return
-    for leftover in bucket.glob(".reclaimed-*"):
-        if leftover.is_dir() and not leftover.is_symlink():
-            shutil.rmtree(leftover, ignore_errors=True)
+    for leftover in bucket.iterdir():
+        if leftover.is_symlink() or not leftover.is_dir():
+            continue
+        try:
+            if leftover.name.startswith(_DISCARDING):
+                shutil.rmtree(leftover, ignore_errors=True)
+            elif leftover.name.startswith(_SET_ASIDE):
+                restore_set_aside(base, leftover)
+        except OSError:
+            continue
 
 
 def reclaim_idle(base: Path, identity: str, generation: str, *, now: float | None = None,
                  idle_seconds: float = IDLE_SECONDS) -> bool:
-    """Remove another browser's isolated namespace after a day without changes.
-
-    Only that exact verified generation is removed; this request's own
-    namespace, a mismatched or invalid marker, any link and anything that
-    cannot be measured are kept. The namespace is renamed aside first, so a
-    returning browser's stale work fails closed and new work starts fresh; if
-    anything changed while it was being checked, it is put back (unless that
-    browser already started a fresh namespace in the meantime).
-    Shared originals live outside this bucket and are never touched.
-    """
-    if identity == scope() or not _COOKIE.fullmatch(identity):
+    """Set aside and delete another browser's idle namespace in one step."""
+    tombstone = set_aside_idle(base, identity, generation, now=now, idle_seconds=idle_seconds)
+    if tombstone is None:
         return False
-    try:
-        target = _location(base, identity)
-        if not target.is_dir() or _marker(target / _SENTINEL, identity) != generation:
-            return False
-        newest = _last_change(target)
-        if newest is None or (time.time() if now is None else now) - newest < idle_seconds:
-            return False
-        tombstone = target.parent / (".reclaimed-" + identity + "-" + uuid4().hex)
-        os.rename(target, tombstone)
-        # Requests resolve the namespace path each time, so nothing new lands in
-        # the tombstone; activity during the check above shows up here instead.
-        if _last_change(tombstone) != newest:
-            if not target.exists():
-                os.rename(tombstone, target)
-                return False
-    except (OSError, UnicodeError):
-        return False  # anything unexpected keeps the namespace
-    shutil.rmtree(tombstone, ignore_errors=True)
+    discard_set_aside(tombstone)
     return True
 
 
