@@ -101,15 +101,21 @@ def _annual_work_order_month_cells(key, table):
     Imported tables put repeated header bands in body rows. Preserve that
     structure when classifying labels; never exempt a month by its text alone.
     Row zero is the table's columns, followed by its unchanged body rows.
-    Unknown/partial/reordered shapes deliberately retain normal date review.
+    The legacy editor also saved a six-row form after removing both empty
+    first-half value rows. Recognize only these exact eight/six-row schemas;
+    unknown/partial/reordered shapes retain normal date review.
     """
     rows = (table.columns, *table.rows)
-    if key != "work_orders" or len(rows) != 8 or any(len(row) != 7 for row in rows):
+    if key != "work_orders" or len(rows) not in (6, 8) or any(len(row) != 7 for row in rows):
         return frozenset()
-    bands = ((0, "wo received", 1), (2, "", 7), (4, "closed", 1), (6, "", 7))
+    bands = (((0, "wo received", 1), (2, "", 7), (4, "closed", 1), (6, "", 7))
+             if len(rows) == 8 else
+             ((0, "wo received", 1), (1, "", 7), (3, "closed", 1), (4, "", 7)))
     for index, label, first in bands:
         row = rows[index]
-        if row[0].strip().casefold() != label:
+        # Word wraps the measure heading across lines; compare its words
+        # without rewriting saved cells or relaxing the required label.
+        if " ".join(row[0].split()).casefold() != label:
             return frozenset()
         # Full names/abbreviations and one terminal period are labels. Years,
         # day numbers, prose, ranges and mixed values must not qualify.

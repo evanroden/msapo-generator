@@ -10,7 +10,9 @@ export default function(component) {
     status.setAttribute('aria-live', 'polite');
     const confirm = document.createElement('button');
     confirm.type = 'button';
-    confirm.textContent = `Confirm these ${data.pictures.length} pictures are ready (except those left for correction)`;
+    confirm.textContent = data.pictures.length === 1 ?
+        'Confirm this picture is ready (unless left for correction)' :
+        `Confirm these ${data.pictures.length} pictures are ready (except those left for correction)`;
     confirm.disabled = true;
     const ready = () => active && !sent && images.length === data.pictures.length &&
         images.length > 0 && images.every((img, n) => loaded[n] && img.complete && img.naturalWidth > 0);

@@ -18,7 +18,9 @@ def install():
                 st.image(raw); st.caption(title+' '+context)
                 choice=key+'_left_'+str(n);keys.append(choice)
                 st.checkbox('Leave for correction',key=choice)
-            st.form_submit_button(f'Confirm these {len(pictures)} pictures are ready (except those left for correction)',on_click=submit)
+            label = ('Confirm this picture is ready (unless left for correction)' if len(pictures) == 1 else
+                     f'Confirm these {len(pictures)} pictures are ready (except those left for correction)')
+            st.form_submit_button(label,on_click=submit)
     previous = batch._render_group
     batch._render_group=render
     try:
