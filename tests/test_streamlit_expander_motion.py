@@ -92,7 +92,7 @@ def test_locked_expander_rejects_changed_source_and_composes_forward_cache():
 def test_previous_cache_and_selection_generations_remain_immutable_upgrade_inputs(bundle, no_cache):
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
-    old = compat._publication(sources, members, True, no_cache_advertisements=no_cache, instant_expander=False)
+    old = compat._publication(sources, members, True, no_cache_advertisements=no_cache, instant_expander=False, tab_navigation=False)
     assert old.names[compat.INDEX_BUNDLE] == ("index.enfra-frontend-e86cbf744776.js" if no_cache
                                             else "index.enfra-frontend-f581fba5f125.js")
     for name, raw in old.payloads.items():

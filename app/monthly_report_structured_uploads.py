@@ -481,6 +481,8 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                     references.append(sources.source_reference(content.source, number))
                 continue
             output_identity = _non_table_activity_identity(content.source)
+            from app.monthly_report_vendor_passages import read_vendor_document
+            passage_pages = read_vendor_document(content.source)
             for number, text in enumerate(content.source.page_texts, 1):
                 reference = sources.source_reference(content.source, number)
                 # Source-referenced manual corrections and deliberate deletions
@@ -501,8 +503,10 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                for line, header_date in _activity_lines(
-                        text, content.source.suffix, with_dates=True):
+                activity_lines = (tuple((p.text, "") for p in passage_pages[number][0])
+                                  if number in passage_pages else
+                                  _activity_lines(text, content.source.suffix, with_dates=True))
+                for line, header_date in activity_lines:
                     line = _activity_text(line)
                     if _date_only_source_label(line):
                         continue

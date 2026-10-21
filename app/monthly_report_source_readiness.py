@@ -20,7 +20,21 @@ _INFORMATIONAL_NOTICES = frozenset({
 
 
 def unresolved_reading_notices(source):
-    return tuple(notice for notice in source.notices if notice not in _INFORMATIONAL_NOTICES)
+    from app.monthly_report_content_policy import page_allowed, page_fingerprint
+    from app.monthly_report_vendor_passages import passage_notice_page
+
+    def acknowledged_passage(notice):
+        page = passage_notice_page(notice, len(source.page_texts))
+        if page is None:
+            return False
+        # Reuse only the user's existing full-original-page decision. Merely
+        # changing classification, typing a fact or deselecting is not consent.
+        if page in source.selected_pages:
+            return page_allowed(source, page)
+        return dict(source.client_page_exclusions).get(page) == page_fingerprint(source, page)
+
+    return tuple(notice for notice in source.notices
+                 if notice not in _INFORMATIONAL_NOTICES and not acknowledged_passage(notice))
 
 
 @dataclass(frozen=True)
