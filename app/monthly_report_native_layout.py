@@ -7,6 +7,7 @@ cleared before current values are written. Unsupported bindings fail explicitly.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import tempfile
 from collections import defaultdict
@@ -481,10 +482,26 @@ def _replace_image(document, element, data, *, contain=False):
         _contain_replacement_picture(element, data)
 
 
-def _fit_cover_photo(node, image_width, image_height):
-    """Center a replacement photo inside its existing native picture frame."""
+def _fit_cover_photo(node, image_width, image_height, *, preserve_crop=False):
+    """Fit a photo in its frame, retaining valid unchanged source crops.
+
+    For unchanged DrawingML, this repair is deliberately limited to ordinary
+    full-frame fills. Group transforms and inset/tiled destination fills need
+    their effective geometry proved separately; do not introduce a new crop
+    based only on their local picture extent.
+    """
     if image_width <= 0 or image_height <= 0:
         raise NativeLayoutError("The cover photograph has no usable dimensions.")
+    if preserve_crop and node.tag == qn("a:blip"):
+        fill = node.getparent()
+        stretch = fill.find(qn("a:stretch"))
+        rectangle = stretch.find(qn("a:fillRect")) if stretch is not None else None
+        if (fill.find(qn("a:tile")) is not None
+                or rectangle is not None and any(value not in ("0", "0.0", "0%") for value in rectangle.attrib.values())
+                or any(child.tag.rsplit("}", 1)[-1] == "grpSpPr"
+                       and child.find(qn("a:xfrm")) is not None
+                       for ancestor in node.iterancestors() for child in ancestor)):
+            return
     frame = None
     if node.tag == qn("a:blip"):
         for ancestor in node.iterancestors():
@@ -495,7 +512,10 @@ def _fit_cover_photo(node, image_width, image_height):
             ext = next((transform.find(qn("a:ext")) for transform in transforms
                         if transform.find(qn("a:ext")) is not None), None)
             if ext is not None:
-                frame = (float(ext.get("cx", "0")), float(ext.get("cy", "0")))
+                try:
+                    frame = (float(ext.get("cx", "0")), float(ext.get("cy", "0")))
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise NativeLayoutError("The cover photograph's native frame dimensions are unavailable.") from exc
                 break
     else:
         def dimensions(element):
@@ -518,10 +538,38 @@ def _fit_cover_photo(node, image_width, image_height):
                     width *= group_width / float(coordinates[0])
                     height *= group_height / float(coordinates[1])
             frame = width, height
-    if not frame or min(frame) <= 0:
+    if not frame or not all(math.isfinite(value) and value > 0 for value in frame):
         raise NativeLayoutError("The cover photograph's native frame dimensions are unavailable.")
     frame_ratio = frame[0] / frame[1]
     image_ratio = image_width / image_height
+    if preserve_crop:
+        # Matching bytes prove which photo this is, not that the old Word
+        # frame displayed it proportionally. Preserve an intentional source
+        # crop only when its remaining pixels actually fit that same frame.
+        # This also retains asymmetric crops instead of needlessly recentering.
+        try:
+            def fraction(value, divisor):
+                if value.endswith("%"):
+                    return float(value[:-1]) / 100
+                if divisor == 1 and value.endswith("f"):
+                    return float(value[:-1]) / 65536
+                return float(value) / divisor
+
+            if node.tag == qn("a:blip"):
+                rectangle = node.getparent().find(qn("a:srcRect"))
+                existing = {key: fraction(rectangle.get(key, "0"), 100000)
+                            if rectangle is not None else 0 for key in ("l", "t", "r", "b")}
+            else:
+                existing = {key: fraction(node.get(name, "0"), 1) for key, name in {
+                    "l": "cropleft", "r": "cropright", "t": "croptop", "b": "cropbottom"}.items()}
+            width = 1 - existing["l"] - existing["r"]
+            height = 1 - existing["t"] - existing["b"]
+            if (width > 0 and height > 0
+                    and all(math.isfinite(value) for value in existing.values())
+                    and math.isclose(image_ratio * width / height, frame_ratio, rel_tol=.001)):
+                return
+        except (TypeError, ValueError, OverflowError):
+            pass  # An unusable source crop cannot justify stretching a photo.
     horizontal = max(0, (1 - frame_ratio / image_ratio) / 2)
     vertical = max(0, (1 - image_ratio / frame_ratio) / 2)
     crop = {"l": horizontal, "r": horizontal, "t": vertical, "b": vertical}
@@ -1227,6 +1275,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     raise NativeLayoutError("The exact native image replacement has no saved artwork.")
                 if image_digest(str(source_path), image_cache_identity, source_item,
                                         role != "cover_photo") in block.asset_hashes:
+                    if role == "cover_photo":
+                        _fit_cover_photo(node, source_item.image_width, source_item.image_height,
+                                         preserve_crop=True)
                     continue
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
@@ -1246,7 +1297,10 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 supplied = next((item for item in group if item.kind == "image" and item.image_part == target), None)
                 if supplied is not None and image_digest(str(source_path), image_cache_identity, supplied,
                                                                 role != "cover_photo") in block.asset_hashes:
-                    continue  # Explicit unchanged source art retains its native resolution/crop.
+                    if role == "cover_photo":
+                        _fit_cover_photo(node, supplied.image_width, supplied.image_height,
+                                         preserve_crop=True)
+                    continue  # Retain original bytes and any proportional source crop.
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
                 new_rid, image = document.part.get_or_add_image(BytesIO(asset_loader(block.asset_hashes[0])))
