@@ -81,6 +81,8 @@ APP='''
 import streamlit as st
 from test_monthly_report_picture_batch import sample
 from app.monthly_report_picture_batch_ui import review_picture_batch
+from picture_batch_test_adapter import install
+install()
 if 'draft' not in st.session_state:
  st.session_state.draft,st.session_state.assets=sample(21)
 st.session_state.draft=review_picture_batch(st.session_state.draft,st.session_state.assets,'synthetic',lambda k,v:k,incarnation='epoch')
@@ -91,7 +93,7 @@ def submit(app):
     return next(b for b in app.button if b.label.startswith('Confirm these'))
 
 
-def test_native_form_21_pictures_take_four_submissions_not_21():
+def test_server_receipts_for_21_pictures_take_four_emulated_submissions_not_21():
     app=AppTest.from_string(APP).run()
     for count in (6,6,6,3):
         assert not app.exception
@@ -112,41 +114,6 @@ def test_deferred_form_switch_has_no_approval_until_submit():
     assert not app.exception
     assert 0 in pending_asset_indexes(app.session_state.draft.blocks[0])
     assert len(pending_asset_indexes(app.session_state.draft.blocks[0]))==16
-
-
-def test_callback_rejects_unrendered_and_repeated_submissions(monkeypatch):
-    draft,assets=sample();req,_=request(draft,assets)
-    state={};monkeypatch.setattr(batch.st,'session_state',state)
-    envelope={k:req[k] for k in ('identity','entries')}|{'nonce':'shown'}
-    keys=tuple('leave'+str(i) for i in range(6))
-    batch._queue('x',envelope,keys)
-    assert 'x_picture_batch_request' not in state
-    state['x_picture_batch_active']=envelope
-    state.update({key: False for key in keys})
-    batch._queue('x',envelope,keys)
-    assert state['x_picture_batch_request']['entries']==envelope['entries']
-    state.pop('x_picture_batch_request')
-    batch._queue('x',envelope,keys)
-    assert 'x_picture_batch_request' not in state
-    # Old callback cannot act on a reopened identical set with a new incarnation.
-    state['x_picture_batch_active']={**envelope,'nonce':'reopened'}
-    batch._queue('x',envelope,keys)
-    assert 'x_picture_batch_request' not in state
-
-
-def test_failed_image_display_disables_entire_group(monkeypatch):
-    real=batch.st.image
-    calls=[]
-    def broken(*a,**kw):
-        calls.append(1)
-        if len(calls)==3:raise ValueError('Synthetic image display failure')
-        return real(*a,**kw)
-    monkeypatch.setattr(batch.st,'image',broken)
-    app=AppTest.from_string(APP).run()
-    assert not app.exception
-    assert submit(app).disabled
-    assert len(pending_asset_indexes(app.session_state.draft.blocks[0]))==21
-    assert 'synthetic_picture_batch_active' not in app.session_state.filtered_state
 
 
 def test_old_individual_session_cache_cannot_approve_new_batch():
@@ -172,40 +139,14 @@ def test_hidden_or_removed_source_cannot_be_approved():
     with pytest.raises(ValueError):batch._apply(replace(draft,sources=(replace(source,facility='Other facility'),)),assets,'epoch',req)
 
 
-def test_deferred_picture_ignores_legacy_cache_and_rotates_reopened_fallback():
+def test_deferred_picture_ignores_legacy_cache():
     app=AppTest.from_string(APP).run()
     block=app.session_state.draft.blocks[0]
     app.session_state['synthetic_client_vendor_reports_approved_pictures']=(asset_fingerprint(block,0),)
     app.checkbox[0].check();submit(app).click().run()
     assert not app.exception
     assert 0 in pending_asset_indexes(app.session_state.draft.blocks[0])
-    old_scope=app.session_state['synthetic_picture_individual_scope']
-    old_key='synthetic_picture_individual_'+old_scope[1]+'_client_vendor_reports_approved_pictures'
-    # Leave and reopen the same report; a late compatibility callback can only
-    # write its obsolete namespace, never confer current consent.
-    app.session_state['synthetic_picture_batch_deferred']=()
-    app.run()
-    app.session_state['synthetic_picture_batch_deferred']=(asset_fingerprint(block,0),)
-    app.session_state[old_key]=(asset_fingerprint(block,0),)
-    app.run()
-    assert not app.exception
-    assert app.session_state['synthetic_picture_individual_scope'][1]!=old_scope[1]
-    assert 0 in pending_asset_indexes(app.session_state.draft.blocks[0])
-
-
-@pytest.mark.parametrize('kind', ['missing','short','duplicate','nonboolean'])
-def test_callback_requires_complete_exact_boolean_form(monkeypatch,kind):
-    draft,assets=sample();req,_=request(draft,assets)
-    envelope={k:req[k] for k in ('identity','entries')}|{'nonce':'shown'}
-    keys=tuple('leave'+str(i) for i in range(6))
-    state={'x_picture_batch_active':envelope,**{k:False for k in keys}}
-    if kind=='missing':state.pop(keys[-1])
-    if kind=='short':keys=keys[:-1]
-    if kind=='duplicate':keys=keys[:-1]+(keys[0],)
-    if kind=='nonboolean':state[keys[0]]=None
-    monkeypatch.setattr(batch.st,'session_state',state)
-    batch._queue('x',envelope,keys)
-    assert 'x_picture_batch_request' not in state
+    assert len(app.get('image'))==1
 
 
 def test_truncated_raster_is_not_approvable_by_group_or_fallback():
@@ -219,7 +160,8 @@ def test_truncated_raster_is_not_approvable_by_group_or_fallback():
     app.session_state.draft=draft;app.session_state.assets={ref:raw};app.run()
     assert not app.exception
     assert pending_asset_indexes(app.session_state.draft.blocks[0])==(0,)
-    assert not app.button
+    assert not any(b.label.startswith('Confirm these') for b in app.button)
+    assert any(b.label.startswith('Remove picture') for b in app.button)
     assert any('cannot be safely displayed' in w.value for w in app.warning)
 
 
@@ -229,6 +171,76 @@ def test_current_individual_fallback_click_still_records_only_visible_picture():
     assert not app.exception
     before=pending_asset_indexes(app.session_state.draft.blocks[0])
     assert before[0]==0
-    next(b for b in app.button if b.label=='This page is ready to include').click().run()
+    submit(app).click().run()
     assert not app.exception
     assert pending_asset_indexes(app.session_state.draft.blocks[0])==before[1:]
+
+
+@pytest.mark.parametrize('change',['missing','short','not_loaded','nonboolean','nonce','identity'])
+def test_component_submission_requires_complete_loaded_exact_context(monkeypatch,change):
+    draft,assets=sample();req,_=request(draft,assets)
+    envelope={k:req[k] for k in ('identity','entries')}|{'nonce':'shown'}
+    value={'identity':envelope['identity'],'nonce':'shown','loaded':[True]*6,'left':[False]*6}
+    if change=='missing':value.pop('left')
+    if change=='short':value['left'].pop()
+    if change=='not_loaded':value['loaded'][0]=False
+    if change=='nonboolean':value['left'][0]=0
+    if change in ('nonce','identity'):value[change]='obsolete'
+    state={'x_picture_batch_active':envelope,'component':{'submission':value}}
+    monkeypatch.setattr(batch.st,'session_state',state)
+    batch._queue_component('x',envelope,'component')
+    assert 'x_picture_batch_request' not in state
+
+
+def test_fallback_reads_only_one_current_picture_not_60_or_approved(monkeypatch):
+    app=AppTest.from_string(APP.replace('sample(21)','sample(60)')).run()
+    app.checkbox[0].check();submit(app).click().run()
+    reads=[];original=batch._read_picture
+    def count(*args):
+        reads.append(args[2]);return original(*args)
+    monkeypatch.setattr(batch,'_read_picture',count)
+    app.run()
+    assert not app.exception
+    assert len(reads)==1 and reads[0][1]==0
+    assert len(app.get('image'))==1
+
+
+def test_oversized_cover_logo_remains_explicitly_removable(monkeypatch):
+    app=AppTest.from_string(APP).run()
+    draft,assets=sample(1)
+    block=replace(draft.blocks[0],key='client_logo')
+    section=SectionSpec('cover','1','Cover',(BlockSpec('client_logo','image'),))
+    app.session_state.draft=replace(draft,blocks=(block,),sections=(section,))
+    app.session_state.assets=assets
+    monkeypatch.setattr(batch,'MAX_IMAGE_BYTES',20)
+    app.run()
+    assert not app.exception
+    assert pending_asset_indexes(app.session_state.draft.blocks[0])==(0,)
+    next(b for b in app.button if b.label=='Remove picture 1 from client logo').click().run()
+    assert not app.exception
+    assert app.session_state.draft.blocks[0].asset_hashes==()
+    assert assets # Saved original payload was not deleted.
+
+
+def test_stale_removal_callback_cannot_remove_reopened_picture(monkeypatch):
+    draft,assets=sample();req,_=request(draft,assets)
+    old={'identity':req['identity'],'entries':req['entries'],'nonce':'old'}
+    state={'x_picture_remove_active':{**old,'nonce':'reopened'}}
+    monkeypatch.setattr(batch.st,'session_state',state)
+    batch._queue_remove('x',old,req['entries'][0])
+    assert 'x_picture_remove_request' not in state
+
+
+def test_component_callback_is_single_use_and_rejects_reopened_envelope(monkeypatch):
+    draft,assets=sample();req,_=request(draft,assets)
+    envelope={k:req[k] for k in ('identity','entries')}|{'nonce':'shown'}
+    value={'identity':envelope['identity'],'nonce':'shown','loaded':[True]*6,'left':[False]*6}
+    state={'x_picture_batch_active':envelope,'component':{'submission':value}}
+    monkeypatch.setattr(batch.st,'session_state',state)
+    batch._queue_component('x',envelope,'component')
+    assert state.pop('x_picture_batch_request')['left']==()
+    batch._queue_component('x',envelope,'component')
+    assert 'x_picture_batch_request' not in state
+    state['x_picture_batch_active']={**envelope,'nonce':'reopened'}
+    batch._queue_component('x',envelope,'component')
+    assert 'x_picture_batch_request' not in state

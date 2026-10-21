@@ -291,6 +291,10 @@ jobs:
           python scripts/patch_streamlit_frontend.py
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
+      - name: Browser image decode, error, retry and keyboard consent gates
+        env:
+          EPC_REQUIRE_PICTURE_BROWSER: '1'
+        run: python -m pytest tests/test_picture_group_browser.py -q
       - name: Actual Progress photos edits, order, reload and Word/PDF
         run: python scripts/qa_progress_photo_journey.py
       - name: Upload synthetic Progress photos evidence, including first failures

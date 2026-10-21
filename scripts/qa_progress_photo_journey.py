@@ -375,7 +375,7 @@ def browser_task(engine, name, base):
             indexes = pending_asset_indexes(current)[:6]
             before = receipt(page)["sequence"]
             confirm = page.get_by_role("button", name=f"Confirm these {len(indexes)} pictures are ready (except those left for correction)", exact=True)
-            form = page.get_by_test_id("stForm").filter(has=confirm)
+            form = page.locator(".picture-review").filter(has=confirm)
             expect(form.locator("img")).to_have_count(len(indexes))
             for picture in form.locator("img").all():
                 picture.scroll_into_view_if_needed()

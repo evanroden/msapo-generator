@@ -134,25 +134,47 @@ def _apply(draft, assets, incarnation, request):
     return replace(draft, blocks=tuple(blocks[b.key] for b in draft.blocks))
 
 
-def _queue(prefix, envelope, widget_keys):
-    active = prefix + '_picture_batch_active'
-    if st.session_state.get(active) != envelope:
+def _queue_component(prefix, envelope, key):
+    state = st.session_state.get(key)
+    value = state.get('submission') if isinstance(state, dict) else None
+    if st.session_state.get(prefix + '_picture_batch_active') != envelope or not isinstance(value, dict):
         return
-    if len(widget_keys) != len(envelope['entries']) or len(set(widget_keys)) != len(widget_keys):
+    if value.get('identity') != envelope['identity'] or value.get('nonce') != envelope['nonce']:
         return
-    if any(key not in st.session_state for key in widget_keys):
-        return
-    values = [st.session_state[key] for key in widget_keys]
-    if any(type(value) is not bool for value in values):
+    count = len(envelope['entries'])
+    left, loaded = value.get('left'), value.get('loaded')
+    if (not isinstance(left, list) or not isinstance(loaded, list) or len(left) != count or len(loaded) != count
+            or any(type(x) is not bool for x in left) or any(x is not True for x in loaded)):
         return
     st.session_state[prefix + '_picture_batch_request'] = {
-        **envelope, 'left': tuple(e for e, value in zip(envelope['entries'], values) if value)}
-    st.session_state.pop(active, None)  # Single-use; a delayed second click has no authority.
+        **envelope, 'left': tuple(e for e, value in zip(envelope['entries'], left) if value)}
+    st.session_state.pop(prefix + '_picture_batch_active', None)
+
+
+def _queue_remove(prefix, envelope, entry):
+    if st.session_state.get(prefix + '_picture_remove_active') != envelope or entry not in envelope['entries']:
+        return
+    st.session_state[prefix + '_picture_remove_request'] = (envelope, entry)
+    st.session_state.pop(prefix + '_picture_remove_active', None)
+
+
+def _render_group(prefix, envelope, pictures):
+    from app.monthly_report_picture_group import render_group
+    key = prefix + '_picture_component_' + envelope['nonce']
+    render_group(key=key, envelope=envelope, pictures=pictures,
+                 on_change=lambda: _queue_component(prefix, envelope, key))
 
 
 def review_picture_batch(draft, assets, prefix, field, *, incarnation):
-    """Six fully displayed pictures per explicit confirmation, with opt-outs."""
+    """Bounded browser-decoded pictures per explicit confirmation, with opt-outs."""
     draft, entries, identity = _manifest(draft, incarnation)
+    removal = st.session_state.pop(prefix + '_picture_remove_request', None)
+    if removal is not None:
+        envelope, entry = removal
+        if envelope['identity'] == identity and entry in entries:
+            from app.monthly_report_saved_pictures_ui import remove_saved_picture
+            draft = replace(draft, blocks=tuple(remove_saved_picture(b, entry[1]) if b.key == entry[0] else b for b in draft.blocks))
+            draft, entries, identity = _manifest(draft, incarnation)
     deferred_key = prefix + '_picture_batch_deferred'
     deferred = st.session_state.get(deferred_key, ())
     request = st.session_state.pop(prefix + '_picture_batch_request', None)
@@ -166,78 +188,64 @@ def review_picture_batch(draft, assets, prefix, field, *, incarnation):
             st.session_state[deferred_key] = deferred
         draft, entries, identity = _manifest(draft, incarnation)
     selected, raw_images, fallback = _choose(draft, assets, entries, deferred)
+    correction_entries = selected
+    # Never decode an entire fallback block, including its approved pictures.
+    # After ordinary groups, inspect just one current pending picture, using
+    # the same strict browser and server gates. Unsupported pictures stay
+    # removable via the unchanged removal helper, including cover artwork.
+    if not selected and fallback:
+        current = next((e for e in entries if e[0] in fallback and
+                        e[1] in pending_asset_indexes(next(b for b in draft.blocks if b.key == e[0]))), None)
+        if current:
+            correction_entries = (current,)
+            counts = Counter(e[2] for e in entries)
+            if current[0] not in _blocked(draft, entries) and _eligible(draft, current) and counts[current[2]] == 1:
+                try:
+                    raw, pixels = _read_picture(draft, assets, current)
+                except (ValueError, OSError, SyntaxError, Image.DecompressionBombError):
+                    st.warning('This picture cannot be safely displayed here. Replace or resize it in its section, or remove it from this draft below.')
+                else:
+                    selected, raw_images = (current,), [(raw, pixels)]
+            else:
+                st.warning('This picture needs source or occurrence correction. Correct it in its section, or remove it from this draft below.')
     active_key = prefix + '_picture_batch_active'
     if selected:
         active = st.session_state.get(active_key)
         if not active or active['identity'] != identity or active['entries'] != selected:
             active = {'identity': identity, 'entries': selected, 'nonce': uuid4().hex}
-        st.session_state.pop(active_key, None)
+        st.session_state[active_key] = active
         st.markdown(f'**Check these {len(selected)} pictures**')
         st.caption(f'{draft.profile.title} · {draft.period.label}')
-        st.caption('Check every picture below for the selected sites and for visible prices, private information, or legal-only, blank or signature-only pages. Leave any doubtful picture for correction.')
+        st.caption('Inspect every picture for the selected sites and for visible prices, private information, or legal-only, blank or signature-only pages. Leave doubtful pictures for correction.')
         from app.monthly_report_sections import readable_label
-        keys = []
-        displayed = True
-        with st.form(prefix + '_picture_batch_' + active['nonce'], clear_on_submit=False):
-            for n, (entry, (raw, _)) in enumerate(zip(selected, raw_images), 1):
-                st.markdown(f'**{n}. {readable_label(entry[0])} · picture {entry[1] + 1}**')
-                if entry[4]:
-                    st.caption(entry[4])
-                block = next(b for b in draft.blocks if b.key == entry[0])
-                for source in draft.sources:
-                    if any(ref.startswith(source.id + ':') for ref in asset_context(block, entry[1])):
-                        st.caption(' · '.join(filter(None, (source.filename, source.facility, source.service_date))))
-                try:
-                    st.image(raw, width='stretch')
-                except (ValueError, OSError):
-                    displayed = False
-                    st.warning('This picture could not be displayed. Use individual review below.')
-                    fallback.add(entry[0])
-                key = prefix + '_picture_leave_' + active['nonce'] + '_' + str(n)
-                keys.append(key)
-                st.checkbox('Leave for correction', key=key)
-            if displayed:
-                st.session_state[active_key] = active
-            st.form_submit_button(f'Confirm these {len(selected)} pictures are ready (except those left for correction)',
-                                  disabled=not displayed or not draft.prepared_by.strip(),
-                                  on_click=_queue, args=(prefix, active, tuple(keys)))
-        pending_count = sum(len(pending_asset_indexes(b)) for b in draft.blocks if b.key in used_block_keys(draft) and b.source != 'Omit')
-        if pending_count > len(selected):
-            st.caption(f'{pending_count - len(selected)} other pictures still need review. The next group appears after confirmation.')
+        pictures = []
+        for n, (entry, (raw, _)) in enumerate(zip(selected, raw_images), 1):
+            block = next(b for b in draft.blocks if b.key == entry[0])
+            context = [entry[4]]
+            for source in draft.sources:
+                if any(ref.startswith(source.id + ':') for ref in asset_context(block, entry[1])):
+                    context.append(' · '.join(filter(None, (source.filename, source.facility, source.service_date))))
+            pictures.append((raw, f'{n}. {readable_label(entry[0])} · picture {entry[1] + 1}', ' · '.join(filter(None, context))))
+        _render_group(prefix, active, pictures)
     else:
         st.session_state.pop(active_key, None)
-    # Do not hand unreadable/unbounded rasters to the compatibility reviewer:
-    # its st.image call is not proof of a successful full raster decode.
-    unsafe = set()
-    for entry in entries:
-        if entry[0] not in fallback:
-            continue
-        try:
-            _read_picture(draft, assets, entry)
-        except (ValueError, OSError, SyntaxError, Image.DecompressionBombError):
-            unsafe.add(entry[0])
-    if unsafe:
-        st.warning('Some pictures cannot be safely displayed here. Replace or resize them in their report sections; they remain unapproved.')
-        fallback.difference_update(unsafe)
-    scope_key = prefix + '_picture_individual_scope'
-    if fallback:
-        # A fresh, non-reusable namespace isolates legacy session receipts.
-        # Keep it only while this exact pending context remains current.
-        signature = (identity, tuple(e for e in entries if e[0] in fallback
-                     and e[1] in pending_asset_indexes(next(b for b in draft.blocks if b.key == e[0]))),
-                     tuple(sorted(deferred)))
-        scope = st.session_state.get(scope_key)
-        if not scope or scope[0] != signature:
-            scope = (signature, uuid4().hex)
-            st.session_state[scope_key] = scope
-        from app.monthly_report_editor import review_client_images
-        st.caption('These pictures need the individual review controls; they were not approved with the group.')
-        subset = replace(draft, blocks=tuple(b for b in draft.blocks if b.key in fallback))
-        reviewed = review_client_images(subset, assets, prefix + '_picture_individual_' + scope[1], field)
-        updates = {b.key: b for b in reviewed.blocks}
-        draft = replace(draft, blocks=tuple(updates.get(b.key, b) for b in draft.blocks))
+    remove_key = prefix + '_picture_remove_active'
+    if correction_entries:
+        removal_active = st.session_state.get(remove_key)
+        if not removal_active or removal_active['identity'] != identity or removal_active['entries'] != correction_entries:
+            removal_active = {'identity': identity, 'entries': correction_entries, 'nonce': uuid4().hex}
+        st.session_state[remove_key] = removal_active
+        with st.expander('Correction controls', expanded=not bool(selected)):
+            st.caption('Removing changes this draft only; the saved original stays intact.')
+            for entry in correction_entries:
+                st.button(f'Remove picture {entry[1] + 1} from {entry[0].replace("_", " ")}',
+                          key=prefix + '_picture_remove_' + removal_active['nonce'] + '_' + entry[0] + '_' + str(entry[1]),
+                          on_click=_queue_remove, args=(prefix, removal_active, entry))
     else:
-        st.session_state.pop(scope_key, None)
-    if not selected and not fallback and not unsafe:
+        st.session_state.pop(remove_key, None)
+    pending_count = sum(len(pending_asset_indexes(b)) for b in draft.blocks if b.key in used_block_keys(draft) and b.source != 'Omit')
+    if pending_count > len(selected):
+        st.caption(f'{pending_count - len(selected)} other pictures still need review. The next group appears after confirmation.')
+    elif not pending_count:
         st.caption('All included pictures are ready. Change pictures in their report sections if needed.')
     return draft

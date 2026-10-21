@@ -364,7 +364,7 @@ def test_actual_browser_task_preserves_original_failure_and_writes_cleanup_evide
 
 
 def test_actual_fixture_upload_review_refreshes_editor_after_matching_browser_journal(monkeypatch, tmp_path):
-    """AppTest supplies uploader bytes only; all report actions use production UI.
+    """AppTest supplies uploader bytes only; report actions use production server logic with an explicit frontend emulator.
 
     The subprocess confines the fixture's process-wide external-network guard.
     This is an importer/action prerequisite check, not a browser upload pass.
@@ -376,6 +376,10 @@ def test_actual_fixture_upload_review_refreshes_editor_after_matching_browser_jo
 from io import BytesIO
 import streamlit as st
 from streamlit.testing.v1 import AppTest
+import sys
+sys.path.insert(0,'tests')
+from picture_batch_test_adapter import install
+install()
 from app import monthly_report_visual_ui as ui, monthly_report_section_preview_ui as preview
 from app import monthly_report_testing as testing, monthly_report_active_work as active
 from app.monthly_report_model import ReportDraft
