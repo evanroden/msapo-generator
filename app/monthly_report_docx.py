@@ -64,10 +64,18 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
     if suffix.lower() in {".heic", ".heif", ".hif"}:
         from pillow_heif import register_heif_opener
         register_heif_opener(thumbnails=False)
-    with Image.open(BytesIO(raw)) as image:
+    try:
+        opened = Image.open(BytesIO(raw))
+    except Image.DecompressionBombError as exc:
+        raise ValueError("Image is too large to decode safely. Resize it before uploading.") from exc
+    with opened as image:
         if image.width * image.height > _MAX_PIXELS_PER_FRAME:
             raise ValueError("Image is too large to decode safely. Resize it before uploading.")
-        if getattr(image, "n_frames", 1) != 1:
+        try:
+            frame_count = getattr(image, "n_frames", 1)
+        except TypeError as exc:
+            raise ValueError("Image frame information could not be read. Export a fresh single-image copy.") from exc
+        if frame_count != 1:
             raise ValueError("Choose a single image; use a PDF for multiple pages.")
         oriented = ImageOps.exif_transpose(image)
         oriented.thumbnail((round(frame[0] * dpi), round(frame[1] * dpi)), Image.Resampling.LANCZOS)
@@ -438,7 +446,9 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             elif spec.type == "image_grid" and block.asset_hashes:
                 if asset_loader is None:
                     raise ValueError("Photo pages require the library resolver.")
-                from app.monthly_report_asset_layout import picture_runs, photo_run
+                from app.monthly_report_asset_layout import picture_runs, photo_run, document_caption_problems, style_document_caption
+                if document_caption_problems(block, draft.sources):
+                    raise ValueError('Shorten the source-page caption to at most three lines before generating.')
                 for index, (is_document, indexes) in enumerate(picture_runs(block, draft.sources)):
                     if index:
                         document.add_page_break()
@@ -446,7 +456,7 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
                         item = indexes[0]
                         _picture(document, asset_loader(block.asset_hashes[item]), height=7.7)
                         if item < len(block.asset_captions) and block.asset_captions[item]:
-                            document.add_paragraph(block.asset_captions[item], style="Caption")
+                            style_document_caption(document.add_paragraph(block.asset_captions[item], style="Caption"))
                     else:
                         _picture(document, photo_page(photo_run(block, indexes), asset_loader, 0), height=7.7)
             for index, reference in enumerate(block.asset_hashes if not block.org_nodes and spec.type != "image_grid" else ()):

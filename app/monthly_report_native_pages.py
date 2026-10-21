@@ -154,7 +154,7 @@ class NativePages:
             node = node.getnext()
         return total
 
-    def technical_picture(self, document, origin, raw, *, new_page=False, caption=False, tail_space=0):
+    def technical_picture(self, document, origin, raw, *, new_page=False, caption=False, tail_space=0, minimum_width=0):
         """New chart/evidence pages contain all pixels, never a photo's crop."""
         from app.monthly_report_docx import _fit_picture
         root = self._root(origin)
@@ -165,6 +165,8 @@ class NativePages:
         def value(node, key, default):
             return int(node.get(qn('w:' + key), str(default))) if node is not None else default
         width = value(size, 'w', 12240) - value(margin, 'left', 720) - value(margin, 'right', 720)
+        if width < minimum_width:
+            raise ValueError('The native source-page area is too narrow for its caption. Use a wider report-page section.')
         top, bottom = value(margin, 'top', 720), value(margin, 'bottom', 720)
         clearance = max(0, value(margin, 'header', 0) + 280 - top)
         height = value(size, 'h', 15840) - top - max(bottom, value(margin, 'footer', 0) + 200) - clearance - 60

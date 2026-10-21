@@ -13,6 +13,8 @@ import re
 def document_page_indexes(block, sources):
     if block.key != 'improvements':
         return frozenset()
+    from app.monthly_report_asset_review import asset_reviewed, _source_context_marker
+    from app.monthly_report_content_policy import page_allowed
     source_ids = [source.id for source in sources]
     mapped = {}
     for asset, references in block.asset_provenance:
@@ -32,8 +34,15 @@ def document_page_indexes(block, sources):
             continue
         source = next(source for source in sources if source.id == parts[0])
         number = int(parts[1])
-        if (source.suffix == '.pdf' and 1 <= number <= len(source.page_texts)
-                and number in source.selected_pages and parts[2] == source.fingerprint):
+        if not (source.suffix == '.pdf' and 1 <= number <= len(source.page_texts)
+                and number in source.selected_pages):
+            continue
+        markers = [ref for ref in references if ref.startswith('asset-source-context:v1:')]
+        # Existing per-asset approval binds the exact asset, caption and current
+        # page-context digest. A bare editable marker never supplies authority.
+        refreshed_review = (markers == [_source_context_marker(source, number)]
+                            and asset_reviewed(block, index) and page_allowed(source, number))
+        if parts[2] == source.fingerprint or refreshed_review:
             result.add(index)
     return frozenset(result)
 
@@ -73,3 +82,31 @@ def photo_preview_references(draft):
     # One byte object can serve multiple occurrences. Its document occurrence
     # requires line-art fidelity even when another occurrence is a photograph.
     return photos - documents
+
+
+def document_caption_problems(block, sources):
+    """Bound new standalone captions to three 10pt lines in a 5in safe width."""
+    from app.monthly_report_visuals import wrapped, font, _measure
+    draw, face = _measure(), font(28)  # 10pt at the existing 200dpi layout scale.
+    return tuple(index for index in document_page_indexes(block, sources)
+                 if index < len(block.asset_captions)
+                 and sum(max(1, len(wrapped(line, face, 1000, draw)))
+                         for line in block.asset_captions[index].split('\n')) > 3)
+
+
+def style_document_caption(paragraph):
+    from docx.shared import Pt
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = 1
+    paragraph.paragraph_format.left_indent = Pt(0)
+    paragraph.paragraph_format.right_indent = Pt(0)
+    paragraph.paragraph_format.first_line_indent = Pt(0)
+    paragraph.paragraph_format.keep_with_next = False
+    paragraph.paragraph_format.keep_together = True
+    paragraph.paragraph_format.page_break_before = False
+    for run in paragraph.runs:
+        run.font.name = 'DejaVu Sans'
+        run.font.size = Pt(10)
+        run.font.bold = False
+        run.font.italic = False

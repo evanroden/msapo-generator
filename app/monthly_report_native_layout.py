@@ -443,6 +443,17 @@ def _contain_replacement_picture(element, data):
         raise NativeLayoutError("The native photo replacement lacks a supported image frame.")
 
 
+def _discardable_picture_anchor(element):
+    """Only an already-cleared frame paragraph may lose obsolete layout."""
+    if element.tag != qn('w:p') or element.find('.//' + qn('w:sectPr')) is not None:
+        return False
+    if any((node.text or '').strip() for node in element.iter(qn('w:t'))):
+        return False
+    allowed = {qn('w:p'), qn('w:pPr'), qn('w:r'), qn('w:rPr'), qn('w:t'), qn('w:br')}
+    return all(node.tag in allowed or any(parent.tag in (qn('w:pPr'), qn('w:rPr'))
+               for parent in node.iterancestors()) for node in element.iter())
+
+
 def _replace_image(document, element, data, *, contain=False):
     # Mixed picture/SmartArt paragraphs are cloned as image frames. Updating a
     # raster is not proof that the neighboring source diagram is current.
@@ -1532,7 +1543,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                              if ref not in retained_images[block.key]]
             images = [asset_loader(block.asset_hashes[index]) for index in image_indexes]
         if images:
-            from app.monthly_report_asset_layout import document_page_indexes
+            from app.monthly_report_asset_layout import document_page_indexes, document_caption_problems, style_document_caption
+            if document_caption_problems(block, draft.sources):
+                raise NativeLayoutError("Shorten the source-page caption to at most three lines before generating.")
             document_indexes = document_page_indexes(block, draft.sources)
             anchors = image_prototypes.get(block.key)
             if not anchors:
@@ -1547,18 +1560,34 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             last = None
             photo_index = 0
             previous_document = False
+            emitted_photo_roots = set()
+            unused_document_anchors = set()
             for index, data in enumerate(images):
                 asset_index = image_indexes[index] if image_indexes else index
                 source_page = asset_index in document_indexes
                 anchor_index = photo_index if document_indexes else index
                 anchor, prototype = anchors[min(anchor_index, len(anchors) - 1)]
+                origin = anchor if anchor_index < len(anchors) else last
+                origin_root = page_plan._root(origin)
+                nested_document = source_page and origin_root is not origin
+                future_photos = any((image_indexes[n] if image_indexes else n) not in document_indexes
+                                    for n in range(index + 1, len(images)))
+                if nested_document and (future_photos or origin_root not in emitted_photo_roots):
+                    raise NativeLayoutError('A source page cannot split this native photo grid safely. Move the source page after its photos, or use a separate report-page section.')
+                document_origin = (last if source_page and previous_document and last is not None
+                                   and page_plan._root(last) is last else origin_root if nested_document else origin)
                 technical = source_page or block.key not in ("improvements", "cover_photo", "brand_logo", "client_logo")
                 if technical:
                     tail_space = (page_plan.trailing_picture_space(document,
-                                  anchor if anchor_index < len(anchors) else last)
+                                  document_origin)
                                   if source_page and index == len(images) - 1 else 0)
-                    clone = page_plan.technical_picture(document, anchor if anchor_index < len(anchors) else last, data, new_page=index > 0 or (source_page and bool(retained_images[block.key])),
-                                                        caption=bool(block.asset_captions), tail_space=tail_space)
+                    has_caption = asset_index < len(block.asset_captions) and bool(block.asset_captions[asset_index].strip())
+                    if source_page and has_caption:
+                        tail_space += 800  # Three controlled 10pt lines plus paragraph spacing.
+                    clone = page_plan.technical_picture(document, document_origin, data,
+                                                        new_page=index > 0 or (source_page and bool(retained_images[block.key])),
+                                                        caption=bool(block.asset_captions) and not source_page, tail_space=tail_space,
+                                                        minimum_width=7200 if source_page and has_caption else 0)
                 else:
                     clone = deepcopy(prototype)
                     for properties in list(clone.iter(qn("w:sectPr"))):
@@ -1570,31 +1599,58 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                         first_paragraph = clone if clone.tag == qn("w:p") else next(clone.iter(qn("w:p")), None)
                         if first_paragraph is not None:
                             Paragraph(first_paragraph, document._body).paragraph_format.page_break_before = True
-                if anchor_index < len(anchors):
+                if nested_document:
+                    if previous_document and document_origin is last:
+                        last.addnext(clone)
+                    elif origin_root in emitted_photo_roots or anchor_index >= len(anchors):
+                        origin_root.addnext(clone)
+                    else:
+                        origin_root.addprevious(clone)
+                    page_plan.emitted(clone, origin_root, kind="picture")
+                    if anchor_index < len(anchors):
+                        unused_document_anchors.add(anchor)
+                elif anchor_index < len(anchors):
                     anchor.addprevious(clone)
                     page_plan.emitted(clone, anchor, kind="picture")
                     # The old frame may own the section boundary. Keep that
                     # boundary until page accounting has finished its reflow.
-                    if not source_page and anchor.find(".//" + qn("w:sectPr")) is None:
+                    if source_page:
+                        unused_document_anchors.add(anchor)
+                    elif anchor.find(".//" + qn("w:sectPr")) is None:
+                        unused_document_anchors.discard(anchor)
                         anchor.getparent().remove(anchor)
                 else:
                     last.addnext(clone)
                     page_plan.emitted(clone, last, kind="picture")
                 last = clone
                 if not source_page:
+                    emitted_photo_roots.add(page_plan._root(clone))
+                    unused_document_anchors.discard(anchor)
                     photo_index += 1
                 previous_document = source_page
                 caption_index = image_indexes[index] if image_indexes else index
                 if caption_index < len(block.asset_captions) and block.asset_captions[caption_index].strip():
                     choices = section_text.get(sec) or global_text
-                    caption = deepcopy(choices[0]) if choices else OxmlElement("w:p")
+                    caption = deepcopy(choices[0]) if choices and not source_page else OxmlElement("w:p")
                     for properties in list(caption.iter(qn("w:sectPr"))):
                         properties.getparent().remove(properties)
                     _clear_images(caption)
                     _set_text(caption, block.asset_captions[caption_index])
+                    if source_page:
+                        from docx.text.paragraph import Paragraph
+                        style_document_caption(Paragraph(caption, document._body))
                     clone.addnext(caption)
                     page_plan.emitted(caption, clone, kind="caption")
                     last = caption
+            # A document page did not consume a photo frame. Remove only its
+            # now-unused, boundary-free cleared anchor after all photos had a
+            # chance to reuse it, including in protected source regions.
+            for old_anchor in unused_document_anchors:
+                parent = old_anchor.getparent()
+                if parent is not None and _discardable_picture_anchor(old_anchor):
+                    parent.remove(old_anchor)
+                    if parent.tag == qn("w:tc") and not parent.findall(qn("w:p")):
+                        parent.append(OxmlElement("w:p"))
     if section_key:
         selected_positions = [position for position, sec in section_by_pos.items()
                               if sec == section_key and original[position - 1].tag != qn("w:sectPr")
