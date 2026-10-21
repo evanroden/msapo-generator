@@ -12,6 +12,32 @@ _LABEL = re.compile(r'(?im)^[ \t]*(actions?|findings?|recommendations?|follow[- 
 _FIELD = re.compile(r"^[ \t]*[A-Za-z][^:\r\n=]{0,60}\s*[:=]")
 _STATUS = re.compile(r"(?im)^[ \t]*(?:(?:(?:work|service|completion|job|repair)\s+)?status|completion|outcome)\s*[:=]")
 MAX_VENDOR_BLOCK_SPANS = 2000
+MAX_VENDOR_FIELD_CHARS = 6000
+FIELD_PATTERNS = {"actions": r"\b(completed|repaired|replaced|inspected)\b",
+                  "findings": r"\b(findings?|observed)\b", "recommendations": r"\brecommend",
+                  "follow_ups": r"\b(follow.up|pending|scheduled)\b"}
+def unsupported_fields(text):
+    """Only structurally typed metadata may be ignored; free prose is pending."""
+    lines = text.splitlines()
+    for number, line in enumerate(lines):
+        if not field_boundary(line) or _LABEL.match(line):
+            continue
+        heading, value = re.split('[:=]', line, maxsplit=1)
+        heading, value = heading.strip().casefold(), value.strip()
+        date = heading in {'report date', 'service date', 'date'} and re.fullmatch(
+            r'\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4}', value)
+        counter = heading in {'header', 'footer', 'page'} and re.fullmatch(
+            r'(?i)(?:page\s+)?\d{1,3}(?:\s+of\s+\d{1,3})?', value)
+        identifier = heading in {'report id', 'report number'} and re.fullmatch(
+            r'[A-Za-z0-9_-]{1,48}', value) and any(c.isdigit() for c in value)
+        if not (date or counter or identifier):
+            return True
+        # Even typed metadata cannot hide a trailing unlabelled status line.
+        following = next((v for v in lines[number + 1:] if v.strip()), '')
+        if following and not field_boundary(following):
+            return True
+    return False
+
 
 _BOUNDARY = re.compile(r'(?i)^\s*(?:page\s+\d|[-*•‣▪]\s|\d+[.)]\s|(?:copyright|confidential|disclaimer|terms and conditions)\b)')
 
@@ -115,11 +141,35 @@ def validated_block_index(source):
     return index
 
 
-def read_vendor_document(source):
+def read_vendor_document(source, *, limit_pages=None):
     """Validate once, then parse only each labeled page's own exact spans."""
     pages = [n for n in range(1, len(source.page_texts) + 1) if labeled_page(source, n)]
     index = validated_block_index(source) if pages and source.classification == 'Vendor service' else None
-    return {n: vendor_passages(source, n, index=index) for n in pages}
+    result = {n: vendor_passages(source, n, index=index) for n in pages}
+    sizes, field_pages = {}, {}
+    if not pages:
+        return result  # Preserve wholly unlabeled legacy sources.
+    for number, text in enumerate(source.page_texts, 1):
+        for field, term in FIELD_PATTERNS.items():
+            values = ([p.text for p in result[number][0] if p.field == field]
+                      if number in result else
+                      [line.strip() for line in text.splitlines() if re.search(term, line, re.I)])
+            if values:
+                sizes[field] = sizes.get(field, -1) + sum(len(v) + 1 for v in values)
+                field_pages.setdefault(field, set()).add(number)
+    oversized = {field for field, size in sizes.items() if size > MAX_VENDOR_FIELD_CHARS}
+    if oversized:
+        affected = set().union(*(field_pages[field] for field in oversized))
+        if limit_pages is not None:
+            limit_pages.update(affected)
+        result = {n: (tuple(p for p in passages if p.field not in oversized),
+                      pending or n in affected)
+                  for n, (passages, pending) in result.items()}
+        # An unlabeled page contributing to an over-limit field cannot escape
+        # back through physical-line Activity/evidence. Keep that page pending.
+        for number in affected - result.keys():
+            result[number] = ((), True)
+    return result
 
 
 def vendor_passages(source, number, *, index=_UNSET):
@@ -135,7 +185,7 @@ def vendor_passages(source, number, *, index=_UNSET):
         return (), True
     # Status fields can qualify an apparently completed action. Their linkage
     # is not inferred: keep this page pending rather than silently drop them.
-    if _STATUS.search(source.page_texts[number - 1]):
+    if _STATUS.search(source.page_texts[number - 1]) or unsupported_fields(source.page_texts[number - 1]):
         return (), True
     if index is _UNSET:
         index = validated_block_index(source)

@@ -17,9 +17,9 @@ def fixture(monkeypatch, tmp_path, fields=None):
         'Follow-up: PENDING LABEL RECHECK. No\ncompletion date is asserted.',
     ]
     doc = fitz.open(); p = doc.new_page()
-    parts = ['Synthetic vendor service report', 'Vendor: Synthetic Vendor',
-             'Report date: 2026-10-16', 'Fixture header: Never an activity event.', *fields,
-             'Footer: Synthetic test data, not a service event.']
+    parts = ['Synthetic vendor service report', 'Report ID: SYN-123',
+             'Report date: 2026-10-16', 'Header: Page 1', *fields,
+             'Footer: Page 1']
     y = 30
     for part in parts:
         p.insert_text((35,y), part, fontsize=10)
@@ -58,7 +58,7 @@ def test_whole_qualifier_prevents_completed_action(monkeypatch,tmp_path,tail):
 
 def test_unknown_field_boundary_never_enters_action(monkeypatch,tmp_path):
     c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump.\nBilling contact: Private Person\nFindings: Observed normal operation.'])
-    assert c.source.actions == 'Actions: Inspected the pump.'
+    assert not c.source.actions  # Unsupported contact prose stays pending, never inferred away.
     assert 'Private Person' not in native_update((c,), 'activity_summary').text
 
 
@@ -163,7 +163,7 @@ def test_inline_fields_are_reviewed_not_blended(monkeypatch,tmp_path):
 @pytest.mark.parametrize('boundary', ['Footer: Do not add this to activity.', 'Confidential information for the service recipient.', 'Page 2 of 3'])
 def test_footer_cannot_become_action_tail(monkeypatch,tmp_path,boundary):
     c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump.\n'+boundary])
-    assert c.source.actions == 'Actions: Inspected the pump.'
+    assert c.source.actions == ('' if boundary.startswith('Footer:') else 'Actions: Inspected the pump.')
     assert boundary not in native_update((c,),'activity_summary').text
 
 
@@ -265,7 +265,7 @@ def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_pat
     assert not upgraded.source.actions
     assert upgraded.source.classification=='Reference only'
     assert any('not auto-imported' in n for n in upgraded.source.notices)
-    assert json.loads(path.read_text())['vendor_passage_policy']==5
+    assert json.loads(path.read_text())['vendor_passage_policy']==6
 
 
 @pytest.mark.parametrize('heading', ["Technician's note", 'Technician’s note', 'Phase 2 result', 'Note (internal)', 'Note #2'])
@@ -327,7 +327,7 @@ def test_version_two_cache_rechecks_unknown_heading_boundary(monkeypatch,tmp_pat
     path.write_text(json.dumps(data))
     upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
     assert not upgraded.source.actions
-    assert json.loads(path.read_text())['vendor_passage_policy']==5
+    assert json.loads(path.read_text())['vendor_passage_policy']==6
 
 
 @pytest.mark.parametrize('heading', ['Supervisor ID:42.', 'Finding #2:12.'])
@@ -445,3 +445,57 @@ def test_span_whitespace_rule_rejects_nonwhitespace_edges(prefix,suffix):
         selected_pages=(1,),pdf_text_blocks=((1,len(prefix),len(prefix)+len(value),sha256(value.encode()).hexdigest()),))
     assert validated_block_index(s) is None
     assert not sources.native_action_lines(s)
+
+
+@pytest.mark.parametrize('same_block',[True,False])
+def test_ignored_negative_note_cannot_certify_completed_action(monkeypatch,tmp_path,same_block):
+    fields=['Actions: Replaced the pump.', "Technician's note: Repair was not completed."]
+    c,_=fixture(monkeypatch,tmp_path,['\n'.join(fields)] if same_block else fields)
+    assert not c.source.actions and not sources.action_evidence(c.source)[0]
+    assert not native_update((c,),'activity_summary').text
+
+
+@pytest.mark.parametrize('label', ['Actions: Inspected', 'Findings: Observed', 'Follow-up: Recommended'])
+def test_aggregate_oversized_field_never_enters_native_activity(label):
+    values=tuple('Vendor service report\n'+label+' '+('sample pump ' * 50)+'.' for _ in range(12))
+    spans=tuple((n,0,len(v),sha256(v.encode()).hexdigest()) for n,v in enumerate(values,1))
+    s=ReportSource('id','synthetic-service.pdf','digest','.pdf',classification='Vendor service',
+                  page_texts=values,selected_pages=tuple(range(1,13)),pdf_text_blocks=spans)
+    s=sources.suggest_facts(s,synthetic_profiles()[0])
+    assert s.classification=='Vendor service'
+    assert not s.actions and not s.findings and not s.follow_ups
+    assert len(s.notices)==12 and all('exceeds the suggestion limit' in n for n in s.notices)
+    assert not sources.native_action_lines(s)
+    from app.monthly_report_sources import SourceContent
+    assert not native_update((SourceContent(s),),'activity_summary').text
+
+
+@pytest.mark.parametrize('note', ["Technician's note: Access approved.",
+    'Footer: Repair was not completed.', 'Header: Work is pending.',
+    'Footer: Summary\nRepair was not completed.'])
+def test_unsupported_substantive_note_and_work_metadata_stay_pending(monkeypatch,tmp_path,note):
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Replaced the pump.',note])
+    assert not c.source.actions and not native_update((c,),'activity_summary').text
+    assert any('not auto-imported' in n for n in c.source.notices)
+
+
+@pytest.mark.parametrize('note',['Footer: Not done.','Header: No work carried out.',
+                                 'Footer: Cancelled.','Billing contact: Not operational.',
+                                 'Vendor: Repair was not completed.'])
+def test_free_prose_metadata_never_certifies_action(monkeypatch,tmp_path,note):
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Replaced the pump.',note])
+    assert not c.source.actions and not sources.native_action_lines(c.source)
+    assert not native_update((c,),'activity_summary').text
+
+
+def test_mixed_labeled_unlabeled_aggregate_limit_cannot_restore_activity():
+    from app.monthly_report_sources import SourceContent
+    label='Vendor service report\nActions: Inspected '+('sample pump ' * 480)+'.'
+    other='Inspected '+('sample pump ' * 30)+'.'
+    s=ReportSource('id','synthetic-service.pdf','digest','.pdf',classification='Vendor service',
+        page_texts=(label,other),selected_pages=(1,2),
+        pdf_text_blocks=((1,0,len(label),sha256(label.encode()).hexdigest()),))
+    s=sources.suggest_facts(s,synthetic_profiles()[0])
+    assert not s.actions and len(s.notices)==2
+    assert not sources.native_action_lines(s)
+    assert not native_update((SourceContent(s),),'activity_summary').text

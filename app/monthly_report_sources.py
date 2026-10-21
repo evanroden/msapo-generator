@@ -159,12 +159,12 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
         facility = matches[0] if len(matches) == 1 else ""
     source = replace(source, classification=classification)
     from app.monthly_report_vendor_passages import read_vendor_document
-    passage_pages = read_vendor_document(source)
+    limit_pages = set()
+    passage_pages = read_vendor_document(source, limit_pages=limit_pages)
     labeled_pages = tuple(passage_pages)
     pending = [n for n, (_, review) in passage_pages.items() if review]
-    patterns = {"actions": r"\b(completed|repaired|replaced|inspected)\b",
-                "findings": r"\b(findings?|observed)\b", "recommendations": r"\brecommend",
-                "follow_ups": r"\b(follow.up|pending|scheduled)\b"}
+    from app.monthly_report_vendor_passages import FIELD_PATTERNS
+    patterns = FIELD_PATTERNS
     field_values, field_pages = {}, {}
     for field, term in patterns.items():
         values = []
@@ -180,10 +180,10 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
         field_values[field] = "\n".join(values)
     oversized = [field for field, value in field_values.items() if len(value) > 6000] if labeled_pages else []
     from app.monthly_report_vendor_passages import passage_notice
-    oversized_pages = sorted({n for field in oversized for n in field_pages[field]})
+    oversized_pages = sorted(limit_pages | {n for field in oversized for n in field_pages[field]})
     notices = tuple(dict.fromkeys((*source.notices,
         *(passage_notice(n, reason="limit") for n in oversized_pages),
-        *(passage_notice(n) for n in pending))))
+        *(passage_notice(n) for n in pending if n not in oversized_pages))))
     def lines(term, field=""):
         if labeled_pages and field:
             return field_values[field] if field not in oversized else ""
@@ -397,7 +397,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         data = library._read(cache)
         source = library.source_from_dict(data["source"])
         tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 5):
+        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 6):
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
@@ -469,7 +469,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 5, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 6, **asdict(content)}))
     return content, attachments
 
 
