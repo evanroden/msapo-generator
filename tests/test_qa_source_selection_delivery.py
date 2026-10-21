@@ -218,3 +218,13 @@ def test_asset_read_error_does_not_raise_or_retain_exception_body():
     assert events[0][1]['matches'] is False
     assert events[0][1]['error_type'] == 'RuntimeError'
     assert 'private' not in json.dumps(events)
+
+
+def test_source_observer_only_changes_trigger_both_native_browser_workflows():
+    import re
+    workflow = Path('.github/workflows/adaptive-workspaces.yml').read_text()
+    sections = re.split(r'^  (pull_request|push):\n', workflow.split('\npermissions:', 1)[0], flags=re.MULTILINE)
+    events = dict(zip(sections[1::2], sections[2::2]))
+    required = {'scripts/qa_source_selection_delivery.py', 'tests/test_qa_source_selection_delivery.py'}
+    for event in ('push', 'pull_request'):
+        assert required <= set(re.findall(r"^      - '([^']+)'$", events[event], flags=re.MULTILINE))
