@@ -101,10 +101,24 @@ export default function(component) {
                 gate.blockAll = gate.blockAll || !withinPair;
                 gate.scopePair = gate.blockAll ? null : withinPair;
             };
+            // The uploader rejects a file outside its accept list (and an
+            // emptied picker sends nothing) without starting an editor run.
+            // No receipt would follow, so such a change must not open a hold.
+            const uploadStarts = input => {
+                const files = Array.from(input.files || []);
+                const accepted = (input.getAttribute?.('accept') || '').split(',')
+                    .map(token => token.trim().toLowerCase()).filter(Boolean);
+                return files.length > 0 && (!accepted.length || files.every(file => {
+                    const name = (file.name || '').toLowerCase(), kind = (file.type || '').toLowerCase();
+                    return accepted.some(token => token.startsWith('.') ? name.endsWith(token) :
+                        token.endsWith('/*') ? kind.startsWith(token.slice(0, -1)) : kind === token);
+                }));
+            };
             const nativeChange = event => {
                 const target = event.target;
                 if (!target?.matches?.('input,textarea,select') ||
                         target.closest?.('.report-preview')) return;
+                if (target.type === 'file' && !uploadStarts(target)) return;
                 awaitNativeEdit();
             };
             // Streamlit's checkbox/toggle label can synchronously request its
@@ -132,8 +146,13 @@ export default function(component) {
                 const disclosure = target.closest('summary')?.closest('[class*="_history_open"]');
                 const historyRerun = Array.from(disclosure?.classList || []).some(
                     name => name.startsWith('st-key-') && name.endsWith('_history_open'));
-                if (label?.querySelector('input[type="checkbox"], input[type="radio"]') ||
-                        (button && !button.disabled) || historyRerun) awaitNativeEdit();
+                // A disabled choice or an already-selected radio changes
+                // nothing and starts no run, so it must not open a hold.
+                const choice = label?.querySelector('input[type="checkbox"], input[type="radio"]');
+                const choiceChanges = choice && !choice.disabled &&
+                    choice.getAttribute?.('aria-disabled') !== 'true' &&
+                    !(choice.type === 'radio' && choice.checked);
+                if (choiceChanges || (button && !button.disabled) || historyRerun) awaitNativeEdit();
             };
             // Ctrl/Command+Enter commits without blur/change. Tab/Shift+Tab
             // moves focus/scroll before its change/blur handlers can protect

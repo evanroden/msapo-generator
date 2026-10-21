@@ -206,3 +206,61 @@ test('ordinary Enter, composition, focus, disabled buttons and file pickers do n
     assert.equal(h.gate.blockAll,false);assert.equal(h.sent.length,1);
     h.cleanup();
 });
+
+// #293 (R6-9): a gesture that submits nothing never receives a full-render
+// receipt, so it must not open a hold that would strand every preview.
+const labelClick=choice=>({target:{closest:s=>s==='label'?{querySelector:()=>choice}:null}});
+const choice=(type,{checked=false,disabled=false,ariaDisabled=null}={})=>
+    ({type,checked,disabled,getAttribute:name=>name==='aria-disabled'?ariaDisabled:null});
+
+for(const [name,control] of [
+    ['an already-selected radio',choice('radio',{checked:true})],
+    ['a disabled checkbox',choice('checkbox',{disabled:true})],
+    ['an aria-disabled radio',choice('radio',{ariaDisabled:'true'})]])
+test('clicking the label of '+name+' does not open the preview hold',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('click',labelClick(control));
+    assert.equal(h.gate.pending,false,'no editor run follows, so no receipt could release it');
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();
+    assert.equal(h.sent.length,2,'both previews stay able to load');
+    h.cleanup();
+});
+
+for(const control of [choice('radio'),choice('checkbox'),choice('checkbox',{checked:true})])
+test('a real '+control.type+(control.checked?' uncheck':' choice')+' still holds previews until its full render',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('click',labelClick(control));
+    assert.equal(h.gate.pending,true);assert.equal(h.gate.blockAll,true);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,0);
+    h.workspace.dataset.epcFullRender='after-choice';h.mutations[0].callback();h.fire();
+    assert.equal(h.sent.length,2);h.cleanup();
+});
+
+const fileInput=(files,accept='.pdf,.docx,image/*')=>({type:'file',files,
+    matches:s=>s==='input,textarea,select',closest:()=>null,
+    getAttribute:name=>name==='accept'?accept:null});
+
+for(const [name,files] of [
+    ['a file type the uploader rejects',[{name:'synthetic-notes.txt',type:'text/plain'}]],
+    ['a mix with one rejected file',[{name:'synthetic.pdf',type:'application/pdf'},{name:'synthetic.exe',type:''}]],
+    ['an emptied file picker',[]]])
+test(name+' does not open the preview hold',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('change',{target:fileInput(files)});
+    assert.equal(h.gate.pending,false);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,2);
+    h.cleanup();
+});
+
+for(const [name,files,accept] of [
+    ['an accepted extension',[{name:'Synthetic Report.DOCX',type:''}],'.pdf,.docx'],
+    ['an accepted media type',[{name:'synthetic-photo',type:'image/png'}],'image/*'],
+    ['an uploader without a type list',[{name:'synthetic.bin',type:''}],null]])
+test(name+' still holds previews until the upload run renders',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    h.dispatch('change',{target:fileInput(files,accept)});
+    assert.equal(h.gate.pending,true);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,0);
+    h.workspace.dataset.epcFullRender='after-upload';h.mutations[0].callback();h.fire();
+    assert.equal(h.sent.length,2);h.cleanup();
+});
