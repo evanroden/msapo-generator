@@ -1,4 +1,8 @@
 import json
+from pathlib import Path
+import os
+import subprocess
+import sys
 import pytest
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
 from scripts.qa_water_widget_delivery import WaterWidgetDelivery
@@ -21,3 +25,19 @@ def test_oversized_and_filtered_frames_count_without_retaining_contents(water):
     snapshot = dict(totals)
     send(finished)
     assert totals == snapshot
+
+
+def test_existing_standalone_harness_imports_without_repository_package(tmp_path):
+    scripts = Path(__file__).resolve().parents[1] / 'scripts'
+    code = f"""
+import sys
+sys.path.insert(0, {str(scripts)!r})
+from qa_widget_delivery import WidgetDelivery
+from qa_water_widget_delivery import WaterWidgetDelivery
+assert WidgetDelivery(lambda *args: None).wire_totals.snapshot()['received']['bytes'] == 0
+assert WaterWidgetDelivery(lambda *args: None).wire_totals.snapshot()['received']['bytes'] == 0
+"""
+    env = {key: value for key, value in os.environ.items() if key != 'PYTHONPATH'}
+    result = subprocess.run([sys.executable, '-c', code], cwd=tmp_path, env=env,
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr

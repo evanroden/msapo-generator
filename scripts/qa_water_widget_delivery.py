@@ -6,7 +6,10 @@ from urllib.parse import urlparse
 from google.protobuf.message import DecodeError
 from streamlit.proto.BackMsg_pb2 import BackMsg
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
-from scripts.qa_wire_totals import WireTotals
+if __package__:
+    from .qa_wire_totals import WireTotals
+else:  # Existing direct `python scripts/...` harness entry points.
+    from qa_wire_totals import WireTotals
 
 
 LABELS = frozenset({"Include page and continue", "Leave page out and continue",
