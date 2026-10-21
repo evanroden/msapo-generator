@@ -165,21 +165,25 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     patterns = {"actions": r"\b(completed|repaired|replaced|inspected)\b",
                 "findings": r"\b(findings?|observed)\b", "recommendations": r"\brecommend",
                 "follow_ups": r"\b(follow.up|pending|scheduled)\b"}
-    field_values = {}
+    field_values, field_pages = {}, {}
     for field, term in patterns.items():
         values = []
+        field_pages[field] = []
         for n, page_text in enumerate(source.page_texts, 1):
             if n in passage_pages:
-                values.extend(p.text for p in passage_pages[n][0] if p.field == field)
+                page_values = [p.text for p in passage_pages[n][0] if p.field == field]
             else:
-                values.extend(line.strip() for line in page_text.splitlines() if re.search(term, line, re.I))
+                page_values = [line.strip() for line in page_text.splitlines() if re.search(term, line, re.I)]
+            if page_values:
+                values.extend(page_values)
+                field_pages[field].append(n)
         field_values[field] = "\n".join(values)
     oversized = [field for field, value in field_values.items() if len(value) > 6000] if labeled_pages else []
-    notices = tuple(dict.fromkeys((*source.notices, *(
-        f"Vendor {field.replace('_', ' ')} needs source review; the complete passage exceeds the suggestion limit."
-        for field in oversized), *(
-        f"Labeled PDF passage on page {n} needs source review; classification or paragraph boundaries are uncertain."
-        for n in pending))))
+    from app.monthly_report_vendor_passages import passage_notice
+    oversized_pages = sorted({n for field in oversized for n in field_pages[field]})
+    notices = tuple(dict.fromkeys((*source.notices,
+        *(passage_notice(n, reason="limit") for n in oversized_pages),
+        *(passage_notice(n) for n in pending))))
     def lines(term, field=""):
         if labeled_pages and field:
             return field_values[field] if field not in oversized else ""
@@ -393,7 +397,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         data = library._read(cache)
         source = library.source_from_dict(data["source"])
         tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 3):
+        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 4):
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
@@ -403,6 +407,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     library._atomic_write(path, raw)
     page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
     pdf_text_blocks = []
+    span_budget_exceeded = False
     if suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as pdf:
             if pdf.is_encrypted and not pdf.authenticate(""):
@@ -416,8 +421,16 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 page_texts.append(text)
                 if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
                     raise ValueError("PDF text exceeds 400,000 characters; select a smaller document range.")
-                from app.monthly_report_vendor_passages import block_spans
-                pdf_text_blocks.extend(block_spans(page, text, number))
+                from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
+                if not span_budget_exceeded:
+                    spans = block_spans(page, text, number)
+                    if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
+                        # No partial-page certainty after exhausting metadata capacity.
+                        # Raw original/page text and ordinary review remain available.
+                        pdf_text_blocks.clear()
+                        span_budget_exceeded = True
+                    else:
+                        pdf_text_blocks.extend(spans)
     elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         normalize_report_image(raw, suffix)  # Validate before caching or paid work.
         page_texts, needs_vision = [""], [1]
@@ -456,7 +469,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 3, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 4, **asdict(content)}))
     return content, attachments
 
 

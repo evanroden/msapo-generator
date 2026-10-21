@@ -91,7 +91,7 @@ def test_bad_offsets_cannot_certify_passage(monkeypatch,tmp_path,change):
     if change=='overlap': spans.insert(1,spans[0])
     if change=='digest': spans[0]=(*spans[0][:3],'0'*64)
     s=replace(c.source,pdf_text_blocks=tuple(spans))
-    if change=='changed_text': s=replace(s,page_texts=(s.page_texts[0].replace('Synthetic','Different',1),))
+    if change=='changed_text': s=replace(s,page_texts=(s.page_texts[0].replace('Inspected','Not done!',1),))
     assert not sources.native_action_lines(s)
     assert not native_update((replace(c,source=s),),'activity_summary').text
 
@@ -264,8 +264,8 @@ def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_pat
     upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
     assert not upgraded.source.actions
     assert upgraded.source.classification=='Reference only'
-    assert any('classification' in n for n in upgraded.source.notices)
-    assert json.loads(path.read_text())['vendor_passage_policy']==3
+    assert any('not auto-imported' in n for n in upgraded.source.notices)
+    assert json.loads(path.read_text())['vendor_passage_policy']==4
 
 
 @pytest.mark.parametrize('heading', ["Technician's note", 'Technician’s note', 'Phase 2 result', 'Note (internal)', 'Note #2'])
@@ -273,7 +273,7 @@ def test_punctuated_unknown_heading_does_not_complete_action(monkeypatch,tmp_pat
     c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump\n'+heading+': Access approved.'])
     assert not c.source.actions
     assert not native_update((c,),'activity_summary').text
-    assert any('review' in n for n in c.source.notices)
+    assert any('review' in n.lower() for n in c.source.notices)
 
 
 def test_labeled_page_preserves_unlabeled_page_findings(monkeypatch,tmp_path):
@@ -327,7 +327,7 @@ def test_version_two_cache_rechecks_unknown_heading_boundary(monkeypatch,tmp_pat
     path.write_text(json.dumps(data))
     upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
     assert not upgraded.source.actions
-    assert json.loads(path.read_text())['vendor_passage_policy']==3
+    assert json.loads(path.read_text())['vendor_passage_policy']==4
 
 
 @pytest.mark.parametrize('heading', ['Supervisor ID:42.', 'Finding #2:12.'])
@@ -335,4 +335,83 @@ def test_two_digit_heading_value_is_not_mistaken_for_time(monkeypatch,tmp_path,h
     c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump\n'+heading])
     assert not c.source.actions
     assert not native_update((c,),'activity_summary').text
-    assert any('review' in n for n in c.source.notices)
+    assert any('review' in n.lower() for n in c.source.notices)
+
+
+def test_negative_status_field_cannot_be_dropped_from_activity(monkeypatch,tmp_path):
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Replaced the pump.\nStatus: Not completed.'])
+    assert not c.source.actions
+    assert not sources.action_evidence(c.source)[0]
+    assert not native_update((c,),'activity_summary').text
+    assert any('review' in n.lower() for n in c.source.notices)
+
+
+def test_span_metadata_omits_unrelated_blocks(monkeypatch,tmp_path):
+    c,_=fixture(monkeypatch,tmp_path)
+    assert len(c.source.pdf_text_blocks)==3
+    assert all(c.source.page_texts[n-1][start:end].startswith(('Actions:','Findings:','Follow-up:'))
+               for n,start,end,digest in c.source.pdf_text_blocks)
+
+
+@pytest.mark.parametrize('status', ['Status: Not completed.', 'Completion status: Pending.', 'Work status: Not started.'])
+def test_separate_status_block_cannot_lose_action_qualification(monkeypatch,tmp_path,status):
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Replaced the pump.',status])
+    assert not c.source.actions and not native_update((c,),'activity_summary').text
+    assert status in c.source.page_texts[0]
+
+
+def test_span_budget_failure_retains_original_and_requires_review(monkeypatch,tmp_path):
+    from app import monthly_report_vendor_passages as passages
+    monkeypatch.setattr(passages,'MAX_VENDOR_BLOCK_SPANS',2)
+    c,raw=fixture(monkeypatch,tmp_path)
+    assert not c.source.pdf_text_blocks
+    assert not c.source.actions and not native_update((c,),'activity_summary').text
+    assert sources.source_bytes(synthetic_profiles()[0],c.source)==raw
+    assert 'completion date is asserted.' in c.source.page_texts[0]
+    assert any('review' in n.lower() for n in c.source.notices)
+
+
+def test_only_exact_passage_notice_uses_current_page_review(monkeypatch,tmp_path):
+    from app.monthly_report_source_readiness import unresolved_reading_notices
+    from app.monthly_report_content_policy import page_fingerprint
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Replaced the pump.\nStatus: Not completed.'])
+    s=c.source
+    assert unresolved_reading_notices(s)
+    reviewed=replace(s,client_page_reviews=((1,page_fingerprint(s,1)),))
+    assert not unresolved_reading_notices(reviewed)
+    assert not reviewed.actions and not native_update((replace(c,source=reviewed),),'activity_summary').text
+    assert reviewed.notices==s.notices and 'not auto-imported' in reviewed.notices[0]
+    for changed in (replace(reviewed,sha256='other-source'),replace(reviewed,captions=((1,'Changed caption'),)),
+                    replace(reviewed,page_texts=(s.page_texts[0]+' Changed.',))):
+        assert unresolved_reading_notices(changed)
+    assert unresolved_reading_notices(replace(s,classification='Vendor service'))
+    assert unresolved_reading_notices(replace(s,actions='Human edited facts'))
+    assert unresolved_reading_notices(replace(reviewed,notices=(*s.notices,'Unknown native content needs review.')))==('Unknown native content needs review.',)
+
+
+def test_exclusion_requires_exact_explicit_receipt(monkeypatch,tmp_path):
+    from app.monthly_report_source_readiness import unresolved_reading_notices
+    from app.monthly_report_content_policy import page_fingerprint
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump but it'])
+    s=replace(c.source,selected_pages=())
+    assert unresolved_reading_notices(s)
+    excluded=replace(s,client_page_exclusions=((1,page_fingerprint(s,1)),))
+    assert not unresolved_reading_notices(excluded)
+    assert unresolved_reading_notices(replace(excluded,selected_pages=(1,)))
+
+
+def test_mixed_page_notices_need_their_own_receipts(monkeypatch,tmp_path):
+    from app.monthly_report_source_readiness import unresolved_reading_notices
+    from app.monthly_report_content_policy import page_fingerprint
+    from app.monthly_report_vendor_passages import passage_notice
+    c,_=fixture(monkeypatch,tmp_path)
+    s=replace(c.source,page_texts=(c.source.page_texts[0],c.source.page_texts[0]),selected_pages=(1,2),
+        notices=(passage_notice(1),passage_notice(2)))
+    reviewed=replace(s,client_page_reviews=((1,page_fingerprint(s,1)),))
+    assert unresolved_reading_notices(reviewed)==(passage_notice(2),)
+    wrong_page=replace(reviewed,client_page_reviews=((1,page_fingerprint(s,1)),(2,page_fingerprint(s,1))))
+    assert unresolved_reading_notices(wrong_page)==(passage_notice(2),)
+    all_reviewed=replace(reviewed,client_page_reviews=((1,page_fingerprint(s,1)),(2,page_fingerprint(s,2))))
+    assert not unresolved_reading_notices(all_reviewed)
+    for invalid in (passage_notice(3),passage_notice(1)+' Extra unknown warning.'):
+        assert unresolved_reading_notices(replace(all_reviewed,notices=(invalid,)))==(invalid,)

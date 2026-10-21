@@ -10,6 +10,9 @@ import fitz
 
 _LABEL = re.compile(r'(?im)^[ \t]*(actions?|findings?|recommendations?|follow[- ]?ups?)\s*[:=]')
 _FIELD = re.compile(r"^[ \t]*[A-Za-z][^:\r\n=]{0,60}\s*[:=]")
+_STATUS = re.compile(r"(?im)^[ \t]*(?:(?:(?:work|service|completion|job|repair)\s+)?status|completion|outcome)\s*[:=]")
+MAX_VENDOR_BLOCK_SPANS = 2000
+
 _BOUNDARY = re.compile(r'(?i)^\s*(?:page\s+\d|[-*•‣▪]\s|\d+[.)]\s|(?:copyright|confidential|disclaimer|terms and conditions)\b)')
 
 
@@ -66,7 +69,7 @@ def block_spans(page, text, number):
             if previous is not None:
                 safe = safe and 0 < box[1] - previous[1] <= 1.8 * max(previous[3] - previous[1], 1)
             previous = box
-        if safe:
+        if safe and _LABEL.search(raw):
             spans.append((number, cursor, end, sha256(raw.encode()).hexdigest()))
         cursor = end
     if text[cursor:].strip():
@@ -125,6 +128,10 @@ def vendor_passages(source, number, *, index=_UNSET):
         return (), False
     if source.classification != 'Vendor service':
         return (), True
+    # Status fields can qualify an apparently completed action. Their linkage
+    # is not inferred: keep this page pending rather than silently drop them.
+    if _STATUS.search(source.page_texts[number - 1]):
+        return (), True
     if index is _UNSET:
         index = validated_block_index(source)
     blocks = index.get(number, ()) if index is not None else ()
@@ -180,3 +187,26 @@ def vendor_passages(source, number, *, index=_UNSET):
     if len(covered) != len(tuple(_LABEL.finditer(text))):
         pending = True
     return tuple(passages), pending
+
+
+_NOTICE_TEXT = {
+    'boundary': ('Page {page}: some passage text was not auto-imported. Review the full source page '
+                 'before including it, or leave it out. Add verified wording manually.'),
+    'limit': ('Page {page}: passage text exceeds the suggestion limit and was not auto-imported. '
+              'Review the full source page before including it, or leave it out. Add verified wording manually.'),
+}
+
+
+def passage_notice(page, *, reason='boundary'):
+    return _NOTICE_TEXT[reason].format(page=page)
+
+
+def passage_notice_page(notice, page_count):
+    """Only this exact bounded notice family is eligible for existing review."""
+    match = re.match(r'^Page ([1-9][0-9]{0,2}):', notice)
+    if not match:
+        return None
+    page = int(match[1])
+    if not 1 <= page <= page_count:
+        return None
+    return page if any(notice == value.format(page=page) for value in _NOTICE_TEXT.values()) else None
