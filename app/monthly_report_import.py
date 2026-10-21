@@ -47,6 +47,10 @@ R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 V = "{urn:schemas-microsoft-com:vml}"
 MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+_NATIVE_CAPTION_FRAMES = {
+    "{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}wsp",
+    V + "shape", V + "rect", W + "txbxContent",
+}
 RASTER = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif"}
 
 
@@ -203,9 +207,16 @@ def _remove_page_field_results(element, fields):
             node.text = ""
 
 
-def _text(element) -> str:
+def _text(element, *, exclude=()) -> str:
+    def visible_nodes(node):
+        if node in exclude:
+            return
+        yield node
+        for child in node:
+            yield from visible_nodes(child)
+
     parts = []
-    for node in element.iter():
+    for node in visible_nodes(element) if exclude else element.iter():
         if node.tag == W + "p" and parts and parts[-1] != "\n":
             parts.append("\n")
         elif node.tag == W + "t":
@@ -328,7 +339,7 @@ def is_header_artwork(item):
     return item.kind == "image" and item.image_role == "header_artwork"
 
 
-def _classify_logo_items(items):
+def _classify_logo_items(items, *, native_frame_text=None, native_frame_image_ids=()):
     """Bind short caption labels and repeated exact artwork to their roles.
 
     Captions can precede or follow pictures. Infer that convention only from
@@ -349,12 +360,18 @@ def _classify_logo_items(items):
         if (item.kind != "text" or (item.section not in ("", "cover")
                                    and not item.part.startswith(("word/header", "word/footer")))):
             continue
-        role = _logo_label_role(item.text)
+        # Text inside native frames belongs to that frame, not every image in
+        # this paragraph or a neighboring paragraph. Closed-frame evidence is
+        # applied by exact occurrence separately, never via digest propagation.
+        caption = (native_frame_text or {}).get(
+            (item.part, item.word_section, item.position), item.text)
+        role = _logo_label_role(caption)
         if not role:
             continue
         scope = (item.part, item.word_section)
         adjacent = {delta: tuple(index for index in positions.get((*scope, item.position + delta), ())
-                                 if items[index].kind == "image") for delta in (-1, 0, 1)}
+                                 if items[index].kind == "image" and items[index].id not in native_frame_image_ids)
+                    for delta in (-1, 0, 1)}
         if adjacent[0]:
             for index in adjacent[0]:
                 roles[index].add(role if len(adjacent[0]) == 1 else "logo")
@@ -459,6 +476,9 @@ def inspect_docx(path: Path) -> DocxInspection:
     background_positions = []
     mint_background_positions = set()
     alternate_positions = set()
+    frame_client_logo_ids = set()
+    native_frame_text = {}
+    native_frame_image_ids = set()
     revision_changes = comment_changes = 0
     content_slot = ""
     note_owners = {}
@@ -546,6 +566,13 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     return None
                                 return metadata(target)["image_digest"]
                             alternatives_equivalent = equivalent_native_alternatives(element, image_identity)
+                            from app.monthly_report_native_logo_roles import client_logo_frame_pictures
+                            has_native_frame = any(node.tag in _NATIVE_CAPTION_FRAMES
+                                                   for node in element.iter())
+                            cover_native_frame = (has_native_frame and part == "word/document.xml"
+                                                  and word_section == 1 and section in ("", "cover"))
+                            frame_client_pictures = (client_logo_frame_pictures(element, image_identity, _logo_label_role)
+                                if cover_native_frame else set())
                             old_pictures = {relations.get(node.get(R + "embed") or node.get(R + "id"), ("", ""))[0]
                                             for node in element.iter() if node.tag in (A + "blip", V + "imagedata")}
                             normalized = _visible(element)
@@ -558,6 +585,18 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part.startswith(("word/header", "word/footer")):
                                 _remove_page_field_results(element, page_fields)
                             text = _text(element)
+                            # Generic captions may use only text outside native frame
+                            # subtrees. Inner labels belong to their own occurrences.
+                            frame_nodes = ({node for node in element.iter() if node.tag in _NATIVE_CAPTION_FRAMES}
+                                if cover_native_frame else set())
+                            # A plain VML picture is not a text-frame picture.
+                            # Exclude only pictures actually inside text boxes.
+                            frame_image_nodes = {node for frame_node in frame_nodes
+                                if frame_node.tag == W + "txbxContent"
+                                for node in frame_node.iter() if node.tag in (A + "blip", V + "imagedata")}
+                            caption_text = _text(element, exclude=frame_nodes) if frame_nodes else text
+                            if cover_native_frame:
+                                native_frame_text[(part, word_section, position)] = caption_text
                             source_note = ""
                             if part in ("word/footnotes.xml", "word/endnotes.xml"):
                                 kind = "footnote" if "footnotes" in part else "endnote"
@@ -659,6 +698,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if part == "word/document.xml" and not section and len(titles) < 12:
                                     titles.extend(line for line in text.splitlines() if 3 < len(line) < 180 and line not in titles)
                             image_nodes = [e for e in element.iter() if e.tag in (A + "blip", V + "imagedata")]
+                            outside_images = [picture for picture in image_nodes if picture not in frame_image_nodes]
                             image_occurrences = {}
                             for node in image_nodes:
                                 rid = node.get(R + "embed") or node.get(R + "id") or node.get(R + "link") or ""
@@ -677,7 +717,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     # A descriptor belongs to its drawing, not every picture
                                     # sharing the paragraph. Only a single-picture paragraph
                                     # can also use the paragraph's caption as identity proof.
-                                    labels = [text] if len(image_nodes) == 1 else []
+                                    labels = ([caption_text] if node not in frame_image_nodes
+                                              and len(outside_images) == 1 else [])
                                     drawing = node
                                     while drawing in parents:
                                         if drawing.tag.rsplit("}", 1)[-1] in ("inline", "anchor", "shape"):
@@ -703,6 +744,10 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
                                     image_role=role if supported else "",
                                     **(metadata(target) if supported else {}))
+                                if supported and node in frame_image_nodes:
+                                    native_frame_image_ids.add(added_id)
+                                if supported and node in frame_client_pictures:
+                                    frame_client_logo_ids.add(added_id)
                                 if target:
                                     image_occurrences[target] = (prior_id or added_id, occurrence + 1)
                             graphics = [e for e in element.iter() if e.tag == A + "graphicData" and not e.get("uri", "").endswith("/picture")]
@@ -777,7 +822,14 @@ def inspect_docx(path: Path) -> DocxInspection:
                 slot = "divider_" + target if item.kind == "image" else ""
                 items[index] = replace(item, section=target, suggested_slot=slot,
                                        note=item.note if item.note == "Native section heading" else "Native divider artwork")
-    items = _classify_logo_items(items)
+    items = _classify_logo_items(items, native_frame_text=native_frame_text,
+                                 native_frame_image_ids=native_frame_image_ids)
+    # Apply frame evidence AFTER global caption/exact-byte classification. This
+    # hint belongs only to the source SHA + occurrence ID; it must never seed
+    # digest-role propagation to a sibling, header, or unlabelled contents image.
+    items = [replace(item, image_role="client_logo" if item.image_role in ("", "logo", "client_logo") else "logo",
+                     suggested_slot="client_logo" if item.image_role in ("", "logo", "client_logo") else "")
+             if item.kind == "image" and item.id in frame_client_logo_ids else item for item in items]
     version = 0
     if revision_changes:
         from app.monthly_report_revision_view import VERSION
@@ -792,7 +844,27 @@ def inspect_docx(path: Path) -> DocxInspection:
 
 
 def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, preview: bool = False,
-                      preserve_transparency: bool | None = None):
+                      preserve_transparency: bool | None = None, source_view=None):
+    """Public byte-read boundary: independently verify every explicit view."""
+    options = dict(line_art=line_art, preview=preview, preserve_transparency=preserve_transparency)
+    if source_view is not None:
+        from app.monthly_report_operational_source import verified_operation
+        with verified_operation(path, source_view) as operation:
+            return _read_import_image(path, item, **options, source_view=operation.view, _operation=operation)
+    return _read_import_image(path, item, **options)
+
+
+def _read_import_image(path, item, *, line_art=True, preview=False, preserve_transparency=None,
+                       source_view=None, _operation=None):
+    if source_view is not None:
+        from app.monthly_report_operational_source import checked_operation, lookup_original
+        operation = checked_operation(path, source_view, _operation)
+        binding, rendered = lookup_original(source_view, item.id)
+        original = next((i for i in source_view.original_inspection.items if i.id == item.id), None)
+        if rendered is None or original != item:
+            raise ImportError("The image occurrence does not match the verified original audit.")
+        return read_import_image(operation.rendition_path, rendered, line_art=line_art, preview=preview,
+                                 preserve_transparency=preserve_transparency)
     if item.kind != "image" or not item.image_part.startswith("word/media/"):
         raise ImportError("Select an extractable image.")
     try:
@@ -813,10 +885,21 @@ def read_import_image(path: Path, item: ImportItem, *, line_art: bool = True, pr
                                   frame=(4, 5) if preview else (7, 9), dpi=96 if preview else 200)
 
 
-def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapping, ...]) -> MappedImport:
-    """Build only selected mappings, retaining every unmapped item in inspection."""
+def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapping, ...], *, source_view=None) -> MappedImport:
+    """Build selected mappings after independent source-view verification."""
+    if source_view is not None:
+        from app.monthly_report_operational_source import verified_operation
+        with verified_operation(path, source_view, inspection) as operation:
+            return _map_items(path, inspection, mappings, source_view=operation.view, _operation=operation)
+    return _map_items(path, inspection, mappings)
+
+
+def _map_items(path, inspection, mappings, *, source_view=None, _operation=None):
     known = {b.key: b for s in known_sections() for b in s.blocks} | {b.key: b for b in layout_blocks()}
-    items = {i.id: i for i in inspection.items}
+    from app.monthly_report_operational_source import checked_operation, operational_items
+    if source_view is not None:
+        checked_operation(path, source_view, _operation)
+    items = {i.id: i for i in operational_items(inspection, source_view)}
     grouped, overrides, assets, mapped = {}, {}, {}, []
     total = 0
     for mapping in mappings:
@@ -836,9 +919,9 @@ def map_items(path: Path, inspection: DocxInspection, mappings: tuple[ImportMapp
                 raise ImportError("An image needs an image destination.")
             if spec.type == "image_page" and block.asset_hashes:
                 raise ImportError("Choose one image for each single-image destination.")
-            normalized = read_import_image(path, item,
+            normalized = _read_import_image(path, item,
                 line_art=mapping.slot not in ("cover_photo", "improvements") and not mapping.slot.startswith("divider_"),
-                preserve_transparency=mapping.slot in ("brand_logo", "client_logo"))
+                preserve_transparency=mapping.slot in ("brand_logo", "client_logo"), source_view=source_view, _operation=_operation)
             digest = hashlib.sha256(normalized.data).hexdigest() + "." + normalized.extension
             if digest not in assets:
                 total += len(normalized.data)
