@@ -9,7 +9,7 @@ import re
 import fitz
 
 _LABEL = re.compile(r'(?im)^[ \t]*(actions?|findings?|recommendations?|follow[- ]?ups?)\s*[:=]')
-_FIELD = re.compile(r'^[ \t]*[A-Za-z][A-Za-z /_-]{0,45}\s*[:=]')
+_FIELD = re.compile(r"^[ \t]*[A-Za-z][^:\r\n=]{0,60}\s*[:=]")
 _BOUNDARY = re.compile(r'(?i)^\s*(?:page\s+\d|[-*•‣▪]\s|\d+[.)]\s|(?:copyright|confidential|disclaimer|terms and conditions)\b)')
 
 
@@ -20,6 +20,20 @@ class VendorPassage:
     end: int
     field: str
     text: str
+
+
+def field_boundary(line):
+    match = _FIELD.match(line)
+    if not match:
+        return False
+    prefix = line[:match.end() - 1]
+    value = line[match.end():]
+    # Exempt explicit embedded time/serial tokens, not a heading whose value
+    # merely happens to be two digits (Supervisor ID:42 / Finding #2:12).
+    technical = re.search(
+        r"(?i)(?:\b(?:at|before|after|by|until|since|from|to)\s+\d{1,2}|"
+        r"\b(?:serial|tag|identifier)\s+[A-Za-z0-9_-]*\d)$", prefix)
+    return not (technical and re.match(r"\d{2}\b", value))
 
 
 def block_spans(page, text, number):
@@ -66,7 +80,41 @@ def labeled_page(source, number):
             and bool(_LABEL.search(source.page_texts[number - 1])))
 
 
-def vendor_passages(source, number):
+_UNSET = object()
+
+
+def validated_block_index(source):
+    """Request-local validation; no retained source cache or stale span reuse."""
+    if not isinstance(source.pdf_text_blocks, (tuple, list)):
+        return None
+    index, last_page, last_end = {}, 0, 0
+    for entry in source.pdf_text_blocks:
+        if (not isinstance(entry, (tuple, list)) or len(entry) != 4
+                or type(entry[0]) is not int or not 1 <= entry[0] <= len(source.page_texts)
+                or not isinstance(entry[3], str)):
+            return None
+        page, start, end, digest = entry
+        text = source.page_texts[page - 1]
+        if (type(start) is not int or type(end) is not int or page < last_page
+                or (page == last_page and start < last_end)
+                or not 0 <= start < end <= len(text)
+                or (start and text[start - 1] != '\n')
+                or (end != len(text) and text[end] != '\n')
+                or sha256(text[start:end].encode()).hexdigest() != digest):
+            return None
+        index.setdefault(page, []).append((start, end))
+        last_page, last_end = page, end
+    return index
+
+
+def read_vendor_document(source):
+    """Validate once, then parse only each labeled page's own exact spans."""
+    pages = [n for n in range(1, len(source.page_texts) + 1) if labeled_page(source, n)]
+    index = validated_block_index(source) if pages and source.classification == 'Vendor service' else None
+    return {n: vendor_passages(source, n, index=index) for n in pages}
+
+
+def vendor_passages(source, number, *, index=_UNSET):
     """Return (confirmed spans, needs_review); never cross a native block/page.
 
     A closed native paragraph is required. Unfinished blocks and unlabeled text
@@ -75,39 +123,14 @@ def vendor_passages(source, number):
     """
     if not labeled_page(source, number):
         return (), False
-    # Ambiguous/no heuristic classification must never fall back to certifying
-    # a physical first line. Only confirmed vendor sources may auto-extract.
     if source.classification != 'Vendor service':
         return (), True
-    text = source.page_texts[number - 1]
-    blocks, previous = [], 0
-    if not isinstance(source.pdf_text_blocks, (tuple, list)):
-        return (), True
-    last_page, last_end = 0, 0
-    for entry in source.pdf_text_blocks:
-        if (not isinstance(entry, (tuple, list)) or len(entry) != 4
-                or type(entry[0]) is not int or not 1 <= entry[0] <= len(source.page_texts)
-                or not isinstance(entry[3], str)):
-            return (), True
-        page, start, end, digest = entry
-        if (type(start) is not int or type(end) is not int or page < last_page
-                or (page == last_page and start < last_end)):
-            return (), True
-        last_page, last_end = page, end
-        if not 0 <= start < end <= len(source.page_texts[page - 1]):
-            return (), True
-        page, start, end, digest = entry
-        if page != number:
-            continue
-        if (type(start) is not int or type(end) is not int
-                or not 0 <= start < end <= len(text) or start < previous
-                or (start and text[start - 1] != '\n')
-                or (end != len(text) and text[end] != '\n')
-                or sha256(text[start:end].encode()).hexdigest() != digest):
-            return (), True
-        blocks.append((start, end)); previous = end
+    if index is _UNSET:
+        index = validated_block_index(source)
+    blocks = index.get(number, ()) if index is not None else ()
     if not blocks:
         return (), True
+    text = source.page_texts[number - 1]
     passages, pending, covered = [], False, set()
     for start, end in blocks:
         raw = text[start:end]
@@ -131,7 +154,7 @@ def vendor_passages(source, number):
             opening = None
         for line in lines:
             label = _LABEL.match(line)
-            boundary = not line.strip() or _FIELD.match(line) or _BOUNDARY.match(line)
+            boundary = not line.strip() or field_boundary(line) or _BOUNDARY.match(line)
             if (opening is not None and not boundary
                     and re.search(r'[.!?][\"\')\]]*$', previous_line.rstrip())):
                 ambiguous = True

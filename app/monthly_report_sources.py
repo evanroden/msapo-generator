@@ -86,9 +86,12 @@ def _date(value: str) -> str:
     return ""
 
 
-def native_action_lines(source: ReportSource):
+def native_action_lines(source: ReportSource, *, passage_pages=None):
     """Price-free native work lines with their actual selected page origins."""
     from app.monthly_report_content_policy import contains_price, page_status
+    from app.monthly_report_vendor_passages import read_vendor_document
+    if passage_pages is None:
+        passage_pages = read_vendor_document(source)
     found = {}
     for number in source.selected_pages:
         if not 1 <= number <= len(source.page_texts):
@@ -96,9 +99,8 @@ def native_action_lines(source: ReportSource):
         text = source.page_texts[number - 1]
         if page_status(text, unreadable=number in source.needs_vision)[0] != "technical":
             continue
-        from app.monthly_report_vendor_passages import labeled_page, vendor_passages
-        lines = (tuple(p.text for p in vendor_passages(source, number)[0] if p.field == "actions")
-                 if labeled_page(source, number) else text.splitlines())
+        lines = (tuple(p.text for p in passage_pages[number][0] if p.field == "actions")
+                 if number in passage_pages else text.splitlines())
         for line in lines:
             line = line.strip()
             uncertain_work = re.search(
@@ -156,13 +158,23 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
         matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", scope_text) for n in (f.title, *f.aliases))]
         facility = matches[0] if len(matches) == 1 else ""
     source = replace(source, classification=classification)
-    from app.monthly_report_vendor_passages import labeled_page, vendor_passages
-    labeled_pages = [n for n in range(1, len(source.page_texts) + 1) if labeled_page(source, n)]
-    passages = [p for n in labeled_pages for p in vendor_passages(source, n)[0]]
-    pending = [n for n in labeled_pages if vendor_passages(source, n)[1]]
-    field_values = {field: "\n".join(p.text for p in passages if p.field == field)
-                    for field in ("actions", "findings", "recommendations", "follow_ups")}
-    oversized = [field for field, value in field_values.items() if len(value) > 6000]
+    from app.monthly_report_vendor_passages import read_vendor_document
+    passage_pages = read_vendor_document(source)
+    labeled_pages = tuple(passage_pages)
+    pending = [n for n, (_, review) in passage_pages.items() if review]
+    patterns = {"actions": r"\b(completed|repaired|replaced|inspected)\b",
+                "findings": r"\b(findings?|observed)\b", "recommendations": r"\brecommend",
+                "follow_ups": r"\b(follow.up|pending|scheduled)\b"}
+    field_values = {}
+    for field, term in patterns.items():
+        values = []
+        for n, page_text in enumerate(source.page_texts, 1):
+            if n in passage_pages:
+                values.extend(p.text for p in passage_pages[n][0] if p.field == field)
+            else:
+                values.extend(line.strip() for line in page_text.splitlines() if re.search(term, line, re.I))
+        field_values[field] = "\n".join(values)
+    oversized = [field for field, value in field_values.items() if len(value) > 6000] if labeled_pages else []
     notices = tuple(dict.fromkeys((*source.notices, *(
         f"Vendor {field.replace('_', ' ')} needs source review; the complete passage exceeds the suggestion limit."
         for field in oversized), *(
@@ -172,7 +184,7 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
         if labeled_pages and field:
             return field_values[field] if field not in oversized else ""
         return "\n".join(line.strip() for line in text.splitlines() if re.search(term, line, re.I))[:6000]
-    actions = "\n".join(line for line, _ in native_action_lines(source))
+    actions = "\n".join(line for line, _ in native_action_lines(source, passage_pages=passage_pages))
     actions = "" if labeled_pages and len(actions) > 6000 else actions[:6000]
     return replace(source, notices=notices, classification=classification, confidence="medium" if len(hits) == 1 else "low",
                    vendor=labeled("vendor|contractor|service company"), facility=facility,
@@ -381,7 +393,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         data = library._read(cache)
         source = library.source_from_dict(data["source"])
         tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 2):
+        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 3):
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
@@ -444,7 +456,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 2, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 3, **asdict(content)}))
     return content, attachments
 
 

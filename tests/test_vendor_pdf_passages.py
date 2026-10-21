@@ -265,4 +265,74 @@ def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_pat
     assert not upgraded.source.actions
     assert upgraded.source.classification=='Reference only'
     assert any('classification' in n for n in upgraded.source.notices)
-    assert json.loads(path.read_text())['vendor_passage_policy']==2
+    assert json.loads(path.read_text())['vendor_passage_policy']==3
+
+
+@pytest.mark.parametrize('heading', ["Technician's note", 'Technician’s note', 'Phase 2 result', 'Note (internal)', 'Note #2'])
+def test_punctuated_unknown_heading_does_not_complete_action(monkeypatch,tmp_path,heading):
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump\n'+heading+': Access approved.'])
+    assert not c.source.actions
+    assert not native_update((c,),'activity_summary').text
+    assert any('review' in n for n in c.source.notices)
+
+
+def test_labeled_page_preserves_unlabeled_page_findings(monkeypatch,tmp_path):
+    c,_=fixture(monkeypatch,tmp_path)
+    source=replace(c.source,page_texts=(*c.source.page_texts,'Observed leakage at the seal.\nFollow-up scheduled for tomorrow.'),selected_pages=(1,2))
+    result=sources.suggest_facts(source,synthetic_profiles()[0])
+    assert 'Observed leakage at the seal.' in result.findings
+    assert 'Follow-up scheduled for tomorrow.' in result.follow_ups
+    assert 'comparison label reads BLUE.' in result.findings
+
+
+def test_span_validation_is_linear_per_suggestion_request(monkeypatch):
+    from app import monthly_report_vendor_passages as passages
+    text='Vendor service report\nActions: Inspected the pump.'
+    digest=sha256(text.encode()).hexdigest()
+    s=ReportSource('id','service.pdf','digest','.pdf',page_texts=(text,)*100,selected_pages=tuple(range(1,101)),
+        pdf_text_blocks=tuple((n,0,len(text),digest) for n in range(1,101)))
+    visits=[]
+    class CountedSpans(tuple):
+        def __iter__(self):
+            for item in super().__iter__():
+                visits.append(1)
+                yield item
+    s=replace(s,pdf_text_blocks=CountedSpans(s.pdf_text_blocks))
+    original=passages.sha256; calls=[]
+    def counted(value):
+        calls.append(1); return original(value)
+    monkeypatch.setattr(passages,'sha256',counted)
+    result=sources.suggest_facts(s,synthetic_profiles()[0])
+    assert result.actions == 'Actions: Inspected the pump.'
+    assert len(calls)<=100
+    assert len(visits)<=100
+
+
+def test_request_local_index_is_not_reused_after_source_change(monkeypatch,tmp_path):
+    from app.monthly_report_vendor_passages import read_vendor_document
+    c,_=fixture(monkeypatch,tmp_path)
+    first=read_vendor_document(c.source)
+    assert first[1][0] and not first[1][1]
+    changed=replace(c.source,page_texts=(c.source.page_texts[0].replace('Inspected','Not done'),))
+    second=read_vendor_document(changed)
+    assert not second[1][0] and second[1][1]
+    assert read_vendor_document(c.source)==first
+
+
+def test_version_two_cache_rechecks_unknown_heading_boundary(monkeypatch,tmp_path):
+    c,raw=fixture(monkeypatch,tmp_path,["Actions: Inspected the pump\nTechnician's note: Access approved."])
+    path=sources._path(synthetic_profiles()[0],c.source.sha256,'.json')
+    data=json.loads(path.read_text()); data['vendor_passage_policy']=2
+    data['source']['actions']="Actions: Inspected the pump Technician's note: Access approved."
+    path.write_text(json.dumps(data))
+    upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
+    assert not upgraded.source.actions
+    assert json.loads(path.read_text())['vendor_passage_policy']==3
+
+
+@pytest.mark.parametrize('heading', ['Supervisor ID:42.', 'Finding #2:12.'])
+def test_two_digit_heading_value_is_not_mistaken_for_time(monkeypatch,tmp_path,heading):
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump\n'+heading])
+    assert not c.source.actions
+    assert not native_update((c,),'activity_summary').text
+    assert any('review' in n for n in c.source.notices)
