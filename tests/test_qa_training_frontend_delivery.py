@@ -63,7 +63,7 @@ def test_prior_committed_close_generation_is_preserved_but_not_accepted_as_curre
     from scripts.qa_training_frontend_delivery import _expected_combobox
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
-    old = compat._publication(sources, members, True, selection_safe_close=False)
+    old = compat._publication(sources, members, True, selection_safe_close=False, no_cache_advertisements=False)
     assert old.names[compat.INDEX_BUNDLE] == "index.enfra-frontend-21a39a02dec4.js"
     for native, raw in old.payloads.items():
         (scripts / old.names[native]).write_bytes(raw)

@@ -364,7 +364,7 @@ def test_actual_browser_task_preserves_original_failure_and_writes_cleanup_evide
 
 
 def test_actual_fixture_upload_review_refreshes_editor_after_matching_browser_journal(monkeypatch, tmp_path):
-    """AppTest supplies uploader bytes only; all report actions use production UI.
+    """AppTest supplies uploader bytes only; report actions use production server logic with an explicit frontend emulator.
 
     The subprocess confines the fixture's process-wide external-network guard.
     This is an importer/action prerequisite check, not a browser upload pass.
@@ -376,67 +376,70 @@ def test_actual_fixture_upload_review_refreshes_editor_after_matching_browser_jo
 from io import BytesIO
 import streamlit as st
 from streamlit.testing.v1 import AppTest
-from app import monthly_report_visual_ui as ui, monthly_report_section_preview_ui as preview
-from app import monthly_report_testing as testing, monthly_report_active_work as active
-from app.monthly_report_model import ReportDraft
-from scripts.qa_progress_photo_journey import invented_photo, expected_assets
-from scripts.workspace_progress_observations import progress_state
-preview.render_section_preview=lambda *a,**kw: None
-app=AppTest.from_file('tests/fixtures/workspaces/monthly_app.py',default_timeout=20)
-app.session_state['_monthly_dom_app_test_token']='a'*32
-app.run()
-next(b for b in app.button if b.label=='Load known-value report').click().run()
-assert not app.exception,app.exception
-def working():
- return next(v for k,v in app.session_state.filtered_state.items()
-  if k.startswith('report_guided_') and k.endswith('_draft') and isinstance(v,ReportDraft))
-before=working();block=next(b for b in before.blocks if b.key=='improvements')
-assert block.source=='This month' and not block.asset_hashes
-class Upload(BytesIO):
- name='synthetic-progress.png'
- @property
- def size(self):return len(self.getvalue())
-original=ui.st.file_uploader
-ui.st.file_uploader=lambda label,*a,**kw: [Upload(invented_photo(1)),Upload(invented_photo(2))] if label=='Progress photos' else original(label,*a,**kw)
-app.run()
-next(b for b in app.button if b.label=='Add these photos').click().run()
-assert not app.exception,app.exception
-current=working();block=next(b for b in current.blocks if b.key=='improvements')
-assert block.source=='This month' and block.asset_hashes==tuple(expected_assets())[:2]
-with testing.isolated('a'*32):
- testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
- recovered=active.load('a'*32,current.profile.contract,current.profile.key,current.period)
- assert recovered and recovered.draft==current
-assert any('data-enfra-progress-receipt' in getattr(item.proto,'body','') for item in app.get('html'))
-from app.monthly_report_asset_review import pending_asset_indexes
-for index in (0,1):
- next(w for w in app.text_area if w.label=='Activity summary').set_value('Activity delivered with photo review '+str(index))
- next(b for b in app.button if b.label=='This page is ready to include').click().run()
- assert not app.exception,app.exception
- current=working();block=next(b for b in current.blocks if b.key=='improvements')
- assert pending_asset_indexes(block)==tuple(range(index+1,2))
- assert next(b for b in current.blocks if b.key=='activity_summary').text=='Activity delivered with photo review '+str(index)
- with testing.isolated('a'*32):
-  testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
-  assert active.load('a'*32,current.profile.contract,current.profile.key,current.period).draft==current
-assert any(b.label=='Edit photos or captions' for b in app.button), 'Committed picture reviews left stale photo editor controls'
-assert not any(b.label=='Edit all photos or captions' for b in app.button)
-assert not any(w.label=='Caption' for w in app.text_area)
-with testing.isolated('a'*32):
- testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
- saved=active.load('a'*32,current.profile.contract,current.profile.key,current.period)
-app.run()
-assert not app.exception,app.exception
-assert working()==current
-assert not any(key.endswith('_period_editor_refresh') for key in app.session_state.filtered_state)
-with testing.isolated('a'*32):
- testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
- assert active.load('a'*32,current.profile.contract,current.profile.key,current.period)==saved
-next(b for b in app.button if b.label=='Edit photos or captions').click().run()
-assert not app.exception,app.exception
-assert sum(b.label=='Move earlier' for b in app.button)==2
-assert any(b.label=='Done editing photos' for b in app.button)
-print('PASS actual guarded fixture empty/add/journal prerequisite')
+import sys
+sys.path.insert(0,'tests')
+from picture_batch_test_adapter import install
+with install():
+    from app import monthly_report_visual_ui as ui, monthly_report_section_preview_ui as preview
+    from app import monthly_report_testing as testing, monthly_report_active_work as active
+    from app.monthly_report_model import ReportDraft
+    from scripts.qa_progress_photo_journey import invented_photo, expected_assets
+    from scripts.workspace_progress_observations import progress_state
+    preview.render_section_preview=lambda *a,**kw: None
+    app=AppTest.from_file('tests/fixtures/workspaces/monthly_app.py',default_timeout=20)
+    app.session_state['_monthly_dom_app_test_token']='a'*32
+    app.run()
+    next(b for b in app.button if b.label=='Load known-value report').click().run()
+    assert not app.exception,app.exception
+    def working():
+     return next(v for k,v in app.session_state.filtered_state.items()
+      if k.startswith('report_guided_') and k.endswith('_draft') and isinstance(v,ReportDraft))
+    before=working();block=next(b for b in before.blocks if b.key=='improvements')
+    assert block.source=='This month' and not block.asset_hashes
+    class Upload(BytesIO):
+     name='synthetic-progress.png'
+     @property
+     def size(self):return len(self.getvalue())
+    original=ui.st.file_uploader
+    ui.st.file_uploader=lambda label,*a,**kw: [Upload(invented_photo(1)),Upload(invented_photo(2))] if label=='Progress photos' else original(label,*a,**kw)
+    app.run()
+    next(b for b in app.button if b.label=='Add these photos').click().run()
+    assert not app.exception,app.exception
+    current=working();block=next(b for b in current.blocks if b.key=='improvements')
+    assert block.source=='This month' and block.asset_hashes==tuple(expected_assets())[:2]
+    with testing.isolated('a'*32):
+     testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
+     recovered=active.load('a'*32,current.profile.contract,current.profile.key,current.period)
+     assert recovered and recovered.draft==current
+    assert any('data-enfra-progress-receipt' in getattr(item.proto,'body','') for item in app.get('html'))
+    from app.monthly_report_asset_review import pending_asset_indexes
+    next(w for w in app.text_area if w.label=='Activity summary').set_value('Activity delivered with group photo review')
+    next(b for b in app.button if b.label.startswith('Confirm these 2 pictures')).click().run()
+    assert not app.exception,app.exception
+    current=working();block=next(b for b in current.blocks if b.key=='improvements')
+    assert pending_asset_indexes(block)==()
+    assert next(b for b in current.blocks if b.key=='activity_summary').text=='Activity delivered with group photo review'
+    with testing.isolated('a'*32):
+     testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
+     assert active.load('a'*32,current.profile.contract,current.profile.key,current.period).draft==current
+    assert any(b.label=='Edit photos or captions' for b in app.button), 'Committed picture reviews left stale photo editor controls'
+    assert not any(b.label=='Edit all photos or captions' for b in app.button)
+    assert not any(w.label=='Caption' for w in app.text_area)
+    with testing.isolated('a'*32):
+     testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
+     saved=active.load('a'*32,current.profile.contract,current.profile.key,current.period)
+    app.run()
+    assert not app.exception,app.exception
+    assert working()==current
+    assert not any(key.endswith('_period_editor_refresh') for key in app.session_state.filtered_state)
+    with testing.isolated('a'*32):
+     testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
+     assert active.load('a'*32,current.profile.contract,current.profile.key,current.period)==saved
+    next(b for b in app.button if b.label=='Edit photos or captions').click().run()
+    assert not app.exception,app.exception
+    assert sum(b.label=='Move earlier' for b in app.button)==2
+    assert any(b.label=='Done editing photos' for b in app.button)
+    print('PASS actual guarded fixture empty/add/journal prerequisite')
 '''
     result = subprocess.run([sys.executable, "-c", script], cwd=Path(__file__).resolve().parents[1],
         env={**os.environ, "EPC_DATA_DIR": str(tmp_path), "EPC_MONTHLY_DOM_FIXTURE": "1",
