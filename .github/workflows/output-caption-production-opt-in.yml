@@ -1,0 +1,47 @@
+name: Output caption production opt-in
+
+# This verification-only branch is never deployed. No genuine fixtures are used.
+on:
+  push:
+    branches:
+      - verify/output-caption-production-20261021
+    paths:
+      - .github/workflows/output-caption-production-opt-in.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monthly-isolated-live-production
+  cancel-in-progress: false
+
+jobs:
+  native-caption:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MONTHLY_QA_EXPECTED_COMMIT: 2c204fccce618827be91103d9edaeaa79e1d0de5
+      MONTHLY_QA_RUN_LABEL: caption-before
+      CAPTION_PHASE: before
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install bounded external browser verifier
+        run: |
+          python -m pip install playwright==1.58.0 pymupdf==1.28.2
+          python -m playwright install --with-deps chromium
+      - name: Record verifier identity and run normal native save and export controls
+        run: |
+          git rev-parse HEAD
+          python -m py_compile scripts/qa_output_caption_production.py
+          python -m scripts.qa_output_caption_production
+      - name: Retain synthetic receipts, outputs and first failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-caption-production-${{ env.CAPTION_PHASE }}-${{ github.run_id }}
+          path: test-artifacts/output-caption-production/
+          if-no-files-found: warn
+          retention-days: 7
