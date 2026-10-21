@@ -5,6 +5,7 @@ erased, and pooled bytes still linked elsewhere are kept. Synthetic data only.
 """
 from datetime import datetime, timedelta, timezone
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -100,10 +101,51 @@ def test_an_unreadable_import_time_never_erases_the_workbook():
     assert link(digest).exists()
 
 
-def test_any_directory_save_applies_the_retention():
+def last_swept(hours_ago):
+    stamp_time = (NOW - timedelta(hours=hours_ago)).timestamp()
+    os.utime(library._root() / "directory_sources" / ".last-sweep", (stamp_time, stamp_time))
+
+
+def test_a_later_directory_save_applies_the_retention():
     _, digest = imported()
     stamp(digest).write_text((NOW - timedelta(days=31)).isoformat(), encoding="ascii")
+    last_swept(2)
     directory.save_directory("Synthetic Other", (), expected_revision=0, actor="Synthetic Editor", confirmed=True,
                              contract_contacts=(directory.DirectoryContact("Administrator", "Synthetic Administrator"),))
     assert not link(digest).exists()
     assert directory.load_directory("Synthetic Contract").source_sha256 == digest
+
+
+def test_an_import_time_without_a_zone_is_unreadable_not_a_crash():
+    _, digest = imported()
+    stamp(digest).write_text((NOW - timedelta(days=90)).replace(tzinfo=None).isoformat(), encoding="ascii")
+    assert retention.expire(now=NOW) == ()
+    assert link(digest).exists()
+
+
+def test_a_pooled_copy_that_could_not_be_removed_is_retried(monkeypatch):
+    raw, digest = imported()
+    pooled, original = object_path(link(digest)), Path.unlink
+
+    def refuse(self, missing_ok=False):
+        if self == pooled:
+            raise PermissionError("synthetic refusal")
+        return original(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    assert retention.expire(now=NOW + timedelta(days=31)) == ()
+    assert not link(digest).exists() and stamp(digest).exists() and pooled.exists()
+    monkeypatch.setattr(Path, "unlink", original)
+    retention.expire(now=NOW + timedelta(days=31))
+    assert not pooled.exists() and not stamp(digest).exists()
+
+
+def test_routine_expiry_runs_at_most_hourly_and_from_directory_listings():
+    _, digest = imported()  # the save itself ran a sweep
+    stamp(digest).write_text((NOW - timedelta(days=31)).isoformat(), encoding="ascii")
+    directory.directory_contracts()
+    assert link(digest).exists()  # swept less than an hour ago
+    last_swept(2)
+    directory.directory_contracts()
+    assert not link(digest).exists()
+    assert retention.expire_quietly(force=True) == ()

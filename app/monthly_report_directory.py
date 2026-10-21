@@ -948,6 +948,10 @@ def load_directory(contract, revision=None, *, include_archived=False):
 
 
 def directory_contracts(*, include_archived=False, unavailable=None):
+    # Ordinary use lists directories, so the 30-day workbook retention (#291)
+    # runs here at most hourly even when no further import is saved.
+    from app.monthly_report_directory_retention import expire_quietly
+    expire_quietly()
     states = [state for _, state in _directory_records(unavailable=unavailable)]
     if include_archived:
         # Keep legacy colliding records individually reachable for recovery.

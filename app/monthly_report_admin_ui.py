@@ -88,7 +88,7 @@ def render_storage_maintenance():
         from app.monthly_report_directory_retention import expire_quietly
         from app.monthly_report_storage import storage_summary
         try:
-            expire_quietly()  # apply the 30-day directory workbook retention
+            expire_quietly(force=True)  # apply the 30-day directory workbook retention now
             st.session_state["report_storage_summary"] = storage_summary()
         except OSError:
             st.session_state.pop("report_storage_summary", None)
@@ -98,7 +98,7 @@ def render_storage_maintenance():
         st.write(f"Disk capacity: {readable_bytes(storage['total'])} · Available: {readable_bytes(storage['free'])} · Monthly report files: {'at least ' if not storage['complete'] else ''}{readable_bytes(storage['monthly'])}")
         st.caption("Measured when you click Check available storage. The disk is also used by other app workflows. Report originals are retained; contact-directory workbooks are deleted 30 days after their latest import. Identical new assets and source files share one stored copy across all contracts and sites. Monthly history keeps references, so changing one site's selection does not change another report. Existing files can be consolidated below.")
         if storage["free"] < max(512 * 1024 * 1024, storage["total"] * .05):
-            st.warning("Storage is running low. Keep space available before importing more large reports. This check does not delete anything.")
+            st.warning("Storage is running low. Keep space available before importing more large reports. This check deletes only contact-directory workbooks past their 30-day retention.")
     if st.button("Consolidate duplicate stored files", key="report_storage_consolidate"):
         from app.monthly_report_objects import consolidate_existing
         from app.monthly_report_storage import storage_summary, readable_bytes
