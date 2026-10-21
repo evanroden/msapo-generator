@@ -1,7 +1,7 @@
 name: Output caption production opt-in
 
 # This verification-only branch is never deployed. No genuine fixtures are used.
-# The prior after attempt expired during deploy cutover; preserve its receipt.
+# Preserve the earlier cutover timeout and invalid-label bootstrap failure.
 on:
   push:
     branches:
@@ -22,13 +22,16 @@ jobs:
     timeout-minutes: 20
     env:
       MONTHLY_QA_EXPECTED_COMMIT: fbcdc7b0389225de0857531c1aef2c0560cd9eb3
-      MONTHLY_QA_RUN_LABEL: caption-after-confirmed-live
+      MONTHLY_QA_RUN_LABEL: caption-after-live
       CAPTION_PHASE: after
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Validate verifier inputs before browser setup
+        run: |
+          python -c 'import os,re; assert re.fullmatch(r"[a-z0-9-]{1,24}", os.environ["MONTHLY_QA_RUN_LABEL"]); assert re.fullmatch(r"[0-9a-f]{40}", os.environ["MONTHLY_QA_EXPECTED_COMMIT"])'
       - name: Install bounded external browser verifier
         run: |
           python -m pip install playwright==1.58.0 pymupdf==1.28.2
