@@ -1,6 +1,7 @@
 """Synthetic title/header/narrative tables retain every original source cell."""
 from dataclasses import replace
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 from app.monthly_report_model import ReportTable
@@ -158,3 +159,34 @@ def test_delivered_pre_projection_header_edit_cannot_replay_into_new_editor():
     assert not app.exception and app.session_state['result'] == original
     assert not [b for b in app.button if b.label == 'Edit onsite call']
     assert app.session_state[old_key]['pending']['result'] == bad_rows
+
+
+@pytest.mark.parametrize("extra", [False, True])
+def test_standard_facility_prefixed_cmms_schema_keeps_all_six_call_fields(extra):
+    columns = ('Facility', *HEADER)
+    row = ('Synthetic facility', *CALL)
+    if extra:
+        app, original = workspace((row,), columns)
+    else:
+        from app.monthly_report_model import ColumnSpec
+        spec, original = example('service_calls', (row,))
+        spec = replace(spec, columns=tuple(ColumnSpec(str(n), title) for n, title in enumerate(columns)))
+        app = AppTest.from_string(SCRIPT.replace('INITIAL', repr(original)).replace('SPEC', repr(spec))).run()
+    assert not app.exception
+    assert len([b for b in app.button if b.label == 'Edit onsite call']) == 1
+    assert not [b for b in app.button if 'table row' in b.label]
+    button(app, 'Edit onsite call').click().run()
+    assert {f.label for kind in ('text_input', 'text_area') for f in getattr(app, kind)} == set(columns)
+    assert field(app, 'Facility').value == row[0]
+    assert field(app, 'Tag #').value == row[5]
+    field(app, 'Area').set_value('Synthetic CMMS annex')
+    button(app, 'Close editing').click().run()
+    result = app.session_state['result']
+    if extra:
+        table = result.extra_tables[0]
+        assert table.columns == columns and table.reference == original.extra_tables[0].reference
+        rows = table.rows
+    else:
+        assert result.references == original.references
+        rows = result.rows
+    assert rows == ((row[0], row[1], row[2], 'Synthetic CMMS annex', row[4], row[5]),)

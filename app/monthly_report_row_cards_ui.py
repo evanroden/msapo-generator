@@ -172,7 +172,7 @@ def _onsite_projection(columns, rows):
     Unrecognized layouts retain neutral, fully editable source rows.
     """
     context = {}
-    canonical = tuple(columns) == _ONSITE_COLUMNS
+    canonical = tuple(columns) in (_ONSITE_COLUMNS, ("Facility", *_ONSITE_COLUMNS))
     title_frame = (len(columns) == 5
                    and re.fullmatch(_MONTH + r" \d{4} Service Calls", columns[0])
                    and tuple(columns[1:]) == ("Column 2", "Column 3", "Column 4", "Column 5")
@@ -186,7 +186,7 @@ def _onsite_projection(columns, rows):
                     and re.fullmatch(r"(?:Detailed )?work-order counts are pending (?:FacilityOne )?CMMS availability[.;](?:[^\n]*)",
                                      row[0], flags=re.IGNORECASE)):
                 context[index] = row[0]
-    return (_ONSITE_COLUMNS if canonical else columns), context, canonical
+    return (_ONSITE_COLUMNS if title_frame else columns), context, canonical
 
 
 def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False):
