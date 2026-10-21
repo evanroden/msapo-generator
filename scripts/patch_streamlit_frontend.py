@@ -69,6 +69,7 @@ class Publication:
     selection_safe_close: bool
     no_cache_advertisements: bool
     instant_expander: bool
+    tab_navigation: bool
 
 
 def _references(raw):
@@ -145,7 +146,8 @@ def _locked_sources(scripts):
 
 def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
                  floating_resize=True, queued_scroll=True, latest_scroll_close=True,
-                 selection_safe_close=True, no_cache_advertisements=True, instant_expander=True):
+                 selection_safe_close=True, no_cache_advertisements=True, instant_expander=True,
+                 tab_navigation=True):
     if not floating_resize:
         originals = json.loads(MANIFEST_PATH.read_bytes())["members"]
         sources = {name: raw for name, raw in sources.items() if name in originals}
@@ -161,7 +163,8 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
         repaired[VIRTUALIZER_BUNDLE] = repair_virtualizer(sources[VIRTUALIZER_BUNDLE])
     if selection_safe_close:
         repaired[COMBOBOX_BUNDLE] = repair_combobox_close(
-            sources[COMBOBOX_BUNDLE], virtualizer_resize=virtualizer_resize)
+            sources[COMBOBOX_BUNDLE], virtualizer_resize=virtualizer_resize,
+            tab_navigation=tab_navigation)
     if floating_resize:
         repaired[FLOATING_BUNDLE] = repair_floating(sources[FLOATING_BUNDLE])
     if scalar_date:
@@ -188,7 +191,8 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
         payloads[name] = rewritten
     names[INDEX_BUNDLE] = _entry_name(payloads[INDEX_BUNDLE])
     return Publication(names, payloads, scalar_date, virtualizer_resize, floating_resize, queued_scroll,
-                       queued_scroll and latest_scroll_close, generation, selection_safe_close, no_cache_advertisements, instant_expander)
+                       queued_scroll and latest_scroll_close, generation, selection_safe_close, no_cache_advertisements, instant_expander,
+                       selection_safe_close and tab_navigation)
 
 
 def _legacy_variants(sources):
@@ -223,12 +227,14 @@ def _validated_publications(static_dir, installed_version):
     publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard,
                                      floating_resize=floating, queued_scroll=scroll,
                                      latest_scroll_close=latest, selection_safe_close=selection,
-                                     no_cache_advertisements=no_refs, instant_expander=instant)
-                         for instant, no_refs, selection, latest, scroll, floating, guard in (
-                             (True, True, True, True, True, True, True), (False, True, True, True, True, True, True),
-                             (False, False, True, True, True, True, True), (False, False, False, True, True, True, True),
-                             (False, False, False, False, True, True, True), (False, False, False, False, False, True, True),
-                             (False, False, False, False, False, False, True), (False, False, False, False, False, False, False))
+                                     no_cache_advertisements=no_refs, instant_expander=instant,
+                                     tab_navigation=tab)
+                         for tab, instant, no_refs, selection, latest, scroll, floating, guard in (
+                             (True, True, True, True, True, True, True, True),
+                             (False, True, True, True, True, True, True, True), (False, False, True, True, True, True, True, True),
+                             (False, False, False, True, True, True, True, True), (False, False, False, False, True, True, True, True),
+                             (False, False, False, False, False, True, True, True), (False, False, False, False, False, False, True, True),
+                             (False, False, False, False, False, False, False, True), (False, False, False, False, False, False, False, False))
                          for flag in (False, True))
     legacy, legacy_date_name, legacy_date = _legacy_variants(sources)
     variants = {**legacy, **{p.names[INDEX_BUNDLE]: (p.payloads[INDEX_BUNDLE], p.scalar_date) for p in publications}}
@@ -290,6 +296,7 @@ def _receipt(publication):
             "selection_safe_close": publication.selection_safe_close,
             "no_cache_advertisements": publication.no_cache_advertisements,
             "instant_expander": publication.instant_expander,
+            "tab_navigation": publication.tab_navigation,
             "combobox_bundle": publication.names[COMBOBOX_BUNDLE],
             "combobox_sha256": sha256(publication.payloads[COMBOBOX_BUNDLE]).hexdigest(),
             "floating_bundle": publication.names.get(FLOATING_BUNDLE, FLOATING_BUNDLE),

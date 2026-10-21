@@ -192,7 +192,8 @@ def outline(draft: ReportDraft) -> tuple[tuple[str, tuple[str, ...], int], ...]:
     def image_count(spec, block):
         from app.monthly_report_visuals import org_groups, photo_count
         try:
-            return len(org_groups(block.org_nodes)) if block.org_nodes else photo_count(block) if spec.type == "image_grid" else len(block.asset_hashes)
+            from app.monthly_report_asset_layout import picture_runs
+            return len(org_groups(block.org_nodes)) if block.org_nodes else len(tuple(picture_runs(block, draft.sources))) if spec.type == "image_grid" else len(block.asset_hashes)
         except ValueError:
             return 0  # Preflight explains the invalid chart/layout; no preview crash.
     for section in included_sections(draft.sections):
@@ -249,7 +250,8 @@ def estimate_bytes(draft: ReportDraft, asset_loader: Callable[[str], bytes] | No
             except ValueError:
                 pass  # The content check explains an invalid chart.
         elif block.asset_hashes and any(s.key == block.key and s.type == "image_grid" for section in draft.sections for s in section.blocks):
-            generated += 150_000 * photo_count(block)
+            from app.monthly_report_asset_layout import picture_runs
+            generated += 150_000 * len(tuple(picture_runs(block, draft.sources)))
     generated += 250_000 * sum(bool(s.divider_asset) for s in included_sections(draft.sections))
     return 150_000 + generated + sum(len(b.text.encode()) + sum(len(c.encode()) for row in b.rows for c in row)
                         + sum(len(c.encode()) for t in b.extra_tables for row in (t.columns, *t.rows) for c in row)
@@ -444,10 +446,19 @@ def _build_verified_docx(draft, *, asset_loader=None, source_view=None):
             elif spec.type == "image_grid" and block.asset_hashes:
                 if asset_loader is None:
                     raise ValueError("Photo pages require the library resolver.")
-                for index in range(photo_count(block)):
+                from app.monthly_report_asset_layout import picture_runs, photo_run, document_caption_problems, style_document_caption
+                if document_caption_problems(block, draft.sources):
+                    raise ValueError('Shorten the source-page caption to at most three lines before generating.')
+                for index, (is_document, indexes) in enumerate(picture_runs(block, draft.sources)):
                     if index:
                         document.add_page_break()
-                    _picture(document, photo_page(block, asset_loader, index), height=7.7)
+                    if is_document:
+                        item = indexes[0]
+                        _picture(document, asset_loader(block.asset_hashes[item]), height=7.7)
+                        if item < len(block.asset_captions) and block.asset_captions[item]:
+                            style_document_caption(document.add_paragraph(block.asset_captions[item], style="Caption"))
+                    else:
+                        _picture(document, photo_page(photo_run(block, indexes), asset_loader, 0), height=7.7)
             for index, reference in enumerate(block.asset_hashes if not block.org_nodes and spec.type != "image_grid" else ()):
                 if asset_loader is None:
                     raise ValueError("Image and PDF-page assets require the library resolver.")
