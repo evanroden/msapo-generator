@@ -184,10 +184,11 @@ def _advance_rich_text_receipt(prefix, before, after):
     receipt = st.session_state.get(marker)
     if (isinstance(receipt, dict) and receipt.get("scope") == _rich_text_scope(prefix)
             and receipt.get("result") == before.fingerprint
-            and receipt.get("text") == before.text
             and receipt.get("text") == st.session_state.get(widget_key)):
-        # This transition consumed the complete delivered text as its input.
-        # The normal editor may acknowledge only this exact combined result.
+        # The exact acknowledged result may already contain an earlier source
+        # contribution from this render. Carry that receipt through another
+        # known merge while its original delivered widget input is unchanged.
+        # A different report/block result or newer input cannot be consumed.
         st.session_state[marker] = {**receipt, "result": after.fingerprint}
 
 

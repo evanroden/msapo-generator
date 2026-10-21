@@ -118,3 +118,53 @@ def test_cached_reader_explains_excluded_original_without_creating_assets(monkey
     assert len(drafts) == 1 and drafts[0].sources
     assert all(not source.client_page_reviews for source in drafts[0].sources)
     assert all(not block.asset_hashes for block in drafts[0].blocks)
+
+
+@pytest.mark.parametrize("label", ["Technician", "Prepared by", "Contact", "Service engineer"])
+def test_bare_number_with_contact_owner_does_not_make_original_page_safe(monkeypatch, tmp_path, label):
+    safe = "Inspected the isolation valve and confirmed it remains closed."
+    contact = label + ": Synthetic Person 2025550176"
+    _, content = ingest_lines(monkeypatch, tmp_path, (safe, contact))
+    assert structured._activity_text(contact) == label + ": Synthetic Person [contact omitted]"
+    value = {"items": [{"source": content.source.id, "page": 1, "text": safe,
+                        "row": [], "include_page": True}],
+             "visual_pages": [[content.source.id, 1]]}
+    result, pages = structured.reader_update((content,), "activity_summary", value)
+    assert result.text == safe and not pages
+    identifier = label + ": inspected asset serial 2025550176"
+    assert structured._activity_text(identifier) == identifier
+
+
+def test_same_action_edit_totals_and_new_source_keep_both_contributions(monkeypatch, tmp_path):
+    from io import BytesIO
+    from streamlit.testing.v1 import AppTest
+    import streamlit as st
+    from test_monthly_report_activity_review_guards import workorder_app
+    from test_monthly_report_activity_intake_commit import APP, activity, editor
+    app, _, original_uploader = workorder_app(monkeypatch, tmp_path)
+    workorder_uploader = st.file_uploader
+    additional = b"Inspected synthetic generator G-37 and confirmed it remains offline."
+    def upload(label, *args, **kwargs):
+        files = workorder_uploader(label, *args, **kwargs)
+        if label == "Add activity files (optional)":
+            stream = BytesIO(additional)
+            stream.name = "synthetic-additional-activity.txt"
+            return [*files, stream]
+        return files
+    monkeypatch.setattr(st, "file_uploader", upload)
+    manual = "  Operator confirmed the starter remains locked out.\n"
+    editor(app).set_value(manual)
+    next(b for b in app.button if b.label == "Add totals to summary").click().run()
+    assert not app.exception
+    expected = activity(app).text
+    assert expected.startswith(manual + "\n\n")
+    assert expected.count("2 total, 1 completed, 1 open") == 1
+    assert expected.count(additional.decode()) == 1
+    assert not any("earlier edit was interrupted" in w.value for w in app.warning)
+    assert not any(b.label == "Apply interrupted edit" for b in app.button)
+    assert editor(app).value == expected
+    monkeypatch.setattr(st, "file_uploader", original_uploader)
+    resumed = AppTest.from_string(APP, default_timeout=45).run()
+    assert not resumed.exception
+    assert activity(resumed).text == expected and editor(resumed).value == expected
+    assert not any(b.label == "Apply interrupted edit" for b in resumed.button)

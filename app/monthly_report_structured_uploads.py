@@ -347,7 +347,8 @@ _ACTIVITY_ID_LABEL = re.compile(
     r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*"
     r"(?:[A-Za-z][A-Za-z0-9/_-]{0,63}[-_/])?$")
 _ACTIVITY_PHONE_LABEL = re.compile(
-    r"(?i)\b(?:phone|telephone|tel|fax|mobile|call)\b[^;\n]*$")
+    r"(?i)\b(?:phone|telephone|tel|fax|mobile|call|contact|technician|"
+    r"prepared by|service engineer)\b[^;\n]*$")
 
 
 def _activity_text(text):
