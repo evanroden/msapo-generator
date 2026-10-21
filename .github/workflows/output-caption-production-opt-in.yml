@@ -20,9 +20,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      MONTHLY_QA_EXPECTED_COMMIT: 2c204fccce618827be91103d9edaeaa79e1d0de5
-      MONTHLY_QA_RUN_LABEL: caption-before-native
-      CAPTION_PHASE: before
+      MONTHLY_QA_EXPECTED_COMMIT: fbcdc7b0389225de0857531c1aef2c0560cd9eb3
+      MONTHLY_QA_RUN_LABEL: caption-after-native
+      CAPTION_PHASE: after
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
