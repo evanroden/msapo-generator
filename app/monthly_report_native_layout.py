@@ -785,6 +785,7 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
         result = _build_native_docx(draft, derivative, asset_loader=asset_loader, section_key=section_key,
                                     master=master, source_view=source_view, original_path=Path(source_path),
                                     source_section_plan=header_scope.source_plan if header_scope else None,
+                                    source_header_scope=header_scope,
                                     source_region_observer=(lambda body, pages: emission_proofs.append(
                                         source_emission_proof(header_scope, body, pages))) if header_scope else None)
     if native_art is not None:
@@ -799,7 +800,7 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
 
 
 def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=None, master=False,
-                       source_view=None, original_path=None, source_section_plan=None, source_region_observer=None) -> bytes:
+                       source_view=None, original_path=None, source_section_plan=None, source_region_observer=None, source_header_scope=None) -> bytes:
     """Render current values into source geometry, or raise a visible mapping error.
 
     ``section_key`` selects the actual logical section's contiguous native range;
@@ -1194,7 +1195,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_pages import NativePages
     unchanged_positions = {item.position for item in inspection.items
                            if item.part == "word/document.xml" and item.id in unchanged_items}
-    page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master)
+    page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master, source_header_scope=source_header_scope)
     work_order_labels = _work_order_table_labels(original, items, section_by_pos)
     from app.monthly_report_native_text import (narrative_prototype, write_narrative,
                                                  header_contains_label)
