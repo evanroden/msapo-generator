@@ -11,6 +11,13 @@ maxUploadSize = 200
 [browser]
 gatherUsageStats = false
 
+[runner]
+# Keep each session's source validation and its next widget rerun on one
+# runner. Immediate replacement runners can contend with their own unfinished
+# validation and incorrectly make ordinary edits require a capacity Retry.
+# Other sessions still use the unchanged shared admission/resource checks.
+fastReruns = false
+
 [client]
 # The root workflow selector owns navigation. Keep the old pages/ bookmark
 # notice reachable by URL without promoting it as a second working tool.
