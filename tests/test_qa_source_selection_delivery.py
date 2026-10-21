@@ -170,3 +170,51 @@ def test_source_journey_is_the_only_explicit_observer_opt_in():
     module = ast.parse(paths[0].read_text())
     task = next(n for n in module.body if isinstance(n, ast.FunctionDef) and n.name == "browser_task")
     assert "source_selection" not in ast.unparse(task)
+
+
+@pytest.mark.parametrize('changed,status,expected_tab', [(False,200,True), (True,200,True),
+    (False,404,True), (False,200,False)])
+def test_delivered_asset_receipt_is_exact_hashed_and_once_per_page(changed, status, expected_tab):
+    from hashlib import sha256
+    from types import SimpleNamespace
+    from scripts.qa_source_selection_delivery import TAB_MARKER, CLOSE_MARKER
+    events, listeners, reads = [], {}, []
+    original = TAB_MARKER + CLOSE_MARKER
+    path = '/static/js/fuzzyFilterSelectOptions.Bf8rcmtM.enfra-overlay-' + 'a' * 20 + '.js'
+    expected = {'path':path, 'sha256':sha256(original).hexdigest(), 'tab_navigation':expected_tab}
+    obj = SourceSelectionDelivery(lambda kind,item:events.append((kind,item)), expected_asset=expected)
+    obj.attach(SimpleNamespace(on=lambda name,fn:listeners.update({name:fn})))
+    def response(url):
+        def body():
+            reads.append(url)
+            return original + (b'private-body-sentinel' if changed else b'')
+        return SimpleNamespace(url=url,status=status,body=body)
+    for url in ['https://example.invalid:8520'+path, 'http://127.0.0.1:8521'+path,
+                'http://127.0.0.1:8520/static/js/other-private.js',
+                'http://127.0.0.1:8520'+path+'?private-query',
+                'http://127.0.0.1:8520'+path.replace('a'*20,'b'*20)]:
+        listeners['response'](response(url))
+    assert not events and not reads
+    url='http://127.0.0.1:8520'+path
+    listeners['response'](response(url)); listeners['response'](response(url))
+    assert reads == [url] and len(events) == 1
+    kind,receipt=events[0]
+    assert kind == 'source-selection-asset'
+    assert receipt['matches'] is (not changed and status==200 and expected_tab)
+    assert receipt['tab_navigation_count'] == receipt['close_guard_count'] == 1
+    assert receipt['length'] == len(original)+(len(b'private-body-sentinel') if changed else 0)
+    assert 'private' not in json.dumps(events) and TAB_MARKER.decode() not in json.dumps(events)
+
+
+def test_asset_read_error_does_not_raise_or_retain_exception_body():
+    from types import SimpleNamespace
+    events,listeners=[],{}
+    path='/static/js/fuzzyFilterSelectOptions.Bf8rcmtM.enfra-overlay-'+ 'a'*20 +'.js'
+    obj=SourceSelectionDelivery(lambda kind,item:events.append((kind,item)),
+        expected_asset={'path':path,'sha256':'a'*64,'tab_navigation':True})
+    obj.attach(SimpleNamespace(on=lambda name,fn:listeners.update({name:fn})))
+    def unavailable(): raise RuntimeError('private-exception-body')
+    listeners['response'](SimpleNamespace(url='http://127.0.0.1:8520'+path,status=200,body=unavailable))
+    assert events[0][1]['matches'] is False
+    assert events[0][1]['error_type'] == 'RuntimeError'
+    assert 'private' not in json.dumps(events)

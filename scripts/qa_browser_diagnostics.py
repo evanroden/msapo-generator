@@ -88,6 +88,14 @@ def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8
     sequence = 0
     original_new = browser_class.new_context
     original_close = context_class.close
+    source_asset, source_asset_error = None, None
+    if source_selection:
+        from scripts.qa_source_selection_delivery import expected_combobox
+        try:
+            source_asset = expected_combobox()
+        except Exception as error:
+            # Keep the original journey even if diagnostic setup is unavailable.
+            source_asset_error = type(error).__name__
 
     @wraps(original_new)
     def new_context(browser, *args, **kwargs):
@@ -114,7 +122,7 @@ def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8
             from scripts.qa_widget_delivery import WidgetDelivery
             if source_selection:
                 from scripts.qa_source_selection_delivery import SourceSelectionDelivery
-                SourceSelectionDelivery(record).attach(page)
+                SourceSelectionDelivery(record, expected_asset=source_asset).attach(page)
             else:
                 WidgetDelivery(record, ports=widget_ports).attach(page)
             page.on('console', lambda msg: record('client', msg.text)
@@ -139,6 +147,8 @@ def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8
         else:
             state['tracing'] = True
         record('started', {'engine': engine})
+        if source_asset_error:
+            record('diagnostic-error', {'stage': 'expected-source-asset', 'error_type': source_asset_error})
         return context
 
     @wraps(original_close)
