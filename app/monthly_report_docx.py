@@ -64,10 +64,18 @@ def normalize_report_image(raw: bytes, suffix: str, *, line_art: bool = False,
     if suffix.lower() in {".heic", ".heif", ".hif"}:
         from pillow_heif import register_heif_opener
         register_heif_opener(thumbnails=False)
-    with Image.open(BytesIO(raw)) as image:
+    try:
+        opened = Image.open(BytesIO(raw))
+    except Image.DecompressionBombError as exc:
+        raise ValueError("Image is too large to decode safely. Resize it before uploading.") from exc
+    with opened as image:
         if image.width * image.height > _MAX_PIXELS_PER_FRAME:
             raise ValueError("Image is too large to decode safely. Resize it before uploading.")
-        if getattr(image, "n_frames", 1) != 1:
+        try:
+            frame_count = getattr(image, "n_frames", 1)
+        except TypeError as exc:
+            raise ValueError("Image frame information could not be read. Export a fresh single-image copy.") from exc
+        if frame_count != 1:
             raise ValueError("Choose a single image; use a PDF for multiple pages.")
         oriented = ImageOps.exif_transpose(image)
         oriented.thumbnail((round(frame[0] * dpi), round(frame[1] * dpi)), Image.Resampling.LANCZOS)
