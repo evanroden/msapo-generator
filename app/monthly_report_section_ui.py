@@ -572,14 +572,15 @@ def _source_view_admission(function):
         staged = st.session_state.get(prefix + '_stage') if prefix else None
         from app.monthly_report_source_view_runtime import import_candidate
         needs_view = staged is not None and import_candidate(staged[2])
-        if kwargs.get("source_view") is None and not needs_view:
-            return function(*args, **kwargs)
         from app import monthly_report_render_jobs as jobs
         try:
+            if kwargs.get("source_view") is None and not needs_view:
+                return function(*args, **kwargs)
             with jobs.work_slot(preview=True):
                 return function(*args, **kwargs)
-        except jobs.RenderBusy as exc:
-            st.warning(str(exc))
+        except jobs.RenderBusy:
+            from app.monthly_report_busy_ui import show_busy_retry
+            show_busy_retry()
             return True
     return admitted
 

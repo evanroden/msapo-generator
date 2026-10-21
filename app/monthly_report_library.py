@@ -469,9 +469,11 @@ def _saved_source_view(value: dict, path: Path, contract: str, key: str,
                        discover: bool = False):
     # Recorded source preparation shares the existing process-wide admission.
     # Ordinary no-record reads do not acquire a slot or change serialization.
+    # Rerender reads must yield immediately; callers retry, never use an
+    # unverified/stale draft. Nested admitted saves/renders remain reentrant.
     if _source_view_is_recorded(value, digest) or "import_source_view" in value or expected is not None:
         from app.monthly_report_render_jobs import work_slot
-        with work_slot():
+        with work_slot(wait_seconds=0):
             return _read_saved_source_view(value, path, contract, key, period, digest,
                                            expected, head=head, discover=discover)
     return _read_saved_source_view(value, path, contract, key, period, digest,

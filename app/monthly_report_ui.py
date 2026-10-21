@@ -6,6 +6,8 @@ import re
 
 import streamlit as st
 
+from app.monthly_report_render_jobs import RenderBusy
+
 MONTHLY_REPORT_WORKFLOW = "Monthly report"
 
 
@@ -113,6 +115,9 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
             else:
                 from app.monthly_report_guided import render_guided_workflow
                 render_guided_workflow(browser_token, browser_timezone, _field, _move)
+    except RenderBusy:
+        from app.monthly_report_busy_ui import show_busy_retry
+        show_busy_retry()
     except (ValueError, OSError) as exc:
         st.error(f"The report could not be loaded: {exc}. Your saved versions were not changed.")
     preserve_report_draft_state()
