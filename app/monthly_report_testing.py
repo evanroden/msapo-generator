@@ -145,8 +145,8 @@ def data_dir(base: Path) -> Path:
 
 def _last_change(target: Path) -> float | None:
     """Newest change anywhere in a namespace; None when it cannot be measured safely."""
-    newest, seen = target.lstat().st_mtime, 0
-    for directory, directories, files in os.walk(target, followlinks=False):
+    newest, seen, unreadable = target.lstat().st_mtime, 0, []
+    for directory, directories, files in os.walk(target, onerror=unreadable.append, followlinks=False):
         for name in (*directories, *files):
             seen += 1
             path = Path(directory) / name
@@ -156,7 +156,17 @@ def _last_change(target: Path) -> float | None:
                 newest = max(newest, path.lstat().st_mtime)
             except FileNotFoundError:
                 continue
-    return newest
+    return None if unreadable else newest
+
+
+def clear_reclaimed(base: Path) -> None:
+    """Finish removals that an earlier reclaim was interrupted during."""
+    bucket = Path(base) / _BUCKET
+    if bucket.is_symlink() or not bucket.is_dir():
+        return
+    for leftover in bucket.glob(".reclaimed-*"):
+        if leftover.is_dir() and not leftover.is_symlink():
+            shutil.rmtree(leftover, ignore_errors=True)
 
 
 def reclaim_idle(base: Path, identity: str, generation: str, *, now: float | None = None,
@@ -166,16 +176,15 @@ def reclaim_idle(base: Path, identity: str, generation: str, *, now: float | Non
     Only that exact verified generation is removed; this request's own
     namespace, a mismatched or invalid marker, any link and anything that
     cannot be measured are kept. The namespace is renamed aside first, so a
-    returning browser's stale work fails closed and new work starts fresh.
+    returning browser's stale work fails closed and new work starts fresh; if
+    anything changed while it was being checked, it is put back (unless that
+    browser already started a fresh namespace in the meantime).
     Shared originals live outside this bucket and are never touched.
     """
     if identity == scope() or not _COOKIE.fullmatch(identity):
         return False
     try:
         target = _location(base, identity)
-        for leftover in target.parent.glob(".reclaimed-*"):  # an interrupted earlier removal
-            if leftover.is_dir() and not leftover.is_symlink():
-                shutil.rmtree(leftover, ignore_errors=True)
         if not target.is_dir() or _marker(target / _SENTINEL, identity) != generation:
             return False
         newest = _last_change(target)
@@ -183,6 +192,12 @@ def reclaim_idle(base: Path, identity: str, generation: str, *, now: float | Non
             return False
         tombstone = target.parent / (".reclaimed-" + identity + "-" + uuid4().hex)
         os.rename(target, tombstone)
+        # Requests resolve the namespace path each time, so nothing new lands in
+        # the tombstone; activity during the check above shows up here instead.
+        if _last_change(tombstone) != newest:
+            if not target.exists():
+                os.rename(tombstone, target)
+                return False
     except (OSError, UnicodeError):
         return False  # anything unexpected keeps the namespace
     shutil.rmtree(tombstone, ignore_errors=True)

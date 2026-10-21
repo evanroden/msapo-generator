@@ -114,10 +114,49 @@ def test_a_returning_stale_task_fails_closed_and_new_work_starts_fresh(root):
         assert fresh.generation != abandoned.generation and fresh.data_root.exists()
 
 
-def test_an_interrupted_removal_is_finished_on_the_next_pass(root):
-    abandoned = full_copy(A)
+def test_an_interrupted_removal_is_finished_once_per_admission(root, monkeypatch):
     leftover = root / testing._BUCKET / (".reclaimed-" + "c" * 32 + "-synthetic")
     (leftover / "nested").mkdir(parents=True)
     (leftover / "nested" / "file.bin").write_bytes(b"SYNTHETIC leftover")
-    assert not testing.reclaim_idle(root, abandoned.scope, abandoned.generation)  # recent: kept
-    assert not leftover.exists() and abandoned.data_root.exists()
+    for token in ("d" * 32, "e" * 32):
+        with run(token) as context:
+            with admission.admit_run_copy(context, 1024):
+                pass
+    calls = []
+    clear = testing.clear_reclaimed
+    monkeypatch.setattr(testing, "clear_reclaimed", lambda base: calls.append(base) or clear(base))
+    with run(B) as other:
+        with admission.admit_run_copy(other, 1024):
+            pass
+    assert len(calls) == 1 and not leftover.exists()
+
+
+def test_activity_during_the_check_puts_the_namespace_back(root, monkeypatch):
+    busy = full_copy(A)
+    age(busy.data_root, 25)
+    rename = os.rename
+
+    def visit_then_rename(source, destination):
+        if Path(source) == busy.data_root:
+            (busy.data_root / "synthetic-new-edit.bin").write_bytes(b"SYNTHETIC edit during the check")
+        rename(source, destination)
+
+    monkeypatch.setattr(testing.os, "rename", visit_then_rename)
+    assert not testing.reclaim_idle(root, busy.scope, busy.generation)
+    assert (busy.data_root / "synthetic-new-edit.bin").exists()
+    assert not list((root / testing._BUCKET).glob(".reclaimed-*"))
+
+
+def test_an_unreadable_subtree_is_never_treated_as_idle(root, monkeypatch):
+    hidden = full_copy(A)
+    age(hidden.data_root, 25)
+    walk = os.walk
+
+    def failing_walk(top, onerror=None, followlinks=False):
+        if onerror:
+            onerror(PermissionError("synthetic unreadable folder"))
+        yield from walk(top, followlinks=followlinks)
+
+    monkeypatch.setattr(testing.os, "walk", failing_walk)
+    assert not testing.reclaim_idle(root, hidden.scope, hidden.generation)
+    assert hidden.data_root.exists()

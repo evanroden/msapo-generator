@@ -140,6 +140,7 @@ def admit_run_copy(context, added_bytes: int):
             with storage._admission_lock(directory):
                 validate_run(context)  # A waiting caller may have been reset.
                 existing = _load(directory)
+                testing.clear_reclaimed(root.parent.parent)
                 retained = tuple(item for item in existing if _generation_exists(base, item)
                                  and (item.scope == context.scope
                                       or not testing.reclaim_idle(root.parent.parent, item.scope, item.generation)))
