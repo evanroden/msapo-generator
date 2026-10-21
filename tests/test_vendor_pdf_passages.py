@@ -249,10 +249,10 @@ def test_reclassification_cannot_restore_physical_line_certification(monkeypatch
     assert not native_update((replace(c,source=s),),'activity_summary').text
 
 
-def test_confirmed_other_source_types_keep_existing_behavior():
+def test_unlabeled_other_source_types_keep_existing_behavior():
     s=ReportSource('id','water.pdf','digest','.pdf',classification='Water treatment',
-        page_texts=('Actions: Inspected the sample pump.',),selected_pages=(1,))
-    assert sources.native_action_lines(s)==(('Actions: Inspected the sample pump.',(1,)),)
+        page_texts=('Inspected the sample pump.',),selected_pages=(1,))
+    assert sources.native_action_lines(s)==(('Inspected the sample pump.',(1,)),)
 
 
 def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_path):
@@ -265,7 +265,7 @@ def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_pat
     assert not upgraded.source.actions
     assert upgraded.source.classification=='Reference only'
     assert any('not auto-imported' in n for n in upgraded.source.notices)
-    assert json.loads(path.read_text())['vendor_passage_policy']==4
+    assert json.loads(path.read_text())['vendor_passage_policy']==5
 
 
 @pytest.mark.parametrize('heading', ["Technician's note", 'Technician’s note', 'Phase 2 result', 'Note (internal)', 'Note #2'])
@@ -327,7 +327,7 @@ def test_version_two_cache_rechecks_unknown_heading_boundary(monkeypatch,tmp_pat
     path.write_text(json.dumps(data))
     upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
     assert not upgraded.source.actions
-    assert json.loads(path.read_text())['vendor_passage_policy']==4
+    assert json.loads(path.read_text())['vendor_passage_policy']==5
 
 
 @pytest.mark.parametrize('heading', ['Supervisor ID:42.', 'Finding #2:12.'])
@@ -415,3 +415,33 @@ def test_mixed_page_notices_need_their_own_receipts(monkeypatch,tmp_path):
     assert not unresolved_reading_notices(all_reviewed)
     for invalid in (passage_notice(3),passage_notice(1)+' Extra unknown warning.'):
         assert unresolved_reading_notices(replace(all_reviewed,notices=(invalid,)))==(invalid,)
+
+
+def test_water_labeled_negative_qualifier_never_certifies_first_line(monkeypatch,tmp_path):
+    monkeypatch.setenv('EPC_DATA_DIR',str(tmp_path))
+    doc=fitz.open(); p=doc.new_page()
+    p.insert_text((35,35),'Water treatment\nActions: Replaced the pump but it\nwas not completed.',fontsize=10)
+    raw=doc.tobytes(); doc.close()
+    c,_=sources.ingest(synthetic_profiles()[0],'synthetic-water.pdf',raw)
+    assert c.source.classification=='Water treatment'
+    assert not c.source.actions and not sources.native_action_lines(c.source)
+    assert not sources.action_evidence(c.source)[0]
+    assert not native_update((c,),'activity_summary').text
+
+
+@pytest.mark.parametrize('field',['  Actions: Inspected the sample pump.', 'Actions: Inspected the sample pump.  '])
+def test_native_block_edge_whitespace_keeps_exact_span(monkeypatch,tmp_path,field):
+    c,_=fixture(monkeypatch,tmp_path,[field])
+    assert c.source.actions=='Actions: Inspected the sample pump.'
+    assert sources.action_evidence(c.source)[0]==((c.source.actions,(1,)),)
+
+
+@pytest.mark.parametrize('prefix,suffix',[('Actions: hidden ',''),('',' hidden')])
+def test_span_whitespace_rule_rejects_nonwhitespace_edges(prefix,suffix):
+    from app.monthly_report_vendor_passages import validated_block_index
+    value='Actions: Inspected the sample pump.'
+    text=prefix+value+suffix
+    s=ReportSource('id','test.pdf','digest','.pdf',classification='Vendor service',page_texts=(text,),
+        selected_pages=(1,),pdf_text_blocks=((1,len(prefix),len(prefix)+len(value),sha256(value.encode()).hexdigest()),))
+    assert validated_block_index(s) is None
+    assert not sources.native_action_lines(s)

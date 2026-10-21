@@ -78,12 +78,18 @@ def block_spans(page, text, number):
 
 
 def labeled_page(source, number):
-    return (source.suffix == '.pdf' and source.classification in ('Vendor service', 'Reference only')
+    return (source.suffix == '.pdf'
             and 1 <= number <= len(source.page_texts)
             and bool(_LABEL.search(source.page_texts[number - 1])))
 
 
 _UNSET = object()
+
+
+def _whole_line_edges(text, start, end):
+    line_end = text.find('\n', end)
+    return (not text[text.rfind('\n', 0, start) + 1:start].strip(' \t\r')
+            and not text[end:line_end if line_end >= 0 else len(text)].strip(' \t\r'))
 
 
 def validated_block_index(source):
@@ -101,8 +107,7 @@ def validated_block_index(source):
         if (type(start) is not int or type(end) is not int or page < last_page
                 or (page == last_page and start < last_end)
                 or not 0 <= start < end <= len(text)
-                or (start and text[start - 1] != '\n')
-                or (end != len(text) and text[end] != '\n')
+                or not _whole_line_edges(text, start, end)
                 or sha256(text[start:end].encode()).hexdigest() != digest):
             return None
         index.setdefault(page, []).append((start, end))
