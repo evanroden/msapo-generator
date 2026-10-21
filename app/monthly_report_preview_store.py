@@ -30,6 +30,7 @@ class PreviewTicket:
     key: str
     pages: int
     sizes: tuple[tuple[float, float], ...]
+    initial_page: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,7 +85,9 @@ class PreviewStore:
             sizes = tuple((page.rect.width, page.rect.height) for page in document)
             if any(not all(math.isfinite(n) and n > 0 for n in size) for size in sizes):
                 raise ValueError('The preview has invalid page dimensions.')
-        ticket = PreviewTicket(uuid4().hex, len(sizes), sizes)
+        first = getattr(preview, 'initial_page', 0)
+        first = first if isinstance(first, int) and 0 <= first < len(sizes) else 0
+        ticket = PreviewTicket(uuid4().hex, len(sizes), sizes, first)
         with self._lock:
             self._expire()
             while self._files and (self._disk_bytes + len(raw) > self.disk_limit

@@ -8,9 +8,14 @@ restorable history; directory updates never mutate profiles or report snapshots.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
-from collections import Counter
+from collections import Counter, OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP, localcontext
 from io import BytesIO
 import hashlib
+import math
 import re
 from zipfile import BadZipFile, ZipFile
 from xml.parsers import expat
@@ -46,6 +51,7 @@ class DirectoryCell:
     column: int
     value: str
     formula: bool = False
+    number_format: str = ""
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,67 @@ class DirectoryWorkbook:
     sha256: str
     sheets: tuple[DirectorySheet, ...]
     notices: tuple[str, ...]
+    date1904: bool = False
+
+
+@dataclass
+class _BatchReads:
+    raw: bytes
+    workbook: DirectoryWorkbook | None = None
+    records: OrderedDict = field(default_factory=OrderedDict)
+    record_bytes: int = 0
+
+
+_BATCH_READS = ContextVar("directory_batch_reads", default=None)
+_BATCH_RECORD_LIMIT = 128
+_BATCH_RECORD_BYTES = 8 * 1024 * 1024
+
+
+@contextmanager
+def _batch_reads(raw):
+    """Reuse validation/discovery only within one synchronous batch save.
+
+    No global/session cache or caller-supplied 'validated' flag. Current heads,
+    locked revision checks and durable readback still use fresh storage reads.
+    """
+    token = _BATCH_READS.set(_BatchReads(raw))
+    try:
+        yield
+    finally:
+        _BATCH_READS.reset(token)
+
+
+def _inspect_import(raw):
+    batch = _BATCH_READS.get()
+    # Only immutable bytes from this exact invocation share validation.
+    if batch is None or not isinstance(raw, bytes) or raw is not batch.raw:
+        return inspect_workbook(raw)
+    if batch.workbook is None:
+        batch.workbook = inspect_workbook(raw)
+    return batch.workbook
+
+
+def _discovery_state(path):
+    batch = _BATCH_READS.get()
+    if batch is None:
+        return _state(library._read(path))
+    library._qa_path_guard(path)  # Never let reuse cross a namespace reset.
+    try:
+        stat = path.stat()
+    except OSError as exc:
+        raise library.LibraryError("Saved report data could not be read; existing data was preserved.") from exc
+    fingerprint = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    cached = batch.records.pop(path, None)
+    if cached is not None:
+        batch.record_bytes -= cached[0][2]
+    state = cached[1] if cached is not None and cached[0] == fingerprint else _state(library._read(path))
+    if stat.st_size <= _BATCH_RECORD_BYTES:
+        batch.records[path] = (fingerprint, state)
+        batch.record_bytes += stat.st_size
+        while len(batch.records) > _BATCH_RECORD_LIMIT or batch.record_bytes > _BATCH_RECORD_BYTES:
+            _, evicted = batch.records.popitem(last=False)
+            batch.record_bytes -= evicted[0][2]
+    return state
 
 
 @dataclass(frozen=True)
@@ -270,19 +337,219 @@ def _workbook_metadata(archive, names, budget):
             target = "" if value.get("TargetMode", "").casefold() == "external" else _resolve("xl/workbook.xml", value.get("Target", ""))
             relations[identity] = target, value.get("Type", "")
 
+    date1904 = False
+
     def worksheet(event, path, value):
+        nonlocal date1904
         if event == "start" and path == (S + "workbook", S + "sheets", S + "sheet"):
             if len(sheets) >= 50:
                 raise ValueError("Directory exceeds 50 worksheets; split it before importing.")
             sheets.append(dict(value))
+        elif event == "start" and path == (S + "workbook", S + "workbookPr"):
+            date1904 = value.get("date1904", "").casefold() in ("1", "true")
 
     if "xl/_rels/workbook.xml.rels" in names:
         _stream_xml(archive, "xl/_rels/workbook.xml.rels", budget, relationship)
     _stream_xml(archive, "xl/workbook.xml", budget, worksheet)
-    return relations, sheets
+    return relations, sheets, date1904
 
 
-def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
+# Built-in number formats that change how a stored number reads. Built-in 14
+# is the reader's locale short date; it is shown as an ISO date.
+_BUILTIN_FORMATS = {1: "0", 2: "0.00", 3: "#,##0", 4: "#,##0.00", 9: "0%", 10: "0.00%",
+                    14: "yyyy-mm-dd", 15: "d-mmm-yy", 16: "d-mmm", 17: "mmm-yy", 18: "h:mm AM/PM",
+                    19: "h:mm:ss AM/PM", 20: "h:mm", 21: "h:mm:ss", 22: "m/d/yy h:mm",
+                    37: "#,##0 ;(#,##0)", 38: "#,##0 ;[Red](#,##0)", 39: "#,##0.00;(#,##0.00)",
+                    40: "#,##0.00;[Red](#,##0.00)", 45: "mm:ss", 46: "[h]:mm:ss", 47: "mmss.0", 49: "@"}
+
+
+def _cell_formats(archive, names):
+    """Number-format codes by cell style index; styles never block reading values.
+
+    Read under their own budget: an unreadable or oversized styles part leaves
+    every cell with its stored value, as before formats were read.
+    """
+    if "xl/styles.xml" not in names:
+        return ()
+    custom, styles = {}, []
+
+    def style(event, path, value):
+        if event != "start":
+            return
+        if path == (S + "styleSheet", S + "numFmts", S + "numFmt") and len(custom) < 1000:
+            custom[value.get("numFmtId", "")] = value.get("formatCode", "")[:255]
+        elif path == (S + "styleSheet", S + "cellXfs", S + "xf"):
+            if len(styles) >= 65536:
+                raise ValueError("Workbook styles exceed the review budget.")
+            styles.append(value.get("numFmtId", "0"))
+
+    try:
+        _stream_xml(archive, "xl/styles.xml", _XmlBudget(), style)
+    except (ValueError, KeyError, ET.ParseError, DefusedXmlException):
+        return ()
+    return tuple(custom.get(number) or _BUILTIN_FORMATS.get(int(number), "")
+                 if number.isdigit() and len(number) <= 10 else ""
+                 for number in styles)
+
+
+def _format_sections(code):
+    """Positive; negative; zero; text sections, splitting only outside quoted text."""
+    sections, current, quoted, escaped = [], [], False, False
+    for char in code:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char in "\\_*" and not quoted:
+            current.append(char)
+            escaped = True
+            continue
+        quoted ^= char == '"'
+        if char == ";" and not quoted:
+            sections.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    return [*sections, "".join(current)]
+
+
+def _format_parts(section):
+    """Literal text and pattern characters of one format section, or None if unsupported."""
+    parts, index = [], 0
+    while index < len(section):
+        char = section[index]
+        if char == '"':
+            end = section.find('"', index + 1)
+            if end < 0:
+                return None
+            parts.append(("text", section[index + 1:end]))
+            index = end + 1
+        elif char == "\\" and index + 1 < len(section):
+            parts.append(("text", section[index + 1]))
+            index += 2
+        elif char in "_*" and index + 1 < len(section):
+            parts.append(("text", " " if char == "_" else ""))
+            index += 2
+        elif char == "[":
+            end = section.find("]", index)
+            # Currency tags carry visible text; colours and locale codes do
+            # not. Conditions and elapsed time keep the stored value.
+            if end < 0:
+                return None
+            tag = section[index + 1:end]
+            currency = re.fullmatch(r"\$([^-]*)(?:-[0-9a-fA-F]+)?", tag)
+            if currency:
+                parts.append(("text", currency[1]))
+            elif not re.fullmatch(r"(?i)red|black|blue|green|white|yellow|magenta|cyan|color\s*\d+", tag):
+                return None
+            index = end + 1
+        elif section[index:index + 7].casefold() == "general":
+            parts.append(("general", ""))
+            index += 7
+        elif section[index:index + 5].upper() == "AM/PM" or section[index:index + 3].upper() == "A/P":
+            parts.append(("date", "p"))
+            index += 5 if section[index:index + 5].upper() == "AM/PM" else 3
+        elif char in "0#?.,%":
+            parts.append(("number", char))
+            index += 1
+        elif char.casefold() in "ymdhs":
+            parts.append(("date", char.casefold()))
+            index += 1
+        elif char.casefold() in "e@" or char in "\\_*":
+            return None  # scientific and text formats
+        else:
+            parts.append(("text", char))
+            index += 1
+    if any(kind == "number" for kind, _ in parts) and ("text", "/") in parts:
+        return None  # fractions
+    return parts
+
+
+def formatted_value(cell, *, date1904=False):
+    """A numeric cell as its saved number format shows it.
+
+    Grouping, decimals, percentages and literal units are applied; dates and
+    times are shown in ISO form. Unsupported or ambiguous formats, text and
+    formulas without a stored value keep the stored value unchanged.
+    """
+    code = cell.number_format
+    try:
+        number = float(cell.value)
+    except ValueError:
+        return cell.value
+    if not math.isfinite(number):
+        return cell.value
+    sections = _format_sections(code)
+    # Negative and zero sections may use their own text; keep those values.
+    if not code or (number < 0 and len(sections) > 1) or (number == 0 and len(sections) > 2):
+        return cell.value
+    parts = _format_parts(sections[0])
+    if not parts:
+        return cell.value
+    kinds = {kind for kind, _ in parts}
+    letters = {value for kind, value in parts if kind == "date"}
+    if "date" in kinds:
+        if "number" in kinds or number < 0 or number > 2958465:
+            return cell.value
+        base = datetime(1904, 1, 1) if date1904 else datetime(1899, 12, 31 if number < 60 else 30)
+        try:
+            moment = base + timedelta(seconds=round(number * 86400))
+        except OverflowError:
+            return cell.value
+        has_date = bool(letters & {"y", "d"}) or ("m" in letters and not letters & {"h", "s", "p"})
+        has_time = bool(letters & {"h", "s", "p"})
+        time = moment.strftime("%H:%M:%S" if "s" in letters else "%H:%M")
+        if has_date and has_time:
+            return moment.strftime("%Y-%m-%d") + " " + time
+        return moment.strftime("%Y-%m-%d") if has_date else time
+    pattern = "".join(value for kind, value in parts if kind == "number")
+    if "general" in kinds:
+        if pattern:
+            return cell.value
+        shown = cell.value
+    elif pattern:
+        first = next(i for i, (kind, _) in enumerate(parts) if kind == "number")
+        last = max(i for i, (kind, _) in enumerate(parts) if kind == "number")
+        if (any(kind != "number" for kind, _ in parts[first:last + 1])
+                or not re.fullmatch(r"(?:#*0+|#+|#,##0)(?:\.0*#*)?%?", pattern)):
+            return cell.value  # Interior literals, scaling, and other unsupported patterns.
+        percent = "%" in pattern
+        decimals = pattern.split(".", 1)[1].replace("%", "").replace(",", "") if "." in pattern else ""
+        required = decimals.count("0")
+        # Excel display rounding is decimal half-up, not Python float's
+        # ties-to-even rounding. Keep the stored decimal through scaling.
+        try:
+            with localcontext() as context:
+                context.prec = 400  # Bound work while retaining normal workbook precision.
+                value = Decimal(cell.value) * (100 if percent else 1)
+                value = value.quantize(Decimal(1).scaleb(-len(decimals)), rounding=ROUND_HALF_UP)
+                if value == 0:
+                    value = abs(value)
+                shown = f"{value:{',' if ',' in pattern else ''}.{len(decimals)}f}"
+        except InvalidOperation:
+            return cell.value
+        if "," not in pattern:
+            whole, point, fraction = shown.partition(".")
+            integer = pattern.split(".", 1)[0].rstrip("%")
+            whole = ("-" if whole.startswith("-") else "") + whole.lstrip("-").zfill(integer.count("0"))
+            shown = whole + point + fraction
+        if len(decimals) > required:  # "#" decimals are optional digits
+            whole, _, fraction = shown.partition(".")
+            fraction = fraction.rstrip("0").ljust(required, "0")
+            shown = whole + ("." + fraction if fraction else "")
+        shown += "%" if percent else ""
+    else:
+        return cell.value
+    first = next(i for i, (kind, _) in enumerate(parts) if kind in ("number", "general"))
+    last = max(i for i, (kind, _) in enumerate(parts) if kind in ("number", "general"))
+    prefix = "".join(value for kind, value in parts[:first] if kind == "text")
+    suffix = "".join(value for kind, value in parts[last + 1:] if kind == "text")
+    sign, shown = ("-", shown[1:]) if shown.startswith("-") else ("", shown)
+    return (sign + prefix + shown + suffix).strip()
+
+
+def inspect_workbook(raw: bytes, *, number_formats=False) -> DirectoryWorkbook:
+    """Bounded cell values; number_formats also records each numeric cell's format code."""
     if not raw or len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError("Choose a nonempty XLSX directory up to 30 MB.")
     try:
@@ -321,7 +588,8 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
 
             if "xl/sharedStrings.xml" in names:
                 _stream_xml(archive, "xl/sharedStrings.xml", budget, shared_text)
-            relations, sheet_nodes = _workbook_metadata(archive, names, budget)
+            relations, sheet_nodes, date1904 = _workbook_metadata(archive, names, budget)
+            formats = _cell_formats(archive, names) if number_formats else ()
             sheets, total_cells, formulas = [], 0, 0
             for node in sheet_nodes:
                 target, kind = relations.get(node.get(R + "id"), ("", ""))
@@ -343,7 +611,7 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                         total_cells += 1
                         if total_cells > MAX_CELLS:
                             raise ValueError("Workbook exceeds 100,000 stored cells. Remove unused formatting or split it.")
-                        cell, cell_path = (coordinate, value.get("t", "")), path
+                        cell, cell_path = (coordinate, value.get("t", ""), value.get("s", "")), path
                         cached, inline, cell_length, is_formula = [], [], 0, False
                     elif cell is not None:
                         if event == "start" and path == (*cell_path, S + "f"):
@@ -354,7 +622,7 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                                 raise ValueError("Workbook cell text exceeds the review budget.")
                             (cached if path[-1] == S + "v" else inline).append(value)
                         elif event == "end" and path == cell_path:
-                            coordinate, kind = cell
+                            coordinate, kind, style = cell
                             value = "".join(cached)
                             if kind == "s":
                                 try:
@@ -375,8 +643,11 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                             if len(value) > 10000 or total_text > MAX_TEXT:
                                 raise ValueError("Workbook cell text exceeds the review budget.")
                             formulas += int(is_formula)
+                            number_format = (formats[int(style)] if formats and kind in ("", "n")
+                                             and style.isdigit() and len(style) <= 5
+                                             and int(style) < len(formats) else "")
                             if value or is_formula:
-                                cells.append(DirectoryCell(*coordinate, value, is_formula))
+                                cells.append(DirectoryCell(*coordinate, value, is_formula, number_format))
                             cell = None
 
                 _stream_xml(archive, target, budget, worksheet_cell)
@@ -388,7 +659,7 @@ def inspect_workbook(raw: bytes) -> DirectoryWorkbook:
                 notices.append(f"{formulas} formula cells use their last saved values, which may be stale or blank. Check the proposed sites and contacts.")
             if any(s.hidden for s in sheets):
                 notices.append("Hidden worksheets are marked and not selected automatically.")
-            return DirectoryWorkbook(hashlib.sha256(raw).hexdigest(), tuple(sheets), tuple(notices))
+            return DirectoryWorkbook(hashlib.sha256(raw).hexdigest(), tuple(sheets), tuple(notices), date1904)
     except (BadZipFile, KeyError, ET.ParseError, DefusedXmlException) as exc:
         raise ValueError("Workbook is invalid or contains unsafe XML; nothing was saved.") from exc
 
@@ -405,7 +676,14 @@ def suggest_matrix(sheet: DirectorySheet):
     boundary = min([*roles, *([address] if address else [])], default=50)
     counts = Counter(r for (r, c), value in values.items() if c > label_col and value)
     candidates = [r for r in rows if r < boundary and counts[r]]
-    header = max(candidates, key=lambda r: (counts[r], -r), default=rows[0] if rows else 1)
+    # A row labelled as the contract/site names wins over an earlier, equally
+    # filled metadata row (Region, account code). Unlabelled sheets keep the
+    # count-then-earliest rule; single-sheet import still allows an override.
+    labelled = [r for r in candidates
+                if re.match(r"\s*(contracts?|accounts?|clients?|facilit(?:y|ies)|sites?|hospitals?|locations?|"
+                            r"buildings?|campus(?:es)?|propert(?:y|ies))\b", labels[r], re.I)
+                and not re.search(r"\b(code|number|no\.?|id|region|area|zone|district)\b|#", labels[r], re.I)]
+    header = max(labelled or candidates, key=lambda r: (counts[r], -r), default=rows[0] if rows else 1)
     groups = []
     for row in roles:
         next_role = next((r for r in roles if r > row), row + 5)
@@ -473,18 +751,64 @@ def sheet_findings(workbook, selected):
     return tuple(findings)
 
 
+_PHONE = re.compile(r"(?P<number>\+?\(?\d[\d\s().\-/]*\d\)?)(?:\s*(?:ext\.?|extension|x)\s*(?P<extension>\d+))?", re.I)
+
+
+def _phone_identity(value):
+    """A phone value with each number reduced to its digits and extension.
+
+    Only phone punctuation and extension syntax are ignored: a note such as
+    "(after hours)" stays part of the value, and a run of fewer than seven
+    digits keeps its spelling.
+    """
+    def digits(match):
+        found = re.sub(r"\D", "", match.group("number"))
+        if len(found) < 7:
+            return match.group()
+        found = found[1:] if len(found) == 11 and found.startswith("1") else found
+        return found + ("x" + match.group("extension") if match.group("extension") else "")
+    return " ".join(_PHONE.sub(digits, value.strip()).casefold().split())
+
+
+def same_contact_value(field, value, other):
+    """Contact fields compare by case and spacing; a phone number also ignores its punctuation."""
+    if field == "phone":
+        return _phone_identity(value) == _phone_identity(other)
+    return " ".join(value.casefold().split()) == " ".join(other.casefold().split())
+
+
 def proposed_contacts(existing, incoming):
-    """Blank updates cannot erase saved details or attach an old phone to a new person."""
+    """Blank updates cannot erase saved details or attach an old phone to a new person.
+
+    Identical values keep the saved record (and its provenance); a reformatted
+    phone number is the same value. When a role repeats, each person is matched
+    by name, so re-importing the same people never duplicates them; an
+    unmatched person is added for review.
+    """
+    def same(value, other):
+        return " ".join(value.casefold().split()) == " ".join(other.casefold().split())
+
     result = list(existing)
+    saved = len(result)
     for contact in incoming:
-        matches = [i for i, c in enumerate(result) if c.role.casefold() == contact.role.casefold()]
-        if len(matches) == 1 and sum(c.role.casefold() == contact.role.casefold() for c in incoming) == 1:
+        if any(same(c.role, contact.role) and all(same_contact_value(f, getattr(c, f), getattr(contact, f))
+                                                  for f in ("name", "phone", "email")) for c in result):
+            continue
+        matches = [i for i in range(saved) if same(result[i].role, contact.role)]
+        repeated = len(matches) > 1 or sum(same(c.role, contact.role) for c in incoming) > 1
+        if repeated:
+            matches = [i for i in matches if contact.name.strip() and same(result[i].name, contact.name)]
+        if len(matches) == 1:
             index = matches[0]
             old = result[index]
-            same_person = not contact.name or contact.name.casefold() == old.name.casefold()
+            same_person = not contact.name or same(contact.name, old.name)
             if same_person:
-                contact = replace(contact, name=contact.name or old.name, phone=contact.phone or old.phone,
-                                  email=contact.email or old.email,
+                merged = {"name": contact.name or old.name, "email": contact.email or old.email,
+                          "phone": old.phone if old.phone and same_contact_value("phone", old.phone, contact.phone)
+                          else contact.phone or old.phone}
+                if all(merged[f] == getattr(old, f) for f in merged):
+                    continue  # nothing new for this person; keep the saved record
+                contact = replace(contact, **merged,
                                   source=";".join(dict.fromkeys(s for s in (contact.source, old.source) if s)))
             result[index] = contact
         else:
@@ -505,12 +829,39 @@ def canonical_contract(contract):
                 " ".join(contract.split()))
 
 
-def _directory_records():
+@dataclass(frozen=True)
+class DirectoryReadProblem:
+    storage_key: str
+    message: str
+
+
+def _directory_records(*, unavailable=None):
+    """Contain a damaged manifest without treating it as an empty directory.
+
+    Direct reads/writes still fail for that record. Discovery may skip it, but
+    callers rendering choices can show the scoped problems from the same scan.
+    """
     root = library._root() / "directory"
-    return tuple((path.parent, _state(library._read(path))) for path in sorted(root.glob("*/manifest.json")))
+    records = []
+    for path in sorted(root.glob("*/manifest.json")):
+        try:
+            # Enumerate and stat current paths on every scan. Concurrent new,
+            # replaced, archived or damaged identities must remain visible.
+            state = _discovery_state(path)
+            if library._contract_directory(state.contract) != path.parent.name:
+                raise library.LibraryError("Directory contract identity mismatch.")
+        except library.LibraryError as exc:
+            # A reset/foreign QA path is not a corrupt record. Revalidate the
+            # isolation boundary outside the containment handler and propagate.
+            library._qa_path_guard(path)
+            if unavailable is not None:
+                unavailable.append(DirectoryReadProblem(path.parent.name, str(exc)))
+            continue
+        records.append((path.parent, state))
+    return tuple(records)
 
 
-def _path(contract):
+def _path(contract, *, creating=False):
     """Reuse old case-sensitive storage paths, keeping history in place.
 
     Exact legacy names remain addressable if pre-existing directories collide.
@@ -522,7 +873,9 @@ def _path(contract):
         if _state(library._read(direct / "manifest.json")).contract != contract:
             raise library.LibraryError("Directory contract identity mismatch.")
         return direct
-    matches = [(path, state) for path, state in _directory_records() if _contract_identity(state.contract) == identity]
+    unavailable = []
+    matches = [(path, state) for path, state in _directory_records(unavailable=unavailable)
+               if _contract_identity(state.contract) == identity]
     if len(matches) == 1:
         return matches[0][0]
     if matches:
@@ -531,18 +884,46 @@ def _path(contract):
             if len(exact) == 1:
                 return exact[0]
         raise library.LibraryError("More than one saved contact list uses this contract name. Open the saved directory and archive the duplicate by its original name.")
+    if creating and unavailable:
+        # An unreadable legacy manifest may have used another spelling of this
+        # contract. Never create a competing identity merely because discovery
+        # could not read it. Existing healthy records can still be updated.
+        raise library.LibraryError("A saved directory could not be read. Recover its contract identity before creating another shared directory; existing data was preserved.")
     return library._root() / "directory" / library._contract_directory(canonical_contract(contract))
 
 
 def _state(value):
     try:
+        # Dataclasses do not validate types. Check the shapes used by directory
+        # selection/editing before allowing one record into a shared catalog.
+        def text_fields(record, names):
+            if any(not isinstance(getattr(record, name), str) for name in names):
+                raise ValueError("Invalid directory text field.")
+
+        if (not isinstance(value["sites"], (list, tuple))
+                or not isinstance(value.get("contract_contacts", ()), (list, tuple))):
+            raise ValueError("Invalid directory sites or contacts.")
         sites = tuple(DirectorySite(**(s | {"aliases": tuple(s.get("aliases", ())),
                       "contacts": tuple(DirectoryContact(**c) for c in s.get("contacts", ())) })) for s in value["sites"])
-        return DirectoryState(value["contract"], value["revision"], sites, value["actor"], value["updated_at"],
-                              value.get("source_sha256", ""), value.get("source_sheet", ""), value.get("action", "save"),
-                              value.get("archived", False),
-                              tuple(DirectoryContact(**c) for c in value.get("contract_contacts", ())))
-    except (KeyError, TypeError, ValueError) as exc:
+        state = DirectoryState(value["contract"], value["revision"], sites, value["actor"], value["updated_at"],
+                               value.get("source_sha256", ""), value.get("source_sheet", ""), value.get("action", "save"),
+                               value.get("archived", False),
+                               tuple(DirectoryContact(**c) for c in value.get("contract_contacts", ())))
+        text_fields(state, ("contract", "actor", "updated_at", "source_sha256", "source_sheet", "action"))
+        _contract_identity(state.contract)
+        if type(state.revision) is not int or state.revision < 1 or type(state.archived) is not bool:
+            raise ValueError("Invalid directory revision or archive state.")
+        for raw, site in zip(value["sites"], sites):
+            text_fields(site, ("key", "title", "address", "source"))
+            library._valid_key(site.key)
+            if (type(site.active) is not bool or not isinstance(raw.get("aliases", ()), (list, tuple))
+                    or not isinstance(raw.get("contacts", ()), (list, tuple))
+                    or any(not isinstance(alias, str) for alias in site.aliases)):
+                raise ValueError("Invalid directory site aliases or active state.")
+        for contact in (*state.contract_contacts, *(c for site in sites for c in site.contacts)):
+            text_fields(contact, ("role", "name", "phone", "email", "source"))
+        return state
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise library.LibraryError("Saved site directory could not be read; existing data was preserved.") from exc
 
 
@@ -566,8 +947,8 @@ def load_directory(contract, revision=None, *, include_archived=False):
     return state
 
 
-def directory_contracts(*, include_archived=False):
-    states = [state for _, state in _directory_records()]
+def directory_contracts(*, include_archived=False, unavailable=None):
+    states = [state for _, state in _directory_records(unavailable=unavailable)]
     if include_archived:
         # Keep legacy colliding records individually reachable for recovery.
         return tuple(sorted({state.contract for state in states}, key=lambda name: (name.casefold(), name)))
@@ -578,35 +959,42 @@ def directory_contracts(*, include_archived=False):
     return tuple(sorted(result.values(), key=str.casefold))
 
 
+def _validate_contacts(contacts):
+    if len(contacts) > MAX_CONTACTS or any(
+        len(getattr(c, field)) > 2000
+        for c in contacts for field in ("role", "name", "phone", "email", "source")
+    ):
+        raise ValueError("Contact record exceeds its review budget.")
+    if any(not c.role.strip() for c in contacts):
+        raise ValueError("Every contact needs a role.")
+
+
+def _validate_records(contract, sites, contract_contacts):
+    """Use the same current record limits for normal saves and recovery."""
+    if len(sites) > MAX_SITES:
+        raise ValueError("Confirm no more than 500 sites.")
+    if contract_contacts is not None:
+        _validate_contacts(contract_contacts)
+    for site in sites:
+        library._valid_key(site.key)
+        if len(site.title) > 200 or len(site.address) > 2000 or len(site.contacts) > MAX_CONTACTS or len(site.aliases) > 30:
+            raise ValueError("Site record exceeds its review budget.")
+        _validate_contacts(site.contacts)
+    # Reuse the explicit facility identity/alias ambiguity checks without inferring scope.
+    if sites:
+        ReportProfile(contract, "directory-check", "Directory validation", tuple(s.facility for s in sites), "multi_site")
+
+
 def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=None,
                    source_sha256="", source_sheet="", action="save", _archived=False,
                    contract_contacts=None):
     actor = library._confirmation(actor, confirmed)
     sites = tuple(sites)
-    if len(sites) > MAX_SITES:
-        raise ValueError("Confirm no more than 500 sites.")
-    def validate_contacts(contacts):
-        if len(contacts) > MAX_CONTACTS or any(
-            len(getattr(c, field)) > 2000
-            for c in contacts for field in ("role", "name", "phone", "email", "source")
-        ):
-            raise ValueError("Contact record exceeds its review budget.")
-        if any(not c.role.strip() for c in contacts):
-            raise ValueError("Every contact needs a role.")
-
     if contract_contacts is not None:
         contract_contacts = tuple(contract_contacts)
-        validate_contacts(contract_contacts)
-    for site in sites:
-        library._valid_key(site.key)
-        if len(site.title) > 200 or len(site.address) > 2000 or len(site.contacts) > MAX_CONTACTS or len(site.aliases) > 30:
-            raise ValueError("Site record exceeds its review budget.")
-        validate_contacts(site.contacts)
-    # Reuse the explicit facility identity/alias ambiguity checks without inferring scope.
-    if sites:
-        ReportProfile(contract, "directory-check", "Directory validation", tuple(s.facility for s in sites), "multi_site")
+    _validate_records(contract, sites, contract_contacts)
     if raw is not None:
-        inspection = inspect_workbook(raw)
+        inspection = _inspect_import(raw)
         if source_sha256 != inspection.sha256 or source_sheet not in {s.name for s in inspection.sheets}:
             raise ValueError("Directory source no longer matches the reviewed workbook.")
     elif source_sha256 and not re.fullmatch(r"[0-9a-f]{64}", source_sha256):
@@ -615,12 +1003,12 @@ def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=
     # One lock covers every casing, including concurrent first saves.
     lock = library._root() / "directory_locks" / library._contract_directory(identity)
     with library._locked(lock):
-        path = _path(contract)
+        path = _path(contract, creating=True)
         current = load_directory(contract, include_archived=True)
         if expected_revision != (current.revision if current else 0):
             raise library.RevisionConflict("Someone changed this directory. Reload and review the new version before saving.")
         contacts = contract_contacts if contract_contacts is not None else (current.contract_contacts if current else ())
-        validate_contacts(contacts)
+        _validate_contacts(contacts)
         if not sites and not contacts:
             raise ValueError("Confirm at least one site or contract-wide contact.")
         # Preserve legacy spelling when updating its existing history so a

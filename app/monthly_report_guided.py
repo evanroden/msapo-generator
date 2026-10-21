@@ -12,11 +12,12 @@ from app import monthly_report_active_work as active_work
 from app.config import operator_today
 from app.memory import (record_report_preferences, record_report_preparer,
                         remembered_report_preferences, remembered_report_preparer)
+from app.monthly_report_busy_ui import recover_render_busy
 from app.monthly_report_checks import preflight
 from app.monthly_report_docx import estimate_bytes, generate_report, normalize_report_image
 from app.monthly_report_editor import _grid, _signature, _typed_table
 from app.monthly_report_model import (ReportDraft, ResolvedBlock, STOCK_TEXTS,
-                                     layout_blocks, profile_sections)
+                                     layout_blocks, profile_sections, picture_replacement_references)
 from app.monthly_report_setup import MONTHLY_BLOCKS, merge_blocks, month_selector, new_month_draft, suggested_period
 from app.monthly_report_section_help import section_help
 
@@ -328,6 +329,10 @@ def review_message(check, draft):
         location = "Equipment Performance Issues" if key == "issues" else "Pending & Declined Proposals"
     if check.code == "required":
         return f"Add {label.lower()} in {location}."
+    if check.code == "ai_date":
+        return (check.message + f" Open Help write this summary in {location} above "
+                "to read the cited page again. Accept the corrected facts with Use these facts "
+                "before updating and reviewing the paragraph.")
     if check.code in {"review", "ai_evidence", "ai_number"}:
         return f"Check the wording and linked evidence for {label.lower()} above, then confirm its review." + (" Correct any unsupported numbers." if check.code == "ai_number" else "")
     if check.code == "client_pages":
@@ -523,7 +528,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
         if notes != block.text:
             source = "Omit" if retained_mbcx and block.source == "Omit" else "This month"
             block = replace(block, source=source, text=notes, reviewed_fingerprint="", client_reviewed_fingerprint="")
-    if block.extra_tables and edit_tables:
+    row_cards = spec.key in {"proposals", "service_calls"} and (spec.type in ("table", "work_order_grid") or block.extra_tables)
+    if row_cards:
+        from app.monthly_report_row_cards_ui import edit_row_cards
+        block = edit_row_cards(spec, block, prefix, field)
+    if block.extra_tables and edit_tables and not row_cards:
         from app.monthly_report_editor import _cell_text
         tables = []
         for n, table in enumerate(block.extra_tables):
@@ -637,7 +646,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             resolved = render_period_items(block, draft.period, draft.sources, prefix,
                 section_title=section_title, editor_anchor=editor_anchor)
             block = _record_period_editor_transition(prefix, canonical_before, block, resolved, draft.period, editor_key)
-    elif edit_tables and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
+    elif edit_tables and not row_cards and spec.type in ("table", "work_order_grid") and (block.rows or not block.extra_tables):
         seed, config = _typed_table(spec, block.rows)
         if optional_table:
             seed = empty_text_seed(seed, spec)
@@ -687,11 +696,16 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     if upload and st.button("Add page to this report" if adding_page else "Use this replacement in this report", key=key + "_replace"):
         from pathlib import Path
         image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix,
-                                       line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"))
+                                       line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"),
+                                       preserve_transparency=spec.key in ("brand_logo", "client_logo"))
         reference = library.asset_reference(image.data, image.extension)
         assets[reference] = image.data
         previous = block
-        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(), references=())
+        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(),
+                        references=picture_replacement_references(block))
+        if spec.key in ("brand_logo", "client_logo"):
+            block = replace(block, reviewed_fingerprint="", client_reviewed_fingerprint="",
+                            asset_provenance=((reference, ()),), client_asset_reviews=())
         if spec.type == "pdf_pages":
             st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
         st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")
@@ -779,7 +793,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                     and not _pending_rich_text_edit(prefix, current)):
                 if request["text"] not in current.text:
                     updated = replace(current, source="This month",
-                        text="\n\n".join(filter(None, (current.text.strip(), request["text"]))),
+                        text="\n\n".join(filter(None, (current.text, request["text"]))),
                         references=tuple(dict.fromkeys((*current.references, request["reference"],
                                                         *([request["scope_receipt"]] if request.get("scope_receipt") else [])))),
                         reviewed_fingerprint="", client_reviewed_fingerprint="")
@@ -993,6 +1007,7 @@ def _current_source_detail(source, contents):
     return source
 
 
+@recover_render_busy
 def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.session_state["_monthly_source_detail_anchors"] = set()
     st.session_state["_monthly_source_detail_forms"] = {}
@@ -1308,19 +1323,21 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         with workspace_section("monthly_cover", "Cover"):
             editor_column, preview_column = workspace_columns("monthly_cover")
             with editor_column:
-                # Contract, period, sites and preparer were already chosen at Start.
-                # Keep report-only photo changes reachable independently from the
-                # starting-report gallery and shared design administration.
-                from app.monthly_report_cover_ui import render_cover_photograph
-                blocks = render_cover_photograph(
-                    blocks, prefix, assets,
-                    lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
-                    scope=_rich_text_scope(prefix),
-                )
+                # A staged source owns the cover choice until it is committed
+                # or canceled. Showing the current-report uploader alongside
+                # its selected-source preview gave two competing photo tasks
+                # and an untruthful empty-cover message.
                 from app.monthly_report_section_ui import render_section_setup
-                render_section_setup(contract, period, prepared, field, state=state,
+                source_pending = render_section_setup(contract, period, prepared, field, state=state,
                                      working_draft=replace(draft, blocks=tuple(blocks.values())),
                                      working_assets=tuple(assets.items()), working_revision=st.session_state[prefix + "_revision"])
+                if not source_pending:
+                    from app.monthly_report_cover_ui import render_cover_photograph
+                    blocks = render_cover_photograph(
+                        blocks, prefix, assets,
+                        lambda ref: assets[ref] if ref in assets else library.read_asset(contract, selected, ref),
+                        scope=_rich_text_scope(prefix),
+                    )
                 with st.expander("About this report"):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)

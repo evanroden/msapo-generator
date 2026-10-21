@@ -103,5 +103,8 @@ with isolated(token):
     if os.environ.get("EPC_MONTHLY_PROGRESS_TASK") == "1":
         from scripts.workspace_progress_observations import emit_progress_snapshot
         emit_progress_snapshot(base, token)
+    if os.environ.get("EPC_MONTHLY_ROW_TASK") == "1":
+        from scripts.workspace_row_observations import emit_row_snapshot
+        emit_row_snapshot(base, token)
     st.caption("Monthly DOM isolated scope: " + str(scope()))
     st.caption("Monthly DOM blocked external attempts: " + str(len(sys._monthly_dom_attempts)))

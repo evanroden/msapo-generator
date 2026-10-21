@@ -52,26 +52,33 @@ def previous_overlay(bundle, scalar_date, virtualizer=False):
 
 @pytest.mark.parametrize("previous_date", [False, True])
 @pytest.mark.parametrize("requested_date", [False, True])
-def test_published_83_member_generation_upgrades_without_losing_originals_or_date(bundle, previous_date, requested_date):
+@pytest.mark.parametrize("queued_scroll", [False, True])
+def test_published_83_member_generation_upgrades_without_losing_originals_or_date(
+        bundle, previous_date, requested_date, queued_scroll):
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
-    old = compat._publication(sources, members, previous_date, queued_scroll=False)
+    old = compat._publication(sources, members, previous_date, queued_scroll=queued_scroll,
+                              latest_scroll_close=False)
     # Exact deployed Water and tested Training identities retained before this
     # repair; deriving these expectations from current output would miss a
     # backwards-compatibility break in the publication recipe.
     assert old.names[compat.INDEX_BUNDLE] == {
-        False: "index.enfra-frontend-fbb0a97cf659.js",
-        True: "index.enfra-frontend-25142a252245.js",
-    }[previous_date]
+        (False, False): "index.enfra-frontend-fbb0a97cf659.js",
+        (False, True): "index.enfra-frontend-25142a252245.js",
+        (True, False): "index.enfra-frontend-ab47dbf6d32f.js",
+        (True, True): "index.enfra-frontend-4cf97569e258.js",
+    }[queued_scroll, previous_date]
     for native, raw in old.payloads.items():
         (scripts / old.names[native]).write_bytes(raw)
     (root / "index.html").write_bytes(compat._publication_html(
         (root / "index.html").read_bytes(), compat.INDEX_BUNDLE, old, (old,)))
     before = files(root)
-    assert compat.selected_frontend(root)["queued_scroll"] is False
+    assert compat.selected_frontend(root)["queued_scroll"] is queued_scroll
+    assert compat.selected_frontend(root)["latest_scroll_close"] is False
     assert files(root) == before
     receipt = compat.patch_bundle(root, installed_version="1.61.1", scalar_date=requested_date)
     assert receipt["queued_scroll"] is True and receipt["closure_count"] == 83
+    assert receipt["latest_scroll_close"] is True
     assert receipt["scalar_date"] is (previous_date or requested_date)
     assert receipt["entry"] != old.names[compat.INDEX_BUNDLE]
     for name, raw in before.items():
@@ -184,6 +191,7 @@ def test_content_named_scheduler_entry_preserves_originals_and_is_idempotent(bun
     assert receipt["floating_resize"] is True
     assert receipt["virtualizer_resize"] is True
     assert receipt["queued_scroll"] is True
+    assert receipt["latest_scroll_close"] is True
     for name in members:
         assert (scripts / name).read_bytes() == before["static/js/" + name]
     raw = (scripts / receipt["entry"]).read_bytes()

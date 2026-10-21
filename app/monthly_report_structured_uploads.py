@@ -169,6 +169,11 @@ _ACTIVITY_CONTINUATION = re.compile(
     r"failed\b|locked\s+out\b|out\s+of\s+service\b|"
     r"under\s+(?:observation|repair)\b|"
     r"(?:and|but|because|although|while|with|without|at|after|before)\b)")
+_ACTIVITY_UNFINISHED = re.compile(r"(?i)\b(?:the|a|an|its|their|that|whether)\s*$")
+_ACTIVITY_NEW_ACTION = re.compile(
+    r"(?i)^\s*(?:inspected|checked|replaced|repaired|tested|completed|installed|"
+    r"cleaned|calibrated|serviced|adjusted|verified|recorded|performed|"
+    r"(?:the\s+)?(?:technician|operator|service team)\b)")
 
 
 def _logical_activity_lines(lines):
@@ -185,7 +190,8 @@ def _logical_activity_lines(lines):
         boundary = bool(_ACTIVITY_BULLET.match(line) or _ACTIVITY_LABEL.match(line)
                         or _EVENT_START.match(line) or contains_price(line))
         ended = bool(re.search(r"[.!?][\"')\]]*$", pending))
-        continuation = bool(_ACTIVITY_CONTINUATION.match(line))
+        continuation = bool(_ACTIVITY_CONTINUATION.match(line) or (
+            _ACTIVITY_UNFINISHED.search(pending) and not _ACTIVITY_NEW_ACTION.match(line)))
         if pending and (not line or boundary or ended or not continuation
                         or _ACTIVITY_LABEL.match(pending) or contains_price(pending)):
             result.append(pending)
@@ -334,6 +340,8 @@ def reader_notices(contents, destination):
 _ACTIVITY_EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 _ACTIVITY_PHONE = re.compile(
     r"(?<!\w)(?:\+?1[ .-]?)?\(?\d{3}\)?[ .-]?\d{3}[ .-]?\d{4}(?!\w)")
+_ACTIVITY_INTERNATIONAL_PHONE = re.compile(
+    r"(?<!\w)(?:\+|00)[1-9](?:[ .()-]*\d){6,14}(?!\w)")
 _ACTIVITY_ID_LABEL = re.compile(
     r"(?i)\b(?:asset|serial|model|tag|identifier|part|work order|job)"
     r"(?:\s+(?:number|no\.?|id))?\s*[:#]?\s*"
@@ -358,7 +366,51 @@ def _activity_text(text):
         if not value.isdigit() or _ACTIVITY_PHONE_LABEL.search(before):
             return "[contact omitted]"
         return value
+    def international_phone(match):
+        before = text[max(0, match.start() - 100):match.start()]
+        if (_ACTIVITY_PHONE_LABEL.search(before)
+                and not _ACTIVITY_ID_LABEL.search(before)):
+            return "[contact omitted]"
+        return match.group()
+    text = _ACTIVITY_INTERNATIONAL_PHONE.sub(international_phone, text)
     return _ACTIVITY_PHONE.sub(phone, text).strip()
+
+
+def _activity_contact_pages(contents, value):
+    """Text redaction cannot make the unchanged source image safe to embed.
+
+    Check the whole native page and every returned passage before selecting any
+    page, so later items (including scanned-page results) can veto an earlier
+    include_page suggestion. The reader validator still owns provenance checks.
+    """
+    by_id = {content.source.id: content.source for content in contents}
+    blocked = {(source.id, number)
+               for source in by_id.values()
+               for number, text in enumerate(source.page_texts, 1)
+               if _activity_text(text) != text.strip()}
+    for item in value.get("items", ()):
+        if not isinstance(item, dict):
+            continue
+        source_id, number, text = item.get("source"), item.get("page"), item.get("text")
+        if (isinstance(source_id, str) and source_id in by_id
+                and type(number) is int and 1 <= number <= len(by_id[source_id].page_texts)
+                and isinstance(text, str) and _activity_text(text) != text.strip()):
+            blocked.add((source_id, number))
+    return blocked
+
+
+def reader_page_notices(contents, destination, value):
+    if destination != "activity_summary":
+        return ()
+    blocked = _activity_contact_pages(contents, value)
+    requested = {(item.get("source"), item.get("page")) for item in value["items"]
+                 if item.get("include_page") is True}
+    return tuple(
+        f"{content.source.filename} · page {number}: the original page was left out "
+        "because it contains contact details. Check its privacy in Source pages "
+        "before including it; extracted Activity text is kept without those details."
+        for content in contents for number in range(1, len(content.source.page_texts) + 1)
+        if (content.source.id, number) in blocked & requested)
 
 
 def _csv_activity_entries(content):
@@ -488,7 +540,7 @@ def reader_request(profile, contents, destination, page_refs=None, table_columns
         "Preserve negative statements and pending qualifiers. Maximum 500 items. "
     )
     if destination == "activity_summary":
-        prompt += "Extract work performed, findings and follow-ups. Set include_page true only when the entire page is relevant technical work with NO pricing, legal-only content, cover-only content, standalone logo/signature or blank page. Inspect all page images, including embedded prices. Do not include pages you cannot read. row must be empty."
+        prompt += "Extract work performed, findings and follow-ups. Set include_page true only when the entire page is relevant technical work with NO pricing, contact details, legal-only content, cover-only content, standalone logo/signature or blank page. Inspect all page images, including embedded prices and contact details. Do not include pages you cannot read. row must be empty."
     else:
         prompt += f"Extract {'capital renewal recommendations' if destination == 'capital_renewal' else 'proposal scope and decision'} into row columns {columns!r}. Missing cells stay empty. include_page must always be false: original quote pages must never enter the report."
     payload = [{"type": "text", "text": prompt}]
@@ -517,6 +569,7 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
     if not isinstance(items, list) or len(items) > 500:
         raise ValueError("The document reader returned invalid section details.")
     by_id = {c.source.id: c for c in contents}
+    contact_pages = _activity_contact_pages(contents, value) if destination == "activity_summary" else set()
     block = existing or ResolvedBlock(destination, "This month")
     texts, rows, refs, pages, blocked_notices = [], [], [], {}, []
     normal = lambda text: " ".join(text.casefold().split())
@@ -573,7 +626,9 @@ def reader_update(contents, destination, value, existing=None, *, table_columns=
                          or normal(proposed) in normal(block.text)))
                 if not already_present:
                     texts.append(proposed)
-            if item.get("include_page") is True and [source.id, number] in value.get("visual_pages", []) and page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)[0] not in {"pricing", "legal", "signature"}:
+            if (item.get("include_page") is True and (source.id, number) not in contact_pages
+                    and [source.id, number] in value.get("visual_pages", [])
+                    and page_status(source.page_texts[number - 1], unreadable=number in source.needs_vision)[0] not in {"pricing", "legal", "signature"}):
                 pages.setdefault(source.id, set()).add(number)
         elif any(row):
             rows.append(tuple(row))

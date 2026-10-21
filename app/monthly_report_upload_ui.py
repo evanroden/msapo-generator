@@ -1182,7 +1182,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             additions[destination] = result
             additions.update({block.key: block for block in prepared})
             remember(result, contents)
-            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ()))
+            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ())) + structured.reader_page_notices(
+                job["contents"], destination, value)
             st.session_state[local_key + "_completed_ids"] = tuple(
                 set(st.session_state.get(local_key + "_completed_ids", ()))
                 | {content.source.id for content in job["contents"]})

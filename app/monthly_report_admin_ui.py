@@ -3,14 +3,14 @@ from urllib.parse import urlencode
 
 import streamlit as st
 
-ADMIN_KINDS = ("directory", "storage", "master")
+ADMIN_KINDS = ("directory", "logos", "storage", "master")
 
 
 def report_url():
     """Normal Monthly route in the same supported live/test mode."""
     query = {"workflow": "monthly"}
     mode = st.query_params.get("monthly_qa")
-    if mode in {"isolated", "fixtures"}:
+    if mode in {"isolated", "fixtures", "logo-recovery"}:
         query["monthly_qa"] = mode
     return "?" + urlencode(query)
 
@@ -18,7 +18,7 @@ def report_url():
 def admin_url(kind="directory"):
     """Only public route selectors enter the URL, never a report identity."""
     if kind not in ADMIN_KINDS:
-        raise ValueError("Choose directory, storage or master administration.")
+        raise ValueError("Choose directory, logos, storage or master administration.")
     return report_url() + "&" + urlencode({"monthly_admin": kind})
 
 
@@ -27,6 +27,7 @@ def render_administration_links():
     with st.sidebar.expander("Administration", expanded=False):
         st.caption("Opens separately; your report tab stays available.")
         for kind, label in (("directory", "Contract and site directory"),
+                            ("logos", "Shared contract logos"),
                             ("storage", "Storage maintenance"),
                             ("master", "Master design administration")):
             st.link_button(label, admin_url(kind), on_click="ignore")
@@ -35,27 +36,41 @@ def render_administration_links():
 def render_administration(kind, field, *, mode):
     from html import escape
     from app.monthly_report_testing import scope
-    if mode not in {"live", "isolated", "fixtures"} or (mode == "live") != (scope() is None):
+    if mode not in {"live", "isolated", "fixtures", "logo-recovery"} or (mode == "live") != (scope() is None):
         raise ValueError("Monthly administration could not verify its storage context; no records were used.")
     if mode == "isolated":
         st.warning("ISOLATED SYNTHETIC TESTING — not a client report. No live report, contact, capacity, logo or design records are accessible here.")
     elif mode == "fixtures":
         st.warning("ISOLATED SHARED-FIXTURE TESTING — not a client report. No live report, contact, capacity, logo or design records are accessible here.")
         st.caption("Changes affect this browser's fixture workspace. Shared uploaded originals stay unchanged.")
+    elif mode == "logo-recovery":
+        from app.monthly_report_logo_recovery_sample import render_banner
+        render_banner()
     st.markdown('<a href="' + escape(report_url(), quote=True) + '" target="_self">Back to Monthly reports</a>', unsafe_allow_html=True)
     if kind not in ADMIN_KINDS:
         st.error("Choose a Monthly administration page.")
         return
     links = []
-    for choice, label in (("directory", "Directory"), ("storage", "Storage"), ("master", "Master design")):
+    for choice, label in (("directory", "Directory"), ("logos", "Logos"), ("storage", "Storage"), ("master", "Master design")):
         if choice == kind:
             links.append(escape(label))
         else:
             links.append('<a href="' + escape(admin_url(choice), quote=True) + '" target="_self">' + label + '</a>')
     st.markdown(" · ".join(links), unsafe_allow_html=True)
     if kind == "directory":
+        if mode == "isolated":
+            from app.monthly_report_directory_recovery_sample import render_sample
+            render_sample()
         from app.monthly_report_directory_ui import render_directory
         render_directory(field)
+    elif kind == "logos":
+        if mode == "isolated":
+            st.link_button("Open separate logo recovery sample", "?workflow=monthly&monthly_qa=logo-recovery&monthly_admin=logos", on_click="ignore")
+        elif mode == "logo-recovery":
+            from app.monthly_report_logo_recovery_sample import render_sample
+            render_sample()
+        from app.monthly_report_branding_ui import render_branding
+        render_branding(field)
     elif kind == "storage":
         st.subheader("Storage maintenance — all contracts")
         render_storage_maintenance()

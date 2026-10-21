@@ -246,13 +246,17 @@ def _issue_control(widget, label, key, value, field, **kwargs):
                  and receipt.get("value") == st.session_state.get(key))
     if st.session_state.get(key, value) != value and not submitted:
         st.session_state[key] = value
+    accepted_value = receipt["value"] if submitted else value
     if widget == st.text_area:
         # The first native mount needs the same wording as the canonical
         # issue, not the textarea's implicit empty default. Keep the existing
         # receipt guard and honor an explicitly submitted clear/update.
-        kwargs["value"] = receipt["value"] if submitted else value
+        kwargs["value"] = accepted_value
+    # This render will commit the accepted value after drawing the controls.
+    # The next native edit must name that value, without needing another run
+    # merely to refresh its callback's former canonical baseline.
     result = widget(label, key=field(key, value), on_change=_issue_changed,
-                    args=(key, value), **kwargs)
+                    args=(key, accepted_value), **kwargs)
     if submitted and result != value:
         return result
     st.session_state.pop(key + "_change", None)
@@ -310,8 +314,10 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
             continue
         item = original
         p = prefix + "_issue_" + item.key
-        surface = st.empty()
-        with surface.container(border=True):
+        # A placeholder emits an empty ancestor before rebuilding this card.
+        # A queue flush between those messages replaces the native input node,
+        # even when its widget key and acknowledged text have not changed.
+        with st.container(border=True, key=p + "_card"):
             text = _issue_control(st.text_area, "Issue description", p + "_text", item.text,
                                   field, height=90, max_chars=4000)
             status = _issue_control(st.selectbox, "Issue status", p + "_status", item.status,
@@ -321,8 +327,10 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
             removed = st.button("Remove from this report", key=p + "_remove")
             if removed:
                 item = replace(item, included=False)
-        if removed:
-            surface.empty()
+                # Read the evidence edits delivered with this click below.
+                # The normal post-commit refresh retires the controls only
+                # after the complete draft and its recovery save were tried.
+                st.session_state[prefix + "_period_editor_refresh"] = True
         evidence_controls[len(items)] = (p, warnings)
         items.append(item)
     if evidence_controls or evidence_pages:
@@ -331,17 +339,14 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
         with st.expander("Evidence", expanded=needs_evidence):
             for n, (p, warnings) in evidence_controls.items():
                 item = items[n]
-                evidence_surface = st.empty()
-                with evidence_surface.container(border=True):
+                with st.container(border=True, key=p + "_evidence"):
                     label = " ".join(item.text.split()) or "Unfinished issue"
                     st.caption("Issue: " + (label if len(label) <= 120 else label[:117] + "…"))
                     # A Remove click can deliver the last native evidence edit
                     # in the same packet. Read it before retiring the controls;
                     # omission must preserve that wording and its source links.
                     item = _render_issue_evidence(item, draft, options, p, field)
-                if not item.included:
-                    evidence_surface.empty()
-                else:
+                if item.included:
                     with warnings.container():
                         for message in problems(item, draft):
                             st.warning(message)
@@ -360,4 +365,7 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
                 st.caption(_status_label(item.status))
                 if st.button("Include again", key=prefix + "_issue_restore_" + item.key):
                     draft = issue_visibility(draft, item.key, True)
+                    # Cards were drawn before this restoration. Use the normal
+                    # post-commit refresh after the complete recovery attempt.
+                    st.session_state[prefix + "_period_editor_refresh"] = True
     return draft if defer_actions else apply_issue_action(draft, prefix)
