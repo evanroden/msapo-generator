@@ -5,6 +5,7 @@ were written, so every Sub-Contractor row took the header's dark fill and bold
 text. A source table with only a header row now yields plain data rows.
 Synthetic values only.
 """
+from copy import deepcopy
 from dataclasses import replace
 from io import BytesIO
 from zipfile import ZipFile
@@ -78,9 +79,10 @@ def _vendor_rows(monkeypatch, tmp_path, **master):
 
 
 def _look(row):
+    """Effective direct look; an explicit "off" or automatic colour is no emphasis."""
     fills = {node.get(W + "fill") for node in row.iter(W + "shd")}
-    return {"fills": fills, "bold": any(True for _ in row.iter(W + "b")),
-            "colors": {node.get(W + "val") for node in row.iter(W + "color")}}
+    return {"fills": fills, "bold": any(node.get(W + "val") not in ("0", "false") for node in row.iter(W + "b")),
+            "colors": {node.get(W + "val") for node in row.iter(W + "color")} - {"auto"}}
 
 
 def test_master_data_rows_do_not_copy_the_header_fill(monkeypatch, tmp_path):
@@ -106,7 +108,8 @@ def test_a_header_only_source_table_yields_plain_data_rows(monkeypatch, tmp_path
 def _xml_table(*rows):
     body = "".join("<w:tr>" + "".join(f'<w:tc><w:tcPr><w:shd w:fill="{fill}"/></w:tcPr><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:tc>'
                                       for text, fill in row) + "</w:tr>" for row in rows)
-    return parse_xml(f'<w:tbl xmlns:w="{W[1:-1]}"><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>{body}</w:tbl>')
+    grid = '<w:gridCol w:w="4000"/>' * max(len(row) for row in rows)
+    return parse_xml(f'<w:tbl xmlns:w="{W[1:-1]}"><w:tblGrid>{grid}</w:tblGrid>{body}</w:tbl>')
 
 
 def test_a_two_level_header_is_not_reused_as_a_data_row():
@@ -122,3 +125,86 @@ def test_a_continuation_frame_still_copies_its_own_data_row():
     _table(table, ("Name", "Detail"), (("Synthetic B", "Two"),), continuation=True)
     rows = table.findall(W + "tr")
     assert len(rows) == 1 and {node.get(W + "fill") for node in rows[0].iter(W + "shd")} == {DATA_FILL}
+
+
+def test_copied_data_rows_drop_the_source_rows_position_markers():
+    template = parse_xml(
+        f'<w:tbl xmlns:w="{W[1:-1]}"><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>'
+        '<w:tr><w:tc><w:p><w:r><w:t>Name</w:t></w:r></w:p></w:tc></w:tr>'
+        '<w:tr><w:trPr><w:cnfStyle w:val="010000000000" w:lastRow="1"/></w:trPr><w:tc><w:tcPr>'
+        f'<w:cnfStyle w:val="000010000000" w:oddHBand="1"/><w:shd w:fill="{DATA_FILL}"/></w:tcPr>'
+        '<w:p><w:pPr><w:cnfStyle w:val="010000000000"/></w:pPr><w:r><w:t>Old</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
+    table = _xml_table((("Name", HEADER_FILL),))
+    _table(table, ("Name",), (("Synthetic A",), ("Synthetic B",)), template=template)
+    data = table.findall(W + "tr")[1:]
+    assert len(data) == 2 and not [node for row in data for node in row.iter(W + "cnfStyle")]
+    assert all({node.get(W + "fill") for node in row.iter(W + "shd")} == {DATA_FILL} for row in data)
+
+
+def test_a_header_style_cannot_make_plain_data_rows_bold_or_white():
+    table = parse_xml(
+        f'<w:tbl xmlns:w="{W[1:-1]}"><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid><w:tr>'
+        '<w:tc><w:p><w:pPr><w:pStyle w:val="SyntheticTableHeading"/></w:pPr><w:r><w:rPr><w:rStyle w:val="SyntheticHeadingChar"/>'
+        '<w:color w:val="FFFFFF" w:themeColor="background1"/></w:rPr><w:t>Name</w:t></w:r></w:p></w:tc>'
+        '<w:tc><w:p><w:pPr><w:pStyle w:val="SyntheticTableHeading"/></w:pPr></w:p></w:tc></w:tr></w:tbl>')
+    _table(table, ("Name", "Detail"), (("Synthetic A", "One"),))
+    data = table.findall(W + "tr")[-1]
+    assert not list(data.iter(W + "rStyle")) and [node.get(W + "val") for node in data.iter(W + "pStyle")] == [
+        "SyntheticTableHeading", "SyntheticTableHeading"]
+    for cell, text in zip(data.findall(W + "tc"), ("Synthetic A", "One")):
+        run = next(run for run in cell.iter(W + "r") if run.find(W + "t") is not None and run.find(W + "t").text)
+        properties = run.find(W + "rPr")
+        assert run.find(W + "t").text == text
+        assert [properties.find(W + name).get(W + "val") for name in ("b", "bCs", "caps")] == ["0", "0", "0"]
+        assert dict(properties.find(W + "color").attrib) == {W + "val": "auto"}
+
+
+def test_copied_rows_carry_no_source_payload():
+    old = "Synthetic Old Client"
+    template = parse_xml(
+        f'<w:tbl xmlns:w="{W[1:-1]}"><w:tblGrid><w:gridCol w:w="4000"/></w:tblGrid>'
+        f'<w:tr><w:tc><w:p><w:bookmarkStart w:id="1" w:name="{old.replace(" ", "_")}_Header"/>'
+        '<w:r><w:t>Name</w:t></w:r><w:bookmarkEnd w:id="1"/></w:p></w:tc></w:tr>'
+        f'<w:tr><w:trPr><w:ins w:id="2" w:author="{old} Editor" w:date="2026-01-01T00:00:00Z"/></w:trPr><w:tc>'
+        f'<w:tcPr><w:cellIns w:id="5" w:author="{old} Editor"/></w:tcPr>'
+        f'<w:p><w:permStart w:id="3" w:edGrp="everyone"/><w:bookmarkStart w:id="4" w:name="{old.replace(" ", "_")}"/>'
+        f'<w:r><w:rPr><w:i/></w:rPr><w:t>{old}</w:t></w:r><w:fldSimple w:instr="AUTHOR"><w:r><w:t>{old}</w:t></w:r></w:fldSimple>'
+        '<w:bookmarkEnd w:id="4"/><w:permEnd w:id="3"/></w:p>'
+        f'<w:p><w:r><w:t>{old} second line</w:t></w:r></w:p></w:tc></w:tr></w:tbl>')
+    table = _xml_table((("Name", HEADER_FILL),))
+    _table(table, ("Name",), (("Synthetic A",), ("Synthetic B",)), template=template)
+    _table(template, ("Name",), (("Synthetic C",),))  # the non-master path rewrites the source table itself
+    for result in (table, template):
+        markup = etree.tostring(result, encoding="unicode")
+        assert "Old" not in markup and "author" not in markup
+        assert not [node for tag in ("bookmarkStart", "permStart", "fldSimple", "ins")
+                    for node in result.iter(W + tag)]
+        assert all(len(cell.findall(W + "p")) == 1 for cell in result.iter(W + "tc"))
+    assert [row.find(f".//{W}i") is not None for row in table.findall(W + "tr")] == [False, True, True]
+
+
+def test_a_two_row_marked_header_of_equal_width_is_not_data():
+    header = "".join(f'<w:tc><w:tcPr><w:shd w:fill="{HEADER_FILL}"/></w:tcPr><w:p><w:r><w:rPr><w:b/></w:rPr>'
+                     f'<w:t>{text}</w:t></w:r></w:p></w:tc>' for text in ("Synthetic", "Group"))
+    marked = '<w:trPr><w:tblHeader/></w:trPr>'
+    table = parse_xml(f'<w:tbl xmlns:w="{W[1:-1]}"><w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>'
+                      f'<w:tr>{marked}{header}</w:tr><w:tr>{marked}{header}</w:tr></w:tbl>')
+    _table(table, ("Name", "Detail"), (("Synthetic A", "One"),))
+    assert _look(table.findall(W + "tr")[-1]) == {"fills": set(), "bold": False, "colors": set()}
+
+
+def test_a_dropped_middle_column_never_lends_its_cell_to_a_retained_column():
+    fills = ("C0C0C1", "C0C0C2", "FF0000", "C0C0C4")  # column 2 is an excluded price column
+    template = _xml_table(tuple((f"Head {n}", HEADER_FILL) for n in range(4)),
+                          tuple((f"Old {n}", fill) for n, fill in enumerate(fills)))
+    table = deepcopy(template)
+    _table(table, ("A", "B", "D"), (), physical_indices=(0, 1, 3))  # master blanking pass
+    _table(table, ("A", "B", "D"), (("1", "2", "4"),), physical_indices=(0, 1, 3), template=template)
+    header, data = table.findall(W + "tr")
+    assert [_text(cell) for cell in header.findall(W + "tc")] == ["A", "B", "D"]
+    assert [next(cell.iter(W + "shd")).get(W + "fill") for cell in data.findall(W + "tc")] == [
+        "C0C0C1", "C0C0C2", "C0C0C4"]
+
+
+def _text(element):
+    return "".join(node.text or "" for node in element.iter(W + "t"))

@@ -538,25 +538,86 @@ def _fit_cover_photo(node, image_width, image_height):
             node.set(name, format(crop[key], ".8f"))
 
 
-def _plain_row(row):
-    """A header copy for data: its geometry, without the header's fill or emphasis."""
+_TRACKED = {qn("w:" + name) for name in ("ins", "del", "trPrChange", "tcPrChange", "pPrChange", "rPrChange",
+                                          "tblPrExChange", "cellIns", "cellDel", "cellMerge")}
+
+
+def _skeleton(row):
+    """A source row's geometry and formatting only, never its payload.
+
+    Each cell keeps its properties and one paragraph whose first run's
+    formatting holds an empty text node. Text, bookmarks, permissions,
+    fields, notes and tracked-change authors are not copied (a master
+    supplies geometry only).
+    """
     row = deepcopy(row)
-    for tag in ("w:tblHeader", "w:cnfStyle", "w:shd"):
-        for node in list(row.iter(qn(tag))):
-            node.getparent().remove(node)
-    for properties in row.iter(qn("w:rPr")):
-        for tag in ("w:b", "w:bCs", "w:color", "w:caps", "w:highlight"):
-            for node in properties.findall(qn(tag)):
-                properties.remove(node)
+    for child in list(row):
+        if child.tag not in (qn("w:tblPrEx"), qn("w:trPr"), qn("w:tc")):
+            row.remove(child)
+    for cell in row.findall(qn("w:tc")):
+        source = cell.find(qn("w:p"))
+        paragraph, run = OxmlElement("w:p"), OxmlElement("w:r")
+        if source is not None:
+            for kept, owner in ((source.find(qn("w:pPr")), paragraph),
+                                (next((r.find(qn("w:rPr")) for r in source.iter(qn("w:r"))), None), run)):
+                if kept is not None:
+                    owner.append(kept)
+        for child in list(cell):
+            if child.tag != qn("w:tcPr"):
+                cell.remove(child)
+        run.append(OxmlElement("w:t"))
+        paragraph.append(run)
+        cell.append(paragraph)
+    for node in [node for node in row.iter() if node.tag in _TRACKED]:
+        node.getparent().remove(node)
     return row
 
 
+def _without_position(row):
+    """A row skeleton without Word's conditional-style position markers (first, last, band)."""
+    row = _skeleton(row)
+    for node in list(row.iter(qn("w:cnfStyle"))):
+        node.getparent().remove(node)
+    return row
+
+
+def _plain_row(row):
+    """A header skeleton for data: its geometry, without the header's fill or emphasis.
+
+    Direct fills and character styles are removed, and the bold, caps and
+    colour a header paragraph style would still apply are overridden on the
+    run current text reuses.
+    """
+    row = _without_position(row)
+    for tag in ("w:tblHeader", "w:shd", "w:rStyle", "w:highlight", "w:b", "w:bCs", "w:caps", "w:color"):
+        for node in list(row.iter(qn(tag))):
+            node.getparent().remove(node)
+    for run in row.iter(qn("w:r")):
+        properties = run.get_or_add_rPr()
+        for name in ("b", "bCs", "caps"):
+            getattr(properties, "get_or_add_" + name)().val = False
+        properties.get_or_add_color().set(qn("w:val"), "auto")
+    return row
+
+
+def _repeats(row):
+    marker = row.find(qn("w:trPr") + "/" + qn("w:tblHeader"))
+    return marker is not None and marker.get(qn("w:val"), "1") not in ("0", "false", "off")
+
+
 def _data_row(element, continuation):
-    """The row current data copies: the table's last data row, else a plain header."""
+    """The row current data copies: the table's last data row, else a plain header.
+
+    The header is the wider of the first two rows plus any following rows
+    marked to repeat as headers, so a two-row header is never taken as data.
+    """
     rows = element.findall(qn("w:tr"))
     header = max(rows[:2], key=lambda row: len(row.findall(qn("w:tc"))))
-    if continuation or rows.index(header) + 1 < len(rows):
-        return rows[-1]
+    extent = rows.index(header) + 1
+    while extent < len(rows) and _repeats(rows[extent]):
+        extent += 1
+    if continuation or extent < len(rows):
+        return _without_position(rows[-1])
     return _plain_row(header)
 
 
@@ -608,10 +669,14 @@ def _table(element, columns, rows, *, physical_indices=(), continuation=False, k
     # report. An empty continuation keeps a blank shape, never an old row.
     output_rows = (rows or (("",) * width,)) if continuation else (columns, *rows)
     for index, values in enumerate(output_rows):
-        row = deepcopy(header if index == 0 and not continuation else prototype)
+        row = _skeleton(header) if index == 0 and not continuation else deepcopy(prototype)
         cells = row.findall(qn("w:tc"))
         for cell in cells:
             row.remove(cell)
+        if physical_indices and len(cells) > max(physical_indices):
+            # A full-width source row lends each retained column its own cell,
+            # never an excluded price column's formatting.
+            cells = [cells[n] for n in physical_indices]
         for column, value in enumerate(tuple(values) + ("",) * (width - len(values))):
             cell = deepcopy(cells[min(column, len(cells) - 1)])
             props = cell.find(qn("w:tcPr"))
