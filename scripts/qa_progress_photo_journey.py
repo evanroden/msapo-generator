@@ -374,7 +374,9 @@ def browser_task(engine, name, base):
         while pending_asset_indexes(current):
             indexes = pending_asset_indexes(current)[:6]
             before = receipt(page)["sequence"]
-            confirm = page.get_by_role("button", name=f"Confirm these {len(indexes)} pictures are ready (except those left for correction)", exact=True)
+            label = ("Confirm this picture is ready (unless left for correction)" if len(indexes) == 1 else
+                     f"Confirm these {len(indexes)} pictures are ready (except those left for correction)")
+            confirm = page.get_by_role("button", name=label, exact=True)
             form = page.locator(".picture-review").filter(has=confirm)
             expect(form.locator("img")).to_have_count(len(indexes))
             for picture in form.locator("img").all():
