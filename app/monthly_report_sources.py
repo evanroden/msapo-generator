@@ -165,7 +165,7 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
     notices = tuple(dict.fromkeys((*source.notices, *(
         f"Vendor {field.replace('_', ' ')} needs source review; the complete passage exceeds the suggestion limit."
         for field in oversized), *(
-        f"Vendor passage on page {n} needs source review; paragraph boundaries are incomplete or unavailable."
+        f"Labeled PDF passage on page {n} needs source review; classification or paragraph boundaries are uncertain."
         for n in pending))))
     def lines(term, field=""):
         if labeled_pages and field:
@@ -372,7 +372,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         data = library._read(cache)
         source = library.source_from_dict(data["source"])
         tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 1):
+        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 2):
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
@@ -435,7 +435,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 1, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 2, **asdict(content)}))
     return content, attachments
 
 

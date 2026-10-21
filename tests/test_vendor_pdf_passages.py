@@ -230,3 +230,39 @@ def test_long_label_is_not_silently_cut_into_a_completed_action():
     assert not s.actions
     assert any('exceeds the suggestion limit' in n for n in s.notices)
     assert s.page_texts==(text,)
+
+
+def test_ambiguous_vendor_classification_never_escapes_full_qualifier(monkeypatch,tmp_path):
+    c,_=fixture(monkeypatch,tmp_path,['Quotation reference only.', 'Actions: Replaced the pump but it\nwas not completed.'])
+    assert c.source.classification == 'Reference only'
+    assert not c.source.actions
+    assert not sources.action_evidence(c.source)[0]
+    assert not native_update((c,),'activity_summary').text
+    assert any('review' in n.lower() for n in c.source.notices)
+
+
+def test_reclassification_cannot_restore_physical_line_certification(monkeypatch,tmp_path):
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump\nand confirmed normal operation.'])
+    s=replace(c.source,classification='Reference only',actions='Actions: Inspected the pump')
+    assert not sources.native_action_lines(s)
+    assert sources.action_evidence(s) == ((), ('Actions: Inspected the pump',))
+    assert not native_update((replace(c,source=s),),'activity_summary').text
+
+
+def test_confirmed_other_source_types_keep_existing_behavior():
+    s=ReportSource('id','water.pdf','digest','.pdf',classification='Water treatment',
+        page_texts=('Actions: Inspected the sample pump.',),selected_pages=(1,))
+    assert sources.native_action_lines(s)==(('Actions: Inspected the sample pump.',(1,)),)
+
+
+def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_path):
+    c,raw=fixture(monkeypatch,tmp_path,['Quotation reference only.', 'Actions: Replaced the pump but it\nwas not completed.'])
+    path=sources._path(synthetic_profiles()[0],c.source.sha256,'.json')
+    data=json.loads(path.read_text()); data['vendor_passage_policy']=1
+    data['source']['actions']='Actions: Replaced the pump but it'
+    path.write_text(json.dumps(data))
+    upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
+    assert not upgraded.source.actions
+    assert upgraded.source.classification=='Reference only'
+    assert any('classification' in n for n in upgraded.source.notices)
+    assert json.loads(path.read_text())['vendor_passage_policy']==2

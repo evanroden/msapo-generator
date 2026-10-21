@@ -61,7 +61,7 @@ def block_spans(page, text, number):
 
 
 def labeled_page(source, number):
-    return (source.suffix == '.pdf' and source.classification == 'Vendor service'
+    return (source.suffix == '.pdf' and source.classification in ('Vendor service', 'Reference only')
             and 1 <= number <= len(source.page_texts)
             and bool(_LABEL.search(source.page_texts[number - 1])))
 
@@ -75,6 +75,10 @@ def vendor_passages(source, number):
     """
     if not labeled_page(source, number):
         return (), False
+    # Ambiguous/no heuristic classification must never fall back to certifying
+    # a physical first line. Only confirmed vendor sources may auto-extract.
+    if source.classification != 'Vendor service':
+        return (), True
     text = source.page_texts[number - 1]
     blocks, previous = [], 0
     if not isinstance(source.pdf_text_blocks, (tuple, list)):
