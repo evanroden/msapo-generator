@@ -44,7 +44,10 @@ def test_every_copy_of_the_notice_names_a_report_and_keeps_its_runs():
     name_report_in_contents_notice(root)
     first, fallback, other, longer = root.iter(W + "p")
     assert _text(first) == REPORT_NOTICE and len(first.findall(W + "r")) == 2
-    assert first.findall(W + "r")[1].find(W + "rPr/" + W + "i") is not None
+    plain, italic = first.findall(W + "r")
+    # The split word keeps its split: "rep" stays plain and "ort" stays italic.
+    assert _text(plain).endswith("within this rep") and _text(italic).startswith("ort may result")
+    assert italic.find(W + "rPr/" + W + "i") is not None
     assert _text(fallback) == " " + REPORT_NOTICE
     assert _text(other) == "Include this proposal in the review."
     assert _text(longer) == CONTENTS_NOTICE + " Extra synthetic text."
@@ -89,3 +92,14 @@ def test_generated_master_report_names_itself_a_report(monkeypatch, tmp_path):
                             ReportPeriod(2026, 9))
     output = ZipFile(BytesIO(_build_docx(draft))).read("word/document.xml").decode("utf-8")
     assert "within this report" in output and "within this proposal" not in output
+
+
+def test_a_word_split_over_three_runs_gives_each_run_its_own_letters():
+    split = CONTENTS_NOTICE.index("this p") + len("this p")
+    parts = (CONTENTS_NOTICE[:split], "ropos", CONTENTS_NOTICE[split + len("ropos"):])
+    root = etree.fromstring(f'<w:body {NS}>{_runs(*parts)}</w:body>')
+    name_report_in_contents_notice(root)
+    texts = [node.text for node in root.iter(W + "t")]
+    assert "".join(texts) == REPORT_NOTICE
+    # Positions 1-5 of "report" fall in the middle run; the last run's positions are past its end.
+    assert texts[0].endswith("this r") and texts[1] == "eport" and texts[2].startswith(" may result")

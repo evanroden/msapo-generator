@@ -30,22 +30,27 @@ def name_report_in_contents_notice(root):
 
     Only a paragraph whose whole text is that notice changes, one word across
     its runs, so run formatting and every other text stay exactly as authored.
+    A word split across runs keeps that split: each run takes the replacement
+    letters at its own positions, and the last one any remainder.
     """
     start = CONTENTS_NOTICE.index("this proposal") + len("this ")
-    end = start + len("proposal")
+    end, replacement = start + len("proposal"), "report"
     for paragraph in root.iter(W + "p"):
         nodes = list(paragraph.iter(W + "t"))
         text = "".join(node.text or "" for node in nodes)
         if text.strip() != CONTENTS_NOTICE:
             continue
-        shift, offset, replacement = len(text) - len(text.lstrip()), 0, "report"
+        word = start + len(text) - len(text.lstrip())
+        spans, offset = [], 0
         for node in nodes:
             value = node.text or ""
-            left, right = max(start + shift, offset), min(end + shift, offset + len(value))
+            left, right = max(word, offset), min(word + end - start, offset + len(value))
             if left < right:
-                node.text = value[:left - offset] + replacement + value[right - offset:]
-                replacement = ""
+                spans.append((node, value, left - offset, right - offset, left - word, right - word))
             offset += len(value)
+        for index, (node, value, left, right, first, last) in enumerate(spans):
+            piece = replacement[first:] if index == len(spans) - 1 else replacement[first:last]
+            node.text = value[:left] + piece + value[right:]
 
 
 def _legacy_band_path(value):
