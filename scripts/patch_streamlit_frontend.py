@@ -22,10 +22,12 @@ import re
 import tempfile
 
 try:
+    from scripts.streamlit_combobox_close import COMBOBOX_BUNDLE, repair_combobox_close
     from scripts.streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
     from scripts.streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
     from scripts.streamlit_floating_resize import FLOATING_BUNDLE, FLOATING_SHA256, repair_floating
 except ModuleNotFoundError:  # Direct `python scripts/...` entrypoint.
+    from streamlit_combobox_close import COMBOBOX_BUNDLE, repair_combobox_close
     from streamlit_overlay_resize import OVERLAY_BUNDLE, OVERLAY_SHA256, repair_overlay
     from streamlit_virtualizer_resize import VIRTUALIZER_BUNDLE, VIRTUALIZER_SHA256, repair_virtualizer
     from streamlit_floating_resize import FLOATING_BUNDLE, FLOATING_SHA256, repair_floating
@@ -60,6 +62,7 @@ class Publication:
     queued_scroll: bool
     latest_scroll_close: bool
     generation: str
+    selection_safe_close: bool
 
 
 def _references(raw):
@@ -135,7 +138,8 @@ def _locked_sources(scripts):
 
 
 def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
-                 floating_resize=True, queued_scroll=True, latest_scroll_close=True):
+                 floating_resize=True, queued_scroll=True, latest_scroll_close=True,
+                 selection_safe_close=True):
     if not floating_resize:
         originals = json.loads(MANIFEST_PATH.read_bytes())["members"]
         sources = {name: raw for name, raw in sources.items() if name in originals}
@@ -146,6 +150,9 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
         sources[OVERLAY_BUNDLE], queued_scroll=queued_scroll, latest_scroll_close=latest_scroll_close)
     if virtualizer_resize:
         repaired[VIRTUALIZER_BUNDLE] = repair_virtualizer(sources[VIRTUALIZER_BUNDLE])
+    if selection_safe_close:
+        repaired[COMBOBOX_BUNDLE] = repair_combobox_close(
+            sources[COMBOBOX_BUNDLE], virtualizer_resize=virtualizer_resize)
     if floating_resize:
         repaired[FLOATING_BUNDLE] = repair_floating(sources[FLOATING_BUNDLE])
     if scalar_date:
@@ -172,7 +179,7 @@ def _publication(sources, members, scalar_date, *, virtualizer_resize=True,
         payloads[name] = rewritten
     names[INDEX_BUNDLE] = _entry_name(payloads[INDEX_BUNDLE])
     return Publication(names, payloads, scalar_date, virtualizer_resize, floating_resize, queued_scroll,
-                       queued_scroll and latest_scroll_close, generation)
+                       queued_scroll and latest_scroll_close, generation, selection_safe_close)
 
 
 def _legacy_variants(sources):
@@ -206,11 +213,11 @@ def _validated_publications(static_dir, installed_version):
     # immutable members and preloads. Preserve their original identity recipe.
     publications = tuple(_publication(sources, members, flag, virtualizer_resize=guard,
                                      floating_resize=floating, queued_scroll=scroll,
-                                     latest_scroll_close=latest)
-                         for latest, scroll, floating, guard in (
-                             (True, True, True, True), (False, True, True, True),
-                             (False, False, True, True), (False, False, False, True),
-                             (False, False, False, False))
+                                     latest_scroll_close=latest, selection_safe_close=selection)
+                         for selection, latest, scroll, floating, guard in (
+                             (True, True, True, True, True), (False, True, True, True, True),
+                             (False, False, True, True, True), (False, False, False, True, True),
+                             (False, False, False, False, True), (False, False, False, False, False))
                          for flag in (False, True))
     legacy, legacy_date_name, legacy_date = _legacy_variants(sources)
     variants = {**legacy, **{p.names[INDEX_BUNDLE]: (p.payloads[INDEX_BUNDLE], p.scalar_date) for p in publications}}
@@ -269,6 +276,9 @@ def _receipt(publication):
             "floating_resize": publication.floating_resize,
             "queued_scroll": publication.queued_scroll,
             "latest_scroll_close": publication.latest_scroll_close,
+            "selection_safe_close": publication.selection_safe_close,
+            "combobox_bundle": publication.names[COMBOBOX_BUNDLE],
+            "combobox_sha256": sha256(publication.payloads[COMBOBOX_BUNDLE]).hexdigest(),
             "floating_bundle": publication.names.get(FLOATING_BUNDLE, FLOATING_BUNDLE),
             "original_floating_sha256": FLOATING_SHA256,
             "floating_sha256": (sha256(publication.payloads[FLOATING_BUNDLE]).hexdigest()
