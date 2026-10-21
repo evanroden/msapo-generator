@@ -292,7 +292,7 @@ def main():
                  "actual_workflow": "native source correction links and form",
                  "browsers": {}, "checks": []}
     qa.exercise = browser_task
-    with observe(qa.OUT / "diagnostics", Browser, BrowserContext):
+    with observe(qa.OUT / "diagnostics", Browser, BrowserContext, source_selection=True):
         qa.main()
 
 
