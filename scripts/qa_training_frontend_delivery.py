@@ -61,7 +61,8 @@ class TrainingFrontendDelivery:
         # reload cannot replace an incomplete or wrong first delivery.
         rows.append({"matches": False, "error": "response observation incomplete"})
         try:
-            observe = {"primary": _frontend_response_receipt, "overlay": _overlay_response_receipt,
+            observe = {"primary": lambda response, expected: _frontend_response_receipt(
+                           response, expected, require_instant_expander=True), "overlay": _overlay_response_receipt,
                        "combobox": _combobox_response_receipt}[kind]
             rows[0] = observe(response, self.expected[kind])
         except Exception as exc:

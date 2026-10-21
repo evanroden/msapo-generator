@@ -369,13 +369,22 @@ def browser_task(engine, name, base):
 
     def review(current):
         from app.monthly_report_asset_review import pending_asset_indexes, approve_asset
-        # Exactly one decision for each explicitly expected pending picture;
-        # a failed acknowledgment stops before any next business action.
-        for index in pending_asset_indexes(current):
+        # One explicit decision covers only the bounded, fully displayed group.
+        # Verify every expected picture loaded before confirming the exact set.
+        while pending_asset_indexes(current):
+            indexes = pending_asset_indexes(current)[:6]
             before = receipt(page)["sequence"]
-            page.get_by_role("button", name="This page is ready to include", exact=True).click()
-            current = approve_asset(current, index)
-            capture("review-photo-" + str(index + 1), current, after=before)
+            confirm = page.get_by_role("button", name=f"Confirm these {len(indexes)} pictures are ready (except those left for correction)", exact=True)
+            form = page.locator(".picture-review").filter(has=confirm)
+            expect(form.locator("img")).to_have_count(len(indexes))
+            for picture in form.locator("img").all():
+                picture.scroll_into_view_if_needed()
+                expect(picture).to_be_visible()
+                assert picture.evaluate("img => img.complete && img.naturalWidth > 0"), "Every reviewed picture must load"
+            confirm.click()
+            for index in indexes:
+                current = approve_asset(current, index)
+            capture("review-photo-group-" + str(indexes[0] + 1), current, after=before)
         return current
 
     try:

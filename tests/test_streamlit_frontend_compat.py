@@ -34,7 +34,7 @@ def previous_overlay(bundle, scalar_date, virtualizer=False):
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
     publication = compat._publication(sources, members, scalar_date, virtualizer_resize=virtualizer,
-                                      floating_resize=False, queued_scroll=False, selection_safe_close=False)
+                                      floating_resize=False, queued_scroll=False, selection_safe_close=False, no_cache_advertisements=False, instant_expander=False)
     # These are independently retained published identities, not names inferred
     # from the selected files or supplied by the current implementation.
     assert publication.names[compat.INDEX_BUNDLE] == {
@@ -58,7 +58,7 @@ def test_published_83_member_generation_upgrades_without_losing_originals_or_dat
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
     old = compat._publication(sources, members, previous_date, queued_scroll=queued_scroll,
-                              latest_scroll_close=False, selection_safe_close=False)
+                              latest_scroll_close=False, selection_safe_close=False, no_cache_advertisements=False, instant_expander=False)
     # Exact deployed Water and tested Training identities retained before this
     # repair; deriving these expectations from current output would miss a
     # backwards-compatibility break in the publication recipe.
@@ -286,6 +286,8 @@ def test_browser_frontend_receipt_hashes_the_delivered_bytes_without_writes(bund
     receipt = _frontend_response_receipt(response, expected)
     assert receipt["matches"] and receipt["sha256"] == sha256(raw).hexdigest()
     assert receipt["full_scope_predicate_count"] == 1 and receipt["original_predicate_count"] == 0
+    assert receipt["no_cache_advertisement_count"] == 1
+    assert receipt["original_cache_advertisement_count"] == 0
     assert all(not isinstance(value, bytes) for value in receipt.values())
     # A correct filename and length cannot certify different JavaScript bytes.
     response.body = lambda: b" " + raw[1:]

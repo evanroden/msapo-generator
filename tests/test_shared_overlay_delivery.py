@@ -83,7 +83,7 @@ def test_current_overlay_gate_rejects_valid_prior_publication_without_scroll_rep
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
     old = compat._publication(sources, members, True, queued_scroll=queued_scroll,
-                              latest_scroll_close=False, selection_safe_close=False)
+                              latest_scroll_close=False, selection_safe_close=False, no_cache_advertisements=False, instant_expander=False)
     assert old.names[compat.INDEX_BUNDLE] == ("index.enfra-frontend-4cf97569e258.js" if queued_scroll
                                             else "index.enfra-frontend-25142a252245.js")
     for native, raw in old.payloads.items():
