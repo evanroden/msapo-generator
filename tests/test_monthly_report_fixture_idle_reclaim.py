@@ -130,7 +130,8 @@ def test_an_interrupted_admission_restores_set_aside_copies_once(root, monkeypat
     with run(B) as other, pytest.raises(storage.VaultQuotaExceeded):
         with admission.admit_run_copy(other, 1):
             pytest.fail("The restored copy still holds its budget")
-    assert len(calls) == 1 and abandoned.data_root.exists() and not doomed.exists()
+    # Once on entry and once to settle the failed admission, never per reservation.
+    assert calls == [root, root] and abandoned.data_root.exists() and not doomed.exists()
 
 
 def test_a_failed_admission_puts_set_aside_copies_back(root, monkeypatch):
@@ -303,3 +304,43 @@ def test_the_scan_stops_at_its_limit_inside_one_large_folder(root, monkeypatch):
     monkeypatch.setattr(testing.os, "scandir", Counting)
     assert testing._last_change(crowded.data_root) is None
     assert len(read) == 6
+
+
+def test_a_save_error_after_the_index_changed_follows_the_index(root, monkeypatch):
+    abandoned = full_copy(A)
+    age(abandoned.data_root, 25)
+    replaced, replace, fsync = [], os.replace, os.fsync
+    monkeypatch.setattr(admission.os, "replace", lambda *args, **kwargs: replaced.append(1) or replace(*args, **kwargs))
+
+    def fail_after_replace(descriptor):
+        if replaced:
+            raise OSError("synthetic flush failure after the new index was installed")
+        return fsync(descriptor)
+
+    monkeypatch.setattr(admission.os, "fsync", fail_after_replace)
+    with run(B) as other, pytest.raises(OSError, match="synthetic flush"):
+        with admission.admit_run_copy(other, 4096):
+            pytest.fail("A failed save reached the install")
+    listed = [item["scope"] for item in reservations(root)]
+    assert listed == [other.scope]  # the visible index released the idle copy
+    assert not abandoned.data_root.exists()  # so it is not restored uncounted
+    assert not list((root / testing._BUCKET).glob(".reclaimed-*"))
+
+
+def test_a_run_reset_during_the_commit_keeps_the_idle_copies(root, monkeypatch):
+    abandoned = full_copy(A)
+    age(abandoned.data_root, 25)
+    save, resets = admission._save, []
+
+    def reset_once_after_commit(directory, records):
+        save(directory, records)
+        if not resets:
+            resets.append(testing.reset(root))
+
+    monkeypatch.setattr(admission, "_save", reset_once_after_commit)
+    with run(B) as other, pytest.raises(OSError):
+        with admission.admit_run_copy(other, 4096):
+            pytest.fail("A reset run reached the install")
+    assert (abandoned.data_root / "synthetic-copy.bin").exists()
+    assert abandoned.scope in [item["scope"] for item in reservations(root)]
+    assert not list((root / testing._BUCKET).glob(".reclaimed-*"))

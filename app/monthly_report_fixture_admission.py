@@ -141,7 +141,7 @@ def admit_run_copy(context, added_bytes: int):
                 validate_run(context)  # A waiting caller may have been reset.
                 existing = _load(directory)
                 testing.recover_set_aside(root.parent.parent, {(item.scope, item.generation) for item in existing})
-                set_aside = []
+                set_aside = {}
                 try:
                     retained = []
                     for item in existing:
@@ -154,23 +154,39 @@ def admit_run_copy(context, added_bytes: int):
                         if tombstone is None:
                             retained.append(item)
                         else:
-                            set_aside.append(tombstone)
+                            set_aside[tombstone] = item
                     _admit(directory, context, reservation, retained)
+                    try:
+                        # A stale lease cannot begin its write, including if reset
+                        # occurred while durable reservation metadata was installed.
+                        validate_run(context)
+                    except BaseException:
+                        if set_aside:  # list the idle copies again so they are put back
+                            kept = (*retained, *set_aside.values())
+                            _save(directory, (*kept, reservation) if len(kept) < _MAX_RESERVATIONS else kept)
+                        raise
                 except BaseException:
-                    for tombstone in set_aside:
-                        try:
-                            testing.restore_set_aside(root.parent.parent, tombstone)
-                        except OSError:
-                            pass  # recovered by the next admission
+                    # Put back exactly the set-aside copies the index on disk still
+                    # lists; an unreadable index leaves them to the next admission.
+                    listed = _listed(directory)
+                    if listed is not None:
+                        testing.recover_set_aside(root.parent.parent, listed)
                     raise
-                # Committed: a crash from here on leaves set-aside copies the index
-                # no longer lists, which the next admission deletes.
-                for tombstone in set_aside:
-                    testing.discard_set_aside(tombstone)
-                # A stale lease cannot begin its write, including if reset
-                # occurred while durable reservation metadata was installed.
-                validate_run(context)
-                yield reservation
+                try:
+                    yield reservation
+                finally:
+                    # Committed: a crash before this leaves set-aside copies the
+                    # index no longer lists, which the next admission deletes.
+                    for tombstone in set_aside:
+                        testing.discard_set_aside(tombstone)
+
+
+def _listed(directory):
+    """The (scope, generation) pairs the index on disk lists now, or None if unreadable."""
+    try:
+        return {(item.scope, item.generation) for item in _load(directory)}
+    except (OSError, storage.VaultIntegrityError):
+        return None
 
 
 def _admit(directory, context, reservation, retained):
