@@ -545,10 +545,12 @@ def _native_art_preservation_review(path, source_view, profile, period, actor, p
                 except (ValueError, OSError):
                     st.error("This verified artwork could not be displayed; preservation remains blocked.")
                     continue
-                if st.checkbox("Preserve this native page artwork unchanged", key=field(key + "_keep", False)):
+                # One explicit action covers preservation AND the same visible
+                # suitability review. Old separate/partial choices cannot seed it.
+                st.caption("Confirm it belongs in this report, with no visible pricing or inappropriate private information.")
+                if st.checkbox("I reviewed this artwork and want to keep it unchanged",
+                               key=field(key + "_preserve_review_v1", False)):
                     kept.update(item.original_id for item in occurrences)
-                if st.checkbox("I checked this artwork: it is relevant, has no visible pricing and no inappropriate private information",
-                               key=field(key + "_review", False)):
                     reviewed.update(item.original_id for item in occurrences)
         ids = tuple(item.original_id for item in inventory.occurrences)
         if kept != set(ids) or reviewed != set(ids) or not actor.strip():

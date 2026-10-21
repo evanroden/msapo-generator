@@ -130,7 +130,7 @@ render_section_setup(profile.contract,period,'Synthetic Operator',_field,
 ''',default_timeout=60).run()
     assert not app.exception
     for checkbox in app.checkbox:
-        if checkbox.label.startswith(('Preserve this native','I checked this artwork')): checkbox.check()
+        if checkbox.label.startswith('I reviewed this artwork and want to keep it unchanged'): checkbox.check()
     app.run()
     assert not app.exception
     assert not any('logo' in w.label.lower() or 'branch' in w.label.lower() for w in app.radio)
@@ -234,8 +234,8 @@ render_section_setup(profile.contract,period,'Synthetic Operator',_field,state=s
 ''',default_timeout=60).run()
     assert not app.exception
     assert all('no confirmed photograph or logo role' in e.value for e in app.error)
-    checks=[c for c in app.checkbox if c.label.startswith(('Preserve this native','I checked this artwork'))]
-    assert len(checks)==4, 'no prior month/legacy review may pre-approve source art'
+    checks=[c for c in app.checkbox if c.label.startswith('I reviewed this artwork and want to keep it unchanged')]
+    assert len(checks)==2, 'no prior month/legacy review may pre-approve source art'
     for checkbox in checks: checkbox.check()
     app.run()
     button=next(b for b in app.button if b.label=='Continue to this month’s updates')

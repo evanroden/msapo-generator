@@ -34,7 +34,7 @@ def previous_overlay(bundle, scalar_date, virtualizer=False):
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
     publication = compat._publication(sources, members, scalar_date, virtualizer_resize=virtualizer,
-                                      floating_resize=False, queued_scroll=False)
+                                      floating_resize=False, queued_scroll=False, selection_safe_close=False)
     # These are independently retained published identities, not names inferred
     # from the selected files or supplied by the current implementation.
     assert publication.names[compat.INDEX_BUNDLE] == {
@@ -58,7 +58,7 @@ def test_published_83_member_generation_upgrades_without_losing_originals_or_dat
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
     old = compat._publication(sources, members, previous_date, queued_scroll=queued_scroll,
-                              latest_scroll_close=False)
+                              latest_scroll_close=False, selection_safe_close=False)
     # Exact deployed Water and tested Training identities retained before this
     # repair; deriving these expectations from current output would miss a
     # backwards-compatibility break in the publication recipe.
