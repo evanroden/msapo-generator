@@ -287,6 +287,37 @@ def _show_issue_delivery(key, pending):
                 language=None, wrap_lines=True)
 
 
+def _recover_rejected_source_deliveries(prefix, captured):
+    """Keep a real delivered choice when its row changed before first capture.
+
+    A retired/forged receipt token is never recovered as a new user action.
+    These source-only records cannot apply anything to the canonical report.
+    """
+    import streamlit as st
+    recovery_prefix = prefix + "_source_delivery_recovery_"
+    for key in list(st.session_state):
+        if (key in captured or not key.startswith(prefix + "_issue_")
+                or "_sources_" not in key or not key.endswith("_change")):
+            continue
+        receipt = st.session_state.get(key)
+        registration = st.session_state.get(key.removesuffix("_change") + "_delivery", {})
+        if (isinstance(receipt, dict) and isinstance(receipt.get("token"), str)
+                and receipt["token"] == registration.get("token")
+                and isinstance(receipt.get("value"), list)
+                and receipt["value"] == st.session_state.get(key.removesuffix("_change"))):
+            st.session_state[recovery_prefix + _digest((key, receipt["identity"], receipt["value"]))] = receipt
+            st.session_state.pop(key, None)
+    for key in sorted(k for k in st.session_state if k.startswith(recovery_prefix)):
+        receipt = st.session_state[key]
+        with st.expander("Earlier source selection (not applied)", key=key):
+            st.caption("The issue, report or sources changed before this choice arrived. "
+                       "These entered links were not applied or saved; compare them before selecting them again.")
+            labels = receipt.get("source_labels", {})
+            st.code("\n".join(labels.get(ref, ref) for ref in receipt["value"])
+                    or "The earlier choice cleared the supporting source selection.",
+                    language=None, wrap_lines=True)
+
+
 def _capture_issue_controls(draft, prefix, options):
     """Project delivered edits without mistaking a widget render for a commit.
 
@@ -295,7 +326,7 @@ def _capture_issue_controls(draft, prefix, options):
     including co-delivered issue fields needed by the row identity guard.
     """
     import streamlit as st
-    items = []
+    items, captured = [], set()
     current_keys = {_issue_pending_key(prefix, item) for item in draft.follow_ups if item.category == "issue"}
     for key in sorted(k for k in st.session_state if k.startswith(prefix + "_pending_issue_delivery_")):
         if key in current_keys or "_recovery_" in key:
@@ -314,9 +345,11 @@ def _capture_issue_controls(draft, prefix, options):
         for recovery_key in sorted(k for k in st.session_state if k.startswith(key + "_recovery_")):
             _show_issue_delivery(recovery_key, st.session_state[recovery_key])
         pending = st.session_state.get(key)
-        receipts = {}
+        receipts, reapplied = {}, False
         identity = _issue_identity(draft, prefix, item)
         if isinstance(pending, dict):
+            captured.update(receipt_key for receipt_key, receipt in pending["receipts"].items()
+                            if st.session_state.get(receipt_key) == receipt)
             if not pending.get("conflicted") and pending["result"] == identity:
                 # The caller's INPUT now contains the edit, not merely a local
                 # renderer return. Never retire a newer callback with it.
@@ -325,21 +358,30 @@ def _capture_issue_controls(draft, prefix, options):
             elif not pending.get("conflicted") and pending["identity"] == identity:
                 item = pending["after"]
                 receipts = dict(pending["receipts"])
+                reapplied = True
             else:
                 pending = {**pending, "conflicted": True}
                 st.session_state[key] = pending
                 _show_issue_delivery(key + "_conflict", pending)
         identity = _issue_identity(draft, prefix, item)
         changes = {}
+        original_fields = dict(_issue_fields(original, options))
+        original_identity = _issue_identity(draft, prefix, original)
         p = prefix + "_issue_" + item.key
         for suffix, current in _issue_fields(item, options):
             control = p + "_" + suffix
             receipt = st.session_state.get(control + "_change")
             registration = st.session_state.get(control + "_delivery", {})
-            if not (isinstance(receipt, dict) and receipt.get("identity") == identity
-                    and receipt.get("token") == registration.get("token")
-                    and receipt.get("before") == current
+            if not (isinstance(receipt, dict) and isinstance(receipt.get("token"), str)
+                    and receipt["token"] == registration.get("token")
                     and receipt.get("value") == st.session_state.get(control)):
+                continue
+            matches = receipt.get("identity") == identity and receipt.get("before") == current
+            # If interruption preceded this widget's registration, its live
+            # callback still names the original row. Accept that exact baseline
+            # too, never a retired token or an independently changed row.
+            if not (matches or (reapplied and receipt.get("identity") == original_identity
+                                and receipt.get("before") == original_fields[suffix])):
                 continue
             value = receipt["value"]
             if suffix.startswith("sources_"):
@@ -351,8 +393,10 @@ def _capture_issue_controls(draft, prefix, options):
             else:
                 continue
             receipts[control + "_change"] = receipt
+            captured.add(control + "_change")
         revised = replace(item, **changes)
         if receipts:
+            captured.update(receipts)
             result = _issue_identity(draft, prefix, revised)
             receipts = {receipt_key: {**receipt, "result": result}
                         for receipt_key, receipt in receipts.items()}
@@ -366,6 +410,7 @@ def _capture_issue_controls(draft, prefix, options):
                 "source_labels": dict(options),
             }
         items.append(revised)
+    _recover_rejected_source_deliveries(prefix, captured)
     return replace(draft, follow_ups=tuple(items))
 
 
@@ -403,6 +448,7 @@ def _issue_changed(key, before, identity, token):
     st.session_state[key + "_change"] = {
         "identity": registration.get("identity", identity), "token": token,
         "before": before, "value": st.session_state.get(key),
+        "source_labels": registration.get("source_labels", {}),
     }
 
 
@@ -427,6 +473,8 @@ def _issue_control(widget, label, key, value, field, *, identity, cycle, **kwarg
     token = uuid4().hex
     st.session_state[key + "_delivery"] = {
         "identity": identity, "before": accepted_value, "token": token, "cycle": cycle,
+        "source_labels": ({ref: kwargs["format_func"](ref) for ref in kwargs["options"]}
+                          if widget == st.multiselect else {}),
     }
     result = widget(label, key=field(key, value), on_change=_issue_changed,
                     args=(key, accepted_value, identity, token), **kwargs)
