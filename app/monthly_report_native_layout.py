@@ -1769,6 +1769,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     page_plan.finish(document=document)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)
+    from app.monthly_report_native_design import name_report_in_contents_notice
+    name_report_in_contents_notice(body)
     if source_region_observer is not None:
         source_region_observer(body, page_plan)
     result = BytesIO()

@@ -21,6 +21,31 @@ CONTENTS_NOTICE = (
     "Any unauthorized use or disclosure of the information within this proposal may result in legal ramifications. "
     "We respect the confidentiality of all parties involved and are committed to safeguarding the sensitive data presented in this document."
 )
+# Owner decision (#304): a generated monthly report names itself a report.
+REPORT_NOTICE = CONTENTS_NOTICE.replace("within this proposal", "within this report")
+
+
+def name_report_in_contents_notice(root):
+    """Say "this report" in every retained copy of the master's confidentiality notice.
+
+    Only a paragraph whose whole text is that notice changes, one word across
+    its runs, so run formatting and every other text stay exactly as authored.
+    """
+    start = CONTENTS_NOTICE.index("this proposal") + len("this ")
+    end = start + len("proposal")
+    for paragraph in root.iter(W + "p"):
+        nodes = list(paragraph.iter(W + "t"))
+        text = "".join(node.text or "" for node in nodes)
+        if text.strip() != CONTENTS_NOTICE:
+            continue
+        shift, offset, replacement = len(text) - len(text.lstrip()), 0, "report"
+        for node in nodes:
+            value = node.text or ""
+            left, right = max(start + shift, offset), min(end + shift, offset + len(value))
+            if left < right:
+                node.text = value[:left - offset] + replacement + value[right - offset:]
+                replacement = ""
+            offset += len(value)
 
 
 def _legacy_band_path(value):
@@ -322,7 +347,7 @@ def native_layout_role(element, text, *, part, section, word_section):
         if lines and all(line == "ENFRA" or re.fullmatch(r"Section \d{1,2}: [A-Za-z /&-]{3,90}", line) for line in lines):
             return "Native contents text frames"
         if (lines and lines[0] == "TABLE OF CONTENTS" and len(lines) == 3
-                and lines[1] == CONTENTS_NOTICE
+                and lines[1] in (CONTENTS_NOTICE, REPORT_NOTICE)
                 and re.fullmatch(r"\d+ Galleria Blvd\..*\|.*enfrasolutions\.com", lines[2], re.I)):
             return "Native contents notice and artwork"
     return ""
