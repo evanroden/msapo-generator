@@ -2,9 +2,10 @@
 
 This metadata-only registry bounds staged source/lineage reservations, not all
 generated workspace data. It grants no access to fixture originals and performs
-no authentication, report save, expiry policy or data deletion. A reservation
-survives a failed write and is reclaimed only after the existing QA generation
-has demonstrably disappeared or been replaced by a valid newer marker.
+no authentication or report save. A reservation survives a failed write and is
+reclaimed after its QA generation has disappeared or been replaced by a valid
+newer marker, or when another browser's namespace has been idle for 24 hours
+(owner policy, #292); shared originals are never removed.
 """
 from __future__ import annotations
 
@@ -139,12 +140,15 @@ def admit_run_copy(context, added_bytes: int):
             with storage._admission_lock(directory):
                 validate_run(context)  # A waiting caller may have been reset.
                 existing = _load(directory)
-                retained = tuple(item for item in existing if _generation_exists(base, item))
+                retained = tuple(item for item in existing if _generation_exists(base, item)
+                                 and (item.scope == context.scope
+                                      or not testing.reclaim_idle(root.parent.parent, item.scope, item.generation)))
                 if any((item.scope, item.generation) == (reservation.scope, reservation.generation) for item in retained):
                     raise storage.VaultIntegrityError("This fixture generation already reserved a copy; reset this run before retrying.")
                 if (len(retained) >= _MAX_RESERVATIONS
                         or sum(item.added_bytes for item in retained) + added_bytes > MAX_ACTIVE_COPY_BYTES):
-                    raise storage.VaultQuotaExceeded("Active fixture copies use the 128 MiB budget; reset completed test runs before staging another.")
+                    raise storage.VaultQuotaExceeded("Active fixture copies use the 128 MiB budget; reset completed test runs "
+                                                     "before staging another. Copies unused for 24 hours are cleared automatically.")
                 available = os.fstatvfs(directory)
                 if available.f_bavail * available.f_frsize < MIN_FREE_BYTES + added_bytes:
                     raise storage.VaultQuotaExceeded("Fixture staging needs 256 MiB of free space after the new source copy.")

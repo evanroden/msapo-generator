@@ -14,12 +14,18 @@ from pathlib import Path
 import os
 import re
 import shutil
+import time
 
 _SCOPE: ContextVar[str | None] = ContextVar("enfra_monthly_qa_scope", default=None)
 _LEASE: ContextVar[str | None] = ContextVar("enfra_monthly_qa_generation", default=None)
 _COOKIE = re.compile(r"[0-9a-f]{32}\Z")
 _BUCKET = "_enfra_monthly_report_qa_v1"
 _SENTINEL = ".enfra-qa-namespace"
+# Owner policy (#292): another browser's isolated copy idle this long may be
+# reclaimed. Ordinary use refreshes the marker's time at most this often.
+IDLE_SECONDS = 24 * 60 * 60
+_ACTIVITY_SECONDS = 10 * 60
+_MEASURE_LIMIT = 20000
 
 
 def scope() -> str | None:
@@ -128,7 +134,59 @@ def data_dir(base: Path) -> Path:
     if expected is not None and expected != generation:
         raise OSError("The isolated test changed while this task was running; stale work was blocked.")
     _LEASE.set(generation)
+    try:
+        # Viewing writes nothing else, so record use on the existing marker.
+        if time.time() - sentinel.stat().st_mtime > _ACTIVITY_SECONDS:
+            os.utime(sentinel)
+    except OSError:
+        pass  # recording activity never blocks the request
     return target
+
+
+def _last_change(target: Path) -> float | None:
+    """Newest change anywhere in a namespace; None when it cannot be measured safely."""
+    newest, seen = target.lstat().st_mtime, 0
+    for directory, directories, files in os.walk(target, followlinks=False):
+        for name in (*directories, *files):
+            seen += 1
+            path = Path(directory) / name
+            if seen > _MEASURE_LIMIT or path.is_symlink():
+                return None
+            try:
+                newest = max(newest, path.lstat().st_mtime)
+            except FileNotFoundError:
+                continue
+    return newest
+
+
+def reclaim_idle(base: Path, identity: str, generation: str, *, now: float | None = None,
+                 idle_seconds: float = IDLE_SECONDS) -> bool:
+    """Remove another browser's isolated namespace after a day without changes.
+
+    Only that exact verified generation is removed; this request's own
+    namespace, a mismatched or invalid marker, any link and anything that
+    cannot be measured are kept. The namespace is renamed aside first, so a
+    returning browser's stale work fails closed and new work starts fresh.
+    Shared originals live outside this bucket and are never touched.
+    """
+    if identity == scope() or not _COOKIE.fullmatch(identity):
+        return False
+    try:
+        target = _location(base, identity)
+        for leftover in target.parent.glob(".reclaimed-*"):  # an interrupted earlier removal
+            if leftover.is_dir() and not leftover.is_symlink():
+                shutil.rmtree(leftover, ignore_errors=True)
+        if not target.is_dir() or _marker(target / _SENTINEL, identity) != generation:
+            return False
+        newest = _last_change(target)
+        if newest is None or (time.time() if now is None else now) - newest < idle_seconds:
+            return False
+        tombstone = target.parent / (".reclaimed-" + identity + "-" + uuid4().hex)
+        os.rename(target, tombstone)
+    except (OSError, UnicodeError):
+        return False  # anything unexpected keeps the namespace
+    shutil.rmtree(tombstone, ignore_errors=True)
+    return True
 
 
 def reset(base: Path) -> None:
