@@ -24,7 +24,7 @@ def test_cross_observer_width_feedback_and_five_negative_controls():
     from scripts.qa_native_owner_source_model import extracts
     static = Path(streamlit.__file__).parent / "static"
     sources, members = compat._locked_sources(static / "static/js")
-    previous = compat._publication(sources, members, False, floating_resize=False, queued_scroll=False, selection_safe_close=False, no_cache_advertisements=False)
+    previous = compat._publication(sources, members, False, floating_resize=False, queued_scroll=False, selection_safe_close=False, no_cache_advertisements=False, instant_expander=False)
     manifest = {"selected_production": {"scalar_date": False, "generation": previous.generation},
                 "assets": {previous.names[name]: {"input_sha256": sha256(previous.payloads[name]).hexdigest()}
                            for name in (compat.OVERLAY_BUNDLE, compat.VIRTUALIZER_BUNDLE)}}

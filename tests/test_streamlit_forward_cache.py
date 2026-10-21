@@ -107,7 +107,7 @@ def test_native_request_coalescing_keeps_empty_advertisements(fragments):
 def test_previous_selection_safe_generation_remains_exact():
     scripts = Path(streamlit.__file__).parent / 'static/static/js'
     sources, members = compat._locked_sources(scripts)
-    previous = compat._publication(sources, members, True, no_cache_advertisements=False)
+    previous = compat._publication(sources, members, True, no_cache_advertisements=False, instant_expander=False)
     assert previous.generation.startswith('30ec452cc18221610df17')
     assert previous.names[compat.INDEX_BUNDLE] == 'index.enfra-frontend-f581fba5f125.js'
     assert ORIGINAL in previous.payloads[compat.INDEX_BUNDLE]
@@ -125,7 +125,7 @@ def test_upgrade_retains_previous_assets_and_receipt_rejects_old_entry(bundle):
     from scripts.qa_shared_fixture_testing import _expected_frontend
     root, scripts = bundle
     sources, members = compat._locked_sources(scripts)
-    previous = compat._publication(sources, members, True, no_cache_advertisements=False)
+    previous = compat._publication(sources, members, True, no_cache_advertisements=False, instant_expander=False)
     for name, raw in previous.payloads.items():
         (scripts / previous.names[name]).write_bytes(raw)
     html = (root / 'index.html').read_bytes()

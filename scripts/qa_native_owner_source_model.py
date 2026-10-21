@@ -36,7 +36,7 @@ def extracts(static, manifest):
     sources, members = compat._locked_sources(scripts)
     selected = manifest["selected_production"]
     publication = compat._publication(sources, members, selected["scalar_date"], virtualizer_resize=True,
-                                      floating_resize=False, queued_scroll=False, selection_safe_close=False, no_cache_advertisements=False)
+                                      floating_resize=False, queued_scroll=False, selection_safe_close=False, no_cache_advertisements=False, instant_expander=False)
     if publication.generation != selected["generation"]:
         raise RuntimeError("Model does not reconstruct the retained ordinary publication")
     rows = {}

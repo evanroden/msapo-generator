@@ -121,7 +121,7 @@ def _asset_response_receipt(response, expected):
     return receipt, raw
 
 
-def _frontend_response_receipt(response, expected):
+def _frontend_response_receipt(response, expected, *, require_instant_expander=False):
     from scripts import patch_streamlit_frontend as compat
     from scripts.streamlit_forward_cache import ORIGINAL as CACHE_ORIGINAL, REPAIRED as CACHE_REPAIRED
     receipt, raw = _asset_response_receipt(response, expected)
@@ -132,6 +132,12 @@ def _frontend_response_receipt(response, expected):
     if receipt.get("matches"):
         receipt.update({"full_scope_predicate_count": raw.count(compat.REPAIRED),
                         "original_predicate_count": raw.count(compat.ORIGINAL)})
+    if require_instant_expander:
+        from scripts.streamlit_expander_motion import DURATION_REPAIRED, FINISH_REPAIRED
+        receipt["instant_expander_count"] = raw.count(DURATION_REPAIRED)
+        receipt["synchronous_expander_finish_count"] = raw.count(FINISH_REPAIRED)
+        receipt["matches"] = bool(receipt.get("matches") and receipt["instant_expander_count"] == 1
+                                  and receipt["synchronous_expander_finish_count"] == 1)
     return receipt
 
 
