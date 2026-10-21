@@ -1,0 +1,49 @@
+name: Private fixture witness opt-in
+
+# Verification-only branch. Never merge/deploy this opt-in workflow.
+# No uploads, resets, report starts, saves, renders or readable source artifacts.
+on:
+  push:
+    branches:
+      - verify/private-fixture-witness-20261021
+    paths:
+      - .github/workflows/private-fixture-witness-opt-in.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monthly-isolated-live-production
+  cancel-in-progress: false
+
+jobs:
+  readonly-witness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install browser and metadata-receipt encryption
+        run: |
+          python -m pip install playwright==1.58.0 cryptography==46.0.4
+          python -m playwright install --with-deps chromium
+      - name: Validate synthetic encryption and native-identity controls
+        run: |
+          python -m py_compile scripts/qa_private_fixture_witness.py
+          python -m scripts.qa_private_fixture_witness --self-test
+      - name: Read approved unchanged original on the exact served build
+        run: |
+          python -m scripts.qa_private_fixture_witness scripts/private-fixture-public-config.json
+      - name: Retain only sealed metadata receipt and sealed failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sealed-fixture-witness-${{ github.run_id }}
+          path: test-artifacts/private-fixture-witness/receipt.encrypted.json
+          if-no-files-found: warn
+          retention-days: 7
+          include-hidden-files: false
