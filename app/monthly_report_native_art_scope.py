@@ -285,12 +285,54 @@ def expected_header_scope(source_view, section_key=None):
         sha256(_canonical(asdict(plan))).hexdigest(), plan)
 
 
-def verify_header_routing(output_bytes, scope):
+@dataclass(frozen=True)
+class NativeEmissionProof:
+    scope_sha256: str
+    source_word_sections_by_unit: tuple[int, ...]
+
+
+def source_emission_proof(scope, body, pages):
+    """Bind every emitted root to its pre-edit source section, never its output break.
+
+    NativePages assigns original roots before editing and propagates ownership
+    only from an explicit source anchor. Unknown insertions have no authority.
+    """
+    if not isinstance(scope, NativeHeaderScope):
+        _error('typed source scope required for emission')
+    owners = []
+    for unit in body:
+        region = pages.owner.get(unit)
+        if region is None or not 0 <= region < len(pages.source_word_sections):
+            _error('an emitted body unit has no source-region owner')
+        owners.append(pages.source_word_sections[region])
+    proof = NativeEmissionProof(scope.sha256, tuple(owners))
+    _emission_ends(scope, proof)
+    return proof
+
+
+def _emission_ends(scope, proof):
+    if not isinstance(proof, NativeEmissionProof) or proof.scope_sha256 != scope.sha256:
+        _error('emission proof belongs to a different source scope')
+    owners = proof.source_word_sections_by_unit
+    if not owners or len(owners) > MAX_BODY_UNITS:
+        _error('empty or over-budget source-region emission')
+    groups, ends = [], []
+    for position, owner in enumerate(owners, 1):
+        if not groups or owner != groups[-1]:
+            if groups:
+                ends.append(position - 1)
+            groups.append(owner)
+    if tuple(groups) != scope.source_word_sections:
+        _error('emitted source-region order or coverage changed')
+    return (*ends, len(owners))
+
+
+def verify_header_routing(output_bytes, scope, *, emission_proof=None):
     """Reject missing/extra/retargeted/reordered output chrome against source scope.
 
     This checkpoint requires exact source-selected section count/order and
-    geometry. NativePages reflow that changes that plan remains unsupported;
-    identical targets never authorize collapsing or adding Word sections.
+    geometry. A writer-owned emission proof permits changed body-unit ordinals,
+    never changed source-region order/coverage or additional Word sections.
     """
     if not isinstance(scope, NativeHeaderScope) or scope.policy != POLICY:
         _error('typed current source header scope required')
@@ -299,7 +341,9 @@ def verify_header_routing(output_bytes, scope):
         _error('source section-plan identity changed')
     with _package(output_bytes) as archive:
         _, routes, ends, even_and_odd = _routing(archive)
-    if ends != scope.expected_output_section_ends:
+    expected_ends = (scope.expected_output_section_ends if emission_proof is None
+                     else _emission_ends(scope, emission_proof))
+    if ends != expected_ends:
         _error('output section boundary ownership moved without source-region proof')
     if even_and_odd != scope.even_and_odd or routes != scope.routes:
         _error('output header/footer routing or first/even-page semantics changed')

@@ -487,7 +487,7 @@ def _verify_native_art_review(original_path, source_view, profile, period, recei
     return _validate_review(_native_art_inventory(original_path, source_view, profile, period), receipt)
 
 
-def verify_native_art_output(output_bytes, review, *, stage='native', source_scope=None):
+def verify_native_art_output(output_bytes, review, *, stage='native', source_scope=None, emission_proof=None):
     """Check kept native drawings survive cleanup at their exact rendered paths.
 
     Strictly compare media bytes and containing drawing structure/geometry.
@@ -516,7 +516,7 @@ def verify_native_art_output(output_bytes, review, *, stage='native', source_sco
             _error('header routing scope does not match the reviewed source view')
         # Positive source-selected closure, NEVER a subset inferred from output.
         # Full output and previews use the same independent route/boundary proof.
-        verify_header_routing(output_bytes, source_scope)
+        verify_header_routing(output_bytes, source_scope, emission_proof=emission_proof)
         expected_parts = set(source_scope.expected_parts)
     from app.monthly_report_import import _resolve
     try:

@@ -45,6 +45,7 @@ class NativePages:
         from app.monthly_report_import import _is_native_divider_background, _text
         self.body, self.fresh = body, fresh
         self.owner, self.live, self.kinds, self.regions = {}, set(), {}, []
+        self.source_word_sections = []
         self.support = set()
         self.headings = {original[p - 1] for p in headings}
         divider_sections = {section_by_pos.get(p) for p in headings
@@ -52,11 +53,12 @@ class NativePages:
         self.redundant_headings = {original[p - 1] for p in headings
                                   if section_by_pos.get(p) in divider_sections
                                   and not _is_native_divider_background(original[p - 1], _text(original[p - 1]))}
-        inherited, start = {}, 0
+        inherited, start, word_section = {}, 0, 0
         for end, element in enumerate(original):
             properties = _boundary(element)
             if properties is None:
                 continue
+            word_section += 1
             original_properties = deepcopy(properties)
             properties = _effective(properties, inherited)
             indices = list(range(start, end + 1))
@@ -73,6 +75,7 @@ class NativePages:
                 logical = {section_by_pos.get(i + 1) for i in range(left, right) if original[i].tag != qn('w:sectPr')}
                 divider = any(i in art_positions for i in range(left, right))
                 region = len(self.regions)
+                self.source_word_sections.append(word_section)
                 self.regions.append(PageRegion(properties, original_properties, unchanged or cover or divider or len(logical) > 1,
                                                split=len(boundaries) > 2))
                 for node in nodes:
@@ -201,6 +204,7 @@ class NativePages:
                 self.body.append(node)
             if terminal:
                 self.body.append(properties)
+                self.owner[properties] = self.regions.index(region)
             elif not rewrite and boundaries:
                 # Only newly adjacent inherited chrome needs materializing.
                 actual = boundaries[-1]
@@ -216,3 +220,4 @@ class NativePages:
                     spacing.set(qn('w:' + key), value)
                 ppr.append(spacing); ppr.append(properties); paragraph.append(ppr)
                 self.body.append(paragraph)
+                self.owner[paragraph] = self.regions.index(region)
