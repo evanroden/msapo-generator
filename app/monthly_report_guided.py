@@ -1452,12 +1452,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.divider()
     with st.container():
         st.subheader("Review and download", anchor="report-review")
-        from app.monthly_report_editor import review_client_images
+        from app.monthly_report_picture_batch_ui import review_picture_batch
         if prepared.strip():
             from app.monthly_report_asset_review import pending_asset_indexes
             before_review = tuple((block.key, block.asset_hashes, pending_asset_indexes(block))
                                   for block in draft.blocks)
-            draft = review_client_images(draft, assets, prefix, field)
+            draft = review_picture_batch(draft, assets, prefix, field, incarnation=_rich_text_scope(prefix))
             after_review = tuple((block.key, block.asset_hashes, pending_asset_indexes(block))
                                  for block in draft.blocks)
             if after_review != before_review:

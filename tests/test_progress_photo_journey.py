@@ -409,16 +409,15 @@ with testing.isolated('a'*32):
  assert recovered and recovered.draft==current
 assert any('data-enfra-progress-receipt' in getattr(item.proto,'body','') for item in app.get('html'))
 from app.monthly_report_asset_review import pending_asset_indexes
-for index in (0,1):
- next(w for w in app.text_area if w.label=='Activity summary').set_value('Activity delivered with photo review '+str(index))
- next(b for b in app.button if b.label=='This page is ready to include').click().run()
- assert not app.exception,app.exception
- current=working();block=next(b for b in current.blocks if b.key=='improvements')
- assert pending_asset_indexes(block)==tuple(range(index+1,2))
- assert next(b for b in current.blocks if b.key=='activity_summary').text=='Activity delivered with photo review '+str(index)
- with testing.isolated('a'*32):
-  testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
-  assert active.load('a'*32,current.profile.contract,current.profile.key,current.period).draft==current
+next(w for w in app.text_area if w.label=='Activity summary').set_value('Activity delivered with group photo review')
+next(b for b in app.button if b.label.startswith('Confirm these 2 pictures')).click().run()
+assert not app.exception,app.exception
+current=working();block=next(b for b in current.blocks if b.key=='improvements')
+assert pending_asset_indexes(block)==()
+assert next(b for b in current.blocks if b.key=='activity_summary').text=='Activity delivered with group photo review'
+with testing.isolated('a'*32):
+ testing.data_dir(__import__('pathlib').Path(__import__('os').environ['EPC_DATA_DIR']))
+ assert active.load('a'*32,current.profile.contract,current.profile.key,current.period).draft==current
 assert any(b.label=='Edit photos or captions' for b in app.button), 'Committed picture reviews left stale photo editor controls'
 assert not any(b.label=='Edit all photos or captions' for b in app.button)
 assert not any(w.label=='Caption' for w in app.text_area)
