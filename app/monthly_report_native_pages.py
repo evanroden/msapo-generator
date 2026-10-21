@@ -41,11 +41,13 @@ def _effective(properties, inherited):
 class NativePages:
     """Keep emission accounting beside the original physical section geometry."""
 
-    def __init__(self, body, original, section_by_pos, headings, unchanged_positions, *, fresh=False):
+    def __init__(self, body, original, section_by_pos, headings, unchanged_positions, *, fresh=False, source_header_scope=None):
         from app.monthly_report_import import _is_native_divider_background, _text
         self.body, self.fresh = body, fresh
         self.owner, self.live, self.kinds, self.regions = {}, set(), {}, []
         self.source_word_sections = []
+        self.source_header_scope = source_header_scope
+        self.reserved_source_sections = set()
         self.support = set()
         self.headings = {original[p - 1] for p in headings}
         divider_sections = {section_by_pos.get(p) for p in headings
@@ -189,8 +191,18 @@ class NativePages:
                     properties.insert(0, deepcopy(node))
                 inherited[key] = node.get(qn('r:id'))
             if document is not None and rewrite and any(self.kinds.get(node) == 'text' for node in nodes):
-                from app.monthly_report_native_text import reserve_running_header
-                reserve_running_header(document, properties)
+                if self.source_header_scope is None:
+                    from app.monthly_report_native_text import reserve_running_header
+                    reserve_running_header(document, properties)
+                else:
+                    source = self.source_word_sections[self.regions.index(region)]
+                    scope = self.source_header_scope
+                    if source not in scope.source_word_sections:
+                        raise ValueError('Rewritten text has no verified source header scope.')
+                    top = scope.reserved_top_margins[scope.source_word_sections.index(source)]
+                    if top is not None:
+                        properties.find(qn('w:pgMar')).set(qn('w:top'), top)
+                    self.reserved_source_sections.add(source)
             # At an artificial split, the retained divider still starts a page.
             if region.split:
                 kind = properties.find(qn('w:type'))

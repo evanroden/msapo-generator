@@ -121,6 +121,8 @@ class NativeHeaderScope:
     expected_parts: tuple[str, ...]
     plan_sha256: str
     source_plan: NativeSectionPlan
+    reserved_routes: tuple[NativeHeaderRoute, ...]
+    reserved_top_margins: tuple[str | None, ...]
 
     @property
     def sha256(self):
@@ -263,6 +265,23 @@ def expected_header_scope(source_view, section_key=None):
     with _package(raw) as archive:
         units, all_routes, ends, even_and_odd = _routing(archive)
         plan = source_section_plan(units, source_view.rendition_inspection)
+        # Measure immutable source headers, including inherited/dormant variants,
+        # before any writer clears text or replaces media. Only this exact top
+        # reservation may be selected by a later rewritten-text region proof.
+        from app.monthly_report_native_text import running_header_top
+        from dataclasses import replace
+        reserved_routes, reserved_tops = [], []
+        for route, end in zip(all_routes, ends):
+            unit = units[end - 1]
+            properties = deepcopy(unit if unit.tag == W + 'sectPr' else unit.find('.//' + W + 'sectPr'))
+            top = running_header_top(properties, [_read(archive, part) for part in route.parts[:3] if part])
+            reserved_tops.append(top)
+            if top is not None:
+                properties.find(W + 'pgMar').set(W + 'top', top)
+            for reference in list(properties):
+                if reference.tag in (W + 'headerReference', W + 'footerReference'):
+                    properties.remove(reference)
+            reserved_routes.append(replace(route, properties_sha256=_subtree_digest(properties)))
     selected = plan.selected_positions(section_key)
     if not selected:
         _error('empty selected source range')
@@ -282,13 +301,16 @@ def expected_header_scope(source_view, section_key=None):
         source_view.rendition_inspection.sha256, source_view.receipt_sha256, section_key,
         selected, source_sections, tuple(ends[index - 1] for index in source_sections), output_ends, routes,
         even_and_odd, tuple(sorted({part for route in routes for part in route.parts if part})),
-        sha256(_canonical(asdict(plan))).hexdigest(), plan)
+        sha256(_canonical(asdict(plan))).hexdigest(), plan,
+        tuple(reserved_routes[index - 1] for index in source_sections),
+        tuple(reserved_tops[index - 1] for index in source_sections))
 
 
 @dataclass(frozen=True)
 class NativeEmissionProof:
     scope_sha256: str
     source_word_sections_by_unit: tuple[int, ...]
+    reserved_source_sections: tuple[int, ...] = ()
 
 
 def source_emission_proof(scope, body, pages):
@@ -305,7 +327,7 @@ def source_emission_proof(scope, body, pages):
         if region is None or not 0 <= region < len(pages.source_word_sections):
             _error('an emitted body unit has no source-region owner')
         owners.append(pages.source_word_sections[region])
-    proof = NativeEmissionProof(scope.sha256, tuple(owners))
+    proof = NativeEmissionProof(scope.sha256, tuple(owners), tuple(sorted(pages.reserved_source_sections)))
     _emission_ends(scope, proof)
     return proof
 
@@ -313,6 +335,11 @@ def source_emission_proof(scope, body, pages):
 def _emission_ends(scope, proof):
     if not isinstance(proof, NativeEmissionProof) or proof.scope_sha256 != scope.sha256:
         _error('emission proof belongs to a different source scope')
+    reserved = proof.reserved_source_sections
+    if (not isinstance(reserved, tuple)
+            or any(type(value) is not int or value not in scope.source_word_sections for value in reserved)
+            or reserved != tuple(sorted(set(reserved)))):
+        _error('unknown or repeated source header reservation')
     owners = proof.source_word_sections_by_unit
     if not owners or len(owners) > MAX_BODY_UNITS:
         _error('empty or over-budget source-region emission')
@@ -345,7 +372,11 @@ def verify_header_routing(output_bytes, scope, *, emission_proof=None):
                      else _emission_ends(scope, emission_proof))
     if ends != expected_ends:
         _error('output section boundary ownership moved without source-region proof')
-    if even_and_odd != scope.even_and_odd or routes != scope.routes:
+    expected_routes = scope.routes
+    if emission_proof is not None:
+        expected_routes = tuple(reserved if source in emission_proof.reserved_source_sections else original
+            for source, original, reserved in zip(scope.source_word_sections, scope.routes, scope.reserved_routes))
+    if even_and_odd != scope.even_and_odd or routes != expected_routes:
         _error('output header/footer routing or first/even-page semantics changed')
     output_parts = tuple(sorted({part for route in routes for part in route.parts if part}))
     if output_parts != scope.expected_parts:
