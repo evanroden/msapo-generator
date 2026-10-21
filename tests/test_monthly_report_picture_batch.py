@@ -166,7 +166,7 @@ def test_deferred_picture_ignores_legacy_cache():
     app.checkbox[0].check();submit(app).click().run()
     assert not app.exception
     assert 0 in pending_asset_indexes(app.session_state.draft.blocks[0])
-    assert len(app.get('image'))==1
+    assert len(app.get('image'))==6
 
 
 def test_truncated_raster_is_not_approvable_by_group_or_fallback():
@@ -189,8 +189,10 @@ def test_current_individual_fallback_click_still_records_only_visible_picture():
     app=AppTest.from_string(APP).run()
     app.checkbox[0].check();submit(app).click().run()
     assert not app.exception
+    for _ in range(3):
+        submit(app).click().run()
     before=pending_asset_indexes(app.session_state.draft.blocks[0])
-    assert before[0]==0
+    assert before==(0,)
     submit(app).click().run()
     assert not app.exception
     assert pending_asset_indexes(app.session_state.draft.blocks[0])==before[1:]
@@ -215,6 +217,8 @@ def test_component_submission_requires_complete_loaded_exact_context(monkeypatch
 def test_fallback_reads_only_one_current_picture_not_60_or_approved(monkeypatch):
     app=AppTest.from_string(APP.replace('sample(21)','sample(60)')).run()
     app.checkbox[0].check();submit(app).click().run()
+    while len(pending_asset_indexes(app.session_state.draft.blocks[0])) > 1:
+        submit(app).click().run()
     reads=[];original=batch._read_picture
     def count(*args):
         reads.append(args[2]);return original(*args)
@@ -264,3 +268,102 @@ def test_component_callback_is_single_use_and_rejects_reopened_envelope(monkeypa
     state['x_picture_batch_active']={**envelope,'nonce':'reopened'}
     batch._queue_component('x',envelope,'component')
     assert 'x_picture_batch_request' not in state
+
+
+def test_deferred_occurrence_does_not_block_later_groups():
+    app=AppTest.from_string(APP).run()
+    app.checkbox[0].check();submit(app).click().run()
+    for expected in (tuple(range(6,12)),tuple(range(12,18)),tuple(range(18,21))):
+        active=app.session_state['synthetic_picture_batch_active']
+        assert tuple(e[1] for e in active['entries'])==expected
+        assert 0 in pending_asset_indexes(app.session_state.draft.blocks[0])
+        submit(app).click().run()
+    assert pending_asset_indexes(app.session_state.draft.blocks[0])==(0,)
+    assert len(app.get('image'))==1
+    assert app.session_state.draft.blocks[0].asset_hashes==sample(21)[0].blocks[0].asset_hashes
+
+
+@pytest.mark.parametrize('difference',['same','caption','provenance','different_assets'])
+def test_duplicate_block_keys_reject_apply_and_selection_without_mutation(difference):
+    draft,assets=sample();req,draft=request(draft,assets)
+    other=draft.blocks[0]
+    if difference=='caption':other=replace(other,asset_captions=('Unseen caption',*other.asset_captions[1:]))
+    if difference=='provenance':other=replace(other,references=('unseen-source',))
+    if difference=='different_assets':other=replace(other,asset_hashes=other.asset_hashes[::-1])
+    ambiguous=replace(draft,blocks=(*draft.blocks,other))
+    for candidate in (ambiguous,replace(ambiguous,blocks=ambiguous.blocks[::-1])):
+        with pytest.raises(ValueError,match='Repeated section'):
+            batch._apply(candidate,assets,'epoch',req)
+        _,entries,_=batch._manifest(candidate,'epoch')
+        with pytest.raises(ValueError,match='Repeated section'):
+            batch._choose(candidate,assets,entries,())
+        assert all(not b.client_asset_reviews for b in candidate.blocks)
+
+
+def test_duplicate_keys_revoke_queued_review_and_removal_preserving_original_draft(monkeypatch):
+    draft,assets=sample();req,draft=request(draft,assets)
+    envelope={k:req[k] for k in ('identity','entries')}|{'nonce':'shown'}
+    state={'x_picture_batch_active':envelope,'x_picture_batch_request':req,
+           'x_picture_remove_active':envelope,'x_picture_remove_request':(envelope,req['entries'][0]),
+           'x_picture_correction_active':envelope,'x_picture_correction_cursor':(req['identity'],req['entries'][0])}
+    monkeypatch.setattr(batch.st,'session_state',state)
+    warnings=[];monkeypatch.setattr(batch.st,'warning',warnings.append)
+    ambiguous=replace(draft,blocks=(*draft.blocks,replace(draft.blocks[0],text='Unseen block retained')))
+    result=batch.review_picture_batch(ambiguous,assets,'x',lambda k,v:k,incarnation='epoch')
+    assert result is ambiguous and not state and warnings
+    batch._queue_remove('x',envelope,req['entries'][0])
+    state['component']={'submission':{'identity':req['identity'],'nonce':'shown','loaded':[True]*6,'left':[False]*6}}
+    batch._queue_component('x',envelope,'component')
+    assert 'x_picture_batch_request' not in state and 'x_picture_remove_request' not in state
+
+
+def test_all_deferred_occurrences_remain_navigable_without_approval_or_removal():
+    app=AppTest.from_string(APP.replace('sample(21)','sample(7)')).run()
+    for checkbox in app.checkbox:checkbox.check()
+    submit(app).click().run()
+    assert tuple(e[1] for e in app.session_state['synthetic_picture_batch_active']['entries'])==(6,)
+    app.checkbox[0].check();submit(app).click().run()
+    first_nonce=app.session_state['synthetic_picture_batch_active']['nonce']
+    original_hashes=app.session_state.draft.blocks[0].asset_hashes
+    for expected in range(7):
+        assert tuple(e[1] for e in app.session_state['synthetic_picture_batch_active']['entries'])==(expected,)
+        app.checkbox[0].check();submit(app).click().run()
+        assert pending_asset_indexes(app.session_state.draft.blocks[0])==tuple(range(7))
+    assert tuple(e[1] for e in app.session_state['synthetic_picture_batch_active']['entries'])==(0,)
+    assert app.session_state['synthetic_picture_batch_active']['nonce']!=first_nonce
+    assert app.session_state.draft.blocks[0].asset_hashes==original_hashes
+
+
+def test_unsafe_first_correction_can_be_skipped_without_consent_and_cycles(monkeypatch):
+    app=AppTest.from_string(APP.replace('sample(21)','sample(2)')).run()
+    for checkbox in app.checkbox:checkbox.check()
+    submit(app).click().run()
+    draft=app.session_state.draft
+    refs=draft.blocks[0].asset_hashes
+    assets=dict(app.session_state.assets);assets[refs[0]]=b'corrupt synthetic picture'
+    app.session_state.assets=assets
+    app.run()
+    assert not app.exception
+    assert not any(b.label.startswith('Confirm these') for b in app.button)
+    original_navigation=app.session_state['synthetic_picture_correction_active']
+    next(b for b in app.button if b.label=='Next picture to correct').click().run()
+    assert not app.exception
+    assert tuple(e[1] for e in app.session_state['synthetic_picture_batch_active']['entries'])==(1,)
+    visible=app.session_state['synthetic_picture_batch_active']
+    removal=app.session_state['synthetic_picture_remove_active']
+    next(b for b in app.button if b.label=='Next picture to correct').click().run()
+    assert not app.exception
+    assert app.session_state['synthetic_picture_correction_active']['nonce']!=original_navigation['nonce']
+    assert pending_asset_indexes(app.session_state.draft.blocks[0])==(0,1)
+    assert app.session_state.draft.blocks[0].asset_hashes==refs
+    # Delayed events from either prior view cannot navigate, approve, or remove.
+    state=dict(app.session_state.filtered_state)
+    monkeypatch.setattr(batch.st,'session_state',state)
+    cursor=state.get('synthetic_picture_correction_cursor')
+    batch._next_correction('synthetic',original_navigation,original_navigation['entries'][1])
+    assert state.get('synthetic_picture_correction_cursor')==cursor
+    batch._queue_remove('synthetic',removal,removal['entries'][0])
+    state['old_component']={'submission':{'identity':visible['identity'],'nonce':visible['nonce'],'loaded':[True],'left':[False]}}
+    batch._queue_component('synthetic',visible,'old_component')
+    assert 'synthetic_picture_batch_request' not in state
+    assert 'synthetic_picture_remove_request' not in state
