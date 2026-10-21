@@ -1,6 +1,7 @@
 name: Output caption production opt-in
 
 # This verification-only branch is never deployed. No genuine fixtures are used.
+# The prior after attempt expired during deploy cutover; preserve its receipt.
 on:
   push:
     branches:
@@ -21,7 +22,7 @@ jobs:
     timeout-minutes: 20
     env:
       MONTHLY_QA_EXPECTED_COMMIT: fbcdc7b0389225de0857531c1aef2c0560cd9eb3
-      MONTHLY_QA_RUN_LABEL: caption-after-native
+      MONTHLY_QA_RUN_LABEL: caption-after-confirmed-live
       CAPTION_PHASE: after
     steps:
       - uses: actions/checkout@v4
