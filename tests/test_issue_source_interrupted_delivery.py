@@ -26,6 +26,8 @@ from app import monthly_report_issues as issues
 from app.monthly_report_ui import _field
 original_enqueue = DeltaGenerator._enqueue
 def enqueue(self, delta_type, *args, **kwargs):
+    if delta_type == 'text_area' and st.session_state.pop('interrupt_first_widget', False):
+        st.stop()
     if delta_type == 'multiselect' and st.session_state.pop('interrupt_enqueue', False):
         st.stop()
     return original_enqueue(self, delta_type, *args, **kwargs)
@@ -71,7 +73,7 @@ def source_packet(widget_id, refs):
     return states
 
 
-@pytest.mark.parametrize('interrupt', [None, 'interrupt_once', 'interrupt_enqueue'])
+@pytest.mark.parametrize('interrupt', [None, 'interrupt_once', 'interrupt_enqueue', 'interrupt_first_widget'])
 def test_legitimate_second_selection_retains_both_links_without_native_reset(interrupt):
     app, source = workspace()
     before = app.session_state['draft']
@@ -263,3 +265,29 @@ def test_source_delivery_with_deferred_clear_is_acknowledged_only_after_assignme
     item = ordered.session_state['draft'].follow_ups[0]
     assert not item.included and item.references[0] == source_reference(source, 1)
     assert not any('_pending_issue_delivery_' in key for key in ordered.session_state.filtered_state)
+
+
+@pytest.mark.parametrize('replacement', ['row', 'period', 'source', 'row_key'])
+def test_new_source_delivery_conflicting_before_first_capture_remains_recoverable(replacement):
+    app, source = workspace()
+    before = app.session_state['draft']
+    a = source_reference(source, 1)
+    if replacement == 'row':
+        changed = replace(before, follow_ups=(replace(before.follow_ups[0], text='Independent newer finding.'),))
+    elif replacement == 'period':
+        changed = replace(before, period=ReportPeriod(2026, 11))
+    elif replacement == 'source':
+        changed = replace(before, sources=(replace(source, page_texts=('Replacement evidence.',)),))
+    else:
+        changed = replace(before, follow_ups=(replace(before.follow_ups[0], key='replacement-row'),))
+    app.session_state['draft'] = changed
+    picker(app).set_value([a]).run()
+    assert not app.exception and app.session_state['draft'] == changed
+    assert picker(app).value == []
+    assert any('synthetic-evidence.txt · page 1' in w.proto.code_text for w in app.get('code'))
+    # A later valid correction is not permission to discard the earlier input.
+    picker(app).set_value([source_reference(changed.sources[0], 1)]).run()
+    app.run()
+    assert not app.exception
+    assert any('Earlier source selection' in w.label for w in app.expander)
+    assert any('synthetic-evidence.txt · page 1' in w.proto.code_text for w in app.get('code'))
