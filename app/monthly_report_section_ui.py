@@ -576,8 +576,15 @@ def _source_view_admission(function):
         try:
             if kwargs.get("source_view") is None and not needs_view:
                 return function(*args, **kwargs)
-            with jobs.work_slot(preview=True):
-                return function(*args, **kwargs)
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            from app.monthly_report_source_handoff import source_review_handoff
+            context = get_script_run_ctx(suppress_warning=True)
+            checkpoint = st.empty()
+            with source_review_handoff(context.session_id if context else None, checkpoint.empty):
+                # Handoff only lets this session's prior runner unwind. All
+                # capacity/priority checks and source proofs remain mandatory.
+                with jobs.work_slot(preview=True):
+                    return function(*args, **kwargs)
         except jobs.RenderBusy:
             from app.monthly_report_busy_ui import show_busy_retry
             show_busy_retry()
