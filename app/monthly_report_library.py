@@ -288,6 +288,7 @@ def source_from_dict(value: dict) -> ReportSource:
     fields = dict(value)
     for key in ("tags", "page_texts", "selected_pages", "needs_vision", "notices"):
         fields[key] = tuple(fields.get(key, ()))
+    fields["pdf_text_blocks"] = tuple(tuple(v) if isinstance(v, (tuple, list)) else v for v in fields.get("pdf_text_blocks", ()))
     fields["captions"] = tuple(tuple(v) for v in fields.get("captions", ()))
     fields["client_page_reviews"] = tuple(tuple(v) for v in fields.get("client_page_reviews", ()))
     fields["client_page_exclusions"] = tuple(tuple(v) for v in fields.get("client_page_exclusions", ()))

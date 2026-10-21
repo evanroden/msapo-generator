@@ -501,8 +501,11 @@ def native_update(contents, destination, existing=None, *, table_columns=None):
                 if not tagged_txt and not useful_activity(text):
                     continue
                 # Preserve qualifiers, dates and tense: this is grounded extractive writing.
-                for line, header_date in _activity_lines(
-                        text, content.source.suffix, with_dates=True):
+                from app.monthly_report_vendor_passages import labeled_page, vendor_passages
+                activity_lines = (tuple((p.text, "") for p in vendor_passages(content.source, number)[0])
+                                  if labeled_page(content.source, number) else
+                                  _activity_lines(text, content.source.suffix, with_dates=True))
+                for line, header_date in activity_lines:
                     line = _activity_text(line)
                     if _date_only_source_label(line):
                         continue

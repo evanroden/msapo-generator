@@ -95,7 +95,10 @@ def native_action_lines(source: ReportSource):
         text = source.page_texts[number - 1]
         if page_status(text, unreadable=number in source.needs_vision)[0] != "technical":
             continue
-        for line in text.splitlines():
+        from app.monthly_report_vendor_passages import labeled_page, vendor_passages
+        lines = (tuple(p.text for p in vendor_passages(source, number)[0] if p.field == "actions")
+                 if labeled_page(source, number) else text.splitlines())
+        for line in lines:
             line = line.strip()
             uncertain_work = re.search(
                 r"\b(?:not|never|cannot|unable|recommend\w*|propos\w*|planned?|planning|"
@@ -151,14 +154,31 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
         scope_text = text[:30_000].casefold()
         matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", scope_text) for n in (f.title, *f.aliases))]
         facility = matches[0] if len(matches) == 1 else ""
-    def lines(term):
+    source = replace(source, classification=classification)
+    from app.monthly_report_vendor_passages import labeled_page, vendor_passages
+    labeled_pages = [n for n in range(1, len(source.page_texts) + 1) if labeled_page(source, n)]
+    passages = [p for n in labeled_pages for p in vendor_passages(source, n)[0]]
+    pending = [n for n in labeled_pages if vendor_passages(source, n)[1]]
+    field_values = {field: "\n".join(p.text for p in passages if p.field == field)
+                    for field in ("actions", "findings", "recommendations", "follow_ups")}
+    oversized = [field for field, value in field_values.items() if len(value) > 6000]
+    notices = tuple(dict.fromkeys((*source.notices, *(
+        f"Vendor {field.replace('_', ' ')} needs source review; the complete passage exceeds the suggestion limit."
+        for field in oversized), *(
+        f"Vendor passage on page {n} needs source review; paragraph boundaries are incomplete or unavailable."
+        for n in pending))))
+    def lines(term, field=""):
+        if labeled_pages and field:
+            return field_values[field] if field not in oversized else ""
         return "\n".join(line.strip() for line in text.splitlines() if re.search(term, line, re.I))[:6000]
-    return replace(source, classification=classification, confidence="medium" if len(hits) == 1 else "low",
+    actions = "\n".join(line for line, _ in native_action_lines(source))
+    actions = "" if labeled_pages and len(actions) > 6000 else actions[:6000]
+    return replace(source, notices=notices, classification=classification, confidence="medium" if len(hits) == 1 else "low",
                    vendor=labeled("vendor|contractor|service company"), facility=facility,
                    service_date=_date(date_match[0]) if date_match else "", work_order=labeled("job(?: number)?|wo(?: number)?|work order"),
                    tags=tuple(v.strip() for v in re.split(r"[,;]", labeled("equipment tags?|asset tags?")) if v.strip()),
-                   actions="\n".join(line for line, _ in native_action_lines(source))[:6000], findings=lines(r"\b(findings?|observed)\b"),
-                   recommendations=lines(r"\brecommend"), follow_ups=lines(r"\b(follow.up|pending|scheduled)\b"),
+                   actions=actions, findings=lines(r"\b(findings?|observed)\b", "findings"),
+                   recommendations=lines(r"\brecommend", "recommendations"), follow_ups=lines(r"\b(follow.up|pending|scheduled)\b", "follow_ups"),
                    quotes=lines(r"\b(quoted|quotation|quote amount)\b"), out_of_limit=lines(r"\b(out.of.(?:limit|range)|above limit|below limit)\b"))
 
 
@@ -352,7 +372,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         data = library._read(cache)
         source = library.source_from_dict(data["source"])
         tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix:
+        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 1):
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
@@ -361,6 +381,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             return SourceContent(replace(source, filename=filename), tables, tuple(tuple(p) for p in data.get("image_items", ()))), ()
     library._atomic_write(path, raw)
     page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
+    pdf_text_blocks = []
     if suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as pdf:
             if pdf.is_encrypted and not pdf.authenticate(""):
@@ -374,6 +395,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 page_texts.append(text)
                 if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
                     raise ValueError("PDF text exceeds 400,000 characters; select a smaller document range.")
+                from app.monthly_report_vendor_passages import block_spans
+                pdf_text_blocks.extend(block_spans(page, text, number))
     elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         normalize_report_image(raw, suffix)  # Validate before caching or paid work.
         page_texts, needs_vision = [""], [1]
@@ -406,12 +429,13 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
         raise ValueError("Source text exceeds 400,000 characters; split the input before reading.")
     source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
+                          pdf_text_blocks=tuple(pdf_text_blocks),
                           selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
     if suffix not in (".csv", ".xlsx"):
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 1, **asdict(content)}))
     return content, attachments
 
 
