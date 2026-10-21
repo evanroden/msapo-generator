@@ -6,6 +6,8 @@ import re
 
 import streamlit as st
 
+from app.monthly_report_render_jobs import RenderBusy
+
 MONTHLY_REPORT_WORKFLOW = "Monthly report"
 
 
@@ -59,7 +61,7 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
     # is the server-side physical namespace in monthly_report_testing.
     selected = st.query_params.get("monthly_qa")
     administration = st.query_params.get("monthly_admin")
-    mode = selected if selected in {"isolated", "fixtures"} else "live"
+    mode = selected if selected in {"isolated", "fixtures", "logo-recovery"} else "live"
     requested = mode != "live"
     last = st.session_state.get("_monthly_report_storage_mode")
     if last != mode and (last is not None or requested):
@@ -80,11 +82,14 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
             if mode == "fixtures":
                 from app.monthly_report_shared_testing_ui import render
                 run_token = shared_fixture_run_token(browser_token)
+            elif mode == "logo-recovery":
+                from app.monthly_report_logo_recovery_sample import render, sample_scope
+                run_token = browser_token
             else:
                 from app.monthly_report_testing_ui import render
                 run_token = browser_token
             live_root = _data_dir()  # Resolve only the base; do not read live records.
-            with isolated(run_token):
+            with (sample_scope(run_token) if mode == "logo-recovery" else isolated(run_token)):
                 _data_dir()  # Bind this run to one immutable QA generation.
                 current = generation()
                 previous = st.session_state.get("_monthly_qa_generation")
@@ -95,6 +100,9 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
                         if key.startswith(("report_", "report_guided_", "monthly_qa_", "_shared_fixture_")) and key != "_shared_fixture_pending":
                             del st.session_state[key]
                 st.session_state["_monthly_qa_generation"] = current
+                if administration is None and mode in {"isolated", "fixtures"}:
+                    from app.monthly_report_source_preview_ui import render as render_source_preview
+                    render_source_preview()
                 if administration is not None:
                     from app.monthly_report_admin_ui import render_administration
                     render_administration(administration, _field, mode=mode)
@@ -107,6 +115,9 @@ def render_monthly_report_workflow(browser_token: str, browser_timezone: str = "
             else:
                 from app.monthly_report_guided import render_guided_workflow
                 render_guided_workflow(browser_token, browser_timezone, _field, _move)
+    except RenderBusy:
+        from app.monthly_report_busy_ui import show_busy_retry
+        show_busy_retry()
     except (ValueError, OSError) as exc:
         st.error(f"The report could not be loaded: {exc}. Your saved versions were not changed.")
     preserve_report_draft_state()

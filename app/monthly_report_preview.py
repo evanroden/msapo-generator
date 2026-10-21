@@ -29,6 +29,20 @@ class ReportPreview:
     pages: int
     fingerprint: str
     period: str
+    initial_page: int = 0
+
+
+def section_initial_page(pdf, section):
+    """Start past a proved title-only divider, keeping every PDF page intact.
+
+    Do not guess that an image-only first page or an unfamiliar native layout
+    is a divider. A content-first report keeps its real first page.
+    """
+    if section is None or len(pdf) < 2:
+        return 0
+    normalize = lambda value: ''.join(c.casefold() for c in value if c.isalnum())
+    expected = normalize(('Appendix ' if section.appendix else 'Section ') + section.number + ' ' + section.title)
+    return int(normalize(pdf[0].get_text()) == expected)
 
 
 MAX_PREVIEW_PAGES = 150
@@ -42,6 +56,7 @@ _REVIEW_CODES = {
     "client_pages",
     "ai_evidence",
     "ai_number",
+    "ai_date",
     "follow_up",
     "follow_up_section",
     "library_save",
@@ -52,12 +67,23 @@ _REVIEW_CODES = {
 }
 
 
-def preview_report(draft, asset_loader=None):
+def preview_report(draft, asset_loader=None, *, source_view=None):
     with monthly_render_jobs.work_slot(preview=True):
-        return _preview_report(draft, asset_loader)
+        return _preview_report(draft, asset_loader, source_view=source_view)
 
 
-def _preview_report(draft, asset_loader=None):
+def _preview_report(draft, asset_loader=None, *, source_view=None):
+    from app.monthly_report_source_view_runtime import render_operation, preview_fingerprint
+    with render_operation(draft, source_view) as operation:
+        fingerprint = preview_fingerprint(draft)
+        result = _preview_verified_report(draft, asset_loader, source_view=operation.view,
+                                          fingerprint=fingerprint)
+        if preview_fingerprint(draft) != fingerprint:
+            raise ValueError('The source-view preview evidence changed during conversion; no output was published.')
+        return result
+
+
+def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fingerprint):
     blockers = [
         c.message
         for c in preflight(draft)
@@ -70,17 +96,20 @@ def _preview_report(draft, asset_loader=None):
 
     photo_assets = {ref for block in draft.blocks if block.key in ('cover_photo', 'improvements')
                     for ref in block.asset_hashes}
+    logo_assets = {ref for block in draft.blocks if block.key in ('brand_logo', 'client_logo')
+                   for ref in block.asset_hashes}
 
     @lru_cache(maxsize=4)
     def small_asset(ref):
         if asset_loader is None:
             raise ValueError("Preview needs the saved report images.")
         image = normalize_report_image(
-            asset_loader(ref), Path(ref).suffix, line_art=ref not in photo_assets, dpi=96
+            asset_loader(ref), Path(ref).suffix, line_art=ref not in photo_assets, dpi=96,
+            preserve_transparency=ref in logo_assets,
         )
         return image.data
 
-    raw = _build_docx(draft, asset_loader=small_asset if asset_loader else None)
+    raw = _build_docx(draft, asset_loader=small_asset if asset_loader else None, source_view=source_view)
     scratch = library._root() / "previews"
     scratch.mkdir(parents=True, exist_ok=True)
     stem = "preview-" + uuid4().hex
@@ -149,9 +178,7 @@ def _preview_report(draft, asset_loader=None):
                     raise ValueError(
                         "Preview exceeds 25 MB. Preview fewer sections or reduce the selected pages."
                     )
-                return ReportPreview(
-                    result, len(output), draft.fingerprint, draft.period.label
-                )
+                return ReportPreview(result, len(output), fingerprint, draft.period.label)
             finally:
                 output.close()
     finally:
@@ -224,6 +251,10 @@ def section_preview_fingerprint(draft, section_key):
     }
     from app.monthly_report_designs import fingerprint
     value["native_layout"] = fingerprint(draft.profile)
+    from app.monthly_report_source_view_runtime import cache_identity
+    source_identity = cache_identity(draft)
+    if source_identity:
+        value['source_view'] = source_identity
     if section is None:
         value["cover"] = {"title": draft.profile.title, "period": draft.period.key,
                           "prepared_by": draft.prepared_by, "synthetic": draft.synthetic,
@@ -262,8 +293,15 @@ def _slice_document_sections(raw, first, count):
     return _save(document)
 
 
-def section_preview_docx(draft, section_key, asset_loader=None):
+def section_preview_docx(draft, section_key, asset_loader=None, *, source_view=None):
     """Private unfinished preview input, never an approved client download."""
+    from app.monthly_report_source_view_runtime import render_operation
+    scope, _ = _section_scope(draft, section_key)
+    with render_operation(scope, source_view, section_key=section_key) as operation:
+        return _section_preview_docx(draft, section_key, asset_loader, source_view=operation.view)
+
+
+def _section_preview_docx(draft, section_key, asset_loader=None, *, source_view=None):
     scope, section = _section_scope(draft, section_key)
     checks_scope = replace(scope, sections=(section,) if section else ())
     unfinished_codes = _REVIEW_CODES | {
@@ -278,27 +316,47 @@ def section_preview_docx(draft, section_key, asset_loader=None):
     source = source_for(draft.profile)
     if source is not None:
         from app.monthly_report_native_layout import build_native_docx
-        return build_native_docx(scope, source, asset_loader=asset_loader, section_key=section_key, master=is_master(draft.profile))
+        return build_native_docx(scope, source, asset_loader=asset_loader, section_key=section_key, master=is_master(draft.profile), source_view=source_view)
+
+    if source_view is not None:
+        raise ValueError('A compatibility source view requires its pinned original native design.')
+    logo_assets = {ref for block in scope.blocks if block.key in ('brand_logo', 'client_logo')
+                   for ref in block.asset_hashes}
 
     @lru_cache(maxsize=12)
     def image_asset(ref):
         if asset_loader is None:
             raise ValueError("The saved picture is not available for this preview.")
-        return normalize_report_image(asset_loader(ref), Path(ref).suffix, line_art=True, dpi=150).data
+        return normalize_report_image(
+            asset_loader(ref), Path(ref).suffix, line_art=True, dpi=150,
+            preserve_transparency=ref in logo_assets,
+        ).data
 
     raw = _build_docx(scope, asset_loader=image_asset if asset_loader else None)
     index = next((n for n, value in enumerate(scope.sections) if value.key == section_key), 0)
     return _slice_document_sections(raw, 2 + 2 * index if section else 0, 2 if section else 1)
 
 
-def preview_section(draft, section_key, asset_loader=None):
+def preview_section(draft, section_key, asset_loader=None, *, source_view=None):
     """High-quality, section-only preview with bounded, cleaned-up conversion."""
     with monthly_render_jobs.work_slot(preview=True):
-        return _preview_section(draft, section_key, asset_loader)
+        return _preview_section(draft, section_key, asset_loader, source_view=source_view)
 
 
-def _preview_section(draft, section_key, asset_loader=None):
-    raw = section_preview_docx(draft, section_key, asset_loader)
+def _preview_section(draft, section_key, asset_loader=None, *, source_view=None):
+    from app.monthly_report_source_view_runtime import render_operation
+    scope, _ = _section_scope(draft, section_key)
+    with render_operation(scope, source_view, section_key=section_key) as operation:
+        fingerprint = section_preview_fingerprint(draft, section_key)
+        result = _preview_verified_section(draft, section_key, asset_loader,
+                                           source_view=operation.view, fingerprint=fingerprint)
+        if section_preview_fingerprint(draft, section_key) != fingerprint:
+            raise ValueError('The source-view preview evidence changed during conversion; no output was published.')
+        return result
+
+
+def _preview_verified_section(draft, section_key, asset_loader=None, *, source_view=None, fingerprint):
+    raw = section_preview_docx(draft, section_key, asset_loader, source_view=source_view)
     stem = "section-preview-" + uuid4().hex
     expected = pdf_converter.OUTPUT_DIR / (stem + ".pdf")
     actual = None
@@ -329,7 +387,9 @@ def _preview_section(draft, section_key, asset_loader=None):
                 result = pdf.tobytes(garbage=3, deflate=True)
                 if len(result) > MAX_PREVIEW_BYTES:
                     raise ValueError("This section preview exceeds 25 MB. Reduce the size of its pictures.")
-                return ReportPreview(result, len(pdf), section_preview_fingerprint(draft, section_key), draft.period.label)
+                _, section = _section_scope(draft, section_key)
+                return ReportPreview(result, len(pdf), fingerprint,
+                                     draft.period.label, section_initial_page(pdf, section))
     finally:
         for path in {actual, expected} - {None}:
             try:
@@ -342,12 +402,14 @@ def render_preview(draft, assets, prefix, field):
     import streamlit as st
 
     with st.expander("Preview the report at any time"):
+        from app.monthly_report_source_view_runtime import preview_fingerprint
+        current_fingerprint = preview_fingerprint(draft)
         st.caption(
             "A low-resolution, watermarked PDF helps you check the whole layout while work is unfinished. It does not approve content or replace the final review."
         )
         key = prefix + "_preview_pdf"
         preview = st.session_state.get(key)
-        if preview and preview.fingerprint != draft.fingerprint:
+        if preview and preview.fingerprint != current_fingerprint:
             st.caption(
                 "The report changed. Refresh the preview to see the current version."
             )
@@ -370,7 +432,7 @@ def render_preview(draft, assets, prefix, field):
                     else "Preview conversion could not finish. Your draft and finished downloads are unchanged."
                 )
         if preview:
-            stale = preview.fingerprint != draft.fingerprint
+            stale = preview.fingerprint != current_fingerprint
             page = int(
                 st.number_input(
                     "Preview page",

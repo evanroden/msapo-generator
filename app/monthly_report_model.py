@@ -154,6 +154,14 @@ class ReportTable:
 
 
 @dataclass(frozen=True)
+class TrainingSessionTable(ReportTable):
+    # Identity of each accepted row snapshot. Only explicit session mutations
+    # add this metadata; plain/legacy tables keep their historical fingerprints.
+    # Tokens never become editable/exported columns.
+    row_tokens: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class OrgChartNode:
     key: str
     name: str = ""
@@ -424,6 +432,17 @@ def profile_sections(profile: ReportProfile) -> tuple[SectionSpec, ...]:
                                         included=section.key not in profile.excluded_sections,
                                         blocks=tuple(blocks[k] for k in order))
     return tuple(sections[k] for k in profile.section_order or tuple(sections))
+
+
+def picture_replacement_references(block: ResolvedBlock) -> tuple[str, ...]:
+    """Keep explicit native logo placement when replacing its artwork bytes.
+
+    These DOCX item references identify where the logo belongs, not approval
+    or provenance for the replacement image. Other pictures keep their existing
+    replacement behavior and must not inherit stale source-content links.
+    """
+    return (tuple(ref for ref in block.references if ref.startswith("docx:"))
+            if block.key in ("brand_logo", "client_logo") else ())
 
 
 def layout_blocks() -> tuple[BlockSpec, ...]:

@@ -41,10 +41,13 @@ def _effective(properties, inherited):
 class NativePages:
     """Keep emission accounting beside the original physical section geometry."""
 
-    def __init__(self, body, original, section_by_pos, headings, unchanged_positions, *, fresh=False):
+    def __init__(self, body, original, section_by_pos, headings, unchanged_positions, *, fresh=False, source_header_scope=None):
         from app.monthly_report_import import _is_native_divider_background, _text
         self.body, self.fresh = body, fresh
         self.owner, self.live, self.kinds, self.regions = {}, set(), {}, []
+        self.source_word_sections = []
+        self.source_header_scope = source_header_scope
+        self.reserved_source_sections = set()
         self.support = set()
         self.headings = {original[p - 1] for p in headings}
         divider_sections = {section_by_pos.get(p) for p in headings
@@ -52,11 +55,12 @@ class NativePages:
         self.redundant_headings = {original[p - 1] for p in headings
                                   if section_by_pos.get(p) in divider_sections
                                   and not _is_native_divider_background(original[p - 1], _text(original[p - 1]))}
-        inherited, start = {}, 0
+        inherited, start, word_section = {}, 0, 0
         for end, element in enumerate(original):
             properties = _boundary(element)
             if properties is None:
                 continue
+            word_section += 1
             original_properties = deepcopy(properties)
             properties = _effective(properties, inherited)
             indices = list(range(start, end + 1))
@@ -73,6 +77,7 @@ class NativePages:
                 logical = {section_by_pos.get(i + 1) for i in range(left, right) if original[i].tag != qn('w:sectPr')}
                 divider = any(i in art_positions for i in range(left, right))
                 region = len(self.regions)
+                self.source_word_sections.append(word_section)
                 self.regions.append(PageRegion(properties, original_properties, unchanged or cover or divider or len(logical) > 1,
                                                split=len(boundaries) > 2))
                 for node in nodes:
@@ -186,8 +191,18 @@ class NativePages:
                     properties.insert(0, deepcopy(node))
                 inherited[key] = node.get(qn('r:id'))
             if document is not None and rewrite and any(self.kinds.get(node) == 'text' for node in nodes):
-                from app.monthly_report_native_text import reserve_running_header
-                reserve_running_header(document, properties)
+                if self.source_header_scope is None:
+                    from app.monthly_report_native_text import reserve_running_header
+                    reserve_running_header(document, properties)
+                else:
+                    source = self.source_word_sections[self.regions.index(region)]
+                    scope = self.source_header_scope
+                    if source not in scope.source_word_sections:
+                        raise ValueError('Rewritten text has no verified source header scope.')
+                    top = scope.reserved_top_margins[scope.source_word_sections.index(source)]
+                    if top is not None:
+                        properties.find(qn('w:pgMar')).set(qn('w:top'), top)
+                    self.reserved_source_sections.add(source)
             # At an artificial split, the retained divider still starts a page.
             if region.split:
                 kind = properties.find(qn('w:type'))
@@ -201,6 +216,7 @@ class NativePages:
                 self.body.append(node)
             if terminal:
                 self.body.append(properties)
+                self.owner[properties] = self.regions.index(region)
             elif not rewrite and boundaries:
                 # Only newly adjacent inherited chrome needs materializing.
                 actual = boundaries[-1]
@@ -216,3 +232,4 @@ class NativePages:
                     spacing.set(qn('w:' + key), value)
                 ppr.append(spacing); ppr.append(properties); paragraph.append(ppr)
                 self.body.append(paragraph)
+                self.owner[paragraph] = self.regions.index(region)

@@ -6,6 +6,7 @@ from docx import Document
 from docx.shared import Inches
 from PIL import Image, PngImagePlugin
 
+from app.monthly_report_import import ImportMapping, inspect_docx, map_items
 from app.monthly_report_model import ResolvedBlock
 from app.monthly_report_native_layout import build_native_docx
 from test_monthly_report_native_layout import source, draft
@@ -52,7 +53,13 @@ def test_explicit_approved_current_enfra_header_art_survives(tmp_path):
     approved = png("green")
     doc.sections[0].header.paragraphs[0].add_run().add_picture(BytesIO(foreign), width=Inches(2))
     doc.save(path)
-    new_brand = ResolvedBlock("brand_logo", "Library", asset_hashes=("approved-header.png",))
+    inspection = inspect_docx(path)
+    header_item = next(item for item in inspection.items
+                       if item.kind == "image" and item.part.startswith("word/header"))
+    # Approval of the replacement bytes does not identify its source occurrence.
+    mapped = map_items(path, inspection, (ImportMapping(header_item.id, "brand_logo"),))
+    new_brand = ResolvedBlock("brand_logo", "Library", asset_hashes=("approved-header.png",),
+                             references=mapped.blocks[0].references)
     result = package_members(build_native_docx(draft(new_brand), path, master=True,
                            asset_loader=lambda _reference: approved))
     assert foreign not in result.values()

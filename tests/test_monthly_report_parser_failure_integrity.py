@@ -212,12 +212,21 @@ def test_valid_small_image_and_workbook_are_processed_and_reimport_is_idempotent
     assert tuple(sources.source_bytes(profile, content.source) for content in contents) == tuple(raw for _, raw in originals)
 
 
-def test_guided_bad_image_batch_keeps_delivered_activity_and_processed_siblings(monkeypatch, tmp_path):
+@pytest.mark.parametrize('suffix', ['.png', '.xlsx', '.docx'])
+@pytest.mark.parametrize('manual', [
+    '  Human edit delivered with this batch.\n\nKeep the isolation note.\n',
+    '',
+])
+def test_guided_bad_file_batch_keeps_exact_delivered_activity_and_recovers(
+        monkeypatch, tmp_path, suffix, manual):
     import streamlit as st
     from app import monthly_report_active_work as active_work
     from test_monthly_report_activity_intake_commit import setup_app, editor, draft, activity, TOKEN
     app, profile = setup_app(monkeypatch, tmp_path)
-    originals = (('first.txt', FIRST), ('large-dimensions.png', oversized_png_header()), ('last.txt', LAST))
+    editor(app).set_value('Earlier wording deliberately replaced by the incoming edit.').run()
+    bad = oversized_png_header() if suffix == '.png' else corrupted_package(suffix)
+    filename = 'malformed-source' + suffix
+    originals = (('first.txt', FIRST), (filename, bad), ('last.txt', LAST))
     original_uploader = st.file_uploader
     def upload(label, *args, **kwargs):
         if label == 'Add activity files (optional)':
@@ -229,7 +238,6 @@ def test_guided_bad_image_batch_keeps_delivered_activity_and_processed_siblings(
             return values
         return original_uploader(label, *args, **kwargs)
     monkeypatch.setattr(st, 'file_uploader', upload)
-    manual = 'Human edit delivered together with this batch remains unchanged.'
     editor(app).set_value(manual).run()
     assert not app.exception
     expected_ids = {sha256(raw).hexdigest() for raw in (FIRST, LAST)}
@@ -237,9 +245,19 @@ def test_guided_bad_image_batch_keeps_delivered_activity_and_processed_siblings(
     native_ids = set().union(*(set(value) for key, value in app.session_state.filtered_state.items()
                             if key.endswith('_native_ids')))
     assert expected_ids <= native_ids
-    assert manual in activity(app).text
-    assert FIRST.decode() in activity(app).text and LAST.decode() in activity(app).text
+    expected = '\n\n'.join(filter(None, (manual, FIRST.decode(), LAST.decode())))
+    assert activity(app).text == expected
+    assert editor(app).value == expected
     notices = '\n'.join(item.value for item in (*app.warning, *app.info, *app.error))
-    assert 'large-dimensions.png' in notices and 'too large to decode safely' in notices
+    reason = 'too large to decode safely' if suffix == '.png' else 'Compressed file data is damaged'
+    assert filename in notices and reason in notices
     journal = active_work.load(TOKEN, profile.contract, profile.key, ReportPeriod(2026, 10))
     assert journal and next(block for block in journal.draft.blocks if block.key == 'activity_summary') == activity(app)
+    monkeypatch.setattr(st, 'file_uploader', original_uploader)
+    from streamlit.testing.v1 import AppTest
+    from test_monthly_report_activity_intake_commit import APP
+    resumed = AppTest.from_string(APP, default_timeout=45).run()
+    assert not resumed.exception
+    assert activity(resumed).text == editor(resumed).value == expected
+    assert {source.id for source in draft(resumed).sources} == expected_ids
+    assert tuple(sources.source_bytes(profile, source) for source in draft(resumed).sources) == (FIRST, LAST)

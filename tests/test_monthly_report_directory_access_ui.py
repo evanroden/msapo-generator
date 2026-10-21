@@ -99,5 +99,5 @@ def test_nameless_report_does_not_read_directory_contact_suggestions(monkeypatch
 
 def test_contract_choices_merge_catalog_case_and_whitespace_variants(monkeypatch):
     monkeypatch.setattr(ui.contracts, "contract_names", lambda: ("Synthetic Contract",))
-    monkeypatch.setattr(directory, "directory_contracts", lambda: (" synthetic   contract ", "SYNTHETIC CONTRACT", "Another Contract"))
+    monkeypatch.setattr(directory, "directory_contracts", lambda **kwargs: (" synthetic   contract ", "SYNTHETIC CONTRACT", "Another Contract"))
     assert ui.contract_choices() == ["Synthetic Contract", "Another Contract"]

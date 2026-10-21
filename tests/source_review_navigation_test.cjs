@@ -1,32 +1,81 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 function fixture() {
-    const frames=new Map();let seq=0;
+    const frames=new Map(),timers=new Map(),observers=new Set();let seq=0;
+    const state={identity:'current-report'},workspace={dataset:{epcMode:'wide'},closest(){return this.stale?this:null;}};workspace._epcWorkspace=state;
     const scroll={scrollTop:800,scrollHeight:5000,clientHeight:750,parentElement:null};
     const review={parentElement:scroll,top:80,isConnected:true,focuses:0,getBoundingClientRect(){return{top:this.top};},setAttribute(){},focus(o){assert.equal(o.preventScroll,true);this.focuses++;}};
     const entries={};
     for(const id of ['first','second']) {
-        const outer={tagName:'DETAILS',open:false,parentElement:scroll},details={open:false};
-        const field={disabled:false,isConnected:true,focuses:0,scrolls:0,focus(o){assert.equal(o.preventScroll,true);this.focuses++;},scrollIntoView(){this.scrolls++;}};
+        // Streamlit's native summary owns both its expanded state and the
+        // inert body. Assigning details.open alone leaves controls inactive.
+        function disclosure(parentElement) {
+            const node={tagName:'DETAILS',open:false,expanded:false,inert:true,clicks:0,parentElement};
+            node.summary={click(){node.clicks++;node.expanded=!node.expanded;node.open=node.expanded;node.inert=!node.expanded;}};
+            node.querySelector=selector=>selector===':scope > summary'?node.summary:selector.includes('stExpanderDetails')?{hasAttribute:()=>node.inert}:null;
+            return node;
+        }
+        const outer=disclosure(scroll),details=disclosure(outer);
+        const field={disabled:false,isConnected:true,stale:false,focuses:0,scrolls:0,closest(selector){return selector==='[inert]'?(outer.inert||details.inert?details:null):this.stale?this:null;},focus(o){assert.equal(o.preventScroll,true);if(!outer.inert&&!details.inert)this.focuses++;},scrollIntoView(){this.scrolls++;}};
         Object.defineProperty(field,'value',{get(){throw Error('navigation cannot read business values');},set(){throw Error('navigation cannot write business values');}});
-        const boundary={parentElement:outer,querySelector:s=>s.includes(id==='first'?'Source sites':'Source date')?field:null,querySelectorAll:()=>[details],getAnimations:()=>[]};
-        const marker={closest:()=>boundary};
-        const link={isConnected:true,parentElement:scroll,top:400,classList:{contains:()=>false},closest(){return this;},getAttribute:()=>`#source-details-${id}--${id==='first'?'site':'date'}`,getBoundingClientRect(){return{top:this.top};},setAttribute(){},focus(){this.focused=true;}};
+        const dateWidget={querySelector:s=>s==='label'?{textContent:'Source date'}:s==='input'?field:null};
+        const owner={isConnected:true,dataset:{reportIdentity:state.identity},closest(){return this.stale?this:null;}};
+        const group={owners:[owner],querySelectorAll(){return this.owners;}};
+        const boundary={parentElement:outer,isConnected:true,ready:true,workspace,group,
+            closest(selector){return selector.includes('epc_workspace_monthly')?this.workspace:selector.includes('_source_metadata_corrections')?this.group:this.stale?this:null;},
+            querySelector:s=>boundary.ready&&id==='first'&&s.includes('Source sites')?field:null,
+            querySelectorAll:s=>s==='details'?[details]:boundary.ready&&s==='[data-testid="stDateInput"]'&&id==='second'?[dateWidget]:[],getAnimations:()=>[]};
+        const marker={id:'source-details-'+id,isConnected:true,closest:s=>s==='[data-stale="true"]'?(marker.stale?marker:null):boundary};
+        const link={isConnected:true,parentElement:scroll,top:400,classList:{contains:()=>false},closest(s){if(s==='a')return this;return s.includes('epc_workspace_monthly')?(this.alert?.marker.workspace ?? (this.alert ? null : workspace)):s==='[data-stale="true"]'?(this.stale?this:null):this.alert?.container || this;},getAttribute:()=>`#source-details-${id}--${id==='first'?'site':'date'}`,getBoundingClientRect(){return{top:this.top};},setAttribute(){},focus(){this.focused=true;}};
         const back={dataset:{sourceId:id},hidden:true,classList:{contains:()=>true},closest(){return this;}};
-        entries[id]={outer,details,field,boundary,marker,link,back};
+        entries[id]={outer,details,field,boundary,marker,link,back,owner,group};
     }
-    const app={listeners:new Map(),contains:()=>true,querySelector:()=>review,querySelectorAll:()=>Object.values(entries).map(v=>v.back),addEventListener(k,fn){this.listeners.set(k,fn);},removeEventListener(k,fn){if(this.listeners.get(k)===fn)this.listeners.delete(k);}};
-    const context={document:{getElementById:id=>entries[id.replace('source-details-','')]?.marker,scrollingElement:scroll},getComputedStyle:()=>({overflowY:'auto'}),Promise,requestAnimationFrame:fn=>{frames.set(++seq,fn);return seq;},cancelAnimationFrame:id=>frames.delete(id)};
+    const correctionMarkers=[];
+    function inline(tag) {
+        const attrs={};
+        return {tagName:tag.toUpperCase(),isConnected:true,parentElement:scroll,
+            textContent:'',getAttribute:key=>attrs[key],setAttribute:(key,value)=>{attrs[key]=value;},
+            classList:{contains:()=>false},closest(s){if(s==='a')return this;return s.includes('epc_workspace_monthly')?(this.alert?.marker.workspace ?? (this.alert ? null : workspace)):s==='[data-stale="true"]'?(this.stale?this:null):this.alert?.container || this;},
+            getBoundingClientRect:()=>({top:400}),focus(){this.focused=true;},
+            after(replacement){this.alert.link=replacement;replacement.alert=this.alert;},
+            remove(){if(this.alert.link===this)this.alert.link=null;}};
+    }
+    const app={listeners:new Map(),workspaces:[workspace],extraMarkers:[],contains:node=>node.insideApp!==false,querySelector:()=>review,
+        querySelectorAll:s=>s.includes('epc_workspace_monthly')?app.workspaces:s==='.enfra-source-correction'?correctionMarkers:s==='[id^="source-details-"]'?[...Object.values(entries).map(v=>v.marker),...app.extraMarkers]:Object.values(entries).map(v=>v.back),
+        addEventListener(k,fn){this.listeners.set(k,fn);},removeEventListener(k,fn){if(this.listeners.get(k)===fn)this.listeners.delete(k);}};
+    const addCorrection=id=>{
+        const alert={querySelector:s=>s==='a[data-enfra-correction-link]'?alert.link:null,
+            querySelectorAll:s=>s==='strong'?[alert.status]:[]};
+        alert.status=inline('strong');alert.status.textContent='Loading correction controls…';alert.status.alert=alert;
+        Object.defineProperty(alert,'control',{get:()=>alert.link||alert.status});
+        const container={isConnected:true,querySelector:()=>alert,querySelectorAll:()=>container.markers,closest:s=>container.stale?container:null};alert.container=container;
+        const marker={isConnected:true,workspace,dataset:{reportIdentity:state.identity,sourceId:id,kind:id==='first'?'site':'date',label:id==='first'?'Correct site':'Correct date'},
+            closest:s=>s.includes('epc_workspace_monthly')?marker.workspace:s==='[data-stale="true"]'?(marker.stale?marker:null):container};
+        alert.marker=marker;container.markers=[marker];correctionMarkers.push(marker);return alert;
+    };
+    class Observer {
+        constructor(callback){this.callback=callback;}
+        observe(target){this.target=target;observers.add(this);}
+        disconnect(){observers.delete(this);}
+    }
+    const context={document:{getElementById:id=>entries[id.replace('source-details-','')]?.marker,scrollingElement:scroll,createElement:inline},getComputedStyle:()=>({overflowY:'auto'}),Promise,MutationObserver:Observer,
+        setTimeout:(fn,ms)=>{assert.ok(ms>0&&ms<=5000);timers.set(++seq,fn);return seq;},clearTimeout:id=>timers.delete(id),
+        requestAnimationFrame:fn=>{frames.set(++seq,fn);return seq;},cancelAnimationFrame:id=>frames.delete(id)};
     vm.runInNewContext(fs.readFileSync('app/monthly_report_source_navigation.js','utf8'),context);
-    const state={};const install=()=>context.ENFRASourceReviewNavigation.install(app,state);
+    const install=()=>context.ENFRASourceReviewNavigation.install(app,state);
     const click=(target,other={})=>{const e={button:0,target,prevented:false,preventDefault(){this.prevented=true;},...other};app.listeners.get('click')(e);return e;};
-    const flush=async()=>{await Promise.resolve();await Promise.resolve();for(const [id,fn]of frames){frames.delete(id);fn();}};
-    return{entries,app,state,review,scroll,install,click,flush};
+    const flush=async()=>{await Promise.resolve();await Promise.resolve();for(const [id,fn]of [...frames]){frames.delete(id);fn();}};
+    const changed=boundary=>{for(const observer of [...observers])if(observer.target===boundary||observer.target===app)observer.callback([]);};
+    const expire=()=>{for(const [id,fn]of [...timers]){timers.delete(id);fn();}};
+    const pendingObservers=()=>[...observers].filter(observer=>observer.target!==app);
+    return{entries,app,state,workspace,review,scroll,install,click,flush,changed,expire,observers,timers,pendingObservers,addCorrection};
 }
 
 test('one correction opens its outer and exact source disclosure and focuses its native field',async()=>{
     const h=fixture(),cleanup=h.install(),a=h.entries.first,b=h.entries.second;
     assert.equal(h.click(a.link).prevented,true);await h.flush();
     assert.equal(a.outer.open,true);assert.equal(a.details.open,true);assert.equal(a.field.focuses,1);assert.equal(a.field.scrolls,1);
+    assert.equal(a.outer.inert,false);assert.equal(a.details.inert,false);
+    assert.equal(a.outer.clicks,1);assert.equal(a.details.clicks,1);
     assert.equal(b.details.open,false);assert.equal(b.field.focuses,0);
     assert.equal(a.back.hidden,false);assert.equal(b.back.hidden,true);
     h.click(b.link);await h.flush();
@@ -34,11 +83,73 @@ test('one correction opens its outer and exact source disclosure and focuses its
     cleanup();assert.equal(h.app.listeners.size,0);
 });
 
+test('date correction resolves the native widget label without reading or changing its value',async()=>{
+    const h=fixture(),cleanup=h.install(),a=h.entries.second;
+    assert.equal(h.click(a.link).prevented,true);await h.flush();
+    assert.equal(a.field.focuses,1);assert.equal(a.field.scrolls,1);
+    assert.equal(a.details.inert,false);assert.equal(h.entries.first.details.open,false);
+    cleanup();
+});
+
+test('a first correction opens a cold native panel and focuses its field when it loads',async()=>{
+    const h=fixture(),cleanup=h.install(),a=h.entries.second;a.boundary.ready=false;
+    assert.equal(h.click(a.link).prevented,true);await h.flush();
+    assert.equal(a.details.open,true);assert.equal(a.field.focuses,0);
+    a.boundary.ready=true;h.changed(a.boundary);await h.flush();
+    assert.equal(a.field.focuses,1);assert.equal(a.field.scrolls,1);
+    assert.equal(h.pendingObservers().length,0);assert.equal(h.timers.size,0);
+    cleanup();
+});
+
+test('return and timeout cancel lazy focus without a later jump or retained observer',async()=>{
+    for(const action of ['return','timeout','dispose','new input']) {
+        const h=fixture(),cleanup=h.install(),a=h.entries.first;a.boundary.ready=false;
+        h.click(a.link);await h.flush();
+        if(action==='return')h.click(a.back);
+        else if(action==='timeout')h.expire();
+        else if(action==='new input')h.app.listeners.get('keydown')({key:'Tab'});
+        else cleanup();
+        a.boundary.ready=true;h.changed(a.boundary);await h.flush();
+        assert.equal(a.field.focuses,0);assert.equal(a.field.scrolls,0);
+        assert.equal(h.pendingObservers().length,0);assert.equal(h.timers.size,0);
+        cleanup();
+        assert.equal(h.observers.size,0);
+    }
+});
+
+test('an unrelated endless loading animation cannot strand a ready correction field',async()=>{
+    const h=fixture(),cleanup=h.install(),a=h.entries.first;
+    a.boundary.getAnimations=()=>[{playState:'running',effect:{getComputedTiming:()=>({endTime:Infinity})},finished:new Promise(()=>{})}];
+    h.click(a.link);await h.flush();assert.equal(a.field.focuses,1);
+    cleanup();
+});
+
 test('Return restores the same warning and accepts already-open disclosures',async()=>{
-    const h=fixture(),cleanup=h.install(),a=h.entries.first;a.outer.open=true;a.details.open=true;
+    const h=fixture(),cleanup=h.install(),a=h.entries.first;a.outer.summary.click();a.details.summary.click();
     h.click(a.link);await h.flush();a.link.top=100;
     h.click(a.back);assert.equal(h.scroll.scrollTop,500);assert.equal(a.link.focused,true);assert.equal(a.back.hidden,true);
+    assert.equal(a.outer.clicks,1);assert.equal(a.details.clicks,1);
     cleanup();
+});
+
+test('Return measures its warning after hiding its own return affordance',async()=>{
+    for(const keepWarning of [true,false]) {
+        const h=fixture(),cleanup=h.install(),a=h.entries.first;
+        h.click(a.link);await h.flush();
+        const target=keepWarning?a.link:h.review;
+        if(!keepWarning)a.link.isConnected=false;
+        target.top=100;
+        let hidden=false;
+        Object.defineProperty(a.back,'hidden',{get(){return hidden;},set(value){
+            if(value&&!hidden)target.top-=24;
+            hidden=value;
+        }});
+        h.click(a.back);
+        assert.equal(h.scroll.scrollTop,800+76-(keepWarning?400:80));
+        assert.equal(a.back.hidden,true);
+        assert.equal(h.state.sourceReviewReturn,null);
+        cleanup();
+    }
 });
 
 test('corrected warning/form may disappear across rerun without losing Return to review',async()=>{
@@ -54,4 +165,164 @@ test('modifier clicks and stale navigation callbacks do not disturb the editor',
     const h=fixture(),cleanup=h.install(),a=h.entries.first;
     assert.equal(h.click(a.link,{ctrlKey:true}).prevented,false);assert.equal(a.details.open,false);
     h.click(a.link);cleanup();await h.flush();assert.equal(a.field.focuses,0);
+});
+
+test('cold warnings remain plain until their owned handler, layout and native field are ready',async()=>{
+    const h=fixture(),notice=h.addCorrection('second');
+    const nativeStatus=notice.status;
+    h.entries.second.boundary.ready=false;delete h.workspace.dataset.epcMode;
+    assert.equal(notice.control.tagName,'STRONG');assert.equal(notice.control.getAttribute('href'),undefined);
+    const cleanup=h.install();await h.flush();assert.equal(notice.control.tagName,'STRONG');
+    h.entries.second.boundary.ready=true;h.changed(h.entries.second.boundary);await h.flush();
+    assert.equal(notice.control.tagName,'STRONG');
+    h.workspace.dataset.epcMode='wide';h.changed(h.app);await h.flush();
+    assert.equal(notice.control.tagName,'A');assert.equal(notice.control.textContent,'Correct date');
+    assert.equal(notice.status,nativeStatus);assert.equal(nativeStatus.hidden,true);
+    assert.equal(notice.control.getAttribute('href'),'#source-details-second--date');
+    h.click(notice.control);await h.flush();assert.equal(h.entries.second.field.focuses,1);
+    cleanup();assert.equal(notice.control,nativeStatus);assert.equal(nativeStatus.hidden,false);assert.equal(h.observers.size,0);
+});
+
+test('one ready source is usable without waiting for another source or an offscreen preview',async()=>{
+    const h=fixture(),first=h.addCorrection('first'),second=h.addCorrection('second');
+    h.entries.second.boundary.ready=false;
+    const cleanup=h.install();await h.flush();
+    assert.equal(first.control.tagName,'A');assert.equal(second.control.tagName,'STRONG');
+    assert.equal(h.click(first.control,{ctrlKey:true}).prevented,false);
+    assert.equal(h.entries.first.details.open,false);
+    h.click(first.control);await h.flush();assert.equal(h.entries.first.field.focuses,1);
+    assert.equal(h.entries.second.field.focuses,0);cleanup();
+});
+
+test('disabled, stale and foreign native targets never activate a correction',async()=>{
+    for(const reason of ['disabled','stale','different report']) {
+        const h=fixture(),notice=h.addCorrection('first'),a=h.entries.first;
+        if(reason==='disabled')a.field.disabled=true;
+        if(reason==='stale')a.field.stale=true;
+        if(reason==='different report')a.boundary.workspace={};
+        const cleanup=h.install();await h.flush();assert.equal(notice.control.tagName,'STRONG',reason);
+        a.field.disabled=false;a.field.stale=false;a.boundary.workspace=h.workspace;
+        h.changed(a.boundary);await h.flush();assert.equal(notice.control.tagName,'A',reason);
+        a.field.disabled=true;h.changed(a.boundary);await h.flush();assert.equal(notice.control.tagName,'STRONG',reason);
+        cleanup();assert.equal(h.observers.size,0);
+    }
+});
+
+test('late warnings activate once and disposal restores a truthful unavailable state',async()=>{
+    const h=fixture(),cleanup=h.install();await h.flush();
+    const notice=h.addCorrection('first');h.changed(h.app);await h.flush();
+    const link=notice.control;assert.equal(link.tagName,'A');
+    h.changed(h.app);await h.flush();assert.equal(notice.control,link);
+    cleanup();assert.equal(notice.control.tagName,'STRONG');assert.equal(h.observers.size,0);
+    h.changed(h.app);await h.flush();assert.equal(notice.control.tagName,'STRONG');
+    const again=h.install();await h.flush();assert.equal(notice.control.tagName,'A');again();
+});
+
+test('the actual sibling source form activates only for its explicit report owner',async()=>{
+    const h=fixture(),a=h.entries.first,notice=h.addCorrection('first');
+    a.boundary.workspace=null; // guided renders this form before workspace()
+    const cleanup=h.install();await h.flush();
+    assert.equal(notice.control.tagName,'A');
+    h.click(notice.control);await h.flush();
+    assert.equal(a.field.focuses,1);assert.equal(a.details.inert,false);
+    assert.equal(h.entries.second.details.open,false);
+    cleanup();
+});
+
+test('sibling forms with missing, foreign, stale or duplicate ownership stay inactive',async()=>{
+    for(const reason of ['missing owner','foreign owner','stale owner','stale form','stale marker','duplicate marker','detached marker','outside app']) {
+        const h=fixture(),a=h.entries.first,notice=h.addCorrection('first');a.boundary.workspace=null;
+        if(reason==='missing owner')a.group.owners=[];
+        if(reason==='foreign owner')a.owner.dataset.reportIdentity='another-report';
+        if(reason==='stale owner')a.owner.stale=true;
+        if(reason==='stale form')a.boundary.stale=true;
+        if(reason==='stale marker')a.marker.stale=true;
+        if(reason==='duplicate marker')h.app.extraMarkers.push({...a.marker});
+        if(reason==='detached marker')a.marker.isConnected=false;
+        if(reason==='outside app')a.boundary.insideApp=false;
+        const cleanup=h.install();await h.flush();
+        assert.equal(notice.control.tagName,'STRONG',reason);
+        h.click(a.link);await h.flush();
+        assert.equal(a.field.focuses,0,reason);assert.equal(a.details.clicks,0,reason);
+        cleanup();assert.equal(h.observers.size,0);
+    }
+});
+
+test('a displayed link cannot focus a field that becomes stale before the readiness frame',async()=>{
+    const h=fixture(),a=h.entries.first,notice=h.addCorrection('first');
+    const cleanup=h.install();await h.flush();const link=notice.control;
+    a.field.stale=true; // no controlsChanged frame has run yet
+    h.click(link);await h.flush();
+    assert.equal(a.field.focuses,0);assert.equal(a.details.clicks,0);
+    cleanup();
+});
+
+test('deferred focus revalidates exact source and captured report ownership',async()=>{
+    for(const reason of ['owner changed','report changed','source duplicated','field stale']) {
+        const h=fixture(),a=h.entries.first;a.boundary.workspace=null;
+        const cleanup=h.install();a.boundary.ready=false;h.click(a.link);await h.flush();
+        if(reason==='owner changed')a.owner.dataset.reportIdentity='another-report';
+        if(reason==='report changed')h.state.identity='another-report';
+        if(reason==='source duplicated')h.app.extraMarkers.push({...a.marker});
+        if(reason==='field stale')a.field.stale=true;
+        a.boundary.ready=true;h.changed(a.boundary);await h.flush();
+        assert.equal(a.field.focuses,0,reason);assert.equal(a.field.scrolls,0,reason);
+        assert.equal(h.pendingObservers().length,0,reason);
+        cleanup();assert.equal(h.observers.size,0);
+    }
+});
+
+test('a correction reopens a native disclosure during its inert closing transition',async()=>{
+    const h=fixture(),a=h.entries.first,cleanup=h.install();
+    a.outer.summary.click();a.details.summary.click();
+    a.details.open=true;a.details.expanded=false;a.details.inert=true;
+    h.click(a.link);await h.flush();
+    assert.equal(a.details.expanded,true);assert.equal(a.details.open,true);
+    assert.equal(a.details.inert,false);assert.equal(a.field.focuses,1);
+    assert.equal(h.entries.second.details.open,false);
+    cleanup();
+});
+
+
+test('actual sibling review warning reaches its same-report sibling source form',async()=>{
+    const h=fixture(),a=h.entries.second,notice=h.addCorrection('second');
+    notice.marker.workspace=null;a.boundary.workspace=null;
+    const cleanup=h.install();await h.flush();assert.equal(notice.control.tagName,'A');
+    h.click(notice.control);await h.flush();assert.equal(a.field.focuses,1);assert.equal(a.details.inert,false);
+    cleanup();
+});
+
+test('sibling warnings cannot borrow foreign, stale, duplicate or missing ownership',async()=>{
+    for(const reason of ['missing identity','foreign identity','stale marker','detached marker','duplicate marker','duplicate workspace','foreign workspace','foreign containing workspace','stale warning','outside app','unknown kind','wrong source','duplicate warning']) {
+        const h=fixture(),a=h.entries.second,notice=h.addCorrection('second');
+        notice.marker.workspace=null;a.boundary.workspace=null;
+        if(reason==='missing identity')delete notice.marker.dataset.reportIdentity;
+        if(reason==='foreign identity')notice.marker.dataset.reportIdentity='foreign';
+        if(reason==='stale marker')notice.marker.stale=true;
+        if(reason==='detached marker')notice.marker.isConnected=false;
+        if(reason==='duplicate marker')notice.container.markers.push({...notice.marker});
+        if(reason==='duplicate workspace')h.app.workspaces.push({...h.workspace});
+        if(reason==='foreign workspace')h.workspace._epcWorkspace={identity:'foreign'};
+        if(reason==='stale warning')notice.container.stale=true;
+        if(reason==='foreign containing workspace')notice.marker.workspace={};
+        if(reason==='outside app')notice.marker.insideApp=false;
+        if(reason==='unknown kind')notice.marker.dataset.kind='unknown';
+        if(reason==='wrong source')notice.marker.dataset.sourceId='missing';
+        if(reason==='duplicate warning'){const duplicate=h.addCorrection('second');duplicate.marker.workspace=null;}
+        const cleanup=h.install();await h.flush();assert.equal(notice.control.tagName,'STRONG',reason);
+        cleanup();
+    }
+});
+
+test('sibling warning ownership is checked again at click and deferred focus',async()=>{
+    for(const phase of ['click','focus']) {
+        const h=fixture(),a=h.entries.second,notice=h.addCorrection('second');
+        notice.marker.workspace=null;a.boundary.workspace=null;
+        const cleanup=h.install();await h.flush();const link=notice.control;assert.equal(link.tagName,'A');
+        if(phase==='click')notice.marker.dataset.reportIdentity='foreign';
+        else a.boundary.ready=false;
+        h.click(link);await h.flush();
+        notice.marker.dataset.reportIdentity='foreign';a.boundary.ready=true;h.changed(a.boundary);await h.flush();
+        assert.equal(a.field.focuses,0,phase);assert.equal(a.field.scrolls,0,phase);cleanup();
+    }
 });

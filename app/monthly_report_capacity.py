@@ -26,6 +26,7 @@ _SITE = re.compile(r"\b(site|facility|location|hospital|campus|building)\b", re.
 _THERMAL = re.compile(r"\b(capacit\w*|thermal|steam|chilled|cooling|heating|demand|tons?|tonnage|btu|mbh|lbs?|requirements?|required|available)\b", re.I)
 _MEASURE = re.compile(r"\b(capacit\w*|demand|required|available|requirements?|quantity|tons?|tonnage|btu|mbh|lbs?)\b", re.I)
 _DIMENSION = re.compile(r"\b(type|service|category|name|label|identifier|id|tag|units)\b", re.I)
+_VALUE = re.compile(r"[$(+\-\u2212]?\s*\d")
 
 
 @dataclass(frozen=True)
@@ -126,19 +127,42 @@ def _table_scope(title):
     return normalized
 
 
-def _two_level_xlsx_header(columns, rows, site_column, suffix):
+def _header_row(records):
+    """Pick the column-heading row below any report title or date.
+
+    A heading row has at least two labelled cells and no values. A data row's
+    plant name ("Hospital boiler plant (steam)") never qualifies, so the real
+    Required/Available heading above it is kept.
+    """
+    def heading(row):
+        cells = [str(c).strip() for c in row if str(c).strip()]
+        return len(cells) >= 2 and not any(_VALUE.match(c) for c in cells)
+    for index, row in enumerate(records[:20]):
+        if heading(row) and sum(bool(_SITE.search(c) or _THERMAL.search(c) or _DIMENSION.search(c))
+                                for c in map(str, row)) >= 2:
+            return index
+    for index, row in enumerate(records[:20]):
+        if (any(_SITE.search(c) for c in row) and any(_THERMAL.search(c) for c in row)
+                and not any(_VALUE.match(str(c).strip()) for c in row)):
+            return index
+    return 0
+
+
+def _two_level_header(columns, rows, site_column, suffix):
     """Join an unambiguous merged-category header with its second header row.
 
     Some saved workbooks place Chilled Water/Steam above separate Required and
     Available labels. A blank site in that second header must not become an
-    invented unmapped capacity row. Only XLSX tables with observable merged
-    category blanks and at least two strictly labeled, number-free subheadings
-    qualify; ambiguous rows remain visible for explicit site review.
+    invented unmapped capacity row. Only XLSX and CSV tables with observable
+    category blanks (the CSV reader names them "Column N") and at least two
+    strictly labeled, number-free subheadings qualify; ambiguous rows remain
+    visible for explicit site review.
     """
-    if (suffix != ".xlsx" or site_column < 0 or len(rows) < 2
+    blank = tuple(not title.strip() or (suffix == ".csv" and title == f"Column {index + 1}")
+                  for index, title in enumerate(columns))
+    if (suffix not in (".xlsx", ".csv") or site_column < 0 or len(rows) < 2
             or rows[0][site_column].strip()
-            or not any(not title.strip() for index, title in enumerate(columns)
-                       if index != site_column)):
+            or not any(blank[index] for index in range(len(columns)) if index != site_column)):
         return columns, rows
     continuation = rows[0]
     labeled = [value.strip() for index, value in enumerate(continuation)
@@ -152,7 +176,7 @@ def _two_level_xlsx_header(columns, rows, site_column, suffix):
         return columns, rows
     result, group = [], ""
     for index, (top, lower) in enumerate(zip(columns, continuation)):
-        if top.strip():
+        if not blank[index]:
             group = top.strip()
         if index == site_column:
             result.append(top)
@@ -168,12 +192,8 @@ def _two_level_xlsx_header(columns, rows, site_column, suffix):
 
 def _candidate(table, source, page, facilities, context=""):
     records = _table_records(table)
-    header = 0
     # Workbooks often start with a report title/date above the real headings.
-    for index, row in enumerate(records[:20]):
-        if any(_SITE.search(c) for c in row) and any(_THERMAL.search(c) for c in row):
-            header = index
-            break
+    header = _header_row(records)
     columns = tuple(str(c).strip() for c in records[header])
     rows = tuple(tuple(str(c).strip() for c in row) for row in records[header + 1:] if any(str(c).strip() for c in row))
     if not rows or not _THERMAL.search(" ".join((table.name, *columns, *(" ".join(row) for row in rows[:20])))):
@@ -183,7 +203,7 @@ def _candidate(table, source, page, facilities, context=""):
     rows = tuple(row + ("",) * (width - len(row)) for row in rows)
     site_columns = [i for i, c in enumerate(columns) if _SITE.search(c)]
     site_column = site_columns[0] if len(site_columns) == 1 else -1
-    columns, rows = _two_level_xlsx_header(columns, rows, site_column, source.suffix)
+    columns, rows = _two_level_header(columns, rows, site_column, source.suffix)
     if site_column < 0:
         # Headerless facility labels can establish a column, but not a guessed site.
         scores = [sum(bool(match_site(row[i], facilities)) for row in rows) for i in range(width)]
@@ -194,6 +214,35 @@ def _candidate(table, source, page, facilities, context=""):
     identity = _digest((source.sha256, page, table.name, columns, rows))
     return CapacityTable(identity, table.name, columns, rows, keys, source.sha256,
                          source.filename, source.suffix, page, site_column)
+
+
+def _docx_tables(profile, source):
+    """Native Word table rows, numbered like ingest's items; a cell stays one cell.
+
+    Flattened item text splits a two-paragraph cell (a units line, a second
+    plant line) into separate rows and shifts every later value. Short text
+    items between tables supply only the following table's title/site context.
+    """
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_sources import _path
+    try:
+        inspected = inspect_docx(_path(profile, source.sha256, source.suffix))
+    except (ImportError, OSError, ValueError):
+        return ()
+    found, headings = [], []
+    for number, item in enumerate(inspected.items, 1):
+        if item.kind == "table" and item.rows:
+            rows = tuple(tuple(" ".join(str(cell).split()) for cell in row) for row in item.rows)
+            if len(rows) > 1:
+                title = " / ".join(headings[-2:]) or f"Page {number}"
+                flat = "\n".join("\t".join(row) for row in rows)
+                found.append((number, SourceTable(title, rows[0], rows[1:]), "\n".join((*headings[-2:], flat))))
+            # A preceding service/site must not become part of the next
+            # table's identity or make its site ambiguous on a partial update.
+            headings = []
+        elif item.text and item.text.strip() and len(item.text) < 250:
+            headings.append(item.text.strip())
+    return tuple(found)
 
 
 def _text_tables(text, name):
@@ -224,7 +273,7 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
     if Path(filename).suffix.casefold() == ".xlsx":
         # The sparse SAX directory reader bounds XML tokens before allocating
         # them; openpyxl's object graph is unnecessary for capacity cells.
-        workbook = directory.inspect_workbook(raw)
+        workbook = directory.inspect_workbook(raw, number_formats=True)
         native_tables = []
         # Directory's bounded XLSX inspector marks hidden/veryHidden sheets.
         # Such sheets may contain stale or unrelated values; they must not
@@ -239,7 +288,8 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
             row_numbers = sorted({cell.row for cell in sheet.cells})
             if len(columns) > 100 or len(row_numbers) > MAX_ROWS or len(columns) * len(row_numbers) > MAX_CELLS:
                 raise ValueError("Capacity worksheet exceeds the review budget.")
-            values = sheet.values()
+            # Cells read as their number formats show them: 1,200 tons, 75%, dates.
+            values = {(c.row, c.column): directory.formatted_value(c, date1904=workbook.date1904) for c in sheet.cells}
             records = tuple(tuple(values.get((row, column), "") for column in columns) for row in row_numbers)
             native_tables.append(SourceTable(sheet.name, records[0], records[1:]))
         source = ReportSource(workbook.sha256, Path(filename).name, workbook.sha256, ".xlsx",
@@ -262,6 +312,11 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
         candidate = _candidate(table, source, number, facilities)
         if candidate:
             found.append(candidate)
+    if source.suffix == ".docx":
+        for number, table, context in _docx_tables(profile, source):
+            candidate = _candidate(table, source, number, facilities, context)
+            if candidate:
+                found.append(candidate)
     if source.suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as document:
             for number, page in enumerate(document, 1):
@@ -279,7 +334,8 @@ def inspect_capacity(profile, filename, raw) -> CapacityInspection:
                                            source, number, facilities, page.get_text())
                     if candidate:
                         found.append(candidate)
-    # DOCX native table rows already have tab-separated item text from ingest.
+    # Text tables remain the fallback for TXT and for Word files whose native
+    # tables could not be read; DOCX tables above keep whole cells.
     if not found:
         recent_headings = []
         for number, text in enumerate(source.page_texts, 1):
@@ -436,13 +492,32 @@ def _row_key(table, row, site):
     return site, _schema(table), _table_scope(table.title), dimensions
 
 
+def _saved_table_candidates(current, new, site):
+    """Resolve within an observed heading before considering column shape.
+
+    Distinct named services remain distinct even when their columns match.
+    Unnamed/default-sheet tables can use an existing shape; if it changed,
+    only one saved unnamed shape can be replaced without guessing identity.
+    """
+    scope = _table_scope(new.title)
+    saved = tuple(old for old in (current.tables if current else ())
+                  if site in old.site_keys and _table_scope(old.title) == scope)
+    if not scope:
+        matching = tuple(old for old in saved if _schema(old) == _schema(new))
+        if matching:
+            return matching
+    return saved
+
+
 def schema_conflicts(current, tables):
+    """Sites where a saved table's heading now arrives with different columns."""
     if current is None:
         return ()
     changed = []
     for new in tables:
         for site in set(new.site_keys):
-            if any(site in old.site_keys and _schema(old) != _schema(new) for old in current.tables):
+            saved = _saved_table_candidates(current, new, site)
+            if saved and not any(_schema(old) == _schema(new) for old in saved):
                 changed.append(site)
     return tuple(dict.fromkeys(changed))
 
@@ -495,11 +570,22 @@ def save_capacity(profile, tables, *, expected_revision, actor, reviewed_fingerp
                 if key in incoming and incoming[key] != row:
                     raise ValueError("Two capacity rows have the same site and labels but different values. Add the missing plant/service label before saving.")
                 incoming[key] = row
-        changed_sites = {s for t in tables for s in t.site_keys}
+        replaced = set()
+        if mode == "replace_sites":
+            for new in tables:
+                for site in set(new.site_keys):
+                    candidates = _saved_table_candidates(current, new, site)
+                    if not _table_scope(new.title) and len({_schema(old) for old in candidates}) > 1:
+                        raise ValueError("These unnamed capacity tables have several saved layouts. "
+                                         "Add a service or plant heading before replacing them, or keep both sets.")
+                    # Keep the resolved saved objects, not a broad same-column
+                    # rule that can also remove another named service.
+                    replaced.update((id(old), site) for old in candidates)
+
         kept = []
         for old in current.tables if current else ():
             pairs = [(row, site) for row, site in zip(old.rows, old.site_keys)
-                     if not (mode == "replace_sites" and site in changed_sites)
+                     if (id(old), site) not in replaced
                      and not (mode != "keep_both" and _row_key(old, row, site) in incoming)]
             if pairs:
                 kept.append(replace(old, rows=tuple(row for row, _ in pairs), site_keys=tuple(site for _, site in pairs)))

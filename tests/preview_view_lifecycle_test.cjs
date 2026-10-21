@@ -39,7 +39,7 @@ test('compact preview belongs below its section heading without moving native ed
     const file=fs.readFileSync('app/workspace_layout.js','utf8');
     const source='function addControls'+file.split('function addControls')[1].split('function discover')[0];
     const document={createElement:tag=>new Element(tag),activeElement:null},state={};
-    const add=vm.runInNewContext('('+source+')',{document,state,schedule:()=>{}});
+    const add=vm.runInNewContext('('+source+')',{document,state,controlsOwner:{},subscriptions:[],schedule:()=>{}});
     const pair=new Element(),marker=new Element(),divider=new Element('hr'),heading=new Element('h3');
     const rowWrapper=new Element(),row=new Element(),reference=new Element(),input=new Element('textarea');
     pair.append(marker,divider,heading,rowWrapper);rowWrapper.append(row);row.append(input,reference);
@@ -541,4 +541,155 @@ test('native editing event withholds preview fragments until matching full-rende
     assert.equal(app.listeners.get('change').size,0,'all native listeners clean up');
     assert.equal(app.listeners.get('click').size,0,'the label capture listener cleans up');
     assert.equal(window.__enfraPreviewNativeEditGates.get(app),undefined);
+});
+
+// App-owned controls may record DOM reading positions, never editor values or
+// a second editable copy. This deterministic model is not physical-device QA.
+function compactReturnHarness({state={},root=null,scrollport=null,offset=1800,height=600}={}) {
+    const source=fs.readFileSync('app/workspace_layout.js','utf8');
+    const controls='function addControls'+source.split('function addControls')[1].split('function discover')[0];
+    const document={createElement:tag=>new Element(tag),activeElement:null};
+    const connect=node=>{
+        node.isConnected=true;node.scrollLeft=0;
+        node.contains=target=>{for(let current=target;current;current=current.parentElement)if(current===node)return true;return false;};
+        node.focus=options=>{assert.equal(options.preventScroll,true);document.activeElement=node;node.focusCalls=(node.focusCalls||0)+1;};
+        return node;
+    };
+    scrollport=scrollport || connect(new Element());root=root || connect(new Element());
+    if(!root.parentElement)scrollport.append(root);
+    scrollport.bounds={top:0,bottom:height,height};
+    scrollport.getBoundingClientRect=()=>scrollport.bounds;
+    root.bounds={top:80,bottom:480,height:400};root.getBoundingClientRect=()=>root.bounds;
+    const pair=connect(new Element()),rowWrapper=connect(new Element()),row=connect(new Element());
+    const editor=connect(new Element()),reference=connect(new Element()),field=connect(new Element('textarea'));
+    root.append(pair);pair.append(new Element('h3'),rowWrapper);rowWrapper.append(row);row.append(editor,reference);editor.append(field);
+    field.documentOffset=offset;field.value='Unblurred native wording';field.selectionStart=9;field.selectionEnd=12;
+    field.matches=()=>true;
+    field.getBoundingClientRect=()=>{
+        const top=state.ownsScroll ? root.bounds.top+field.documentOffset-root.scrollTop : field.documentOffset-scrollport.scrollTop;
+        return {top,bottom:top+140,height:140};
+    };
+    reference.scrollIntoView=()=>{(state.ownsScroll?root:scrollport).scrollTop=3600;};
+    pair.scrollIntoView=()=>{scrollport.scrollTop=400;}; // historical section-top return
+    const subscriptions=[],context={document,state,root,scrollport,controlsOwner:{},subscriptions,schedule:()=>{}};
+    const add=vm.runInNewContext('('+controls+')',context);
+    const render=()=>{
+        add(pair,reference,'Activity',row,editor);
+        connect(pair.querySelector('.epc-compact-open'));connect(reference.querySelector('.epc-compact-back'));
+    };
+    render();
+    const open=()=>pair.querySelector('.epc-compact-open');
+    const back=()=>reference.querySelector('.epc-compact-back');
+    const remember=()=>{document.activeElement=field;for(const listener of pair.listeners.get('input') || [])listener({target:field});};
+    const enter=()=>{open().onpointerdown?.();document.activeElement=open();open().onclick({detail:1});};
+    return {state,root,scrollport,pair,row,editor,reference,field,document,render,open,back,remember,enter,subscriptions};
+}
+
+test('narrow pointer preview return restores the last field position and preserves native input without reopening keyboard',()=>{
+    const h=compactReturnHarness();h.scrollport.scrollTop=1500;h.field.scrollTop=35;h.remember();
+    const native=[...h.row.children],text=h.field.value,selection=[h.field.selectionStart,h.field.selectionEnd];
+    h.scrollport.scrollTop=400; // reach View preview beneath the section heading
+    for(const listener of h.pair.listeners.get('focusout') || [])listener({type:'focusout',target:h.field});
+    h.enter();assert.equal(h.scrollport.scrollTop,3600);
+    h.field.scrollTop=0;h.back().onclick({detail:1});
+    assert.equal(h.scrollport.scrollTop,1500,'return to the edited paragraph, not the section heading');
+    assert.equal(h.field.scrollTop,35,'restore the native textarea reading position');
+    assert.equal(h.document.activeElement,h.editor,'pointer return focuses a non-text editing surface');
+    assert.equal(h.field.focusCalls || 0,0,'a pointer Back must not reopen the software keyboard');
+    assert.equal(h.field.value,text);assert.deepEqual([h.field.selectionStart,h.field.selectionEnd],selection);
+    assert.deepEqual(h.row.children,native,'never clone or reparent the native editor');
+    assert.equal(h.open().getAttribute('aria-expanded'),'false');
+    assert.equal(h.pair.querySelectorAll('.epc-compact-open').length,1);
+});
+
+test('narrow keyboard Back restores the same native field across a replaced preview and repeated measurements',()=>{
+    const h=compactReturnHarness();h.scrollport.scrollTop=1500;h.remember();
+    h.field.scrollTop=77;
+    for(const listener of h.pair.listeners.get('focusout') || [])listener({type:'focusout',target:h.field});
+    h.document.activeElement=h.open();h.open().onclick({detail:0});
+    const open=h.open(),field=h.field;
+    h.reference.replaceChildren();h.render();h.render();
+    assert.equal(h.open(),open);
+    h.back().onclick({detail:0});
+    assert.equal(h.document.activeElement,field);assert.equal(h.scrollport.scrollTop,1500);
+    assert.equal(h.field.scrollTop,77,'keyboard blur retains the final native field reading position');
+    assert.equal(h.field.selectionStart,9);assert.equal(h.field.selectionEnd,12);
+    assert.equal(h.pair.listeners.get('input').size,1);
+    assert.equal(h.pair.listeners.get('focusin').size,1,'layout measurement cannot multiply input listeners');
+    h.subscriptions.forEach(remove=>remove());
+    assert.equal(h.pair.listeners.get('input').size,0);
+});
+
+test('narrow return follows the same field after viewport reflow and scroll-owner change',()=>{
+    const h=compactReturnHarness();h.scrollport.scrollTop=1500;h.remember();h.enter();
+    h.field.documentOffset+=250;h.scrollport.bounds={top:0,height:320,bottom:320};
+    h.back().onclick({detail:1});
+    assert.equal(h.field.getBoundingClientRect().top,240,'the stored anchor stays visible when the viewport shrinks');
+    h.remember();h.enter();h.state.ownsScroll=true;
+    h.back().onclick({detail:1});
+    assert.equal(h.field.getBoundingClientRect().top-h.root.bounds.top,240,
+        'a confined/tabletop transition restores the anchor in the current working scroll root');
+    assert.equal(h.document.activeElement,h.editor);
+});
+
+test('narrow return keeps the restored field clear of measured sticky chrome',()=>{
+    const h=compactReturnHarness({offset:1540});h.scrollport.scrollTop=1500;h.remember();h.enter();
+    h.root.style.getPropertyValue=()=> '112px';
+    h.back().onclick({detail:1});
+    assert.equal(h.field.getBoundingClientRect().top,112);
+    assert.equal(h.document.activeElement,h.editor);
+});
+
+test('short untouched section returns to its opening position and a detached field is never refocused',()=>{
+    const h=compactReturnHarness({offset:250});h.scrollport.scrollTop=80;h.enter();h.back().onclick({detail:0});
+    assert.equal(h.scrollport.scrollTop,80);assert.equal(h.document.activeElement,h.open());
+    h.scrollport.scrollTop=100;h.remember();h.enter();h.field.isConnected=false;
+    h.back().onclick({detail:0});
+    assert.equal(h.scrollport.scrollTop,100);assert.equal(h.document.activeElement,h.open());
+    assert.equal(h.field.focusCalls || 0,0);
+});
+
+test('preview return positions belong to each section even when two previews were opened',()=>{
+    const state={},first=compactReturnHarness({state});
+    const second=compactReturnHarness({state,root:first.root,scrollport:first.scrollport,offset:4900});
+    first.scrollport.scrollTop=1500;first.remember();first.enter();
+    second.scrollport.scrollTop=4600;second.remember();second.enter();second.back().onclick({detail:1});
+    assert.equal(second.scrollport.scrollTop,4600);
+    first.back().onclick({detail:1});
+    assert.equal(first.scrollport.scrollTop,1500,'another section cannot replace the return anchor');
+    assert.equal(first.field.value,'Unblurred native wording');
+});
+
+test('cold section preview starts at meaningful content once and preserves subsequent reading',()=>{
+    const {root,panel}=dom(),timers=new Map(),observers=[];let sequence=0;
+    class Observer {constructor(callback){this.callback=callback;observers.push(this);}observe(){}disconnect(){}}
+    const document=new Element();document.createElement=tag=>new Element(tag);
+    const window={devicePixelRatio:1};
+    const context={window,document,Map,JSON,Array,Number,Math,String,
+        IntersectionObserver:Observer,ResizeObserver:Observer,MutationObserver:Observer,
+        setTimeout:callback=>{timers.set(++sequence,callback);return sequence;},clearTimeout:id=>timers.delete(id)};
+    const source=fs.readFileSync('app/monthly_report_preview_view.py','utf8').split('JS = r"""\n')[1].split('\n"""')[0];
+    const render=vm.runInNewContext('('+source.replace('export default function','function')+')',context);
+    const invoke=data=>render({parentElement:root,data:{viewScope:'same-report|training',pages:[],...data},setStateValue:()=>{}});
+    let cleanup=invoke({generation:'cold',sizes:[],ready:false});
+    assert.equal(panel._previewState.positioned,false,'placeholder pagination is not a reading choice');
+    cleanup();
+    cleanup=invoke({generation:'ready',sizes:[[612,792],[612,792],[612,792]],initialPage:1,ready:true});
+    assert.equal(panel._previewState.page,1);
+    assert.equal(panel.querySelectorAll('figure').length,3,'the divider and all content pages remain reachable');
+    assert.equal(panel.querySelector('.report-preview-position').textContent,'2 / 3');
+    panel._previewState.page=2;panel.querySelector('.report-preview-scroll').scrollTop=43;
+    cleanup();
+    cleanup=invoke({generation:'edited',sizes:[[612,792],[612,792],[612,792]],initialPage:1,ready:true});
+    assert.equal(panel._previewState.page,2,'editing does not reset the reading page');
+    assert.equal(panel.querySelector('.report-preview-scroll').scrollTop,43);
+    cleanup();
+    cleanup=invoke({generation:'evicted',sizes:[],ready:false});cleanup();
+    cleanup=invoke({generation:'retry',sizes:[[612,792],[612,792],[612,792]],initialPage:1,ready:true});
+    assert.equal(panel._previewState.page,2,'error/eviction and retry retain the reading position');
+    // Natural scrolling back to the divider is a deliberate reading position.
+    panel._previewState.page=0;panel.querySelector('.report-preview-scroll').scrollTop=0;cleanup();
+    cleanup=invoke({generation:'edited-again',sizes:[[612,792],[612,792]],initialPage:1,ready:true});
+    assert.equal(panel._previewState.page,0,'the initial hint never overrides an existing reading choice');
+    cleanup();
 });

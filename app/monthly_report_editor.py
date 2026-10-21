@@ -345,7 +345,8 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
             if st.session_state.get(once_key + "_digest") != digest:
                 try:
                     normalized = normalize_report_image(uploaded.getvalue(), Path(uploaded.name).suffix,
-                                                        line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"))
+                                                        line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"),
+                                                        preserve_transparency=spec.key in ("brand_logo", "client_logo"))
                     reference = library.asset_reference(normalized.data, normalized.extension)
                     assets[reference] = normalized.data
                     st.session_state[once_key] = reference
@@ -357,7 +358,10 @@ def _block_editor(spec: BlockSpec, state: library.LibraryState, previous: dict[s
                     st.session_state.pop(once_key, None)
         reference = st.session_state.get(once_key)
         text = st.text_input("Caption", key=field(key + "_caption", starting.text))
-        block = (ResolvedBlock(spec.key, source, text=text, asset_hashes=(reference,) if reference else ())
+        from app.monthly_report_model import picture_replacement_references
+        block = (ResolvedBlock(spec.key, source, text=text, asset_hashes=(reference,) if reference else (),
+                               references=picture_replacement_references(starting),
+                               asset_provenance=((reference, ()),) if reference and spec.key in ("brand_logo", "client_logo") else ())
                  if reference or uploaded else replace(starting, source=source, text=text))
     elif spec.type in ("table", "work_order_grid"):
         columns = [c.title for c in spec.columns] or ["Facility", "Item", "Status"]
@@ -446,6 +450,12 @@ def _typed_table(spec: BlockSpec, rows) -> tuple[list[dict], dict]:
     return seed or [dict.fromkeys(columns)], config
 
 
+def _source_scope_controls(start_key):
+    return _signature(tuple(sorted((key, value) for key, value in st.session_state.items()
+        if key.startswith(start_key + "_")
+        and key.endswith(("_source", "_include", "_library_image", "_monthly_mode")))))
+
+
 def render_profile_workflow(browser_token: str, browser_timezone: str, field, move) -> None:
     st.subheader("1. Choose the report")
     names = contracts.contract_names()
@@ -480,6 +490,15 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     start_choices = (["Saved work for this month" if current else "Last month's report for this profile"] if prior else []) + ["The profile's library template"]
     start = st.radio("Start from", start_choices, key=field(prefix + "_start", start_choices[0]))
     from_prior = bool(prior and start == start_choices[0])
+    start_key = prefix + "_" + _signature(start)
+    scope_context = _signature((asdict(profile), period.key, start,
+                               prior.draft.fingerprint if from_prior else None, state.revision))
+    scope_key = prefix + "_source_scope_context"
+    previous_scope = st.session_state.get(scope_key)
+    scope_draft = prior.draft if previous_scope is None and from_prior else None
+    if (previous_scope is not None and previous_scope[0] == scope_context
+            and previous_scope[1] == _source_scope_controls(start_key)):
+        scope_draft = previous_scope[2]
     previous = {b.key: b for b in prior.draft.blocks} if prior else {}
     prepared_key = field(prefix + "_prepared", remembered_report_preparer(browser_token, contract, profile.key)
                          or (prior.draft.prepared_by if prior else "ENFRA Asset Management Team"))
@@ -489,7 +508,7 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
         from app.monthly_report_sources import ingest, source_bytes
         st.session_state[prefix + "_evidence"] = tuple(replace(ingest(profile, s.filename, source_bytes(profile, s))[0], source=s) for s in prior.draft.sources)
     report_sources, monthly_blocks, monthly_specs = render_uploads(
-        profile, period, prefix, field, retain_accepted=True)
+        profile, period, prefix, field, retain_accepted=True, scope_draft=scope_draft)
     # This editor reconstructs blocks from saved report fallbacks on every
     # action. Keep retirement receipts until the new report is saved, so moving
     # an accepted source cannot resurrect its old destination from that fallback.
@@ -505,7 +524,6 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
         overrides = {b.key: b for b in profile.block_overrides}
         base_sections = tuple(replace(s, blocks=tuple(overrides.get(b.key, b) for b in s.blocks)) for s in base_sections)
     by_key = {s.key: s for s in base_sections}
-    start_key = prefix + "_" + _signature(start)
     order_key = field(start_key + "_order", [s.key for s in base_sections] if from_prior else list(profile.section_order) or [s.key for s in base_sections])
     assets = st.session_state.setdefault(prefix + "_assets", {})
     sections, blocks = [], []
@@ -559,6 +577,9 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
             st.caption(f"{', '.join(block_keys)} · at least {pages} pages")
     st.subheader("6. Check and generate")
     draft = review_client_images(draft, assets, prefix, field)
+    # Bind the next form to the actual assembled report and its native source
+    # controls. A same-event route/include change cannot borrow old ownership.
+    st.session_state[scope_key] = (scope_context, _source_scope_controls(start_key), draft)
     estimated = estimate_bytes(draft, loader)
     st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Target: under 15 MB.")
     checks = preflight(draft, estimated)
