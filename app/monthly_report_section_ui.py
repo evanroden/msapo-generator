@@ -486,14 +486,15 @@ def _starting_review_sections(sections, plans, diagram_failures):
     return tuple(pending)
 
 
-def _native_art_preservation_review(path, source_view, profile, period, actor, prefix, field, *, saved=None):
+def _native_art_preservation_review(path, source_view, profile, period, actor, prefix, field, *, saved=None, inventory=None):
     """One source-art preservation review, never a logo or Word-branch choice."""
     from app.monthly_report_native_art_review import (
         _native_art_inventory, make_native_art_review, _verify_native_art_review,
     )
     from app.monthly_report_import import _read_import_image
     from app.monthly_report_operational_source import _operation_from_verified_view
-    inventory = _native_art_inventory(path, source_view, profile, period)
+    if inventory is None:
+        inventory = _native_art_inventory(path, source_view, profile, period)
     if not inventory.occurrences:
         return None
     if saved is not None:
@@ -769,6 +770,7 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     from app.monthly_report_designs import source_for
     native_design = source_for(candidate) is not None
     native_art_review = None
+    native_art_pending = False
     if (source_view is not None and state is not None
             and state.profile.imported_from not in ("", inspection.sha256)):
         # An incoming contribution is not permission to replace the saved
@@ -781,8 +783,12 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             saved_art = (library.imported_native_art_review(contract, candidate.key, period, source_view=source_view)
                          if state and state.profile.imported_from == inspection.sha256
                          and library.source_view_replay_recorded(contract, candidate.key, period, inspection.sha256) else None)
+            from app.monthly_report_native_art_review import _native_art_inventory
+            art_inventory = _native_art_inventory(path, source_view, candidate, period)
             native_art_review = _native_art_preservation_review(
-                path, source_view, candidate, period, actor, p, field, saved=saved_art)
+                path, source_view, candidate, period, actor, p, field, saved=saved_art,
+                inventory=art_inventory)
+            native_art_pending = bool(art_inventory.occurrences) and native_art_review is None
         except (ValueError, OSError) as exc:
             st.error(str(exc))
             return True
@@ -950,6 +956,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     st.caption(section.title + " · " + status)
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
+    if native_art_pending:
+        todo.append("Review the native page artwork above before continuing.")
     if state is None and cover_section and plans["cover"].get("approved"):
         from app.monthly_report_start_import import unresolved_cover_artwork
         from app.monthly_report_native_art_review import native_cover_furniture_ids

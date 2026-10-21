@@ -47,6 +47,10 @@ R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 V = "{urn:schemas-microsoft-com:vml}"
 MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
+_NATIVE_CAPTION_FRAMES = {
+    "{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}wsp",
+    V + "shape", V + "rect", W + "txbxContent",
+}
 RASTER = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif"}
 
 
@@ -203,9 +207,16 @@ def _remove_page_field_results(element, fields):
             node.text = ""
 
 
-def _text(element) -> str:
+def _text(element, *, exclude=()) -> str:
+    def visible_nodes(node):
+        if node in exclude:
+            return
+        yield node
+        for child in node:
+            yield from visible_nodes(child)
+
     parts = []
-    for node in element.iter():
+    for node in visible_nodes(element) if exclude else element.iter():
         if node.tag == W + "p" and parts and parts[-1] != "\n":
             parts.append("\n")
         elif node.tag == W + "t":
@@ -328,7 +339,7 @@ def is_header_artwork(item):
     return item.kind == "image" and item.image_role == "header_artwork"
 
 
-def _classify_logo_items(items, *, native_frame_positions=()):
+def _classify_logo_items(items, *, native_frame_text=None, native_frame_image_ids=()):
     """Bind short caption labels and repeated exact artwork to their roles.
 
     Captions can precede or follow pictures. Infer that convention only from
@@ -352,14 +363,15 @@ def _classify_logo_items(items, *, native_frame_positions=()):
         # Text inside native frames belongs to that frame, not every image in
         # this paragraph or a neighboring paragraph. Closed-frame evidence is
         # applied by exact occurrence separately, never via digest propagation.
-        if (item.part, item.word_section, item.position) in native_frame_positions:
-            continue
-        role = _logo_label_role(item.text)
+        caption = (native_frame_text or {}).get(
+            (item.part, item.word_section, item.position), item.text)
+        role = _logo_label_role(caption)
         if not role:
             continue
         scope = (item.part, item.word_section)
         adjacent = {delta: tuple(index for index in positions.get((*scope, item.position + delta), ())
-                                 if items[index].kind == "image") for delta in (-1, 0, 1)}
+                                 if items[index].kind == "image" and items[index].id not in native_frame_image_ids)
+                    for delta in (-1, 0, 1)}
         if adjacent[0]:
             for index in adjacent[0]:
                 roles[index].add(role if len(adjacent[0]) == 1 else "logo")
@@ -465,7 +477,8 @@ def inspect_docx(path: Path) -> DocxInspection:
     mint_background_positions = set()
     alternate_positions = set()
     frame_client_logo_ids = set()
-    native_frame_positions = set()
+    native_frame_text = {}
+    native_frame_image_ids = set()
     revision_changes = comment_changes = 0
     content_slot = ""
     note_owners = {}
@@ -554,13 +567,10 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 return metadata(target)["image_digest"]
                             alternatives_equivalent = equivalent_native_alternatives(element, image_identity)
                             from app.monthly_report_native_logo_roles import client_logo_frame_pictures
-                            has_native_frame = any(node.tag in (
-                                "{http://schemas.microsoft.com/office/word/2010/wordprocessingShape}wsp", V + "shape")
-                                for node in element.iter())
+                            has_native_frame = any(node.tag in _NATIVE_CAPTION_FRAMES
+                                                   for node in element.iter())
                             cover_native_frame = (has_native_frame and part == "word/document.xml"
                                                   and word_section == 1 and section in ("", "cover"))
-                            if cover_native_frame:
-                                native_frame_positions.add((part, word_section, position))
                             frame_client_pictures = (client_logo_frame_pictures(element, image_identity, _logo_label_role)
                                 if cover_native_frame else set())
                             old_pictures = {relations.get(node.get(R + "embed") or node.get(R + "id"), ("", ""))[0]
@@ -575,6 +585,18 @@ def inspect_docx(path: Path) -> DocxInspection:
                             if part.startswith(("word/header", "word/footer")):
                                 _remove_page_field_results(element, page_fields)
                             text = _text(element)
+                            # Generic captions may use only text outside native frame
+                            # subtrees. Inner labels belong to their own occurrences.
+                            frame_nodes = ({node for node in element.iter() if node.tag in _NATIVE_CAPTION_FRAMES}
+                                if cover_native_frame else set())
+                            # A plain VML picture is not a text-frame picture.
+                            # Exclude only pictures actually inside text boxes.
+                            frame_image_nodes = {node for frame_node in frame_nodes
+                                if frame_node.tag == W + "txbxContent"
+                                for node in frame_node.iter() if node.tag in (A + "blip", V + "imagedata")}
+                            caption_text = _text(element, exclude=frame_nodes) if frame_nodes else text
+                            if cover_native_frame:
+                                native_frame_text[(part, word_section, position)] = caption_text
                             source_note = ""
                             if part in ("word/footnotes.xml", "word/endnotes.xml"):
                                 kind = "footnote" if "footnotes" in part else "endnote"
@@ -676,6 +698,7 @@ def inspect_docx(path: Path) -> DocxInspection:
                                 if part == "word/document.xml" and not section and len(titles) < 12:
                                     titles.extend(line for line in text.splitlines() if 3 < len(line) < 180 and line not in titles)
                             image_nodes = [e for e in element.iter() if e.tag in (A + "blip", V + "imagedata")]
+                            outside_images = [picture for picture in image_nodes if picture not in frame_image_nodes]
                             image_occurrences = {}
                             for node in image_nodes:
                                 rid = node.get(R + "embed") or node.get(R + "id") or node.get(R + "link") or ""
@@ -694,7 +717,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     # A descriptor belongs to its drawing, not every picture
                                     # sharing the paragraph. Only a single-picture paragraph
                                     # can also use the paragraph's caption as identity proof.
-                                    labels = [text] if len(image_nodes) == 1 and not cover_native_frame else []
+                                    labels = ([caption_text] if node not in frame_image_nodes
+                                              and len(outside_images) == 1 else [])
                                     drawing = node
                                     while drawing in parents:
                                         if drawing.tag.rsplit("}", 1)[-1] in ("inline", "anchor", "shape"):
@@ -720,6 +744,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                                     note="" if supported else "External, missing or unsupported image. Export this drawing as PNG/JPEG and replace it after review.",
                                     image_role=role if supported else "",
                                     **(metadata(target) if supported else {}))
+                                if supported and node in frame_image_nodes:
+                                    native_frame_image_ids.add(added_id)
                                 if supported and node in frame_client_pictures:
                                     frame_client_logo_ids.add(added_id)
                                 if target:
@@ -796,7 +822,8 @@ def inspect_docx(path: Path) -> DocxInspection:
                 slot = "divider_" + target if item.kind == "image" else ""
                 items[index] = replace(item, section=target, suggested_slot=slot,
                                        note=item.note if item.note == "Native section heading" else "Native divider artwork")
-    items = _classify_logo_items(items, native_frame_positions=native_frame_positions)
+    items = _classify_logo_items(items, native_frame_text=native_frame_text,
+                                 native_frame_image_ids=native_frame_image_ids)
     # Apply frame evidence AFTER global caption/exact-byte classification. This
     # hint belongs only to the source SHA + occurrence ID; it must never seed
     # digest-role propagation to a sibling, header, or unlabelled contents image.

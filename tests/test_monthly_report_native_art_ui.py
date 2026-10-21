@@ -74,6 +74,11 @@ render_section_setup(profile.contract, period, 'Synthetic Operator', _field,
                      identity=replace(profile, imported_from=''), source_view=view)
 ''', default_timeout=60).run()
     assert not app.exception
+    button = next(b for b in app.button if b.label == 'Continue to this month’s updates')
+    assert button.disabled
+    assert not any('Your sites and sections are ready' in x.value for x in app.success)
+    app.checkbox[0].check().run()
+    assert next(b for b in app.button if b.label == 'Continue to this month’s updates').disabled
     for checkbox in app.checkbox:
         if checkbox.label.startswith(('Preserve this native', 'I checked this artwork')):
             checkbox.check()
@@ -132,3 +137,78 @@ def test_optional_heavy_ui_uses_existing_admission_but_default_does_not(monkeypa
     assert render() == 'rendered' and entered == []
     assert render(source_view=object()) == 'rendered'
     assert entered == [{'preview':True}]
+
+
+def test_empty_native_art_inventory_does_not_add_pending_gate(sample, monkeypatch):
+    from io import BytesIO
+    from lxml import etree as ET
+    from app import monthly_report_section_ui as ui
+    from test_monthly_report_native_art_review import rewrite, setup
+    path, _, original_profile, period, _, _ = sample
+    def remove_header_pictures(parts):
+        for name in tuple(parts):
+            if name.startswith(('word/header', 'word/footer')) and name.endswith('.xml'):
+                root = ET.fromstring(parts[name])
+                for node in tuple(root.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')):
+                    node.getparent().remove(node)
+                parts[name] = ET.tostring(root)
+    path.write_bytes(rewrite(path.read_bytes(), remove_header_pictures))
+    from dataclasses import replace
+    from app.monthly_report_compatibility_view import derive_compatibility_view
+    from app.monthly_report_native_art_review import native_art_inventory
+    import test_monthly_report_native_art_review as fixtures
+    def empty_setup(source):
+        view = derive_compatibility_view(source.read_bytes())
+        profile = replace(original_profile, imported_from=view.original_inspection.sha256)
+        inventory = native_art_inventory(source, view, profile, period)
+        return source, view, profile, period, inventory, None
+    monkeypatch.setattr(fixtures, 'setup', empty_setup)
+    _, view, profile, period, inventory, _ = empty_setup(path)
+    assert not inventory.occurrences
+    upload = BytesIO(path.read_bytes()); upload.name = 'synthetic-no-native-art.docx'; upload.size = len(upload.getvalue())
+    real = ui.st.file_uploader
+    monkeypatch.setattr(ui.st, 'file_uploader', lambda label,*args,**kwargs:
+        upload if label == 'Starting report' else real(label,*args,**kwargs))
+    app = AppTest.from_string(f'''
+from pathlib import Path
+from dataclasses import replace
+from test_monthly_report_native_art_review import setup
+from app.monthly_report_section_ui import render_section_setup
+from app.monthly_report_ui import _field
+path, view, profile, period, inventory, _ = setup(Path({str(path)!r}))
+render_section_setup(profile.contract, period, 'Synthetic Operator', _field,
+    identity=replace(profile, imported_from=''), source_view=view)
+''', default_timeout=60).run()
+    assert not app.exception
+    assert not next(b for b in app.button if b.label == 'Continue to this month’s updates').disabled
+    assert not any('Review the native page artwork' in x.value for x in app.info)
+
+
+def test_unavailable_native_thumbnail_keeps_continue_disabled(sample, monkeypatch):
+    from io import BytesIO
+    from app import monthly_report_section_ui as ui, monthly_report_import as imports
+    path, *_ = sample
+    upload = BytesIO(path.read_bytes()); upload.name = 'synthetic-blocked-art.docx'; upload.size = len(upload.getvalue())
+    real = ui.st.file_uploader
+    monkeypatch.setattr(ui.st, 'file_uploader', lambda label,*args,**kwargs:
+        upload if label == 'Starting report' else real(label,*args,**kwargs))
+    real_read = imports._read_import_image
+    def blocked(path, item, *args, **kwargs):
+        if item.part.startswith(('word/header', 'word/footer')):
+            raise ValueError('Synthetic thumbnail failure')
+        return real_read(path, item, *args, **kwargs)
+    monkeypatch.setattr(imports, '_read_import_image', blocked)
+    app = AppTest.from_string(f'''
+from pathlib import Path
+from dataclasses import replace
+from test_monthly_report_native_art_review import setup
+from app.monthly_report_section_ui import render_section_setup
+from app.monthly_report_ui import _field
+path, view, profile, period, inventory, _ = setup(Path({str(path)!r}))
+render_section_setup(profile.contract, period, 'Synthetic Operator', _field,
+    identity=replace(profile, imported_from=''), source_view=view)
+''', default_timeout=60).run()
+    assert not app.exception
+    assert app.error
+    assert next(b for b in app.button if b.label == 'Continue to this month’s updates').disabled
+    assert not any('Your sites and sections are ready' in x.value for x in app.success)

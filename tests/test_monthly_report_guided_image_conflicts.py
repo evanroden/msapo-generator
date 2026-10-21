@@ -106,3 +106,41 @@ render_section_setup(working.profile.contract, working.period, "Synthetic Editor
     assert not any(b.label == "Use incoming organization chart" for b in reopened.button)
     replayed = save_start(reopened)
     assert block(replayed) == block(saved)
+
+
+@pytest.mark.parametrize("slot", ["org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"])
+def test_repeated_source_correction_accepts_explicit_guided_replacement_only(slot):
+    from app.monthly_report_start_replay import merge_starting_drafts
+    previous, incoming = pair(slot)
+    guided = complete_guided_sections(replace(previous, blocks=(replace(block(previous, slot), asset_hashes=("report-only.png",)),)))
+    with pytest.raises(ValueError, match="repeated Starting"):
+        merge_starting_drafts(guided, incoming, previous)
+    choice = image_conflicts(guided, incoming, previous, **context())[0]
+    revised = apply_replacements(guided, incoming, previous, {slot: choice.binding}, **context())
+    saved = merge_starting_drafts(revised, incoming, previous)
+    assert block(saved, slot) == block(incoming, slot)
+    assert saved.sections == guided.sections
+    assert pending_asset_indexes(block(saved, slot)) == (0,)
+    assert merge_starting_drafts(saved, incoming, incoming) == saved
+
+
+@pytest.mark.parametrize("field,value", [
+    ("type", "rich_text"), ("allowed_sources", ("Omit",)),
+    ("stock_text_keys", ("different",)), ("columns", (ColumnSpec("different", "Different"),)),
+])
+def test_repeated_replacement_does_not_ignore_structural_mismatch(field, value):
+    from app.monthly_report_start_replay import merge_starting_drafts
+    previous, incoming = pair()
+    guided = complete_guided_sections(incoming)
+    guided = replace(guided, sections=tuple(replace(section, blocks=tuple(
+        replace(spec, **{field: value}) if spec.key == "org_chart" else spec
+        for spec in section.blocks)) for section in guided.sections))
+    with pytest.raises(ValueError, match="repeated Starting"):
+        merge_starting_drafts(guided, incoming, previous)
+
+
+@pytest.mark.parametrize("slot", ["brand_logo", "client_logo", "cover_photo", "improvements"])
+def test_repeated_normalization_does_not_expand_to_brand_or_other_slots(slot):
+    from app.monthly_report_start_replay import same_replacement_page_spec
+    spec = BlockSpec(slot, "image_page", required=True)
+    assert not same_replacement_page_spec(replace(spec, required=False), spec)
