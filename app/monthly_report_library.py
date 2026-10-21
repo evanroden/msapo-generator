@@ -666,7 +666,20 @@ def verified_render_source_view(draft: ReportDraft, original_path: Path, expecte
     art_context = saved_view[2]
     if art_context is not None:
         from app.monthly_report_native_art_review import _scope as native_art_scope
-        if native_art_scope(expected_view, profile, draft.period) != art_context.inventory.scope_bytes:
+        scope_profile = profile
+        from app import monthly_report_designs as designs
+        reviewed_template = art_context.inventory.scope['template']
+        # Opening an imported report pins its implicit original design. This
+        # changes only the template spelling, not the reviewed source. Accept
+        # that one-way promotion only while the saved design still resolves to
+        # this exact original; installed overrides and every other scope field
+        # remain authoritative. Never rewrite the immutable review receipt.
+        if (persisted.template == reviewed_template
+                and not reviewed_template.startswith((designs.PREFIX, designs.MASTER_PREFIX, designs.BUILTIN_PREFIX))
+                and profile.template == designs.PREFIX + digest
+                and designs.fingerprint(persisted) == digest):
+            scope_profile = replace(profile, template=reviewed_template)
+        if native_art_scope(expected_view, scope_profile, draft.period) != art_context.inventory.scope_bytes:
             raise LibraryError("Native artwork preservation belongs to a different current profile or template scope.")
         kept_refs = {f"docx:{digest}:{item.original_id}" for item in art_context.inventory.occurrences}
         if any(kept_refs.intersection(block.references) for block in draft.blocks):
