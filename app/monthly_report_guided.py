@@ -1379,9 +1379,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     footer = blocks.get("footer_text")
     if footer:
         draft = replace(draft, address_line=footer.text if footer.source != "Omit" else "")
-    from app.monthly_report_issues import apply_issue_action
+    from app.monthly_report_issues import apply_issue_action, acknowledge_issue_controls
     draft = apply_issue_action(draft, prefix)
     st.session_state[draft_key] = draft
+    acknowledge_issue_controls(draft, prefix)
     current_revision = snapshot.revision if snapshot else 0
     conflict = current_revision != st.session_state[prefix + "_revision"]
     if conflict:
