@@ -159,10 +159,14 @@ def _queue_remove(prefix, envelope, entry):
 
 
 def _render_group(prefix, envelope, pictures):
-    from app.monthly_report_picture_group import render_group
+    from app.monthly_report_picture_group import PictureMediaError, render_group
     key = prefix + '_picture_component_' + envelope['nonce']
-    render_group(key=key, envelope=envelope, pictures=pictures, media_scope=prefix,
-                 on_change=lambda: _queue_component(prefix, envelope, key))
+    try:
+        render_group(key=key, envelope=envelope, pictures=pictures, media_scope=prefix,
+                     on_change=lambda: _queue_component(prefix, envelope, key))
+    except PictureMediaError:
+        st.session_state.pop(prefix + '_picture_batch_active', None)
+        st.warning('These pictures could not be displayed. They remain pending; retry on the next review or use Correction controls below. Your other edits can still save.')
 
 
 def review_picture_batch(draft, assets, prefix, field, *, incarnation):

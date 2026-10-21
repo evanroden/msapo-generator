@@ -10,6 +10,7 @@ def test_transport_and_protocol_changes_trigger_both_browser_workflows():
     required = {'scripts/streamlit_forward_cache.py', 'tests/test_streamlit_forward_cache.py',
                 'scripts/qa_wire_totals.py', 'tests/test_qa_wire_totals.py',
                 'tests/test_picture_group_media.py', 'tests/test_picture_group_load_gate.py',
+                'tests/test_picture_media_recovery.py',
                 'tests/picture_group_load_gate_test.cjs', 'tests/test_picture_group_browser.py',
                 'tests/test_picture_transport_workflow.py'}
     for event in ('push', 'pull_request'):

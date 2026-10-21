@@ -70,7 +70,10 @@ def test_component_arguments_do_not_contain_image_payload(native, monkeypatch):
     assert all(p['url'].startswith('/reports/media/') for p in data['pictures'])
 
 
-@pytest.mark.parametrize('bad', ['https://external.invalid/x.png', '//external.invalid/x.png', '/other/x.png'])
+@pytest.mark.parametrize('bad', ['https://external.invalid/x.png', '//external.invalid/x.png', '/other/x.png',
+    '/base/../media/'+'a'*32+'.png', '/base/%2e%2e/media/'+'a'*32+'.png',
+    '/base%2fother/media/'+'a'*32+'.png', '/media/'+'a'*32+'.png?x=1',
+    '/media/'+'a'*32+'.png#x', '/media/'+'a'*32+'.png/other', '/media/'+'a'*32+'.jpeg'])
 def test_unexpected_media_routes_fail_closed(native, monkeypatch, bad):
     monkeypatch.setattr(native[0], 'add', lambda *args, **kwargs: bad)
     with pytest.raises(ValueError, match='registered safely'):
@@ -81,6 +84,24 @@ def test_unexpected_media_routes_fail_closed(native, monkeypatch, bad):
 def test_configured_base_path_not_current_multipage_path(native, monkeypatch, base, prefix):
     monkeypatch.setattr(group.config, 'get_option', lambda key: base)
     assert group._media_url(png('blue'), 'image/png', 'picture-review:context:0').startswith(prefix)
+
+
+@pytest.mark.parametrize('endpoint, base, prefix', [('/mock/media', '', '/mock/media/'),
+    ('/base/media', 'base', '/base/media/'), ('/media', 'base', '/base/media/'),
+    ('/base/team/media', 'base/team', '/base/team/media/')])
+def test_native_endpoint_is_authoritative_without_duplicate_base(native, monkeypatch, endpoint, base, prefix):
+    native[1]._media_endpoint = endpoint
+    monkeypatch.setattr(group.config, 'get_option', lambda key: base)
+    url = group._media_url(png('blue'), 'image/png', 'picture-review:context:0')
+    assert url.startswith(prefix)
+    assert url.count('/base') <= 1
+
+
+@pytest.mark.parametrize('base', ['../base', 'base/../other', 'base%2fother', 'base?x=1', 'base#x'])
+def test_unsafe_configured_base_cannot_change_media_target(native, monkeypatch, base):
+    monkeypatch.setattr(group.config, 'get_option', lambda key: base)
+    with pytest.raises(ValueError, match='base path'):
+        group._media_url(png('blue'), 'image/png', 'picture-review:context:0')
 
 
 def test_native_partial_hash_collision_cannot_substitute_old_bytes(native):

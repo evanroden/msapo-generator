@@ -3,10 +3,14 @@ from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 import re
-from urllib.parse import quote
 import streamlit as st
 from streamlit import config
 from streamlit.runtime import Runtime
+from streamlit.runtime.media_file_storage import MediaFileStorageError
+
+
+class PictureMediaError(ValueError):
+    """This bounded review display failed; unrelated draft edits can still save."""
 
 HTML = '<section class="picture-review" aria-label="Picture review"></section>'
 CSS = '''
@@ -32,12 +36,22 @@ def _media_url(raw, mime, coordinate):
     # Re-register on every render so native full/fragment session lifetime owns it.
     # Native large-media IDs use sampled hashing; bind the full bytes as well,
     # otherwise an unsampled change can resolve to an older stored image.
-    url = Runtime.instance().media_file_mgr.add(raw, mime, coordinate,
-                                              file_name=sha256(raw).hexdigest())
-    if not re.fullmatch(r'/media/[a-f0-9]{32}\.(?:png|jpe?g)', url):
-        raise ValueError('Picture media could not be registered safely.')
+    try:
+        url = Runtime.instance().media_file_mgr.add(raw, mime, coordinate,
+                                                  file_name=sha256(raw).hexdigest())
+    except (OSError, MediaFileStorageError) as exc:
+        raise PictureMediaError('Picture media could not be registered safely.') from exc
+    # The native manager owns its endpoint prefix (including isolated native
+    # runtimes). Accept only its bounded, root-relative media path: no scheme,
+    # host, traversal, encoded separator, query or fragment can cross origins.
+    extension = 'png' if mime == 'image/png' else 'jpe?g' if mime == 'image/jpeg' else None
+    if not isinstance(url, str) or extension is None or not re.fullmatch(r'/(?:[A-Za-z0-9_-]+/)*media/[a-f0-9]{32}\.' + extension, url):
+        raise PictureMediaError('Picture media could not be registered safely.')
     base = config.get_option('server.baseUrlPath').strip('/')
-    return ('/' + quote(base, safe='/') if base else '') + url
+    if base and not re.fullmatch(r'[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*', base):
+        raise PictureMediaError('Picture media base path is not supported safely.')
+    prefix = '/' + base if base else ''
+    return url if not prefix or url.startswith(prefix + '/') else prefix + url
 
 
 def render_group(*, key, envelope, pictures, on_change, media_scope):
