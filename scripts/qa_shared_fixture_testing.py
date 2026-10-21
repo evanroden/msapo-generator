@@ -46,6 +46,8 @@ def _expected_frontend(static_dir=None):
     # exact known repairs/config and edges, then compares every selected blob.
     # A selected filename or a digest of unvalidated installed bytes is not proof.
     selected = compat.selected_frontend(root)
+    if not selected["no_cache_advertisements"]:
+        raise RuntimeError("The pinned frontend lacks safe ForwardMsg advertisements.")
     raw = (root / "static/js" / selected["entry"]).read_bytes()
     if sha256(raw).hexdigest() != selected["patched_entry_sha256"]:
         raise RuntimeError("Pinned primary frontend changed after validation.")
@@ -119,12 +121,23 @@ def _asset_response_receipt(response, expected):
     return receipt, raw
 
 
-def _frontend_response_receipt(response, expected):
+def _frontend_response_receipt(response, expected, *, require_instant_expander=False):
     from scripts import patch_streamlit_frontend as compat
+    from scripts.streamlit_forward_cache import ORIGINAL as CACHE_ORIGINAL, REPAIRED as CACHE_REPAIRED
     receipt, raw = _asset_response_receipt(response, expected)
+    receipt.update(no_cache_advertisement_count=raw.count(CACHE_REPAIRED),
+                   original_cache_advertisement_count=raw.count(CACHE_ORIGINAL))
+    receipt["matches"] = bool(receipt.get("matches") and raw.count(CACHE_REPAIRED) == 1
+                              and raw.count(CACHE_ORIGINAL) == 0)
     if receipt.get("matches"):
         receipt.update({"full_scope_predicate_count": raw.count(compat.REPAIRED),
                         "original_predicate_count": raw.count(compat.ORIGINAL)})
+    if require_instant_expander:
+        from scripts.streamlit_expander_motion import DURATION_REPAIRED, FINISH_REPAIRED
+        receipt["instant_expander_count"] = raw.count(DURATION_REPAIRED)
+        receipt["synchronous_expander_finish_count"] = raw.count(FINISH_REPAIRED)
+        receipt["matches"] = bool(receipt.get("matches") and receipt["instant_expander_count"] == 1
+                                  and receipt["synchronous_expander_finish_count"] == 1)
     return receipt
 
 

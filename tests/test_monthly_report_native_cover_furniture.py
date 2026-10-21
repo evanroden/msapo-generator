@@ -227,7 +227,7 @@ render_section_setup(profile.contract,period,'Synthetic Operator',_field,identit
     assert offered and band not in offered
     assert any('no confirmed' in e.value for e in app.error)
     for checkbox in app.checkbox:
-        if checkbox.label.startswith(('Preserve this native','I checked this artwork')):checkbox.check()
+        if checkbox.label.startswith('I reviewed this artwork and want to keep it unchanged'):checkbox.check()
     app.run();assert not app.exception
     button=next(b for b in app.button if b.label=='Continue to this month’s updates')
     assert not button.disabled

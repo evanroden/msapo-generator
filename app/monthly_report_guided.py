@@ -1058,14 +1058,22 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     prefix = "report_guided_" + _signature((contract, selected, period.key))
     assets = st.session_state.setdefault(prefix + "_assets", {})
     snapshot = library.load_snapshot(contract, selected, period)
-    imported = library.load_imported_draft(contract, selected)
+    from app.monthly_report_start import read_starting_state, refresh_profile_identity
+    from app.monthly_report_read_wait import read_with_capacity_wait
+    read_status = st.empty()
+    read_checkpoint = st.empty()
+    try:
+        imported, prior, prior_draft = read_with_capacity_wait(
+            lambda: read_starting_state(contract, selected, period),
+            read_checkpoint.empty,
+            lambda: read_status.info("Waiting for report capacity… Your edits are kept."),
+        )
+    finally:
+        read_status.empty()
     if completed_setup == selected:
         record_report_preferences(browser_token, contract, selected)
         if imported:
             record_report_preparer(browser_token, contract, selected, imported.prepared_by)
-    from app.monthly_report_start import latest_snapshot, latest_saved_draft, refresh_profile_identity
-    prior = latest_snapshot(contract, selected, period)
-    prior_draft = latest_saved_draft(contract, selected, period, before=True)
     draft_key = prefix + "_draft"
     resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
     # Keep this status slot on every render. Removing a one-shot root element
@@ -1454,12 +1462,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.divider()
     with st.container():
         st.subheader("Review and download", anchor="report-review")
-        from app.monthly_report_editor import review_client_images
+        from app.monthly_report_picture_batch_ui import review_picture_batch
         if prepared.strip():
             from app.monthly_report_asset_review import pending_asset_indexes
             before_review = tuple((block.key, block.asset_hashes, pending_asset_indexes(block))
                                   for block in draft.blocks)
-            draft = review_client_images(draft, assets, prefix, field)
+            draft = review_picture_batch(draft, assets, prefix, field, incarnation=_rich_text_scope(prefix))
             after_review = tuple((block.key, block.asset_hashes, pending_asset_indexes(block))
                                  for block in draft.blocks)
             if after_review != before_review:

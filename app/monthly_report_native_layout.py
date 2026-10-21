@@ -777,23 +777,30 @@ def _build_verified_native_docx(draft, source_path, *, asset_loader=None, sectio
         raise NativeLayoutError("Experimental native source views do not support master or foreign-branding reuse.")
     from app.monthly_report_operational_source import rendition_file
     header_scope = None
+    emission_proofs = []
     if native_art is not None:
-        from app.monthly_report_native_art_scope import expected_header_scope
+        from app.monthly_report_native_art_scope import expected_header_scope, source_emission_proof
         header_scope = expected_header_scope(source_view, section_key)
     with rendition_file(source_view) as derivative:
         result = _build_native_docx(draft, derivative, asset_loader=asset_loader, section_key=section_key,
                                     master=master, source_view=source_view, original_path=Path(source_path),
-                                    source_section_plan=header_scope.source_plan if header_scope else None)
+                                    source_section_plan=header_scope.source_plan if header_scope else None,
+                                    source_header_scope=header_scope,
+                                    source_region_observer=(lambda body, pages: emission_proofs.append(
+                                        source_emission_proof(header_scope, body, pages))) if header_scope else None)
     if native_art is not None:
         from app.monthly_report_pdf_image_budget import release_transient_word_memory
         release_transient_word_memory()
         from app.monthly_report_native_art_review import verify_native_art_output
-        verify_native_art_output(result, native_art, source_scope=header_scope)
+        if len(emission_proofs) != 1:
+            raise NativeLayoutError("Native source-region emission proof is unavailable.")
+        verify_native_art_output(result, native_art, source_scope=header_scope,
+                                 emission_proof=emission_proofs[0])
     return result
 
 
 def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=None, master=False,
-                       source_view=None, original_path=None, source_section_plan=None) -> bytes:
+                       source_view=None, original_path=None, source_section_plan=None, source_region_observer=None, source_header_scope=None) -> bytes:
     """Render current values into source geometry, or raise a visible mapping error.
 
     ``section_key`` selects the actual logical section's contiguous native range;
@@ -1188,7 +1195,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_pages import NativePages
     unchanged_positions = {item.position for item in inspection.items
                            if item.part == "word/document.xml" and item.id in unchanged_items}
-    page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master)
+    page_plan = NativePages(body, original, section_by_pos, headings, unchanged_positions, fresh=master, source_header_scope=source_header_scope)
     work_order_labels = _work_order_table_labels(original, items, section_by_pos)
     from app.monthly_report_native_text import (narrative_prototype, write_narrative,
                                                  header_contains_label)
@@ -1590,6 +1597,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             for existing in list(body.findall(qn("w:sectPr"))):
                 body.remove(existing)
             body.append(closing)
+            page_plan.owner[closing] = page_plan.owner[last_selected]
 
     contact = next((block for block in draft.blocks if block.key == "contact_matrix"), None)
     if contact is not None and not contact.rows and not any(table.rows for table in contact.extra_tables):
@@ -1685,6 +1693,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     page_plan.finish(document=document)
     from app.monthly_report_divider_numerals import fit_proposals_numeral
     fit_proposals_numeral(document, section_key=section_key)
+    if source_region_observer is not None:
+        source_region_observer(body, page_plan)
     result = BytesIO()
     document.save(result)
     # Prune image relationships which became unused after old payload removal.

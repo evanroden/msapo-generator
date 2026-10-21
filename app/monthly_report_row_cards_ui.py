@@ -6,6 +6,7 @@ display changes alone cannot change the report.
 """
 from dataclasses import replace
 from datetime import date
+from functools import partial
 import re
 from uuid import uuid4
 
@@ -24,7 +25,7 @@ def _values(fields):
                  for key, original, kind, default in fields)
 
 
-def _queue(key, expected, tokens, active, fields, action="edit", target=None):
+def _queue(key, expected, tokens, active, fields, action="edit", target=None, *, preserve_empty=False):
     """One delivered native action includes the currently open row's text."""
     record = dict(st.session_state.get(key, {}))
     rows, identities = list(expected), list(tokens)
@@ -66,7 +67,7 @@ def _queue(key, expected, tokens, active, fields, action="edit", target=None):
             active = None
     elif action == "remove" and target == draft_token:
         active, draft_token = None, None
-    if changed_fields:
+    if changed_fields and not preserve_empty:
         retained = [(row, token) for row, token in zip(rows, identities)
                     if any(value is not None and str(value).strip() for value in row)]
         rows, identities = [row for row, _ in retained], [token for _, token in retained]
@@ -158,7 +159,38 @@ def _finish_row(key):
             + '</style>')
 
 
-def _edit_table(columns, rows, types, key, noun, add_label, field):
+_ONSITE_COLUMNS = ("WO #", "Finish Date", "Area", "Task Code-Description", "Tag #")
+_MONTH = r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+
+
+def _onsite_projection(columns, rows):
+    """Display semantics only: never normalize or remove stored source cells.
+
+    A monthly title is recognized only above the exact canonical header.
+    First-column-only values are NOT generally notes: a partial work order is
+    still a work order. Only the explicit pending-CMMS narrative is context.
+    Unrecognized layouts retain neutral, fully editable source rows.
+    """
+    context = {}
+    canonical = tuple(columns) in (_ONSITE_COLUMNS, ("Facility", *_ONSITE_COLUMNS),
+                                   ("WO #", "Date", "Area", "Task", "Asset"))
+    title_frame = (len(columns) == 5
+                   and re.fullmatch(_MONTH + r" \d{4} Service Calls", columns[0])
+                   and tuple(columns[1:]) == ("Column 2", "Column 3", "Column 4", "Column 5")
+                   and rows and tuple(rows[0]) == _ONSITE_COLUMNS)
+    if title_frame:
+        canonical = True
+        context[0] = columns[0]
+    if canonical:
+        for index, row in enumerate(rows):
+            if (len(row) == 5 and not any(row[1:]) and isinstance(row[0], str)
+                    and re.fullmatch(r"(?:Detailed )?work-order counts are pending (?:FacilityOne )?CMMS availability[.;](?:[^\n]*)",
+                                     row[0], flags=re.IGNORECASE)):
+                context[index] = row[0]
+    return (_ONSITE_COLUMNS if title_frame else columns), context, canonical
+
+
+def _edit_table(columns, rows, types, key, noun, add_label, field, *, onsite=False):
     record = dict(st.session_state.get(key, {}))
     pending = record.get("pending")
     incoming = tuple(tuple(row) for row in rows)
@@ -193,6 +225,14 @@ def _edit_table(columns, rows, types, key, noun, add_label, field):
     draft_token = record.get("draft_token")
     st.session_state[key] = record
 
+    queue = partial(_queue, preserve_empty=True) if onsite else _queue
+    context = {}
+    if onsite:
+        columns, context, canonical = _onsite_projection(columns, rows)
+        if not canonical:
+            noun, add_label = "table row", "Add table row"
+            st.caption("Source table — original fields retained.")
+
     active_values = (rows[tokens.index(active)] if active in tokens else
                      tuple("" for _ in columns) if active and active == draft_token else ())
     input_kinds = dict(record.get("input_kinds", {}))
@@ -221,7 +261,12 @@ def _edit_table(columns, rows, types, key, noun, add_label, field):
     if active and active == draft_token:
         entries.insert(min(record.get("draft_index", len(entries)), len(entries)),
                        (active, tuple("" for _ in columns)))
+    visible_index = 0
     for index, (token, row) in enumerate(entries):
+        source_index = tokens.index(token) if token in tokens else None
+        if source_index in context:
+            st.caption(context[source_index])
+            continue
         if token != active and not any(value is not None and str(value).strip() for value in row):
             continue
         card_key = key + "_card_" + token
@@ -231,27 +276,28 @@ def _edit_table(columns, rows, types, key, noun, add_label, field):
                 # first identifier or a long title is entered. Keep this
                 # active heading the same height until explicit closure.
                 st.write("Edit " + noun)
-                _render_fields(columns, fields, args, field)
-                st.button("Close editing", key=key + "_close_" + token, on_click=_queue, args=(*args, "close"))
+                _render_fields(columns, fields, args, field, queue)
+                st.button("Close editing", key=key + "_close_" + token, on_click=queue, args=(*args, "close"))
             else:
-                _summary(columns, row, noun, index)
+                _summary(columns, row, noun, visible_index if onsite else index)
                 st.button("Edit " + noun, key=key + "_open_" + token,
-                          on_click=_queue, args=(*args, "open", token))
+                          on_click=queue, args=(*args, "open", token))
             if token != draft_token:
                 st.button("Remove " + noun, key=key + "_remove_" + token,
                           help="Removes only this row from this report; source files and saved versions remain.",
-                          on_click=_queue, args=(*args, "remove", token))
+                          on_click=queue, args=(*args, "remove", token))
             _finish_row(card_key)
-    st.button(add_label, key=key + "_add", on_click=_queue, args=(*args, "add"),
+        visible_index += 1
+    st.button(add_label, key=key + "_add", on_click=queue, args=(*args, "add"),
               disabled=bool(active and active == draft_token))
     return rows
 
 
-def _render_fields(columns, fields, args, field):
+def _render_fields(columns, fields, args, field, queue=_queue):
     for index, (title, (key, original, kind, default)) in enumerate(zip(columns, fields), 1):
         # These labels do not replace the stored or exported source headings.
         label = title if title.strip() else f"Column {index}"
-        options = dict(key=field(key, default), value=default, on_change=_queue, args=args)
+        options = dict(key=field(key, default), value=default, on_change=queue, args=args)
         if kind == "date" and (isinstance(default, date) or default is None):
             st.date_input(label, format="YYYY-MM-DD", **options)
         elif kind in {"number", "currency"} and (isinstance(default, float) or default is None):
@@ -270,6 +316,9 @@ def edit_row_cards(spec, block, prefix, field):
     context = (spec.key, _rich_text_scope(prefix), block.references,
                tuple(table.reference for table in block.extra_tables), spec.columns)
     key = prefix + "_row_cards_" + _signature(context)
+    if spec.key == "service_calls":
+        # Retire pre-projection callbacks that could have opened a header as a call.
+        key += "_onsite_context_v1"
     tables = []
     for index, table in enumerate(block.extra_tables):
         if len(block.extra_tables) > 1:
@@ -283,12 +332,14 @@ def edit_row_cards(spec, block, prefix, field):
             # in the same event. Price validation remains in force.
             tables.append(review_table_headings(table, key + "_headings_" + str(index), field))
             continue
-        edited = _edit_table(table.columns, table.rows, (), table_key, noun, add_label, field)
+        edited = _edit_table(table.columns, table.rows, (), table_key, noun, add_label, field,
+                             onsite=spec.key == "service_calls")
         tables.append(replace(table, rows=edited) if edited != table.rows else table)
     rows = block.rows
     if rows or not block.extra_tables:
         columns = tuple(column.title for column in spec.columns) or ("Facility", "Item", "Status")
-        rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field)
+        rows = _edit_table(columns, rows, tuple(column.type for column in spec.columns), key + "_rows", noun, add_label, field,
+                           onsite=spec.key == "service_calls")
     if rows == block.rows and tuple(tables) == block.extra_tables:
         return block
     return replace(block, source="This month", rows=rows, extra_tables=tuple(tables),
