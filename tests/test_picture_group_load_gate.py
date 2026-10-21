@@ -14,7 +14,7 @@ def test_production_v2_component_registers_in_real_streamlit_runtime():
 import sys
 sys.path.insert(0,'tests')
 from streamlit.testing.v1 import AppTest
-app=AppTest.from_string("from test_monthly_report_picture_batch import sample\\nfrom app.monthly_report_picture_batch_ui import review_picture_batch\\ndraft,assets=sample()\\nreview_picture_batch(draft,assets,'real_component',lambda k,v:k,incarnation='epoch')").run()
+app=AppTest.from_string("from streamlit.runtime import Runtime\\nRuntime.instance().media_file_mgr._storage._media_endpoint='/media'\\nfrom test_monthly_report_picture_batch import sample\\nfrom app.monthly_report_picture_batch_ui import review_picture_batch\\ndraft,assets=sample()\\nreview_picture_batch(draft,assets,'real_component',lambda k,v:k,incarnation='epoch')").run()
 assert not app.exception,[e.message for e in app.exception]
 """
     result=subprocess.run([sys.executable,'-c',script],cwd=Path(__file__).resolve().parents[1],capture_output=True,text=True,timeout=20)

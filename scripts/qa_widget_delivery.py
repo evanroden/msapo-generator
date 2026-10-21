@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from google.protobuf.message import DecodeError
 from streamlit.proto.BackMsg_pb2 import BackMsg
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+from scripts.qa_wire_totals import WireTotals
 
 DEFAULT_PORTS = (8520, 8521, 8528)
 
@@ -30,8 +31,10 @@ class WidgetDelivery:
         self.ports = tuple(ports)
         self.cache = OrderedDict()
         self.socket_sequence = 0
+        self.wire_totals = WireTotals()
 
     def message(self, direction, raw, socket_id):
+        self.wire_totals.frame(direction, raw)
         if not isinstance(raw, bytes):
             return
         msg = ForwardMsg() if direction == 'received' else BackMsg()
@@ -40,6 +43,7 @@ class WidgetDelivery:
         except DecodeError:
             return
         kind = msg.WhichOneof('type')
+        self.wire_totals.kind(direction, kind)
         result = {'direction': direction, 'kind': kind, 'socket': socket_id}
         if direction == 'sent' and kind == 'rerun_script':
             run = msg.rerun_script
@@ -75,6 +79,7 @@ class WidgetDelivery:
                           fragments=list(msg.new_session.fragment_ids_this_run))
         elif direction == 'received' and kind == 'script_finished':
             result['finish'] = msg.script_finished
+            result['wire_totals'] = self.wire_totals.snapshot()
         else:
             return
         self.record('widget-wire', result)

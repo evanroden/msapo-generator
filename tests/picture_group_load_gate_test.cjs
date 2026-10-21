@@ -9,8 +9,8 @@ function setup(count=6){
  const root=new Element('section'), parent={querySelector:()=>root};
  const document={createElement:tag=>new Element(tag),createTextNode:value=>value};
  const source=fs.readFileSync('app/monthly_report_picture_group.js','utf8').replace('export default ','');
- const render=vm.runInNewContext('('+source+')',{document});
- const data={identity:'exact',nonce:'first',pictures:Array.from({length:count},(_,i)=>({title:'Picture '+i,context:'Synthetic',image:'bytes',mime:'image/png'}))};
+ const render=vm.runInNewContext('('+source+')',{document,URL,window:{location:{origin:'https://synthetic.invalid'}}});
+ const data={identity:'exact',nonce:'first',pictures:Array.from({length:count},(_,i)=>({title:'Picture '+i,context:'Synthetic',url:'/media/'+'a'.repeat(32)+'.png'}))};
  const events=[];const component={parentElement:parent,data,setStateValue:(k,v)=>events.push(v)};
  const cleanup=render(component);const figures=root.children.slice(0,count);
  return {root,render,component,cleanup,events,images:figures.map(f=>f.children[2]),choices:figures.map(f=>f.children[5].children[0]),retries:figures.map(f=>f.children[4]),button:root.children.at(-1)};
@@ -41,3 +41,5 @@ test('old cleanup, decode and click cannot submit after rerender/reopen',async()
  assert.equal(c.root.children.at(-1).disabled,true);
  c.cleanup();assert.equal(c.root.children.at(-1).disabled,true);
 });
+
+test('off-origin and malformed media never load or approve',()=>{for(const url of ['https://evil.invalid/media/'+ 'a'.repeat(32)+'.png','//evil.invalid/media/x.png','/other/path.png']){const c=setup(1);c.render({...c.component,data:{...c.component.data,pictures:[{title:'x',context:'x',url}]}});assert.equal(c.root.children.at(-1).disabled,true);assert.equal(c.root.children[0].children[2].src,undefined);}});

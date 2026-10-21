@@ -45,7 +45,14 @@ export default function(component) {
                 } catch (_) { if (active && current === attempt) failed(); }
             };
             img.onerror = () => { if (active && current === attempt) failed(); };
-            img.src = `data:${picture.mime};base64,${picture.image}`;
+            // Only the existing same-origin media endpoint; never an external URL.
+            try {
+                if (typeof picture.url !== 'string' || !picture.url.startsWith('/') || picture.url.startsWith('//')) throw new Error('Unsafe media URL');
+                const url = new URL(picture.url, window.location.origin);
+                if (url.origin !== window.location.origin || url.search || url.hash ||
+                    !/\/media\/[a-f0-9]{32}\.(png|jpe?g)$/.test(url.pathname)) throw new Error('Unsafe media URL');
+                img.src = url.href;
+            } catch (_) { failed(); }
         }
         retry.onclick = load;
         const label = document.createElement('label');

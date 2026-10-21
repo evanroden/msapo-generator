@@ -161,7 +161,7 @@ def _queue_remove(prefix, envelope, entry):
 def _render_group(prefix, envelope, pictures):
     from app.monthly_report_picture_group import render_group
     key = prefix + '_picture_component_' + envelope['nonce']
-    render_group(key=key, envelope=envelope, pictures=pictures,
+    render_group(key=key, envelope=envelope, pictures=pictures, media_scope=prefix,
                  on_change=lambda: _queue_component(prefix, envelope, key))
 
 

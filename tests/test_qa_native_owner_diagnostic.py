@@ -21,7 +21,7 @@ def historical_client(root, scripts):
     # This fixture represents the already-consumed historical diagnostic.
     # Reconstruct its original generation, without either later repair.
     previous = compat._publication(sources, members, False,
-                                   floating_resize=False, queued_scroll=False, selection_safe_close=False)
+                                   floating_resize=False, queued_scroll=False, selection_safe_close=False, no_cache_advertisements=False)
     for native, raw in previous.payloads.items():
         (scripts / previous.names[native]).write_bytes(raw)
     html = (root / "index.html").read_bytes()
