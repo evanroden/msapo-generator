@@ -1058,14 +1058,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     prefix = "report_guided_" + _signature((contract, selected, period.key))
     assets = st.session_state.setdefault(prefix + "_assets", {})
     snapshot = library.load_snapshot(contract, selected, period)
-    imported = library.load_imported_draft(contract, selected)
+    from app.monthly_report_start import read_starting_state, refresh_profile_identity
+    imported, prior, prior_draft = read_starting_state(contract, selected, period)
     if completed_setup == selected:
         record_report_preferences(browser_token, contract, selected)
         if imported:
             record_report_preparer(browser_token, contract, selected, imported.prepared_by)
-    from app.monthly_report_start import latest_snapshot, latest_saved_draft, refresh_profile_identity
-    prior = latest_snapshot(contract, selected, period)
-    prior_draft = latest_saved_draft(contract, selected, period, before=True)
     draft_key = prefix + "_draft"
     resume = st.session_state.get("report_resume_import") == (contract, selected, period.key)
     # Keep this status slot on every render. Removing a one-shot root element

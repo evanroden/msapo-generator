@@ -44,8 +44,9 @@ def test_busy_saved_view_yields_immediately_and_retry_revalidates(sample, operat
         section_preview_fingerprint(draft, 'cover')
 
 
-@pytest.mark.parametrize('blocked_call', [1, 2])
-def test_real_guided_busy_retry_preserves_browser_edits(sample, monkeypatch, blocked_call):
+def test_real_guided_busy_retry_preserves_browser_edits(sample, monkeypatch):
+    # Grouped starting-state selection independently reloads once per rerun.
+    blocked_call = 1
     from app import monthly_report_guided as guided, monthly_report_start_ui as start_ui
     path, view, profile, period, *_ = sample
     draft, _ = save_sample(sample)
@@ -54,7 +55,7 @@ def test_real_guided_busy_retry_preserves_browser_edits(sample, monkeypatch, blo
     monkeypatch.setattr(start_ui, 'choose_contract', lambda *args: profile.contract)
     monkeypatch.setattr(start_ui, 'select_sites', lambda *args, **kwargs: (profile, profile))
     monkeypatch.setattr(guided, 'month_selector', lambda *args: period)
-    real = library.load_imported_draft
+    real = library._load_imported_draft_value
     state = {'calls': 0, 'held': False, 'blocked': False, 'armed': False}
     def load(*args, **kwargs):
         state['calls'] += 1
@@ -62,7 +63,7 @@ def test_real_guided_busy_retry_preserves_browser_edits(sample, monkeypatch, blo
             assert jobs._WORK_SLOT.acquire(blocking=False)
             state.update(held=True, blocked=True)
         return real(*args, **kwargs)
-    monkeypatch.setattr(library, 'load_imported_draft', load)
+    monkeypatch.setattr(library, '_load_imported_draft_value', load)
     app = AppTest.from_string('''
 import streamlit as st
 from app.monthly_report_ui import _field, _move, restore_report_draft_state
