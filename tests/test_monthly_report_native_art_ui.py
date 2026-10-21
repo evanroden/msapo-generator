@@ -23,7 +23,7 @@ st.session_state['receipt'] = _native_art_preservation_review(path, view, profil
 ''', default_timeout=30).run()
     assert not app.exception
     assert app.session_state['receipt'] is None
-    assert len(app.checkbox) == 4, 'two same-byte images share display only; footer is another group'
+    assert len(app.checkbox) == 2, 'two same-byte images share display only; footer is another group'
     assert not app.radio and not app.selectbox
     assert len(app.get('popover')) == 2, 'technical source targets stay behind optional details'
     assert all(panel.proto.popover.label == 'Source details' for panel in app.get('popover'))
@@ -80,7 +80,7 @@ render_section_setup(profile.contract, period, 'Synthetic Operator', _field,
     app.checkbox[0].check().run()
     assert next(b for b in app.button if b.label == 'Continue to this month’s updates').disabled
     for checkbox in app.checkbox:
-        if checkbox.label.startswith(('Preserve this native', 'I checked this artwork')):
+        if checkbox.label.startswith('I reviewed this artwork and want to keep it unchanged'):
             checkbox.check()
     app.run()
     assert not app.exception
