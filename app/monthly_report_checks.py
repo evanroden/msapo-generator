@@ -95,6 +95,30 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
     return tuple(dict.fromkeys(findings))
 
 
+def _annual_work_order_month_cells(key, table):
+    """Coordinates of labels in the complete, two-measure annual grid only.
+
+    Imported tables put repeated header bands in body rows. Preserve that
+    structure when classifying labels; never exempt a month by its text alone.
+    Row zero is the table's columns, followed by its unchanged body rows.
+    Unknown/partial/reordered shapes deliberately retain normal date review.
+    """
+    rows = (table.columns, *table.rows)
+    if key != "work_orders" or len(rows) != 8 or any(len(row) != 7 for row in rows):
+        return frozenset()
+    bands = ((0, "wo received", 1), (2, "", 7), (4, "closed", 1), (6, "", 7))
+    for index, label, first in bands:
+        row = rows[index]
+        if row[0].strip().casefold() != label:
+            return frozenset()
+        # Full names/abbreviations and one terminal period are labels. Years,
+        # day numbers, prose, ranges and mixed values must not qualify.
+        months = tuple(_MONTHS.get(cell.strip().removesuffix(".").casefold()) for cell in row[1:])
+        if months != tuple(range(first, first + 6)):
+            return frozenset()
+    return frozenset((index, column) for index, _, _ in bands for column in range(1, 7))
+
+
 def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck, ...]:
     checks = []
     from app.monthly_report_designs import is_master
@@ -174,8 +198,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                         if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):
                             checks.append(ReportCheck("client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))
             for table in block.extra_tables:
-                texts.extend((block.key, cell) for row in table.rows for cell in row)
-                texts.extend((block.key, title) for title in table.columns)
+                month_labels = _annual_work_order_month_cells(block.key, table)
+                texts.extend((block.key, cell, None, (r, c) in month_labels)
+                             for r, row in enumerate((table.columns, *table.rows))
+                             for c, cell in enumerate(row))
                 if table_has_pricing(table.columns, table.rows):
                     checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, block.key))
                 if any(price_column(title) and any(i < len(r) and r[i].strip() for r in table.rows) for i, title in enumerate(table.columns)):
@@ -233,13 +259,14 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             checks.append(ReportCheck("empty", f"{section.title} is included but empty.", False, section.key))
     for item in texts:
         key, text = item[:2]
-        narrative = item[2] if len(item) == 3 else None
+        narrative = item[2] if len(item) >= 3 else None
+        structural_month = len(item) == 4 and item[3]
         if contains_price(text):
             checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key))
         phrases = placeholder_matches(text)
         if phrases:
             checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key))
-        if key != "report_identity":
+        if key != "report_identity" and not structural_month:
             if narrative is not None:
                 from app.monthly_report_period_items import apply_exclusions, unresolved_mentions
                 stale = unresolved_mentions(narrative, draft.period, draft.sources)
