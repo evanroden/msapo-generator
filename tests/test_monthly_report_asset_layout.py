@@ -506,3 +506,71 @@ def test_section_preview_tracks_review_only_document_geometry_not_unrelated_cons
     assert section_preview_fingerprint(before, 'training') == section_preview_fingerprint(after, 'training')
     unrelated = replace(after, blocks=(replace(reviewed, reviewed_fingerprint='unrelated'),))
     assert section_preview_fingerprint(unrelated, 'activity') == fingerprint
+
+
+@pytest.mark.parametrize('count', [1, 2])
+def test_document_only_native_grid_uses_body_pages_in_source_order(tmp_path, count):
+    from tests.test_monthly_report_native_layout import draft
+    from app.monthly_report_native_layout import build_native_docx
+    block, source, assets = payload()
+    refs = [block.asset_hashes[1]]
+    source = replace(source, page_texts=tuple('Service page' for _ in range(count)), selected_pages=tuple(range(1,count+1)))
+    if count == 2:
+        ref, raw = image((850,1100), 'purple'); assets[ref] = raw; refs.append(ref)
+    references = tuple(f'{source.id}:{i+1}:{source.fingerprint}' for i in range(count))
+    block = replace(block, asset_hashes=tuple(refs), asset_captions=tuple(f'Service page {i+1}' for i in range(count)),
+                    references=references, asset_provenance=tuple((ref,(references[i],)) for i,ref in enumerate(refs)))
+    path = table_source(tmp_path, assets)
+    output = Document(BytesIO(build_native_docx(replace(draft(block),sources=(source,)),path,asset_loader=assets.__getitem__)))
+    assert len(output.inline_shapes) == count
+    assert not output.tables
+    for shape, ref in zip(output.inline_shapes, refs):
+        assert shape.width > Inches(5)
+        assert shape._inline.getparent().getparent().getparent().getparent() is output._element.body
+        assert output.part.related_parts[shape._inline.graphic.graphicData.pic.blipFill.blip.embed].blob == assets[ref]
+    assert [p.text for p in output.paragraphs if p.text.startswith('Service page')] == list(block.asset_captions)
+
+
+@requires_libreoffice
+@pytest.mark.parametrize('count', [1, 2])
+@pytest.mark.parametrize('retained', [False, True])
+def test_rendered_document_only_native_grid_has_no_blank_page(tmp_path, count, retained):
+    import fitz
+    from app.pdf_converter import convert_to_pdf
+    from app.monthly_report_import import inspect_docx, map_items, ImportMapping
+    from app.monthly_report_native_layout import build_native_docx
+    from tests.test_monthly_report_native_layout import draft
+    block, source, assets = payload()
+    refs = [block.asset_hashes[1]]
+    if count == 2:
+        ref, raw = image((850,1100), 'purple'); assets[ref] = raw; refs.append(ref)
+    source = replace(source, page_texts=tuple('Service page' for _ in refs), selected_pages=tuple(range(1,count+1)))
+    references = tuple(f'{source.id}:{i+1}:{source.fingerprint}' for i in range(count))
+    block = replace(block, asset_hashes=tuple(refs), asset_captions=tuple(f'Service page {i+1}' for i in range(count)),
+                    references=references, asset_provenance=tuple((ref,(references[i],)) for i,ref in enumerate(refs)))
+    path = table_source(tmp_path, assets)
+    blocks = [block]
+    if retained:
+        document = Document(path)
+        document.tables[0]._tbl.addprevious(document.add_paragraph('Retained activity narrative')._p)
+        document.save(path)
+        inspection = inspect_docx(path)
+        item = next(item for item in inspection.items if item.kind == 'text' and item.text == 'Retained activity narrative')
+        blocks.insert(0, map_items(path, inspection, (ImportMapping(item.id,'activity_summary'),)).blocks[0])
+    raw = build_native_docx(replace(draft(*blocks),sources=(source,)),path,asset_loader=assets.__getitem__)
+    generated = Document(BytesIO(raw))
+    assert bool(generated.tables) == retained
+    if retained:
+        assert generated.tables[0]._tbl.tblGrid.xml == Document(path).tables[0]._tbl.tblGrid.xml
+    output_path = tmp_path/'document-only.docx'; output_path.write_bytes(raw)
+    pdf = convert_to_pdf(output_path)
+    try:
+        with fitz.open(pdf) as output:
+            assert len(output) == count + int(retained)
+            for i in range(count):
+                page = output[i+int(retained)]
+                assert f'Service page {i+1}' in page.get_text()
+                images = page.get_image_info()
+                assert len(images) == 1 and images[0]['bbox'][2]-images[0]['bbox'][0] > 5*72
+            if retained: assert 'Retained activity narrative' in output[0].get_text()
+    finally: pdf.unlink(missing_ok=True)

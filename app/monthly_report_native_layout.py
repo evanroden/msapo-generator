@@ -1561,6 +1561,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             photo_index = 0
             previous_document = False
             emitted_photo_roots = set()
+            has_ordinary_photos = any(i not in document_indexes for i in image_indexes)
             unused_document_anchors = set()
             for index, data in enumerate(images):
                 asset_index = image_indexes[index] if image_indexes else index
@@ -1572,7 +1573,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 nested_document = source_page and origin_root is not origin
                 future_photos = any((image_indexes[n] if image_indexes else n) not in document_indexes
                                     for n in range(index + 1, len(images)))
-                if nested_document and (future_photos or origin_root not in emitted_photo_roots):
+                if nested_document and (future_photos or (has_ordinary_photos and origin_root not in emitted_photo_roots)):
                     raise NativeLayoutError('A source page cannot split this native photo grid safely. Move the source page after its photos, or use a separate report-page section.')
                 document_origin = (last if source_page and previous_document and last is not None
                                    and page_plan._root(last) is last else origin_root if nested_document else origin)
