@@ -1059,7 +1059,17 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     assets = st.session_state.setdefault(prefix + "_assets", {})
     snapshot = library.load_snapshot(contract, selected, period)
     from app.monthly_report_start import read_starting_state, refresh_profile_identity
-    imported, prior, prior_draft = read_starting_state(contract, selected, period)
+    from app.monthly_report_read_wait import read_with_capacity_wait
+    read_status = st.empty()
+    read_checkpoint = st.empty()
+    try:
+        imported, prior, prior_draft = read_with_capacity_wait(
+            lambda: read_starting_state(contract, selected, period),
+            read_checkpoint.empty,
+            lambda: read_status.info("Waiting for report capacity… Your edits are kept."),
+        )
+    finally:
+        read_status.empty()
     if completed_setup == selected:
         record_report_preferences(browser_token, contract, selected)
         if imported:
