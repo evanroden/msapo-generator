@@ -16,27 +16,46 @@ MAX_VENDOR_FIELD_CHARS = 6000
 FIELD_PATTERNS = {"actions": r"\b(completed|repaired|replaced|inspected)\b",
                   "findings": r"\b(findings?|observed)\b", "recommendations": r"\brecommend",
                   "follow_ups": r"\b(follow.up|pending|scheduled)\b"}
+def typed_metadata(line):
+    if not field_boundary(line):
+        return False
+    heading, value = re.split('[:=]', line, maxsplit=1)
+    heading, value = heading.strip().casefold(), value.strip()
+    date = heading in {'report date', 'service date', 'date'} and re.fullmatch(
+        r'\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4}', value)
+    counter = heading in {'header', 'footer', 'page'} and re.fullmatch(
+        r'(?i)(?:page\s+)?\d{1,3}(?:\s+of\s+\d{1,3})?', value)
+    identifier = heading in {'report id', 'report number'} and re.fullmatch(
+        r'[A-Za-z0-9_-]{1,48}', value) and any(c.isdigit() for c in value)
+    return bool(date or counter or identifier)
+
+
 def unsupported_fields(text):
     """Only structurally typed metadata may be ignored; free prose is pending."""
-    lines = text.splitlines()
+    lines = [line for line in text.splitlines() if line.strip()]
     for number, line in enumerate(lines):
         if not field_boundary(line) or _LABEL.match(line):
             continue
-        heading, value = re.split('[:=]', line, maxsplit=1)
-        heading, value = heading.strip().casefold(), value.strip()
-        date = heading in {'report date', 'service date', 'date'} and re.fullmatch(
-            r'\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4}', value)
-        counter = heading in {'header', 'footer', 'page'} and re.fullmatch(
-            r'(?i)(?:page\s+)?\d{1,3}(?:\s+of\s+\d{1,3})?', value)
-        identifier = heading in {'report id', 'report number'} and re.fullmatch(
-            r'[A-Za-z0-9_-]{1,48}', value) and any(c.isdigit() for c in value)
-        if not (date or counter or identifier):
+        if not typed_metadata(line):
             return True
-        # Even typed metadata cannot hide a trailing unlabelled status line.
-        following = next((v for v in lines[number + 1:] if v.strip()), '')
-        if following and not field_boundary(following):
+        # One next-nonblank lookup per line, never copying page suffixes.
+        if number + 1 < len(lines) and not field_boundary(lines[number + 1]):
             return True
     return False
+
+
+def safe_remainder(text):
+    """No ignored prose: only exact conventional titles and typed metadata."""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or typed_metadata(line):
+            continue
+        if re.fullmatch(r'(?i)(?:(?:monthly|vendor|service|maintenance|inspection|field|activity)\s+){1,3}report', line):
+            continue
+        if re.fullmatch(r'(?i)page\s+\d{1,3}(?:\s+of\s+\d{1,3})?', line):
+            continue
+        return False
+    return True
 
 
 _BOUNDARY = re.compile(r'(?i)^\s*(?:page\s+\d|[-*•‣▪]\s|\d+[.)]\s|(?:copyright|confidential|disclaimer|terms and conditions)\b)')
@@ -241,7 +260,16 @@ def vendor_passages(source, number, *, index=_UNSET):
         finish(end)
     if len(covered) != len(tuple(_LABEL.finditer(text))):
         pending = True
-    return tuple(passages), pending
+    # Every unconsumed character remains accountable. A separate native block
+    # can qualify the action even when it has no recognized field heading.
+    cursor = 0
+    for passage in passages:
+        if not safe_remainder(text[cursor:passage.start]):
+            return (), True
+        cursor = passage.end
+    if pending or not safe_remainder(text[cursor:]):
+        return (), True
+    return tuple(passages), False
 
 
 _NOTICE_TEXT = {

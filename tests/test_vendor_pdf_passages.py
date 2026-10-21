@@ -17,7 +17,7 @@ def fixture(monkeypatch, tmp_path, fields=None):
         'Follow-up: PENDING LABEL RECHECK. No\ncompletion date is asserted.',
     ]
     doc = fitz.open(); p = doc.new_page()
-    parts = ['Synthetic vendor service report', 'Report ID: SYN-123',
+    parts = ['Vendor service report', 'Report ID: SYN-123',
              'Report date: 2026-10-16', 'Header: Page 1', *fields,
              'Footer: Page 1']
     y = 30
@@ -163,13 +163,13 @@ def test_inline_fields_are_reviewed_not_blended(monkeypatch,tmp_path):
 @pytest.mark.parametrize('boundary', ['Footer: Do not add this to activity.', 'Confidential information for the service recipient.', 'Page 2 of 3'])
 def test_footer_cannot_become_action_tail(monkeypatch,tmp_path,boundary):
     c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump.\n'+boundary])
-    assert c.source.actions == ('' if boundary.startswith('Footer:') else 'Actions: Inspected the pump.')
+    assert c.source.actions == ('Actions: Inspected the pump.' if boundary.startswith('Page ') else '')
     assert boundary not in native_update((c,),'activity_summary').text
 
 
 def test_blank_separates_unrelated_paragraph(monkeypatch,tmp_path):
     c,_=fixture(monkeypatch,tmp_path,['Actions: Inspected the pump.\n\nUnrelated operational planning note goes here.'])
-    assert c.source.actions == 'Actions: Inspected the pump.'
+    assert not c.source.actions  # Unknown remainder is not inferred unrelated.
     assert 'Unrelated' not in native_update((c,),'activity_summary').text
 
 
@@ -265,7 +265,7 @@ def test_version_one_cache_rechecks_ambiguous_classification(monkeypatch,tmp_pat
     assert not upgraded.source.actions
     assert upgraded.source.classification=='Reference only'
     assert any('not auto-imported' in n for n in upgraded.source.notices)
-    assert json.loads(path.read_text())['vendor_passage_policy']==6
+    assert json.loads(path.read_text())['vendor_passage_policy']==7
 
 
 @pytest.mark.parametrize('heading', ["Technician's note", 'Technician’s note', 'Phase 2 result', 'Note (internal)', 'Note #2'])
@@ -327,7 +327,7 @@ def test_version_two_cache_rechecks_unknown_heading_boundary(monkeypatch,tmp_pat
     path.write_text(json.dumps(data))
     upgraded,_=sources.ingest(synthetic_profiles()[0],c.source.filename,raw)
     assert not upgraded.source.actions
-    assert json.loads(path.read_text())['vendor_passage_policy']==6
+    assert json.loads(path.read_text())['vendor_passage_policy']==7
 
 
 @pytest.mark.parametrize('heading', ['Supervisor ID:42.', 'Finding #2:12.'])
@@ -499,3 +499,34 @@ def test_mixed_labeled_unlabeled_aggregate_limit_cannot_restore_activity():
     assert not s.actions and len(s.notices)==2
     assert not sources.native_action_lines(s)
     assert not native_update((SourceContent(s),),'activity_summary').text
+
+
+def test_unlabeled_separate_negative_block_cannot_be_dropped(monkeypatch,tmp_path):
+    c,_=fixture(monkeypatch,tmp_path,['Actions: Replaced the pump.','It was not completed.'])
+    assert not c.source.actions and not sources.native_action_lines(c.source)
+    assert not native_update((c,),'activity_summary').text
+    assert any('not auto-imported' in n for n in c.source.notices)
+
+
+def test_metadata_follower_scan_does_not_copy_suffixes():
+    from app.monthly_report_vendor_passages import unsupported_fields
+    class NoSuffixCopies(list):
+        def __getitem__(self,key):
+            assert not isinstance(key,slice),'quadratic suffix copy'
+            return super().__getitem__(key)
+    class DenseText(str):
+        def splitlines(self,*a,**k):
+            return NoSuffixCopies(super().splitlines(*a,**k))
+    text=DenseText('\n'.join(['Page: 1'] * 20000))
+    assert not unsupported_fields(text)
+
+
+@pytest.mark.parametrize('remainder',['It was not completed.', 'Not done.',
+    'Vendor service report not completed.', 'Short annotation', 'Cancelled'])
+@pytest.mark.parametrize('before',[True,False])
+def test_unknown_page_remainder_before_or_after_action_is_pending(monkeypatch,tmp_path,remainder,before):
+    fields=[remainder,'Actions: Replaced the pump.'] if before else ['Actions: Replaced the pump.',remainder]
+    c,_=fixture(monkeypatch,tmp_path,fields)
+    assert not c.source.actions and not sources.action_evidence(c.source)[0]
+    assert not native_update((c,),'activity_summary').text
+    assert any('not auto-imported' in n for n in c.source.notices)
