@@ -11,6 +11,7 @@ from streamlit.runtime.scriptrunner_utils.script_requests import RerunData
 from streamlit.testing.v1 import AppTest
 from app import monthly_report_render_jobs as jobs
 from app import monthly_report_source_handoff as handoff
+from test_monthly_report_native_art_review import sample
 
 
 def test_global_fast_reruns_remain_enabled():
@@ -111,15 +112,15 @@ def test_resource_checks_are_not_bypassed_after_handoff(monkeypatch, reason):
                 pytest.fail('Handoff is not resource admission')
 
 
-def test_real_section_wrapper_preserves_fields_across_rerun():
+def test_real_guided_boundary_preserves_fields_across_rerun():
     app = AppTest.from_string('''
 import streamlit as st
-from app.monthly_report_section_ui import _source_view_admission
-@_source_view_admission
-def render(*, source_view=None):
+from app.monthly_report_busy_ui import recover_render_busy
+@recover_render_busy
+def render():
     st.text_input('Prepared by', key='report_test_actor')
     st.checkbox('Preserve artwork', key='report_test_keep')
-render(source_view=object())
+render()
 ''').run()
     assert not app.exception
     app.text_input[0].set_value('Synthetic operator')
@@ -127,3 +128,47 @@ render(source_view=object())
     assert not app.exception
     assert app.text_input[0].value == 'Synthetic operator'
     assert app.checkbox[0].value
+
+
+def test_guided_boundary_handoff_precedes_saved_source_reload(sample):
+    from test_monthly_report_native_art_lifecycle import save_sample
+    _, _, profile, _, *_ = sample
+    save_sample(sample)
+    # The former section-only boundary ran too late: guided editor reloads
+    # the saved source before reaching that section. Exercise a real persisted
+    # synthetic view through the same boundary while its old runner unwinds.
+    app = AppTest.from_string(f'''
+import streamlit as st
+from threading import Event, Thread, Timer
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+from app.monthly_report_source_handoff import source_review_handoff
+from app.monthly_report_render_jobs import work_slot
+from app.monthly_report_busy_ui import recover_render_busy
+from app import monthly_report_library as library
+session_id = get_script_run_ctx().session_id
+entered, release = Event(), Event()
+def old_run():
+    with source_review_handoff(session_id, lambda: None):
+        with work_slot(preview=True):
+            entered.set()
+            assert release.wait(5)
+worker = Thread(target=old_run)
+worker.start()
+assert entered.wait(5)
+timer = Timer(.15, release.set)
+timer.start()
+@recover_render_busy
+def render():
+    draft = library.load_imported_draft({profile.contract!r}, {profile.key!r})
+    assert draft is not None
+    st.success('Saved source independently revalidated')
+try:
+    render()
+finally:
+    release.set()
+    worker.join(5)
+    timer.cancel()
+''', default_timeout=30).run()
+    assert not app.exception
+    assert any('independently revalidated' in item.value for item in app.success)
+    assert not any('Another report' in item.value for item in app.info)

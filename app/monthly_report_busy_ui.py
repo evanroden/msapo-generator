@@ -17,7 +17,14 @@ def recover_render_busy(function):
     @wraps(function)
     def recover(*args, **kwargs):
         try:
-            return function(*args, **kwargs)
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            from app.monthly_report_source_handoff import source_review_handoff
+            context = get_script_run_ctx(suppress_warning=True)
+            checkpoint = st.empty()
+            with source_review_handoff(context.session_id if context else None, checkpoint.empty):
+                # Includes saved-source reloads before section setup. This is
+                # only a same-session handoff, never global admission/proof.
+                return function(*args, **kwargs)
         except RenderBusy:
             show_busy_retry()
     return recover

@@ -1,7 +1,7 @@
 """Bounded same-session handoff, never a substitute for resource admission.
 
 Streamlit can start a new runner while the old one finishes pure source work.
-Only those source-review sections share a lock. Other sessions never wait here;
+Only monthly guided-editor runs share a lock. Other sessions never wait here;
 all callers must still acquire the unchanged global work slot afterward.
 """
 from contextlib import contextmanager
@@ -33,7 +33,7 @@ def source_review_handoff(session_id, checkpoint, *, wait_seconds=HANDOFF_SECOND
         checkpoint()  # Current script thread; obsolete runners stop at yield.
         remaining = deadline - monotonic()
         if remaining <= 0:
-            raise RenderBusy('The previous source review is finishing. Retry shortly.')
+            raise RenderBusy('The previous report operation is finishing. Retry shortly.')
         if lock.acquire(timeout=min(.25, remaining)):
             break
     try:
