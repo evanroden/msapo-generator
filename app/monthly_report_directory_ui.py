@@ -283,6 +283,8 @@ def _render_directory(field):
         raw, source_sha, sheet_name = None, state.source_sha256, state.source_sheet
     else:
         upload = st.file_uploader("Contract / site directory workbook", type=["xlsx"], max_upload_size=30, key="report_directory_upload")
+        st.caption("A confirmed import keeps the uploaded workbook file for 30 days for checking, then deletes it. "
+                   "The reviewed contacts and directory history stay.")
         if st.button("Read workbook", disabled=upload is None, key="report_directory_read"):
             raw = upload.getvalue()
             inspection = directory.inspect_workbook(raw)
@@ -356,7 +358,7 @@ def _render_directory(field):
     if state:
         _directory_history(contract, state, prefix, actor)
         with st.expander("Remove this contact list from use"):
-            st.write(f"Archive the shared contact list for **{literal(contract)}**. It will stop supplying site and contact suggestions. Saved reports, source workbooks and directory history stay available.")
+            st.write(f"Archive the shared contact list for **{literal(contract)}**. It will stop supplying site and contact suggestions. Saved reports and directory history stay available; uploaded workbook files are deleted 30 days after their latest import.")
             confirmed_archive = st.checkbox("Archive this contract’s contact list", key=prefix + "_archive_ok_" + _signature(actor))
             if st.button("Archive contact list", key=prefix + "_archive", disabled=not confirmed_archive):
                 directory.archive_directory(contract, expected_revision=state.revision, actor=actor, confirmed=confirmed_archive)
