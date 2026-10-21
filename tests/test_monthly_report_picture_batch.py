@@ -82,15 +82,35 @@ import streamlit as st
 from test_monthly_report_picture_batch import sample
 from app.monthly_report_picture_batch_ui import review_picture_batch
 from picture_batch_test_adapter import install
-install()
 if 'draft' not in st.session_state:
  st.session_state.draft,st.session_state.assets=sample(21)
-st.session_state.draft=review_picture_batch(st.session_state.draft,st.session_state.assets,'synthetic',lambda k,v:k,incarnation='epoch')
+with install():
+ st.session_state.draft=review_picture_batch(st.session_state.draft,st.session_state.assets,'synthetic',lambda k,v:k,incarnation='epoch')
 '''
 
 
 def submit(app):
     return next(b for b in app.button if b.label.startswith('Confirm these'))
+
+
+def test_frontend_emulator_does_not_escape_each_apptest_rerun():
+    production = batch._render_group
+    app = AppTest.from_string(APP).run()
+    assert not app.exception
+    assert batch._render_group is production
+    submit(app).click().run()
+    assert not app.exception
+    assert batch._render_group is production
+
+
+def test_frontend_emulator_restores_production_after_failure():
+    from picture_batch_test_adapter import install
+    production = batch._render_group
+    with pytest.raises(RuntimeError, match='Synthetic test failure'):
+        with install():
+            assert batch._render_group is not production
+            raise RuntimeError('Synthetic test failure')
+    assert batch._render_group is production
 
 
 def test_server_receipts_for_21_pictures_take_four_emulated_submissions_not_21():
