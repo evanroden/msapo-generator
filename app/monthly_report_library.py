@@ -131,14 +131,19 @@ def _qa_path_guard(path: Path) -> None:
 
 
 def _read(path: Path) -> dict:
+    return _read_with_bytes(path)[0]
+
+
+def _read_with_bytes(path: Path) -> tuple[dict, bytes]:
     _qa_path_guard(path)
     try:
         if path.stat().st_size > MAX_JSON_BYTES:
             raise LibraryError("Saved report metadata exceeds the storage limit.")
-        value = json.loads(path.read_bytes())
+        raw = path.read_bytes()
+        value = json.loads(raw)
         if not isinstance(value, dict) or value.get("schema") != 1:
             raise LibraryError("Unsupported report storage schema; existing data was preserved.")
-        return value
+        return value, raw
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise LibraryError("Saved report data could not be read; existing data was preserved.") from exc
 
@@ -879,6 +884,10 @@ def starting_contribution(contract: str, key: str, period: ReportPeriod,
 def load_imported_draft(contract: str, key: str, *, source_view=None) -> ReportDraft | None:
     path = _profile_path(contract, key)
     value = _read(path / "manifest.json")
+    return _load_imported_draft_value(value, path, contract, key, source_view=source_view)
+
+
+def _load_imported_draft_value(value, path, contract, key, *, source_view=None):
     draft = draft_from_dict(value["bootstrap"]) if value.get("bootstrap") else None
     if draft is None:
         if source_view is not None or "import_source_view" in value:
@@ -896,6 +905,54 @@ def load_imported_draft(contract: str, key: str, *, source_view=None) -> ReportD
 def imported_snapshot_revision(contract: str, key: str) -> int:
     value = _read(_profile_path(contract, key) / "manifest.json")
     return int(value.get("bootstrap_snapshot_revision", 0))
+
+
+@contextmanager
+def _imported_draft_read(contract: str, key: str):
+    """One read-only selection operation, not a reusable proof/cache token.
+
+    Reload independently on every entry. Before returning selected drafts,
+    reject changed metadata, immutable original or canonical receipt. Output,
+    saves and previews retain their own independent verification boundaries.
+    """
+    from app.monthly_report_source_view_runtime import _file_digest
+    from app.monthly_report_compatibility_view import MAX_VIEW_SOURCE_BYTES
+    folder = _profile_path(contract, key)
+    manifest = folder / "manifest.json"
+    def digest(path, limit):
+        _qa_path_guard(path)
+        try:
+            return _file_digest(path, limit)
+        except OSError as exc:
+            raise LibraryError("Saved report evidence disappeared or could not be read during report selection.") from exc
+
+    value, raw = _read_with_bytes(manifest)
+    before = hashlib.sha256(raw).hexdigest()
+    draft = _load_imported_draft_value(value, folder, contract, key)
+    if digest(manifest, MAX_JSON_BYTES) != before:
+        raise LibraryError("Saved report metadata changed during report selection.")
+    evidence = [(manifest, MAX_JSON_BYTES, before)]
+    if "import_source_view" in value:
+        # The loader above has independently checked this exact head, scope,
+        # original and artwork receipt. Never infer a replacement receipt.
+        record = value.get("source_views", {}).get(value["import_source_view"])
+        if draft is None or not isinstance(record, dict) or not isinstance(record.get("scope"), dict):
+            raise LibraryError("Saved source-view head changed during report selection.")
+        scope = record["scope"]
+        evidence.extend((
+            (folder / "imports" / (draft.profile.imported_from + ".docx"),
+             MAX_VIEW_SOURCE_BYTES, draft.profile.imported_from),
+            (_source_view_receipt_path(folder, scope), MAX_JSON_BYTES, scope["receipt_sha256"]),
+        ))
+
+    def unchanged():
+        for path, limit, expected in evidence:
+            if digest(path, limit) != expected:
+                raise LibraryError("Saved report evidence changed during report selection. Retry without changing the report.")
+
+    unchanged()
+    yield draft, int(value.get("bootstrap_snapshot_revision", 0))
+    unchanged()
 
 
 def imported_original(contract: str, key: str) -> Path | None:

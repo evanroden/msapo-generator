@@ -55,12 +55,33 @@ def latest_saved_draft(contract, key, period, *, before=False):
     saved = None if before else library.load_snapshot(contract, key, period)
     saved = saved or latest_snapshot(contract, key, period)
     imported = library.load_imported_draft(contract, key)
+    return _select_saved_draft(saved, imported, contract, key, period, before=before)
+
+
+def _select_saved_draft(saved, imported, contract, key, period, *, before=False, import_revision=None):
     if imported and (imported.period.key < period.key if before else imported.period.key <= period.key):
         if not saved or imported.period.key > saved.draft.period.key:
             return imported
-        if imported.period == saved.draft.period and library.imported_snapshot_revision(contract, key) == saved.revision:
-            return imported
+        if imported.period == saved.draft.period:
+            revision = (library.imported_snapshot_revision(contract, key)
+                        if import_revision is None else import_revision)
+            if revision == saved.revision:
+                return imported
     return saved.draft if saved else None
+
+
+def read_starting_state(contract, key, period):
+    """Read both starting candidates with one fresh, bounded source proof.
+
+    Keep the existing snapshot lookup order and month/revision precedence.
+    The imported result is local to this call, never session/global state.
+    """
+    with library._imported_draft_read(contract, key) as (imported, import_revision):
+        prior = latest_snapshot(contract, key, period)
+        saved = latest_snapshot(contract, key, period)
+        prior_draft = _select_saved_draft(saved, imported, contract, key, period,
+                                        before=True, import_revision=import_revision)
+    return imported, prior, prior_draft
 
 
 def recommended_designs(profile, profiles, period):
