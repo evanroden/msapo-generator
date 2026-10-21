@@ -85,8 +85,10 @@ def render_administration(kind, field, *, mode):
 def render_storage_maintenance():
     """Administrative tools kept out of ordinary monthly authoring."""
     if st.button("Check available storage", key="report_storage_check"):
+        from app.monthly_report_directory_retention import expire_quietly
         from app.monthly_report_storage import storage_summary
         try:
+            expire_quietly()  # apply the 30-day directory workbook retention
             st.session_state["report_storage_summary"] = storage_summary()
         except OSError:
             st.session_state.pop("report_storage_summary", None)
@@ -94,7 +96,7 @@ def render_storage_maintenance():
     if storage := st.session_state.get("report_storage_summary"):
         from app.monthly_report_storage import readable_bytes
         st.write(f"Disk capacity: {readable_bytes(storage['total'])} · Available: {readable_bytes(storage['free'])} · Monthly report files: {'at least ' if not storage['complete'] else ''}{readable_bytes(storage['monthly'])}")
-        st.caption("Measured when you click Check available storage. The disk is also used by other app workflows. Originals are retained. Identical new assets and source files share one stored copy across all contracts and sites. Monthly history keeps references, so changing one site's selection does not change another report. Existing files can be consolidated below.")
+        st.caption("Measured when you click Check available storage. The disk is also used by other app workflows. Report originals are retained; contact-directory workbooks are deleted 30 days after their latest import. Identical new assets and source files share one stored copy across all contracts and sites. Monthly history keeps references, so changing one site's selection does not change another report. Existing files can be consolidated below.")
         if storage["free"] < max(512 * 1024 * 1024, storage["total"] * .05):
             st.warning("Storage is running low. Keep space available before importing more large reports. This check does not delete anything.")
     if st.button("Consolidate duplicate stored files", key="report_storage_consolidate"):

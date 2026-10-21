@@ -1017,10 +1017,14 @@ def save_directory(contract, sites, *, expected_revision, actor, confirmed, raw=
         state = DirectoryState(stored_contract, expected_revision + 1, sites, actor, library._now(), source_sha256, source_sheet, action, _archived, contacts)
         encoded = library._json({"schema": 1, **asdict(state)})
         if raw is not None:
-            library._atomic_write(library._root() / "directory_sources" / (source_sha256 + ".xlsx"), raw)
+            # Kept 30 days after its latest import (#291); history never reads it.
+            from app.monthly_report_directory_retention import store_import
+            store_import(source_sha256, raw)
         library._atomic_write(path / "history" / f"{state.revision:08d}.json", encoded)
         library._atomic_write(path / "manifest.json", encoded)
-        return state
+    from app.monthly_report_directory_retention import expire_quietly
+    expire_quietly()
+    return state
 
 
 def merge_sites(existing, incoming):
