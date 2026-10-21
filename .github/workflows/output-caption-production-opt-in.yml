@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 20
     env:
       MONTHLY_QA_EXPECTED_COMMIT: 2c204fccce618827be91103d9edaeaa79e1d0de5
-      MONTHLY_QA_RUN_LABEL: caption-before
+      MONTHLY_QA_RUN_LABEL: caption-before-native
       CAPTION_PHASE: before
     steps:
       - uses: actions/checkout@v4
@@ -35,8 +35,8 @@ jobs:
       - name: Record verifier identity and run normal native save and export controls
         run: |
           git rev-parse HEAD
-          python -m py_compile scripts/qa_output_caption_production.py
-          python -m scripts.qa_output_caption_production
+          python -m py_compile scripts/qa_output_caption_production.py scripts/qa_output_caption_native_history.py
+          python -m scripts.qa_output_caption_native_history
       - name: Retain synthetic receipts, outputs and first failure
         if: always()
         uses: actions/upload-artifact@v4
