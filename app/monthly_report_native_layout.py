@@ -538,13 +538,42 @@ def _fit_cover_photo(node, image_width, image_height):
             node.set(name, format(crop[key], ".8f"))
 
 
-def _table(element, columns, rows, *, physical_indices=(), continuation=False, keep_all_rows_intact=False):
+def _plain_row(row):
+    """A header copy for data: its geometry, without the header's fill or emphasis."""
+    row = deepcopy(row)
+    for tag in ("w:tblHeader", "w:cnfStyle", "w:shd"):
+        for node in list(row.iter(qn(tag))):
+            node.getparent().remove(node)
+    for properties in row.iter(qn("w:rPr")):
+        for tag in ("w:b", "w:bCs", "w:color", "w:caps", "w:highlight"):
+            for node in properties.findall(qn(tag)):
+                properties.remove(node)
+    return row
+
+
+def _data_row(element, continuation):
+    """The row current data copies: the table's last data row, else a plain header."""
+    rows = element.findall(qn("w:tr"))
+    header = max(rows[:2], key=lambda row: len(row.findall(qn("w:tc"))))
+    if continuation or rows.index(header) + 1 < len(rows):
+        return rows[-1]
+    return _plain_row(header)
+
+
+def _table(element, columns, rows, *, physical_indices=(), continuation=False, keep_all_rows_intact=False,
+           template=None):
+    """Write current rows into a native table.
+
+    ``template`` is the untouched source table when ``element`` was already
+    blanked to its header, so data rows still copy a source data row.
+    """
     explicit_header = bool(columns) and not continuation
     native_rows = element.findall(qn("w:tr"))
     if not native_rows:
         raise NativeLayoutError("The source table has no row geometry.")
     header = max(native_rows[:2], key=lambda row: len(row.findall(qn("w:tc"))))
-    prototype = native_rows[-1] if len(native_rows) > 1 else header
+    has_template = template is not None and template.find(qn("w:tr")) is not None
+    prototype = _data_row(template if has_template else element, continuation)
     width = len(columns) or max((len(row) for row in rows), default=0)
     if not width or width > 100 or any(len(row) > width for row in rows):
         raise NativeLayoutError("Current table columns do not match its row values.")
@@ -1520,7 +1549,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                         page_plan.assigned(anchor, last)
                 _table(anchor, columns, rows, physical_indices=shape.indices if shape else (),
                        continuation=bool(shape and shape.continuation),
-                       keep_all_rows_intact=(block.key == "contact_matrix"))
+                       keep_all_rows_intact=(block.key == "contact_matrix"), template=prototype)
                 page_plan.emitted(anchor, kind="table")
                 label = work_order_labels.get(anchor)
                 if label is not None and table_reference == source_ref_by_id[label[1]]:
