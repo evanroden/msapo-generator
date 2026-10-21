@@ -23,6 +23,10 @@ MAX_IMAGE_PIXELS = 4_000_000
 MAX_BATCH_PIXELS = 16_000_000
 
 
+def _unique_blocks(draft):
+    return len({b.key for b in draft.blocks}) == len(draft.blocks)
+
+
 def _manifest(draft, incarnation):
     used = used_block_keys(draft)
     blocks = tuple(refresh_asset_source_context(b, draft.sources) for b in draft.blocks)
@@ -79,14 +83,16 @@ def _blocked(draft, entries):
 
 
 def _choose(draft, assets, entries, deferred):
+    if not _unique_blocks(draft):
+        raise ValueError('Repeated section identifiers need correction before picture review.')
     pending = tuple(e for e in entries if e[1] in pending_asset_indexes(next(b for b in draft.blocks if b.key == e[0])))
     counts = Counter(e[2] for e in entries)
     fallback = _blocked(draft, entries)
-    fallback.update(e[0] for e in pending if counts[e[2]] != 1 or e[2] in deferred or not _eligible(draft, e))
+    fallback.update(e[0] for e in pending if counts[e[2]] != 1 or not _eligible(draft, e))
     selected, raw_images = [], []
     total_bytes = total_pixels = 0
     for entry in pending:
-        if entry[0] in fallback:
+        if entry[0] in fallback or entry[2] in deferred:
             continue
         try:
             raw, pixels = _read_picture(draft, assets, entry)
@@ -105,11 +111,16 @@ def _choose(draft, assets, entries, deferred):
         total_bytes += len(raw); total_pixels += pixels
         if len(selected) == MAX_PICTURES:
             break
+    # Deferred occurrences do not prevent reviewing later valid pictures.
+    # Offer their correction controls only after ordinary pending groups.
+    fallback.update(e[0] for e in pending if e[2] in deferred)
     return tuple(selected), raw_images, fallback
 
 
 def _apply(draft, assets, incarnation, request):
     """All validation precedes immutable receipt updates; no partial success."""
+    if not _unique_blocks(draft):
+        raise ValueError('Repeated section identifiers need correction before picture review.')
     draft, entries, identity = _manifest(draft, incarnation)
     expected, chosen, left = request['identity'], request['entries'], request['left']
     if not draft.prepared_by.strip() or identity != expected or not 0 < len(chosen) <= MAX_PICTURES:
@@ -158,6 +169,16 @@ def _queue_remove(prefix, envelope, entry):
     st.session_state.pop(prefix + '_picture_remove_active', None)
 
 
+def _next_correction(prefix, envelope, target):
+    if (st.session_state.get(prefix + '_picture_correction_active') != envelope
+            or target not in envelope['entries']):
+        return
+    st.session_state[prefix + '_picture_correction_cursor'] = (envelope['identity'], target)
+    for suffix in ('_picture_correction_active', '_picture_batch_active', '_picture_remove_active',
+                   '_picture_batch_request', '_picture_remove_request'):
+        st.session_state.pop(prefix + suffix, None)
+
+
 def _render_group(prefix, envelope, pictures):
     from app.monthly_report_picture_group import PictureMediaError, render_group
     key = prefix + '_picture_component_' + envelope['nonce']
@@ -171,9 +192,17 @@ def _render_group(prefix, envelope, pictures):
 
 def review_picture_batch(draft, assets, prefix, field, *, incarnation):
     """Bounded browser-decoded pictures per explicit confirmation, with opt-outs."""
+    if not _unique_blocks(draft):
+        for suffix in ('_picture_batch_active', '_picture_batch_request',
+                       '_picture_remove_active', '_picture_remove_request',
+                       '_picture_correction_active', '_picture_correction_cursor'):
+            st.session_state.pop(prefix + suffix, None)
+        st.warning('Repeated section identifiers need correction before pictures can be reviewed or removed here. Your pictures and other edits are unchanged.')
+        return draft
     draft, entries, identity = _manifest(draft, incarnation)
     removal = st.session_state.pop(prefix + '_picture_remove_request', None)
     if removal is not None:
+        st.session_state.pop(prefix + '_picture_correction_cursor', None)
         envelope, entry = removal
         if envelope['identity'] == identity and entry in entries:
             from app.monthly_report_saved_pictures_ui import remove_saved_picture
@@ -183,12 +212,16 @@ def review_picture_batch(draft, assets, prefix, field, *, incarnation):
     deferred = st.session_state.get(deferred_key, ())
     request = st.session_state.pop(prefix + '_picture_batch_request', None)
     if request is not None:
+        st.session_state.pop(prefix + '_picture_correction_cursor', None)
         try:
             draft = _apply(draft, assets, incarnation, request)
         except (ValueError, OSError, SyntaxError, Image.DecompressionBombError):
             st.warning('Those pictures changed or could not be checked. Nothing was marked ready; review them again.')
         else:
-            deferred = tuple(set((*deferred, *(e[2] for e in request['left']))))
+            left_fingerprints = tuple(e[2] for e in request['left'])
+            # Re-deferring a correction moves it behind the other deferred
+            # occurrences, so no doubtful first picture traps navigation.
+            deferred = tuple(fp for fp in deferred if fp not in left_fingerprints) + left_fingerprints
             st.session_state[deferred_key] = deferred
         draft, entries, identity = _manifest(draft, incarnation)
     selected, raw_images, fallback = _choose(draft, assets, entries, deferred)
@@ -197,9 +230,17 @@ def review_picture_batch(draft, assets, prefix, field, *, incarnation):
     # After ordinary groups, inspect just one current pending picture, using
     # the same strict browser and server gates. Unsupported pictures stay
     # removable via the unchanged removal helper, including cover artwork.
+    correction_navigation = None
     if not selected and fallback:
-        current = next((e for e in entries if e[0] in fallback and
-                        e[1] in pending_asset_indexes(next(b for b in draft.blocks if b.key == e[0]))), None)
+        pending_corrections = [e for e in entries if e[0] in fallback and
+                               e[1] in pending_asset_indexes(next(b for b in draft.blocks if b.key == e[0]))]
+        deferred_order = {fp: i for i, fp in enumerate(deferred)}
+        pending_corrections.sort(key=lambda e: deferred_order.get(e[2], -1))
+        cursor = st.session_state.get(prefix + '_picture_correction_cursor')
+        current = (cursor[1] if cursor and cursor[0] == identity and cursor[1] in pending_corrections
+                   else next(iter(pending_corrections), None))
+        if len(pending_corrections) > 1:
+            correction_navigation = (tuple(pending_corrections), current)
         if current:
             correction_entries = (current,)
             counts = Counter(e[2] for e in entries)
@@ -212,6 +253,20 @@ def review_picture_batch(draft, assets, prefix, field, *, incarnation):
                     selected, raw_images = (current,), [(raw, pixels)]
             else:
                 st.warning('This picture needs source or occurrence correction. Correct it in its section, or remove it from this draft below.')
+    navigation_key = prefix + '_picture_correction_active'
+    if correction_navigation:
+        candidates, current = correction_navigation
+        navigation = st.session_state.get(navigation_key)
+        if (not navigation or navigation['identity'] != identity
+                or navigation['entries'] != candidates or navigation['current'] != current):
+            navigation = {'identity': identity, 'entries': candidates, 'current': current, 'nonce': uuid4().hex}
+        st.session_state[navigation_key] = navigation
+        target = candidates[(candidates.index(current) + 1) % len(candidates)]
+        st.button('Next picture to correct', key=prefix + '_picture_next_' + navigation['nonce'],
+                  on_click=_next_correction, args=(prefix, navigation, target))
+        st.caption('Moving to another picture does not mark this one ready or remove it.')
+    else:
+        st.session_state.pop(navigation_key, None)
     active_key = prefix + '_picture_batch_active'
     if selected:
         active = st.session_state.get(active_key)
