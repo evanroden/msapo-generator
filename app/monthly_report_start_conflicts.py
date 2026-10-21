@@ -12,7 +12,7 @@ import json
 import re
 
 from app.monthly_report_model import ReportDraft, ResolvedBlock
-from app.monthly_report_start_replay import merge_starting_drafts
+from app.monthly_report_start_replay import merge_starting_drafts, same_replacement_page_spec
 
 LABELS = {
     "org_chart": "Organization chart",
@@ -73,8 +73,7 @@ def image_conflicts(existing: ReportDraft | None, incoming: ReportDraft,
         present = old.get(block.key)
         if (block.key not in LABELS or not present or not _picture_only(present)
                 or not _picture_only(block) or present.asset_hashes == block.asset_hashes
-                or specs.get(block.key) != new_specs.get(block.key)
-                or specs.get(block.key) is None or specs[block.key].type != "image_page"):
+                or not same_replacement_page_spec(specs.get(block.key), new_specs.get(block.key))):
             continue
         # Reuse the actual three-way policy: unchanged consumed source content
         # must not prompt again merely because a human edited the report later.
