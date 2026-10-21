@@ -41,8 +41,11 @@ def layout_checks(draft):
             elif spec.type == "image_grid" and block.asset_hashes:
                 if photo_pages is None:
                     photo_pages = _renders_photo_pages(draft.profile)
-                if photo_pages:
-                    for index in photo_caption_problems(block):
+                if photo_pages and type(block.photos_per_page) is int and 1 <= block.photos_per_page <= 6:
+                    from app.monthly_report_asset_layout import picture_runs, photo_run
+                    problems = (indexes[local] for is_document, indexes in picture_runs(block, draft.sources)
+                                if not is_document for local in photo_caption_problems(photo_run(block, indexes)))
+                    for index in problems:
                         checks.append(ReportCheck(
                             "photo_caption",
                             f"Shorten photo caption {index + 1} in {_label(spec.key)}, or choose fewer "

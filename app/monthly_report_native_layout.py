@@ -1532,39 +1532,58 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                              if ref not in retained_images[block.key]]
             images = [asset_loader(block.asset_hashes[index]) for index in image_indexes]
         if images:
+            from app.monthly_report_asset_layout import document_page_indexes
+            document_indexes = document_page_indexes(block, draft.sources)
             anchors = image_prototypes.get(block.key)
             if not anchors:
                 choices = section_images.get(sec) or global_images
-                if not choices and block.key in ("improvements", "cover_photo", "brand_logo", "client_logo"):
+                if (not choices and block.key in ("improvements", "cover_photo", "brand_logo", "client_logo")
+                        and not all(i in document_indexes for i in image_indexes)):
                     raise NativeLayoutError(f"The source has no native picture frame for {block.key}.")
                 # Technical content needs the section's page geometry, not an
                 # old photograph. Empty chart pages can accept a new inline frame.
                 prototype = choices[0] if choices else OxmlElement("w:p")
                 anchors = [(append_native(sec, prototype), prototype)]
             last = None
+            photo_index = 0
+            previous_document = False
             for index, data in enumerate(images):
-                anchor, prototype = anchors[min(index, len(anchors) - 1)]
-                technical = block.key not in ("improvements", "cover_photo", "brand_logo", "client_logo")
+                asset_index = image_indexes[index] if image_indexes else index
+                source_page = asset_index in document_indexes
+                anchor_index = photo_index if document_indexes else index
+                anchor, prototype = anchors[min(anchor_index, len(anchors) - 1)]
+                technical = source_page or block.key not in ("improvements", "cover_photo", "brand_logo", "client_logo")
                 if technical:
-                    clone = page_plan.technical_picture(document, anchor if index < len(anchors) else last, data, new_page=index > 0,
-                                                        caption=bool(block.asset_captions))
+                    tail_space = (page_plan.trailing_picture_space(document,
+                                  anchor if anchor_index < len(anchors) else last)
+                                  if source_page and index == len(images) - 1 else 0)
+                    clone = page_plan.technical_picture(document, anchor if anchor_index < len(anchors) else last, data, new_page=index > 0 or (source_page and bool(retained_images[block.key])),
+                                                        caption=bool(block.asset_captions), tail_space=tail_space)
                 else:
                     clone = deepcopy(prototype)
                     for properties in list(clone.iter(qn("w:sectPr"))):
                         properties.getparent().remove(properties)
                     _set_text(clone, "")
                     _replace_image(document, clone, data, contain=block.key == "improvements")
-                if index < len(anchors):
+                    if previous_document:
+                        from docx.text.paragraph import Paragraph
+                        first_paragraph = clone if clone.tag == qn("w:p") else next(clone.iter(qn("w:p")), None)
+                        if first_paragraph is not None:
+                            Paragraph(first_paragraph, document._body).paragraph_format.page_break_before = True
+                if anchor_index < len(anchors):
                     anchor.addprevious(clone)
                     page_plan.emitted(clone, anchor, kind="picture")
                     # The old frame may own the section boundary. Keep that
                     # boundary until page accounting has finished its reflow.
-                    if anchor.find(".//" + qn("w:sectPr")) is None:
+                    if not source_page and anchor.find(".//" + qn("w:sectPr")) is None:
                         anchor.getparent().remove(anchor)
                 else:
                     last.addnext(clone)
                     page_plan.emitted(clone, last, kind="picture")
                 last = clone
+                if not source_page:
+                    photo_index += 1
+                previous_document = source_page
                 caption_index = image_indexes[index] if image_indexes else index
                 if caption_index < len(block.asset_captions) and block.asset_captions[caption_index].strip():
                     choices = section_text.get(sec) or global_text

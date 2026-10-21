@@ -94,8 +94,8 @@ def _preview_verified_report(draft, asset_loader=None, *, source_view=None, fing
     if not draft.sections:
         raise ValueError("Add report sections before creating a preview.")
 
-    photo_assets = {ref for block in draft.blocks if block.key in ('cover_photo', 'improvements')
-                    for ref in block.asset_hashes}
+    from app.monthly_report_asset_layout import photo_preview_references
+    photo_assets = photo_preview_references(draft)
     logo_assets = {ref for block in draft.blocks if block.key in ('brand_logo', 'client_logo')
                    for ref in block.asset_hashes}
 

@@ -104,7 +104,57 @@ class NativePages:
         if root is not None and source in self.owner:
             self.owner[root] = self.owner[source]
 
-    def technical_picture(self, document, origin, raw, *, new_page=False, caption=False):
+    def trailing_picture_space(self, document, origin):
+        """Reserve retained empty paragraphs through their next page boundary.
+
+        Source paragraphs are not removed, moved or reinterpreted as consent.
+        This only budgets space for a new final document-page picture. Unknown
+        markup stops the scan rather than claiming it is disposable scaffolding.
+        """
+        total = 0
+        node = origin.getnext()
+        allowed = {qn('w:p'), qn('w:pPr'), qn('w:r'), qn('w:rPr'), qn('w:t'), qn('w:br')}
+        while node is not None and node.tag == qn('w:p'):
+            if any((text.text or '').strip() for text in node.iter(qn('w:t'))):
+                break
+            if node.find('.//' + qn('w:sectPr')) is not None:
+                break
+            # Formatting subtrees may contain font/spacing values, but unknown
+            # content (fields/bookmarks/artwork) is not an empty paragraph.
+            content = [child for child in node.iter()
+                       if not any(parent.tag in (qn('w:pPr'), qn('w:rPr'))
+                                  for parent in child.iterancestors())]
+            if any(child.tag not in allowed for child in content):
+                break
+            paragraph = Paragraph(node, document._body)
+            styles, seen_styles = [], set()
+            style = paragraph.style
+            while style is not None and style.style_id not in seen_styles:
+                seen_styles.add(style.style_id)
+                styles.append(style)
+                style = style.base_style
+            formats = [paragraph.paragraph_format, *(style.paragraph_format for style in styles)]
+            page_break = next((form.page_break_before for form in formats
+                               if form.page_break_before is not None), False)
+            if page_break:
+                break  # This paragraph already belongs to the next page.
+            def spacing(name):
+                return next((int(value.twips) for form in formats
+                             if (value := getattr(form, name)) is not None), 0)
+            sizes = [run.font.size.twips for run in paragraph.runs if run.font.size is not None]
+            sizes += [style.font.size.twips for style in styles if style.font.size is not None]
+            # Budget the effective paragraph line height plus its inherited
+            # spacing. A single empty line still occupies a Word line box.
+            line = next((form.line_spacing for form in formats if form.line_spacing is not None), 1.2)
+            line_height = (int(line.twips) if hasattr(line, 'twips')
+                           else round(max(sizes, default=220) * max(1.2, float(line))))
+            total += line_height + spacing('space_before') + spacing('space_after')
+            if any(br.get(qn('w:type')) == 'page' for br in node.iter(qn('w:br'))):
+                break
+            node = node.getnext()
+        return total
+
+    def technical_picture(self, document, origin, raw, *, new_page=False, caption=False, tail_space=0):
         """New chart/evidence pages contain all pixels, never a photo's crop."""
         from app.monthly_report_docx import _fit_picture
         root = self._root(origin)
@@ -120,6 +170,7 @@ class NativePages:
         height = value(size, 'h', 15840) - top - max(bottom, value(margin, 'footer', 0) + 200) - clearance - 60
         if caption:
             height -= 480
+        height -= tail_space
         if min(width, height) <= 0:
             raise ValueError('The native page has no usable picture area. Check the master page margins.')
         element = OxmlElement('w:p')
