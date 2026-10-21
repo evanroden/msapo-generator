@@ -4,6 +4,7 @@ Owner policy: an abandoned copy may be discarded after a day without use; shared
 originals and active or current-browser work never are. Synthetic data only.
 """
 from contextlib import contextmanager
+import contextvars
 from hashlib import sha256
 import json
 import os
@@ -36,9 +37,9 @@ def root(tmp_path, monkeypatch):
     return tmp_path
 
 
-def full_copy(token):
+def full_copy(token, size=admission.MAX_ACTIVE_COPY_BYTES):
     with run(token) as context:
-        with admission.admit_run_copy(context, admission.MAX_ACTIVE_COPY_BYTES):
+        with admission.admit_run_copy(context, size):
             context.data_root.joinpath("synthetic-copy.bin").write_bytes(b"SYNTHETIC staged copy")
     return context
 
@@ -123,7 +124,8 @@ def test_an_interrupted_admission_restores_set_aside_copies_once(root, monkeypat
     (doomed / "nested").mkdir(parents=True)
     calls = []
     recover = testing.recover_set_aside
-    monkeypatch.setattr(testing, "recover_set_aside", lambda base: calls.append(base) or recover(base))
+    monkeypatch.setattr(testing, "recover_set_aside",
+                        lambda base, reserved: calls.append(base) or recover(base, reserved))
     monkeypatch.setattr(testing, "set_aside_idle", lambda *args, **kwargs: None)  # observe recovery only
     with run(B) as other, pytest.raises(storage.VaultQuotaExceeded):
         with admission.admit_run_copy(other, 1):
@@ -170,13 +172,134 @@ def test_activity_during_the_check_puts_the_namespace_back(root, monkeypatch):
 def test_an_unreadable_subtree_is_never_treated_as_idle(root, monkeypatch):
     hidden = full_copy(A)
     age(hidden.data_root, 25)
-    walk = os.walk
+    (hidden.data_root / "synthetic-locked").mkdir()
+    age(hidden.data_root, 25)
+    scandir = os.scandir
 
-    def failing_walk(top, onerror=None, followlinks=False):
-        if onerror:
-            onerror(PermissionError("synthetic unreadable folder"))
-        yield from walk(top, followlinks=followlinks)
+    def unreadable(path):
+        if Path(path).name == "synthetic-locked":
+            raise PermissionError("synthetic unreadable folder")
+        return scandir(path)
 
-    monkeypatch.setattr(testing.os, "walk", failing_walk)
+    monkeypatch.setattr(testing.os, "scandir", unreadable)
     assert not testing.reclaim_idle(root, hidden.scope, hidden.generation)
     assert hidden.data_root.exists()
+
+
+def test_reclaim_waits_for_a_returning_request_recording_its_use(root, monkeypatch):
+    returning = full_copy(A)
+    age(returning.data_root, 25)
+    outcome, utime = [], os.utime
+
+    def reclaim_meanwhile(path, *args, **kwargs):
+        if Path(path).name == testing._SENTINEL:  # the request is recording its use
+            outcome.append(contextvars.Context().run(testing.reclaim_idle, root, returning.scope, returning.generation))
+        return utime(path, *args, **kwargs)
+
+    monkeypatch.setattr(testing.os, "utime", reclaim_meanwhile)
+    with run(A) as context:
+        assert context.data_root.exists()
+    assert outcome == [False] and (returning.data_root / "synthetic-copy.bin").exists()
+
+
+def test_a_request_that_finds_its_namespace_moved_fails_closed(root, monkeypatch):
+    returning = full_copy(A)
+    age(returning.data_root, 25)
+    marker = testing._marker
+
+    def reclaimed_right_after_the_check(sentinel, identity):
+        generation = marker(sentinel, identity)
+        contextvars.Context().run(testing.reclaim_idle, root, returning.scope, returning.generation)
+        return generation
+
+    monkeypatch.setattr(testing, "_marker", reclaimed_right_after_the_check)
+    with testing.isolated(A), pytest.raises(OSError, match="reset during a running task"):
+        memory._data_dir()
+
+
+def test_a_scan_error_after_a_set_aside_puts_it_back(root):
+    abandoned = full_copy(A, 1024)
+    broken = full_copy("c" * 32, 1024)
+    age(abandoned.data_root, 25)
+    (broken.data_root / testing._SENTINEL).unlink()  # a later record cannot be checked
+    with run(B) as other, pytest.raises(storage.VaultIntegrityError):
+        with admission.admit_run_copy(other, 1):
+            pytest.fail("Admission continued past an unreadable record")
+    assert (abandoned.data_root / "synthetic-copy.bin").exists()
+    assert not list((root / testing._BUCKET).glob(".reclaimed-*"))
+
+
+def test_copies_released_by_a_committed_admission_are_never_restored(root, monkeypatch):
+    abandoned = full_copy(A)
+    age(abandoned.data_root, 25)
+    discard = testing.discard_set_aside
+    monkeypatch.setattr(testing, "discard_set_aside", lambda tombstone: None)  # crash right after commit
+    with run(B) as other:
+        with admission.admit_run_copy(other, 4096):
+            pass
+    assert list((root / testing._BUCKET).glob(".reclaimed-*"))
+    monkeypatch.setattr(testing, "discard_set_aside", discard)
+    with run("c" * 32) as third:
+        with admission.admit_run_copy(third, 1):
+            pass
+    assert not abandoned.data_root.exists()
+    assert not list((root / testing._BUCKET).glob(".reclaimed-*"))
+    assert [item["scope"] for item in reservations(root)] == [other.scope, third.scope]
+
+
+def test_a_failed_check_after_the_move_puts_the_namespace_back(root, monkeypatch):
+    abandoned = full_copy(A)
+    age(abandoned.data_root, 25)
+    measure, rename = testing._last_change, os.rename
+
+    def unmeasurable_once_moved(target):
+        if target.name.startswith(testing._SET_ASIDE):
+            raise PermissionError("synthetic unreadable copy")
+        return measure(target)
+
+    monkeypatch.setattr(testing, "_last_change", unmeasurable_once_moved)
+    assert testing.set_aside_idle(root, abandoned.scope, abandoned.generation) is None
+    assert (abandoned.data_root / "synthetic-copy.bin").exists()
+
+    def refuse_putting_back(source, destination):
+        if Path(destination) == abandoned.data_root:
+            raise PermissionError("synthetic refusal")
+        rename(source, destination)
+
+    monkeypatch.setattr(testing.os, "rename", refuse_putting_back)
+    with pytest.raises(PermissionError):  # explicit, not a silent "kept"
+        testing.set_aside_idle(root, abandoned.scope, abandoned.generation)
+    monkeypatch.setattr(testing.os, "rename", rename)
+    testing.recover_set_aside(root, {(abandoned.scope, abandoned.generation)})
+    assert (abandoned.data_root / "synthetic-copy.bin").exists()
+
+
+def test_the_scan_stops_at_its_limit_inside_one_large_folder(root, monkeypatch):
+    crowded = full_copy(A)
+    for number in range(50):
+        (crowded.data_root / f"synthetic-{number}.bin").write_bytes(b"")
+    age(crowded.data_root, 25)
+    read, scandir = [], os.scandir
+
+    class Counting:
+        def __init__(self, path):
+            self.entries = scandir(path)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.entries.close()
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            entry = next(self.entries)
+            read.append(entry.name)
+            return entry
+
+    monkeypatch.setattr(testing, "_MEASURE_LIMIT", 5)
+    monkeypatch.setattr(testing.os, "scandir", Counting)
+    assert testing._last_change(crowded.data_root) is None
+    assert len(read) == 6

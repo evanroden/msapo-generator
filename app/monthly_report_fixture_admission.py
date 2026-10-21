@@ -140,20 +140,21 @@ def admit_run_copy(context, added_bytes: int):
             with storage._admission_lock(directory):
                 validate_run(context)  # A waiting caller may have been reset.
                 existing = _load(directory)
-                testing.recover_set_aside(root.parent.parent)
-                retained, set_aside = [], []
-                for item in existing:
-                    if not _generation_exists(base, item):
-                        continue
-                    # Idle copies are only set aside here; they are deleted once
-                    # this admission is committed and restored if it fails.
-                    tombstone = (None if item.scope == context.scope
-                                 else testing.set_aside_idle(root.parent.parent, item.scope, item.generation))
-                    if tombstone is None:
-                        retained.append(item)
-                    else:
-                        set_aside.append(tombstone)
+                testing.recover_set_aside(root.parent.parent, {(item.scope, item.generation) for item in existing})
+                set_aside = []
                 try:
+                    retained = []
+                    for item in existing:
+                        if not _generation_exists(base, item):
+                            continue
+                        # Idle copies are only set aside here; they are deleted once
+                        # this admission is committed and restored if anything fails.
+                        tombstone = (None if item.scope == context.scope
+                                     else testing.set_aside_idle(root.parent.parent, item.scope, item.generation))
+                        if tombstone is None:
+                            retained.append(item)
+                        else:
+                            set_aside.append(tombstone)
                     _admit(directory, context, reservation, retained)
                 except BaseException:
                     for tombstone in set_aside:
@@ -162,6 +163,8 @@ def admit_run_copy(context, added_bytes: int):
                         except OSError:
                             pass  # recovered by the next admission
                     raise
+                # Committed: a crash from here on leaves set-aside copies the index
+                # no longer lists, which the next admission deletes.
                 for tombstone in set_aside:
                     testing.discard_set_aside(tombstone)
                 # A stale lease cannot begin its write, including if reset
