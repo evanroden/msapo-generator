@@ -1266,15 +1266,20 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             def accept_workorders(report=report, profile=profile, period=period, previous=previous, prefix=prefix,
                                   current_source=current_source, action_scope=action_scope):
                 from app.monthly_report_source_scope import contribution_receipt
+                # A delivered text edit can reach the working draft before an
+                # interrupted rerender refreshes this button's callback. Bind
+                # to that exact receipt at activation, while the consumer still
+                # rejects a different report, source or unrelated block revision.
+                accepted_previous = _pending_rich_text_edit(prefix, previous) or previous
                 st.session_state[prefix + "_pending_accepted_workorders"] = {
                     "contract": profile.contract, "profile": profile.key,
-                    "month": period.key, "expected": previous.fingerprint,
+                    "month": period.key, "expected": accepted_previous.fingerprint,
                     "scope": action_scope,
                     "source_id": report.source_id, "reference": report.reference,
                     "text": report.text,
                     "scope_receipt": contribution_receipt(report.reference, profile, period,
                                                           destination, text=report.text, source=current_source,
-                                                          prior_block=previous),
+                                                          prior_block=accepted_previous),
                 }
             st.button("Add totals to summary",
                       key=local_key + "_accept_work_orders_" + report.source_id[:16] + "_" + action_scope,
