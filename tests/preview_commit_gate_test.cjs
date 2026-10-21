@@ -300,3 +300,18 @@ test('a direct radio activation with no observed start (arrow selection) holds',
     assert.equal(h.gate.pending,true,'an unknown prior state is treated as a change');
     h.cleanup();
 });
+
+
+for(const selected of [true,false])
+test('a label click and its forwarded input click agree ('+(selected?'already selected':'new choice')+')',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const radio=radioInput(selected),text={closest:s=>s==='label'?{querySelector:()=>radio}:null};
+    h.dispatch('pointerdown',{target:text});
+    h.dispatch('click',{target:text});
+    radio.checked=true;  // the browser then forwards a click to the input
+    h.dispatch('click',{target:radio});
+    assert.equal(h.gate.pending,!selected,selected?'re-clicking the selected option starts no run':'a new choice holds');
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();
+    assert.equal(h.sent.length,selected?2:0);
+    h.cleanup();
+});

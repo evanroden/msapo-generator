@@ -131,7 +131,9 @@ export default function(component) {
             const priorChecked = new WeakMap();
             const rememberChoice = event => {
                 const target = event.target;
-                if (target?.matches?.('input[type="radio"]')) priorChecked.set(target, target.checked);
+                const radio = target?.matches?.('input[type="radio"]') ? target :
+                    target?.closest?.('label')?.querySelector?.('input[type="radio"]');
+                if (radio) priorChecked.set(radio, radio.checked);
             };
             const nativeChoiceClick = event => {
                 const target = event.target;
@@ -159,7 +161,10 @@ export default function(component) {
                 // the input) is checked before dispatch, so use the state seen
                 // at the gesture's start, and hold when that is unknown.
                 const choice = label?.querySelector('input[type="checkbox"], input[type="radio"]');
+                // A label click is followed by the browser's forwarded click on
+                // its input; record the state here so both read the same answer.
                 const direct = choice && target === choice;
+                if (choice && !direct) priorChecked.set(choice, choice.checked);
                 const wasSelected = direct ? priorChecked.get(choice) === true : choice?.checked;
                 if (direct) priorChecked.delete(choice);
                 const choiceChanges = choice && !choice.disabled &&
