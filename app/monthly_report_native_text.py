@@ -109,9 +109,15 @@ def _points(value):
 
 
 def reserve_running_header(document, properties):
-    """Reserve only measured, page-anchored header content on rewritten pages.
+    top = running_header_top(properties, header_parts(document, properties))
+    if top is not None:
+        properties.find(qn('w:pgMar')).set(qn('w:top'), top)
 
-    Source-replay/divider regions never call this. Paragraph-relative shapes,
+
+def running_header_top(properties, headers):
+    """Compute a top margin from measured, page-anchored header content.
+
+    Callers apply the result only to rewritten text, never source-replay/divider regions. Paragraph-relative shapes,
     grouped coordinate spaces and full-page watermark/background canvases are
     not evidence of a running header and do not authorize a margin correction.
     """
@@ -128,7 +134,7 @@ def reserve_running_header(document, properties):
     if not 0 <= top < page_height:
         return
     bottoms = []
-    for part in header_parts(document, properties):
+    for part in headers:
         for anchor in part.iter(qn('wp:anchor')):
             position = anchor.find(qn('wp:positionV'))
             extent = anchor.find(qn('wp:extent'))
@@ -162,4 +168,4 @@ def reserve_running_header(document, properties):
     if bottoms:
         corrected = max(top, max(bottoms) + 6)
         if corrected < page_height / 3:
-            margin.set(qn('w:top'), str(math.ceil(corrected * 20)))
+            return str(math.ceil(corrected * 20))

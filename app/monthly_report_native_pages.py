@@ -41,10 +41,13 @@ def _effective(properties, inherited):
 class NativePages:
     """Keep emission accounting beside the original physical section geometry."""
 
-    def __init__(self, body, original, section_by_pos, headings, unchanged_positions, *, fresh=False):
+    def __init__(self, body, original, section_by_pos, headings, unchanged_positions, *, fresh=False, source_header_scope=None):
         from app.monthly_report_import import _is_native_divider_background, _text
         self.body, self.fresh = body, fresh
         self.owner, self.live, self.kinds, self.regions = {}, set(), {}, []
+        self.source_word_sections = []
+        self.source_header_scope = source_header_scope
+        self.reserved_source_sections = set()
         self.support = set()
         self.headings = {original[p - 1] for p in headings}
         divider_sections = {section_by_pos.get(p) for p in headings
@@ -52,11 +55,12 @@ class NativePages:
         self.redundant_headings = {original[p - 1] for p in headings
                                   if section_by_pos.get(p) in divider_sections
                                   and not _is_native_divider_background(original[p - 1], _text(original[p - 1]))}
-        inherited, start = {}, 0
+        inherited, start, word_section = {}, 0, 0
         for end, element in enumerate(original):
             properties = _boundary(element)
             if properties is None:
                 continue
+            word_section += 1
             original_properties = deepcopy(properties)
             properties = _effective(properties, inherited)
             indices = list(range(start, end + 1))
@@ -73,6 +77,7 @@ class NativePages:
                 logical = {section_by_pos.get(i + 1) for i in range(left, right) if original[i].tag != qn('w:sectPr')}
                 divider = any(i in art_positions for i in range(left, right))
                 region = len(self.regions)
+                self.source_word_sections.append(word_section)
                 self.regions.append(PageRegion(properties, original_properties, unchanged or cover or divider or len(logical) > 1,
                                                split=len(boundaries) > 2))
                 for node in nodes:
@@ -99,7 +104,57 @@ class NativePages:
         if root is not None and source in self.owner:
             self.owner[root] = self.owner[source]
 
-    def technical_picture(self, document, origin, raw, *, new_page=False, caption=False):
+    def trailing_picture_space(self, document, origin):
+        """Reserve retained empty paragraphs through their next page boundary.
+
+        Source paragraphs are not removed, moved or reinterpreted as consent.
+        This only budgets space for a new final document-page picture. Unknown
+        markup stops the scan rather than claiming it is disposable scaffolding.
+        """
+        total = 0
+        node = origin.getnext()
+        allowed = {qn('w:p'), qn('w:pPr'), qn('w:r'), qn('w:rPr'), qn('w:t'), qn('w:br')}
+        while node is not None and node.tag == qn('w:p'):
+            if any((text.text or '').strip() for text in node.iter(qn('w:t'))):
+                break
+            if node.find('.//' + qn('w:sectPr')) is not None:
+                break
+            # Formatting subtrees may contain font/spacing values, but unknown
+            # content (fields/bookmarks/artwork) is not an empty paragraph.
+            content = [child for child in node.iter()
+                       if not any(parent.tag in (qn('w:pPr'), qn('w:rPr'))
+                                  for parent in child.iterancestors())]
+            if any(child.tag not in allowed for child in content):
+                break
+            paragraph = Paragraph(node, document._body)
+            styles, seen_styles = [], set()
+            style = paragraph.style
+            while style is not None and style.style_id not in seen_styles:
+                seen_styles.add(style.style_id)
+                styles.append(style)
+                style = style.base_style
+            formats = [paragraph.paragraph_format, *(style.paragraph_format for style in styles)]
+            page_break = next((form.page_break_before for form in formats
+                               if form.page_break_before is not None), False)
+            if page_break:
+                break  # This paragraph already belongs to the next page.
+            def spacing(name):
+                return next((int(value.twips) for form in formats
+                             if (value := getattr(form, name)) is not None), 0)
+            sizes = [run.font.size.twips for run in paragraph.runs if run.font.size is not None]
+            sizes += [style.font.size.twips for style in styles if style.font.size is not None]
+            # Budget the effective paragraph line height plus its inherited
+            # spacing. A single empty line still occupies a Word line box.
+            line = next((form.line_spacing for form in formats if form.line_spacing is not None), 1.2)
+            line_height = (int(line.twips) if hasattr(line, 'twips')
+                           else round(max(sizes, default=220) * max(1.2, float(line))))
+            total += line_height + spacing('space_before') + spacing('space_after')
+            if any(br.get(qn('w:type')) == 'page' for br in node.iter(qn('w:br'))):
+                break
+            node = node.getnext()
+        return total
+
+    def technical_picture(self, document, origin, raw, *, new_page=False, caption=False, tail_space=0, minimum_width=0):
         """New chart/evidence pages contain all pixels, never a photo's crop."""
         from app.monthly_report_docx import _fit_picture
         root = self._root(origin)
@@ -110,11 +165,14 @@ class NativePages:
         def value(node, key, default):
             return int(node.get(qn('w:' + key), str(default))) if node is not None else default
         width = value(size, 'w', 12240) - value(margin, 'left', 720) - value(margin, 'right', 720)
+        if width < minimum_width:
+            raise ValueError('The native source-page area is too narrow for its caption. Use a wider report-page section.')
         top, bottom = value(margin, 'top', 720), value(margin, 'bottom', 720)
         clearance = max(0, value(margin, 'header', 0) + 280 - top)
         height = value(size, 'h', 15840) - top - max(bottom, value(margin, 'footer', 0) + 200) - clearance - 60
         if caption:
             height -= 480
+        height -= tail_space
         if min(width, height) <= 0:
             raise ValueError('The native page has no usable picture area. Check the master page margins.')
         element = OxmlElement('w:p')
@@ -186,8 +244,18 @@ class NativePages:
                     properties.insert(0, deepcopy(node))
                 inherited[key] = node.get(qn('r:id'))
             if document is not None and rewrite and any(self.kinds.get(node) == 'text' for node in nodes):
-                from app.monthly_report_native_text import reserve_running_header
-                reserve_running_header(document, properties)
+                if self.source_header_scope is None:
+                    from app.monthly_report_native_text import reserve_running_header
+                    reserve_running_header(document, properties)
+                else:
+                    source = self.source_word_sections[self.regions.index(region)]
+                    scope = self.source_header_scope
+                    if source not in scope.source_word_sections:
+                        raise ValueError('Rewritten text has no verified source header scope.')
+                    top = scope.reserved_top_margins[scope.source_word_sections.index(source)]
+                    if top is not None:
+                        properties.find(qn('w:pgMar')).set(qn('w:top'), top)
+                    self.reserved_source_sections.add(source)
             # At an artificial split, the retained divider still starts a page.
             if region.split:
                 kind = properties.find(qn('w:type'))
@@ -201,6 +269,7 @@ class NativePages:
                 self.body.append(node)
             if terminal:
                 self.body.append(properties)
+                self.owner[properties] = self.regions.index(region)
             elif not rewrite and boundaries:
                 # Only newly adjacent inherited chrome needs materializing.
                 actual = boundaries[-1]
@@ -216,3 +285,4 @@ class NativePages:
                     spacing.set(qn('w:' + key), value)
                 ppr.append(spacing); ppr.append(properties); paragraph.append(ppr)
                 self.body.append(paragraph)
+                self.owner[paragraph] = self.regions.index(region)

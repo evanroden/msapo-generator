@@ -239,6 +239,24 @@ def training_block(blocks):
     return blocks.get("training_summary", ResolvedBlock("training_summary", "This month"))
 
 
+def new_month_training(block):
+    """Carry standing requirements without carrying monthly completion tables.
+
+    Role references distinguish the standing matrix from monthly sessions.
+    Unidentified imported schemas keep the existing empty-schema rollover
+    behavior; column names alone do not establish ownership. Historical
+    snapshots and the shared Training store are never changed here.
+    """
+    tables = tuple(
+        table if table.reference == MATRIX_REF else ReportTable(table.columns, (), "")
+        for table in block.extra_tables if table.reference != EVENT_REF
+    )
+    return ResolvedBlock(
+        block.key, "Omit" if block.source == "Omit" else "This month",
+        photos_per_page=block.photos_per_page, extra_tables=tables,
+    )
+
+
 def events_for_period(block, period):
     """A standing completion is not evidence that training happened this month."""
     table = next((t for t in block.extra_tables if t.reference == EVENT_REF), None)

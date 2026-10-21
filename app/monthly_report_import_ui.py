@@ -13,7 +13,7 @@ import streamlit as st
 from app import monthly_report_library as library
 from app.config import operator_today
 from app.monthly_report_import import (
-    MAX_DOCX_BYTES, ImportMapping, imported_draft, inspect_docx, map_items, read_import_image,
+    MAX_DOCX_BYTES, ImportMapping, imported_draft, inspect_docx, map_items, read_import_image, is_logo_artwork, is_header_artwork,
 )
 from app.monthly_report_model import known_sections, layout_blocks
 
@@ -117,9 +117,18 @@ def render_import(state: library.LibraryState, field, browser_timezone: str = ""
                 item.kind == "image" and b.type in ("image_page", "image_grid", "pdf_pages") or
                 item.kind == "text" and b.type in ("rich_text", "stock_text") or
                 item.kind == "table" and (b.type in ("table", "work_order_grid") or b.key == "contact_matrix"))]
+            if is_header_artwork(item):
+                allowed = [slot for slot in allowed if slot != "cover_photo"]
+                st.caption("Header artwork has no confirmed photograph role. Confirm its identity separately from the cover photograph.")
+            if is_logo_artwork(item):
+                allowed = [slot for slot in allowed if slot != "cover_photo"]
+                st.caption("This artwork is a logo. Choose its branding role; cover photographs are separate.")
             if allowed:
                 default = item.suggested_slot if item.suggested_slot in allowed else allowed[0]
-                destination = st.selectbox("Confirmed destination", allowed, key=field(document_key + "_destination_" + item.id, default))
+                destination_key = field(document_key + "_destination_" + item.id, default)
+                if st.session_state.get(destination_key) not in allowed:
+                    st.session_state[destination_key] = default
+                destination = st.selectbox("Confirmed destination", allowed, key=destination_key)
                 columns, header = (), True
                 if item.rows:
                     header = st.checkbox("First row contains column headings", key=field(document_key + "_headers_" + item.id, True))

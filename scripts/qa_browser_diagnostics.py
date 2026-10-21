@@ -81,12 +81,21 @@ def target_path(name: str) -> Path:
 
 
 @contextmanager
-def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8521, 8528)):
+def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8521, 8528),
+            source_selection=False):
     output.mkdir(parents=True, exist_ok=True)
     states = {}
     sequence = 0
     original_new = browser_class.new_context
     original_close = context_class.close
+    source_asset, source_asset_error = None, None
+    if source_selection:
+        from scripts.qa_source_selection_delivery import expected_combobox
+        try:
+            source_asset = expected_combobox()
+        except Exception as error:
+            # Keep the original journey even if diagnostic setup is unavailable.
+            source_asset_error = type(error).__name__
 
     @wraps(original_new)
     def new_context(browser, *args, **kwargs):
@@ -111,7 +120,11 @@ def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8
 
         def on_page(page):
             from scripts.qa_widget_delivery import WidgetDelivery
-            WidgetDelivery(record, ports=widget_ports).attach(page)
+            if source_selection:
+                from scripts.qa_source_selection_delivery import SourceSelectionDelivery
+                SourceSelectionDelivery(record, expected_asset=source_asset).attach(page)
+            else:
+                WidgetDelivery(record, ports=widget_ports).attach(page)
             page.on('console', lambda msg: record('client', msg.text)
                     if msg.text.startswith('ENFRA_QA_DIAGNOSTIC ') else None)
             page.on('pageerror', lambda error: record('pageerror', {
@@ -122,6 +135,9 @@ def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8
                 'url': response.url[:500], 'status': response.status})
                 if response.request.resource_type == 'image' else None)
         context.add_init_script(CLIENT)
+        if source_selection:
+            from scripts.qa_source_selection_delivery import CLIENT as SOURCE_SELECTION_CLIENT
+            context.add_init_script(SOURCE_SELECTION_CLIENT)
         context.on('page', on_page)
         try:
             context.tracing.start(screenshots=True, snapshots=True, sources=True)
@@ -131,6 +147,8 @@ def observe(output: Path, browser_class, context_class, *, widget_ports=(8520, 8
         else:
             state['tracing'] = True
         record('started', {'engine': engine})
+        if source_asset_error:
+            record('diagnostic-error', {'stage': 'expected-source-asset', 'error_type': source_asset_error})
         return context
 
     @wraps(original_close)

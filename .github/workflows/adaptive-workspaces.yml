@@ -19,9 +19,13 @@ on:
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
+      - 'scripts/qa_monthly_literal_labels.py'
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_report_row_cards.py'
+      - 'scripts/workspace_row_observations.py'
+      - 'tests/test_report_row_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
       - 'scripts/qa_fresh_native_errors.js'
       - 'scripts/qa_fresh_native_error_checks.py'
@@ -43,6 +47,22 @@ on:
       - 'scripts/workspace_water_observations.py'
       - 'tests/test_workspace_water_observations.py'
       - 'scripts/patch_streamlit_frontend.py'
+      - 'scripts/streamlit_combobox_close.py'
+      - 'tests/test_multiselect_tab_navigation.py'
+      - 'tests/multiselect_tab_navigation_test.cjs'
+      - 'scripts/streamlit_expander_motion.py'
+      - 'tests/test_streamlit_expander_motion.py'
+      - 'tests/expander_motion_test.cjs'
+      - 'scripts/streamlit_forward_cache.py'
+      - 'tests/test_streamlit_forward_cache.py'
+      - 'scripts/qa_wire_totals.py'
+      - 'tests/test_qa_wire_totals.py'
+      - 'tests/test_picture_group_media.py'
+      - 'tests/test_picture_media_recovery.py'
+      - 'tests/test_picture_group_load_gate.py'
+      - 'tests/picture_group_load_gate_test.cjs'
+      - 'tests/test_picture_group_browser.py'
+      - 'tests/test_picture_transport_workflow.py'
       - 'scripts/streamlit_frontend_manifest.json'
       - 'scripts/streamlit_overlay_resize.py'
       - 'scripts/streamlit_virtualizer_resize.py'
@@ -87,6 +107,7 @@ on:
       - 'tests/test_workspace_training_reference.py'
       - 'tests/test_training_reference_geometry.py'
       - 'tests/test_training_participant_native_contract.py'
+      - 'tests/training_scroll_commit_test.cjs'
       - 'scripts/workspace_training_observations.py'
       - 'scripts/workspace_browser_observations.py'
       - 'scripts/qa_photo_action_observations.js'
@@ -95,6 +116,8 @@ on:
       - 'tests/test_qa_training_form_observations.py'
       - 'scripts/qa_monthly_live.py'
       - 'scripts/qa_source_corrections.py'
+      - 'scripts/qa_source_selection_delivery.py'
+      - 'tests/test_qa_source_selection_delivery.py'
       - 'tests/source_review_navigation_test.cjs'
       - 'tests/test_source_correction_cold_controls.py'
       - 'tests/test_monthly_report_identity_strip.py'
@@ -133,9 +156,13 @@ on:
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
+      - 'scripts/qa_monthly_literal_labels.py'
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
+      - 'scripts/qa_report_row_cards.py'
+      - 'scripts/workspace_row_observations.py'
+      - 'tests/test_report_row_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
       - 'scripts/qa_fresh_native_errors.js'
       - 'scripts/qa_fresh_native_error_checks.py'
@@ -157,6 +184,22 @@ on:
       - 'scripts/workspace_water_observations.py'
       - 'tests/test_workspace_water_observations.py'
       - 'scripts/patch_streamlit_frontend.py'
+      - 'scripts/streamlit_combobox_close.py'
+      - 'tests/test_multiselect_tab_navigation.py'
+      - 'tests/multiselect_tab_navigation_test.cjs'
+      - 'scripts/streamlit_expander_motion.py'
+      - 'tests/test_streamlit_expander_motion.py'
+      - 'tests/expander_motion_test.cjs'
+      - 'scripts/streamlit_forward_cache.py'
+      - 'tests/test_streamlit_forward_cache.py'
+      - 'scripts/qa_wire_totals.py'
+      - 'tests/test_qa_wire_totals.py'
+      - 'tests/test_picture_group_media.py'
+      - 'tests/test_picture_media_recovery.py'
+      - 'tests/test_picture_group_load_gate.py'
+      - 'tests/picture_group_load_gate_test.cjs'
+      - 'tests/test_picture_group_browser.py'
+      - 'tests/test_picture_transport_workflow.py'
       - 'scripts/streamlit_frontend_manifest.json'
       - 'scripts/streamlit_overlay_resize.py'
       - 'scripts/streamlit_virtualizer_resize.py'
@@ -201,6 +244,7 @@ on:
       - 'tests/test_workspace_training_reference.py'
       - 'tests/test_training_reference_geometry.py'
       - 'tests/test_training_participant_native_contract.py'
+      - 'tests/training_scroll_commit_test.cjs'
       - 'scripts/workspace_training_observations.py'
       - 'scripts/workspace_browser_observations.py'
       - 'scripts/qa_photo_action_observations.js'
@@ -209,6 +253,8 @@ on:
       - 'tests/test_qa_training_form_observations.py'
       - 'scripts/qa_monthly_live.py'
       - 'scripts/qa_source_corrections.py'
+      - 'scripts/qa_source_selection_delivery.py'
+      - 'tests/test_qa_source_selection_delivery.py'
       - 'tests/source_review_navigation_test.cjs'
       - 'tests/test_source_correction_cold_controls.py'
       - 'tests/test_monthly_report_identity_strip.py'
@@ -237,6 +283,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  literal-labels:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and literal-label browser harness
+        run: |
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Literal imported labels have no automatic links or formatting
+        run: python scripts/qa_monthly_literal_labels.py
+      - name: Upload literal-label evidence immediately, including first failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-literal-label-browser-evidence
+          path: test-artifacts/monthly-literal-labels/
+          retention-days: 7
+          if-no-files-found: warn
   synthetic-progress-photos:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -255,6 +327,10 @@ jobs:
           python scripts/patch_streamlit_frontend.py
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
+      - name: Browser image decode, error, retry and keyboard consent gates
+        env:
+          EPC_REQUIRE_PICTURE_BROWSER: '1'
+        run: python -m pytest tests/test_picture_group_browser.py -q
       - name: Actual Progress photos edits, order, reload and Word/PDF
         run: python scripts/qa_progress_photo_journey.py
       - name: Upload synthetic Progress photos evidence, including first failures
@@ -361,6 +437,11 @@ jobs:
         env:
           EPC_MONTHLY_WATER_TASK: '1'
         run: python scripts/qa_water_page_journey.py
+      - name: Native proposal and onsite row editing with actual output
+        if: ${{ !cancelled() }}
+        env:
+          EPC_MONTHLY_ROW_TASK: '1'
+        run: python scripts/qa_report_row_cards.py
       - name: Fresh ordinary Water page review from empty omitted state
         if: ${{ !cancelled() }}
         run: python scripts/qa_water_fresh_page_journey.py
@@ -387,6 +468,7 @@ jobs:
             test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
             test-artifacts/water-page-journey/
+            test-artifacts/report-row-cards/
             test-artifacts/water-fresh-page-journey/
           retention-days: 7
           if-no-files-found: warn

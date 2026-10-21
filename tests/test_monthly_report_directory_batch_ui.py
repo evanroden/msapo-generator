@@ -20,10 +20,12 @@ class Entry:
     conflicts: tuple = ()
     changed: bool = True
     existing: bool = True
+    new_contract: bool = False
+    changes: tuple = ()
 
     @property
     def can_save(self):
-        return self.changed and not self.conflicts
+        return (self.changed or bool(self.changes)) and not self.conflicts
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ class Result:
     unchanged: tuple = ()
     blocked: tuple = ()
     failed: tuple = ()
+    not_created: tuple = ()
 
 
 APP = """
@@ -119,7 +122,7 @@ def test_save_uses_original_reviewed_revision_and_cannot_replay(monkeypatch, pla
     confirm(app).check().run()
     save_button(app).click().run()
     assert not app.exception
-    assert calls == [(plan, b"synthetic workbook", {"actor": "Synthetic Editor", "confirmed": True})]
+    assert calls == [(plan, b"synthetic workbook", {"actor": "Synthetic Editor", "confirmed": True, "create": (), "accept": ()})]
     assert save_button(app).disabled
     assert any("Saved contacts for 1 contract." in msg.value for msg in app.success)
     app.run()
