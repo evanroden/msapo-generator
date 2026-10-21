@@ -133,7 +133,11 @@ export default function(component) {
                 const target = event.target;
                 const radio = target?.matches?.('input[type="radio"]') ? target :
                     target?.closest?.('label')?.querySelector?.('input[type="radio"]');
-                if (radio) priorChecked.set(radio, radio.checked);
+                if (!radio) return;
+                // Arrow keys select another radio of the same group, so record
+                // the whole group at the gesture's start.
+                const group = radio.closest?.('[role="radiogroup"]')?.querySelectorAll?.('input[type="radio"]');
+                for (const member of group?.length ? group : [radio]) priorChecked.set(member, member.checked);
             };
             const nativeChoiceClick = event => {
                 const target = event.target;
@@ -157,15 +161,18 @@ export default function(component) {
                 // A disabled choice or an already-selected radio changes
                 // nothing and starts no run, so it must not open a hold. A
                 // label click precedes the radio's activation, so its state is
-                // still the prior one; a direct activation (Space, or a click on
-                // the input) is checked before dispatch, so use the state seen
-                // at the gesture's start, and hold when that is unknown.
+                // still the prior one; a direct activation (Space, arrows, or a
+                // click on the input) is checked before dispatch, so use the
+                // state seen at the gesture's start. With no observed start
+                // (an assistive or scripted click) the click opens nothing:
+                // if it does change the radio, its native change event opens
+                // the hold in the same task.
                 const choice = label?.querySelector('input[type="checkbox"], input[type="radio"]');
                 // A label click is followed by the browser's forwarded click on
                 // its input; record the state here so both read the same answer.
                 const direct = choice && target === choice;
                 if (choice && !direct) priorChecked.set(choice, choice.checked);
-                const wasSelected = direct ? priorChecked.get(choice) === true : choice?.checked;
+                const wasSelected = direct ? priorChecked.get(choice) !== false : choice?.checked;
                 if (direct) priorChecked.delete(choice);
                 const choiceChanges = choice && !choice.disabled &&
                     choice.getAttribute?.('aria-disabled') !== 'true' &&

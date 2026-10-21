@@ -269,8 +269,9 @@ test(name+' still holds previews until the upload run renders',()=>{
 
 
 // A radio activated directly is checked before its click is dispatched.
-const radioInput=checked=>{const radio={type:'radio',checked,disabled:false,getAttribute:()=>null,
-    matches:s=>s==='input[type="radio"]'};radio.closest=s=>s==='label'?{querySelector:()=>radio}:null;return radio;};
+const radioInput=(checked,group=null)=>{const radio={type:'radio',checked,disabled:false,getAttribute:()=>null,
+    matches:s=>s==='input[type="radio"]'||s==='input,textarea,select'};
+    radio.closest=s=>s==='label'?{querySelector:()=>radio}:s==='[role="radiogroup"]'?group:null;return radio;};
 
 for(const gesture of ['keydown','pointerdown'])
 test('a new radio choice activated directly ('+gesture+') still holds previews',()=>{
@@ -294,10 +295,32 @@ test('Space on the radio that is already selected does not open the hold',()=>{
     h.cleanup();
 });
 
-test('a direct radio activation with no observed start (arrow selection) holds',()=>{
+test('an arrow-key selection within a radio group holds previews',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const members=[];const group={querySelectorAll:()=>members};
+    const old=radioInput(true,group),next=radioInput(false,group);members.push(old,next);
+    h.dispatch('keydown',{target:old,key:'ArrowDown',isComposing:false});
+    old.checked=false;next.checked=true;  // the browser moves the selection
+    h.dispatch('click',{target:next});
+    assert.equal(h.gate.pending,true,'the newly selected radio was recorded unselected at keydown');
+    h.cleanup();
+});
+
+test('a scripted click on the selected radio with no gesture does not open the hold',()=>{
     const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
     h.dispatch('click',{target:radioInput(true)});
-    assert.equal(h.gate.pending,true,'an unknown prior state is treated as a change');
+    assert.equal(h.gate.pending,false,'no change event follows, so no run could release a hold');
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,2);
+    h.cleanup();
+});
+
+test('a scripted click that does change a radio is held by its change event',()=>{
+    const h=pendingEditorWithSibling();h.gate.pending=false;h.gate.scopePair=null;
+    const radio=radioInput(true);
+    h.dispatch('click',{target:radio});
+    h.dispatch('change',{target:radio});  // fired in the same task after the activation
+    assert.equal(h.gate.pending,true);
+    h.intersections[1].callback([{isIntersecting:true}]);h.fire();assert.equal(h.sent.length,0);
     h.cleanup();
 });
 
