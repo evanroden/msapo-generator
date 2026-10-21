@@ -544,11 +544,31 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             seed = [dict(zip(table.columns, r)) for r in table.rows] or [dict.fromkeys(table.columns)]
             if optional_table:
                 seed = empty_text_seed(seed)
-            rows = _grid(key + f"_imported_{n}_" + _signature(table.columns), seed, num_rows="dynamic", hide_index=True)
+            grid_key = key + f"_imported_{n}_" + _signature(table.columns)
+            if spec.key == "work_orders":
+                artificial_seed = st.session_state.setdefault(grid_key + "_artificial_seed", not table.rows)
+            rows = _grid(grid_key, seed, num_rows="dynamic", hide_index=True)
             # Opening a blank imported frame must retain its original
             # structure/reference without pretending its editor slot is data.
             edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows
                                 if any(v is not None and (str(v).strip() if optional_table else v != "") for v in r.values()))
+            if spec.key == "work_orders":
+                # Imported blank rows are real table geometry. The native
+                # editor's visual add-row is not part of its returned values.
+                kept_rows = rows
+                deleted = st.session_state.get(grid_key, {}).get("deleted_rows", [])
+                if artificial_seed and (0 in deleted or rows and any(
+                        _cell_text(v) for v in rows[0].values())):
+                    # The artificial slot has become a real row or was
+                    # explicitly deleted. Keep that fact across widget unmounts.
+                    st.session_state[grid_key + "_artificial_seed"] = False
+                if (artificial_seed and 0 not in deleted
+                        and rows and not any(_cell_text(v) for v in rows[0].values())):
+                    # Only the synthetic slot for a truly empty table is not
+                    # content. Explicitly added/deleted rows remain authoritative.
+                    kept_rows = rows[1:]
+                edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns)
+                                    for r in kept_rows)
             tables.append(table if optional_table and (rows == seed or not edited_rows and not has_values(table.rows))
                           else replace(table, rows=edited_rows))
         if optional_table and tuple(tables) != block.extra_tables:
