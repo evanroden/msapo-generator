@@ -411,20 +411,28 @@ def complete_guided_sections(draft):
     Existing order, titles, imported schemas and content remain authoritative.
     Older partial designs gain the missing sections and standard block slots;
     this guided working copy never requires content just to retain a heading.
-    A section the user left out keeps its content left out (Omit), so making
-    it present never republishes it; an explicit edit or include restores it.
-    Left out means excluded by the profile, or off although normally on; an
-    appendix that is merely off by default (RFI) is not a user's choice.
+    A section the user left out keeps its content left out, so making it
+    present never republishes it: its blocks become Omit (content kept, a
+    pending library replacement cancelled) and its carried issues or
+    proposals are left out of this report; an explicit edit or include
+    restores them. Left out means excluded by the profile, or off although
+    normally on; an appendix that is merely off by default (RFI) is not a
+    user's choice.
     """
     from app.monthly_report_model import default_sections, optional_sections
-    chosen = set(draft.profile.excluded_sections) | {section.key for section in default_sections() if section.included}
-    left_out = {block.key for section in draft.sections if not section.included and section.key in chosen
-                for block in section.blocks}
+    chosen = set(draft.profile.excluded_sections) | {
+        section.key for section in (*default_sections(), *optional_sections()) if section.included}
+    sections_out = {section.key for section in draft.sections if not section.included and section.key in chosen}
+    left_out = {block.key for section in draft.sections if section.key in sections_out for block in section.blocks}
     draft = replace(draft, blocks=tuple(
-        replace(block, source="Omit") if block.key in left_out and block.source != "Omit" and any(
+        replace(block, source="Omit", pending_library_save=False)
+        if block.key in left_out and block.source != "Omit" and any(
             (block.text.strip(), block.rows, block.asset_hashes, block.extra_tables, block.org_nodes,
              block.ai_paragraphs)) else block
-        for block in draft.blocks))
+        for block in draft.blocks), follow_ups=tuple(
+        replace(item, included=False)
+        if item.included and ("issues" if item.category == "issue" else "proposals") in sections_out else item
+        for item in draft.follow_ups))
     native_order = (draft.profile.section_order if draft.profile.template.startswith(
         ("enfra_native:", "enfra_master:")) else ())
     optional_keys = {"rfi", *(section.key for section in optional_sections())}

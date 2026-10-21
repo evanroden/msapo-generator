@@ -190,7 +190,8 @@ def test_partial_legacy_sections_restore_standard_headings_without_rewriting_con
     assert all(section.included for section in normalized.sections)
     assert all(not block.required for section in normalized.sections for block in section.blocks)
     assert normalized.sections[0].blocks[0].columns == custom.columns
-    assert normalized.blocks == draft.blocks
+    # The left-out Training content is kept exactly but stays left out (#297).
+    assert normalized.blocks == (replace(content, source="Omit"),)
     assert normalized.profile == draft.profile
     assert complete_guided_sections(normalized) == normalized
 

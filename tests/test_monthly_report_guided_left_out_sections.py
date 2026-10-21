@@ -12,7 +12,8 @@ from docx import Document
 
 from app.monthly_report_docx import _build_docx
 from app.monthly_report_guided import complete_guided_sections
-from app.monthly_report_model import ReportPeriod, ResolvedBlock, synthetic_draft, synthetic_profiles
+from app.monthly_report_model import (BlockSpec, ReportFollowUp, ReportPeriod, ResolvedBlock, SectionSpec,
+                                      synthetic_draft, synthetic_profiles)
 
 EXCLUDED_TEXT = "Synthetic training notes the user left out."
 
@@ -70,3 +71,30 @@ def test_an_appendix_the_profile_excluded_stays_left_out():
     draft = replace(draft, profile=replace(draft.profile, excluded_sections=("rfi",)))
     rfi = _blocks(complete_guided_sections(draft))["demo_rfi"]
     assert rfi.source == "Omit" and rfi.text == "Synthetic RFI request."
+
+
+def test_carried_items_of_a_left_out_section_stay_left_out():
+    draft = _draft()
+    issue = ReportFollowUp("synthetic-issue", "issue", "Synthetic carried issue.", "August 2026")
+    proposal = ReportFollowUp("synthetic-proposal", "proposal", "Synthetic carried proposal.", "August 2026")
+    draft = replace(draft, follow_ups=(issue, proposal), sections=tuple(
+        replace(section, included=False) if section.key == "issues" else section for section in draft.sections))
+    after = complete_guided_sections(draft)
+    assert after.follow_ups == (replace(issue, included=False), proposal)  # kept, left out, re-includable
+
+
+def test_a_left_out_block_cancels_its_pending_library_replacement():
+    draft = _draft()
+    draft = replace(draft, blocks=tuple(replace(block, pending_library_save=True) if block.key == "demo_training"
+                                        else block for block in draft.blocks))
+    training = _blocks(complete_guided_sections(draft))["demo_training"]
+    assert training.source == "Omit" and not training.pending_library_save and training.text == EXCLUDED_TEXT
+
+
+def test_a_normally_on_optional_section_left_out_stays_left_out():
+    draft = _draft()
+    receivable = SectionSpec("accounts_receivable", "", "Accounts Receivable",
+                             (BlockSpec("accounts_receivable_notes", "rich_text"),), included=False)
+    notes = ResolvedBlock("accounts_receivable_notes", "This month", text="Synthetic receivable notes.")
+    draft = replace(draft, sections=(*draft.sections, receivable), blocks=(*draft.blocks, notes))
+    assert _blocks(complete_guided_sections(draft))["accounts_receivable_notes"].source == "Omit"
