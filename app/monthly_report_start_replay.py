@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from app.monthly_report_model import ReportDraft, ResolvedBlock
+from app.monthly_report_model import ReportDraft, ResolvedBlock, known_sections
 from app.monthly_report_setup import merge_drafts
 
 
