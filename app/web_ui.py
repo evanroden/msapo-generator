@@ -321,6 +321,20 @@ CUSTOM_CSS = """
         background: linear-gradient(180deg, var(--enfra-iced) 0, #FFFFFF 250px);
     }
     #MainMenu, footer, header {visibility: hidden;}
+    /* The collapsed sidebar's native opener lives inside the hidden header.
+       Restore only that control, not Streamlit's menu/status chrome or any
+       report-preview toolbar. Keep native pointer and keyboard behavior. */
+    [data-testid="stHeader"] [data-testid="stExpandSidebarButton"] {
+        visibility: visible;
+    }
+    /* Below this width, the centered 1000px form can meet the native opener.
+       Reserve the native header's height only there, without moving the form
+       when its sidebar opens or changing wide/sidebarless workflow spacing. */
+    @media (max-width: 1100px) {
+        .stApp:has([data-testid="stSidebar"]) .block-container {
+            padding-top: 3.75rem !important;
+        }
+    }
 
     .block-container {
         max-width: 1000px !important;
