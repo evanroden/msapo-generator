@@ -50,8 +50,13 @@ def prepared(*sheets):
     return raw, batch.prepare_workbook(directory.inspect_workbook(raw))
 
 
+def proposed(plan):
+    """Synthetic contracts are not catalog contracts; these cases opt in to creating them."""
+    return tuple(entry.contract for entry in plan.entries if entry.new_contract)
+
+
 def save(plan, raw):
-    return batch.save_workbook_plan(plan, raw, actor="Synthetic Editor", confirmed=True)
+    return batch.save_workbook_plan(plan, raw, actor="Synthetic Editor", confirmed=True, create=proposed(plan))
 
 
 def test_summary_contacts_remain_contract_wide_and_site_membership_is_explicit(tmp_path):
@@ -122,17 +127,17 @@ def test_existing_sites_roles_and_identity_survive_a_partial_import():
     assert save(plan, raw).saved
 
 
-def test_conflicting_populated_person_or_contact_fields_block_that_contract():
+def test_changed_populated_person_or_contact_fields_are_kept_until_accepted():
     raw, first = prepared()
     save(first, raw)
     changed_raw, plan = prepared(("Active Contracts", summary(B9="Synthetic Replacement")),
                                 ("Synthetic Contract Sites", detail(B10="202-555-0199")))
     entry = plan.entries[0]
-    assert len(entry.conflicts) == 2 and not entry.can_save
+    assert not entry.conflicts and len(entry.changes) == 2 and entry.can_save
     assert entry.contract_contacts[0].name == "Synthetic Executive"
     assert entry.sites[0].contacts[0].phone == "202-555-0101"
     result = save(plan, changed_raw)
-    assert result.blocked and not result.saved
+    assert result.unchanged == ("Synthetic Contract",) and not result.blocked
     assert directory.load_directory("Synthetic Contract").revision == 1
 
 
@@ -150,7 +155,9 @@ def test_named_person_never_inherits_an_unidentified_phone_record():
     directory.save_directory("Synthetic Contract", (), expected_revision=0, actor="Synthetic Editor", confirmed=True,
         contract_contacts=(directory.DirectoryContact("Executive Director", phone="202-555-0199"),))
     _, plan = prepared(("Active Contracts", summary(B10="")))
-    assert any("contact identity" in c for c in plan.entries[0].conflicts)
+    change, = plan.entries[0].changes
+    assert not plan.entries[0].conflicts
+    assert (change.after.name, change.after.phone) == ("Synthetic Executive", "")
 
 
 def test_only_exact_or_explicit_aliases_link_a_contract_and_site(monkeypatch):

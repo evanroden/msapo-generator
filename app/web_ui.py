@@ -1597,6 +1597,14 @@ def _render_asset_control(
     return raw_asset
 
 
+
+def _load_synthetic_quote_from_about() -> None:
+    """Apply the deliberate sample action before any quote widget mounts."""
+    _load_test_into_state()
+    # A new uploader identity prevents an earlier upload replacing the sample.
+    st.session_state["uploader_nonce"] = st.session_state.get("uploader_nonce", 0) + 1
+
+
 def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
     """Show workflow-appropriate footer and the actual public runtime build."""
     from app.public_build import runtime_commit
@@ -1613,6 +1621,11 @@ def _render_footer(workflow: str = PURCHASE_WORKFLOW) -> None:
     commit = runtime_commit()
     with st.expander("About"):
         st.caption("Running code: " + (commit if commit else "build identifier unavailable"))
+        if workflow == PURCHASE_WORKFLOW:
+            st.button("Load synthetic quote", key="load_synthetic_test",
+                      help="Replace this browser's current quote with the built-in synthetic example. No request is sent.",
+                      on_click=_load_synthetic_quote_from_about)
+
 
 
 _WORKFLOW_QUERY_CHOICES = {
@@ -1807,43 +1820,8 @@ def _render_purchase_workflow(browser_token, identity, presentation) -> None:
     from app.workspace_layout import workspace_section, workspace_columns
     restore_po_draft(st.session_state)
 
-    st.markdown(
-        """
-        <div class="hero">
-            <p class="brand-kicker">PURCHASE ORDER WORKFLOW</p>
-            <h1>Purchase Order <span class="zing">Process Control</span></h1>
-            <p class="hero-subtitle">
-                Upload the quote, answer only what the tool could not determine,
-                then create both files and open the prefilled Smartsheet request.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # The byline doubles as the synthetic-sample trigger. It is intentionally
-    # unlabelled and NOT gated behind an environment flag: it is the only way to
-    # exercise the full path -- render included -- on a deployment with no API
-    # key, and a flag would make it absent exactly where it is needed. A test
-    # pins its availability, so hiding it later is a deliberate act.
-    _, center, _ = st.columns([2, 3, 2])
-    with center:
-        if st.button(
-            "Built by Evan Roden",
-            key="load_synthetic_test",
-            width="stretch",
-            help="Load the built-in synthetic quote for a safe workflow test.",
-        ):
-            _load_test_into_state()
-            # Bumping the nonce changes the uploader's widget key, which is the
-            # only way to make Streamlit forget a file the operator already
-            # dropped in. Without it the previous upload is still mounted, and
-            # on the next rerun its extraction overwrites the sample's seeded
-            # quote -- the sample would appear to load and then vanish.
-            st.session_state["uploader_nonce"] = (
-                st.session_state.get("uploader_nonce", 0) + 1
-            )
-            st.rerun()
+    st.title("Purchase order")
+    st.caption("Add the vendor quote, complete missing details, then create the two-file package.")
 
     presentation.enter_context(workspace_section("purchase_review", "Quote and request review"))
     editor, reference = workspace_columns("purchase_review")

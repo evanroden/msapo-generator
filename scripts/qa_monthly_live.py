@@ -251,6 +251,18 @@ def request_qa_generation(page, stage):
         raise
 
 
+def click_native_checkbox_label(scope, name):
+    """Deliver one pointer gesture to the native visible label, not its clipped input."""
+    checkbox = scope.get_by_role("checkbox", name=name, exact=True)
+    expect(checkbox).to_have_count(1)
+    expect(checkbox).not_to_be_checked()
+    label = checkbox.locator("xpath=ancestor::label")
+    expect(label).to_have_count(1)
+    expect(label.get_by_role("checkbox")).to_have_count(1)
+    expect(label).to_be_visible()
+    label.click()
+
+
 def correct_replay_source_scope(page):
     """An explicit synthetic reviewer choice, never an extraction assertion."""
     warning = page.locator('[data-testid="stAlert"]').filter(has_text=
@@ -273,8 +285,15 @@ def correct_replay_source_scope(page):
     expect(details).to_have_count(1)
     sites = details.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites")
     combo = sites.get_by_role("combobox")
+    expect(combo).to_be_focused()
     combo.fill("Demo North")
+    expect(combo).to_have_value("Demo North")
     page.get_by_role("option", name="Demo North", exact=True).click()
+    # Finish the native multiselect with one ordinary Tab. BaseWeb keeps its
+    # option portal open after selection and makes the surrounding workspace
+    # aria-hidden until the picker closes; a role lookup there is premature.
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("listbox")).to_have_count(0)
     pending_input = combo.element_handle()
     # A native file-selection click does not deliver a buffered form. Keep
     # the exact input node and the unsubmitted site choice through both moves.
@@ -310,16 +329,29 @@ def correct_replay_source_scope(page):
     # the current source. A site correction must not silently waive that gate.
     stale = page.get_by_text("A supporting source changed or is missing.", exact=True)
     expect(stale).to_have_count(1)
-    evidence = page.locator('[data-testid="stExpander"]').filter(has=
-        page.get_by_role("checkbox", name="Remove unavailable source links", exact=True))
-    summary = evidence.locator("summary")
+    # Locate the relevant native disclosure by its exact warning content.
+    # A collapsed details body is absent from the accessibility tree, so its
+    # checkbox cannot identify the disclosure until the user has opened it.
+    evidence = page.locator('[data-testid="stExpander"]').filter(has=stale)
+    summary = evidence.locator(":scope > details > summary")
     if not summary.evaluate("el => el.parentElement.open"):
         summary.click()
-    source_pages = evidence.locator('[data-testid="stMultiSelect"]').filter(has_text="Supporting source pages")
+    # Keep a stable section boundary after the missing-link warning disappears.
+    source_pages = page.locator(".st-key-epc_edit_monthly_issues").get_by_test_id(
+        "stMultiSelect").filter(has_text="Supporting source pages")
+    expect(source_pages).to_have_count(1)
     source_pages.get_by_role("combobox").fill("synthetic-activity.txt")
     page.get_by_role("option", name="synthetic-activity.txt · page 1", exact=True).click()
-    evidence.get_by_role("checkbox", name="Remove unavailable source links", exact=True).check()
+    # Observe this one selection before Tab; never reselect to conceal a lost gesture.
+    expect(source_pages.get_by_text("synthetic-activity.txt · page 1", exact=True)).to_be_visible()
+    page.keyboard.press("Tab")
+    expect(page.get_by_role("listbox")).to_have_count(0)
+    expect(source_pages.get_by_text("synthetic-activity.txt · page 1", exact=True)).to_be_visible()
+    # Streamlit's React-Aria input is intentionally clipped to 1 x 1 px. The
+    # native label is the human pointer target; do not force-click that input.
+    click_native_checkbox_label(evidence, "Remove unavailable source links")
     expect(stale).to_have_count(0, timeout=25000)
+    expect(source_pages.get_by_text("synthetic-activity.txt · page 1", exact=True)).to_be_visible()
     final = page.get_by_text(re.compile(r"^QA working report SHA256: (?!" + after + r"$)[0-9a-f]{64}$")).last
     final.wait_for(timeout=25000)
     fingerprint = (final.text_content() or "").split(": ")[-1]

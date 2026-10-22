@@ -267,6 +267,7 @@ def browser_task(engine, name, base):
     context = browser.new_context(viewport={"width": 1365, "height": 900})
     context.add_cookies([{"name": "epc_device_id", "value": token, "url": URL}])
     context.add_init_script(native_error_init())
+    context.add_init_script((ROOT / "scripts/qa_photo_action_observations.js").read_text())
     page = context.new_page()
     page.set_default_timeout(20000)
     page.on("pageerror", lambda error: record["browser_errors"].append(str(error)))
@@ -337,6 +338,20 @@ def browser_task(engine, name, base):
                 retained_files.setdefault(paths[role], item)
         return state
 
+    def native_geometry(stage):
+        native_actions = page.evaluate("window.__enfraPhotoActionObservations()")
+        record["photo_native_actions"] = native_actions
+        last_down = max(index for index, event in enumerate(native_actions) if event["type"] == "pointerdown")
+        gesture = native_actions[last_down:]
+        assert [event["type"] for event in gesture] == ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]
+        first = gesture[0]
+        assert all(event["trusted"] and event["connected"] and event["target"] == first["action"] for event in gesture)
+        assert all(abs(event["button"]["y"]-first["button"]["y"]) <= 1 for event in gesture), gesture
+        status = page.locator('.enfra-browser-save-status').bounding_box()
+        assert status and all(event["status"] and abs(event["status"]["height"]-status["height"]) <= 1 for event in gesture), gesture
+        record.setdefault("save_status_geometry", []).append({"stage":stage,"viewport":page.viewport_size,
+            "acknowledged_status":status,"native_gesture":gesture})
+
     def panel(number):
         item = page.locator(PAIR).get_by_test_id("stExpander").filter(has=page.locator("summary").get_by_text("Photo " + str(number), exact=True))
         expect(item).to_have_count(1)
@@ -354,13 +369,24 @@ def browser_task(engine, name, base):
 
     def review(current):
         from app.monthly_report_asset_review import pending_asset_indexes, approve_asset
-        # Exactly one decision for each explicitly expected pending picture;
-        # a failed acknowledgment stops before any next business action.
-        for index in pending_asset_indexes(current):
+        # One explicit decision covers only the bounded, fully displayed group.
+        # Verify every expected picture loaded before confirming the exact set.
+        while pending_asset_indexes(current):
+            indexes = pending_asset_indexes(current)[:6]
             before = receipt(page)["sequence"]
-            page.get_by_role("button", name="This page is ready to include", exact=True).click()
-            current = approve_asset(current, index)
-            capture("review-photo-" + str(index + 1), current, after=before)
+            label = ("Confirm this picture is ready (unless left for correction)" if len(indexes) == 1 else
+                     f"Confirm these {len(indexes)} pictures are ready (except those left for correction)")
+            confirm = page.get_by_role("button", name=label, exact=True)
+            form = page.locator(".picture-review").filter(has=confirm)
+            expect(form.locator("img")).to_have_count(len(indexes))
+            for picture in form.locator("img").all():
+                picture.scroll_into_view_if_needed()
+                expect(picture).to_be_visible()
+                assert picture.evaluate("img => img.complete && img.naturalWidth > 0"), "Every reviewed picture must load"
+            confirm.click()
+            for index in indexes:
+                current = approve_asset(current, index)
+            capture("review-photo-group-" + str(indexes[0] + 1), current, after=before)
         return current
 
     try:
@@ -433,6 +459,7 @@ def browser_task(engine, name, base):
         page.locator(PAIR).get_by_role("button", name="Add these photos", exact=True).click()
         block = preserve_asset_reviews(block, replace(block, asset_hashes=refs, asset_captions=(ADDED, CAPTIONS[1], "")))
         capture("caption-delivered-with-add-old-reviews-retained", block)
+        native_geometry("caption-with-add")
         record["action_delivery"].append(action_delivery(delivery, start, "Add these photos", ADDED))
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_function("() => document.querySelector('.epc-workspace')?.dataset.epcMode==='compact'")
@@ -442,11 +469,13 @@ def browser_task(engine, name, base):
         panel(2).get_by_role("button", name="Remove photo", exact=True).click()
         block = preserve_asset_reviews(block, replace(block, asset_hashes=(refs[0], refs[2]), asset_captions=(ADDED, THIRD)))
         capture("narrow-later-caption-delivered-with-remove", block)
+        native_geometry("390-caption-with-remove")
         record["action_delivery"].append(action_delivery(delivery, start, "Remove photo", THIRD))
         start = len(delivery)
         page.get_by_role("textbox", name="Activity summary", exact=True).fill(ACTIVITY)
         page.locator(PAIR).get_by_role("button", name="Done editing photos", exact=True).click()
         capture("narrow-activity-delivered-with-done", block, activity=ACTIVITY)
+        native_geometry("390-activity-with-done")
         record["action_delivery"].append(action_delivery(delivery, start, "Done editing photos", ACTIVITY))
         expect(page.locator(PAIR).get_by_role("button", name="Move earlier", exact=True)).to_have_count(0)
         block = review(block)
@@ -466,8 +495,11 @@ def browser_task(engine, name, base):
         density.get_by_role("slider").press("Home")
         block = replace(block, photos_per_page=1)
         capture("narrow-reentry-density-one", block, activity=ACTIVITY)
+        page.set_viewport_size({"width": 545, "height": 757})
+        page.wait_for_function("() => document.querySelector('.epc-workspace')?.dataset.epcMode==='compact'")
         page.locator(PAIR).get_by_role("button", name="Done editing photos", exact=True).click()
         capture("narrow-reentry-done", block, activity=ACTIVITY)
+        native_geometry("545-reentry-done")
         native = {}
         capture_native_window_errors(page, native, "final")
         native_documents.append(native["native_window_errors"])
@@ -491,6 +523,11 @@ def browser_task(engine, name, base):
         raise
     finally:
         primary = sys.exc_info()[0] is not None
+        if "photo_native_actions" not in record:
+            try:
+                record["photo_native_actions"] = page.evaluate("window.__enfraPhotoActionObservations?.() || []")
+            except Exception as exc:
+                record["photo_observation_error"] = type(exc).__name__
         native = {}
         capture_native_window_errors(page, native, "final")
         native_documents.append(native["native_window_errors"])

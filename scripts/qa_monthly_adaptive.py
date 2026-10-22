@@ -233,15 +233,33 @@ def pair_state(observed, key):
 
 def scroll_pair(page, selector, inset=130, *, preview=False):
     # Python's notRunning receipt can precede the workspace component mounting
-    # its layout classes/mode after reload. Wait for that actual scroll owner,
-    # rather than dereferencing a missing enhancement root. In compact mode an
+    # its layout classes after reload. A mode receipt alone can precede the
+    # requested pair's discovery; require that row's actual CSS and surfaces
+    # before this one scroll. In compact mode an
     # open preview follows the editor; moving the SECTION top into view would
     # move that preview back below the viewport.
-    page.wait_for_function("""wanted => {""" + DEEP + """
+    page.wait_for_function("""wanted => {""" + DEEP + r"""
       const pair=document.querySelector(wanted.selector);
       const root=pair?.closest('.epc-workspace');
       const mode=root?.dataset.epcMode;
       if(!['wide','book','tabletop','compact'].includes(mode))return false;
+      if(!pair.classList.contains('epc-workspace-pair'))return false;
+      const editor=pair.querySelector('.epc-workspace-editor');
+      const reference=pair.querySelector('.epc-workspace-reference');
+      const editColumn=editor?.closest('.epc-editor-column');
+      const refColumn=reference?.closest('.epc-reference-column');
+      const row=editColumn?.parentElement;
+      if(!row||row!==refColumn?.parentElement||!row.classList.contains('epc-workspace-row'))return false;
+      const rowStyle=getComputedStyle(row);
+      const columns=rowStyle.gridTemplateColumns?.trim().split(/\s+/);
+      if(rowStyle.display!=='grid'||columns?.length!==(['compact','tabletop'].includes(mode)?1:2))return false;
+      if(!editor.getClientRects().length||editor.getBoundingClientRect().width<=0)return false;
+      if(mode==='compact'){
+        if(Math.abs(editColumn.getBoundingClientRect().width-row.getBoundingClientRect().width)>2)return false;
+        const closed=pair.dataset.epcPreviewOpen!=='true';
+        if(closed&&(getComputedStyle(refColumn).display!=='none'||reference.getClientRects().length))return false;
+        if(!closed&&!reference.getClientRects().length)return false;
+      }
       const scroll=mode==='tabletop'||root.dataset.epcConfined==='true'
         ?root:document.querySelector('[data-testid="stMain"]');
       if(!scroll)return false;
@@ -276,6 +294,20 @@ def current_image(page, selector):
 
 def editor_state(field):
     return field.evaluate("n=>({value:n.value,start:n.selectionStart,end:n.selectionEnd,focused:document.activeElement===n,identity:n===window.__monthlyActivityNode})")
+
+
+def reading_state(field):
+    return field.evaluate("""node => {
+      const rect=node.getBoundingClientRect();
+      let owner=node.parentElement;
+      while(owner && !(owner.scrollHeight>owner.clientHeight && /auto|scroll/.test(getComputedStyle(owner).overflowY)))
+        owner=owner.parentElement;
+      owner=owner||document.scrollingElement;
+      return {y:rect.y,height:rect.height,scrollTop:node.scrollTop,scrollLeft:node.scrollLeft,
+        start:node.selectionStart,end:node.selectionEnd,focused:document.activeElement===node,
+        sameNode:node===window.__monthlyActivityNode,
+        owner:{testid:owner.dataset.testid||'',top:owner.scrollTop,height:owner.clientHeight}};
+    }""")
 
 
 def exercise(browser_type, name):
@@ -343,6 +375,8 @@ def exercise(browser_type, name):
         check(name, "actual generated Activity imagery is mounted", bool(activity["surface"]) and any(i["loaded"] for i in activity["images"]), activity)
         check(name, "Activity preview is its section output", all(activity["heading"] in i["alt"] for i in activity["images"]), activity["images"])
         check(name, "long text produced real multiple preview pages", int(activity["page"].split("/")[1]) >= 2, activity["page"])
+        check(name, "first real Activity preview opens after its identified title divider",
+              activity["page"].startswith("2 /"), activity["page"])
         duplicates = baseline["duplicateIds"]
         framework = [item for item in duplicates if "glide" in item[0].lower()]
         REPORT["browsers"][name]["framework_duplicate_ids"] = framework
@@ -371,12 +405,20 @@ def exercise(browser_type, name):
             '[data-action="enlarge"], select[aria-label="Preview zoom"]')
         check(name, "no preview page/zoom/enlarge toolbar", controls.count() == 0)
         preview_scroll = actual.locator(".report-preview-scroll")
-        preview_scroll.evaluate("""node => {
+        preview_scroll.press("Home")
+        expect(actual.locator(".report-preview-position")).to_have_text(re.compile(r"^1 /"))
+        divider_image = actual.locator('figure[data-index="0"] img')
+        expect(divider_image).to_be_visible(timeout=30000)
+        expect(divider_image).to_have_js_property('complete', True)
+        check(name, "native keyboard still reaches the retained divider page",
+              divider_image.evaluate('node=>node.naturalWidth>0'))
+        distance = preview_scroll.evaluate("""node => {
           const second=node.querySelector('figure[data-index="1"]');
           if (!second) throw Error('The real report has no second preview page');
-          node.scrollTop=second.offsetTop-node.offsetTop+16;
-          node.dispatchEvent(new Event('scroll',{bubbles:true}));
+          return second.offsetTop-node.offsetTop+16-node.scrollTop;
         }""")
+        preview_scroll.hover()
+        page.mouse.wheel(0, distance)
         expect(actual.locator(".report-preview-position")).to_have_text(
             re.compile(r"^2 /"), timeout=20000)
         before_view = pair_state(snapshot(page), "activity")
@@ -471,10 +513,41 @@ def exercise(browser_type, name):
         scroll_pair(page, ACTIVITY, inset=80)
         check(name, "compact still has one current Activity editor", field.count() == 1 and field.input_value() == committed)
         check(name, "compact contains whole-page horizontal overflow", page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2"))
-        page.locator(ACTIVITY).get_by_role("button", name="View preview", exact=True).click()
-        current_image(page, ACTIVITY)
-        page.locator(ACTIVITY).get_by_role("button", name="Back to editing", exact=True).click()
-        check(name, "compact preview returns to same editor", field.is_visible() and field.input_value() == committed)
+        navigation_runs = page.evaluate(CLIENT_SNAPSHOT)['server']['full_runs']
+        for action in ("pointer", "keyboard"):
+            field.click()
+            field.press("Control+End")
+            frames(page)
+            prior_reading = reading_state(field)
+            check(name, action + " return starts in the existing scrolled native editor",
+                  prior_reading['sameNode'] and prior_reading['focused'] and prior_reading['scrollTop'] > 0,
+                  prior_reading)
+            open_preview = page.locator(ACTIVITY).get_by_role("button", name="View preview", exact=True)
+            if action == "pointer":
+                open_preview.click()
+            else:
+                open_preview.press("Enter")
+            current_image(page, ACTIVITY)
+            back = page.locator(ACTIVITY).get_by_role("button", name="Back to editing", exact=True)
+            if action == "pointer":
+                back.click()
+            else:
+                back.press("Enter")
+            frames(page)
+            returned_reading = reading_state(field)
+            check(name, action + " preview return keeps native node, caret and inner reading position",
+                  returned_reading['sameNode'] and field.input_value() == committed
+                  and (returned_reading['start'], returned_reading['end']) == (prior_reading['start'], prior_reading['end'])
+                  and abs(returned_reading['scrollTop'] - prior_reading['scrollTop']) <= TOLERANCE
+                  and abs(returned_reading['scrollLeft'] - prior_reading['scrollLeft']) <= TOLERANCE,
+                  {'before':prior_reading,'returned':returned_reading})
+            check(name, action + " preview return restores the editing field reading position",
+                  abs(returned_reading['y'] - prior_reading['y']) <= TOLERANCE,
+                  {'before':prior_reading,'returned':returned_reading})
+            check(name, action + " preview return uses the intended native focus",
+                  returned_reading['focused'] == (action == "keyboard"), returned_reading)
+        check(name, "preview entry and return do not submit the unchanged report",
+              page.evaluate(CLIENT_SNAPSHOT)['server']['full_runs'] == navigation_runs)
         capture(page, name, "actual-compact-return")
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
         check(name, "zero external browser requests or sharing", not attempts and not page.evaluate("window.__monthlyShareAttempts.length"), attempts)

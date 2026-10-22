@@ -10,17 +10,24 @@ from app.monthly_report_pdf_image_budget import (
 )
 
 
-def jpeg(w=2400, h=1600, *, tint=60):
+def jpeg(w=2400, h=1600, *, tint=60, authoring_metadata=False, orientation=1):
     img = Image.effect_noise((w, h), 30).convert("RGB")
     img.paste((tint, 90, 130), (0, 0, 100, 100))
     out = BytesIO()
-    img.save(out, "JPEG", quality=88)
+    options = {}
+    if authoring_metadata:
+        exif = Image.Exif()
+        exif[315] = "SYNTHETIC-PINNED-PHOTO-ARTIST"
+        exif[274] = orientation
+        options["exif"] = exif.tobytes()
+    img.save(out, "JPEG", quality=88, **options)
     return out.getvalue()
 
 
-def data(tmp_path, *, wide=False):
-    allowed = jpeg(4000, 800) if wide else jpeg(tint=60)
-    user_upload = jpeg(tint=140)
+def data(tmp_path, *, wide=False, authoring_metadata=False, orientation=1):
+    size = (4000, 800) if wide else (2400, 1600)
+    allowed = jpeg(*size, authoring_metadata=authoring_metadata, orientation=orientation)
+    user_upload = jpeg(tint=140, authoring_metadata=authoring_metadata)
     master = tmp_path / "synthetic-master.docx"
     with ZipFile(master, "w") as z:
         z.writestr("word/media/old.jpg", allowed)
@@ -46,9 +53,25 @@ def test_exact_pinned_photo_only_and_editable_word_unmodified(tmp_path):
         assert z.read("word/document.xml") == b"Q-TEST-731 | Pending | 45 gpm"
 
 
-def test_very_wide_diagram_retains_original_resolution(tmp_path):
-    master, word, _, _ = data(tmp_path, wide=True)
+@pytest.mark.parametrize("authoring_metadata", [False, True])
+def test_very_wide_diagram_retains_original_resolution(tmp_path, authoring_metadata):
+    from app.monthly_report_media_privacy import sanitize_package_media
+
+    master, word, _, _ = data(tmp_path, wide=True, authoring_metadata=authoring_metadata)
+    word = sanitize_package_media(word)
     assert compact_native_photos_for_pdf(word, pinned_source=master) == word
+
+
+def test_sanitized_oriented_photo_keeps_its_display_orientation_and_resolution(tmp_path):
+    from app.monthly_report_media_privacy import sanitize_package_media
+
+    master, word, _, _ = data(tmp_path, authoring_metadata=True, orientation=6)
+    clean = sanitize_package_media(word)
+    assert compact_native_photos_for_pdf(clean, pinned_source=master) == clean
+    with ZipFile(BytesIO(clean)) as archive:
+        with Image.open(BytesIO(archive.read("word/media/old.jpg"))) as photo:
+            assert photo.size == (2400, 1600)
+            assert dict(photo.getexif()) == {274: 6}
 
 
 def test_unrecognized_photo_never_touched_and_max_dimension_bounded(tmp_path):
@@ -65,12 +88,14 @@ def test_optional_os_memory_trim_does_not_change_report():
     release_transient_word_memory()
 
 
-def test_generated_docx_stays_native_while_pdf_copy_is_compacted(monkeypatch, tmp_path):
+@pytest.mark.parametrize("authoring_metadata", [False, True], ids=["clean", "authoring-metadata"])
+def test_generated_docx_stays_native_while_pdf_copy_is_compacted(monkeypatch, tmp_path, authoring_metadata):
     from app import monthly_report_docx as engine, monthly_report_designs as designs
     from app import monthly_report_render_jobs as jobs
     from app.monthly_report_model import ReportDraft, ReportPeriod, ReportProfile, Facility
 
-    master, word, *_ = data(tmp_path)
+    master, word, original_photo, original_upload = data(tmp_path, authoring_metadata=authoring_metadata)
+    original_master_hash = sha256(master.read_bytes()).hexdigest()
     profile = ReportProfile("Synthetic Contract", "p", "Synthetic Site",
                             (Facility("s", "Synthetic Site"),))
     draft = ReportDraft(profile, ReportPeriod(2026, 9), "Synthetic Editor", (), ())
@@ -86,12 +111,27 @@ def test_generated_docx_stays_native_while_pdf_copy_is_compacted(monkeypatch, tm
         with ZipFile(path) as z:
             with Image.open(BytesIO(z.read("word/media/old.jpg"))) as img:
                 seen["edge"] = max(img.size)
+            seen["upload"] = z.read("word/media/new-upload.jpg")
         pdf = tmp_path / "synthetic.pdf"
         pdf.write_bytes(b"%PDF-synthetic")
         return pdf
 
     monkeypatch.setattr(jobs, "convert_to_pdf", convert)
     result = engine._generate_report(draft)
-    assert result.docx == word
+    if not authoring_metadata:
+        assert result.docx == word
+    with ZipFile(BytesIO(result.docx)) as archive:
+        # Export removes authoring metadata, but the downloadable native Word
+        # image pixels and resolution stay intact. Only its PDF copy shrinks.
+        for name, original in (("old.jpg", original_photo), ("new-upload.jpg", original_upload)):
+            exported = archive.read("word/media/" + name)
+            with Image.open(BytesIO(original)) as before, Image.open(BytesIO(exported)) as after:
+                assert after.size == before.size == (2400, 1600)
+                assert after.tobytes() == before.tobytes()
+                assert 315 not in after.getexif()
+            if name == "new-upload.jpg":
+                assert seen["upload"] == exported  # metadata removal never authorizes downsampling
+        assert archive.read("word/document.xml") == b"Q-TEST-731 | Pending | 45 gpm"
+    assert sha256(master.read_bytes()).hexdigest() == original_master_hash
     assert result.pdf == b"%PDF-synthetic"
     assert seen["edge"] == 1400

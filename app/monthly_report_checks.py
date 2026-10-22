@@ -95,6 +95,36 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
     return tuple(dict.fromkeys(findings))
 
 
+def _annual_work_order_month_cells(key, table):
+    """Coordinates of labels in the complete, two-measure annual grid only.
+
+    Imported tables put repeated header bands in body rows. Preserve that
+    structure when classifying labels; never exempt a month by its text alone.
+    Row zero is the table's columns, followed by its unchanged body rows.
+    The legacy editor also saved a six-row form after removing both empty
+    first-half value rows. Recognize only these exact eight/six-row schemas;
+    unknown/partial/reordered shapes retain normal date review.
+    """
+    rows = (table.columns, *table.rows)
+    if key != "work_orders" or len(rows) not in (6, 8) or any(len(row) != 7 for row in rows):
+        return frozenset()
+    bands = (((0, "wo received", 1), (2, "", 7), (4, "closed", 1), (6, "", 7))
+             if len(rows) == 8 else
+             ((0, "wo received", 1), (1, "", 7), (3, "closed", 1), (4, "", 7)))
+    for index, label, first in bands:
+        row = rows[index]
+        # Word wraps the measure heading across lines; compare its words
+        # without rewriting saved cells or relaxing the required label.
+        if " ".join(row[0].split()).casefold() != label:
+            return frozenset()
+        # Full names/abbreviations and one terminal period are labels. Years,
+        # day numbers, prose, ranges and mixed values must not qualify.
+        months = tuple(_MONTHS.get(cell.strip().removesuffix(".").casefold()) for cell in row[1:])
+        if months != tuple(range(first, first + 6)):
+            return frozenset()
+    return frozenset((index, column) for index, _, _ in bands for column in range(1, 7))
+
+
 def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck, ...]:
     checks = []
     from app.monthly_report_designs import is_master
@@ -139,6 +169,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                     checks.append(ReportCheck("ai_evidence", "Evidence changed or a source is missing. Refresh and review the AI draft before generating.", True, block.key))
             if any("Unsupported number" in flag for paragraph in block.ai_paragraphs for flag in paragraph.flags):
                 checks.append(ReportCheck("ai_number", "Correct unsupported numerical statements in the AI draft.", True, block.key))
+            if block.ai_paragraphs:
+                from app.monthly_report_ai import block_date_problems
+                checks.extend(ReportCheck("ai_date", message, True, block.key)
+                              for message in block_date_problems(block, draft.sources))
             if block.org_nodes:
                 if block.asset_hashes:
                     checks.append(ReportCheck("org_chart", "Choose the editable chart or the uploaded chart, not both in the same chart item.", True, block.key))
@@ -170,8 +204,10 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                         if page not in source.selected_pages or not 1 <= page <= len(source.page_texts) or not page_allowed(source, page):
                             checks.append(ReportCheck("client_source_page", f"Remove or review page {page} of {source.filename} in this section. Its current selection is not approved for the client report.", True, block.key))
             for table in block.extra_tables:
-                texts.extend((block.key, cell) for row in table.rows for cell in row)
-                texts.extend((block.key, title) for title in table.columns)
+                month_labels = _annual_work_order_month_cells(block.key, table)
+                texts.extend((block.key, cell, None, (r, c) in month_labels)
+                             for r, row in enumerate((table.columns, *table.rows))
+                             for c, cell in enumerate(row))
                 if table_has_pricing(table.columns, table.rows):
                     checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, block.key))
                 if any(price_column(title) and any(i < len(r) and r[i].strip() for r in table.rows) for i, title in enumerate(table.columns)):
@@ -229,13 +265,14 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
             checks.append(ReportCheck("empty", f"{section.title} is included but empty.", False, section.key))
     for item in texts:
         key, text = item[:2]
-        narrative = item[2] if len(item) == 3 else None
+        narrative = item[2] if len(item) >= 3 else None
+        structural_month = len(item) == 4 and item[3]
         if contains_price(text):
             checks.append(ReportCheck("pricing", f"Remove pricing from {key.replace('_', ' ')}. Client reports cannot contain prices.", True, key))
         phrases = placeholder_matches(text)
         if phrases:
             checks.append(ReportCheck("placeholder", f"Remove template instructions from {key}: {', '.join(phrases)}.", True, key))
-        if key != "report_identity":
+        if key != "report_identity" and not structural_month:
             if narrative is not None:
                 from app.monthly_report_period_items import apply_exclusions, unresolved_mentions
                 stale = unresolved_mentions(narrative, draft.period, draft.sources)
@@ -279,19 +316,25 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         # text/tables. They must not bypass the required foreign-site check.
         if source.classification == "Reference only" or not source.selected_pages:
             continue
-        if source.service_date:
-            try:
-                value = date.fromisoformat(source.service_date)
-                valid_period = draft.period.start <= value <= draft.period.end
-            except ValueError:
-                valid_period = False
-            if not valid_period:
-                checks.append(ReportCheck("source_period", f"Check uploaded source date: {source.filename} ({source.service_date}).", False, source.id))
-        else:
-            checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
+        from app.monthly_report_source_scope import contribution_dates_bound
+        # Verified row/totals dates already bind every included use to this
+        # report. Only the file-date ritual is redundant; keep all site gates.
+        if not contribution_dates_bound(draft, source):
+            if source.service_date:
+                try:
+                    value = date.fromisoformat(source.service_date)
+                    valid_period = draft.period.start <= value <= draft.period.end
+                except ValueError:
+                    valid_period = False
+                if not valid_period:
+                    checks.append(ReportCheck("source_period", f"Check uploaded source date: {source.filename} ({source.service_date}).", False, source.id))
+            else:
+                checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
         if ((not facility or facility not in names) and not foreign_included and not unknown_included
                 and not (source.id in included_sources and included_scope_valid(draft, source))):
             checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id))
+    from app.monthly_report_layout_checks import layout_checks
+    checks.extend(layout_checks(draft))
     # Same issue can be reached through the cover and a repeated section
     # binding. Preserve distinct fields/messages but show each exact concern once.
     return tuple(dict.fromkeys(checks))
