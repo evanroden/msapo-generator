@@ -154,27 +154,40 @@ def settled(page, rows, record, stage, baseline=None):
     return value
 
 
-def canvas_point(page, row, *, action=True):
+def native_grid_target(page, row, *, action=True):
     """Locked Streamlit 1.61.1: 32px row marker, fixed 160px pinned Row column.
 
     Remaining column widths may stretch; target the start of the first data
     column instead of guessing its full width. Row/header height is 2.1875rem.
-    A missing/moved grid fails; no rescue click or DOM event injection follows.
+    Glide draws into a canvas underlay, but its sibling native scroller receives
+    pointer input. Target that surface with ordinary locator actionability,
+    never force a click through it onto the visual-only canvas.
+    A missing/covered grid fails; no rescue click or DOM event injection follows.
     """
-    canvas = page.get_by_test_id("data-grid-canvas")
-    canvas.scroll_into_view_if_needed()
-    box = canvas.bounding_box()
-    if not box:
-        raise AssertionError("Native canvas is not visible")
+    grid = page.get_by_test_id("stDataFrame")
+    canvas = grid.get_by_test_id("data-grid-canvas")
+    surface = grid.locator(".dvn-scroller.stDataFrameGlideDataEditor")
+    assert grid.count() == canvas.count() == surface.count() == 1, "Ambiguous native grid"
+    surface.scroll_into_view_if_needed()
+    box, target = canvas.bounding_box(), surface.bounding_box()
+    assert box and target, "Native grid is not visible"
     rem = page.evaluate("parseFloat(getComputedStyle(document.documentElement).fontSize)")
     height = round(2.1875 * rem)
-    return canvas, {"x": 32 + (80 if action else 160 + 25), "y": height * (row + 1.5)}
+    point = {"x": box["x"] + 32 + (80 if action else 160 + 25) - target["x"],
+             "y": box["y"] + height * (row + 1.5) - target["y"]}
+    assert 0 < point["x"] < target["width"] and 0 < point["y"] < target["height"], "Native cell is clipped"
+    assert surface.evaluate("""(node, point) => {
+      const rect = node.getBoundingClientRect();
+      const hit = document.elementFromPoint(rect.left + point.x, rect.top + point.y);
+      return !!hit && (hit === node || node.contains(hit));
+    }""", point), "Native cell is covered"
+    return surface, point
 
 
 def menu(page, row):
     from playwright.sync_api import expect
-    canvas, point = canvas_point(page, row)
-    canvas.click(position=point)
+    surface, point = native_grid_target(page, row)
+    surface.click(position=point)
     options = page.get_by_role("menu", name="Button action menu")
     expect(options).to_be_visible()
     expect(options.get_by_role("menuitem", name="Insert blank above", exact=True)).to_be_visible()
@@ -210,8 +223,8 @@ def exercise(browser, name):
         expect(page.get_by_role("menu", name="Button action menu")).to_have_count(0)
         settled(page, expected_rows("initial"), record, "cancel is no-op", baseline)
 
-        canvas, point = canvas_point(page, 0, action=False)
-        canvas.dblclick(position=point)
+        surface, point = native_grid_target(page, 0, action=False)
+        surface.dblclick(position=point)
         field = page.locator(".gdg-input")
         expect(field).to_have_value("Received")
         field.fill(EDIT)  # No Enter/Tab: the next native menu click must deliver this edit.

@@ -206,3 +206,72 @@ def test_server_shutdown_is_bounded():
     process = Slow()
     qa.stop_server(process)
     assert process.calls == ["terminate", ("wait", 10), "kill", ("wait", 5)]
+
+
+class NativeGrid:
+    """Locator-only contract; no local browser is launched."""
+    def __init__(self):
+        self.calls = []
+        self.counts = {"grid": 1, "canvas": 1, "surface": 1}
+        self.boxes = {kind: {"x": 80, "y": 208, "width": 1038, "height": 245}
+                      for kind in ("canvas", "surface")}
+        self.hit = True
+
+    def get_by_test_id(self, testid):
+        assert testid == "stDataFrame"
+        return self.Node(self, "grid")
+
+    def evaluate(self, expression):
+        assert expression == "parseFloat(getComputedStyle(document.documentElement).fontSize)"
+        return 16
+
+    class Node:
+        def __init__(self, owner, kind):
+            self.owner, self.kind = owner, kind
+
+        def get_by_test_id(self, testid):
+            assert self.kind == "grid" and testid == "data-grid-canvas"
+            return self.__class__(self.owner, "canvas")
+
+        def locator(self, selector):
+            assert self.kind == "grid" and selector == ".dvn-scroller.stDataFrameGlideDataEditor"
+            return self.__class__(self.owner, "surface")
+
+        def count(self): return self.owner.counts[self.kind]
+        def bounding_box(self): return self.owner.boxes[self.kind]
+        def scroll_into_view_if_needed(self): self.owner.calls.append(("scroll", self.kind))
+
+        def evaluate(self, expression, point):
+            assert self.kind == "surface"
+            assert "elementFromPoint" in expression and "node.contains(hit)" in expression
+            self.owner.calls.append(("hit", point))
+            return self.owner.hit
+
+
+@pytest.mark.parametrize("action,x", [(True, 112), (False, 217)])
+def test_native_grid_targets_input_surface_not_visual_canvas(action, x):
+    page = NativeGrid()
+    # Translate coordinates; do not assume the two DOM elements share an origin.
+    page.boxes["surface"]["x"] -= 2
+    page.boxes["surface"]["y"] -= 3
+    target, point = qa.native_grid_target(page, 0, action=action)
+    assert target.kind == "surface"
+    assert point == {"x": x + 2, "y": 55.5}
+    assert page.calls == [("scroll", "surface"), ("hit", point)]
+
+
+@pytest.mark.parametrize("fault", ["missing", "ambiguous", "hidden", "clipped", "covered"])
+def test_native_grid_refuses_unproved_pointer_target(fault):
+    page = NativeGrid()
+    if fault == "missing":
+        page.counts["canvas"] = 0
+    elif fault == "ambiguous":
+        page.counts["surface"] = 2
+    elif fault == "hidden":
+        page.boxes["surface"] = None
+    elif fault == "clipped":
+        page.boxes["surface"]["height"] = 40
+    else:
+        page.hit = False
+    with pytest.raises(AssertionError):
+        qa.native_grid_target(page, 0)
