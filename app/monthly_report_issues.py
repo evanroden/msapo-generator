@@ -318,6 +318,52 @@ def _recover_rejected_source_deliveries(prefix, captured):
                     language=None, wrap_lines=True)
 
 
+
+def _recover_rejected_issue_field_deliveries(prefix, captured):
+    """Quarantine delivered issue fields rejected by the canonical baseline.
+
+    This includes off-page rows and removed rows without pending records.
+    A recovered value is copyable, not authorization to edit a future row.
+    """
+    import streamlit as st
+    names = {"text": "Description", "status": "Status",
+             "update": "Update", "note": "Evidence"}
+    recovery_prefix = prefix + "_issue_field_recovery_"
+    for key in tuple(st.session_state):
+        if (key in captured or not key.startswith(prefix + "_issue_")
+                or not key.endswith("_change")):
+            continue
+        control = key.removesuffix("_change")
+        suffix = control.rsplit("_", 1)[-1]
+        if suffix not in names:
+            continue
+        receipt = st.session_state.get(key)
+        if not isinstance(receipt, dict):
+            continue
+        registration = st.session_state.get(control + "_delivery", {})
+        delivered = (isinstance(receipt.get("token"), str)
+                     and receipt["token"] == registration.get("token")
+                     and isinstance(receipt.get("value"), str)
+                     and receipt["value"] == st.session_state.get(control))
+        if delivered:
+            recovery_key = recovery_prefix + _digest((key, receipt.get("identity"), receipt["value"]))
+            st.session_state.setdefault(recovery_key, {
+                "field": names[suffix], "value": receipt["value"],
+            })
+        # Every unclaimed receipt has failed canonical capture. Retire it even
+        # if its token is stale, so a later ABA row cannot reconsider it.
+        st.session_state.pop(key, None)
+        if delivered:
+            st.session_state.pop(control + "_delivery", None)
+    for key in sorted(k for k in st.session_state if k.startswith(recovery_prefix)):
+        record = st.session_state[key]
+        with st.expander("Earlier issue input (not applied)", key=key):
+            st.caption("The issue or report changed before this input could be applied. "
+                       "Compare it with the current issue before copying it.")
+            st.code(record["field"] + ": " + record["value"],
+                    language=None, wrap_lines=True)
+
+
 def _capture_issue_controls(draft, prefix, options):
     """Project delivered edits without mistaking a widget render for a commit.
 
@@ -335,6 +381,8 @@ def _capture_issue_controls(draft, prefix, options):
         if isinstance(pending, dict) and "after" in pending:
             pending = {**pending, "conflicted": True}
             st.session_state[key] = pending
+            captured.update(receipt_key for receipt_key, receipt in pending.get("receipts", {}).items()
+                            if st.session_state.get(receipt_key) == receipt)
             _show_issue_delivery(key + "_missing_row", pending)
     for original in draft.follow_ups:
         if original.category != "issue":
@@ -411,6 +459,7 @@ def _capture_issue_controls(draft, prefix, options):
             }
         items.append(revised)
     _recover_rejected_source_deliveries(prefix, captured)
+    _recover_rejected_issue_field_deliveries(prefix, captured)
     return replace(draft, follow_ups=tuple(items))
 
 
