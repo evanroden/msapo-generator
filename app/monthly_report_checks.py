@@ -37,11 +37,17 @@ def placeholder_matches(text: str) -> tuple[str, ...]:
 
 
 _MONTHS = {name.casefold(): i for i in range(1, 13) for name in (calendar.month_name[i], calendar.month_abbr[i])}
+_MONTHS["sept"] = 9  # Widely used four-letter September abbreviation.
 _MONTH_RE = re.compile(
     r"\b(" + "|".join(sorted(_MONTHS, key=len, reverse=True))
-    + r")\b(?:\s+\d{1,2}(?!\d)(?:st|nd|rd|th)?[,]?)?(?:\s+(\d{4}))?", re.IGNORECASE,
+    + r")\b\.?(?:\s+\d{1,2}(?!\d)(?:st|nd|rd|th)?[,]?)?(?:\s+(\d{4}))?", re.IGNORECASE,
 )
 _DATE_RE = re.compile(r"\b(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2})/(\d{2,4}))\b")
+# Recognize MM/YYYY only as a complete token, never the middle of a full date,
+# part number, decimal, path, or hyphenated purchase-order identifier.
+_MONTH_YEAR_RE = re.compile(
+    r"(?<![\w/.-])(?P<month>\d{1,2})/(?P<year>(?:19|20|21)\d{2})(?![\w/-]|\.\d)"
+)
 
 
 def _clearly_future_follow_up(text: str, start: int, end: int, *, source_year: int,
@@ -68,7 +74,7 @@ def _clearly_future_follow_up(text: str, start: int, end: int, *, source_year: i
 def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
     findings = []
     for match in _MONTH_RE.finditer(text):
-        if match[1] in ("may", "march") and not re.search(r"\d", match[0]):
+        if match[1].casefold() in ("may", "march") and not re.search(r"\d", match[0]):
             continue
         # Historical wording is exempt only immediately before this reference.
         # "Since July. June activity" must still warn about the second sentence.
@@ -91,6 +97,17 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
         if (value.year, value.month) != (year, month) and not _clearly_future_follow_up(
                 text, match.start(), match.end(), source_year=value.year,
                 source_month=value.month, target_year=year, target_month=month):
+            findings.append(match[0])
+    for match in _MONTH_YEAR_RE.finditer(text):
+        if re.search(r"\bsince\s+$", text[max(0, match.start() - 12):match.start()], re.I):
+            continue
+        observed_month, observed_year = int(match["month"]), int(match["year"])
+        if not 1 <= observed_month <= 12:
+            findings.append(match[0])
+            continue
+        if (observed_year, observed_month) != (year, month) and not _clearly_future_follow_up(
+                text, match.start(), match.end(), source_year=observed_year,
+                source_month=observed_month, target_year=year, target_month=month):
             findings.append(match[0])
     return tuple(dict.fromkeys(findings))
 
