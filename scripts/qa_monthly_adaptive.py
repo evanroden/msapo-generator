@@ -278,17 +278,36 @@ def scroll_pair(page, selector, inset=130, *, preview=False):
         expect(page.locator(selector).locator('.report-preview')).to_be_in_viewport(ratio=0.5)
 
 
-def current_image(page, selector):
+# A decoded divider can precede the viewer's automatic selected-page mount.
+# Check the intended page and its current status in the same browser evaluation.
+CURRENT_IMAGE_READY = r"""
+ const pair=document.querySelector(wanted.selector);
+ if (!pair) return false;
+ let images=deep(pair,'.report-preview img');
+ if (wanted.selected_page !== null) {
+   const status=deep(pair,'.report-preview-status')[0]?.textContent || '';
+   const position=deep(pair,'.report-preview-position')[0]?.textContent || '';
+   if (!/^Current · [1-9]\d* pages?$/.test(status) ||
+       !position.startsWith(wanted.selected_page + ' /')) return false;
+   images=deep(pair,'.report-preview figure[data-index="' +
+     (wanted.selected_page - 1) + '"] img');
+ }
+ return images.some(n=>n.complete && n.naturalWidth>0);
+"""
+
+
+def current_image(page, selector, *, selected_page=None):
     pair = page.locator(selector)
     status = pair.locator(".report-preview-status")
     expect(status).to_have_text(re.compile(r"^Current · [1-9]\d* pages?$"), timeout=120000)
-    image = pair.locator(".report-preview img").first
+    image_selector = (".report-preview img" if selected_page is None else
+                      f'.report-preview figure[data-index="{selected_page - 1}"] img')
+    image = pair.locator(image_selector).first
     image.wait_for(state="visible", timeout=45000)
     expect(image).to_have_js_property("complete", True, timeout=20000)
-    page.wait_for_function("""selector => {""" + DEEP + """
-      const pair=document.querySelector(selector);
-      return pair && deep(pair,'.report-preview img').some(n=>n.complete&&n.naturalWidth>0);
-    }""", arg=selector, timeout=20000)
+    page.wait_for_function("wanted => {" + DEEP + CURRENT_IMAGE_READY + "}",
+                           arg={"selector": selector, "selected_page": selected_page},
+                           timeout=20000)
     return pair
 
 
@@ -369,7 +388,7 @@ def exercise(browser_type, name):
         check(name, "vendor pages have no competing Activity checkbox",
               page.locator(ACTIVITY).get_by_role("checkbox", name="Add reviewed vendor service pages", exact=True).count() == 0)
         scroll_pair(page, ACTIVITY)
-        actual = current_image(page, ACTIVITY)
+        actual = current_image(page, ACTIVITY, selected_page=2)
         baseline = capture(page, name, "actual-activity-current")
         activity = pair_state(baseline, "activity")
         check(name, "actual generated Activity imagery is mounted", bool(activity["surface"]) and any(i["loaded"] for i in activity["images"]), activity)
