@@ -12,8 +12,8 @@ def resolved_app(monkeypatch,tmp_path):
     app,_=app_with_library(monkeypatch,tmp_path)
     native_uploader=upload_ui.st.file_uploader
     upload(monkeypatch,'synthetic-resolved-utility.pdf',utility_pdf())
-    app.run();button(app,'Read monthly files').click().run()
-    button(app,'Include page and continue').click().run()
+    app.run();app.run()  # Upload performs the free native read.
+    button(app,'Include page').click().run()
     button(app,'Add selected pages and tables to report').click().run()
     assert not app.exception
     # Only the real file bytes enter through the uploader seam. Restore the
@@ -29,9 +29,12 @@ def test_successful_add_collapses_exact_resolved_file_without_another_review_rit
     assert sum(b.label=='Manage source files' for b in app.button)==1
     assert sum(c.value=='1 source file' for c in app.caption)==1
     assert not any(e.label=='Included files and pictures' for e in app.expander)
-    assert not any(b.label in ('Include page and continue','Add selected pages and tables to report',
-                              'Change','Review source files','Done with source files') for b in app.button)
-    assert not any(e.label=='Choose pages for the client report' for e in app.expander)
+    assert not any(b.label in ('Change','Review source files','Done with source files') for b in app.button)
+    # Closed controls stay mounted to preserve unsubmitted native form input;
+    # the one keyed panel owns visibility and does no hidden source raster work.
+    assert any('_source_manager_panel{display:none' in item.value for item in app.markdown)
+    assert button(app,'Include page').disabled
+    assert not next(block for block in current_draft(app).blocks if block.key=='activity_summary').references
     assert len(next(b for b in current_draft(app).blocks if b.key=='utility_analysis').asset_hashes)==1
 
 
@@ -47,7 +50,7 @@ def test_change_reaches_original_controls_and_done_changes_no_source_draft_or_st
     assert any(e.label=='Choose pages for the client report' for e in app.expander)
     assert any(b.label=='Remove source from this draft' for b in app.button)
     assert any(b.label=='Use these source details' for b in app.button)
-    assert any(w.label=='Monthly source files' for w in app.get('file_uploader'))
+    assert any(w.label=='Add source files' for w in app.get('file_uploader'))
     assert any(w.label=='Read extracted text' for w in app.expander)
     assert current_draft(app)==before
     button(app,'Done with source files').click().run()
@@ -70,7 +73,8 @@ def test_report_only_removed_page_stays_actionable_without_automatic_reinclusion
     app.run()
     assert not app.exception
     assert not any(e.label=='Included files and pictures' for e in app.expander)
-    assert any(b.label=='Review synthetic-resolved-utility.pdf' for b in app.button)
+    assert any('need details' in item.value for item in app.caption)
+    assert button(app,'Manage source files')
     assert not next(b for b in current_draft(app).blocks if b.key=='utility_analysis').asset_hashes
     button(app,'Manage source files').click().run()
     assert any(e.label=='Choose pages for the client report' for e in app.expander)
@@ -103,7 +107,7 @@ def test_change_does_not_materialize_absent_source_caption_or_replace_inherited_
     assert current_draft(app)==before
     assert not current_draft(app).sources[0].captions
     assert next(w for w in app.text_input if w.label=='Page caption').value==inherited
-    assert button(app,'Include page and continue').disabled is blocked
+    assert button(app,'Include page').disabled is blocked
 
 
 def test_done_consumes_delivered_caption_before_retiring_its_native_control(monkeypatch,tmp_path):
@@ -127,7 +131,7 @@ def test_mixed_sources_keep_one_actionable_card_and_reach_the_unresolved_file(mo
     button(app,'Manage source files').click().run()
     native_uploader=upload_ui.st.file_uploader
     upload(monkeypatch,'synthetic-reference.txt',b'An undecided fictional source note.')
-    app.run();button(app,'Read monthly files').click().run()
+    app.run();app.run()  # Upload performs the free native read.
     monkeypatch.setattr(upload_ui.st,'file_uploader',native_uploader)
     app.run();button(app,'Done with source files').click().run()
     assert not app.exception
@@ -153,12 +157,14 @@ def test_reader_completion_and_done_capture_caption_in_same_native_event(monkeyp
 
     app,_=app_with_library(monkeypatch,tmp_path)
     native_uploader=upload_ui.st.file_uploader
-    raw=utility_pdf()
-    upload(monkeypatch,'synthetic-utility.pdf',raw)
-    app.run();button(app,'Read monthly files').click().run()
-    stream=BytesIO(raw);stream.name='synthetic-utility.pdf'
+    from test_monthly_report_sources import pdf_bytes
+    # Only an Activity source may reach this reader; Utility is intentionally excluded.
+    raw=pdf_bytes(1)
+    upload(monkeypatch,'synthetic-service.pdf',raw)
+    app.run();app.run()  # Upload performs the free native read.
+    stream=BytesIO(raw);stream.name='synthetic-service.pdf'
     monkeypatch.setattr(upload_ui.st,'file_uploader',lambda label,*a,**kw:
-        [stream] if label=='Add activity files (optional)' else native_uploader(label,*a,**kw))
+        [stream] if label=='Add source files' else native_uploader(label,*a,**kw))
     future=Future();future.set_running_or_notify_cancel()
     starts=[]
     monkeypatch.setattr(ai,'ANTHROPIC_API_KEY','synthetic-never-sent')
@@ -168,7 +174,7 @@ def test_reader_completion_and_done_capture_caption_in_same_native_event(monkeyp
     assert len(starts)==1 and button(app,'Done with source files')
     source=current_draft(app).sources[0]
     future.set_result({'items':[{'source':source.id,'page':1,
-        'text':'Electricity consumption: 1250 kWh. Synthetic test data.',
+        'text':'Completed inspection of DEMO-01.',
         'row':[],'include_page':True}], 'visual_pages':[[source.id,1]], 'notices':[]})
     delivered='Caption delivered when reading finishes'
     next(w for w in app.text_input if w.label=='Page caption').set_value(delivered)
@@ -222,8 +228,8 @@ def test_eight_optional_files_remain_available_without_eight_generic_review_remi
     for name,raw in originals.items():
         stream=BytesIO(raw);stream.name=name;streams.append(stream)
     monkeypatch.setattr(upload_ui.st,'file_uploader',lambda label,*a,**kw:
-        streams if label=='Monthly source files' else native_uploader(label,*a,**kw))
-    app.run();button(app,'Read monthly files').click().run()
+        streams if label=='Add source files' else native_uploader(label,*a,**kw))
+    app.run();app.run()  # Upload performs the free native read.
     monkeypatch.setattr(upload_ui.st,'file_uploader',native_uploader)
     app.run();button(app,'Done with source files').click().run()
     assert not app.exception
@@ -246,7 +252,7 @@ def test_specific_problem_opens_its_file_beside_optional_references(monkeypatch,
     button(app,'Manage source files').click().run()
     native_uploader=upload_ui.st.file_uploader
     upload(monkeypatch,'synthetic-reference.txt',b'Optional synthetic reference note.')
-    app.run();button(app,'Read monthly files').click().run()
+    app.run();app.run()  # Upload performs the free native read.
     monkeypatch.setattr(upload_ui.st,'file_uploader',native_uploader)
     app.run()
     select(app,'File to review').set_value(utility.id).run()
@@ -260,9 +266,9 @@ def test_specific_problem_opens_its_file_beside_optional_references(monkeypatch,
     before=current_draft(app)
     assert not app.exception
     assert sum(b.label=='Manage source files' for b in app.button)==1
-    assert any('Check the source reporting date.' in c.value for c in app.caption)
+    assert any('Check uploaded source date:' in item.value and utility.filename in item.value for item in app.warning)
     assert not any("Review this file's use" in c.value for c in app.caption)
-    button(app,'Review '+utility.filename).click().run()
+    next(control for control in app.button if control.label=='Correct date' and utility.id in control.key).click().run()
     assert not app.exception
     assert select(app,'File to review').value==utility.id
     assert next(w for w in app.date_input if w.label=='Source date').value==date(2026,8,1)

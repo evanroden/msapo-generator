@@ -7,6 +7,10 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 _V = '{urn:schemas-microsoft-com:vml}'
+_FIELD_LABEL = re.compile(
+    r'^location\s*/\s*campus\s*/\s*building\b.*:\s*$',
+    re.IGNORECASE,
+)
 
 
 def _outline(paragraph, styles):
@@ -41,7 +45,11 @@ def narrative_prototype(element, styles, static_labels):
     candidates = [p for p in element.iter(qn('w:p'))
                   if _text(p) and not list(p.iter(qn('w:txbxContent')))
                   and not _outline(p, styles)
-                  and _text(p).strip().casefold() not in static_labels]
+                  and _text(p).strip().casefold() not in static_labels
+                  # This native field prompt can precede even very short prose.
+                  # Its underline/size describe the label, not the new narrative.
+                  # Ordinary prose ending in a colon remains a valid prototype.
+                  and not _FIELD_LABEL.fullmatch(_text(p).strip())]
     if not candidates:
         return None
     # A canvas commonly begins with a label/site line and then its actual notes.

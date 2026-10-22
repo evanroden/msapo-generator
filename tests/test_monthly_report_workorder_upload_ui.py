@@ -17,7 +17,7 @@ def _upload(monkeypatch, raw=CSV):
     stream.name = "work_orders.csv"
     original = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
-                        [stream] if label == "Add activity files (optional)"
+                        [stream] if label == "Add source files"
                         else original(label, *args, **kwargs))
     monkeypatch.setattr(ai, "ANTHROPIC_API_KEY", "")
 

@@ -218,7 +218,9 @@ def test_accepted_totals_summary_is_quiet_and_reopens_in_the_one_manager(monkeyp
     app.run()
     next(button for button in app.button if button.label == "Add totals to summary").click().run()
     assert not app.exception
-    assert not any("Totals accepted" in item.value for item in app.caption)
+    # The selected-file summary and its native form stay mounted inside the
+    # closed workspace, so closing does not discard browser-only form input.
+    assert any("_source_manager_panel{display:none" in item.value for item in app.markdown)
     managers = [button for button in app.button if button.label == "Manage source files"]
     assert len(managers) == 1
     managers[0].click().run()

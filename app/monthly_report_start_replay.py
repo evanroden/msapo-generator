@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from app.monthly_report_model import ReportDraft, ResolvedBlock
+from app.monthly_report_model import ReportDraft, ResolvedBlock, known_sections
 from app.monthly_report_setup import merge_drafts
 
 
@@ -60,6 +60,48 @@ def retain_automatic_logo_contributions(incoming: ReportDraft,
         if (prior is not None and prior.asset_hashes and prior.references
                 and set(prior.references) <= references):
             retained.append(prior)
+    return _retain_contribution_blocks(incoming, previous, retained)
+
+
+def retain_automatic_divider_contributions(incoming: ReportDraft,
+                                           previous: ReportDraft | None, *, verified: bool,
+                                           inspection, plans, native_design=False) -> ReportDraft:
+    """Retain only an exact acknowledged native-owned divider contribution.
+
+    The previous source receipt stays separate from the current report.
+    Three-way replay preserves edits, omissions, clears, and removals.
+    """
+    if not native_design or previous is None or not verified:
+        return incoming
+    identity = lambda draft: (draft.profile.contract, draft.profile.key, draft.period)
+    if identity(previous) != identity(incoming):
+        return incoming
+    plans = tuple(plans)
+    items = {item.id: item for item in inspection.items}
+    selected = {item_id for plan in plans for item_id in plan.get("selected", ())}
+    existing_keys = {block.key for block in incoming.blocks}
+    retained = []
+    for role in ("divider_" + section.key for section in known_sections()):
+        if role in existing_keys:
+            continue
+        skipped = {item_id for plan in plans
+                   if plan.get("automatic") and not plan.get("omit")
+                   and plan.get("source_sha256") == inspection.sha256
+                   and plan.get("source_site_relation") == "same"
+                   for item_id in plan.get("automatic_divider_skips", {}).get(role, ())
+                   if item_id in items and items[item_id].kind == "image"
+                   and items[item_id].suggested_slot == role}
+        if not skipped or skipped & selected:
+            continue
+        prior = next((block for block in previous.blocks if block.key == role), None)
+        references = {f"docx:{inspection.sha256}:{item_id}" for item_id in skipped}
+        if (prior is not None and prior.source != "Omit" and prior.asset_hashes
+                and prior.references and set(prior.references) <= references):
+            retained.append(prior)
+    return _retain_contribution_blocks(incoming, previous, retained)
+
+
+def _retain_contribution_blocks(incoming, previous, retained):
     if not retained:
         return incoming
     blocks = list(incoming.blocks)

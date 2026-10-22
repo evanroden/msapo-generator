@@ -51,7 +51,7 @@ def test_read_draft_review_preserves_existing_work_and_invalidates(
         b"Service date: 2026-09-03\nInspected the synthetic pump.",
     )
     app.run()
-    button(app, "Read monthly files").click().run()
+    app.run()  # Upload performs the free native read.
     button(app, "Find work, findings and follow-ups").click().run()
     assert not app.exception
     button(app, "Use these facts").click().run()

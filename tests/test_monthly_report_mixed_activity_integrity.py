@@ -130,14 +130,16 @@ def test_guided_mixed_upload_is_processed_and_reading_cannot_retry_an_unrouted_c
     from app.monthly_report_model import ReportPeriod
     from test_monthly_report_activity_intake_commit import setup_app, editor, draft, activity, TOKEN
     app, profile = setup_app(monkeypatch, tmp_path)
+    # Explicit source types preserve this Activity-routing test under the
+    # general intake; ambiguous Reference-only files are covered separately.
     originals = {
-        'synthetic-site-log.csv': b'Building,Work Performed,Service Date\nUnmapped East,Replaced reserve pump coupling,2026-10-12\n',
+        'synthetic-cmms-site-log.csv': b'Building,Work Performed,Service Date\nUnmapped East,Replaced reserve pump coupling,2026-10-12\n',
     }
     if mixed:
-        originals['synthetic-service.pdf'] = pdf_bytes(SAFE_WORK)
+        originals['synthetic-maintenance report.pdf'] = pdf_bytes(SAFE_WORK)
     original_uploader = st.file_uploader
     def upload(label, *args, **kwargs):
-        if label == 'Add activity files (optional)':
+        if label == 'Add source files':
             values = []
             for name, raw in originals.items():
                 stream = BytesIO(raw); stream.name = name; values.append(stream)
@@ -175,7 +177,7 @@ def test_guided_mixed_upload_is_processed_and_reading_cannot_retry_an_unrouted_c
     assert expected_ids <= native_ids
     assert not calls and not reservations, 'Upload alone cannot start paid reading.'
     notices = '\n'.join(item.value for item in (*app.warning, *app.info, *app.caption))
-    assert 'synthetic-site-log.csv' in notices and 'not sent to the Activity reader' in notices
+    assert 'synthetic-cmms-site-log.csv' in notices and 'not sent to the Activity reader' in notices
     assert 'reserve pump coupling' not in activity(app).text
     if mixed:
         next(button for button in app.button if button.label == 'Read selected files').click().run()

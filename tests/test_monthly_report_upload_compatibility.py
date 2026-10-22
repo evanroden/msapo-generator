@@ -20,7 +20,7 @@ def test_first_failed_source_preparation_stays_pending_until_corrected(monkeypat
     select(app, "Classification").set_value("Water treatment").run()
     for page in reviewed:
         select(app, "Preview page / item").set_value(page).run()
-        button(app, "Include page and continue").click().run()
+        button(app, "Include page").click().run()
     prepare = upload_ui.sources.prepare_pages
     if len(reviewed) == 2:
         def fail(*args, **kwargs):
@@ -40,7 +40,7 @@ def test_first_failed_source_preparation_stays_pending_until_corrected(monkeypat
     monkeypatch.setattr(upload_ui.sources, "prepare_pages", prepare)
     for page in (1, 2):
         select(app, "Preview page / item").set_value(page).run()
-        button(app, "Include page and continue").click().run()
+        button(app, "Include page").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
     assert not any("pending file selection" in item.value for item in app.error)
@@ -68,7 +68,7 @@ def accepted_water(monkeypatch, tmp_path):
     # the warning acknowledgment is no longer a site-scope authorization.
     select(app, "Source facility").set_value(profile.facilities[0].key)
     button(app, "Use these source details").click().run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     next(w for w in app.selectbox if w.key.endswith("_water_reports_source")).set_value("This month").run()
     next(w for w in app.toggle if w.key.endswith("_water_include")).set_value(True).run()
@@ -170,7 +170,7 @@ def test_failed_replacement_keeps_accepted_page_caption_and_source_snapshot(monk
     assert not app.exception
     assert any("Check page 1" in error.value for error in app.error)
     assert observed[-1] == accepted
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
     updated = observed[-1]
@@ -249,7 +249,7 @@ def test_detailed_editor_keeps_accepted_pages_through_generation_rerun(monkeypat
     select(app, "Classification").set_value("Water treatment").run()
     select(app, "Source facility").set_value(profile.facilities[0].key)
     button(app, "Use these source details").click().run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
     source = next(w for w in app.selectbox if w.key.endswith("_water_reports_source"))

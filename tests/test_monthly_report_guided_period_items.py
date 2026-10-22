@@ -42,7 +42,7 @@ def test_exclude_restore_and_historical_keep_one_current_editor_without_resurrec
     assert not app.exception
     assert sum('id="report-editor-activity_summary"' in item.value for item in app.markdown) == 1
     assert any('#report-editor-activity_summary' in item.value for item in app.markdown)
-    click(app, 'Exclude this item from this report')
+    click(app, 'Leave out')
     assert len(app.text_area) == 1
     assert editor(app).value == app.session_state['canonical'].text == CURRENT
     for _ in range(2):
@@ -50,14 +50,14 @@ def test_exclude_restore_and_historical_keep_one_current_editor_without_resurrec
         assert editor(app).value == CURRENT
     click(app, 'Restore this wording')
     assert OLD in editor(app).value
-    click(app, 'Retain as historical context')
+    click(app, 'Keep as history')
     assert HISTORICAL + OLD in editor(app).value
     assert editor(app).value == app.session_state['canonical'].text
     app.run()
-    assert not any(b.label == 'Retain as historical context' for b in app.button)
+    assert not any(b.label == 'Keep as history' for b in app.button)
     # A substantive wording/date correction invalidates only this exact choice.
     editor(app).set_value(editor(app).value.replace('inspected', 'rechecked')).run()
-    assert any(b.label == 'Retain as historical context' for b in app.button)
+    assert any(b.label == 'Keep as history' for b in app.button)
 
 
 def test_repeat_import_and_old_widget_receipt_cannot_restore_excluded_wording():
@@ -65,7 +65,7 @@ def test_repeat_import_and_old_widget_receipt_cannot_restore_excluded_wording():
     original_key = editor(app).key
     editor(app).set_value(OLD + '\n' + CURRENT + '\nManual correction retained.').run()
     old_receipt = dict(app.session_state[original_key + '_explicitly_edited'])
-    click(app, 'Exclude this item from this report')
+    click(app, 'Leave out')
     canonical = app.session_state['canonical']
     assert OLD not in canonical.text and 'Manual correction retained.' in canonical.text
     # Repeat source material retaining report decisions, including a late old
@@ -81,13 +81,13 @@ def test_repeat_import_and_old_widget_receipt_cannot_restore_excluded_wording():
     editor(app).set_value('September 16 2026: manually corrected current work.').run()
     app.run()
     assert editor(app).value == app.session_state['canonical'].text == 'September 16 2026: manually corrected current work.'
-    assert not any(b.label == 'Retain as historical context' for b in app.button)
+    assert not any(b.label == 'Keep as history' for b in app.button)
 
 
 def test_interrupted_decision_replays_exact_baseline_but_not_newer_report():
     app = AppTest.from_string(APP).run()
     app.session_state['commit_enabled'] = False
-    click(app, 'Exclude this item from this report')
+    click(app, 'Leave out')
     assert OLD in app.session_state['canonical'].text
     assert OLD not in app.session_state['result'].text
     app.session_state['commit_enabled'] = True
@@ -95,7 +95,7 @@ def test_interrupted_decision_replays_exact_baseline_but_not_newer_report():
     assert not app.exception and editor(app).value == CURRENT
     click(app, 'Restore this wording')
     app.session_state['commit_enabled'] = False
-    click(app, 'Exclude this item from this report')
+    click(app, 'Leave out')
     newer = replace(app.session_state['canonical'], text='September 21 2026: a newer manual correction.')
     app.session_state['canonical'] = newer
     app.session_state['commit_enabled'] = True
@@ -113,7 +113,7 @@ def test_full_guided_durable_recovery_and_docx_exclude_receipt_payload(monkeypat
     click(app, 'Load known-value report')
     priced = 'August 20 2026: quoted synthetic repair cost $987654.'
     editor(app).set_value(priced + '\n' + CURRENT).run()
-    click(app, 'Exclude this item from this report')
+    click(app, 'Leave out')
     assert editor(app).value == CURRENT
     with qa.isolated(ACTOR_COOKIE):
         journal = active.load(ACTOR_COOKIE, fixture.CONTRACT, fixture.profile().key, fixture.PERIOD)
@@ -137,7 +137,7 @@ def test_full_guided_durable_recovery_and_docx_exclude_receipt_payload(monkeypat
 
 def test_interrupted_manual_edit_and_omission_reconciliation_survive_together():
     app = AppTest.from_string(APP).run()
-    click(app, 'Exclude this item from this report')
+    click(app, 'Leave out')
     canonical = app.session_state['canonical']
     app.session_state['canonical'] = replace(canonical, text=OLD + '\n' + CURRENT)
     app.session_state['commit_enabled'] = False
