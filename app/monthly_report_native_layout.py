@@ -788,6 +788,18 @@ def _cover(element, draft, *, preserve_issue_date=False):
             _set_text(paragraph, "")
 
 
+def _fit_unchanged_cover_photo(node, source_path, item):
+    width, height = item.image_width, item.image_height
+    if width <= 0 or height <= 0:
+        # Do not assume header-only inspection supplied usable dimensions.
+        # Use the same normalization path that already proved image identity,
+        # but retain the original package media rather than replacing it.
+        from app.monthly_report_import import read_import_image
+        normalized = read_import_image(Path(source_path), item, line_art=False)
+        width, height = normalized.width, normalized.height
+    _fit_cover_photo(node, width, height, preserve_crop=True)
+
+
 @lru_cache(maxsize=128)
 def _source_image_digest(source_path, source_digest, item, line_art):
     # The verified immutable source hash is part of this bounded cache key.
@@ -1276,8 +1288,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 if image_digest(str(source_path), image_cache_identity, source_item,
                                         role != "cover_photo") in block.asset_hashes:
                     if role == "cover_photo":
-                        _fit_cover_photo(node, source_item.image_width, source_item.image_height,
-                                         preserve_crop=True)
+                        _fit_unchanged_cover_photo(node, source_path, source_item)
                     continue
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
@@ -1298,8 +1309,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 if supplied is not None and image_digest(str(source_path), image_cache_identity, supplied,
                                                                 role != "cover_photo") in block.asset_hashes:
                     if role == "cover_photo":
-                        _fit_cover_photo(node, supplied.image_width, supplied.image_height,
-                                         preserve_crop=True)
+                        _fit_unchanged_cover_photo(node, source_path, supplied)
                     continue  # Retain original bytes and any proportional source crop.
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")

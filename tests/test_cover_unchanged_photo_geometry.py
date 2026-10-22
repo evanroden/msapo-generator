@@ -81,6 +81,29 @@ def test_unchanged_valid_asymmetric_source_crop_is_not_recentered(tmp_path, sect
 
 
 @pytest.mark.parametrize('section', [None, 'cover'])
+@pytest.mark.parametrize('missing', [(0, 0), (400, 0), (0, 300)])
+def test_unchanged_photo_uses_decoded_size_when_inspection_size_is_unavailable(tmp_path, monkeypatch, section, missing):
+    from dataclasses import replace
+    from app import monthly_report_native_layout as native
+    path, draft, assets, photograph = source_photo(tmp_path, {})
+    original = path.read_bytes()
+    inspection = inspect_docx(path)
+    inspection = replace(inspection, items=tuple(
+        replace(item, image_width=missing[0], image_height=missing[1]) if item.kind == 'image' else item
+        for item in inspection.items))
+    # Header-only inspection may not have registered a supported decoder yet.
+    # The actual normalization/digest path remains real and reads the source.
+    monkeypatch.setattr(native, 'inspect_docx', lambda _: inspection)
+    result = build_native_docx(draft, path, asset_loader=assets.__getitem__, section_key=section)
+    fitted, frame = photo_geometry(result)
+    assert 400 * (1 - fitted['l'] - fitted['r']) / (300 * (1 - fitted['t'] - fitted['b'])) == pytest.approx(frame[0] / frame[1], rel=.001)
+    assert frame == (Inches(4), Inches(2))
+    assert path.read_bytes() == original
+    with ZipFile(BytesIO(result)) as package:
+        assert photograph in [package.read(n) for n in package.namelist() if n.startswith('word/media/')]
+
+
+@pytest.mark.parametrize('section', [None, 'cover'])
 def test_source_view_photo_is_fitted_without_rewriting_preserved_art(tmp_path, monkeypatch, section):
     from test_monthly_report_source_frame_logo_role import source
     from test_monthly_report_native_art_review import setup
