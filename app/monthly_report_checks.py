@@ -99,11 +99,11 @@ def stale_period_mentions(text: str, year: int, month: int) -> tuple[str, ...]:
                 source_month=value.month, target_year=year, target_month=month):
             findings.append(match[0])
     for match in _MONTH_YEAR_RE.finditer(text):
-        if re.search(r"\bsince\s+$", text[max(0, match.start() - 12):match.start()], re.I):
-            continue
         observed_month, observed_year = int(match["month"]), int(match["year"])
         if not 1 <= observed_month <= 12:
             findings.append(match[0])
+            continue
+        if re.search(r"\bsince\s+$", text[max(0, match.start() - 12):match.start()], re.I):
             continue
         if (observed_year, observed_month) != (year, month) and not _clearly_future_follow_up(
                 text, match.start(), match.end(), source_year=observed_year,
