@@ -98,3 +98,68 @@ def test_a_normally_on_optional_section_left_out_stays_left_out():
     notes = ResolvedBlock("accounts_receivable_notes", "This month", text="Synthetic receivable notes.")
     draft = replace(draft, sections=(*draft.sections, receivable), blocks=(*draft.blocks, notes))
     assert _blocks(complete_guided_sections(draft))["accounts_receivable_notes"].source == "Omit"
+
+
+def test_a_profile_excluded_section_missing_from_an_older_draft_stays_left_out():
+    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    retained = ResolvedBlock("training_summary", "This month", text="Synthetic retained training notes.")
+    draft = replace(draft, profile=replace(draft.profile, excluded_sections=("training",)),
+                    sections=tuple(section for section in draft.sections if section.key != "training"),
+                    blocks=(*draft.blocks, retained))
+    after = complete_guided_sections(draft)
+    assert any(section.key == "training" and section.included for section in after.sections)
+    assert _blocks(after)["training_summary"] == replace(retained, source="Omit")
+
+
+def test_a_confirmed_proposal_stays_confirmed_when_its_section_is_left_out():
+    from app.monthly_report_followups import confirmation, problems
+    draft = _draft()
+    proposal = ReportFollowUp("synthetic-proposal", "proposal", "Synthetic carried proposal.", "August 2026",
+                              status="pending")
+    unconfirmed = ReportFollowUp("synthetic-open-proposal", "proposal", "Synthetic unreviewed proposal.",
+                                 "August 2026", status="pending")
+    draft = replace(draft, sections=tuple(replace(section, included=False) if section.key == "proposals" else section
+                                          for section in draft.sections),
+                    follow_ups=(replace(proposal, reviewed_fingerprint=confirmation(proposal, draft.period)), unconfirmed))
+    after = complete_guided_sections(draft)
+    confirmed, still_open = after.follow_ups
+    assert not confirmed.included and not problems(confirmed, after)
+    assert not still_open.included and any("Confirm this proposal" in message for message in problems(still_open, after))
+
+
+def test_a_table_frame_with_no_rows_is_not_content():
+    from app.monthly_report_model import ReportTable
+    draft = _draft()
+    frame = ResolvedBlock("demo_training", "This month", extra_tables=(ReportTable(("Topic",), ()),),
+                          rows=((" ",),))
+    draft = replace(draft, blocks=tuple(frame if block.key == "demo_training" else block for block in draft.blocks))
+    assert _blocks(complete_guided_sections(draft))["demo_training"] == frame
+
+
+INCLUDE_APP = """
+import streamlit as st
+from dataclasses import replace
+from app.monthly_report_ai_ui import edit_linked_paragraphs
+from app.monthly_report_model import DraftParagraph, ReportPeriod, ResolvedBlock, synthetic_draft, synthetic_profiles
+from app.monthly_report_ui import _field
+
+draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+paragraph = (DraftParagraph("Synthetic inspected chiller.", (), ()),)
+blocks = {key: ResolvedBlock(key, "Omit", text="- Synthetic inspected chiller.", ai_paragraphs=paragraph,
+                             ai_written=True, reviewed_fingerprint="synthetic-reviewed")
+          for key in ("activity_summary", "mbcx_report")}
+st.session_state["result"] = edit_linked_paragraphs(draft, blocks, "qa_left_out_linked", _field)
+"""
+
+
+def test_left_out_source_linked_wording_can_be_included_again():
+    from streamlit.testing.v1 import AppTest
+    app = AppTest.from_string(INCLUDE_APP, default_timeout=15).run()
+    assert not app.exception
+    buttons = [button for button in app.button if button.label == "Include in this report"]
+    assert len(buttons) == 1  # MBCx keeps its own retained-notes control
+    buttons[0].click().run()
+    result = app.session_state["result"]
+    assert result["activity_summary"].source == "This month" and not result["activity_summary"].reviewed
+    assert result["activity_summary"].ai_paragraphs[0].text == "Synthetic inspected chiller."
+    assert result["mbcx_report"].source == "Omit"

@@ -417,20 +417,36 @@ def complete_guided_sections(draft):
     proposals are left out of this report; an explicit edit or include
     restores them. Left out means excluded by the profile, or off although
     normally on; an appendix that is merely off by default (RFI) is not a
-    user's choice.
+    user's choice. A profile-excluded section missing from an older draft
+    counts too, through its standard blocks; a confirmed proposal stays
+    confirmed as left out.
     """
+    from app.monthly_report_followups import confirmation
     from app.monthly_report_model import default_sections, optional_sections
     chosen = set(draft.profile.excluded_sections) | {
         section.key for section in (*default_sections(), *optional_sections()) if section.included}
+    present = {section.key: section for section in draft.sections}
+    standard_specs = {section.key: section for order in ((), draft.profile.section_order)
+                      for section in profile_sections(replace(draft.profile, excluded_sections=(), section_order=order))}
     sections_out = {section.key for section in draft.sections if not section.included and section.key in chosen}
-    left_out = {block.key for section in draft.sections if section.key in sections_out for block in section.blocks}
+    sections_out |= {key for key in draft.profile.excluded_sections if key not in present and key in standard_specs}
+    left_out = {block.key for key in sections_out for block in (present.get(key) or standard_specs[key]).blocks}
+
+    def filled(rows):
+        return any(str(cell).strip() for row in rows for cell in row if cell is not None)
+
+    def leave_out(item):
+        left = replace(item, included=False)
+        confirmed = item.reviewed_fingerprint and item.reviewed_fingerprint == confirmation(item, draft.period)
+        return replace(left, reviewed_fingerprint=confirmation(left, draft.period)) if confirmed else left
+
     draft = replace(draft, blocks=tuple(
         replace(block, source="Omit", pending_library_save=False)
         if block.key in left_out and block.source != "Omit" and any(
-            (block.text.strip(), block.rows, block.asset_hashes, block.extra_tables, block.org_nodes,
-             block.ai_paragraphs)) else block
+            (block.text.strip(), filled(block.rows), block.asset_hashes,
+             any(filled(table.rows) for table in block.extra_tables), block.org_nodes, block.ai_paragraphs)) else block
         for block in draft.blocks), follow_ups=tuple(
-        replace(item, included=False)
+        leave_out(item)
         if item.included and ("issues" if item.category == "issue" else "proposals") in sections_out else item
         for item in draft.follow_ups))
     native_order = (draft.profile.section_order if draft.profile.template.startswith(
