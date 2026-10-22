@@ -76,9 +76,9 @@ def test_native_upload_merges_delivered_input_and_new_source_then_recovers(
         assert activity(app).text == manual
     original_uploader = st.file_uploader
     def upload(label, *args, **kwargs):
-        if label == 'Add activity files (optional)':
+        if label == 'Add source files':
             stream = BytesIO(b'Synthetic vendor inspected relief valve RV-27; replacement remains pending.\n')
-            stream.name = 'synthetic-intake-service.txt'
+            stream.name = 'synthetic-maintenance report.txt'
             return [stream]
         return original_uploader(label, *args, **kwargs)
     monkeypatch.setattr(st, 'file_uploader', upload)

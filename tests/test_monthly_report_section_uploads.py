@@ -122,10 +122,10 @@ def test_section_workflow_reads_once_reviews_and_applies_without_chain(monkeypat
     assert not any(w.label.startswith("Add synthetic") for w in app.selectbox)
     assert not app.multiselect
     assert button(app, "Add reviewed pages").disabled
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert next(w for w in app.selectbox if w.label == "Page to review").value == 2
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert not button(app, "Add reviewed pages").disabled
     button(app, "Add reviewed pages").click().run()
     assert not app.exception
@@ -141,7 +141,7 @@ def test_section_workflow_reads_once_reviews_and_applies_without_chain(monkeypat
 
 def test_section_upload_does_not_embed_same_file_elsewhere(monkeypatch, tmp_path):
     app = section_app(monkeypatch, tmp_path, pdf_bytes(1))
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     button(app, "Add reviewed pages").click().run()
     existing = app.session_state["test_sources"][0]
     # Re-use the exact original content bytes: identity is content based.
@@ -164,17 +164,17 @@ def test_price_pages_cannot_be_included_even_by_direct_include(monkeypatch, tmp_
         raw = pdf.tobytes()
     app = section_app(monkeypatch, tmp_path, raw)
     assert not app.exception
-    assert button(app, "Include page and continue").disabled
+    assert button(app, "Include page").disabled
     assert button(app, "Add reviewed pages").disabled
 
 
 def test_changed_caption_needs_one_new_review_without_rereading(monkeypatch, tmp_path):
     app = section_app(monkeypatch, tmp_path, pdf_bytes(1))
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not button(app, "Add reviewed pages").disabled
     next(w for w in app.text_input if w.label == "Page caption").set_value("Updated caption").run()
     assert button(app, "Add reviewed pages").disabled
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not button(app, "Add reviewed pages").disabled
 
 
@@ -201,7 +201,7 @@ else:
     button(app, "Read monthly files").click().run()
     next(w for w in app.selectbox if w.label == "Classification").set_value("Vendor service").run()
     next(w for w in app.radio if w.label == "View").set_value("Section").run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     next(w for w in app.text_input if w.label == "Vendor").set_value("Synthetic updated vendor").run()
     next(w for w in app.radio if w.label == "View").set_value("Batch").run()
     assert not app.exception

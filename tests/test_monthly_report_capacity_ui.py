@@ -53,7 +53,7 @@ def test_upload_reviews_and_saves_all_sites_once(profile, monkeypatch):
     assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
     assert not any(b.label.startswith("Save capacity") for b in app.button)
-    assert next(w for w in app.toggle if w.label == "Update existing capacity values").value is False
+    assert next(w for w in app.toggle if w.label == "Correct existing reusable capacity").value is False
 
 
 def test_actor_missing_disables_contract_save(profile, monkeypatch):
@@ -78,7 +78,7 @@ def test_existing_capacity_does_not_get_overwritten_by_repeated_upload(profile, 
     assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
     assert not any(b.label.startswith("Apply reviewed capacity") for b in app.button)
-    next(w for w in app.toggle if w.label == "Update existing capacity values").set_value(True).run()
+    next(w for w in app.toggle if w.label == "Correct existing reusable capacity").set_value(True).run()
     assert not app.exception
     assert capacity.load_capacity(profile.contract).revision == 1
 
@@ -117,25 +117,23 @@ def test_saved_contract_capacity_uses_secondary_edit_control_and_preserves_versi
     assert not app.exception
     saved = capacity.load_capacity(profile.contract)
     assert saved and saved.revision == 1
-    assert not any(item.label == "Edit or replace shared capacity" for item in app.expander)
+    assert next(item for item in app.expander if item.label == "Capacity source and reusable data").proto.expanded is True
 
     app.run()
     assert not app.exception
-    assert any(item.label == "Edit or replace shared capacity" for item in app.expander)
-    assert any("Saved capacity for 2 contract sites" in item.value
-               for item in app.get("caption"))
-    assert any("Previously saved report versions stay unchanged" in item.value
-               for item in app.get("caption"))
+    assert next(item for item in app.expander if item.label == "Capacity source and reusable data").proto.expanded is False
+    assert any(item.value == "Capacity · reused for these sites" for item in app.caption)
+    assert "Previously saved report versions stay unchanged" in app.toggle("test_capacity_change").proto.help
     assert next(item for item in app.toggle
-                if item.label == "Update existing capacity values").value is False
+                if item.label == "Correct existing reusable capacity").value is False
     assert capacity.load_capacity(profile.contract) == saved
 
     next(item for item in app.toggle
-         if item.label == "Update existing capacity values").set_value(True).run()
+         if item.label == "Correct existing reusable capacity").set_value(True).run()
     assert not app.exception
     assert capacity.load_capacity(profile.contract) == saved
     assert next(item for item in app.toggle
-                if item.label == "Update existing capacity values").value is True
+                if item.label == "Correct existing reusable capacity").value is True
 
 
 def test_first_time_capacity_upload_stays_primary_and_requires_no_optional_maintenance(
@@ -146,8 +144,8 @@ def test_first_time_capacity_upload_stays_primary_and_requires_no_optional_maint
     app.run()
     assert not app.exception
     assert capacity.load_capacity(profile.contract) is None
-    assert not any(item.label == "Edit or replace shared capacity" for item in app.expander)
-    assert any("Add capacity data once for these sites" in item.value
+    assert next(item for item in app.expander if item.label == "Capacity source and reusable data").proto.expanded is True
+    assert any("Clear site matches fill missing reusable capacity automatically" in item.value
                for item in app.get("caption"))
     # No empty upload should alter the report or create a shared site table.
     original = app.session_state["test_block"].fingerprint

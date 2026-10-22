@@ -70,9 +70,9 @@ def test_fresh_caption_editor_displays_fallback_without_mutating_source(monkeypa
 
 def _included_editor(monkeypatch, tmp_path):
     app = _water_app(monkeypatch, tmp_path, pdf_bytes(1))
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     app.run()
-    button(app, "Edit pages").click().run()
+    button(app, "Report pages").click().run()
     assert not app.exception
     return app
 
@@ -84,7 +84,7 @@ def test_edit_then_immediate_include_reviews_that_exact_caption(monkeypatch, tmp
     # Both values are delivered in one native submission. Do not insert an
     # intermediate rerun/blur to disguise callback-before-render ordering.
     next(w for w in app.text_input if w.label == "Page caption").set_value(caption)
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     updated = app.session_state["test_blocks"]["water_reports"]
     source = app.session_state["test_sources"][0]
@@ -101,7 +101,7 @@ def test_edit_then_immediate_include_reviews_that_exact_caption(monkeypatch, tmp
 def test_immediate_include_cannot_approve_newly_submitted_price(monkeypatch, tmp_path):
     app = _included_editor(monkeypatch, tmp_path)
     next(w for w in app.text_input if w.label == "Page caption").set_value("Invoice amount $125")
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     source = app.session_state["test_sources"][0]
     updated = app.session_state["test_blocks"]["water_reports"]

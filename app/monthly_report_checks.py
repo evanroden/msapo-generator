@@ -319,16 +319,20 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
         # text/tables. They must not bypass the required foreign-site check.
         if source.classification == "Reference only" or not source.selected_pages:
             continue
-        if source.service_date:
-            try:
-                value = date.fromisoformat(source.service_date)
-                valid_period = draft.period.start <= value <= draft.period.end
-            except ValueError:
-                valid_period = False
-            if not valid_period:
-                checks.append(ReportCheck("source_period", f"Check uploaded source date: {source.filename} ({source.service_date}).", False, source.id))
-        else:
-            checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
+        from app.monthly_report_source_scope import contribution_dates_bound
+        # Verified row/totals dates already bind every included use to this
+        # report. Only the file-date ritual is redundant; keep all site gates.
+        if not contribution_dates_bound(draft, source):
+            if source.service_date:
+                try:
+                    value = date.fromisoformat(source.service_date)
+                    valid_period = draft.period.start <= value <= draft.period.end
+                except ValueError:
+                    valid_period = False
+                if not valid_period:
+                    checks.append(ReportCheck("source_period", f"Check uploaded source date: {source.filename} ({source.service_date}).", False, source.id))
+            else:
+                checks.append(ReportCheck("source_date_unknown", f"Confirm the reporting date for {source.filename}; no date has been established.", False, source.id))
         if ((not facility or facility not in names) and not foreign_included and not unknown_included
                 and not (source.id in included_sources and included_scope_valid(draft, source))):
             checks.append(ReportCheck("source_facility", f"Check uploaded source facility: {source.filename} ({source.facility or 'not established'}).", False, source.id))

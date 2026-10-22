@@ -35,21 +35,21 @@ def test_structured_source_review_decisions_survive_metadata_owner_and_reload(mo
     stream.name = "synthetic-owner-order.pdf"
     uploader = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
-        [stream] if label == "Add activity files (optional)" else uploader(label, *args, **kwargs))
+        [stream] if label == "Add source files" else uploader(label, *args, **kwargs))
     app.run()
     assert not app.exception
     select(app, "Classification").set_value("Vendor service").run()
     # Include explicitly reruns after storing the reviewed source but before
     # the full draft commit. A top metadata form must not restore its old copy.
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert 1 in dict(reviewed_source(app).client_page_reviews)
     assert select(app, "Preview page / item").value == 2
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert 2 in dict(reviewed_source(app).client_page_exclusions)
     assert select(app, "Preview page / item").value == 3
     next(widget for widget in app.text_input if widget.label == "Page caption").set_value("Reviewed third page")
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     source = reviewed_source(app)
     assert set(dict(source.client_page_reviews)) == {1, 3}
     assert set(dict(source.client_page_exclusions)) == {2}

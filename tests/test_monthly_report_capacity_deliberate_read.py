@@ -105,9 +105,9 @@ def test_populated_report_capacity_keeps_upload_secondary_and_values_exact(
     app.session_state["test_draft"] = draft(profile, block)
     app.run()
     assert not app.exception
-    panel = next(x for x in app.expander if x.label == "Add capacity for future reports")
+    panel = next(x for x in app.expander if x.label == "Capacity source and reusable data")
     assert panel.proto.expanded is False
-    assert any("These capacity values are in this report only" in x.value
+    assert any("Capacity · this report only" in x.value
                for x in app.get("caption"))
     assert app.session_state["test_block"] == block
     assert capacity.load_capacity(profile.contract) is None
@@ -134,8 +134,8 @@ def test_empty_imported_schema_keeps_first_capacity_upload_primary(profile, monk
     app.session_state["test_draft"] = draft(profile, block)
     app.run()
     assert not app.exception
-    assert not any(x.label == "Add capacity for future reports" for x in app.expander)
-    assert any("Add capacity data once" in x.value for x in app.get("caption"))
+    assert next(x for x in app.expander if x.label == "Capacity source and reusable data").proto.expanded is True
+    assert any("Clear site matches fill missing reusable capacity automatically" in x.value for x in app.caption)
     assert app.session_state["test_block"] == block
     assert capacity.load_capacity(profile.contract) is None
 

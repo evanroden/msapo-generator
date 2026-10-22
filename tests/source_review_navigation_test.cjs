@@ -39,7 +39,7 @@ function fixture() {
             after(replacement){this.alert.link=replacement;replacement.alert=this.alert;},
             remove(){if(this.alert.link===this)this.alert.link=null;}};
     }
-    const app={listeners:new Map(),workspaces:[workspace],extraMarkers:[],contains:node=>node.insideApp!==false,querySelector:()=>review,
+    const app={request:null,listeners:new Map(),workspaces:[workspace],extraMarkers:[],contains:node=>node.insideApp!==false,querySelector:s=>s.startsWith('#')?review:s==='.enfra-source-review-target'?app.request:null,
         querySelectorAll:s=>s.includes('epc_workspace_monthly')?app.workspaces:s==='.enfra-source-correction'?correctionMarkers:s==='[id^="source-details-"]'?[...Object.values(entries).map(v=>v.marker),...app.extraMarkers]:Object.values(entries).map(v=>v.back),
         addEventListener(k,fn){this.listeners.set(k,fn);},removeEventListener(k,fn){if(this.listeners.get(k)===fn)this.listeners.delete(k);}};
     const addCorrection=id=>{
@@ -67,7 +67,7 @@ function fixture() {
     const changed=boundary=>{for(const observer of [...observers])if(observer.target===boundary||observer.target===app)observer.callback([]);};
     const expire=()=>{for(const [id,fn]of [...timers]){timers.delete(id);fn();}};
     const pendingObservers=()=>[...observers].filter(observer=>observer.target!==app);
-    return{entries,app,state,workspace,review,scroll,install,click,flush,changed,expire,observers,timers,pendingObservers,addCorrection};
+    return{entries,app,state,workspace,review,scroll,install,click,flush,changed,expire,observers,timers,pendingObservers,addCorrection,context};
 }
 
 test('one correction opens its outer and exact source disclosure and focuses its native field',async()=>{
@@ -324,5 +324,108 @@ test('sibling warning ownership is checked again at click and deferred focus',as
         h.click(link);await h.flush();
         notice.marker.dataset.reportIdentity='foreign';a.boundary.ready=true;h.changed(a.boundary);await h.flush();
         assert.equal(a.field.focuses,0,phase);assert.equal(a.field.scrolls,0,phase);cleanup();
+    }
+});
+
+test('native warning action retains its callback and a new target focuses once after rerun',async()=>{
+    const h=fixture(),a=h.entries.first;let cleanup=h.install();
+    const warning={dataset:{sourceId:'first'}};
+    const wrapper={querySelector:()=>warning};
+    const button={isConnected:true,parentElement:h.scroll,getBoundingClientRect:()=>({top:420}),closest:()=>wrapper,setAttribute(){},focus(){this.focused=true;}};
+    const target={closest:s=>s==='button'?button:null};
+    assert.equal(h.click(target).prevented,false,'the native selection/open callback must still run');
+    assert.equal(a.field.focuses,0);assert.equal(h.state.sourceReviewReturn.source,'first');
+    cleanup();h.app.request={isConnected:true,closest:s=>s.includes('epc_workspace_monthly')?h.workspace:null,dataset:{sourceId:'first',field:'site',token:'new-native-action'}};
+    cleanup=h.install();await h.flush();
+    assert.equal(a.field.focuses,1);assert.equal(a.details.open,true);assert.equal(a.back.hidden,false);
+    cleanup();cleanup=h.install();await h.flush();
+    assert.equal(a.field.focuses,1,'an ordinary rerender cannot repeatedly steal editor focus');
+    h.click(a.back);assert.equal(button.focused,true);assert.equal(h.state.sourceReviewReturn,null);
+    cleanup();
+});
+
+test('page correction keeps its native callback and returns to the same page task',async()=>{
+    const h=fixture(),a=h.entries.first;let cleanup=h.install();
+    const context={dataset:{sourceId:'first',returnTarget:'report-section-water'}};
+    const wrapper={querySelector:s=>s==='.enfra-source-page-correction'?context:null};
+    const button={isConnected:true,parentElement:h.scroll,top:420,getBoundingClientRect(){return{top:this.top};},
+        closest:s=>s.includes('monthly_source_page_correction_')?wrapper:null,setAttribute(){},focus(){this.focused=true;}};
+    const originalQuery=h.app.querySelector;
+    h.app.querySelector=s=>s==='#report-section-water'?h.review:originalQuery(s);
+    const target={closest:s=>s==='button'?button:null};
+    assert.equal(h.click(target).prevented,false);
+    assert.equal(h.state.sourceReviewReturn.target,'report-section-water');
+    assert.equal(a.back.textContent,'Return to report pages');
+    cleanup();h.app.request={isConnected:true,closest:s=>s.includes('epc_workspace_monthly')?h.workspace:null,dataset:{sourceId:'first',field:'site',token:'page-context-action'}};
+    cleanup=h.install();await h.flush();
+    assert.equal(a.field.focuses,1);button.top=120;
+    h.click(a.back);assert.equal(h.scroll.scrollTop,500);assert.equal(button.focused,true);
+    assert.equal(h.state.sourceReviewReturn,null);cleanup();
+});
+
+
+test('opening the single page owner scrolls its exact source once without reading input',async()=>{
+    const h=fixture();
+    const page={isConnected:true,parentElement:{getAnimations:()=>[]},focuses:0,scrolls:0,
+        closest:s=>s.includes('epc_workspace_monthly')?h.workspace:null,
+        setAttribute(){},focus(o){assert.equal(o.preventScroll,true);this.focuses++;},scrollIntoView(){this.scrolls++;}};
+    const originalId=h.context.document.getElementById;
+    h.context.document.getElementById=id=>id==='source-page-context-first'?page:originalId(id);
+    const originalQuery=h.app.querySelector;
+    h.app.querySelector=s=>s==='.enfra-report-page-target'?{isConnected:true,closest:s=>s.includes('epc_workspace_monthly')?h.workspace:null,dataset:{sourceId:'first',token:'one-open'}}:originalQuery(s);
+    let cleanup=h.install();await h.flush();assert.equal(page.focuses,1);assert.equal(page.scrolls,1);
+    cleanup();cleanup=h.install();await h.flush();assert.equal(page.focuses,1);cleanup();
+});
+
+test('native correction waits for its cold date input and cancels stale ownership',async()=>{
+    for(const change of [false,true]) {
+        const h=fixture(),a=h.entries.second;
+        h.app.request={isConnected:true,closest:s=>s.includes('epc_workspace_monthly')?h.workspace:null,
+            dataset:{sourceId:'second',field:'date',token:'native-cold-date'}};
+        a.boundary.ready=false;
+        const cleanup=h.install();await h.flush();assert.equal(a.field.focuses,0);
+        if(change)h.state.identity='different-report';
+        a.boundary.ready=true;h.changed(a.boundary);await h.flush();
+        assert.equal(a.field.focuses,change?0:1);
+        assert.equal(h.state.sourceReviewFocusToken,change?undefined:'native-cold-date');
+        cleanup();assert.equal(h.observers.size,0);assert.equal(h.timers.size,0);
+    }
+});
+
+test('a native source target in the no-Activity sibling manager requires its exact report owner',async()=>{
+    for(const foreign of [false,true]) {
+        const h=fixture(),a=h.entries.second;
+        a.boundary.workspace=null;
+        if(foreign)a.owner.dataset.reportIdentity='foreign-report';
+        h.app.request={isConnected:true,closest:s=>s.includes('_source_manager_panel')?a.group:null,
+            dataset:{sourceId:'second',field:'date',token:'native-sibling-date'}};
+        const cleanup=h.install();await h.flush();
+        assert.equal(a.field.focuses,foreign?0:1);
+        cleanup();assert.equal(h.observers.size,0);
+    }
+});
+
+
+test('native page focus cancels foreign, stale or detached target ownership before deferred focus',async()=>{
+    for (const phase of ['resolve','frame']) for (const defect of ['foreign','stale','detached','outside']) {
+        const h=fixture();
+        const foreign={dataset:{epcMode:'wide'},_epcWorkspace:{identity:'foreign-report'}};
+        const page={isConnected:true,insideApp:true,stale:false,workspace:h.workspace,focuses:0,scrolls:0,
+            closest(s){return s.includes('epc_workspace_monthly')?this.workspace:s==='[data-stale="true"]'&&this.stale?this:null;},
+            setAttribute(){},focus(){this.focuses++;},scrollIntoView(){this.scrolls++;}};
+        const change=()=>{if(defect==='foreign')page.workspace=foreign;else if(defect==='stale')page.stale=true;
+            else if(defect==='detached')page.isConnected=false;else page.insideApp=false;};
+        const originalId=h.context.document.getElementById;
+        h.context.document.getElementById=id=>id==='source-page-context-first'?page:originalId(id);
+        const originalQuery=h.app.querySelector;
+        const request={isConnected:true,closest:s=>s.includes('epc_workspace_monthly')?h.workspace:null,
+            dataset:{sourceId:'first',token:'owner-check'}};
+        h.app.querySelector=s=>s==='.enfra-report-page-target'?request:originalQuery(s);
+        if(phase==='resolve')change();
+        const cleanup=h.install();
+        if(phase==='frame'){await Promise.resolve();await Promise.resolve();change();}
+        await h.flush();
+        assert.equal(page.focuses,0,phase+' '+defect);assert.equal(page.scrolls,0);
+        assert.equal(h.state.sourcePageFocusToken,undefined);cleanup();
     }
 });

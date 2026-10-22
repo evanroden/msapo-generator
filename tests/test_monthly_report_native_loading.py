@@ -12,8 +12,8 @@ import streamlit as st
 from app.monthly_report_native_loading import reserve_text_area, reserve_empty_uploader
 reserve_text_area("working_notes", 140)
 text = st.text_area("Notes", value="Original note", height=140, key="working_notes")
-reserve_empty_uploader("source_upload", "Add activity files (optional)")
-st.file_uploader("Add activity files (optional)", type=["pdf"],
+reserve_empty_uploader("source_upload", "Add source files")
+st.file_uploader("Add source files", type=["pdf"],
                  accept_multiple_files=True, key="source_upload")
 if st.button("Keep notes"):
     st.session_state["submitted_note"] = text
@@ -49,7 +49,7 @@ def test_sizing_is_scoped_to_the_existing_skeleton_and_wraps_its_native_label():
     assert not app.exception
     text_css, upload_css = [item.proto.body for item in app.get("html")]
     assert '.st-key-working_notes > [data-testid="stSkeleton"]{height:140px;}' in text_css
-    assert 'Add activity files (optional)' in upload_css
+    assert 'Add source files' in upload_css
     assert 'visibility:hidden' in upload_css
     assert 'height:4.25rem' in upload_css and 'height:6.15rem' in upload_css
     assert '(width < 23rem)' in upload_css
@@ -62,7 +62,7 @@ def test_populated_upload_does_not_claim_the_empty_dropzone_geometry():
 import streamlit as st
 from app.monthly_report_native_loading import reserve_empty_uploader
 st.session_state["selected_upload"] = ["existing uploaded file"]
-reserve_empty_uploader("selected_upload", "Add activity files (optional)")
+reserve_empty_uploader("selected_upload", "Add source files")
 """).run()
     assert not app.exception and not app.get("html")
 

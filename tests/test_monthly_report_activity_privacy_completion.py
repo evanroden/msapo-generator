@@ -92,9 +92,9 @@ def test_cached_reader_explains_excluded_original_without_creating_assets(monkey
     app = monthly(monkeypatch, tmp_path)
     original = ui.st.file_uploader
     def upload(label, *args, **kwargs):
-        if label == "Add activity files (optional)":
+        if label == "Add source files":
             stream = BytesIO(raw)
-            stream.name = "synthetic-contact-service.pdf"
+            stream.name = "synthetic-contact-maintenance report.pdf"
             return [stream]
         return original(label, *args, **kwargs)
     def cached(profile, kind, digest):
@@ -146,9 +146,9 @@ def test_same_action_edit_totals_and_new_source_keep_both_contributions(monkeypa
     additional = b"Inspected synthetic generator G-37 and confirmed it remains offline."
     def upload(label, *args, **kwargs):
         files = workorder_uploader(label, *args, **kwargs)
-        if label == "Add activity files (optional)":
+        if label == "Add source files":
             stream = BytesIO(additional)
-            stream.name = "synthetic-additional-activity.txt"
+            stream.name = "synthetic-additional-maintenance report.txt"
             return [*files, stream]
         return files
     monkeypatch.setattr(st, "file_uploader", upload)

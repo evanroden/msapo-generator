@@ -111,9 +111,13 @@ def test_unready_or_ambiguous_checkbox_never_gets_a_gesture(blocked):
 def test_source_correction_evidence_uploads_before_later_browser_steps():
     path = Path(__file__).resolve().parents[1] / ".github/workflows/adaptive-workspaces.yml"
     workflow = path.read_text()
-    expected = """        run: python scripts/qa_source_corrections.py
+    expected = """        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_source_corrections.py
+          NATIVE_TEST
       - name: Upload source correction evidence immediately, including first failures
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: source-correction-browser-evidence-${{ github.run_attempt }}
@@ -124,6 +128,6 @@ def test_source_correction_evidence_uploads_before_later_browser_steps():
 """
     assert workflow.count(expected) == 1
     final = workflow.split("      - name: Upload synthetic screenshots and geometry\n", 1)[1]
-    assert final.startswith("        if: always()\n        uses: actions/upload-artifact@v4\n")
+    assert final.startswith("        if: always()\n        timeout-minutes: 3\n        uses: actions/upload-artifact@v4\n")
     assert "            test-artifacts/source-corrections/\n" in final
     assert "permissions:\n  contents: read\n" in workflow

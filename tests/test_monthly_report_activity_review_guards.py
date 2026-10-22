@@ -104,7 +104,7 @@ def workorder_app(monkeypatch, tmp_path):
            b'SYNTHETIC-WO-2,2026-10-12,Open,Synthetic West\n')
     original = st.file_uploader
     def upload(label, *args, **kwargs):
-        if label == 'Add activity files (optional)':
+        if label == 'Add source files':
             stream = BytesIO(raw); stream.name = 'synthetic-workorders.csv'
             return [stream]
         return original(label, *args, **kwargs)

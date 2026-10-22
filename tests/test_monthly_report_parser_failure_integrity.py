@@ -226,10 +226,10 @@ def test_guided_bad_file_batch_keeps_exact_delivered_activity_and_recovers(
     editor(app).set_value('Earlier wording deliberately replaced by the incoming edit.').run()
     bad = oversized_png_header() if suffix == '.png' else corrupted_package(suffix)
     filename = 'malformed-source' + suffix
-    originals = (('first.txt', FIRST), (filename, bad), ('last.txt', LAST))
+    originals = (('first-maintenance report.txt', FIRST), (filename, bad), ('last-maintenance report.txt', LAST))
     original_uploader = st.file_uploader
     def upload(label, *args, **kwargs):
-        if label == 'Add activity files (optional)':
+        if label == 'Add source files':
             values = []
             for name, raw in originals:
                 stream = BytesIO(raw)

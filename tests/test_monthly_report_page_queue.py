@@ -29,20 +29,21 @@ def test_scanned_pages_advance_through_initially_unselected_pages(monkeypatch, t
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic-scanned.pdf", scanned_pdf())
     app.run()
-    button(app, "Read monthly files").click().run()
+    app.run()  # Upload performs the free native read.
     assert not app.exception
     assert next(x for x in app.multiselect if x.label == "Included pages / extracted items").value == []
     assert not button(app, "Next page needing review").disabled
-    assert not any(x.label in ("Review source", "File to review", "Classification confidence") for x in app.selectbox)
+    assert not any(x.label in ("Review source", "Classification confidence") for x in app.selectbox)
+    assert sum(x.label == "File to review" for x in app.selectbox) == 1
     destination = next(x for x in app.selectbox if x.label == "Report section for synthetic-scanned.pdf")
     assert "Maintenance — vendor service pages" in destination.options
     assert "vendor_reports" not in destination.options
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert select(app, "Preview page / item").value == 2
     assert not any("Every page has been checked" in x.value for x in app.success)
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert select(app, "Preview page / item").value == 3
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert button(app, "Next page needing review").disabled
     assert any("Every page has been checked" in x.value for x in app.success)
     assert next(x for x in app.multiselect if x.label == "Included pages / extracted items").value == [1, 3]
