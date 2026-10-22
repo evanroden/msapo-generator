@@ -171,3 +171,25 @@ def test_controller_observations_share_marked_server_environment_and_restore(tmp
         require_synthetic_root(tmp_path)
     assert os.environ["EPC_DATA_DIR"] == "original-root"
     assert os.environ["EPC_MONTHLY_DOM_FIXTURE"] == "original-value"
+
+
+def test_output_and_controller_guards_import_without_optional_playwright():
+    import subprocess
+    import sys
+    code = """
+import importlib.abc, sys
+class NoBrowser(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'playwright' or fullname.startswith('playwright.'):
+            raise ModuleNotFoundError('Optional Playwright deliberately unavailable', name='playwright')
+sys.meta_path.insert(0, NoBrowser())
+from scripts import qa_about_logo_refresh as runner
+assert callable(runner.validate_native_outputs) and callable(runner.controller_environment)
+try:
+    runner.main()
+except ModuleNotFoundError as exc:
+    assert exc.name == 'playwright'
+else:
+    raise AssertionError('Native acceptance must not silently skip missing Playwright')
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=30)

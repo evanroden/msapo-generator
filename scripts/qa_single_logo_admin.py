@@ -19,7 +19,6 @@ from urllib.parse import urlparse, quote
 import urllib.request
 
 from PIL import Image
-from playwright.sync_api import expect, sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/"test-artifacts"/"single-logo-admin"
@@ -239,6 +238,10 @@ def exercise(engine,name,executable=None):
 
 
 def main():
+    # Pure receipt guards are also tested without optional browser packages.
+    # Actual native acceptance still requires Playwright and both engines.
+    global expect, sync_playwright, PlaywrightTimeoutError
+    from playwright.sync_api import expect, sync_playwright, TimeoutError as PlaywrightTimeoutError
     parser=argparse.ArgumentParser();parser.add_argument("--chromium-only",action="store_true")
     parser.add_argument("--chromium-executable");args=parser.parse_args()
     OUT.mkdir(parents=True,exist_ok=True)

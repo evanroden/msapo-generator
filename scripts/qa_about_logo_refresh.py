@@ -20,7 +20,6 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from playwright.sync_api import expect, sync_playwright
 from scripts.workspace_history_observations import namespace, storage_state
 from scripts.workspace_logo_refresh_observations import MODES, artwork
 
@@ -211,6 +210,10 @@ def controller_environment(base):
 
 
 def main():
+    # Output/controller guards are part of the base suite without browser extras.
+    # Native acceptance must still fail if its required browser tool is absent.
+    global expect, sync_playwright
+    from playwright.sync_api import expect, sync_playwright
     OUT.mkdir(parents=True, exist_ok=True)
     failures = []
     with tempfile.TemporaryDirectory(prefix='about-logo-synthetic-') as temp, ExitStack() as controller:

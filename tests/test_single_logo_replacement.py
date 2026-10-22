@@ -260,3 +260,25 @@ def test_native_catalog_receipt_rejects_wrong_revision_asset_or_invariant(change
     assert validate_catalog_state(state, 5, "expected.png") == state
     with pytest.raises(AssertionError):
         validate_catalog_state({**state, **changed}, 5, "expected.png")
+
+
+def test_pure_native_receipt_guard_imports_without_optional_playwright():
+    import subprocess
+    import sys
+    code = """
+import importlib.abc, sys
+class NoBrowser(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'playwright' or fullname.startswith('playwright.'):
+            raise ModuleNotFoundError('Optional Playwright deliberately unavailable', name='playwright')
+sys.meta_path.insert(0, NoBrowser())
+from scripts import qa_single_logo_admin as runner
+assert runner.validate_catalog_state({'revision': 5, 'asset': 'expected.png', 'healthy': True, 'history': True}, 5, 'expected.png')['revision'] == 5
+try:
+    runner.main()
+except ModuleNotFoundError as exc:
+    assert exc.name == 'playwright'
+else:
+    raise AssertionError('Browser acceptance must not silently skip missing Playwright')
+"""
+    subprocess.run([sys.executable, "-c", code], check=True, timeout=30)
