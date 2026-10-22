@@ -59,6 +59,11 @@ def test_audit_activity_upload_has_manual_offline_reader_path(monkeypatch, tmp_p
     monkeypatch.setattr(ai, "ANTHROPIC_API_KEY", "")
     app.run()
     assert not app.exception
+    # This mixed file is intentionally ambiguous in the general intake. The
+    # reviewer must route it affirmatively before any Activity insertion.
+    next(w for w in app.selectbox if w.label == "Classification").set_value("Vendor service").run()
+    app.run()
+    assert not app.exception
     editor = next(w for w in app.text_area if w.label == "Activity summary")
     assert "Example Mechanical QA Services replaced" in editor.value
     assert "pH 8.2" not in editor.value

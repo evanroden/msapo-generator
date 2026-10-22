@@ -9,7 +9,7 @@ from test_monthly_report_ui import monthly
 
 def activity_upload(monkeypatch, raw):
     stream = BytesIO(raw)
-    stream.name = 'activity.txt'
+    stream.name = 'synthetic-maintenance report.txt'
     original = ui.st.file_uploader
     monkeypatch.setattr(ui.st, 'file_uploader', lambda label, *args, **kwargs:
                         [stream] if label == 'Add source files' else original(label, *args, **kwargs))

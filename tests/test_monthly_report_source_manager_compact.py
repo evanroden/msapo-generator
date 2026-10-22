@@ -157,10 +157,12 @@ def test_reader_completion_and_done_capture_caption_in_same_native_event(monkeyp
 
     app,_=app_with_library(monkeypatch,tmp_path)
     native_uploader=upload_ui.st.file_uploader
-    raw=utility_pdf()
-    upload(monkeypatch,'synthetic-utility.pdf',raw)
+    from test_monthly_report_sources import pdf_bytes
+    # Only an Activity source may reach this reader; Utility is intentionally excluded.
+    raw=pdf_bytes(1)
+    upload(monkeypatch,'synthetic-service.pdf',raw)
     app.run();app.run()  # Upload performs the free native read.
-    stream=BytesIO(raw);stream.name='synthetic-utility.pdf'
+    stream=BytesIO(raw);stream.name='synthetic-service.pdf'
     monkeypatch.setattr(upload_ui.st,'file_uploader',lambda label,*a,**kw:
         [stream] if label=='Add source files' else native_uploader(label,*a,**kw))
     future=Future();future.set_running_or_notify_cancel()
@@ -172,7 +174,7 @@ def test_reader_completion_and_done_capture_caption_in_same_native_event(monkeyp
     assert len(starts)==1 and button(app,'Done with source files')
     source=current_draft(app).sources[0]
     future.set_result({'items':[{'source':source.id,'page':1,
-        'text':'Electricity consumption: 1250 kWh. Synthetic test data.',
+        'text':'Completed inspection of DEMO-01.',
         'row':[],'include_page':True}], 'visual_pages':[[source.id,1]], 'notices':[]})
     delivered='Caption delivered when reading finishes'
     next(w for w in app.text_input if w.label=='Page caption').set_value(delivered)

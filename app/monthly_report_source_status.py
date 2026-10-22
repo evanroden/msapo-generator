@@ -14,7 +14,8 @@ import stat
 
 from app import monthly_report_sources as sources
 from app import monthly_report_testing as testing
-from app.monthly_report_asset_review import asset_context, pending_asset_indexes
+from app.monthly_report_asset_review import (asset_context, pending_asset_indexes,
+                                             current_source_page_review_matches)
 from app.monthly_report_content_policy import contains_price, page_allowed, page_fingerprint
 from app.monthly_report_model import used_block_keys
 from app.monthly_report_page_controls import included_page_caption
@@ -88,9 +89,11 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
         # still match it. A raw page identity alone never supplies that proof.
         current_scoped_page = (reviewed_scope(source, draft.profile) is not None
                                and _source_context_marker(source, number) in context)
+        # A genuine caption/page re-review also proves current evidence without
+        # inventing a site-scope override. All admission checks below still apply.
         if (len(set(page_references)) != 1
                 or any(reference != expected_reference for reference in page_references)
-                and not current_scoped_page):
+                and not (current_scoped_page or current_source_page_review_matches(block, index, source, number))):
             return None, "Review the attached page against the current source details."
         if any(page_identity(reference) is None
                and not reference.startswith("asset-source-context:v1:")
@@ -150,20 +153,30 @@ def source_manager_status(draft, contents, *, unavailable=(), pending=False):
         from app.monthly_report_source_scope import included_scope_valid, reviewed_scope
         if reading.included:
             site = facility_choice(source, draft.profile)
-            if (site == KEEP_FACILITY or
-                    (not source.facility or source.scope_review) and not included_scope_valid(draft, source)):
+            if site == KEEP_FACILITY:
                 return result("Check the source facility.")
             if reading.problem:
                 return result(reading.problem)
+            if (not source.facility or source.scope_review) and not included_scope_valid(draft, source):
+                return result("Check the source facility.")
         numbers = tuple(sources.image_numbers(content))
         if not numbers:
             if reading.included:
                 # Accepted mapped dates/sites/totals are already bound to this
                 # report. Do not invent a second file-level review ritual.
+                # Reviewed wording alone does not accept a file date. Match
+                # preflight's existing applicability so reference-only and
+                # explicitly unselected historical sources stay available.
+                if not reading.period_bound and selected and source.classification != "Reference only":
+                    when = source_date(source.service_date)
+                    if when is None or not draft.period.start <= when <= draft.period.end:
+                        return result("Check the source reporting date.")
                 # Plain native text is described as included, not reviewed.
                 return result(resolved=reading.accepted, needs_correction=False)
             return result(resolved=False, needs_correction=False)
-        if source.classification not in CLASSIFICATION_DESTINATIONS and not reading.included:
+        # Accepted text/tables do not approve the separate image-page use.
+        # Sources without image pages already returned above.
+        if source.classification not in CLASSIFICATION_DESTINATIONS:
             return result("Review this file's use in the report.", needs_correction=False)
         if (len(numbers) != len(set(numbers))
                 or any(type(number) is not int or not 1 <= number <= len(source.page_texts) for number in numbers)):

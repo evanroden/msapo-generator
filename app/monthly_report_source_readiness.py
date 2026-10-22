@@ -20,7 +20,21 @@ _INFORMATIONAL_NOTICES = frozenset({
 
 
 def unresolved_reading_notices(source):
-    return tuple(notice for notice in source.notices if notice not in _INFORMATIONAL_NOTICES)
+    from app.monthly_report_content_policy import page_allowed, page_fingerprint
+    from app.monthly_report_vendor_passages import passage_notice_page
+
+    def acknowledged_passage(notice):
+        page = passage_notice_page(notice, len(source.page_texts))
+        if page is None:
+            return False
+        # Reuse only the user's existing full-original-page decision. Merely
+        # changing classification, typing a fact or deselecting is not consent.
+        if page in source.selected_pages:
+            return page_allowed(source, page)
+        return dict(source.client_page_exclusions).get(page) == page_fingerprint(source, page)
+
+    return tuple(notice for notice in source.notices
+                 if notice not in _INFORMATIONAL_NOTICES and not acknowledged_passage(notice))
 
 
 @dataclass(frozen=True)
@@ -30,10 +44,12 @@ class SourceContentReadiness:
     summary: str = "Not included"
     problem: str = ""
     destinations: tuple[str, ...] = ()
+    period_bound: bool = False
 
 
 def content_readiness(draft, source):
-    uses = tuple(use for use in source_uses(draft, source.id) if use[0] in {"text", "rows"})
+    uses = tuple(use for use in source_uses(draft, source.id)
+                 if use[0] in {"text", "rows", "follow_up", "organization"})
     if not uses:
         return SourceContentReadiness()
     destinations = tuple(dict.fromkeys(use[1] for use in uses))
@@ -42,19 +58,24 @@ def content_readiness(draft, source):
     blocks = {block.key: block for block in draft.blocks}
 
     def current_review(use):
-        block = blocks[use[1]]
-        if not block.ai_written or not block.reviewed:
+        block = blocks.get(use[1])
+        if use[0] != "text" or block is None or not block.ai_written or not block.reviewed:
             return False
         from app.monthly_report_ai import ai_references, evidence_fingerprint
-        return bool(block.ai_evidence_fingerprint and block.ai_evidence_fingerprint ==
-                    evidence_fingerprint(draft.sources, ai_references(block)))
+        references = ai_references(block)
+        return bool(any(_source_id(ref) == source.id for ref in references)
+                    and block.ai_evidence_fingerprint and block.ai_evidence_fingerprint ==
+                    evidence_fingerprint(draft.sources, references))
 
-    covered = tuple(_covered_use(use, source, draft.profile, draft.period) for use in uses)
+    covered = tuple(_covered_use(use, source, draft.profile, draft.period, sources=draft.sources) for use in uses)
     reviewed = tuple(current_review(use) for use in uses)
     accepted = all(a or b for a, b in zip(covered, reviewed))
+    # Wording review is not a reporting-date decision. Only current report
+    # contribution receipts bind all of this source's included content to it.
+    period_bound = all(covered)
     kinds = {use[0] for use in uses}
-    label = ("Totals accepted" if all(covered) and kinds == {"text"} else
-             "Tables accepted" if all(covered) and kinds == {"rows"} else
+    label = ("Totals accepted" if period_bound and kinds == {"text"} else
+             "Tables accepted" if period_bound and kinds == {"rows"} else
              "Content reviewed" if accepted else "Included content")
     problem = ""
     if not accepted:
@@ -65,7 +86,8 @@ def content_readiness(draft, source):
             for use in uses for ref in use[3] if ref.startswith(USE_PREFIX))
         if own_receipt:
             problem = "Review the changed totals or mapped rows."
-        elif any(blocks[use[1]].ai_written and not current_review(use) for use in uses):
+        elif any(blocks.get(use[1]) is not None and blocks[use[1]].ai_written
+                 and not current_review(use) for use in uses):
             problem = "Review the current suggested wording and its evidence."
     return SourceContentReadiness(True, accepted, label + " · " + locations,
-                                  problem, destinations)
+                                  problem, destinations, period_bound)

@@ -13,10 +13,12 @@ export default function(component) {
         state.identity = data.identity;
         state.active = null;
         state.mode = null;
+        state.compactPositions = new WeakMap();
         state.sourceReviewReturn = null;
     }
     let frame = null, focusFrame = null, disposed = false, pairs = [], lastGeometry = '';
     const subscriptions = [];
+    const controlsOwner = {};
     if (data.workflow === 'monthly' && globalThis.ENFRASourceReviewNavigation)
         subscriptions.push(globalThis.ENFRASourceReviewNavigation.install(app, state));
     root.classList.add('epc-workspace');
@@ -64,7 +66,7 @@ export default function(component) {
         target.addEventListener(type, listener, {passive:true});
         subscriptions.push(() => target.removeEventListener(type, listener));
     }
-    function addControls(pair, reference, title, row) {
+    function addControls(pair, reference, title, row, editor) {
         // Keep the action under its own heading/errors, immediately before
         // the working row. Prepending it to the pair made it read as the prior
         // section's action on narrow screens. Move only our own control group.
@@ -84,8 +86,52 @@ export default function(component) {
             pair.insertBefore(open.parentElement, before);
             if (focused) open.focus({preventScroll:true});
         }
+        const positions = state.compactPositions || (state.compactPositions = new WeakMap());
+        let position = positions.get(pair);
+        if (!position) {position = {}; positions.set(pair,position);}
+        position.editor = editor;
+        function capture(target) {
+            const owner = state.ownsScroll ? root : scrollport;
+            const scrolls = [];
+            let node = target || editor || pair;
+            while (node) {
+                scrolls.push({node,top:node.scrollTop || 0,left:node.scrollLeft || 0});
+                if (node === scrollport) break;
+                node = node.parentElement;
+            }
+            return {target,scrolls,top:target ? target.getBoundingClientRect().top-owner.getBoundingClientRect().top : null};
+        }
+        if (position.owner !== controlsOwner) {
+            position.owner = controlsOwner;
+            const remember = event => {
+                const target = event.target;
+                if (position.editor?.contains(target) && target.matches?.('input,textarea,select,[contenteditable="true"],[role="textbox"],[role="combobox"]')) {
+                    // Reaching the section's preview action may require
+                    // scrolling away from a long editor before it blurs.
+                    const bounds = (state.ownsScroll ? root : scrollport).getBoundingClientRect();
+                    const field = target.getBoundingClientRect();
+                    if (event.type === 'focusout' && (field.bottom <= bounds.top || field.top >= bounds.bottom)) return;
+                    position.edit = capture(target);
+                }
+            };
+            pair.addEventListener('focusin',remember);
+            pair.addEventListener('focusout',remember);
+            pair.addEventListener('input',remember);
+            subscriptions.push(() => {pair.removeEventListener('focusin',remember);pair.removeEventListener('focusout',remember);pair.removeEventListener('input',remember);});
+        }
+        open.onpointerdown = () => {
+            // Before the browser focuses View preview, retain the focused
+            // field's latest inner scroll without disturbing native input.
+            const target = document.activeElement;
+            if (editor?.contains(target) && target === position.edit?.target) {
+                const bounds = (state.ownsScroll ? root : scrollport).getBoundingClientRect();
+                const field = target.getBoundingClientRect();
+                if (field.bottom > bounds.top && field.top < bounds.bottom) position.edit = capture(target);
+            }
+        };
         open.onclick = () => {
-            state.returnFocus = document.activeElement;
+            const prior = position.edit;
+            position.return = prior?.target?.isConnected && editor?.contains(prior.target) ? prior : capture(null);
             pair.dataset.epcPreviewOpen = 'true'; open.setAttribute('aria-expanded', 'true');
             reference.scrollIntoView({block:'start'}); reference.focus({preventScroll:true});
             schedule();
@@ -108,10 +154,29 @@ export default function(component) {
             backControls.className = 'epc-preview-controls'; backControls.append(back);
             reference.prepend(backControls);
         }
-        back.onclick = () => {
+        back.onclick = event => {
             pair.dataset.epcPreviewOpen = 'false'; open.setAttribute('aria-expanded', 'false');
-            if (state.returnFocus?.isConnected) state.returnFocus.focus({preventScroll:true});
-            pair.scrollIntoView({block:'start'}); schedule();
+            const prior = position.return;
+            if (prior) {
+                prior.scrolls.forEach(({node,top,left}) => {
+                    if (node.isConnected) {node.scrollTop=top;node.scrollLeft=left;}
+                });
+                const target = prior.target;
+                if (target?.isConnected && editor?.contains(target)) {
+                    // Reflow/rotation can change the field's document offset.
+                    // Restore its reading anchor in the current scroll owner.
+                    const owner = state.ownsScroll ? root : scrollport;
+                    const bounds = owner.getBoundingClientRect();
+                    const lastVisible = Math.max(16,bounds.height-80);
+                    const chromeTop = parseFloat(root.style.getPropertyValue?.('--epc-preview-top')) || bounds.top;
+                    const firstVisible = Math.min(lastVisible,Math.max(16,chromeTop-bounds.top));
+                    const offset = Math.min(Math.max(firstVisible,prior.top),lastVisible);
+                    owner.scrollTop += target.getBoundingClientRect().top-bounds.top-offset;
+                    if (event?.detail === 0) target.focus({preventScroll:true});
+                    else {editor.setAttribute('tabindex','-1');editor.focus({preventScroll:true});}
+                } else open.focus({preventScroll:true});
+            } else open.focus({preventScroll:true});
+            schedule();
         };
     }
     function discover() {
@@ -137,7 +202,7 @@ export default function(component) {
             while (track && track !== refColumn) {
                 track.classList.add('epc-reference-track'); track=track.parentElement;
             }
-            addControls(pair, reference, marker.dataset.epcTitle || 'Section preview', row);
+            addControls(pair, reference, marker.dataset.epcTitle || 'Section preview', row, editor);
             return {id, pair, reference};
         }).filter(Boolean);
     }
@@ -173,6 +238,10 @@ export default function(component) {
     function measure() {
         frame = null;
         if (disposed || !root.isConnected || document.hidden) return;
+        // The framework can replace this keyed container's class attribute
+        // while retaining its native subtree. Reassert only our owned class
+        // before measuring; the current mode must keep its matching CSS.
+        root.classList.add('epc-workspace');
         discover();
         const sample = snapshot();
         const context = geometry.resolveDisplayContext(sample);
@@ -249,6 +318,14 @@ export default function(component) {
     if (chrome) resize.observe(chrome);
     const mutation = new MutationObserver(schedule);
     mutation.observe(root, {childList:true,subtree:true});
+    const rootClass = new MutationObserver(() => {
+        if (disposed || !root.isConnected || root.classList.contains('epc-workspace')) return;
+        // Restore before paint, without touching scroll, focus or framework
+        // classes. The resulting class record is a no-op, not a rerun loop.
+        root.classList.add('epc-workspace');
+        schedule();
+    });
+    rootClass.observe(root, {attributes:true,attributeFilter:['class']});
     listen(window,'resize'); listen(window,'orientationchange');
     listen(window.visualViewport,'resize'); listen(window.visualViewport,'scroll');
     listen(window.screen?.orientation,'change');
@@ -261,7 +338,7 @@ export default function(component) {
         disposed = true;
         if (frame !== null) cancelAnimationFrame(frame);
         if (focusFrame !== null) cancelAnimationFrame(focusFrame);
-        resize.disconnect(); mutation.disconnect(); subscriptions.forEach(remove => remove());
+        resize.disconnect(); mutation.disconnect(); rootClass.disconnect(); subscriptions.forEach(remove => remove());
         safe.remove(); scrollport.classList.remove('epc-workspace-scroll-owner');
     };
     state.cleanup = cleanup;

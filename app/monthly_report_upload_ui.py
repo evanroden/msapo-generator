@@ -366,7 +366,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
             if len(candidates) == 1:
                 caption_defaults[number] = candidates[0]
     _sync_source_fields(source, p, field, caption_defaults=caption_defaults)
-    from app.monthly_report_source_scope import artwork_scope_keys
+    from app.monthly_report_source_scope import artwork_scope_keys, preserve_descriptive_scope
     artwork_keys = (artwork_scope_keys(scope_draft, source.id)
                     if scope_draft is not None and scope_draft.profile == profile
                     and scope_draft.period == period else ())
@@ -419,7 +419,8 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                     elif visible:
                         try:
                             thumbnail = sources.page_image(profile, content, page, preview=True)
-                            st.image(thumbnail.data, width=650)
+                            from app.monthly_report_source_preview import source_thumbnail_uri
+                            st.image(source_thumbnail_uri(thumbnail), width=650)
                             preview_ok = True
                         except (ValueError, OSError) as exc:
                             st.error(str(exc))
@@ -428,7 +429,7 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 if page in captions or page not in caption_defaults or caption != default_caption:
                     captions[page] = caption
         changes["captions"] = tuple(sorted(captions.items()))
-        updated_source = replace(source, **changes)
+        updated_source = preserve_descriptive_scope(source, replace(source, **changes), profile)
         _remember_delivered_source_edit(prefix, source, updated_source)
         source = updated_source
         if pages and page in sources.image_numbers(content):
@@ -505,6 +506,14 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                      disabled=source_in_use,
                      help="Remove the linked report content first. Its original source is still needed." if source_in_use else None):
             st.session_state[key] = tuple(c for c in contents if c.source.id != selected)
+            for marker in tuple(st.session_state):
+                if marker.startswith(key + "_structured_") and marker.endswith("_context"):
+                    removed_key = marker.removesuffix("_context") + "_removed_selection_ids"
+                    st.session_state[removed_key] = tuple(set(st.session_state.get(removed_key, ())) | {selected})
+            for marker in tuple(st.session_state):
+                if marker.startswith(key + "_structured_") and marker.endswith(("_native_ids", "_completed_ids")):
+                    st.session_state[marker] = tuple(identity for identity in st.session_state[marker]
+                                                     if identity != selected)
             st.rerun()
     st.caption(f"{len(contents)} sources. {sum(len(c.source.selected_pages) for c in contents)} selected pages/items. "
                f"{sum(len(set(c.source.needs_vision) & set(c.source.selected_pages)) for c in contents)} selected pages need OCR/vision; no paid extraction runs automatically.")
@@ -756,7 +765,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
             st.caption("File classification: " + source.classification)
             for attr, label in (("vendor", "Vendor"), ("work_order", "Job / work-order number")):
                 changes[attr] = st.text_input(label, key=field(p + "_" + attr, getattr(source, attr)))
-            source = replace(source, **changes)
+            from app.monthly_report_source_scope import preserve_descriptive_scope
+            source = preserve_descriptive_scope(source, replace(source, **changes), profile)
     for notice in source.notices:
         st.warning(notice)
     undecided = [n for n in _undecided_pages(content, source) if (source.id, n) not in existing]
@@ -795,7 +805,8 @@ def _render_section_page_review(profile, content, prefix, field, blocks, *, peri
     preview_ok = False
     try:
         thumbnail = sources.page_image(profile, content, page, preview=True)
-        st.image(thumbnail.data, width=650)
+        from app.monthly_report_source_preview import source_thumbnail_uri
+        st.image(source_thumbnail_uri(thumbnail), width=650)
         preview_ok = True
     except (ValueError, OSError) as exc:
         st.error(str(exc))
@@ -1142,6 +1153,7 @@ def _queue_section_read(local_key, request):
 
 def render_workorder_metrics(profile, period, prefix, contents, blocks, *, additions=None, selected_id=None):
     """Review one selected spreadsheet without introducing another intake path."""
+    from app.monthly_report_guided import _rich_text_scope
     destination = "activity_summary"
     local_key = prefix + "_evidence_structured_" + destination
     additions = additions or {}
@@ -1201,20 +1213,27 @@ def render_workorder_metrics(profile, period, prefix, contents, blocks, *, addit
                           facility_choice(current_source, profile) in {site.key for site in profile.facilities}))
             if not confirmed:
                 st.caption("Choose this file's sites in Source details before inserting its totals.")
+        action_scope = _rich_text_scope(prefix)
         def accept_workorders(report=report, profile=profile, period=period, previous=previous, prefix=prefix,
-                              current_source=current_source):
+                              current_source=current_source, action_scope=action_scope):
             from app.monthly_report_source_scope import contribution_receipt
+            # A delivered text edit can reach the working draft before an
+            # interrupted rerender refreshes this button's callback. Bind
+            # to that exact receipt at activation, while the consumer still
+            # rejects a different report, source or unrelated block revision.
+            accepted_previous = _pending_rich_text_edit(prefix, previous) or previous
             st.session_state[prefix + "_pending_accepted_workorders"] = {
                 "contract": profile.contract, "profile": profile.key,
-                "month": period.key, "expected": previous.fingerprint,
+                "month": period.key, "expected": accepted_previous.fingerprint,
+                "scope": action_scope,
                 "source_id": report.source_id, "reference": report.reference,
                 "text": report.text,
                 "scope_receipt": contribution_receipt(report.reference, profile, period,
                                                       destination, text=report.text, source=current_source,
-                                                      prior_block=previous),
+                                                      prior_block=accepted_previous),
             }
         st.button("Add totals to summary",
-                  key=local_key + "_accept_work_orders_" + report.source_id[:16],
+                  key=local_key + "_accept_work_orders_" + report.source_id[:16] + "_" + action_scope,
                   on_click=accept_workorders, disabled=not confirmed)
 
 
@@ -1237,10 +1256,21 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     labels = {"activity_summary": "Add activity files (optional)", "capital_renewal": "Add capital renewal file", "proposals": "Add proposal file"}
     context = _signature((asdict(profile), period.key, destination, tuple(table_columns or ()),
                           _rich_text_scope(prefix), testing.scope(), testing.generation()))
-    uploaded = st.file_uploader("Add source files" if managed else labels[destination], type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
+    from app.monthly_report_native_loading import reserve_empty_uploader
+    intake_label = "Add source files" if managed else labels[destination]
+    reserve_empty_uploader(local_key + "_upload_" + context, intake_label)
+    uploaded = st.file_uploader(intake_label, type=sorted(s.lstrip(".") for s in sources.SUPPORTED),
                                 accept_multiple_files=True, max_upload_size=128,
                                 key=local_key + "_upload_" + context)
     picked = tuple((u.name, u.getvalue()) for u in (uploaded or ()))
+    selected_ids = {hashlib.sha256(raw).hexdigest() for _, raw in picked}
+    # A native uploader retains removed bytes. Other uploads must not undo
+    # Remove; release each tombstone only after that exact file leaves this
+    # chooser, so clearing/reselecting is a new explicit intake decision.
+    removed_key = local_key + "_removed_selection_ids"
+    removed = set(st.session_state.get(removed_key, ())) & selected_ids
+    st.session_state[removed_key] = tuple(removed)
+    picked = tuple((name, raw) for name, raw in picked if hashlib.sha256(raw).hexdigest() not in removed)
     signature = _signature([(name, hashlib.sha256(raw).hexdigest()) for name, raw in picked])
     picked_ids = {hashlib.sha256(raw).hexdigest() for _, raw in picked}
     if st.session_state.get(local_key + "_context") != context:
@@ -1257,13 +1287,31 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
         # The one managed intake also accepts sources for other sections.
         # Their extracted operational values must not become Activity prose
         # merely because Activity owns the shared source controls.
-        return not (managed and content.source.classification in {
-            "Utility results", "Water treatment", "MBCx", "Capital renewal", "Proposal / quote", "Training",
-        })
+        if not managed:
+            return True
+        source = content.source
+        # Classification is delivered by the native page owner later in this
+        # render. Do not apply an older read (or native insertion) before that
+        # exact mounted control commits its newly delivered routing decision.
+        # A stale widget from another source/canonical class has no authority.
+        p = evidence_key + "_" + source.id
+        previous = st.session_state.get(p + "_canonical_view")
+        delivered = st.session_state.get(p + "_classification")
+        if (st.session_state.get(prefix + "_source_active_selected") == source.id
+                and previous is not None and previous.id == source.id
+                and previous.sha256 == source.sha256
+                and previous.classification == source.classification
+                and delivered in sources.CLASSIFICATIONS
+                and delivered != source.classification):
+            return False
+        return source.classification in {
+            "Vendor service", "CMMS export", "Improvement / training photo",
+        }
 
     def read_target():
-        return {"context": context, "files": signature,
-                "sources": tuple(c.source.fingerprint for c in contents if c.source.id in picked_ids),
+        eligible = tuple(c for c in contents if c.source.id in picked_ids and activity_input(c))
+        return {"context": context, "files": _signature(tuple((c.source.filename, c.source.id) for c in eligible)),
+                "sources": tuple(c.source.fingerprint for c in eligible),
                 "revision": st.session_state.get(prefix + "_revision", 0)}
 
     def read_request():
@@ -1336,7 +1384,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             additions[destination] = result
             additions.update({block.key: block for block in prepared})
             remember(result, contents)
-            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ()))
+            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ())) + structured.reader_page_notices(
+                job["contents"], destination, value)
             st.session_state[local_key + "_completed_ids"] = tuple(
                 set(st.session_state.get(local_key + "_completed_ids", ()))
                 | {content.source.id for content in job["contents"]})
@@ -1376,24 +1425,30 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     if picked and st.session_state.get(local_key + "_read") != signature:
         contents, messages = sources.ingest_batch(profile, picked, contents)
         st.session_state[evidence_key] = contents
-        scoped = tuple(c for c in contents if c.source.id in picked_ids)
         st.session_state[local_key + "_messages"] = messages
-        processed = set(st.session_state.get(local_key + "_native_ids", ()))
-        fresh = tuple(c for c in scoped if c.source.id not in processed and activity_input(c))
-        if fresh:
-            additions[destination] = structured.native_update(
-                fresh, destination, additions.get(destination, blocks.get(destination)),
-                table_columns=table_columns)
-            remember(additions[destination], contents)
-            st.session_state[local_key + "_native_ids"] = tuple(processed | {c.source.id for c in fresh})
-        st.session_state[local_key + "_read"] = signature
+    # Remember a real empty selection, too. Remove does not clear the browser's
+    # uploader; only clearing/reselecting may re-ingest those unchanged bytes.
+    st.session_state[local_key + "_read"] = signature
+    processed = set(st.session_state.get(local_key + "_native_ids", ()))
+    fresh = tuple(c for c in contents if c.source.id in picked_ids
+                  and c.source.id not in processed and activity_input(c))
+    if fresh:
+        additions[destination] = structured.native_update(
+            fresh, destination, additions.get(destination, blocks.get(destination)),
+            table_columns=table_columns)
+        remember(additions[destination], contents)
+        st.session_state[local_key + "_native_ids"] = tuple(processed | {c.source.id for c in fresh})
     # A successful reading consumed these unchanged source bytes. Saving a
     # shared version or editing its human wording must not replay its cached
     # contribution; only new selected files need another reading.
     completed_ids = set(st.session_state.get(local_key + "_completed_ids", ()))
-    scoped = tuple(c for c in contents if c.source.id in picked_ids and c.source.id not in completed_ids)
+    scoped = tuple(c for c in contents if c.source.id in picked_ids
+                   and c.source.id not in completed_ids and activity_input(c))
+    for notice in structured.reader_notices(scoped, destination):
+        st.warning(notice)
+    scoped = structured.reader_sources(scoped, destination)
     target = read_target()
-    digest = ai.digest(("section-upload-v4", destination, tuple(table_columns or ()),
+    digest = ai.digest(("section-upload-v5", destination, tuple(table_columns or ()),
                         sorted(c.source.id for c in scoped)))
     pending = st.session_state.get(local_key + "_pending")
     if pending and pending[0].get("request") != target:

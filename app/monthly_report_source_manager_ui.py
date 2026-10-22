@@ -40,6 +40,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
                                  assets=None, table_columns=None):
     """One stable source workspace; hiding never retires buffered native forms."""
     from html import escape
+    from hashlib import sha256
     from app.monthly_report_guided import _current_source_detail, _forget_block_widgets
     from app.monthly_report_source_scope import artwork_scope_keys
     from app.monthly_report_source_details import detail_problems
@@ -68,7 +69,13 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
     st.markdown('<style>.st-key-' + panel_key + '{display:' + ("block" if opened else "none") +
                 ';}</style>', unsafe_allow_html=True)
     with st.container(key=panel_key):
-        before_ids = {content.source.id for content in st.session_state.get(prefix + "_evidence", ())}
+        st.markdown('<span class="enfra-source-correction-owner" data-report-identity="' +
+                    sha256(prefix.encode()).hexdigest()[:24] + '" aria-hidden="true"></span>',
+                    unsafe_allow_html=True)
+        before_sources = {source.id: source.fingerprint for source in draft.sources}
+        before_sources.update((content.source.id, content.source.fingerprint)
+                              for content in st.session_state.get(prefix + "_evidence", ()))
+        before_ids = set(before_sources)
         has_activity = any(section.key == "activity" for section in draft.sections)
         if has_activity:
             sources, additions, _ = render_structured_uploads(
@@ -78,9 +85,11 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             sources, additions = draft.sources, {}
         draft = replace(draft, sources=keep_missing(prefix, sources))
         if additions:
-            from app.monthly_report_guided import merge_blocks
+            from app.monthly_report_guided import merge_blocks, _advance_rich_text_receipt
             for key, block in additions.items():
+                previous = blocks.get(key)
                 blocks[key] = merge_blocks(blocks.get(key), block) if key == "improvements" else block
+                _advance_rich_text_receipt(prefix, previous, blocks[key])
             _forget_block_widgets(prefix, additions)
         contents = st.session_state.get(prefix + "_evidence", ())
         ordered = {source.id: source for source in draft.sources}
@@ -165,6 +174,12 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             show_intake=not has_activity, selected_source_id=selected, visible=opened,
             shown_source_page=shown_page[0] if shown_page else None, section_page_owners=section_page_owners)
         draft = replace(draft, sources=keep_missing(prefix, sources))
+        if before_sources != {source.id: source.fingerprint for source in draft.sources}:
+            # Intake/read controls precede metadata and page controls. Finish
+            # their delivered edits/defaults, then bind the displayed read
+            # request to the settled source. This is not paid-read consent.
+            # Classification also routes on this action, not a second click.
+            st.session_state[prefix + "_period_editor_refresh"] = True
         if additions:
             previous_blocks = blocks
             draft, blocks = apply_prepared(draft, blocks, additions, incoming_specs, prefix)

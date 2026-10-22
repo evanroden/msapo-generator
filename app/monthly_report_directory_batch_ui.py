@@ -6,6 +6,7 @@ import streamlit as st
 
 from app import monthly_report_directory_batch as batch
 from app.monthly_report_editor import _signature
+from app.monthly_report_ui_text import literal
 
 
 def _summary_rows(plan):
@@ -22,8 +23,11 @@ def _summary_rows(plan):
             "Site contacts": sum(len(site.contacts) for site in entry.sites),
             "Workbook sheets": "; ".join(entry.source_sheets),
             "Saved revision": entry.expected_revision,
+            "Changed details": len(entry.changes),
             "Result": "Needs review" if entry.conflicts else (
-                "Ready to save" if entry.changed else "Already matches"),
+                "New contract: select below to create" if entry.new_contract else (
+                    "Ready to save" if entry.changed else
+                    "Changed details below" if entry.changes else "Already matches")),
         })
     return rows
 
@@ -83,11 +87,11 @@ def _show_result(result):
     if result.saved:
         quantity = f"{len(result.saved)} contract" + ("s" if len(result.saved) != 1 else "")
         st.success(f"Saved contacts for {quantity}. Existing reports and their selected sites were not changed.")
-        st.caption("Saved: " + "; ".join(result.saved))
+        st.caption("Saved: " + literal("; ".join(result.saved)))
     if result.unchanged:
         quantity = f"{len(result.unchanged)} contract" + ("s already match" if len(result.unchanged) != 1 else " already matches")
         st.info(f"{quantity} the saved directory; no new revisions were created for these records.")
-        st.caption("Already current: " + "; ".join(result.unchanged))
+        st.caption("Already current: " + literal("; ".join(result.unchanged)))
     if result.blocked:
         st.warning("These contracts were not saved because they need review.")
         st.dataframe([{"Contract": contract, "Reason": reason} for contract, reason in result.blocked],
@@ -96,6 +100,9 @@ def _show_result(result):
         st.error("Some contracts could not be saved. Successful saves above remain available. Refresh the preview before retrying.")
         st.dataframe([{"Contract": contract, "Reason": reason} for contract, reason in result.failed],
                      hide_index=True, width="stretch")
+    if result.not_created:
+        quantity = f"{len(result.not_created)} proposed new contract" + ("s were" if len(result.not_created) != 1 else " was")
+        st.info(f"{quantity} not selected and not created.")
 
 
 def render_batch(inspection, raw, actor, prefix):
@@ -126,7 +133,7 @@ def render_batch(inspection, raw, actor, prefix):
     st.write("Save the usable contract and site contacts together. Missing values are not invented; ambiguous records below are left out.")
     st.caption("The preview includes existing records retained from the saved directory. This import does not change report membership or replace contacts inside existing reports.")
     for notice in plan.notices:
-        st.caption(notice)
+        st.caption(literal(notice))
     if plan.entries:
         st.dataframe(_summary_rows(plan), hide_index=True, width="stretch")
     else:
@@ -148,24 +155,48 @@ def render_batch(inspection, raw, actor, prefix):
             st.dataframe(rows, hide_index=True, width="stretch")
         else:
             st.caption("No contact details are included.")
-    eligible = tuple(entry for entry in plan.entries if entry.can_save)
-    unchanged = tuple(entry for entry in plan.entries if not entry.changed and not entry.conflicts)
-    st.caption(f"{len(eligible)} contracts to save · {len(unchanged)} already current · {len({row['Contract'] for row in conflicts})} requiring review")
+    reviewable = [(entry, change) for entry in plan.entries if not entry.conflicts for change in entry.changes]
+    accept = ()
+    if reviewable:
+        st.warning("The workbook changes some saved details. Saved values are kept unless you choose the workbook "
+                   "value below; the other updates can still be saved.")
+        st.dataframe([{"Contract": entry.contract, "Applies to": change.applies_to, "Detail": change.detail,
+                       "Saved": change.saved, "Workbook": change.workbook} for entry, change in reviewable],
+                     hide_index=True, width="stretch")
+        labels = {change.id: f"{entry.contract} · {change.applies_to} · {change.detail}: {change.workbook}"
+                  for entry, change in reviewable}
+        accept = tuple(st.multiselect("Use the workbook value for", list(labels), default=[], format_func=labels.get,
+                                      key=key + "_accept_" + signature))
+    proposed = [entry.contract for entry in plan.entries if entry.new_contract and entry.can_save]
+    create = ()
+    if proposed:
+        st.warning("Some workbook columns do not match a known contract or reviewed alias. "
+                   "They are only created when selected here; a renamed or misspelled column should stay unselected.")
+        create = tuple(st.multiselect("Create these new contracts", proposed, default=[],
+                                      key=key + "_create_" + signature))
+    eligible = tuple(entry for entry in plan.entries
+                     if entry.can_save and (not entry.new_contract or entry.contract in create)
+                     and (entry.changed or any(change.id in accept for change in entry.changes)))
+    unchanged = tuple(entry for entry in plan.entries if not entry.changed and not entry.conflicts and not entry.changes)
+    st.caption(f"{len(eligible)} contracts to save · {len(unchanged)} already current · {len({row['Contract'] for row in conflicts})} requiring review"
+               + (f" · {len(proposed) - len(create)} new not selected" if proposed else "")
+               + (f" · {len(reviewable) - len(accept)} changed details kept as saved" if reviewable else ""))
     outcome = st.session_state.get(result_key)
     current_outcome = outcome[1] if outcome and outcome[0] == signature else None
     if current_outcome is not None:
         _show_result(current_outcome)
-    elif plan.entries and not eligible and not conflicts:
+    elif plan.entries and not eligible and not conflicts and not proposed and not reviewable:
         st.success("This workbook already matches the saved directory. No changes are needed.")
     confirmed = st.checkbox("I reviewed the included contracts, sites and contacts and confirm this shared save",
-                            key=key + "_confirm_" + signature,
+                            key=key + "_confirm_" + signature + ("_" + _signature((create, accept)) if create or accept else ""),
                             disabled=not eligible or current_outcome is not None)
     if st.button("Save all reviewed contacts", key=key + "_save", type="primary",
                  disabled=not (eligible and confirmed) or current_outcome is not None):
         try:
-            result = batch.save_workbook_plan(plan, raw, actor=actor.strip(), confirmed=confirmed)
+            result = batch.save_workbook_plan(plan, raw, actor=actor.strip(), confirmed=confirmed, create=create,
+                                              accept=accept)
         except (ValueError, OSError) as exc:
-            st.error(str(exc))
+            st.error(literal(exc))
             st.caption("Refresh the preview and review the current directory before trying again.")
             return
         st.session_state[result_key] = (signature, result)

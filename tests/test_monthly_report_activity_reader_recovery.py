@@ -47,7 +47,7 @@ def app_for_text(monkeypatch, tmp_path, *, ai_key, cache=None):
     original_uploader = ui.st.file_uploader
     text = (b'2026-09-03 | WO-TEST-1001 | PUMP-TEST-02\n'
             b'Completed strainer cleaning and leak inspection. Result: no leakage found.\n')
-    uploaded = SimpleNamespace(name='activity.txt', getvalue=lambda: text)
+    uploaded = SimpleNamespace(name='synthetic-maintenance report.txt', getvalue=lambda: text)
     monkeypatch.setattr(ui.st, 'file_uploader', lambda label, *args, **kwargs:
                         [uploaded] if label=='Add source files'
                         else original_uploader(label, *args, **kwargs))

@@ -55,7 +55,8 @@ def render_correction_page(profile, content, page):
         return None
     try:
         image = sources.page_image(profile, content, page, preview=True)
-        st.image(image.data, width="stretch")
+        from app.monthly_report_source_preview import source_thumbnail_uri
+        st.image(source_thumbnail_uri(image), width="stretch")
     except (ValueError, OSError) as exc:
         st.error(str(exc))
         return None

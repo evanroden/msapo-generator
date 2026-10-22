@@ -60,7 +60,7 @@ def test_synthetic_rrh_quick_path_generates_two_files_and_native_new_tab_link(
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
 
     assert not app.exception
-    assert app.button[0].label == "Built by Evan Roden"
+    assert app.button[0].label == "Load synthetic quote"
     app.button[0].click().run()
     assert not app.exception
     assert [item.label for item in app.expander] == [
@@ -68,11 +68,11 @@ def test_synthetic_rrh_quick_path_generates_two_files_and_native_new_tab_link(
         "Change a value the tool already filled",
         "About",
     ]
-    assert app.button[1].disabled
+    assert next(b for b in app.button if b.label == "Generate both files and Smartsheet link").disabled
 
     app.text_input[0].set_value("Synthetic Asset Manager").run()
-    assert not app.button[1].disabled
-    app.button[1].click().run()
+    assert not next(b for b in app.button if b.label == "Generate both files and Smartsheet link").disabled
+    next(b for b in app.button if b.label == "Generate both files and Smartsheet link").click().run()
 
     assert not app.exception
     assert len(app.get("download_button")) == 2
@@ -362,13 +362,15 @@ def test_ios_mail_share_embeds_the_pdf_and_message_for_web_share():
     assert "event.source !== window.parent" in source
 
 
-def test_nondescript_synthetic_trigger_is_available_without_an_env_flag(monkeypatch):
+def test_explicit_synthetic_trigger_is_available_in_about_without_an_env_flag(monkeypatch):
     _configure_smartsheet(monkeypatch)
 
     app = AppTest.from_file(ROOT / "run_web.py", default_timeout=20).run()
 
     assert not app.exception
-    assert "Built by Evan Roden" in {item.label for item in app.button}
+    assert "Load synthetic quote" in {item.label for item in app.expander[-1].button}
+    assert app.title[0].value == "Purchase order"
+    assert not any('<p class="brand-kicker">' in item.value for item in app.markdown)
 
 
 def test_unresolved_fields_are_visible_stable_and_not_in_correction_panel(

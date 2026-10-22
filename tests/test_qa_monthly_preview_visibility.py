@@ -26,10 +26,23 @@ def run_scroll(**options):
 const scroll={scrollTop:0,getBoundingClientRect:()=>({top:options.rootTop||0})};
 const root=options.mounted===false?null:{...scroll,
   dataset:{epcMode:options.mode??'compact',epcConfined:String(Boolean(options.confined))}};
+const classes=name=>({contains:value=>value===name});
+const row={classList:classes('epc-workspace-row'),getBoundingClientRect:()=>({width:600})};
+const editColumn={parentElement:row,getBoundingClientRect:()=>({width:600})};
+const refColumn={parentElement:row};
+const editor={closest:()=>editColumn,getClientRects:()=>[{}],
+  getBoundingClientRect:()=>({width:600})};
+const reference={closest:()=>refColumn,getClientRects:()=>options.open===false?[]:[{}]};
+const getComputedStyle=node=>node===row?
+  {display:'grid',gridTemplateColumns:['compact','tabletop'].includes(root?.dataset.epcMode)?'600px':'600px 600px'}:
+  {display:options.open===false?'none':'block'};
 const surface=options.surface===false?null:{
   getClientRects:()=>options.hidden?[]:[{}],getBoundingClientRect:()=>({top:980})};
 const shadow={querySelectorAll:selector=>selector==='.report-preview'&&surface?[surface]:[]};
 const pair={dataset:{epcPreviewOpen:options.open===false?'false':'true'},
+  classList:classes('epc-workspace-pair'),
+  querySelector:selector=>selector==='.epc-workspace-editor'?editor:
+    selector==='.epc-workspace-reference'?reference:null,
   closest:()=>root,getBoundingClientRect:()=>({top:options.pairTop??90}),
   querySelectorAll:selector=>options.shadow?(selector==='*'?[{shadowRoot:shadow}]:[]):
     (selector==='.report-preview'&&surface?[surface]:[])};

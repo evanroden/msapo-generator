@@ -6,6 +6,10 @@ from urllib.parse import urlparse
 from google.protobuf.message import DecodeError
 from streamlit.proto.BackMsg_pb2 import BackMsg
 from streamlit.proto.ForwardMsg_pb2 import ForwardMsg
+if __package__:
+    from .qa_wire_totals import WireTotals
+else:  # Existing direct `python scripts/...` harness entry points.
+    from qa_wire_totals import WireTotals
 
 
 LABELS = frozenset({"Include page", "Exclude page",
@@ -26,8 +30,10 @@ class WaterWidgetDelivery:
         self.cache = OrderedDict()
         self.known = OrderedDict()
         self.count = 0
+        self.wire_totals = WireTotals()
 
     def message(self, direction, raw):
+        self.wire_totals.frame(direction, raw)
         if not isinstance(raw, bytes) or len(raw) > 4 * 1024 * 1024 or self.count >= 5000:
             return
         msg = ForwardMsg() if direction == "received" else BackMsg()
@@ -36,6 +42,7 @@ class WaterWidgetDelivery:
         except DecodeError:
             return
         kind = msg.WhichOneof("type")
+        self.wire_totals.kind(direction, kind)
         row = {"direction": direction, "kind": kind}
         if direction == "received" and kind == "delta":
             element = msg.delta.new_element
@@ -81,6 +88,7 @@ class WaterWidgetDelivery:
                        fragments=list(msg.new_session.fragment_ids_this_run))
         elif direction == "received" and kind == "script_finished":
             row["finish"] = msg.script_finished
+            row["wire_totals"] = self.wire_totals.snapshot()
         else:
             return
         self.count += 1

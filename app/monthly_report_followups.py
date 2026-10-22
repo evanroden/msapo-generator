@@ -289,9 +289,11 @@ def _render_section_followups(draft, prefix, field, category):
                 ) if options else []
                 missing = tuple(ref for ref in item.references if ref not in options)
                 if missing:
-                    st.warning("Some saved source links are unavailable. Replace them with current evidence, or explicitly remove them.")
+                    notice = st.empty()
                     if st.checkbox("Remove unavailable source links", key=field(p + "_remove_missing_" + _digest(missing), False)):
                         missing = ()
+                    else:
+                        notice.warning("Some saved source links are unavailable. Replace them with current evidence, or explicitly remove them.")
                 excluded = not item.included
                 if proposal or status == "resolved":
                     excluded = st.checkbox(

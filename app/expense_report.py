@@ -28,6 +28,7 @@ email_attachments_for_package returns the PDF only.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import shutil
 import subprocess
@@ -243,6 +244,11 @@ class ExpenseItem:
     # Split receipts use one unique receipt_id per reimbursement line while
     # sharing source_receipt_id. The source image is attached only once.
     source_receipt_id: str = ""
+    # A known foreign printed amount is never an implicit USD reimbursement.
+    # The review receipt is bound to the original, line, date, currency and
+    # entered amount; changing any of those requires the USD review again.
+    source_currency: str = ""
+    usd_review_fingerprint: str = ""
 
 
 @dataclass(frozen=True)
@@ -363,6 +369,15 @@ def parse_expense_amount(value: object) -> Decimal | None:
     if not amount.is_finite() or amount <= 0 or amount > Decimal("9999999.99"):
         return None
     return amount.quantize(Decimal("0.01"))
+
+
+def usd_review_signature(item: ExpenseItem, *, content_digests=None) -> str:
+    """Identity of the exact USD reimbursement reviewed for a foreign receipt."""
+    source = (content_digests.digest(item.file_bytes) if content_digests is not None
+              else hashlib.sha256(item.file_bytes).digest())
+    reviewed = (item.receipt_id, item.source_receipt_id, item.transaction_date,
+                item.source_currency.strip().upper(), parse_expense_amount(item.amount))
+    return hashlib.sha256(source + repr(reviewed).encode('utf-8')).hexdigest()
 
 
 def parse_mileage(value: object) -> Decimal | None:
@@ -590,6 +605,10 @@ def validate_expense_report(
             problems.append(f"{prefix}: enter a valid reimbursable amount")
         else:
             total += amount
+        currency = item.source_currency.strip().upper()
+        if currency and currency != "USD" and item.usd_review_fingerprint != usd_review_signature(
+                item, content_digests=content_digests):
+            problems.append(f"{prefix}: confirm the approved U.S.-dollar reimbursement amount for this {currency} receipt")
         if item.section == EXPENSE_SECTION_MISC:
             misc_count += 1
         elif item.section == EXPENSE_SECTION_ENTERTAINMENT:
@@ -807,6 +826,8 @@ def expense_report_signature(
                     item.merchant_name,
                     item.contact_name,
                     item.source_receipt_id,
+                    item.source_currency,
+                    item.usd_review_fingerprint,
                 )
             ).encode("utf-8")
         )
@@ -984,9 +1005,9 @@ def convert_expense_workbook_to_pdf(workbook_bytes: bytes) -> bytes:
 
     Returns PDF bytes. Raises ExpenseReportError on every reachable failure --
     unknown backend, missing binary, non-200 service response, absent or
-    non-PDF output. Callers must assume this can also raise things that are NOT
-    ExpenseReportError (subprocess.TimeoutExpired, requests transport errors);
-    build_expense_package catches Exception for exactly that reason.
+    non-PDF output. Calc timeout errors are wrapped only after its owned process
+    tree stops. Callers must still handle backend transport failures;
+    build_expense_package preserves the completed workbook in that case.
 
     An UNRECOGNIZED PDF_BACKEND raises rather than falling through to a
     default. Silently substituting LibreOffice for a misspelled "gotenburg"
@@ -1039,11 +1060,12 @@ def convert_expense_workbook_to_pdf(workbook_bytes: bytes) -> bytes:
         # the "could not render" branch below, intermittently, only under load.
         # The Writer path in app/pdf_converter.py had to learn this separately.
         from app.office_limits import prepare_profile
+        from app.office_process import run_office
         from app.monthly_report_render_jobs import conversion_slot
         profile_uri = prepare_profile(temp / 'libreoffice-profile')
         with conversion_slot(wait_seconds=130):
-            result = subprocess.run(
-                [
+            try:
+                result = run_office([
                     executable,
                     "--headless",
                     f"-env:UserInstallation={profile_uri}",
@@ -1052,22 +1074,25 @@ def convert_expense_workbook_to_pdf(workbook_bytes: bytes) -> bytes:
                     "--outdir",
                     str(temp),
                     str(source),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-        # check=False, then test for the OUTPUT FILE. LibreOffice routinely
+                ], timeout=120)
+            except subprocess.TimeoutExpired as exc:
+                raise ExpenseReportError(
+                    "Expense PDF conversion took too long. The conversion was stopped. "
+                    "The completed Excel report is still available; retry PDF conversion."
+                ) from exc
+        # Check the result and OUTPUT FILE. LibreOffice routinely
         # exits 0 while converting nothing (missing import filter, profile
         # lock, unreadable input), so trusting the return code is how a
-        # renderer failure becomes a silent one. The file's existence is the
-        # only honest success signal, and its first four bytes are the second.
+        # renderer failure becomes a silent one. A current output file and its
+        # PDF signature are required as well as a successful exit.
         rendered = temp / "expense_report.pdf"
-        if not rendered.is_file():
-            detail = (result.stderr or result.stdout or "unknown error").strip()[:300]
+        if result.returncode or not rendered.is_file():
+            logging.getLogger(__name__).warning(
+                "Expense PDF conversion failed: exit=%s stdout=%s stderr=%s",
+                result.returncode, result.stdout, result.stderr)
             raise ExpenseReportError(
-                f"LibreOffice could not render the combined PDF: {detail}"
+                "LibreOffice could not read or render the expense workbook. "
+                "The completed Excel report is still available; check the receipts and retry PDF conversion."
             )
         payload = rendered.read_bytes()
         if not payload.startswith(b"%PDF"):

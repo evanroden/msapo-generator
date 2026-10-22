@@ -9,16 +9,24 @@ from app import monthly_report_library as library
 from app.monthly_report_directory_ui import contract_choices
 from app.monthly_report_editor import _key, _signature
 from app.monthly_report_model import Facility, ReportProfile
+from app.monthly_report_ui_text import literal
 from app.monthly_report_section_ui import _site_options
 from app.monthly_report_start import membership_key, matching_profiles, report_key, design_seed, save_design_start, recommended_designs
 
 
-def _logo(contract, state, images):
-    from app.monthly_report_branding import find_logo, read_logo, card_image
+def _logo(contract, state, images, *, unavailable=None):
+    from app.monthly_report_branding import find_logo, read_logo, card_image, LogoArtworkError
     logo = find_logo(contract, state=state) if state else None
     if logo:
         if logo.asset not in images:
-            images[logo.asset] = card_image(read_logo(logo))
+            try:
+                images[logo.asset] = card_image(read_logo(logo))
+            except LogoArtworkError:
+                # This is a screen-only fallback. Never replace the stored
+                # image or suppress an error when it is needed for a report.
+                images[logo.asset] = None
+        if images[logo.asset] is None and unavailable is not None:
+            unavailable.add(contract)
         return images[logo.asset]
     for profile in library.list_profiles(contract):
         state = library.load_profile(contract, profile.key)
@@ -45,7 +53,7 @@ def _contract_tile(title):
     # UI-only placeholder. It never substitutes a fabricated image in DOCX.
     label = _fallback_initials(title)
     st.markdown(
-        '<div aria-label="No logo configured" style="width:8.5rem;height:3.5rem;'
+        '<div aria-label="Contract initials" style="width:8.5rem;height:3.5rem;'
         'background:#e9efed;border:1px solid #c3d1cc;border-radius:.35rem;'
         'display:flex;align-items:center;justify-content:center;'
         'font-weight:700;letter-spacing:.08em;color:#174237">' + label + '</div>',
@@ -53,28 +61,37 @@ def _contract_tile(title):
     )
 
 
+def _unavailable_logo_notice(unavailable):
+    if unavailable:
+        from app.monthly_report_admin_ui import admin_url
+        st.warning("A saved contract logo could not be read. Contract selection is still available; saved logos and reports were not changed.")
+        st.link_button("Review shared logos", admin_url("logos"), on_click="ignore")
+
+
 def choose_contract(last_contract, field):
     from app.monthly_report_branding import find_logo, load_branding
     state, images = load_branding(), {}
+    unavailable = set()
     names = contract_choices()
     current_key = field("report_contract", last_contract if last_contract in names else "")
     current = st.session_state[current_key]
     if current and not st.session_state.get("report_change_contract", False):
         selected_logo = find_logo(current, state=state) if state else None
         selected_title = _contract_label(current, selected_logo)
-        logo = _logo(current, state, images)
+        logo = _logo(current, state, images, unavailable=unavailable)
         if logo:
             picture, identity, action = st.columns((1, 5, 2), vertical_alignment="center")
             picture.image(logo, width=80)
         else:
             identity, action = st.columns((6, 2), vertical_alignment="center")
         with identity:
-            st.subheader(selected_title, anchor=False)
+            st.subheader(literal(selected_title), anchor=False)
             if selected_title.casefold() != current.casefold():
-                st.caption("Account code: " + current)
+                st.caption("Account code: " + literal(current))
         if action.button("Change contract", key="report_change_contract_button", width="stretch"):
             st.session_state["report_change_contract"] = True
             st.rerun()
+        _unavailable_logo_notice(unavailable)
         return current
     st.subheader("Choose your contract")
     query = st.text_input("Find a contract", key=field("report_contract_search", ""), placeholder="Type part of the contract name")
@@ -89,19 +106,20 @@ def choose_contract(last_contract, field):
     for offset in range(0, len(visible), 3):
         for column, (name, title) in zip(st.columns(3), visible[offset:offset+3]):
             with column, st.container(border=True):
-                logo = _logo(name, state, images)
+                logo = _logo(name, state, images, unavailable=unavailable)
                 if logo:
                     st.image(logo, width=160)
                 else:
                     _contract_tile(title)
                 if title.casefold() != name.casefold():
-                    st.caption("Account code: " + name)
+                    st.caption("Account code: " + literal(name))
                 # Exact source code is the selection identity. The approved
                 # full client title is the primary visual label and searchable.
-                if st.button(title, key="report_contract_card_" + _signature(name), width="stretch"):
+                if st.button(literal(title), key="report_contract_card_" + _signature(name), width="stretch"):
                     st.session_state[current_key] = name
                     st.session_state["report_change_contract"] = False
                     st.rerun()
+    _unavailable_logo_notice(unavailable)
     return None
 
 
@@ -120,12 +138,12 @@ def site_choices(contract, profiles):
 
 
 def identity_summary(profile):
-    """One exact site/scope summary for the stable contract/month strip."""
+    """One literal site/scope caption for the stable contract/month strip."""
     facilities = profile.facilities
     label = "Site: " if len(facilities) == 1 else "Sites: "
-    sites = label + "; ".join(site.title for site in facilities)
+    sites = label + "; ".join(literal(site.title) for site in facilities)
     ordinary_title = facilities[0].title if len(facilities) == 1 else " / ".join(site.title for site in facilities)
-    name = profile.title + " · " if profile.title != ordinary_title else ""
+    name = literal(profile.title) + " · " if profile.title != ordinary_title else ""
     scope = {"individual": "", "multi_site": "Combined report · ", "regional": "Regional report · "}[profile.scope_type]
     return name + scope + sites
 
@@ -164,7 +182,7 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
             if completed:
                 st.session_state[key] = bool(seed and f.key in membership_key(seed.facilities))
             detail = "Include this site in the report." + (" Also known as: " + "; ".join(f.aliases) if f.aliases else "")
-            if st.checkbox(f.title, key=key, help=detail, width="stretch"):
+            if st.checkbox(literal(f.title), key=key, help=literal(detail), width="stretch"):
                 selected.append(f)
     selection_notice = st.empty()
     with st.expander("More report details"):
@@ -189,13 +207,13 @@ def select_sites(contract, profiles, remembered, field, completed=None, *, rende
             return None, None
         amended = []
         for f in facilities:
-            aliases = st.text_input("Other names for " + f.title, key=field(prefix + "_aliases_" + f.key, "; ".join(f.aliases)))
+            aliases = st.text_input("Other names for " + literal(f.title), key=field(prefix + "_aliases_" + f.key, "; ".join(f.aliases)))
             amended.append(replace(f, aliases=tuple(v.strip() for v in aliases.split(";") if v.strip())))
         facilities = tuple(amended)
         matches = matching_profiles(profiles, facilities)
         existing = next((p for p in matches if p.key == remembered), matches[0] if matches else None)
         if len(matches) > 1:
-            selected_key = st.radio("Saved designs for these same sites", [p.key for p in matches], format_func=lambda key: next(p.title for p in matches if p.key == key), key=prefix + "_matches_" + _signature(membership_key(facilities)))
+            selected_key = st.radio("Saved designs for these same sites", [p.key for p in matches], format_func=lambda key: literal(next(p.title for p in matches if p.key == key)), key=prefix + "_matches_" + _signature(membership_key(facilities)))
             existing = next(p for p in matches if p.key == selected_key)
         identity = _signature(membership_key(facilities))
         title = (existing.title if existing else facilities[0].title) if len(facilities) == 1 else " / ".join(f.title for f in facilities)
@@ -242,10 +260,10 @@ def starting_choice(profile, profiles, period, prepared, field):
     if selected.startswith("Use another"):
         st.caption("Suggested order: shared sites first, then the same report scope, then the most recent saved month. This copies the design; it does not add sites to your report.")
         if len(available) == 1:
-            st.write("Starting design: " + available[0].title)
+            st.write("Starting design: " + literal(available[0].title))
             source = library.load_profile(profile.contract, available[0].key)
         else:
-            key = st.radio("Report design to reuse", [p.key for p in available], format_func=lambda k: next(p.title for p in available if p.key == k), key="report_start_from_" + profile.key)
+            key = st.radio("Report design to reuse", [p.key for p in available], format_func=lambda k: literal(next(p.title for p in available if p.key == k)), key="report_start_from_" + profile.key)
             source = library.load_profile(profile.contract, key)
         st.caption("Reuses the section layout, table headings and saved contract logos. You’ll supply this site's org chart, contacts, photos and current work.")
     else:
@@ -266,6 +284,6 @@ def starting_choice(profile, profiles, period, prepared, field):
             st.session_state["report_resume_import"] = (profile.contract, profile.key, period.key)
             st.rerun()
         except (ValueError, OSError) as exc:
-            st.error(str(exc))
+            st.error(literal(exc))
         finally:
             st.session_state.pop(pending_key, None)

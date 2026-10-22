@@ -17,6 +17,7 @@ import hashlib
 from pathlib import Path
 import re
 from zipfile import BadZipFile
+import zlib
 
 import fitz
 from openpyxl import load_workbook
@@ -85,9 +86,12 @@ def _date(value: str) -> str:
     return ""
 
 
-def native_action_lines(source: ReportSource):
+def native_action_lines(source: ReportSource, *, passage_pages=None):
     """Price-free native work lines with their actual selected page origins."""
     from app.monthly_report_content_policy import contains_price, page_status
+    from app.monthly_report_vendor_passages import read_vendor_document
+    if passage_pages is None:
+        passage_pages = read_vendor_document(source)
     found = {}
     for number in source.selected_pages:
         if not 1 <= number <= len(source.page_texts):
@@ -95,7 +99,9 @@ def native_action_lines(source: ReportSource):
         text = source.page_texts[number - 1]
         if page_status(text, unreadable=number in source.needs_vision)[0] != "technical":
             continue
-        for line in text.splitlines():
+        lines = (tuple(p.text for p in passage_pages[number][0] if p.field == "actions")
+                 if number in passage_pages else text.splitlines())
+        for line in lines:
             line = line.strip()
             uncertain_work = re.search(
                 r"\b(?:not|never|cannot|unable|recommend\w*|propos\w*|planned?|planning|"
@@ -151,14 +157,45 @@ def suggest_facts(source: ReportSource, profile: ReportProfile) -> ReportSource:
         scope_text = text[:30_000].casefold()
         matches = [f.title for f in profile.facilities if any(re.search(r"(?<!\w)" + re.escape(n.casefold()) + r"(?!\w)", scope_text) for n in (f.title, *f.aliases))]
         facility = matches[0] if len(matches) == 1 else ""
-    def lines(term):
+    source = replace(source, classification=classification)
+    from app.monthly_report_vendor_passages import read_vendor_document
+    limit_pages = set()
+    passage_pages = read_vendor_document(source, limit_pages=limit_pages)
+    labeled_pages = tuple(passage_pages)
+    pending = [n for n, (_, review) in passage_pages.items() if review]
+    from app.monthly_report_vendor_passages import FIELD_PATTERNS
+    patterns = FIELD_PATTERNS
+    field_values, field_pages = {}, {}
+    for field, term in patterns.items():
+        values = []
+        field_pages[field] = []
+        for n, page_text in enumerate(source.page_texts, 1):
+            if n in passage_pages:
+                page_values = [p.text for p in passage_pages[n][0] if p.field == field]
+            else:
+                page_values = [line.strip() for line in page_text.splitlines() if re.search(term, line, re.I)]
+            if page_values:
+                values.extend(page_values)
+                field_pages[field].append(n)
+        field_values[field] = "\n".join(values)
+    oversized = [field for field, value in field_values.items() if len(value) > 6000] if labeled_pages else []
+    from app.monthly_report_vendor_passages import passage_notice
+    oversized_pages = sorted(limit_pages | {n for field in oversized for n in field_pages[field]})
+    notices = tuple(dict.fromkeys((*source.notices,
+        *(passage_notice(n, reason="limit") for n in oversized_pages),
+        *(passage_notice(n) for n in pending if n not in oversized_pages))))
+    def lines(term, field=""):
+        if labeled_pages and field:
+            return field_values[field] if field not in oversized else ""
         return "\n".join(line.strip() for line in text.splitlines() if re.search(term, line, re.I))[:6000]
-    return replace(source, classification=classification, confidence="medium" if len(hits) == 1 else "low",
+    actions = "\n".join(line for line, _ in native_action_lines(source, passage_pages=passage_pages))
+    actions = "" if labeled_pages and len(actions) > 6000 else actions[:6000]
+    return replace(source, notices=notices, classification=classification, confidence="medium" if len(hits) == 1 else "low",
                    vendor=labeled("vendor|contractor|service company"), facility=facility,
                    service_date=_date(date_match[0]) if date_match else "", work_order=labeled("job(?: number)?|wo(?: number)?|work order"),
                    tags=tuple(v.strip() for v in re.split(r"[,;]", labeled("equipment tags?|asset tags?")) if v.strip()),
-                   actions="\n".join(line for line, _ in native_action_lines(source))[:6000], findings=lines(r"\b(findings?|observed)\b"),
-                   recommendations=lines(r"\brecommend"), follow_ups=lines(r"\b(follow.up|pending|scheduled)\b"),
+                   actions=actions, findings=lines(r"\b(findings?|observed)\b", "findings"),
+                   recommendations=lines(r"\brecommend", "recommendations"), follow_ups=lines(r"\b(follow.up|pending|scheduled)\b", "follow_ups"),
                    quotes=lines(r"\b(quoted|quotation|quote amount)\b"), out_of_limit=lines(r"\b(out.of.(?:limit|range)|above limit|below limit)\b"))
 
 
@@ -312,7 +349,10 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
                 or any(i.file_size > 32 * 1024 * 1024 for i in infos)
                 or len({i.filename for i in infos}) != len(infos)):
             raise ValueError("Expanded workbook exceeds the safe parsing budget.")
-    workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
+    try:
+        workbook = load_workbook(BytesIO(raw), read_only=True, data_only=True, keep_links=False)
+    except TypeError as exc:
+        raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     try:
         if len(workbook.worksheets) > 30:
             raise ValueError("Workbook exceeds 30 worksheets; upload the required sheets separately.")
@@ -333,6 +373,11 @@ def _spreadsheet(raw: bytes, suffix: str) -> tuple[SourceTable, ...]:
         if not tables:
             raise ValueError("Workbook has no nonempty worksheets.")
         return tuple(tables)
+    except TypeError as exc:
+        # openpyxl can reject malformed typed properties when reading either
+        # the package or its lazy rows. Keep this decoder boundary separate
+        # from TypeError in product source mapping or persistence code.
+        raise ValueError("Workbook structure could not be read. Export a fresh XLSX or CSV copy.") from exc
     finally:
         workbook.close()
 
@@ -352,7 +397,7 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
         data = library._read(cache)
         source = library.source_from_dict(data["source"])
         tables = tuple(SourceTable(t["name"], tuple(t["columns"]), tuple(tuple(r) for r in t["rows"])) for t in data.get("tables", ()))
-        if source.suffix == suffix:
+        if source.suffix == suffix and (suffix != ".pdf" or data.get("vendor_passage_policy", 0) >= 7):
             if data.get("client_page_policy", 0) < 1 and suffix not in (".csv", ".xlsx"):
                 source = replace(source, selected_pages=suggested_pages(source))
             if data.get("native_action_policy", 0) < 1:
@@ -361,6 +406,8 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
             return SourceContent(replace(source, filename=filename), tables, tuple(tuple(p) for p in data.get("image_items", ()))), ()
     library._atomic_write(path, raw)
     page_texts, needs_vision, tables, image_items, notices = [], [], (), [], []
+    pdf_text_blocks = []
+    span_budget_exceeded = False
     if suffix == ".pdf":
         with fitz.open(stream=raw, filetype="pdf") as pdf:
             if pdf.is_encrypted and not pdf.authenticate(""):
@@ -374,6 +421,16 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
                 page_texts.append(text)
                 if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
                     raise ValueError("PDF text exceeds 400,000 characters; select a smaller document range.")
+                from app.monthly_report_vendor_passages import block_spans, MAX_VENDOR_BLOCK_SPANS
+                if not span_budget_exceeded:
+                    spans = block_spans(page, text, number)
+                    if len(pdf_text_blocks) + len(spans) > MAX_VENDOR_BLOCK_SPANS:
+                        # No partial-page certainty after exhausting metadata capacity.
+                        # Raw original/page text and ordinary review remain available.
+                        pdf_text_blocks.clear()
+                        span_budget_exceeded = True
+                    else:
+                        pdf_text_blocks.extend(spans)
     elif suffix in ocr.SUPPORTED_IMAGE_SUFFIXES:
         normalize_report_image(raw, suffix)  # Validate before caching or paid work.
         page_texts, needs_vision = [""], [1]
@@ -406,12 +463,13 @@ def ingest(profile: ReportProfile, filename: str, raw: bytes) -> tuple[SourceCon
     if sum(map(len, page_texts)) > ocr._MAX_EXTRACTED_CHARS:
         raise ValueError("Source text exceeds 400,000 characters; split the input before reading.")
     source = ReportSource(digest, filename, digest, suffix, page_texts=tuple(page_texts),
+                          pdf_text_blocks=tuple(pdf_text_blocks),
                           selected_pages=tuple(range(1, len(page_texts)+1)), needs_vision=tuple(needs_vision), notices=tuple(notices))
     if suffix not in (".csv", ".xlsx"):
         source = replace(source, selected_pages=suggested_pages(source))
     source = suggest_facts(source, profile)
     content = SourceContent(source, tables, tuple(image_items))
-    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, **asdict(content)}))
+    library._atomic_write(cache, library._json({"schema": 1, "client_page_policy": 1, "native_action_policy": 1, "vendor_passage_policy": 7, **asdict(content)}))
     return content, attachments
 
 
@@ -467,7 +525,8 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
             added = sum(map(len, content.source.page_texts))
             if text_size + added > MAX_REPORT_TEXT:
                 raise ValueError("Total extracted text exceeds 800,000 characters. Remove unused sources or split the report.")
-        except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile, RecursionError) as exc:
+        except (ValueError, OSError, LookupError, csv.Error, RuntimeError, BadZipFile,
+                zlib.error, fitz.mupdf.FzErrorBase) as exc:
             # Only newly rejected and content-addressed bytes may be cleaned.
             # Never remove accepted originals or any pre-existing library file.
             if not already_present:
@@ -483,8 +542,18 @@ def ingest_batch(profile: ReportProfile, files: tuple[tuple[str, bytes], ...], e
                     pass
             if isinstance(exc, OSError):
                 reason = "Storage or file reader was unavailable; retry this file."
+            elif isinstance(exc, zlib.error):
+                reason = "Compressed file data is damaged. Export a fresh copy and upload it again."
+            elif isinstance(exc, fitz.mupdf.FzErrorBase):
+                reason = "PDF pages could not be decoded. Retry this file or export a fresh PDF copy."
+            elif isinstance(exc, (KeyError, IndexError)):
+                reason = "The file is missing required document data. Export a fresh copy and upload it again."
             elif isinstance(exc, LookupError):
                 reason = "The file uses an unknown text encoding; provide a UTF-8 copy."
+            elif isinstance(exc, BadZipFile):
+                reason = "The Word or workbook package is damaged. Export a fresh copy and upload it again."
+            elif isinstance(exc, RecursionError):
+                reason = "The file structure is too deeply nested. Export a simpler copy and upload it again."
             else:
                 reason = str(exc)[:300]
             messages.append(f"Not read: {filename}. {reason}")
@@ -501,7 +570,10 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
     if number < 1 or number > len(source.page_texts):
         raise ValueError("Source page does not exist.")
     directory = _path(profile, source.sha256, source.suffix).parent / "prepared" / source.sha256
-    cache = directory / f"{number}-{'preview' if preview else 'print'}.json"
+    # Older DOCX previews were incorrectly prepared at print resolution.
+    # Keep those assets intact and give the corrected derivative its own key.
+    purpose = "preview-docx-v2" if preview and source.suffix == ".docx" else "preview" if preview else "print"
+    cache = directory / f"{number}-{purpose}.json"
     if cache.exists():
         saved = library._read(cache)
         if not re.fullmatch(r"[0-9a-f]{64}\.(?:jpg|png)", saved.get("asset", "")):
@@ -531,7 +603,7 @@ def page_image(profile: ReportProfile, content: SourceContent, number: int, *, p
         if inspected.sha256 != source.sha256:
             raise ValueError("A source file failed its integrity check.")
         item = next(i for i in inspected.items if i.id == item_id)
-        result = read_import_image(path, item)
+        result = read_import_image(path, item, preview=preview)
     else:
         raise ValueError("This source contains text/tables rather than image pages.")
     ref = library.asset_reference(result.data, result.extension)

@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import subprocess
 
+import pytest
 import streamlit
 
 
@@ -53,3 +54,38 @@ pointer.handlers.opened(false);assert.equal(pointer.state.filter,'');
         "pointer": callback("Le", ",[Y]),Re="),
         "opening": opening,
     })], check=True, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("scenario", ["selection", "closed", "null-close"])
+def test_native_scroll_uses_committed_selection_before_passive_cleanup(tmp_path, scenario):
+    from scripts.streamlit_overlay_resize import OVERLAY_BUNDLE, repair_overlay
+
+    assets = Path(streamlit.__file__).parent / "static/static/js"
+    multiselect = (assets / "Multiselect.Bh_0JsCR.js").read_text()
+    combo = (assets / "fuzzyFilterSelectOptions.Bf8rcmtM.js").read_text()
+    widget = (assets / "useBasicWidgetState.CCuiA4s6.js").read_text()
+    overlay = (assets / OVERLAY_BUNDLE).read_text()
+
+    def between(source, start, end):
+        offset = source.index(start)
+        return source[offset:source.index(end, offset)]
+
+    def callback(name, end):
+        prefix = name + "=(0,w.useCallback)("
+        return between(multiselect, prefix, end)[len(prefix):]
+
+    source = tmp_path / "native.json"
+    source.write_text(json.dumps({
+        "widget": between(widget, "function o(", "function s("),
+        "latest": between(overlay, "function Ze(", "var Qe="),
+        "change": callback("Me", ",[t.maxSelections,S,x]),Ne="),
+        "opened": callback("Pe", ",[]),X="),
+        "close": "let " + between(combo, "G=()=>{if(o===`multiple`)", ",q=()=>"),
+    }))
+    before, after = tmp_path / "before.js", tmp_path / "after.js"
+    before.write_bytes(repair_overlay((assets / OVERLAY_BUNDLE).read_bytes(), latest_scroll_close=False))
+    after.write_bytes(repair_overlay((assets / OVERLAY_BUNDLE).read_bytes()))
+    result = subprocess.run(["node", str(Path(__file__).with_name("training_scroll_commit_test.cjs")),
+                             str(source), str(before), str(after), scenario], capture_output=True,
+                            text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr
