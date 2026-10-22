@@ -1,0 +1,328 @@
+"""Hosted-only native work-order grid journey; invented data and disposable disk.
+
+The fixture uses production editor, active-work journal and native output code.
+No browser widget state, callback, or report result is injected by this driver.
+"""
+from __future__ import annotations
+
+from dataclasses import replace
+from hashlib import sha256
+from io import BytesIO
+import json
+import os
+from pathlib import Path
+import secrets
+import subprocess
+import sys
+import tempfile
+import time
+from urllib.parse import urlparse
+from urllib.request import urlopen
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+OUT = ROOT / "test-artifacts" / "work-order-rows"
+PORT = 8537
+URL = f"http://127.0.0.1:{PORT}"
+COLUMNS = ("Work orders", "Jan", "Feb", "Mar", "Apr", "May", "Jun")
+BLANK = ("",) * 7
+ROWS = (
+    ("Received", "1", "2", "3", "4", "5", "6"),
+    ("", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+    ("", "7", "8", "9", "10", "11", "12"),
+    ("Closed", "13", "14", "15", "16", "17", "18"),
+    ("", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"),
+)
+EDIT = "Received edited before insertion"
+PREFIX = "synthetic_work_order_rows"
+RECEIPT = "data-work-order-receipt"
+
+
+def scenario(base):
+    """Known compact data, with an unchanged synthetic eight-row native source."""
+    from docx import Document
+    from app.monthly_report_import import inspect_docx
+    from app.monthly_report_model import (
+        Facility, ReportDraft, ReportPeriod, ReportProfile, ReportTable,
+        ResolvedBlock, default_sections,
+    )
+    path = Path(base) / "synthetic-work-orders.docx"
+    if not path.exists():
+        source = Document()
+        source.add_heading("MONTHLY ACTIVITY SUMMARY", 1)
+        source.add_paragraph("WORK ORDERS")
+        rows = (COLUMNS, BLANK, *ROWS[:3], BLANK, *ROWS[3:])
+        table = source.add_table(rows=len(rows), cols=7)
+        table.style = "Table Grid"
+        for row, values in zip(table.rows, rows):
+            for cell, value in zip(row.cells, values):
+                cell.text = value
+        source.save(path)
+    inspection = inspect_docx(path)
+    item = next(item for item in inspection.items if item.kind == "table")
+    reference = f"docx:{inspection.sha256}:{item.id}"
+    profile = ReportProfile("Synthetic row contract", "synthetic-row-site", "Synthetic Site",
+                            (Facility("synthetic-row-site", "Synthetic Site"),))
+    sections = (next(section for section in default_sections() if section.key == "activity"),)
+    draft = ReportDraft(profile, ReportPeriod(2026, 10), "Synthetic Editor", sections,
+        (ResolvedBlock("work_orders", "This month", extra_tables=(ReportTable(COLUMNS, ROWS, reference),)),
+         ResolvedBlock("activity_summary", "This month", text="Synthetic unrelated note remains unchanged.")),
+        synthetic=True)
+    return path, draft
+
+
+def row_state(draft):
+    block = next(block for block in draft.blocks if block.key == "work_orders")
+    table, = block.extra_tables
+    return {"columns": list(table.columns), "rows": [list(row) for row in table.rows],
+            "reference": table.reference, "fingerprint": draft.fingerprint,
+            "unrelated": replace(draft, blocks=tuple(b for b in draft.blocks if b.key != "work_orders")).fingerprint}
+
+
+def expected_rows(stage):
+    rows = [list(row) for row in ROWS]
+    if stage != "initial":
+        rows[0][0] = EDIT
+    if stage in {"above", "restored"}:
+        rows.insert(0, list(BLANK))
+    if stage == "restored":
+        rows.insert(4, list(BLANK))
+    return rows
+
+
+def assert_receipt(value, rows, baseline=None):
+    assert value["working"] == value["durable"], "Native result has not reached the disk journal"
+    assert value["working"]["columns"] == list(COLUMNS)
+    assert value["working"]["rows"] == rows
+    assert value["source_unchanged"] is True
+    assert value["revision"] > 0
+    if baseline:
+        for key in ("reference", "unrelated"):
+            assert value["working"][key] == baseline["working"][key]
+        assert value["generation"] == baseline["generation"]
+
+
+def assert_outputs(word, pdf, rows):
+    from docx import Document
+    import pymupdf
+    document = Document(BytesIO(word))
+    assert len(document.tables) == 1
+    actual = [[cell.text for cell in row.cells] for row in document.tables[0].rows]
+    assert actual == [list(COLUMNS), *rows]
+    assert all(len(row) == 7 for row in actual)
+    assert not any("__work_order_row_" in cell or "Insert blank" in cell for row in actual for cell in row)
+    with pymupdf.open(stream=pdf, filetype="pdf") as rendered:
+        text = "\n".join(page.get_text() for page in rendered)
+        assert EDIT in " ".join(text.split())
+        assert "Insert blank" not in text and "__work_order_row_" not in text
+        tables = [(table.row_count, table.col_count) for page in rendered for table in page.find_tables().tables]
+        assert tables == [(8, 7)]
+        pages = len(rendered)
+    return {"docx_sha256": sha256(word).hexdigest(), "pdf_sha256": sha256(pdf).hexdigest(),
+            "pdf_pages": pages, "native_table": [8, 7]}
+
+
+OBSERVE = r"""() => {
+  window.rowNativeEvents=[];
+  for(const type of ['pointerdown','click','dblclick','input','keydown']) {
+    document.addEventListener(type,event=>{
+      const n=event.target;
+      if(!n.closest?.('[data-testid="stDataFrame"],[data-testid="stDataFrameButtonActionMenu"],.gdg-growing-entry'))return;
+      window.rowNativeEvents.push({type,trusted:event.isTrusted,key:event.key||null,
+        label:n.getAttribute?.('aria-label')||null,testid:n.getAttribute?.('data-testid')||null,
+        at:performance.now()});
+      if(window.rowNativeEvents.length>120)window.rowNativeEvents.shift();
+    },true);
+  }
+}"""
+
+
+def settled(page, rows, record, stage, baseline=None):
+    page.wait_for_function("""wanted => {
+      const nodes=document.querySelectorAll('[data-work-order-receipt]');
+      if(!nodes.length)return false;
+      const v=JSON.parse(nodes[nodes.length-1].getAttribute('data-work-order-receipt'));
+      return JSON.stringify(v.working.rows)===JSON.stringify(wanted) &&
+        JSON.stringify(v.working)===JSON.stringify(v.durable) &&
+        document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
+    }""", arg=rows, timeout=25000)
+    value = json.loads(page.locator(f'[{RECEIPT}]').last.get_attribute(RECEIPT))
+    assert_receipt(value, rows, baseline)
+    record["steps"].append({"stage": stage, "receipt": value,
+                            "native_events": page.evaluate("window.rowNativeEvents || []")})
+    return value
+
+
+def canvas_point(page, row, *, action=True):
+    """Locked Streamlit 1.61.1: 32px row marker, fixed 160px pinned Row column.
+
+    Remaining column widths may stretch; target the start of the first data
+    column instead of guessing its full width. Row/header height is 2.1875rem.
+    A missing/moved grid fails; no rescue click or DOM event injection follows.
+    """
+    canvas = page.get_by_test_id("data-grid-canvas")
+    canvas.scroll_into_view_if_needed()
+    box = canvas.bounding_box()
+    if not box:
+        raise AssertionError("Native canvas is not visible")
+    rem = page.evaluate("parseFloat(getComputedStyle(document.documentElement).fontSize)")
+    height = round(2.1875 * rem)
+    return canvas, {"x": 32 + (80 if action else 160 + 25), "y": height * (row + 1.5)}
+
+
+def menu(page, row):
+    from playwright.sync_api import expect
+    canvas, point = canvas_point(page, row)
+    canvas.click(position=point)
+    options = page.get_by_role("menu", name="Button action menu")
+    expect(options).to_be_visible()
+    expect(options.get_by_role("menuitem", name="Insert blank above", exact=True)).to_be_visible()
+    expect(options.get_by_role("menuitem", name="Insert blank below", exact=True)).to_be_visible()
+    return options
+
+
+def exercise(browser, name):
+    from playwright.sync_api import expect
+    out = OUT / name
+    out.mkdir(parents=True, exist_ok=True)
+    record = {"synthetic_only": True, "steps": [], "errors": [], "external": [],
+              "browser": name, "tested_checkout": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}
+    context = browser.new_context(viewport={"width": 1200, "height": 900}, accept_downloads=True)
+    context.add_cookies([{"name": "epc_device_id", "value": secrets.token_hex(16), "url": URL}])
+    context.add_init_script("(" + OBSERVE + ")()")
+    def route(request):
+        parsed = urlparse(request.request.url)
+        if parsed.scheme in {"data", "blob"} or parsed.hostname == "127.0.0.1" and parsed.port == PORT:
+            request.continue_()
+        else:
+            record["external"].append(parsed.hostname)
+            request.abort()
+    context.route("**/*", route)
+    page = context.new_page()
+    page.set_default_timeout(15000)
+    page.on("pageerror", lambda error: record["errors"].append(str(error)))
+    try:
+        page.goto(URL, wait_until="domcontentloaded")
+        baseline = settled(page, expected_rows("initial"), record, "compact unchanged")
+        menu(page, 0)
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("menu", name="Button action menu")).to_have_count(0)
+        settled(page, expected_rows("initial"), record, "cancel is no-op", baseline)
+
+        canvas, point = canvas_point(page, 0, action=False)
+        canvas.dblclick(position=point)
+        field = page.locator(".gdg-input")
+        expect(field).to_have_value("Received")
+        field.fill(EDIT)  # No Enter/Tab: the next native menu click must deliver this edit.
+        menu(page, 0).get_by_role("menuitem", name="Insert blank above", exact=True).click()
+        settled(page, expected_rows("above"), record, "pending edit and above", baseline)
+
+        # A real rapid repeated pointer attempt is not fabricated wire replay.
+        # The menu retires on first activation; exactly one row may be inserted.
+        menu(page, 3).get_by_role("menuitem", name="Insert blank below", exact=True).dblclick(delay=40)
+        settled(page, expected_rows("restored"), record, "repeated below attempt inserts once", baseline)
+        page.screenshot(path=str(out / "restored-desktop.png"), full_page=True)
+        old_menu = menu(page, 0).element_handle()
+        page.get_by_role("checkbox", name="Show synthetic table", exact=True).uncheck()
+        expect(page.get_by_test_id("data-grid-canvas")).to_have_count(0)
+        assert old_menu is not None and not old_menu.evaluate("node => node.isConnected")
+        settled(page, expected_rows("restored"), record, "retired menu cannot survive unmount", baseline)
+        page.get_by_role("checkbox", name="Show synthetic table", exact=True).check()
+        settled(page, expected_rows("restored"), record, "reopen without replay", baseline)
+        page.set_viewport_size({"width": 545, "height": 757})
+        page.reload(wait_until="domcontentloaded")
+        settled(page, expected_rows("restored"), record, "narrow disk reload", baseline)
+        assert page.evaluate("document.documentElement.scrollWidth<=document.documentElement.clientWidth+2")
+        menu(page, 0)
+        page.keyboard.press("Escape")
+        settled(page, expected_rows("restored"), record, "narrow menu reachable and canceled", baseline)
+        page.get_by_role("button", name="Generate synthetic Word and PDF", exact=True).click()
+        word = pdf = None
+        for kind in ("Word", "PDF"):
+            button = page.get_by_role("button", name="Download synthetic " + kind, exact=True)
+            expect(button).to_be_visible(timeout=120000)
+            with page.expect_download(timeout=120000) as download:
+                button.click()
+            path = out / ("restored.docx" if kind == "Word" else "restored.pdf")
+            download.value.save_as(path)
+            if kind == "Word":
+                word = path.read_bytes()
+            else:
+                pdf = path.read_bytes()
+        record["outputs"] = assert_outputs(word, pdf, expected_rows("restored"))
+        settled(page, expected_rows("restored"), record, "export leaves saved table unchanged", baseline)
+        page.screenshot(path=str(out / "restored-narrow.png"), full_page=True)
+        assert not record["errors"] and not record["external"]
+        record["passed"] = True
+    except Exception as error:
+        record["first_failure"] = str(error)
+        try:
+            page.screenshot(path=str(out / "first-failure.png"), full_page=True)
+            (out / "first-failure.html").write_text(page.content())
+        except Exception as capture_error:
+            record["capture_error"] = str(capture_error)
+        raise
+    finally:
+        try:
+            record["native_events"] = page.evaluate("window.rowNativeEvents || []")
+        except Exception as observation_error:
+            record["observation_error"] = str(observation_error)
+        (out / "result.json").write_text(json.dumps(record, indent=2) + "\n")
+        context.close()
+
+
+def stop_server(process):
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
+
+
+def main():
+    from playwright.sync_api import sync_playwright
+    OUT.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="work-order-rows-synthetic-") as directory:
+        base = Path(directory)
+        (base / "monthly-dom-synthetic-only.marker").write_text("synthetic-monthly-dom-v1", encoding="ascii")
+        env = dict(os.environ, EPC_DATA_DIR=str(base), EPC_MONTHLY_DOM_FIXTURE="1",
+                   EPC_WORK_ORDER_ROW_FIXTURE="1", ANTHROPIC_API_KEY="", SMARTSHEET_API_MODE="disabled")
+        with (OUT / "streamlit.log").open("w") as log:
+            process = subprocess.Popen([sys.executable, "-m", "streamlit", "run",
+                "tests/fixtures/workspaces/work_order_rows_app.py", "--server.address", "127.0.0.1",
+                "--server.port", str(PORT), "--server.headless", "true", "--browser.gatherUsageStats", "false"],
+                cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        raise RuntimeError("Synthetic row server stopped")
+                    try:
+                        with urlopen(URL + "/_stcore/health", timeout=1) as response:
+                            if response.status == 200:
+                                break
+                    except OSError:
+                        time.sleep(.1)
+                else:
+                    raise RuntimeError("Synthetic row server did not become healthy")
+                failures = []
+                with sync_playwright() as playwright:
+                    for name, engine in (("chromium", playwright.chromium), ("webkit", playwright.webkit)):
+                        browser = engine.launch(headless=True)
+                        try:
+                            exercise(browser, name)
+                        except Exception as error:
+                            failures.append(f"{name}: {error}")
+                        finally:
+                            browser.close()
+                if failures:
+                    raise AssertionError("; ".join(failures))
+            finally:
+                stop_server(process)
+    print("PASS native work-order actions, disk reload and actual Word/PDF on both engines")
+
+
+if __name__ == "__main__":
+    main()

@@ -22,6 +22,8 @@ on:
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_monthly_literal_labels.py'
+      - 'scripts/qa_work_order_rows.py'
+      - 'tests/test_work_order_row_browser_contract.py'
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
@@ -165,6 +167,8 @@ on:
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
       - 'scripts/qa_monthly_literal_labels.py'
+      - 'scripts/qa_work_order_rows.py'
+      - 'tests/test_work_order_row_browser_contract.py'
       - 'scripts/qa_browser_diagnostics.py'
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
@@ -295,6 +299,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  synthetic-work-order-rows:
+    runs-on: ubuntu-24.04
+    # Separate new acceptance, not an extension of any existing job's budget.
+    timeout-minutes: 45
+    env:
+      FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements-dev.lock
+      - name: Install locked app and work-order row browser harness
+        timeout-minutes: 20
+        run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-calc fonts-dejavu-core fonts-crosextra-carlito fonts-crosextra-caladea
+          python -m pip install -r requirements-dev.lock
+          python scripts/patch_streamlit_frontend.py
+          python -m pip install playwright==1.58.0
+          python -m playwright install --with-deps chromium webkit
+      - name: Native blank-row actions retain edits and actual saved output
+        timeout-minutes: 11
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 10 <<'NATIVE_TEST'
+          python scripts/qa_work_order_rows.py
+          NATIVE_TEST
+      - name: Upload work-order row evidence including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: work-order-row-browser-evidence
+          path: test-artifacts/work-order-rows/
+          retention-days: 7
+          if-no-files-found: warn
   literal-labels:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
