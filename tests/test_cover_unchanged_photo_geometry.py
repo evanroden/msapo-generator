@@ -205,7 +205,7 @@ def test_unchanged_complex_destination_is_not_recropped_from_local_extent(tmp_pa
 
 
 @pytest.mark.parametrize('invalid', ['NaN', 'inf', '0', '-1', 'oops'])
-def test_nonfinite_or_nonpositive_frame_is_rejected_without_image_mutation(tmp_path, invalid):
+def test_replacement_nonfinite_or_nonpositive_frame_is_rejected_without_image_mutation(tmp_path, invalid):
     from app.monthly_report_native_layout import _fit_cover_photo, NativeLayoutError
     path, _, _, _ = source_photo(tmp_path, {})
     doc = Document(path)
@@ -215,7 +215,7 @@ def test_nonfinite_or_nonpositive_frame_is_rejected_without_image_mutation(tmp_p
     blip = next(picture.iter(qn('a:blip')))
     before = doc.element.xml
     with pytest.raises(NativeLayoutError, match='frame dimensions'):
-        _fit_cover_photo(blip, 400, 300, preserve_crop=True)
+        _fit_cover_photo(blip, 400, 300, preserve_crop=False)
     assert doc.element.xml == before
 
 
