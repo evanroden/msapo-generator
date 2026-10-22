@@ -36,6 +36,7 @@ def test_synthetic_fixture_uses_native_sidebar_and_only_session_navigation():
     app.sidebar.button[1].click().run()
     assert not app.exception
     assert app.session_state["sidebar_destination"] == "Synthetic master templates"
+    assert len(app.get("link_button")) == 4
 
 
 def test_header_clearance_is_limited_to_narrow_workflows_with_a_sidebar():
@@ -43,6 +44,45 @@ def test_header_clearance_is_limited_to_narrow_workflows_with_a_sidebar():
     narrow = CUSTOM_CSS.split("@media (max-width: 1100px) {", 1)[1]
     assert narrow.lstrip().startswith(selector)
     assert "padding-top: 3.75rem !important;" in narrow.split(selector, 1)[1].split("}", 1)[0]
+
+
+def test_only_collapsed_sidebar_subtree_is_removed_from_focus():
+    assert CUSTOM_CSS.count(navigation.COLLAPSED_SIDEBAR_RULE) == 1
+    assert '[aria-expanded="true"]' not in navigation.COLLAPSED_SIDEBAR_RULE
+    assert "stExpandSidebarButton" not in navigation.COLLAPSED_SIDEBAR_RULE
+    assert "visibility: hidden;" in navigation.COLLAPSED_SIDEBAR_RULE
+    assert '[aria-expanded="false"] *' in navigation.COLLAPSED_SIDEBAR_RULE
+
+
+@pytest.mark.parametrize("hidden_stop", [False, True])
+@pytest.mark.parametrize("key", ["Tab", "Shift+Tab"])
+def test_tab_gate_rejects_any_collapsed_sidebar_stop(hidden_stop, key):
+    page = Mock()
+    control = Mock()
+    page.evaluate.side_effect = [{"insideCollapsedSidebar": hidden_stop},
+                                 {"insideCollapsedSidebar": False}]
+    control.evaluate.side_effect = [False, True]
+    record = []
+    if hidden_stop:
+        with pytest.raises(navigation.CollapsedSidebarFocusError, match="received Tab focus"):
+            navigation.tab_to_control(page, control, record, key=key)
+        control.evaluate.assert_not_called()
+        assert len(record) == 1
+    else:
+        navigation.tab_to_control(page, control, record, key=key)
+        assert len(record) == 2
+    for call in page.keyboard.press.call_args_list:
+        assert call.args == (key,) and not call.kwargs
+
+
+def test_tab_gate_does_not_accept_an_unreachable_control():
+    page = Mock()
+    control = Mock()
+    page.evaluate.return_value = {"insideCollapsedSidebar": False}
+    control.evaluate.return_value = False
+    with pytest.raises(AssertionError, match="unreachable by Tab"):
+        navigation.tab_to_control(page, control, [])
+    assert page.keyboard.press.call_count == 30
 
 
 def test_native_browser_regression_remains_in_hosted_dom_job():

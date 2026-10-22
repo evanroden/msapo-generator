@@ -22,11 +22,21 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "test-artifacts" / "sidebar-navigation"
 PORT = 8588
 URL = f"http://127.0.0.1:{PORT}"
+COLLAPSED_SIDEBAR_RULE = '''    [data-testid="stSidebar"][aria-expanded="false"],
+    [data-testid="stSidebar"][aria-expanded="false"] * {
+        visibility: hidden;
+    }
+'''
 FIXTURE = '''import streamlit as st
 from app.web_ui import CUSTOM_CSS
+from scripts.qa_sidebar_navigation import COLLAPSED_SIDEBAR_RULE
 
 st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+css = CUSTOM_CSS
+if st.query_params.get("sidebar_focus_baseline") == "1":
+    assert css.count(COLLAPSED_SIDEBAR_RULE) == 1
+    css = css.replace(COLLAPSED_SIDEBAR_RULE, "")
+st.markdown(css, unsafe_allow_html=True)
 st.segmented_control("Choose workflow", ("Purchase order", "Expense reimbursement", "Monthly report"),
     default="Monthly report", key="workflow_mode", label_visibility="collapsed",
     width="stretch", required=True)
@@ -35,6 +45,9 @@ with st.sidebar:
         for destination in ("Synthetic branding", "Synthetic master templates"):
             if st.button(destination):
                 st.session_state["sidebar_destination"] = destination
+        for index in range(4):
+            st.link_button(f"Synthetic administration {index + 1}",
+                f"http://127.0.0.1:8588/?synthetic_admin={index}", on_click="ignore")
 st.title("Synthetic sidebar navigation")
 st.write("Destination: " + st.session_state.get("sidebar_destination", "none"))
 # A non-Streamlit header must not be revived by a broad visibility override.
@@ -114,7 +127,31 @@ def inspect_workflow_overlap(page):
     }""")
 
 
-def journey(browser, width, output, record):
+class CollapsedSidebarFocusError(AssertionError):
+    """Ordinary Tab reached an off-canvas native sidebar control."""
+
+
+def tab_to_control(page, control, record, *, key="Tab"):
+    """Use real Tab input and reject every collapsed-sidebar focus stop."""
+    assert key in ("Tab", "Shift+Tab")
+    for _ in range(30):
+        page.keyboard.press(key)
+        state = page.evaluate("""() => {
+            const node = document.activeElement;
+            const sidebar = node?.closest('[data-testid="stSidebar"]');
+            return {tag: node?.tagName, text: node?.textContent?.trim().slice(0, 100),
+                visibility: node ? getComputedStyle(node).visibility : null,
+                insideCollapsedSidebar: sidebar?.getAttribute('aria-expanded') === 'false'};
+        }""")
+        record.append(state)
+        if state["insideCollapsedSidebar"]:
+            raise CollapsedSidebarFocusError(f"Collapsed sidebar received Tab focus: {state}")
+        if control.evaluate("node => document.activeElement === node"):
+            return
+    raise AssertionError("Native control was unreachable by Tab")
+
+
+def journey(browser, width, output, record, *, focus_baseline=False):
     from playwright.sync_api import expect
 
     context = browser.new_context(viewport={"width": width, "height": 900})
@@ -133,7 +170,8 @@ def journey(browser, width, output, record):
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
-        page.goto(URL, wait_until="domcontentloaded")
+        page.goto(URL + ("?sidebar_focus_baseline=1" if focus_baseline else ""),
+                  wait_until="domcontentloaded")
         expect(page.get_by_role("heading", name="Synthetic sidebar navigation")).to_be_visible()
         sidebar = page.get_by_test_id("stSidebar")
         opener = page.get_by_test_id("stExpandSidebarButton")
@@ -163,6 +201,7 @@ def journey(browser, width, output, record):
         for name in ("Synthetic branding", "Synthetic master templates"):
             sidebar.get_by_role("button", name=name, exact=True).click()
             expect(page.get_by_text("Destination: " + name, exact=True)).to_be_visible()
+        expect(sidebar.get_by_role("link")).to_have_count(4)
         page.screenshot(path=str(output / "expanded.png"))
         record["pointer_destinations"] = ["Synthetic branding", "Synthetic master templates"]
 
@@ -172,19 +211,33 @@ def journey(browser, width, output, record):
         expect(opener).to_be_visible()
         require_quiet_chrome(page)
 
-        # Find the opener through ordinary Tab navigation, not programmatic
-        # focus. Its inherited hidden state used to remove it from this order.
-        for _ in range(30):
-            page.keyboard.press("Tab")
-            if opener.evaluate("node => document.activeElement === node"):
-                break
-        else:
-            raise AssertionError("Native opener was unreachable by Tab")
+        # Being eventually reachable is insufficient: no off-canvas control
+        # may intercept Tab on the way to the ordinary visible native opener.
+        record["tab_after_pointer_collapse"] = []
+        tab_to_control(page, opener, record["tab_after_pointer_collapse"])
+        record["reverse_tab_while_collapsed"] = []
+        tab_to_control(page, opener, record["reverse_tab_while_collapsed"], key="Shift+Tab")
         page.keyboard.press("Enter")
         expect(sidebar).to_have_attribute("aria-expanded", "true")
         record["keyboard_reopen"] = True
         expect(sidebar.get_by_role("button", name="Synthetic branding", exact=True)).to_be_visible()
         require_quiet_chrome(page)
+
+        # Reproduce keyboard collapse too. Hover exposes Streamlit's native
+        # desktop collapse affordance; Tab obtains focus and Enter activates it.
+        # No programmatic focus or JS click is used.
+        sidebar.hover()
+        collapse = sidebar.get_by_test_id("stSidebarCollapseButton").get_by_role("button")
+        record["tab_to_collapse"] = []
+        tab_to_control(page, collapse, record["tab_to_collapse"])
+        page.keyboard.press("Enter")
+        expect(sidebar).to_have_attribute("aria-expanded", "false")
+        record["tab_after_keyboard_collapse"] = []
+        tab_to_control(page, opener, record["tab_after_keyboard_collapse"])
+        page.keyboard.press("Enter")
+        expect(sidebar).to_have_attribute("aria-expanded", "true")
+        expect(sidebar.get_by_role("link")).to_have_count(4)
+        record["keyboard_collapse_without_hidden_stops"] = True
 
         # Repeat collapse/reopen, then reload. Streamlit may retain the current
         # state; either way, normal collapse must leave a usable opener.
@@ -251,6 +304,22 @@ def main():
                     for name in ("chromium", "webkit"):
                         browser = getattr(playwright, name).launch(headless=True)
                         try:
+                            if name == "chromium":
+                                # Same native fixture with only the new closed-
+                                # subtree rule removed must expose the original
+                                # defect, not pass a vacuous focus assertion.
+                                output = OUT / "chromium-390-focus-baseline"
+                                output.mkdir(exist_ok=True)
+                                baseline = {"browser": name, "width": 390, "rejected": False}
+                                evidence["collapsed_focus_baseline"] = baseline
+                                try:
+                                    journey(browser, 390, output, baseline, focus_baseline=True)
+                                except CollapsedSidebarFocusError as error:
+                                    baseline["expected_failure"] = str(error)
+                                    baseline["rejected"] = True
+                                else:
+                                    raise AssertionError("Unfixed native sidebar did not expose hidden focus stops")
+                                assert not baseline["page_errors"] and not baseline["external_requests"], baseline
                             for width in (1365, 1024, 390):
                                 output = OUT / f"{name}-{width}"
                                 output.mkdir(exist_ok=True)
