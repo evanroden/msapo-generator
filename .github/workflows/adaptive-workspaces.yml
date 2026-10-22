@@ -120,6 +120,7 @@ on:
       - 'tests/test_qa_training_form_observations.py'
       - 'scripts/qa_monthly_live.py'
       - 'scripts/qa_source_corrections.py'
+      - 'scripts/qa_single_logo_admin.py'
       - 'scripts/qa_source_selection_delivery.py'
       - 'tests/test_qa_source_selection_delivery.py'
       - 'tests/source_review_navigation_test.cjs'
@@ -261,6 +262,7 @@ on:
       - 'tests/test_qa_training_form_observations.py'
       - 'scripts/qa_monthly_live.py'
       - 'scripts/qa_source_corrections.py'
+      - 'scripts/qa_single_logo_admin.py'
       - 'scripts/qa_source_selection_delivery.py'
       - 'tests/test_qa_source_selection_delivery.py'
       - 'tests/source_review_navigation_test.cjs'
@@ -503,6 +505,13 @@ jobs:
           python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
           python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py
           NATIVE_TEST
+      - name: Shared logo single-record replacement, stale review and restore
+        if: ${{ !cancelled() }}
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_single_logo_admin.py
+          NATIVE_TEST
       - name: Water page management across desktop and narrow browser with actual output
         if: ${{ !cancelled() }}
         env:
@@ -559,6 +568,7 @@ jobs:
             test-artifacts/monthly-preparer-navigation/
             test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
+            test-artifacts/single-logo-admin/
             test-artifacts/water-page-journey/
             test-artifacts/report-row-cards/
             test-artifacts/water-fresh-page-journey/

@@ -82,6 +82,27 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_LOGO_ADMIN_TASK") == "1":
+    if (st.query_params.get("monthly_qa") != "logo-recovery"
+            or st.query_params.get("monthly_admin") != "logos"):
+        st.error("This synthetic task requires the isolated logo administration route.")
+        st.stop()
+    from app.monthly_report_logo_recovery_sample import sample_scope, check_sample
+    from app.monthly_report_admin_ui import render_administration
+    from app import monthly_report_branding as branding
+    with sample_scope(token):
+        render_administration("logos", _field, mode="logo-recovery")
+        current = branding.load_branding()
+        if current:
+            _, checks = check_sample()
+            st.caption("QA shared-logo revision: " + str(current.revision))
+            st.caption("QA inspected logo: " + st.session_state.get("report_branding_preview_", ""))
+            st.caption("QA selected logo asset: " + current.logos[0].asset)
+            st.caption("QA healthy logo unchanged: " + str(checks["Healthy logo and mapping unchanged"]).lower())
+            unchanged = checks["Original readable history unchanged"] and checks["Damaged collection history unchanged"]
+            st.caption("QA original histories unchanged: " + str(unchanged).lower())
+    st.stop()
+
 from scripts.workspace_browser_observations import install_synthetic_observations, emit_snapshot
 from scripts.workspace_text_observations import emit_text_snapshot
 from scripts.workspace_water_observations import emit_water_snapshot

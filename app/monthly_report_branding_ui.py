@@ -10,7 +10,7 @@ from app.monthly_report_editor import _signature
 
 def render_branding(field):
     st.subheader("Shared contract logos")
-    st.write("These logos appear on contract cards and fill empty logos in new reports. Existing report logos stay as saved; managers can choose a replacement in Site information.")
+    st.write("These logos appear on contract cards and fill empty logos in new reports. Existing report logos stay as saved.")
     current = branding.load_branding()
     revision = current.revision if current else 0
     upload = st.file_uploader("Reviewed logo collection", type=["zip"], max_upload_size=32, key="report_branding_bundle")
@@ -31,17 +31,24 @@ def render_branding(field):
         try:
             st.image(assets.get(logo.asset) or branding.read_logo(logo), width=360)
         except branding.LogoArtworkError:
-            st.warning("This saved logo could not be read. Upload a reviewed replacement collection or restore a readable collection below. The original was kept unchanged.")
+            st.warning("This saved logo could not be read. Replace this shared logo below, upload a reviewed collection, or restore a readable version. History is unchanged.")
         st.text("Contracts: " + (", ".join(logo.contracts) or "ENFRA report branding"))
-        st.caption("Source reviewed " + logo.checked_on)
+        from app.monthly_report_branding_replace import OWNER_VARIANT_PREFIX
+        owner_provided = logo.source_note.startswith(OWNER_VARIANT_PREFIX)
+        st.caption(("Artwork reviewed " if owner_provided else "Source reviewed ") + logo.checked_on)
         if logo.source_note:
             st.text(logo.source_note)
-        st.link_button("Official source", logo.source_url)
-        st.link_button("Artwork source", logo.asset_url)
+        st.link_button("Official brand reference" if owner_provided else "Official source", logo.source_url)
+        if owner_provided:
+            st.caption("Owner-provided artwork; the official link is a brand reference.")
+        else:
+            st.link_button("Artwork source", logo.asset_url)
         with st.expander("All logos and contract mappings"):
             st.dataframe([{"Logo": v.title, "Contracts": ", ".join(v.contracts), "Reviewed": v.checked_on, "Official source": v.source_url} for v in logos], hide_index=True)
     actor = st.text_input("Logo editor name", key=field("report_branding_actor", ""))
     st.caption("Your entered name records this shared change; it is not authenticated identity. Earlier logo collections remain restorable.")
+    if current and not upload:
+        _replace_selected_logo(current, shown, actor)
     if upload:
         if current:
             removed = {c for v in current.logos for c in v.contracts} - {c for v in logos for c in v.contracts}
@@ -80,7 +87,10 @@ def offer_logo(block, contract, prefix, assets):
         return block
     from dataclasses import replace
     with st.container(border=True):
-        st.caption(f"Available: {logo.title} · official source checked {logo.checked_on}")
+        from app.monthly_report_branding_replace import OWNER_VARIANT_PREFIX
+        review_label = ("owner-provided artwork reviewed" if logo.source_note.startswith(OWNER_VARIANT_PREFIX)
+                        else "official source checked")
+        st.caption(f"Available: {logo.title} · {review_label} {logo.checked_on}")
         st.image(branding.read_logo(logo), width=240)
         label = "Use this logo in this report" if block.asset_hashes else "Add this logo to this report"
         if st.button(label, key=prefix + "_official_" + block.key + "_" + logo.asset):
@@ -94,3 +104,59 @@ def offer_logo(block, contract, prefix, assets):
             from app.monthly_report_asset_review import approve_all_assets
             return approve_all_assets(block)
     return block
+
+
+def _replace_selected_logo(current, key, actor):
+    """Optional administration only; ordinary report creation has no new choice."""
+    from datetime import date
+    from app.monthly_report_branding_replace import (
+        prepare_replacement, replace_selected_logo,
+    )
+    logo = next(logo for logo in current.logos if logo.key == key)
+    prefix = "report_single_logo_" + _signature((key, current.revision))
+    with st.expander("Replace this shared logo", expanded=False):
+        st.caption("Updates this shared logo. New reports use it only for empty logo slots. Contracts, other logos and saved reports stay unchanged.")
+        upload = st.file_uploader("Owner-provided approved logo (PNG)", type=["png"],
+                                 max_upload_size=4, key=prefix + "_upload")
+        if upload is None:
+            return
+        raw = upload.getvalue()
+        left, right = st.columns(2)
+        with left:
+            st.caption("Current")
+            try:
+                st.image(branding.read_logo(logo), width=240)
+            except branding.LogoArtworkError:
+                st.warning("The current artwork is unreadable; its record will remain in history.")
+        with right:
+            st.caption("Replacement")
+            try:
+                branding._image(raw, branding.library.asset_reference(raw, "png"))
+                st.image(raw, width=240)
+            except ValueError as exc:
+                # In-memory upload validation only; storage/namespace errors
+                # from reading the current logo remain fail-closed above.
+                st.error(str(exc))
+                return
+        checked = st.date_input("Artwork reviewed on", value=date.today(), key=prefix + "_date")
+        note = st.text_area("Artwork source and approval", value="", max_chars=900,
+                            placeholder="Describe the owner-provided file and approved variant.",
+                            key=prefix + "_note")
+        st.caption("The official brand link is retained as a reference; this upload is recorded as owner-provided artwork.")
+        try:
+            review = prepare_replacement(logo, current.revision, raw, actor=actor,
+                                         checked_on=checked.isoformat(), source_note=note)
+        except ValueError as exc:
+            st.caption(str(exc))
+            return
+        identity = prefix + "_" + review.token
+        confirmed = st.checkbox("I reviewed this replacement and approve this shared logo change", key=identity + "_confirm")
+        if st.button("Replace selected logo", disabled=not confirmed, key=identity + "_save"):
+            try:
+                replace_selected_logo(key, raw, expected_revision=current.revision,
+                    actor=actor, checked_on=checked.isoformat(), source_note=note,
+                    review_token=review.token, confirmed=confirmed)
+                st.session_state["report_branding_saved"] = True
+                st.rerun()
+            except (OSError, ValueError) as exc:
+                st.error(str(exc))

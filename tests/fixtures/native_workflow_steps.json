@@ -131,6 +131,11 @@
       "commands": "          python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py\n"
     },
     {
+      "raw": "      - name: Shared logo single-record replacement, stale review and restore\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_single_logo_admin.py\n",
+      "before": "      - name: Shared logo single-record replacement, stale review and restore\n        if: ${{ !cancelled() }}\n",
+      "commands": "          python scripts/qa_single_logo_admin.py\n"
+    },
+    {
       "raw": "      - name: Water page management across desktop and narrow browser with actual output\n        if: ${{ !cancelled() }}\n        env:\n          EPC_MONTHLY_WATER_TASK: '1'\n        run: python scripts/qa_water_page_journey.py\n",
       "before": "      - name: Water page management across desktop and narrow browser with actual output\n        if: ${{ !cancelled() }}\n        env:\n          EPC_MONTHLY_WATER_TASK: '1'\n",
       "commands": "          python scripts/qa_water_page_journey.py\n"
@@ -156,7 +161,7 @@
       "commands": "          python scripts/qa_fresh_native_owner_diagnostic.py\n"
     },
     {
-      "raw": "      - name: Upload synthetic screenshots and geometry\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: adaptive-synthetic-browser-evidence\n          path: |\n            test-artifacts/adaptive-workspaces/\n            test-artifacts/expense-adaptive/\n            test-artifacts/po-adaptive/\n            test-artifacts/monthly-adaptive/\n            test-artifacts/source-corrections/\n            test-artifacts/monthly-first-site/\n            test-artifacts/monthly-preparer-navigation/\n            test-artifacts/monthly-text-hydration/\n            test-artifacts/shared-fixture-testing/\n            test-artifacts/water-page-journey/\n            test-artifacts/report-row-cards/\n            test-artifacts/water-fresh-page-journey/\n          retention-days: 7\n          if-no-files-found: warn\n"
+      "raw": "      - name: Upload synthetic screenshots and geometry\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: adaptive-synthetic-browser-evidence\n          path: |\n            test-artifacts/adaptive-workspaces/\n            test-artifacts/expense-adaptive/\n            test-artifacts/po-adaptive/\n            test-artifacts/monthly-adaptive/\n            test-artifacts/source-corrections/\n            test-artifacts/monthly-first-site/\n            test-artifacts/monthly-preparer-navigation/\n            test-artifacts/monthly-text-hydration/\n            test-artifacts/shared-fixture-testing/\n            test-artifacts/single-logo-admin/\n            test-artifacts/water-page-journey/\n            test-artifacts/report-row-cards/\n            test-artifacts/water-fresh-page-journey/\n          retention-days: 7\n          if-no-files-found: warn\n"
     },
     {
       "raw": "      - name: Upload separate native owner diagnostic evidence\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: fresh-native-owner-diagnostic-evidence\n          path: test-artifacts/fresh-native-owner-diagnostic/\n          retention-days: 7\n          if-no-files-found: warn\n\n"
