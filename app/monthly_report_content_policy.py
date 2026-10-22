@@ -74,6 +74,8 @@ _TECHNICAL_VALUE_SUFFIX = re.compile(
 _TECHNICAL_HEADING_DETAIL = re.compile(
     r"^(?:hours?|hrs?|days?|weeks?|months?|years?|kg|lb|lbs|g|gallons?|liters?|litres?|"
     r"gpm|cfm|psi|kPa|bar|V|(?-i:A)|F|C|kW|kWh|tons?|m3|L)\b", re.I)
+_ENGINEERING_LOAD_ESTIMATE = re.compile(
+    r"(?:est\.?|estimates?)\s+peak\s*coincident\s*load\s*\(\s*(?:tons?|MBH)\s*\)", re.I)
 _LEGAL_TERMS = ("terms and conditions", "limitation of liability", "indemnif", "governing law", "entire agreement", "waiver", "arbitration", "force majeure", "consequential damages", "jurisdiction", "severability", "warranty disclaimer")
 
 
@@ -131,6 +133,11 @@ def contains_price(text):
 
 
 def _price_heading(title):
+    # This complete, unit-qualified engineering heading is not a quotation.
+    # Word can wrap or join its words. Extra financial/mixed labels must still
+    # reach the ordinary gate; a unit anywhere in a heading is not a waiver.
+    if _ENGINEERING_LOAD_ESTIMATE.fullmatch(" ".join(title.split())):
+        return False
     return (any(not _nonmonetary_detail(match.group(), title[match.end():], heading=True)
                 and not _reference_metadata_prefix(match.group(), title[:match.start()])
                 for match in _PRICE_LABEL.finditer(title))
@@ -214,6 +221,18 @@ def table_price_columns(columns, rows):
     return tuple(sorted(excluded))
 
 
+def schema_price_columns(columns, rows, *, kinds=()):
+    """Keep raw-title/type guards, with the same complete load-heading proof."""
+    headings = _table_headings(columns, rows)
+    excluded = []
+    for i, title in enumerate(columns):
+        kind = kinds[i] if i < len(kinds) else ""
+        engineering = _ENGINEERING_LOAD_ESTIMATE.fullmatch(" ".join(headings[i].split()))
+        if price_column(title, kind) and (kind == "currency" or not engineering):
+            excluded.append(i)
+    return tuple(excluded)
+
+
 def table_has_pricing(columns, rows, *, work_orders=False):
     if ambiguous_price_columns(columns, rows) and any(any(str(cell).strip() for cell in row) for row in rows):
         return True
@@ -258,7 +277,8 @@ def price_free_table(spec: "BlockSpec", block: "ResolvedBlock") -> tuple["BlockS
     if spec.type in ("table", "work_order_grid"):
         headings, indexes, updated_rows = filter_rows(
             tuple(c.title for c in spec.columns), block.rows,
-            tuple(n for n, c in enumerate(spec.columns) if price_column(c.title, c.type)),
+            schema_price_columns(tuple(c.title for c in spec.columns), block.rows,
+                                 kinds=tuple(c.type for c in spec.columns)),
         )
         keys = {c.key for c in spec.columns}
         columns = [replace(column, title=headings[n]) for n, column in enumerate(spec.columns)]
