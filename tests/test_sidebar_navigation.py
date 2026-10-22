@@ -1,6 +1,9 @@
 """Fast scope checks; actual visibility/input is tested by qa_sidebar_navigation."""
 import re
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 from streamlit.testing.v1 import AppTest
 import pytest
@@ -105,3 +108,74 @@ def test_sidebar_evidence_upload_is_immediate_even_on_failure():
     assert "if: always()" in step and "timeout-minutes: 3" in step
     assert "name: native-sidebar-browser-evidence-${{ github.run_attempt }}" in step
     assert workflow.count("test-artifacts/sidebar-navigation/") == 2
+
+
+@pytest.mark.parametrize("readiness", ["ready", "missing", "hidden"])
+def test_workflow_geometry_waits_for_all_native_radios(monkeypatch, readiness):
+    calls = []
+    geometry = [{"area": 0}] * 3
+    class Radios:
+        def nth(self, index):
+            return index
+    radios = Radios()
+    class Workflow:
+        def locator(self, selector):
+            assert selector == 'button[role="radio"]'
+            return radios
+        def evaluate(self, script):
+            calls.append("geometry")
+            assert "getBoundingClientRect" in script and "querySelectorAll" in script
+            return geometry
+    workflow = Workflow()
+    class Page:
+        def locator(self, selector):
+            assert selector == ".st-key-workflow_mode"
+            return workflow
+    class Expectation:
+        def __init__(self, target):
+            self.target = target
+        def to_have_count(self, count, *, timeout):
+            assert self.target is radios
+            calls.append(("count", count, timeout))
+            if readiness == "missing":
+                raise AssertionError("Native radios did not hydrate")
+        def to_be_visible(self, *, timeout):
+            calls.append(("visible", self.target, timeout))
+            if readiness == "hidden" and self.target == 1:
+                raise AssertionError("Native radio remained hidden")
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", SimpleNamespace(expect=Expectation))
+    if readiness == "ready":
+        assert navigation.inspect_workflow_overlap(Page()) is geometry
+        assert calls == [("count", 3, 5000), ("visible", 0, 5000),
+                         ("visible", 1, 5000), ("visible", 2, 5000), "geometry"]
+    else:
+        with pytest.raises(AssertionError, match="Native radio"):
+            navigation.inspect_workflow_overlap(Page())
+        assert calls[0] == ("count", 3, 5000)
+        assert "geometry" not in calls
+
+
+@pytest.mark.parametrize("readiness", ["quiet", "missing", "visible"])
+def test_quiet_chrome_waits_for_fragments_without_skipping_visibility(monkeypatch, readiness):
+    page = Mock()
+    node = Mock()
+    node.evaluate.return_value = "visible" if readiness == "visible" else "hidden"
+    page.locator.return_value.all.return_value = [node]
+    page.get_by_role.return_value.count.return_value = 0
+    expectation = Mock()
+    if readiness == "missing":
+        expectation.to_have_count.side_effect = AssertionError("Fragment did not hydrate")
+    expect = Mock(return_value=expectation)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", SimpleNamespace(expect=expect))
+    if readiness == "quiet":
+        navigation.require_quiet_chrome(page)
+    else:
+        with pytest.raises(AssertionError):
+            navigation.require_quiet_chrome(page)
+    assert expectation.to_have_count.call_count == (1 if readiness == "missing" else 3)
+    for call in expectation.to_have_count.call_args_list:
+        assert call.args == (1,) and call.kwargs == {"timeout": 5000}
+    if readiness == "missing":
+        node.evaluate.assert_not_called()
+    else:
+        node.evaluate.assert_called()

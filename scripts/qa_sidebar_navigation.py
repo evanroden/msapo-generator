@@ -77,13 +77,41 @@ def actionable_opener(page, record):
 
 
 def require_quiet_chrome(page):
+    from playwright.sync_api import expect
+
+    # Later markdown fragments hydrate independently of the page title too.
     for selector in ('[data-testid="stHeader"]', '#synthetic-preview-toolbar', '#synthetic-footer'):
-        assert page.locator(selector).count() == 1, selector
+        expect(page.locator(selector)).to_have_count(1, timeout=5000)
     for selector in ('[data-testid="stHeader"]', '[data-testid="stToolbar"]',
                      '#MainMenu', '#synthetic-preview-toolbar', '#synthetic-footer'):
         for node in page.locator(selector).all():
             assert node.evaluate("node => getComputedStyle(node).visibility") == "hidden", selector
     assert not page.get_by_role("button", name="Hidden preview tool").count()
+
+
+def inspect_workflow_overlap(page):
+    """Wait for native radio hydration before measuring actual button geometry.
+
+    Streamlit can show the later title while the segmented-control container
+    still has no buttons. Missing or hidden buttons must still fail, rather
+    than passing an empty overlap sample.
+    """
+    from playwright.sync_api import expect
+
+    workflow = page.locator(".st-key-workflow_mode")
+    radios = workflow.locator('button[role="radio"]')
+    expect(radios).to_have_count(3, timeout=5000)
+    for index in range(3):
+        expect(radios.nth(index)).to_be_visible(timeout=5000)
+    return workflow.evaluate("""node => {
+        const opener = document.querySelector('[data-testid="stExpandSidebarButton"]').getBoundingClientRect();
+        return [...node.querySelectorAll('button[role="radio"]')].map(button => {
+            const r = button.getBoundingClientRect();
+            return {label: button.textContent, rect: r.toJSON(), area:
+                Math.max(0, Math.min(opener.right,r.right)-Math.max(opener.left,r.left))*
+                Math.max(0, Math.min(opener.bottom,r.bottom)-Math.max(opener.top,r.top))};
+        });
+    }""")
 
 
 def journey(browser, width, output, record):
@@ -111,20 +139,14 @@ def journey(browser, width, output, record):
         opener = page.get_by_test_id("stExpandSidebarButton")
         expect(sidebar).to_have_attribute("aria-expanded", "false")
         opener.wait_for(state="attached")
-        record["initial_opener"] = inspect_opener(page)
         expect(opener).to_be_visible()
+        record["initial_opener_readiness"] = {}
+        opener = actionable_opener(page, record["initial_opener_readiness"])
+        record["initial_opener"] = record["initial_opener_readiness"]["after_actionability"]
         assert record["initial_opener"]["visibility"] == "visible"
         assert record["initial_opener"]["tag"] == "BUTTON"
         assert record["initial_opener"]["inViewport"] and record["initial_opener"]["ownsHit"]
-        record["workflow_overlap"] = page.locator(".st-key-workflow_mode").evaluate("""node => {
-            const opener = document.querySelector('[data-testid="stExpandSidebarButton"]').getBoundingClientRect();
-            return [...node.querySelectorAll('button[role="radio"]')].map(button => {
-                const r = button.getBoundingClientRect();
-                return {label: button.textContent, rect: r.toJSON(), area:
-                    Math.max(0, Math.min(opener.right,r.right)-Math.max(opener.left,r.left))*
-                    Math.max(0, Math.min(opener.bottom,r.bottom)-Math.max(opener.top,r.top))};
-            });
-        }""")
+        record["workflow_overlap"] = inspect_workflow_overlap(page)
         assert len(record["workflow_overlap"]) == 3
         assert all(row["area"] == 0 for row in record["workflow_overlap"]), record["workflow_overlap"]
         record["main_padding_top"] = page.locator(".block-container").evaluate(
