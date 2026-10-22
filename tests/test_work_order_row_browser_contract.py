@@ -5,6 +5,9 @@ from io import BytesIO
 import json
 from pathlib import Path
 import subprocess
+import sys
+from types import ModuleType
+from unittest.mock import Mock
 
 from docx import Document
 import pymupdf
@@ -241,6 +244,10 @@ class NativeGrid:
         def bounding_box(self): return self.owner.boxes[self.kind]
         def scroll_into_view_if_needed(self): self.owner.calls.append(("scroll", self.kind))
 
+        def wait_for(self, **options):
+            assert options == {"state": "visible", "timeout": 15000}
+            self.owner.calls.append(("visible", self.kind))
+
         def evaluate(self, expression, point):
             assert self.kind == "surface"
             assert "elementFromPoint" in expression and "node.contains(hit)" in expression
@@ -257,7 +264,8 @@ def test_native_grid_targets_input_surface_not_visual_canvas(action, x):
     target, point = qa.native_grid_target(page, 0, action=action)
     assert target.kind == "surface"
     assert point == {"x": x + 2, "y": 55.5}
-    assert page.calls == [("scroll", "surface"), ("hit", point)]
+    assert page.calls == [("visible", kind) for kind in ("grid", "canvas", "surface")] + [
+        ("scroll", "surface"), ("hit", point)]
 
 
 @pytest.mark.parametrize("fault", ["missing", "ambiguous", "hidden", "clipped", "covered"])
@@ -275,3 +283,62 @@ def test_native_grid_refuses_unproved_pointer_target(fault):
         page.hit = False
     with pytest.raises(AssertionError):
         qa.native_grid_target(page, 0)
+
+
+@pytest.mark.parametrize("visible", [False, True])
+@pytest.mark.parametrize("fault", [None, "input count", "initial state", "label count", "label inputs", "hidden", "final state"])
+def test_visibility_toggle_uses_one_proved_native_label(monkeypatch, visible, fault):
+    page, checkbox, label, inputs = (Mock() for _ in range(4))
+    page.get_by_role.return_value = checkbox
+    checkbox.locator.return_value = label
+    label.get_by_role.return_value = inputs
+    states = []
+
+    def expectation(node):
+        result = Mock()
+        def count(number):
+            assert number == 1
+            reason = {id(checkbox): "input count", id(label): "label count", id(inputs): "label inputs"}[id(node)]
+            if fault == reason:
+                raise AssertionError(reason)
+        def checked(*, checked):
+            assert node is checkbox
+            assert checked is (not visible if not states else visible)
+            if fault == "initial state" and not states:
+                raise AssertionError(fault)
+            if fault == "final state" and states:
+                raise AssertionError(fault)
+            states.append(checked)
+        def shown():
+            assert node is label
+            if fault == "hidden":
+                raise AssertionError(fault)
+        result.to_have_count.side_effect = count
+        result.to_be_checked.side_effect = checked
+        result.to_be_visible.side_effect = shown
+        return result
+
+    # Pytest's locked dependencies deliberately omit browser tooling. Stub only
+    # the assertion API; this contract must not need Playwright installation.
+    browser_api = ModuleType("playwright.sync_api")
+    browser_api.expect = expectation
+    monkeypatch.setitem(sys.modules, "playwright", ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", browser_api)
+    if fault:
+        with pytest.raises(AssertionError, match=fault):
+            qa.toggle_table_visibility(page, visible=visible)
+        if fault == "final state":
+            label.click.assert_called_once_with()
+        else:
+            label.click.assert_not_called()
+    else:
+        qa.toggle_table_visibility(page, visible=visible)
+        label.click.assert_called_once_with()
+        assert states == [not visible, visible]
+        checkbox.locator.assert_called_once_with("xpath=ancestor::label")
+        label.get_by_role.assert_called_once_with("checkbox")
+    page.get_by_role.assert_called_once_with("checkbox", name="Show synthetic table", exact=True)
+    checkbox.click.assert_not_called()
+    checkbox.check.assert_not_called()
+    checkbox.uncheck.assert_not_called()
+    checkbox.press.assert_not_called()

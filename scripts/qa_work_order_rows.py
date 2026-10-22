@@ -167,6 +167,10 @@ def native_grid_target(page, row, *, action=True):
     grid = page.get_by_test_id("stDataFrame")
     canvas = grid.get_by_test_id("data-grid-canvas")
     surface = grid.locator(".dvn-scroller.stDataFrameGlideDataEditor")
+    # The server receipt can precede React's lazy-loaded grid mount. Await the
+    # actual controls before the first gesture, not a delay or a rescue click.
+    for node in (grid, canvas, surface):
+        node.wait_for(state="visible", timeout=15000)
     assert grid.count() == canvas.count() == surface.count() == 1, "Ambiguous native grid"
     surface.scroll_into_view_if_needed()
     box, target = canvas.bounding_box(), surface.bounding_box()
@@ -193,6 +197,21 @@ def menu(page, row):
     expect(options.get_by_role("menuitem", name="Insert blank above", exact=True)).to_be_visible()
     expect(options.get_by_role("menuitem", name="Insert blank below", exact=True)).to_be_visible()
     return options
+
+
+def toggle_table_visibility(page, *, visible):
+    from playwright.sync_api import expect
+    checkbox = page.get_by_role("checkbox", name="Show synthetic table", exact=True)
+    expect(checkbox).to_have_count(1)
+    expect(checkbox).to_be_checked(checked=not visible)
+    # Streamlit's accessible input is clipped to 1px; people click its native
+    # visible label. No .check(), force click, keyboard fallback or retry.
+    label = checkbox.locator("xpath=ancestor::label")
+    expect(label).to_have_count(1)
+    expect(label.get_by_role("checkbox")).to_have_count(1)
+    expect(label).to_be_visible()
+    label.click()
+    expect(checkbox).to_be_checked(checked=visible)
 
 
 def exercise(browser, name):
@@ -237,11 +256,11 @@ def exercise(browser, name):
         settled(page, expected_rows("restored"), record, "repeated below attempt inserts once", baseline)
         page.screenshot(path=str(out / "restored-desktop.png"), full_page=True)
         old_menu = menu(page, 0).element_handle()
-        page.get_by_role("checkbox", name="Show synthetic table", exact=True).uncheck()
+        toggle_table_visibility(page, visible=False)
         expect(page.get_by_test_id("data-grid-canvas")).to_have_count(0)
         assert old_menu is not None and not old_menu.evaluate("node => node.isConnected")
         settled(page, expected_rows("restored"), record, "retired menu cannot survive unmount", baseline)
-        page.get_by_role("checkbox", name="Show synthetic table", exact=True).check()
+        toggle_table_visibility(page, visible=True)
         settled(page, expected_rows("restored"), record, "reopen without replay", baseline)
         page.set_viewport_size({"width": 545, "height": 757})
         page.reload(wait_until="domcontentloaded")
