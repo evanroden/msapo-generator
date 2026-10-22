@@ -162,8 +162,7 @@ def test_unchanged_vml_crop_fits_and_keeps_valid_fixed_point_or_outset_geometry(
     from lxml import etree
     from app.monthly_report_native_layout import _fit_cover_photo
     v = '{urn:schemas-microsoft-com:vml}'
-    group = etree.Element(v + 'group', style='width:4in;height:2in', coordsize='400,200')
-    shape = etree.SubElement(group, v + 'shape', style='width:400;height:200')
+    shape = etree.Element(v + 'shape', style='width:4in;height:2in')
     image = etree.SubElement(shape, v + 'imagedata')
     _fit_cover_photo(image, 400, 300, preserve_crop=True)
     assert float(image.get('croptop')) == pytest.approx(1/6, abs=1e-8)
@@ -172,7 +171,7 @@ def test_unchanged_vml_crop_fits_and_keeps_valid_fixed_point_or_outset_geometry(
     before = dict(image.attrib)
     _fit_cover_photo(image, 400, 400, preserve_crop=True)
     assert dict(image.attrib) == before
-    group.set('style', 'width:4in;height:4.5in')
+    shape.set('style', 'width:4in;height:4.5in')
     image.attrib.update({'croptop': '-.25', 'cropbottom': '-.25', 'cropleft': '0', 'cropright': '0'})
     before = dict(image.attrib)
     _fit_cover_photo(image, 400, 300, preserve_crop=True)

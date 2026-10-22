@@ -482,6 +482,36 @@ def _replace_image(document, element, data, *, contain=False):
         _contain_replacement_picture(element, data)
 
 
+def _ordinary_unchanged_photo_geometry(node):
+    if node.tag == qn("a:blip"):
+        fill = node.getparent()
+        stretch = fill.find(qn("a:stretch"))
+        rectangle = stretch.find(qn("a:fillRect")) if stretch is not None else None
+        return not (fill.find(qn("a:tile")) is not None
+                    or rectangle is not None and any(value not in ("0", "0.0", "0%") for value in rectangle.attrib.values())
+                    or any(child.tag.rsplit("}", 1)[-1] == "grpSpPr"
+                           and child.find(qn("a:xfrm")) is not None
+                           for ancestor in node.iterancestors() for child in ancestor))
+    # Other valid VML shape subtypes have not had their effective geometry
+    # proved here. Preserve them instead of making the old identity shortcut
+    # newly fail or borrowing an enclosing shape's unrelated dimensions.
+    return (node.getparent().tag == "{urn:schemas-microsoft-com:vml}shape"
+            and not any(ancestor.tag == "{urn:schemas-microsoft-com:vml}group"
+                        for ancestor in node.iterancestors()))
+
+
+def _unchanged_photo_geometry_supported(node):
+    if not _ordinary_unchanged_photo_geometry(node):
+        return False
+    # Modern/fallback representations are one logical picture. If any branch
+    # is outside the bounded repair, do not recrop another branch in isolation.
+    for alternate in node.iterancestors("{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"):
+        if any(not _ordinary_unchanged_photo_geometry(image) for image in alternate.iter()
+               if image.tag in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata")):
+            return False
+    return True
+
+
 def _fit_cover_photo(node, image_width, image_height, *, preserve_crop=False):
     """Fit a photo in its frame, retaining valid unchanged source crops.
 
@@ -492,16 +522,8 @@ def _fit_cover_photo(node, image_width, image_height, *, preserve_crop=False):
     """
     if image_width <= 0 or image_height <= 0:
         raise NativeLayoutError("The cover photograph has no usable dimensions.")
-    if preserve_crop and node.tag == qn("a:blip"):
-        fill = node.getparent()
-        stretch = fill.find(qn("a:stretch"))
-        rectangle = stretch.find(qn("a:fillRect")) if stretch is not None else None
-        if (fill.find(qn("a:tile")) is not None
-                or rectangle is not None and any(value not in ("0", "0.0", "0%") for value in rectangle.attrib.values())
-                or any(child.tag.rsplit("}", 1)[-1] == "grpSpPr"
-                       and child.find(qn("a:xfrm")) is not None
-                       for ancestor in node.iterancestors() for child in ancestor)):
-            return
+    if preserve_crop and not _unchanged_photo_geometry_supported(node):
+        return
     frame = None
     if node.tag == qn("a:blip"):
         for ancestor in node.iterancestors():
@@ -788,12 +810,36 @@ def _cover(element, draft, *, preserve_issue_date=False):
             _set_text(paragraph, "")
 
 
-def _fit_unchanged_cover_photo(node, source_path, item):
+def _native_photo_orientation_proved(node, document_part):
+    from PIL import Image, UnidentifiedImageError
+
+    representations = [node]
+    for alternate in node.iterancestors("{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"):
+        representations.extend(image for image in alternate.iter()
+                               if image.tag in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata"))
+    for image in set(representations):
+        rid = image.get(qn("r:embed")) or image.get(qn("r:id"))
+        relation = document_part.rels.get(rid)
+        if relation is None or relation.is_external:
+            return False
+        try:
+            with Image.open(BytesIO(relation.target_part.blob)) as source:
+                if source.getexif().get(274, 1) != 1:
+                    return False
+        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+            return False
+    return True
+
+
+def _fit_unchanged_cover_photo(node, source_path, item, document_part):
+    # Native renderers need not honor EXIF the same way as gallery
+    # normalization. Without proving their display axes, retain all original
+    # representations/crops rather than fitting one against the wrong axes.
+    if (not _unchanged_photo_geometry_supported(node)
+            or not _native_photo_orientation_proved(node, document_part)):
+        return
     width, height = item.image_width, item.image_height
     if width <= 0 or height <= 0:
-        # Do not assume header-only inspection supplied usable dimensions.
-        # Use the same normalization path that already proved image identity,
-        # but retain the original package media rather than replacing it.
         from app.monthly_report_import import read_import_image
         normalized = read_import_image(Path(source_path), item, line_art=False)
         width, height = normalized.width, normalized.height
@@ -1288,7 +1334,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 if image_digest(str(source_path), image_cache_identity, source_item,
                                         role != "cover_photo") in block.asset_hashes:
                     if role == "cover_photo":
-                        _fit_unchanged_cover_photo(node, source_path, source_item)
+                        _fit_unchanged_cover_photo(node, source_path, source_item, document.part)
                     continue
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
@@ -1309,7 +1355,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 if supplied is not None and image_digest(str(source_path), image_cache_identity, supplied,
                                                                 role != "cover_photo") in block.asset_hashes:
                     if role == "cover_photo":
-                        _fit_unchanged_cover_photo(node, source_path, supplied)
+                        _fit_unchanged_cover_photo(node, source_path, supplied, document.part)
                     continue  # Retain original bytes and any proportional source crop.
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
