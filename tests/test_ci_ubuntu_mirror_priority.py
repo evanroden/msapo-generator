@@ -1,6 +1,7 @@
 """No network or system mutation: validate the hosted runner mirror transform."""
 from pathlib import Path
 import re
+import shlex
 
 import pytest
 
@@ -91,3 +92,30 @@ def test_each_native_setup_prefers_existing_mirror_before_dependency_fetch():
     for paths in events[2::2]:
         assert "      - 'scripts/ci_ubuntu_mirror_priority.py'" in paths
         assert "      - 'tests/test_ci_ubuntu_mirror_priority.py'" in paths
+
+
+def test_pytest_renderer_setup_is_bounded_and_preserves_packages_and_trust():
+    workflow = Path('.github/workflows/tests.yml').read_text()
+    job = workflow.split('\n  pytest:', 1)[1].split('\n  container:', 1)[0]
+    setup = job.split('      - name: Install document renderers\n', 1)[1]
+    setup = setup.split('      - uses: actions/setup-python@v5', 1)[0]
+    assert '        timeout-minutes: 20\n' in setup
+    assert not re.search(r'^        if:', setup, flags=re.MULTILINE)
+    command = setup.split('        run: |\n', 1)[1]
+    assert shlex.split(command.replace('\\\n', '')) == [
+        'sudo', 'python3', 'scripts/ci_ubuntu_mirror_priority.py',
+        'sudo', 'apt-get', 'update',
+        'sudo', 'apt-get', 'install', '-y', '--no-install-recommends',
+        'libreoffice-writer', 'libreoffice-calc', 'fontconfig',
+        'fonts-dejavu-core', 'fonts-dejavu-extra', 'fonts-liberation',
+        'fonts-crosextra-carlito', 'fonts-crosextra-caladea', 'fonts-texgyre',
+        'fonts-opensymbol', 'fonts-urw-base35',
+    ]
+    assert '    timeout-minutes: 90\n' in job
+    assert 'continue-on-error' not in job
+    assert '          python runtime/check_renderer.py\n' in job
+    assert '        run: python -m pytest -q --junitxml=test-results.xml\n' in job
+    for name in ('Validate environment and Python sources', 'Run tests'):
+        step = job.split(f'      - name: {name}\n', 1)[1]
+        step = step.split('      - ', 1)[0]
+        assert not re.search(r'^        if:', step, flags=re.MULTILINE)
