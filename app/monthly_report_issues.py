@@ -468,6 +468,10 @@ def _issue_control(widget, label, key, value, field, *, identity, cycle, **kwarg
     accepted_value = receipt["value"] if submitted else value
     if widget == st.text_area:
         kwargs["value"] = accepted_value
+    elif widget == st.multiselect:
+        # The Python mirror alone does not set a newly mounted native default.
+        # Keep real selection and explicit clear consistent in both protocols.
+        kwargs["default"] = accepted_value
     # A render is not acknowledgement. Capture is durable before registration,
     # so even interruption before the native delta is queued keeps this value.
     token = uuid4().hex
