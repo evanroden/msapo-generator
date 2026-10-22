@@ -9,7 +9,7 @@ from datetime import date
 
 from app.monthly_report_content_policy import (
     contains_price,
-    price_column,
+    schema_price_columns,
     table_has_pricing,
 )
 from app.monthly_report_model import (
@@ -210,7 +210,8 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                              for c, cell in enumerate(row))
                 if table_has_pricing(table.columns, table.rows):
                     checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, block.key))
-                if any(price_column(title) and any(i < len(r) and r[i].strip() for r in table.rows) for i, title in enumerate(table.columns)):
+                if any(any(i < len(r) and r[i].strip() for r in table.rows)
+                       for i in schema_price_columns(table.columns, table.rows)):
                     checks.append(ReportCheck("pricing", "Remove pricing columns from the client report.", True, block.key))
     layout_keys = {spec.key for spec in layout_blocks()} & used_block_keys(draft)
     for block in draft.blocks:
@@ -259,7 +260,9 @@ def preflight(draft: ReportDraft, estimated_bytes: int = 0) -> tuple[ReportCheck
                     if table_has_pricing(tuple(c.title for c in spec.columns), block.rows, work_orders=spec.type == "work_order_grid"):
                         checks.append(ReportCheck("pricing", "Remove pricing or clarify ambiguous total rows in the client table.", True, spec.key))
                     texts.extend((spec.key, col.title) for col in spec.columns)
-                    if any(price_column(col.title, col.type) and any(i < len(r) and r[i].strip() for r in block.rows) for i, col in enumerate(spec.columns)):
+                    if any(any(i < len(r) and r[i].strip() for r in block.rows)
+                           for i in schema_price_columns(tuple(c.title for c in spec.columns), block.rows,
+                                                         kinds=tuple(c.type for c in spec.columns))):
                         checks.append(ReportCheck("pricing", "Remove pricing columns from the client report.", True, spec.key))
         if not has_content:
             checks.append(ReportCheck("empty", f"{section.title} is included but empty.", False, section.key))

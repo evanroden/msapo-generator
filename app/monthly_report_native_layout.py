@@ -1473,6 +1473,26 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     divider_word_sections = {item.word_section for position in headings for item in items[position]}
     if section_key and section_key not in set(section_by_pos.values()):
         raise NativeLayoutError(f"The source layout does not contain the {section_key} section.")
+    from app.monthly_report_native_table_context import supplied_table_context
+    # Preserved placement also includes mixed picture tables edited in place.
+    # Only exact current cell values may authorize retaining adjacent context;
+    # leave the broader placement/redaction receipt unchanged.
+    context_table_refs = set(preserved_table_refs)
+    for block in draft.blocks:
+        if block.source == "Omit":
+            continue
+        for table in block.extra_tables:
+            if table.reference not in context_table_refs:
+                continue
+            expected, _ = table_without_prices(native_tables[table.reference])
+            if expected is None or (table.columns, table.rows) != (expected.columns, expected.rows):
+                context_table_refs.discard(table.reference)
+    table_context = {} if master else supplied_table_context(
+        draft, original, items, section_by_pos, native_tables, context_table_refs,
+        styles=document.styles.element)
+    unchanged_items.update(item.id for context, _ in table_context.values() for item in context)
+    context_anchors = {key: original[context[0].position - 1]
+                       for key, (context, _) in table_context.items()}
     from app.monthly_report_native_pages import NativePages
     unchanged_positions = {item.position for item in inspection.items
                            if item.part == "word/document.xml" and item.id in unchanged_items}
@@ -1670,24 +1690,25 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     else:
                         _set_text(cell, "")
 
-    def append_native(sec, prototype):
+    def append_native(sec, prototype, *, before=None):
         clone = deepcopy(prototype)
         # A copied payload must not introduce another Word section boundary.
         for properties in list(clone.iter(qn("w:sectPr"))):
             properties.getparent().remove(properties)
         _clear_images(clone)
         _set_text(clone, "")
-        section_ends[sec].addprevious(clone)
-        page_plan.assigned(clone, section_ends[sec])
+        anchor = before if before is not None else section_ends[sec]
+        anchor.addprevious(clone)
+        page_plan.assigned(clone, anchor)
         return clone
 
-    def text_anchor(sec):
+    def text_anchor(sec, *, before=None):
         choices = section_text.get(sec) or global_text
         if choices:
             prototype = choices[0]
         else:
             prototype = OxmlElement("w:p")
-        return append_native(sec, prototype), prototype
+        return append_native(sec, prototype, before=before), prototype
 
     specs = {b.key: (s.key, b) for s in draft.sections for b in s.blocks}
     render_blocks = list(draft.blocks)
@@ -1712,6 +1733,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if sec not in section_ends:
             raise NativeLayoutError(f"The source has no native layout for {sec}.")
         text_value = "" if block.key in preserved_text else block.text
+        if text_value and block.key in table_context:
+            text_value = table_context[block.key][1]
         relocated_notes = []
         for identity, item in supplied_notes.items():
             kind, note_id = identity.split(":", 1)
@@ -1728,7 +1751,13 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                             node.getparent().remove(node)
         if text_value or relocated_notes:
             anchors = text_prototypes.get(block.key)
-            if not anchors:
+            context_anchor = context_anchors.get(block.key)
+            if context_anchor is not None and (not anchors or
+                    original.index(context_anchor) < original.index(anchors[0][0])):
+                # A newly added note still leads its section when the source's
+                # only prior prose is now retained beside its exact table.
+                anchors = [text_anchor(sec, before=context_anchor)]
+            elif not anchors:
                 anchors = [text_anchor(sec)]
             anchor, prototype = anchors[0]
             # Current prose is one flow, not one old canvas/page per new line.
