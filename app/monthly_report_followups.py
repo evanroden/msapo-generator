@@ -235,6 +235,71 @@ def _visible_followup_keys(items, prefix, label):
     return {item.key for item in items[start:start + FOLLOWUP_PAGE_SIZE]}
 
 
+
+def _render_rejected_followup_receipt(key, record):
+    """Keep a delivered value readable after its original row/source changes."""
+    import streamlit as st
+    with st.expander("Earlier proposal input (not applied)", key=key):
+        st.caption("The proposal, report or sources changed before this input could be applied. "
+                   "Copy it only after reviewing the current item.")
+        value = record["value"]
+        if isinstance(value, list):
+            labels = record.get("source_labels", {})
+            detail = "\n".join(labels.get(ref, ref) for ref in value) or "(selection cleared)"
+        else:
+            detail = str(value)
+        st.code(record["field"] + ": " + detail, language=None, wrap_lines=True)
+
+
+def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=None):
+    """Retire off-page receipts that no longer match their exact input baseline.
+
+    A rejected delivered value remains copyable, but never becomes a later
+    authorization if a previous row identity or source selection returns.
+    """
+    import streamlit as st
+    protected = protected or {}
+    p = prefix + "_follow_" + item.key + "_compact"
+    identity = _followup_choice_identity(draft, prefix, item)
+    missing = tuple(ref for ref in item.references if ref not in options)
+    expected = {
+        p + "_text_change": item.text,
+        p + "_status_change": item.status,
+        p + "_update_change": item.update,
+        p + "_note_change": item.evidence_note,
+        p + "_sources_" + _digest(list(options)) + "_change":
+            [ref for ref in item.references if ref in options],
+        p + "_excluded_choice": not item.included,
+        p + "_remove_missing_" + _digest(missing) + "_choice": False,
+    }
+    for key in tuple(st.session_state):
+        if not key.startswith(p + "_") or not key.endswith(("_change", "_choice")):
+            continue
+        receipt = st.session_state.get(key)
+        if not isinstance(receipt, dict) or protected.get(key) == receipt:
+            continue
+        suffix = "_change" if key.endswith("_change") else "_choice"
+        control = key.removesuffix(suffix)
+        delivered = receipt.get("value") == st.session_state.get(control)
+        if suffix == "_change":
+            registration = st.session_state.get(control + "_delivery", {})
+            delivered = (delivered and isinstance(receipt.get("token"), str)
+                         and receipt["token"] == registration.get("token"))
+        if (key in expected and receipt.get("identity") == identity
+                and receipt.get("before") == expected[key] and delivered):
+            continue
+        # An acknowledged input needs no additional recovery copy.
+        if delivered and receipt.get("result") != identity:
+            recovery_key = (prefix + "_rejected_" + item.category + "_receipt_" +
+                            _digest((key, receipt.get("identity"), receipt.get("value"))))
+            st.session_state.setdefault(recovery_key, {
+                "field": control.removeprefix(p + "_").split("_", 1)[0].capitalize(),
+                "value": receipt["value"],
+                "source_labels": receipt.get("source_labels", {}),
+            })
+        st.session_state.pop(key, None)
+
+
 def _capture_followup_controls(draft, prefix, category, options):
     """Capture delivered fields before an explicit page choice retires them.
 
@@ -244,6 +309,21 @@ def _capture_followup_controls(draft, prefix, category, options):
     """
     import streamlit as st
     result = []
+    # A replaced/removed row cannot make its interrupted edit disappear.
+    current_keys = {_pending_followup_key(prefix, item) for item in draft.follow_ups
+                    if item.category == category}
+    pending_prefix = prefix + "_pending_followup_" + category + "_"
+    for key in sorted(k for k in st.session_state if k.startswith(pending_prefix)):
+        if key in current_keys or "_recovery_" in key:
+            continue
+        pending = st.session_state[key]
+        if isinstance(pending, dict) and isinstance(pending.get("after"), ReportFollowUp):
+            pending = {**pending, "conflicted": True}
+            st.session_state[key] = pending
+            for receipt_key, receipt in pending.get("receipts", {}).items():
+                if st.session_state.get(receipt_key) == receipt:
+                    st.session_state.pop(receipt_key, None)
+            _render_followup_recovery(key + "_missing_row", pending)
     for item in draft.follow_ups:
         if item.category != category:
             result.append(item)
@@ -271,6 +351,7 @@ def _capture_followup_controls(draft, prefix, category, options):
                 st.warning("An interrupted item edit belongs to an earlier row, report or source revision. "
                            "The current item is kept; the entered details below remain available to copy.")
                 _render_followup_recovery(pending_key + "_current_conflict", pending)
+        _retire_rejected_followup_receipts(draft, prefix, item, options, receipts)
         p = prefix + "_follow_" + item.key + "_compact"
         changes = {}
         identity = _followup_choice_identity(draft, prefix, item)
@@ -330,6 +411,9 @@ def _capture_followup_controls(draft, prefix, category, options):
                 "source_labels": {ref: options[ref] for ref in revised.references if ref in options},
             }
         result.append(revised)
+    for key in sorted(k for k in st.session_state
+                      if k.startswith(prefix + "_rejected_" + category + "_receipt_")):
+        _render_rejected_followup_receipt(key, st.session_state[key])
     return replace(draft, follow_ups=tuple(result))
 
 
@@ -467,8 +551,13 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
     from app.monthly_report_issues import _issue_control
 
     if not any(item.category == category for item in draft.follow_ups):
-        return draft
+        # Even with no remaining row, interrupted edits must stay recoverable.
+        return _capture_followup_controls(draft, prefix, category, {})
     proposal = category == "proposal"
+    if proposal:
+        # Migration is report-wide, not conditional on which page is visible.
+        draft = replace(draft, follow_ups=tuple(normalize_proposal(item)
+                        for item in draft.follow_ups))
     st.markdown("**Carried proposals**" if proposal else "**Open and recently resolved issues**")
     st.caption("Confirm the current decision, or open the proposal to update it." if proposal
                else "Open an item when its details or status changed.")
