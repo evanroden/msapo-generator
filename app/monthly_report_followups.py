@@ -350,8 +350,6 @@ def _capture_followup_controls(draft, prefix, category, options):
     """
     import streamlit as st
     result = []
-    if category == "proposal":
-        _recover_missing_proposal_receipts(prefix, draft.follow_ups)
     # A replaced/removed row cannot make its interrupted edit disappear.
     current_keys = {_pending_followup_key(prefix, item) for item in draft.follow_ups
                     if item.category == category}
@@ -367,6 +365,10 @@ def _capture_followup_controls(draft, prefix, category, options):
                 if st.session_state.get(receipt_key) == receipt:
                     st.session_state.pop(receipt_key, None)
             _render_followup_recovery(key + "_missing_row", pending)
+    # Pending records already preserve the full row. Retire their receipts
+    # first, then recover only callbacks that arrived before a pending record.
+    if category == "proposal":
+        _recover_missing_proposal_receipts(prefix, draft.follow_ups)
     for item in draft.follow_ups:
         if item.category != category:
             result.append(item)

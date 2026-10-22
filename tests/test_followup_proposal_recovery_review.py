@@ -87,7 +87,7 @@ def test_removed_last_proposal_still_shows_its_interrupted_edit():
     app.run()
     assert not app.exception
     assert app.session_state['draft'].follow_ups == ()
-    assert 'Earlier unsaved scope that must stay copyable' in codes(app)
+    assert codes(app).count('Earlier unsaved scope that must stay copyable') == 1
     key = 'review_paged_proposals_pending_followup_proposal_proposal-0'
     assert app.session_state[key]['conflicted'] is True
     assert app.session_state[key]['after'].text == 'Earlier unsaved scope that must stay copyable'
