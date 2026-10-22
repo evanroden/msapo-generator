@@ -11,7 +11,7 @@ from app import monthly_report_library as library
 from app.monthly_report_asset_review import preserve_asset_reviews
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_editor import _signature
-from app.monthly_report_model import ResolvedBlock
+from app.monthly_report_model import ResolvedBlock, picture_replacement_references
 
 
 PICTURES = (
@@ -23,15 +23,16 @@ PICTURES = (
 
 def replace_cover_picture(block, data, suffix, assets):
     """Replace only the requested slot; identical artwork keeps its review."""
-    image = normalize_report_image(data, suffix, line_art=block.key != "cover_photo")
+    image = normalize_report_image(data, suffix, line_art=block.key != "cover_photo",
+                                   preserve_transparency=block.key in ("brand_logo", "client_logo"))
     reference = library.asset_reference(image.data, image.extension)
     assets[reference] = image.data
     if block.source != "Omit" and block.asset_hashes == (reference,):
         return block
     return preserve_asset_reviews(block, replace(
         block, source="Replace once", asset_hashes=(reference,),
-        asset_captions=(), references=(), reviewed_fingerprint="",
-        client_reviewed_fingerprint="", asset_provenance=(), client_asset_reviews=(),
+        asset_captions=(), references=picture_replacement_references(block), reviewed_fingerprint="",
+        client_reviewed_fingerprint="", asset_provenance=((reference, ()),), client_asset_reviews=(),
     ))
 
 

@@ -20,7 +20,7 @@ The disconnected `app/monthly_report_fixture_vault.py` primitive was implemented
 | Immutable originals/hash, explicit target/scenario and independent expectations | Retained |
 | Production importer, isolated disposable runs, exact generation/reset leases and no live fallback | Retained; integrated evidence still required |
 | No real files in Git/build/static assets/CI/logs | Retained; sharing inside the app does not authorize development-channel publication |
-| No fixture purge or automatic expiry | Retained; run reset does not delete shared originals |
+| No fixture purge or automatic expiry | Retained for shared originals; isolated run copies idle for 24 hours are reclaimed (owner policy, #292) |
 
 ## Verified starting capabilities and limits
 

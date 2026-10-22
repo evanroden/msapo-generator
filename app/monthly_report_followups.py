@@ -4,6 +4,7 @@ from dataclasses import asdict, replace
 import hashlib
 import json
 import re
+from uuid import uuid4
 
 from app.monthly_report_model import ReportFollowUp, STOCK_TEXTS
 from app.monthly_report_sources import source_reference
@@ -135,10 +136,9 @@ def output_followups(draft):
 
 
 def _followup_choice_identity(draft, prefix, item):
-    from app.monthly_report_issues import _action_scope
-    values = asdict(item)
-    values.pop("reviewed_fingerprint", None)
-    return _digest((_action_scope(draft, prefix), values))
+    # The same row/report/editor identity that binds native issue receipts.
+    from app.monthly_report_issues import _issue_identity
+    return _issue_identity(draft, prefix, item)
 
 
 def _record_followup_choice(key, identity, before):
@@ -240,6 +240,7 @@ def _capture_followup_controls(draft, prefix, category, options):
 
     Each callback names its original value. Stale mirrors and changed source
     option sets cannot overwrite canonical fields; untouched rows stay intact.
+    Issue cards use their own receipts in ``_capture_issue_controls``.
     """
     import streamlit as st
     result = []
@@ -270,8 +271,7 @@ def _capture_followup_controls(draft, prefix, category, options):
                 st.warning("An interrupted item edit belongs to an earlier row, report or source revision. "
                            "The current item is kept; the entered details below remain available to copy.")
                 _render_followup_recovery(pending_key + "_current_conflict", pending)
-        p = (prefix + "_issue_" + item.key if category == "issue"
-             else prefix + "_follow_" + item.key + "_compact")
+        p = prefix + "_follow_" + item.key + "_compact"
         changes = {}
         identity = _followup_choice_identity(draft, prefix, item)
         for attr, suffix in (("text", "text"), ("status", "status"),
@@ -452,13 +452,12 @@ def render_followups(draft, prefix, field, *, category=None, defer_issue_actions
             raise ValueError("Choose equipment issues or proposals to review.")
         if category == "issue":
             from app.monthly_report_issues import render_issue_cards
-            return render_issue_cards(draft, prefix, field, defer_actions=defer_issue_actions,
-                                      defer_commit=defer_commit)
+            return render_issue_cards(draft, prefix, field, defer_actions=defer_issue_actions)
         result = _render_section_followups(draft, prefix, field, category)
         return result if defer_commit else acknowledge_followup_controls(result, prefix)
     from app.monthly_report_issues import apply_issue_action, render_issue_cards
-    draft = _render_all_followups(render_issue_cards(draft, prefix, field, defer_actions=True,
-                                                   defer_commit=True), prefix, field)
+    draft = _render_all_followups(render_issue_cards(draft, prefix, field, defer_actions=True),
+                                  prefix, field)
     draft = draft if defer_issue_actions else apply_issue_action(draft, prefix)
     return draft if defer_commit else acknowledge_followup_controls(draft, prefix)
 
@@ -479,6 +478,7 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
         for n in range(1, len(s.page_texts) + 1)
     }
     draft = _capture_followup_controls(draft, prefix, category, options)
+    cycle = uuid4().hex
     message = followup_limit_message(draft)
     if message:
         st.error(message)
@@ -522,27 +522,27 @@ def _render_section_followups(draft, prefix, field, category, *, initially_editi
                 identity = _followup_choice_identity(draft, prefix, item)
                 text = _issue_control(st.text_area,
                     "Proposal scope" if proposal else "Issue description",
-                    p + "_text", item.text, field, identity=identity, height=90, max_chars=4000,
+                    p + "_text", item.text, field, identity=identity, cycle=cycle, height=90, max_chars=4000,
                 )
                 status = _issue_control(st.radio,
                     "Proposal decision" if proposal else "Current status",
                     p + "_status", item.status, field,
-                    identity=identity,
+                    identity=identity, cycle=cycle,
                     options=PROPOSAL_STATUSES if proposal else ISSUE_STATUSES,
                     format_func=_status_label, horizontal=True,
                 )
                 update = _issue_control(st.text_area,
                     "What changed this month?", p + "_update", item.update, field,
-                    identity=identity, height=90, max_chars=4000,
+                    identity=identity, cycle=cycle, height=90, max_chars=4000,
                 )
                 evidence = _issue_control(st.text_area,
                     "Evidence or explanation for the status", p + "_note", item.evidence_note, field,
-                    identity=identity, height=90, max_chars=4000,
+                    identity=identity, cycle=cycle, height=90, max_chars=4000,
                 )
                 selected = _issue_control(st.multiselect,
                     "Supporting source pages (optional)", p + "_sources_" + _digest(list(options)),
                     [ref for ref in item.references if ref in options], field,
-                    identity=identity, options=list(options), format_func=options.get,
+                    identity=identity, cycle=cycle, options=list(options), format_func=options.get,
                 ) if options else []
                 missing = _followup_missing_links(draft, prefix, item, options)
                 if missing:

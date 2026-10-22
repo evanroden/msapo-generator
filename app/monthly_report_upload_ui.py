@@ -1182,7 +1182,8 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
             additions[destination] = result
             additions.update({block.key: block for block in prepared})
             remember(result, contents)
-            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ()))
+            st.session_state[local_key + "_messages"] = tuple(value.get("notices", ())) + structured.reader_page_notices(
+                job["contents"], destination, value)
             st.session_state[local_key + "_completed_ids"] = tuple(
                 set(st.session_state.get(local_key + "_completed_ids", ()))
                 | {content.source.id for content in job["contents"]})
@@ -1261,20 +1262,27 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
                               facility_choice(current_source, profile) in {site.key for site in profile.facilities}))
                 if not confirmed:
                     st.caption("Choose this file's sites in Source details before inserting its totals.")
+            action_scope = _rich_text_scope(prefix)
             def accept_workorders(report=report, profile=profile, period=period, previous=previous, prefix=prefix,
-                                  current_source=current_source):
+                                  current_source=current_source, action_scope=action_scope):
                 from app.monthly_report_source_scope import contribution_receipt
+                # A delivered text edit can reach the working draft before an
+                # interrupted rerender refreshes this button's callback. Bind
+                # to that exact receipt at activation, while the consumer still
+                # rejects a different report, source or unrelated block revision.
+                accepted_previous = _pending_rich_text_edit(prefix, previous) or previous
                 st.session_state[prefix + "_pending_accepted_workorders"] = {
                     "contract": profile.contract, "profile": profile.key,
-                    "month": period.key, "expected": previous.fingerprint,
+                    "month": period.key, "expected": accepted_previous.fingerprint,
+                    "scope": action_scope,
                     "source_id": report.source_id, "reference": report.reference,
                     "text": report.text,
                     "scope_receipt": contribution_receipt(report.reference, profile, period,
                                                           destination, text=report.text, source=current_source,
-                                                          prior_block=previous),
+                                                          prior_block=accepted_previous),
                 }
             st.button("Add totals to summary",
-                      key=local_key + "_accept_work_orders_" + report.source_id[:16],
+                      key=local_key + "_accept_work_orders_" + report.source_id[:16] + "_" + action_scope,
                       on_click=accept_workorders, disabled=not confirmed)
 
     def render_current_source_details():
@@ -1311,8 +1319,11 @@ def render_structured_uploads(profile, period, prefix, field, destination, *, bl
     # contribution; only new selected files need another reading.
     completed_ids = set(st.session_state.get(local_key + "_completed_ids", ()))
     scoped = tuple(c for c in contents if c.source.id in picked_ids and c.source.id not in completed_ids)
+    for notice in structured.reader_notices(scoped, destination):
+        st.warning(notice)
+    scoped = structured.reader_sources(scoped, destination)
     target = read_target()
-    digest = ai.digest(("section-upload-v4", destination, tuple(table_columns or ()),
+    digest = ai.digest(("section-upload-v5", destination, tuple(table_columns or ()),
                         sorted(c.source.id for c in scoped)))
     pending = st.session_state.get(local_key + "_pending")
     if pending and pending[0].get("request") != target:

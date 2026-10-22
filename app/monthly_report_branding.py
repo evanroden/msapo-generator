@@ -22,6 +22,10 @@ MAX_BUNDLE_BYTES = 32 * 1024 * 1024
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 
+class LogoArtworkError(ValueError):
+    """Missing or invalid artwork in an otherwise valid storage namespace."""
+
+
 @dataclass(frozen=True)
 class BrandLogo:
     key: str
@@ -78,16 +82,27 @@ def _logos(values):
     return tuple(result)
 
 
+@st.cache_data(max_entries=32, show_spinner=False)
 def _image(raw, reference):
-    if len(raw) > MAX_IMAGE_BYTES or library.asset_reference(raw, "png") != reference:
-        raise ValueError("A logo is too large or does not match its fingerprint.")
+    """Cache only a successful validation result, keyed by the exact bytes/ref.
+
+    Decoding on every card rerun would undo the existing card-image cache.
+    No image bytes or decoded buffers are returned into this validation cache.
+    """
+    if not raw or len(raw) > MAX_IMAGE_BYTES or library.asset_reference(raw, "png") != reference:
+        raise LogoArtworkError("A logo is empty, too large or does not match its fingerprint.")
     try:
         with Image.open(BytesIO(raw)) as image:
             if image.format != "PNG" or not 1 <= image.width <= 2400 or not 1 <= image.height <= 1600:
-                raise ValueError("Logos must be PNG images no larger than 2400 × 1600 pixels.")
+                raise LogoArtworkError("Logos must be PNG images no larger than 2400 × 1600 pixels.")
             image.verify()
-    except (OSError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
-        raise ValueError("A logo image could not be read.") from exc
+        # PNG.verify checks framing/checksums, not the compressed pixel stream.
+        # Decode within the bounds checked above before these bytes can become
+        # shared artwork. Reopen because verify invalidates the first image.
+        with Image.open(BytesIO(raw)) as image:
+            image.load()
+    except (OSError, SyntaxError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
+        raise LogoArtworkError("A logo image could not be read.") from exc
 
 
 def inspect_bundle(raw):
@@ -169,9 +184,21 @@ def find_logo(contract=None, *, brand=False, state=None):
 
 def read_logo(logo):
     if not library._ASSET.fullmatch(logo.asset):
-        raise ValueError("Invalid saved logo reference.")
-    raw = (_path() / "assets" / logo.asset).read_bytes()
+        raise LogoArtworkError("Invalid saved logo reference.")
+    # Resolve/revalidate the namespace outside artwork error handling. A reset
+    # or lease failure must stop the operation, not turn into a missing logo.
+    path = _path() / "assets" / logo.asset
+    library._qa_path_guard(path)
+    try:
+        if path.stat().st_size > MAX_IMAGE_BYTES:
+            raise LogoArtworkError("A saved logo exceeds the image size limit.")
+        raw = path.read_bytes()
+    except OSError as exc:
+        library._qa_path_guard(path)
+        raise LogoArtworkError("A saved logo image could not be read.") from exc
+    library._qa_path_guard(path)
     _image(raw, logo.asset)
+    library._qa_path_guard(path)
     return raw
 
 

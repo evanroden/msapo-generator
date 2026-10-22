@@ -11,15 +11,22 @@ from contextvars import ContextVar
 from uuid import uuid4
 from hashlib import sha256
 from pathlib import Path
+import fcntl
 import os
 import re
 import shutil
+import time
 
 _SCOPE: ContextVar[str | None] = ContextVar("enfra_monthly_qa_scope", default=None)
 _LEASE: ContextVar[str | None] = ContextVar("enfra_monthly_qa_generation", default=None)
 _COOKIE = re.compile(r"[0-9a-f]{32}\Z")
 _BUCKET = "_enfra_monthly_report_qa_v1"
 _SENTINEL = ".enfra-qa-namespace"
+# Owner policy (#292): another browser's isolated copy idle this long may be
+# reclaimed. Ordinary use refreshes the marker's time at most this often.
+IDLE_SECONDS = 24 * 60 * 60
+_ACTIVITY_SECONDS = 10 * 60
+_MEASURE_LIMIT = 20000
 
 
 def scope() -> str | None:
@@ -128,7 +135,165 @@ def data_dir(base: Path) -> Path:
     if expected is not None and expected != generation:
         raise OSError("The isolated test changed while this task was running; stale work was blocked.")
     _LEASE.set(generation)
+    try:
+        # Viewing writes nothing else, so record use on the existing marker.
+        if time.time() - sentinel.stat().st_mtime > _ACTIVITY_SECONDS:
+            # Idle reclaim decides and moves the namespace under this lock, so
+            # a returning request either records its use first or sees the move.
+            with _namespace_lock(target, fcntl.LOCK_SH):
+                os.utime(sentinel)
+    except FileNotFoundError as exc:
+        raise OSError("This isolated test was reset during a running task; retry on a new test session.") from exc
+    except OSError:
+        pass  # recording activity never blocks the request
     return target
+
+
+@contextmanager
+def _namespace_lock(target: Path, operation: int):
+    """Lock the namespace folder itself; FileNotFoundError once it has moved."""
+    descriptor = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        fcntl.flock(descriptor, operation)
+        held, current = os.fstat(descriptor), os.lstat(target)
+        if (held.st_dev, held.st_ino) != (current.st_dev, current.st_ino):
+            raise FileNotFoundError("The isolated namespace moved while waiting.")
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _last_change(target: Path) -> float | None:
+    """Newest change anywhere in a namespace; None when it cannot be measured safely.
+
+    Entries are read one at a time, so the limit bounds the work even for one
+    very large folder; a link or an unreadable folder also stops the scan.
+    """
+    try:
+        newest, seen, folders = target.lstat().st_mtime, 0, [target]
+        while folders:
+            with os.scandir(folders.pop()) as entries:
+                for entry in entries:
+                    seen += 1
+                    if seen > _MEASURE_LIMIT or entry.is_symlink():
+                        return None
+                    try:
+                        newest = max(newest, entry.stat(follow_symlinks=False).st_mtime)
+                    except FileNotFoundError:
+                        continue
+                    if entry.is_dir(follow_symlinks=False):
+                        folders.append(entry.path)
+    except OSError:
+        return None
+    return newest
+
+
+_SET_ASIDE = ".reclaimed-"
+_DISCARDING = ".discarding-"
+# A set-aside name records the reservation it belongs to: owner, generation, nonce.
+_SET_ASIDE_NAME = re.compile(r"\.reclaimed-([0-9a-f]{32})-([0-9a-f]{32})-[0-9a-f]{32}\Z")
+
+
+def _idle_since(target: Path, identity: str, generation: str, cutoff: float) -> float | None:
+    """The namespace's newest change when nothing changed after ``cutoff``, else None."""
+    sentinel = target / _SENTINEL
+    if _marker(sentinel, identity) != generation or sentinel.lstat().st_mtime > cutoff:
+        return None  # another generation, or recent use seen on the marker; no walk needed
+    newest = _last_change(target)
+    return newest if newest is not None and newest <= cutoff else None
+
+
+def set_aside_idle(base: Path, identity: str, generation: str, *, now: float | None = None,
+                   idle_seconds: float = IDLE_SECONDS) -> Path | None:
+    """Rename another browser's namespace aside after a day without changes.
+
+    Returns the set-aside path, or None when the namespace stays: this
+    request's own namespace, a mismatched or invalid marker, a request
+    recording use right now, any link, anything that cannot be measured, or
+    any change seen while it was being checked. A namespace moved and then
+    found unsafe is put back; if that fails the error is raised and the
+    caller's next ``recover_set_aside`` restores it. Otherwise the caller
+    calls ``discard_set_aside`` or ``restore_set_aside``; a returning
+    browser's stale work fails closed meanwhile. Shared originals live
+    outside this bucket and are never touched.
+    """
+    if identity == scope() or not _COOKIE.fullmatch(identity) or not _COOKIE.fullmatch(generation):
+        return None
+    cutoff = (time.time() if now is None else now) - idle_seconds
+    tombstone = None
+    try:
+        target = _location(base, identity)
+        with _namespace_lock(target, fcntl.LOCK_EX | fcntl.LOCK_NB):
+            newest = _idle_since(target, identity, generation, cutoff)
+            if newest is None:
+                return None
+            tombstone = target.parent / f"{_SET_ASIDE}{identity}-{generation}-{uuid4().hex}"
+            os.rename(target, tombstone)
+            # Requests resolve the namespace path each time, so nothing new
+            # lands in the set-aside copy; work already under way shows here.
+            if _last_change(tombstone) == newest:
+                return tombstone
+    except (OSError, UnicodeError):
+        pass
+    if tombstone is None or not os.path.lexists(tombstone):
+        return None  # nothing was moved; the namespace stays
+    restore_set_aside(base, tombstone)
+    return None
+
+
+def restore_set_aside(base: Path, tombstone: Path) -> None:
+    """Put a set-aside namespace back, unless its browser already started a fresh one."""
+    target = _location(base, tombstone.name[len(_SET_ASIDE):].split("-", 1)[0])
+    if target.exists() or target.is_symlink():
+        discard_set_aside(tombstone)
+    else:
+        os.rename(tombstone, target)
+
+
+def discard_set_aside(tombstone: Path) -> None:
+    """Delete a set-aside namespace; it is renamed first so it is never restored half-deleted."""
+    doomed = tombstone.with_name(_DISCARDING + tombstone.name[len(_SET_ASIDE):])
+    try:
+        os.rename(tombstone, doomed)
+    except OSError:
+        doomed = tombstone  # still delete it rather than leave it to be restored
+    shutil.rmtree(doomed, ignore_errors=True)
+
+
+def recover_set_aside(base: Path, reserved) -> None:
+    """Finish what an interrupted admission left behind.
+
+    ``reserved`` holds the (scope, generation) pairs the admission index still
+    lists. A set-aside namespace still listed belongs to an admission that
+    never committed and is put back; one no longer listed was released by a
+    committed admission and is deleted, so it never returns uncounted.
+    """
+    bucket = Path(base) / _BUCKET
+    if bucket.is_symlink() or not bucket.is_dir():
+        return
+    for leftover in bucket.iterdir():
+        if leftover.is_symlink() or not leftover.is_dir():
+            continue
+        try:
+            if leftover.name.startswith(_DISCARDING):
+                shutil.rmtree(leftover, ignore_errors=True)
+            elif owner := _SET_ASIDE_NAME.fullmatch(leftover.name):
+                if owner.groups() in reserved:
+                    restore_set_aside(base, leftover)
+                else:
+                    discard_set_aside(leftover)
+        except OSError:
+            continue
+
+
+def reclaim_idle(base: Path, identity: str, generation: str, *, now: float | None = None,
+                 idle_seconds: float = IDLE_SECONDS) -> bool:
+    """Set aside and delete another browser's idle namespace in one step."""
+    tombstone = set_aside_idle(base, identity, generation, now=now, idle_seconds=idle_seconds)
+    if tombstone is None:
+        return False
+    discard_set_aside(tombstone)
+    return True
 
 
 def reset(base: Path) -> None:

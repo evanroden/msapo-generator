@@ -6,6 +6,15 @@ from app.monthly_report_model import ReportDraft, ResolvedBlock
 from app.monthly_report_setup import merge_drafts
 
 
+
+def same_replacement_page_spec(current, incoming):
+    """Only guided optionality may differ for an exact non-brand page slot."""
+    return (current is not None and incoming is not None
+            and current.key in {"org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"}
+            and current.type == "image_page"
+            and replace(current, required=False) == replace(incoming, required=False))
+
+
 def _content(block: ResolvedBlock | None):
     if block is None:
         return None
@@ -169,7 +178,8 @@ def merge_starting_drafts(existing: ReportDraft | None, incoming: ReportDraft,
         address_compatible = (block.key != "footer_text" or existing.address_line in (
             previous.address_line, "" if block.source == "Omit" else block.text))
         if (_content(present) == _content(block)
-                and current_specs.get(block.key) == incoming_specs.get(block.key)
+                and (current_specs.get(block.key) == incoming_specs.get(block.key)
+                     or same_replacement_page_spec(current_specs.get(block.key), incoming_specs.get(block.key)))
                 and address_compatible):
             continue
         unchanged_report = (_content(present) == _content(old)

@@ -1,14 +1,14 @@
 """Upload a report, confirm its sites, then review recognizable report sections."""
 
 import hashlib
+from contextlib import nullcontext
 from dataclasses import asdict, replace
 from pathlib import Path
+from uuid import uuid4
 
 import streamlit as st
 
-from app import contracts
 from app import monthly_report_library as library
-from app.config import FACILITIES
 from app.monthly_report_content_policy import contains_price, table_has_pricing
 from app.monthly_report_docx import normalize_report_image
 from app.monthly_report_editor import _grid, _key, _signature
@@ -37,47 +37,8 @@ def plan_signature(plan):
 
 
 def _site_options(contract):
-    from app.monthly_report_directory import available_sites, load_directory
-    directory = load_directory(contract)
-    if contract != contracts.RRH_CONTRACT:
-        catalog = tuple(Facility(_key(title), title) for title in contracts.sites_for_contract(contract))
-        return available_sites(catalog, directory)
-    # Explicit owner-confirmed alias relationship. Never group sites by address
-    # or guess regional membership from a title or geographic location.
-    result = []
-    # Only distinctive, owner-established abbreviations are safe *cover*
-    # identity evidence. The general facility catalog also contains city,
-    # street and ZIP shorthand; importing all of those as aliases could
-    # mistake incidental body/geographic mentions for report membership.
-    cover_aliases = {"united_memorial": ("UMMC",), "rochester_general": ("RGH",)}
-    for key, value in FACILITIES.items():
-        if key == "st_marys" and "unity_specialty" in FACILITIES:
-            continue
-        aliases = (FACILITIES["st_marys"]["name"],) if key == "unity_specialty" and "st_marys" in FACILITIES else ()
-        aliases = (*aliases, *cover_aliases.get(key, ()))
-        result.append(Facility(key, value["name"], aliases))
-    listed = list(available_sites(result, directory))
-    # A real standing directory can replace a catalog facility with a saved
-    # site of the same key/title but no aliases. Preserve the owner's saved
-    # identifiers and aliases; supplement a DISTINCTIVE shorthand only if
-    # exactly one active listed site matches the catalog identity. Never
-    # overwrite the standing directory or retarget two duplicate facilities.
-    for key, short_names in cover_aliases.items():
-        title = FACILITIES[key]["name"].casefold()
-        matches = [i for i, site in enumerate(listed)
-                   if site.key == key or site.title.casefold() == title]
-        if len(matches) != 1:
-            continue
-        index = matches[0]
-        site = listed[index]
-        if any(alias.casefold() in
-               {other.title.casefold(), *(name.casefold() for name in other.aliases)}
-               for i, other in enumerate(listed) if i != index
-               for alias in short_names):
-            continue
-        listed[index] = replace(
-            site, aliases=tuple(dict.fromkeys((*site.aliases, *short_names))))
-    return tuple(listed)
+    from app.monthly_report_site_catalog import site_options
+    return site_options(contract)
 
 
 def _identity(contract, prepared, prefix, field, state, inspection=None):
@@ -201,7 +162,7 @@ def _explicit_quote_price_risk(section, inspection):
 
 
 def _section_card(section, path, inspection, period, prefix, field, plans, first, *, cover_photo_ids=(),
-                  cover_design_available=False, source_name="Uploaded Word report"):
+                  cover_design_available=False, source_name="Uploaded Word report", source_view=None, profile=None):
     p = prefix + "_section_" + section.key
     old = plans.get(section.key, {})
     status = "Ready" if old.get("approved") else "Review"
@@ -237,6 +198,14 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "captured_word_sections": old.get("captured_word_sections", ()),
                 "preserved_assets": list(old.get("preserved_assets", ())),
                 "word_page_records": list(old.get("word_page_records", ()))}
+        from app.monthly_report_native_art_review import native_cover_furniture_ids
+        furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
+        kept_native = set()
+        if old.get("native_art_review") is not None:
+            from app.monthly_report_native_art_review import verify_native_art_review
+            context = verify_native_art_review(path, source_view, profile, period, old["native_art_review"])
+            kept_native = {item.original_id for item in context.inventory.occurrences}
+            plan["native_art_review"] = context.receipt
         blocking = []
         cover_recovery = ("Choose ‘Use this report’s cover design’ above to keep its current artwork."
                           if cover_design_available else
@@ -245,7 +214,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             if section.key == "cover":
                 from app.monthly_report_start_import import unresolved_cover_artwork
                 unread = any(i.kind == "unsupported" for i in section.items)
-                if not cover_design_available and (unread or unresolved_cover_artwork(section.items)):
+                if not cover_design_available and (unread or unresolved_cover_artwork(section.items, native_furniture_ids=furniture_ids)):
                     blocking.append(
                         "This starting report would also supply the new report’s page design. "
                         "Repair the unread or unassigned cover artwork in the original Word file "
@@ -332,7 +301,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     plan["tables"][item.id] = table
                     plan["selected"].append(item.id)
             from app.monthly_report_picture_cards import review_pictures
-            pictures = [i for i in items if i.kind == "image"]
+            pictures = [i for i in items if i.kind == "image" and i.id not in kept_native]
             if section.key == "cover":
                 fixed_logos = [i for i in pictures if old.get("destinations", {}).get(i.id, i.suggested_slot)
                                in {"brand_logo", "client_logo"}]
@@ -368,13 +337,13 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
             if section.key == "cover":
                 from app.monthly_report_start_import import unresolved_cover_artwork
                 from app.monthly_report_import import read_import_image
-                unknown = unresolved_cover_artwork(section.items)
+                unknown = tuple(item for item in unresolved_cover_artwork(section.items, native_furniture_ids=furniture_ids) if item.id not in kept_native)
                 if unknown:
                     st.markdown("**Other imported cover artwork**")
                     for number, item in enumerate(unknown[:4], 1):
                         st.caption(f"Cover artwork {number} · {source_name}")
                         try:
-                            preview = read_import_image(path, item, preview=True)
+                            preview = read_import_image(path, item, preview=True, source_view=source_view)
                             st.image(preview.data, width=min(preview.width, 650))
                         except (ValueError, OSError):
                             st.warning(f"Cover artwork {number} could not be displayed; it remains in the original Word file.")
@@ -517,13 +486,116 @@ def _starting_review_sections(sections, plans, diagram_failures):
     return tuple(pending)
 
 
+def _native_art_preservation_review(path, source_view, profile, period, actor, prefix, field, *, saved=None, inventory=None):
+    """One source-art preservation review, never a logo or Word-branch choice."""
+    from app.monthly_report_native_art_review import (
+        _native_art_inventory, make_native_art_review, _verify_native_art_review,
+    )
+    from app.monthly_report_import import _read_import_image
+    from app.monthly_report_operational_source import _operation_from_verified_view
+    if inventory is None:
+        inventory = _native_art_inventory(path, source_view, profile, period)
+    if not inventory.occurrences:
+        return None
+    if saved is not None:
+        return _verify_native_art_review(path, source_view, profile, period, saved).receipt
+    groups = {}
+    for occurrence in inventory.occurrences:
+        if any(values for representation in occurrence.rendition_representations
+               for tag, values in representation.crop_orientation
+               if tag not in ("{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent",
+                              "{http://schemas.openxmlformats.org/drawingml/2006/main}ext")):
+            st.error("This source artwork uses crop or orientation settings that require a rendered-location review. "
+                     "The current preservation inspector cannot approve it from a full-image thumbnail.")
+            return None
+        groups.setdefault(occurrence.preview_group_key, []).append(occurrence)
+    kept, reviewed = set(), set()
+    with st.expander("Preserve native page artwork", expanded=True):
+        st.caption("Keep this artwork in its original position. Check that it belongs in this report; "
+                   "the original file stays unchanged.")
+        with _operation_from_verified_view(path, source_view) as operation:
+            items = {item.id: item for item in operation.view.original_inspection.items}
+            for number, (group, occurrences) in enumerate(groups.items(), 1):
+                key = prefix + "_native_art_" + inventory.sha256[:20] + "_" + group[:16]
+                st.markdown(f"**Native page artwork {number}**")
+                locations = tuple(dict.fromkeys(
+                    "Cover" if item.original_part == "word/document.xml" else
+                    "Page header" if "/header" in item.original_part else "Page footer"
+                    for item in occurrences))
+                st.caption(" / ".join(locations) + f" · {len(occurrences)} location(s)")
+                with st.popover("Source details"):
+                    st.caption("Exact source targets: " + "; ".join(
+                        f"{item.original_part} · {item.original_id}" for item in occurrences))
+                    st.caption("Preservation does not assign logo ownership or certify hidden file contents.")
+                try:
+                    from io import BytesIO
+                    from zipfile import ZipFile
+                    from PIL import Image
+                    from app.monthly_report_operational_source import lookup_original
+                    _, rendered = lookup_original(operation.view, occurrences[0].original_id)
+                    with ZipFile(operation.rendition_path) as package:
+                        with Image.open(BytesIO(package.read(rendered.image_part))) as source_image:
+                            if (source_image.format != "PNG" or source_image.mode not in ("RGB", "RGBA")
+                                    or source_image.info or source_image.getexif()):
+                                raise ValueError("Rendered-location review is required for encoded display metadata.")
+                    picture = _read_import_image(path, items[occurrences[0].original_id], preview=True,
+                                                 source_view=operation.view, _operation=operation,
+                                                 preserve_transparency=True)
+                    st.image(picture.data, width=min(picture.width, 650))
+                except (ValueError, OSError):
+                    st.error("This verified artwork could not be displayed; preservation remains blocked.")
+                    continue
+                # One explicit action covers preservation AND the same visible
+                # suitability review. Old separate/partial choices cannot seed it.
+                st.caption("Confirm it belongs in this report, with no visible pricing or inappropriate private information.")
+                if st.checkbox("I reviewed this artwork and want to keep it unchanged",
+                               key=field(key + "_preserve_review_v1", False)):
+                    kept.update(item.original_id for item in occurrences)
+                    reviewed.update(item.original_id for item in occurrences)
+        ids = tuple(item.original_id for item in inventory.occurrences)
+        if kept != set(ids) or reviewed != set(ids) or not actor.strip():
+            st.info("Inspect and preserve every listed artwork group before this source design can be used.")
+            return None
+        return make_native_art_review(inventory, actor=actor, keep_native_ids=ids,
+                                      visually_reviewed_ids=ids, suitable_ids=ids)
+
+
+def _source_view_admission(function):
+    """Finite automatic source preparation shares the existing monthly slot."""
+    from functools import wraps
+    from inspect import signature
+    parameters = signature(function)
+    @wraps(function)
+    def admitted(*args, **kwargs):
+        values = parameters.bind_partial(*args, **kwargs).arguments
+        state, identity = values.get('state'), values.get('identity')
+        prefix = ("report_setup_" + _signature((values['contract'], state.profile.key if state else identity.key if identity else "new", values['period'].key))
+                  if 'contract' in values and 'period' in values else None)
+        staged = st.session_state.get(prefix + '_stage') if prefix else None
+        from app.monthly_report_source_view_runtime import import_candidate
+        needs_view = staged is not None and import_candidate(staged[2])
+        from app import monthly_report_render_jobs as jobs
+        try:
+            if kwargs.get("source_view") is None and not needs_view:
+                return function(*args, **kwargs)
+            with jobs.work_slot(preview=True):
+                return function(*args, **kwargs)
+        except jobs.RenderBusy:
+            from app.monthly_report_busy_ui import show_busy_retry
+            show_busy_retry()
+            return True
+    return admitted
+
+
+@_source_view_admission
 def render_section_setup(contract, period, prepared, field, *, state=None, identity=None,
-                         working_draft=None, working_assets=(), working_revision=None):
+                         working_draft=None, working_assets=(), working_revision=None, source_view=None):
     prefix = "report_setup_" + _signature((contract, state.profile.key if state else identity.key if identity else "new", period.key))
     # An existing report is already editable. Keep its replacement uploader
     # optional, but always render the uploader in the same widget container
     # across staged/review reruns so Streamlit cannot discard its bytes.
     optional_import = working_draft is not None
+    original_token_key = prefix + "_original_review_token"
 
     def _open_saved_original():
         if not state:
@@ -533,6 +605,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                                   key=prefix + "_original", disabled=not prepared.strip()):
             from app.monthly_report_import import inspect_docx
             st.session_state[prefix + "_stage"] = (None, original, inspect_docx(original))
+            st.session_state[original_token_key] = uuid4().hex
+            st.session_state[prefix + "_image_conflict_incarnation"] = uuid4().hex
+            st.session_state.pop(prefix + "_image_replacements", None)
             st.rerun()
 
     if optional_import:
@@ -556,17 +631,25 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         digest = hashlib.sha256(upload.getvalue()).hexdigest()
         staged = st.session_state.get(prefix + "_stage")
         loaded_hash = staged[2].sha256 if staged else ""
+        committed_hash = st.session_state.get(prefix + "_committed_upload_digest", "")
         failed_hash = st.session_state.get(prefix + "_failed_digest")
         retry = False
         if failed_hash == digest:
             st.warning("This starting report could not be analyzed. The previous draft remains unchanged.")
             retry = st.button("Retry report analysis", key=prefix + "_retry_analysis")
-        if digest != loaded_hash and (digest != failed_hash or retry):
+        # A committed upload still mounted after saving must not reopen itself.
+        # Once another source is staged, however, reselecting that committed
+        # file is a new choice and must replace the superseded review.
+        unchanged_committed_upload = not staged and digest == committed_hash
+        if digest != loaded_hash and not unchanged_committed_upload and (digest != failed_hash or retry):
             try:
                 with st.spinner("Reading sections and cover pictures…"):
                     incoming = _stage(upload)
                 previous = st.session_state.get(prefix + "_stage")
                 st.session_state[prefix + "_stage"] = incoming
+                st.session_state[prefix + "_image_conflict_incarnation"] = uuid4().hex
+                st.session_state.pop(prefix + "_image_replacements", None)
+                st.session_state.pop(original_token_key, None)
                 st.session_state.pop(prefix + "_failed_digest", None)
                 if previous and previous[0]:
                     previous[0].cleanup()
@@ -576,6 +659,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                 st.warning("This report could not be analyzed. Choose a valid DOCX or retry; your existing work was preserved.")
     else:
         st.session_state.pop(prefix + "_failed_digest", None)
+        # Removing then selecting the same file is an explicit new import.
+        # An unchanged native uploader after a successful save is not.
+        st.session_state.pop(prefix + "_committed_upload_digest", None)
         previous = st.session_state.get(prefix + "_stage")
         if previous and previous[0]:
             # Removing the uploader's file cancels its unsaved review too.
@@ -590,12 +676,44 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
         _open_saved_original()
     staged = st.session_state.get(prefix + "_stage")
     if not staged:
+        st.session_state.pop(original_token_key, None)
         return False
+    _, path, inspection = staged
+    automatic_view = source_view is None
+    if source_view is None:
+        from app.monthly_report_source_view_runtime import derive_import_view
+        try:
+            source_view = derive_import_view(path, inspection)
+        except (ValueError, OSError) as exc:
+            # Original audit and existing blocking questions remain truthful.
+            st.warning("Automatic native artwork interpretation is blocked: " + str(exc))
+    if source_view is not None and not automatic_view:
+        from app.monthly_report_operational_source import verify_inspection
+        try:
+            source_view = verify_inspection(path, inspection, source_view)
+        except (ValueError, OSError) as exc:
+            st.error(str(exc))
+            return True
+    p = prefix + "_" + inspection.sha256[:16]
+    if source_view is not None:
+        p += "_view_" + source_view.receipt_sha256[:16]
+    cancel_original = False
+    if staged[0] is None:
+        # A later review of identical source bytes is a new action target.
+        token = st.session_state.setdefault(original_token_key, uuid4().hex)
+        cancel_original = st.button("Cancel saved-original review", key=p + "_cancel_original_" + token)
+    if cancel_original:
+        # This stage has no uploader to clear. Retire only its unsaved review
+        # choices, never the saved original or the current report's work.
+        st.session_state.pop(prefix + "_stage", None)
+        st.session_state.pop(original_token_key, None)
+        for key in list(st.session_state):
+            if key.startswith(p + "_"):
+                st.session_state.pop(key, None)
+        st.rerun()
     if state and staged[0] is None and not prepared.strip():
         st.info("Enter Prepared by above to review the saved original.")
         return True
-    _, path, inspection = staged
-    p = prefix + "_" + inspection.sha256[:16]
     if identity:
         candidate = identity
         actor = prepared.strip() or st.text_input(
@@ -654,13 +772,41 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                             or (branding and find_logo(contract, brand=key == "brand_logo", state=branding)))
     from app.monthly_report_designs import source_for
     native_design = source_for(candidate) is not None
-    seed = automatic_section_plans(inspection, analysis, preferred_logos=preferred_logos, native_design=native_design)
-    seed_signature = _signature((analysis, preferred_logos, native_design))
+    native_art_review = None
+    native_art_pending = False
+    if (source_view is not None and state is not None
+            and state.profile.imported_from not in ("", inspection.sha256)):
+        # An incoming contribution is not permission to replace the saved
+        # native design or rebind its source-view authority to different bytes.
+        st.info("This is a different starting-report file. Its native artwork cannot yet be combined with this saved report. Your saved report is unchanged. "
+                "Add the updated pages in their report sections, or start a separate report to use this design.")
+        return True
+    if source_view is not None:
+        try:
+            saved_art = (library.imported_native_art_review(contract, candidate.key, period, source_view=source_view)
+                         if state and state.profile.imported_from == inspection.sha256
+                         and library.source_view_replay_recorded(contract, candidate.key, period, inspection.sha256) else None)
+            from app.monthly_report_native_art_review import _native_art_inventory
+            art_inventory = _native_art_inventory(path, source_view, candidate, period)
+            native_art_review = _native_art_preservation_review(
+                path, source_view, candidate, period, actor, p, field, saved=saved_art,
+                inventory=art_inventory)
+            native_art_pending = bool(art_inventory.occurrences) and native_art_review is None
+        except (ValueError, OSError) as exc:
+            st.error(str(exc))
+            return True
+    seed = automatic_section_plans(inspection, analysis, preferred_logos=preferred_logos,
+                                   native_design=native_design, source_view=source_view,
+                                   native_art_review=native_art_review, source_path=path,
+                                   profile=candidate, period=period)
+    seed_signature = _signature((analysis, preferred_logos, native_design) if source_view is None else
+                                (analysis, preferred_logos, native_design, native_art_review,
+                                 source_view.receipt_sha256))
     if st.session_state.get(p + "_analysis_signature") != seed_signature:
         st.session_state[p + "_section_plans"] = seed
         st.session_state[p + "_analysis_signature"] = seed_signature
     intent = "Automatic starting report"
-    sections = section_reviews(inspection)
+    sections = section_reviews(inspection, source_view=source_view)
     plans = st.session_state.setdefault(p + "_section_plans", {})
     # Preserve native diagrams at their evidenced Word/ENFRA section before
     # asking the operator about anything. Ordinary image parts already follow
@@ -722,7 +868,9 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
     if cover_section and analysis.site_relation == "same":
         from app.monthly_report_start_import import cover_photo_candidates
         from app.monthly_report_picture_cards import review_cover_gallery
-        candidates = cover_photo_candidates(cover_section.items)
+        from app.monthly_report_native_art_review import native_cover_furniture_ids
+        furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
+        candidates = cover_photo_candidates(cover_section.items, native_furniture_ids=furniture_ids)
         if candidates:
             cover_photo_ids = tuple(item.id for item in candidates)
             with st.expander("Cover photograph", expanded=True,
@@ -797,7 +945,8 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             _section_card(section, path, inspection, period, p, field, plans, index == 0,
                           cover_photo_ids=cover_photo_ids if section.key == "cover" else (),
                           cover_design_available=state is not None,
-                          source_name=upload.name if upload is not None else "Saved original Word report")
+                          source_name=upload.name if upload is not None else "Saved original Word report",
+                          source_view=source_view, profile=candidate)
     with st.expander("Review what will be carried across (optional)", key=p + "_check_import", on_change="rerun") as details:
         if details.open:
             for section in sections:
@@ -810,10 +959,19 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                     st.caption(section.title + " · " + status)
     remaining = [s.title for s in sections if not plans.get(s.key, {}).get("approved")]
     todo = [*missing, *(["Review these sections: " + "; ".join(remaining) + "."] if remaining else [])]
+    if native_art_pending:
+        todo.append("Review the native page artwork above before continuing.")
     if state is None and cover_section and plans["cover"].get("approved"):
         from app.monthly_report_start_import import unresolved_cover_artwork
+        from app.monthly_report_native_art_review import native_cover_furniture_ids
+        furniture_ids = native_cover_furniture_ids(inspection.items) if source_view is not None else ()
+        kept_native = set()
+        if native_art_review is not None:
+            from app.monthly_report_native_art_review import verify_native_art_review
+            context = verify_native_art_review(path, source_view, candidate, period, native_art_review)
+            kept_native = {item.original_id for item in context.inventory.occurrences}
         if (any(item.kind == "unsupported" for item in cover_section.items)
-                or unresolved_cover_artwork(cover_section.items)):
+                or any(item.id not in kept_native for item in unresolved_cover_artwork(cover_section.items, native_furniture_ids=furniture_ids))):
             # Even deliberately excluded foreign content would remain inside a
             # new profile's uploaded native design. A contribution omission or
             # an older staged approval cannot certify that design's artwork.
@@ -822,6 +980,135 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                        "or open an existing report with a saved cover design. This upload would also supply a new report’s page design.")
             st.error(message)
             todo.append("Repair the source cover artwork before using it as a new report design.")
+    prepared_import = None
+    def _prepare_merge():
+        nonlocal prepared_import
+        if prepared_import is None:
+            # New eager preflight work shares the existing admission gate with
+            # previews/exports. Keep one normalized import only in this rerun,
+            # never a second decoded copy or a cross-rerun/session asset cache.
+            from app.monthly_report_render_jobs import work_slot
+            with work_slot(preview=True) if recovery_preflight else nullcontext():
+                prepared_import = build_starting_import(
+                    path, inspection, tuple(plans[s.key] for s in sections),
+                    source_view=source_view, profile=candidate, period=period)
+        else:
+            # Continue may reuse immutable normalized bytes from this exact
+            # render, but source identity and mutable saved state are checked
+            # again, then profile/snapshot CAS protects final publication.
+            if path.stat().st_size > 128 * 1024 * 1024:
+                raise ValueError("Original DOCX exceeds the import limit.")
+            with path.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != inspection.sha256:
+                    raise ValueError("Original DOCX changed during review. Analyze it again.")
+        mapped, mappings = prepared_import
+        profile = candidate if state else design_profile(candidate, inspection, mappings, mapped.overrides)
+        profile = replace(profile, excluded_sections=())
+        draft = imported_draft(profile, period, actor, mapped)
+        draft = replace(draft, sections=tuple(replace(s, included=True) for s in draft.sections))
+        replay_existing = state and (source_view is None or library.source_view_replay_recorded(
+            contract, profile.key, period, inspection.sha256))
+        previous, verified = library.starting_contribution(
+            contract, profile.key, period, inspection.sha256, source_view=source_view) if replay_existing else (None, False)
+        from app.monthly_report_start_replay import retain_automatic_logo_contributions
+        incoming_keys = {block.key for block in draft.blocks}
+        draft = retain_automatic_logo_contributions(
+            draft, previous, verified=verified, inspection=inspection,
+            plans=plans.values(), preferred_logos=preferred_logos)
+        consumed_logo_slots = {block.key for block in draft.blocks
+                               if block.key in ("brand_logo", "client_logo") and block.key not in incoming_keys}
+        current = library.load_snapshot(contract, profile.key, period) if state else None
+        prior_import = library.load_imported_draft(contract, profile.key) if state else None
+        base = current.draft if current else None
+        if working_draft is not None:
+            if (working_draft.profile.contract, working_draft.profile.key, working_draft.period) != (contract, profile.key, period):
+                raise ValueError("The open draft belongs to different sites or a different month. Reopen the intended report before importing.")
+            if working_revision != (current.revision if current else 0):
+                raise ValueError("Another version was saved while you were working. Compare and accept that version using Save progress before adding this report. Your open draft and upload are preserved.")
+            base = working_draft
+        elif prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
+            # Bootstrap already includes this exact snapshot plus the
+            # last acknowledged import. Appending the snapshot again
+            # can resurrect its older text or duplicate edited tables.
+            base = prior_import
+        return mapped, profile, draft, previous, verified, consumed_logo_slots, current, base
+
+    from app.monthly_report_start_conflicts import LABELS, image_conflicts, apply_replacements, snapshot_guard
+    replacement_key = prefix + "_image_replacements"
+    incarnation_key = prefix + "_image_conflict_incarnation"
+    incarnation = st.session_state.setdefault(incarnation_key, uuid4().hex)
+    decisions = st.session_state.setdefault(replacement_key, {})
+    review_scope = _signature((inspection.sha256, tuple(plan_signature(plan) for plan in plans.values()),
+                               candidate, actor, working_draft, working_revision,
+                               state.revision if state else 0))
+    if st.session_state.get(prefix + "_image_review_scope") != review_scope:
+        decisions.clear()
+        incarnation = uuid4().hex
+        st.session_state[incarnation_key] = incarnation
+        st.session_state[prefix + "_image_review_scope"] = review_scope
+    def _conflict_context(current):
+        return dict(verified=verified, source_sha256=inspection.sha256,
+                    profile_revision=state.revision if state else 0,
+                    snapshot_revision=current.revision if current else 0,
+                    incarnation=incarnation)
+
+    has_page = any(slot in LABELS for plan in plans.values()
+                   for slot in (*plan.get("destinations", {}).values(),
+                                *(slot for slot, _ in plan.get("new_assets", ())),
+                                *(slot for slot, _ in plan.get("preserved_assets", ()))))
+    recovery_preflight = bool(state and not todo and has_page)
+    if recovery_preflight:
+        from app.monthly_report_render_jobs import RenderBusy
+        try:
+            mapped, profile, incoming_draft, previous, verified, _, current, base = _prepare_merge()
+            scope = _signature((base, incoming_draft, previous, verified, state.revision,
+                                current.revision if current else 0))
+            scope_key = prefix + "_image_conflict_scope"
+            if st.session_state.get(scope_key) != scope:
+                decisions.clear()
+                incarnation = uuid4().hex
+                st.session_state[incarnation_key] = incarnation
+                st.session_state[scope_key] = scope
+            conflicts = image_conflicts(base, incoming_draft, previous, **_conflict_context(current))
+            valid = {conflict.slot: conflict.binding for conflict in conflicts}
+            if any(valid.get(slot) != binding for slot, binding in decisions.items()):
+                decisions.clear()
+                st.warning("The report or incoming picture changed. Review both pictures again before replacing anything.")
+            if conflicts:
+                st.subheader("A report page already has a different picture")
+                st.caption("Your current report is unchanged. Compare the two pages before explicitly replacing one. This does not approve the incoming picture’s contents.")
+                assets = dict((*working_assets, *mapped.assets))
+                for conflict in conflicts:
+                    with st.container(border=True):
+                        st.markdown("**" + conflict.label + "**")
+                        for label, block in (("Current report", conflict.current), ("Incoming report", conflict.incoming)):
+                            reference = block.asset_hashes[0]
+                            raw = assets.get(reference) or library.read_asset(contract, profile.key, reference)
+                            if library.asset_reference(raw, reference.rsplit(".", 1)[-1]) != reference:
+                                raise ValueError("A preview picture changed. Review the source again; your report is unchanged.")
+                            st.image(raw, width="stretch", caption=label + " — " + conflict.label)
+                            st.caption("Picture caption: " + (block.asset_captions[0] if block.asset_captions else "(none)"))
+                        if decisions.get(conflict.slot) == conflict.binding:
+                            st.caption("Incoming page selected. Nothing changes until you continue and the import saves successfully.")
+                        if st.button("Use incoming " + conflict.label.lower(), key=p + "_replace_" + conflict.binding):
+                            decisions[conflict.slot] = conflict.binding
+                            st.rerun()
+                        if st.button("Keep current " + conflict.label.lower() + " and return to review", key=p + "_keep_" + conflict.binding):
+                            decisions.clear()
+                            st.session_state[incarnation_key] = uuid4().hex
+                            st.rerun()
+                if any(decisions.get(conflict.slot) != conflict.binding for conflict in conflicts):
+                    todo.append("Compare the different report pages above. Keeping the current page leaves this incoming report unimported.")
+        except (ValueError, OSError, RenderBusy) as exc:
+            decisions.clear()
+            st.session_state[incarnation_key] = uuid4().hex
+            st.error(str(exc))
+            if isinstance(exc, RenderBusy):
+                if st.button("Retry report page comparison", key=p + "_retry_page_comparison"):
+                    st.rerun()
+                todo.append("Report page comparison is waiting for capacity. Your report and upload are unchanged.")
+            else:
+                todo.append("Resolve the existing report conflict before continuing; your report and upload are unchanged.")
     for message in todo:
         st.info(message)
     if not todo:
@@ -832,36 +1119,11 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             if todo:
                 raise ValueError("Resolve the remaining starting-report messages before continuing. Your draft and upload are unchanged.")
             with st.spinner("Saving your report and its reusable design…"):
-                mapped, mappings = build_starting_import(path, inspection, tuple(plans[s.key] for s in sections))
-                profile = candidate if state else design_profile(candidate, inspection, mappings, mapped.overrides)
-                profile = replace(profile, excluded_sections=())
-                draft = imported_draft(profile, period, actor, mapped)
-                draft = replace(draft, sections=tuple(replace(s, included=True) for s in draft.sections))
-                previous, verified = library.starting_contribution(
-                    contract, profile.key, period, inspection.sha256) if state else (None, False)
-                from app.monthly_report_start_replay import retain_automatic_logo_contributions
-                incoming_keys = {block.key for block in draft.blocks}
-                draft = retain_automatic_logo_contributions(
-                    draft, previous, verified=verified, inspection=inspection,
-                    plans=plans.values(), preferred_logos=preferred_logos)
-                consumed_logo_slots = {block.key for block in draft.blocks
-                                       if block.key in ("brand_logo", "client_logo") and block.key not in incoming_keys}
+                mapped, profile, draft, previous, verified, consumed_logo_slots, current, base = _prepare_merge()
                 source_draft = draft
-                current = library.load_snapshot(contract, profile.key, period) if state else None
-                prior_import = library.load_imported_draft(contract, profile.key) if state else None
-                base = current.draft if current else None
-                if working_draft is not None:
-                    if (working_draft.profile.contract, working_draft.profile.key, working_draft.period) != (contract, profile.key, period):
-                        raise ValueError("The open draft belongs to different sites or a different month. Reopen the intended report before importing.")
-                    if working_revision != (current.revision if current else 0):
-                        raise ValueError("Another version was saved while you were working. Compare and accept that version using Save progress before adding this report. Your open draft and upload are preserved.")
-                    base = working_draft
-                elif prior_import and prior_import.period == period and (not current or library.imported_snapshot_revision(contract, profile.key) == current.revision):
-                    # Bootstrap already includes this exact snapshot plus the
-                    # last acknowledged import. Appending the snapshot again
-                    # can resurrect its older text or duplicate edited tables.
-                    base = prior_import
                 from app.monthly_report_start_replay import merge_starting_drafts
+                if decisions:
+                    base = apply_replacements(base, draft, previous, decisions, **_conflict_context(current))
                 draft = merge_starting_drafts(base, draft, previous, verified=verified)
                 # Existing reviewed logos belong to the selected sites/contract.
                 # A starting report must not replace them with older artwork.
@@ -884,14 +1146,35 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
                           "inferred_source": asdict(analysis),
                           "items": [asdict(i) for i in inspection.items],
                           "section_plans": [{k: v for k, v in plan.items() if k not in ("new_assets", "preserved_assets")} for plan in plans.values()]}
+                if native_art_review is not None:
+                    review["native_art_review"] = native_art_review
                 # Normalize dataclass table values for the JSON audit record.
                 review["section_plans"] = [dict(plan, tables={k: asdict(v) for k, v in plan.get("tables", {}).items()}) for plan in review["section_plans"]]
-                library.save_report_setup(profile, draft, path, review, assets=tuple(assets.items()),
-                                          expected_revision=state.revision if state else 0, actor=actor, confirmed=True,
-                                          snapshot_revision=current.revision if current else 0, source_draft=source_draft)
+                if decisions:
+                    review["single_image_replacements"] = dict(decisions)
+                guard = snapshot_guard(profile, period, current.revision if current else 0,
+                                       current.draft.fingerprint if current else "") if decisions else nullcontext()
+                with guard:
+                    library.save_report_setup(profile, draft, path, review, assets=tuple(assets.items()),
+                                              expected_revision=state.revision if state else 0, actor=actor, confirmed=True,
+                                              snapshot_revision=current.revision if current else 0, source_draft=source_draft, source_view=source_view)
+                decisions.clear()
+                st.session_state[incarnation_key] = uuid4().hex
                 st.session_state["report_resume_import"] = (contract, profile.key, period.key)
                 st.session_state["report_setup_done"] = profile.key
+                # Only durable success retires this exact source-review task.
+                # Keep the receipt scoped to report/sites/month so its still
+                # mounted uploader cannot immediately recreate unsaved review.
+                # Failures retain the original staged source and every choice.
+                if st.session_state.get(prefix + "_stage") is staged:
+                    st.session_state.pop(prefix + "_stage", None)
+                    st.session_state.pop(original_token_key, None)
+                    if staged[0]:
+                        st.session_state[prefix + "_committed_upload_digest"] = inspection.sha256
+                        staged[0].cleanup()
             st.rerun()
         except (ValueError, OSError) as exc:
+            decisions.clear()
+            st.session_state[incarnation_key] = uuid4().hex
             st.error(str(exc))
     return True
