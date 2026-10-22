@@ -929,6 +929,7 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             from app.monthly_report_guided import _rich_text_scope
             if not isinstance(pending_edit, dict) or pending_edit.get("scope") != _rich_text_scope(prefix):
                 raise ValueError("This report changed after the page action was opened. Your current report is unchanged; review the page again.")
+            before_page_edit = {content.source.id: content.source for content in contents}
             contents, changes = apply_page_request(contents, blocks, pending_edit)
         except ValueError as exc:
             st.warning(str(exc))
@@ -939,6 +940,11 @@ def render_section_uploads(profile: ReportProfile, period: ReportPeriod, prefix:
             if isinstance(forms, dict):
                 for content in contents:
                     if content.source.id == pending_edit["source_id"]:
+                        # This exact accepted page action happened after the
+                        # source form was drawn. Carry its narrow revision
+                        # forward, without waiving an unrelated source edit.
+                        _acknowledge_managed_page_edit(
+                            before_page_edit[content.source.id], content.source, prefix)
                         forms[content.source.id] = content.source
             request = st.session_state.get(local_key + "_auto_include")
             if request and request["source_id"] == pending_edit["source_id"]:

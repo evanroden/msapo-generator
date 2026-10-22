@@ -151,7 +151,7 @@ def browser_task(browser_type, name):
         date_link.click()
         expect(page.get_by_role("button", name="Done with source files", exact=True)).to_be_visible()
         files = page.locator('[data-testid="stSelectbox"]').filter(has_text="File to review")
-        expect(files).to_contain_text("synthetic-activity.txt")
+        expect(files.get_by_role("combobox")).to_have_value("synthetic-activity.txt")
         disclosure = source_panel.locator("details")
         expect(disclosure).to_have_count(1)
         disclosure.locator(":scope > summary").click()
