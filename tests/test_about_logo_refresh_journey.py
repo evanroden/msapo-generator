@@ -1,12 +1,93 @@
 """Local non-browser guards; native engine acceptance remains a separate run."""
 from pathlib import Path
 import json
+import os
+import signal
+import subprocess
+import sys
+from xml.etree import ElementTree
 from dataclasses import replace
 import pytest
 from streamlit.testing.v1 import AppTest
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = 'a3' * 16
+
+
+def validate_child_receipt(path):
+    root = ElementTree.parse(path).getroot()
+    suites = root.findall('.//testsuite')
+    cases = root.findall('.//testcase')
+    assert len(suites) == 1 and len(cases) == 1, 'Expected exactly one executed child test'
+    assert suites[0].attrib['tests'] == '1'
+    for name in ('failures', 'errors', 'skipped'):
+        assert suites[0].attrib[name] == '0', 'Child test did not pass: ' + name
+    assert not any(cases[0].find(name) is not None for name in ('failure', 'error', 'skipped'))
+
+
+def run_app_test_child(node, tmp_path):
+    log = tmp_path / 'child-pytest.log'
+    receipt = tmp_path / 'child-results.xml'
+    timed_out = False
+    with log.open('w') as output:
+        process = subprocess.Popen(
+            [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider',
+             '--basetemp', str(tmp_path / 'child-pytest'),
+             '--junitxml', str(receipt), node],
+            cwd=ROOT, env=dict(os.environ, EPC_ABOUT_APPTEST_CHILD=node),
+            stdout=output, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+        )
+        def stop_group(sig):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                pass
+        try:
+            process.wait(timeout=180)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            stop_group(signal.SIGTERM)
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        finally:
+            # The group leader may exit before a TERM-resistant descendant.
+            # Always retire the owned group and reap its leader, even on failure.
+            stop_group(signal.SIGKILL)
+            process.wait(timeout=5)
+    details = log.read_text()
+    assert not timed_out, 'AppTest child exceeded 180 seconds:\n' + details
+    assert process.returncode == 0, details
+    validate_child_receipt(receipt)
+
+
+@pytest.fixture
+def app_test_process(request, tmp_path):
+    """The standalone fixture owns irreversible audit hooks: isolate its process.
+
+    Re-enter only this selected test in a disposable child, preserving all real
+    assertions and native output generation. Parent tests never execute the app.
+    """
+    node = request.node.nodeid
+    if os.environ.get('EPC_ABOUT_APPTEST_CHILD') == node:
+        return True
+    from app import monthly_report_ai, ocr, smartsheet
+    targets = ((monthly_report_ai, 'request_json'), (ocr, '_ocr_request'),
+               (smartsheet, 'submit_po'))
+    originals = [getattr(module, name) for module, name in targets]
+    missing = object()
+    names = ('_monthly_dom_guard_installed', '_monthly_dom_attempts', 'addaudithook')
+    original_sys = {name: getattr(sys, name, missing) for name in names}
+    run_app_test_child(node, tmp_path)
+    for (module, name), original in zip(targets, originals):
+        assert getattr(module, name) is original
+    for name, original in original_sys.items():
+        assert getattr(sys, name, missing) is original
+    # Audit events only, never actual network: the parent must have no leaked deny.
+    sys.audit('socket.connect', None, ('203.0.113.1', 443))
+    sys.audit('socket.getaddrinfo', 'synthetic.invalid', 443, 0, 0, 0)
+    return False
 
 
 def app_for(monkeypatch, tmp_path, mode):
@@ -41,7 +122,9 @@ def receipt(app):
 
 
 @pytest.mark.parametrize('mode', ['imported', 'custom', 'omit'])
-def test_real_guided_setup_passive_explicit_and_recovery(monkeypatch, tmp_path, mode):
+def test_real_guided_setup_passive_explicit_and_recovery(monkeypatch, tmp_path, mode, app_test_process):
+    if not app_test_process:
+        return
     from scripts.workspace_history_observations import storage_state
     app = app_for(monkeypatch, tmp_path, mode)
     before = receipt(app)
@@ -67,7 +150,9 @@ def test_real_guided_setup_passive_explicit_and_recovery(monkeypatch, tmp_path, 
     assert latest['live_library_absent']
 
 
-def test_setup_rejects_existing_namespace_and_bad_mode(monkeypatch, tmp_path):
+def test_setup_rejects_existing_namespace_and_bad_mode(monkeypatch, tmp_path, app_test_process):
+    if not app_test_process:
+        return
     from app.monthly_report_testing import isolated
     from scripts.workspace_logo_refresh_observations import setup
     app_for(monkeypatch, tmp_path, 'custom')
@@ -90,7 +175,9 @@ from conftest import requires_libreoffice
 
 @requires_libreoffice
 @pytest.mark.parametrize('mode', ['imported', 'custom', 'omit'])
-def test_actual_native_output_assertions_before_and_after_refresh(monkeypatch, tmp_path, mode):
+def test_actual_native_output_assertions_before_and_after_refresh(monkeypatch, tmp_path, mode, app_test_process):
+    if not app_test_process:
+        return
     from scripts.qa_about_logo_refresh import validate_native_outputs
     from scripts.workspace_logo_refresh_observations import artwork
     app = app_for(monkeypatch, tmp_path, mode)
@@ -193,3 +280,60 @@ else:
     raise AssertionError('Native acceptance must not silently skip missing Playwright')
 """
     subprocess.run([sys.executable, "-c", code], check=True, timeout=30)
+
+
+def test_child_fixture_keeps_process_wide_guards_strict(monkeypatch, tmp_path, app_test_process):
+    if not app_test_process:
+        return
+    from app import monthly_report_ai, ocr, smartsheet
+    app_for(monkeypatch, tmp_path, 'custom')
+    for call in (monthly_report_ai.request_json, ocr._ocr_request, smartsheet.submit_po):
+        with pytest.raises(AssertionError, match='Synthetic Monthly DOM fixture blocked'):
+            call()
+    with pytest.raises(AssertionError, match='blocked external network'):
+        sys.audit('socket.connect', None, ('203.0.113.1', 443))
+    with pytest.raises(AssertionError, match='blocked external network'):
+        sys.audit('socket.getaddrinfo', 'synthetic.invalid', 443, 0, 0, 0)
+
+
+@pytest.mark.parametrize('timeout,exit_code', [(False, 1), (True, 0)])
+def test_child_failure_or_timeout_fails_parent_and_reaps_group(monkeypatch, tmp_path, timeout, exit_code):
+    from types import SimpleNamespace
+    signals, waits = [], []
+    process = SimpleNamespace(pid=123456, returncode=exit_code)
+    def wait(*, timeout):
+        waits.append(timeout)
+        if len(waits) == 1 and should_timeout:
+            raise subprocess.TimeoutExpired('synthetic pytest child', timeout)
+        return process.returncode
+    should_timeout = timeout
+    process.wait = wait
+    def launch(command, **kwargs):
+        assert command[-1] == 'synthetic-node'
+        assert kwargs['env']['EPC_ABOUT_APPTEST_CHILD'] == 'synthetic-node'
+        assert kwargs['start_new_session'] is True
+        kwargs['stdout'].write('synthetic first-failure evidence')
+        return process
+    monkeypatch.setattr(subprocess, 'Popen', launch)
+    monkeypatch.setattr(os, 'killpg', lambda pid, sig: signals.append((pid, sig)))
+    with pytest.raises(AssertionError, match='synthetic first-failure evidence'):
+        run_app_test_child('synthetic-node', tmp_path)
+    assert signals == ([(123456, signal.SIGTERM)] if timeout else []) + [(123456, signal.SIGKILL)]
+    assert waits == ([180, 5, 5] if timeout else [180, 5])
+    assert (tmp_path / 'child-pytest.log').read_text() == 'synthetic first-failure evidence'
+
+
+@pytest.mark.parametrize('tests,failures,errors,skipped', [
+    (1, 0, 0, 0), (0, 0, 0, 0), (2, 0, 0, 0),
+    (1, 1, 0, 0), (1, 0, 1, 0), (1, 0, 0, 1),
+])
+def test_child_receipt_requires_one_executed_pass(tmp_path, tests, failures, errors, skipped):
+    receipt = tmp_path / 'child-results.xml'
+    receipt.write_text(f'<testsuites><testsuite tests="{tests}" failures="{failures}" '
+                       f'errors="{errors}" skipped="{skipped}"><testcase name="synthetic"/>'
+                       '</testsuite></testsuites>')
+    if (tests, failures, errors, skipped) == (1, 0, 0, 0):
+        validate_child_receipt(receipt)
+    else:
+        with pytest.raises(AssertionError):
+            validate_child_receipt(receipt)
