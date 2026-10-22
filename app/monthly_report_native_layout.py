@@ -1647,6 +1647,14 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_text import (narrative_prototype, write_narrative,
                                                  header_contains_label)
     narrative_styles = {style.style_id: style.element for style in document.styles}
+    # Freeze role boundaries before source text is cleared. Typography borrowing
+    # must never look across a native section or independently mapped block.
+    narrative_scopes = {
+        element: (section_by_pos[position], next((item.suggested_slot for item in items[position]
+            if item.suggested_slot and not item.suggested_slot.startswith('divider_')),
+            _DEFAULT_TEXT.get(section_by_pos[position])))
+        for position, element in enumerate(original, 1)
+    }
     text_prototypes = defaultdict(list)
     image_prototypes = defaultdict(list)
     table_prototypes = defaultdict(list)
@@ -1664,7 +1672,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     global_text = [prototype for position, e in enumerate(original, 1)
                    if section_by_pos[position] != "cover" and position not in headings
                    and e.tag == qn("w:p")
-                   and (prototype := narrative_prototype(e, narrative_styles, _STATIC)) is not None]
+                   and (prototype := narrative_prototype(e, narrative_styles, _STATIC, scopes=narrative_scopes)) is not None]
     for position, element in enumerate(original, 1):
         sec = section_by_pos[position]
         if element.tag == qn('w:sectPr'):
@@ -1774,7 +1782,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 page_plan.support.add(element)
             else:
                 label = re.fullmatch(r"(Client Utility Rate Analysis)(?:\s+Author:.*)?", text, re.IGNORECASE)
-                prototype = None if label else narrative_prototype(element, narrative_styles, _STATIC)
+                prototype = None if label else narrative_prototype(element, narrative_styles, _STATIC, scopes=narrative_scopes)
                 if prototype is not None:
                     text_prototypes[slot].append((element, prototype))
                     section_text[sec].append(deepcopy(prototype))

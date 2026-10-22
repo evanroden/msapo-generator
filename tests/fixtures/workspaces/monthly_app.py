@@ -113,6 +113,10 @@ if os.environ.get("EPC_MONTHLY_LOGO_ADMIN_TASK") == "1":
             st.caption("QA healthy logo unchanged: " + str(checks["Healthy logo and mapping unchanged"]).lower())
             unchanged = checks["Original readable history unchanged"] and checks["Damaged collection history unchanged"]
             st.caption("QA original histories unchanged: " + str(unchanged).lower())
+            import json
+            st.caption("QA catalog receipt: " + json.dumps({"revision": current.revision,
+                "asset": current.logos[0].asset,
+                "healthy": checks["Healthy logo and mapping unchanged"], "history": unchanged}, sort_keys=True))
     st.stop()
 
 from scripts.workspace_browser_observations import install_synthetic_observations, emit_snapshot

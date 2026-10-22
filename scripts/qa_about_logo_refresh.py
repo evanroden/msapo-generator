@@ -4,6 +4,7 @@ Uses the existing marked/cookie-isolated actual guided fixture. No force click,
 backend mutation after explicit sample setup, public route, retry, or live catalog.
 Native outputs use the real builder/converter, not a shared-version save action.
 """
+from contextlib import contextmanager, ExitStack
 from hashlib import sha256
 from io import BytesIO
 import json
@@ -192,12 +193,30 @@ def exercise(engine, engine_name, mode, base):
         context.close(); browser.close()
 
 
+@contextmanager
+def controller_environment(base):
+    """Bind controller observations to the same newly marked disposable root."""
+    from scripts.workspace_browser_observations import require_synthetic_root
+    previous = {key: os.environ.get(key) for key in ('EPC_DATA_DIR', 'EPC_MONTHLY_DOM_FIXTURE')}
+    try:
+        os.environ.update(EPC_DATA_DIR=str(base), EPC_MONTHLY_DOM_FIXTURE='1')
+        require_synthetic_root(base)  # Missing/invalid marker remains a hard failure.
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     failures = []
-    with tempfile.TemporaryDirectory(prefix='about-logo-synthetic-') as temp:
+    with tempfile.TemporaryDirectory(prefix='about-logo-synthetic-') as temp, ExitStack() as controller:
         base = Path(temp)
         (base / 'monthly-dom-synthetic-only.marker').write_text('synthetic-monthly-dom-v1')
+        controller.enter_context(controller_environment(base))
         env = dict(os.environ, EPC_DATA_DIR=temp, EPC_MONTHLY_DOM_FIXTURE='1', EPC_MONTHLY_LOGO_REFRESH_TASK='1',
             ANTHROPIC_API_KEY='', SMARTSHEET_API_MODE='disabled', PYTHONDONTWRITEBYTECODE='1')
         env.pop('EPC_MONTHLY_DOM_APPTEST', None)

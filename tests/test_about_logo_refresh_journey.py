@@ -141,3 +141,33 @@ def test_native_wait_requires_fresh_exact_scope_generation_and_durable_choice():
         assert not predicate(changed, wanted)
     changed = deepcopy(state); changed['durable']['without_logo'] = 'different'
     assert not predicate(changed, wanted)
+
+
+@pytest.mark.parametrize("marker", [None, "wrong-marker"])
+def test_controller_environment_does_not_relax_disposable_marker(tmp_path, monkeypatch, marker):
+    import os
+    from scripts.qa_about_logo_refresh import controller_environment
+    monkeypatch.setenv("EPC_DATA_DIR", "original-root")
+    monkeypatch.delenv("EPC_MONTHLY_DOM_FIXTURE", raising=False)
+    if marker is not None:
+        (tmp_path / "monthly-dom-synthetic-only.marker").write_text(marker)
+    with pytest.raises(ValueError):
+        with controller_environment(tmp_path):
+            pytest.fail("Invalid disposable root was accepted")
+    assert os.environ["EPC_DATA_DIR"] == "original-root"
+    assert "EPC_MONTHLY_DOM_FIXTURE" not in os.environ
+
+
+def test_controller_observations_share_marked_server_environment_and_restore(tmp_path, monkeypatch):
+    import os
+    from scripts.qa_about_logo_refresh import controller_environment
+    from scripts.workspace_browser_observations import require_synthetic_root
+    monkeypatch.setenv("EPC_DATA_DIR", "original-root")
+    monkeypatch.setenv("EPC_MONTHLY_DOM_FIXTURE", "original-value")
+    (tmp_path / "monthly-dom-synthetic-only.marker").write_text("synthetic-monthly-dom-v1")
+    with controller_environment(tmp_path):
+        assert os.environ["EPC_DATA_DIR"] == str(tmp_path)
+        assert os.environ["EPC_MONTHLY_DOM_FIXTURE"] == "1"
+        require_synthetic_root(tmp_path)
+    assert os.environ["EPC_DATA_DIR"] == "original-root"
+    assert os.environ["EPC_MONTHLY_DOM_FIXTURE"] == "original-value"

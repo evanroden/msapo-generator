@@ -219,3 +219,44 @@ def test_failed_retained_asset_validation_installs_nothing(catalog,damage):
            for p in library._root().rglob('*') if p.is_file() and p.name!='.write-lock'}
     assert after==before
     assert branding.load_branding()==state
+
+
+@pytest.mark.parametrize("zone", ["America/New_York", "Pacific/Honolulu", None])
+def test_review_date_uses_operator_timezone_and_fallback(catalog, monkeypatch, zone):
+    from datetime import date
+    from app import config
+    import streamlit as st
+    seen = []
+    monkeypatch.setattr(type(st.context), "timezone", property(lambda self: zone))
+    def today(browser_timezone=None):
+        seen.append(browser_timezone)
+        return date(2026, 10, 21)
+    monkeypatch.setattr(config, "operator_today", today)
+    _, _, raw = catalog
+    app, _ = app_with_upload(monkeypatch, raw)
+    assert not app.exception and seen and set(seen) == {zone}
+    assert next(d for d in app.date_input if d.label == "Artwork reviewed on").value == date(2026, 10, 21)
+
+
+def test_cleared_review_date_contains_error_and_preserves_history(catalog, monkeypatch):
+    state, _, raw = catalog
+    app, _ = app_with_upload(monkeypatch, raw)
+    confirmation = next(c for c in app.checkbox if c.label.startswith("I reviewed this replacement"))
+    confirmation.check().run()
+    next(d for d in app.date_input if d.label == "Artwork reviewed on").set_value(None).run()
+    assert not app.exception
+    assert any("Enter the date" in c.value for c in app.caption)
+    assert not any(b.label == "Replace selected logo" for b in app.button)
+    assert app.selectbox("report_branding_history")
+    assert branding.load_branding() == state
+
+
+@pytest.mark.parametrize("changed", [
+    {"revision": 4}, {"asset": "unexpected.png"}, {"healthy": False}, {"history": False},
+])
+def test_native_catalog_receipt_rejects_wrong_revision_asset_or_invariant(changed):
+    from scripts.qa_single_logo_admin import validate_catalog_state
+    state = {"revision": 5, "asset": "expected.png", "healthy": True, "history": True}
+    assert validate_catalog_state(state, 5, "expected.png") == state
+    with pytest.raises(AssertionError):
+        validate_catalog_state({**state, **changed}, 5, "expected.png")

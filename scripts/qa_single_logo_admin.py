@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from urllib.parse import urlparse, quote
 import urllib.request
 
@@ -74,10 +75,25 @@ def native_negative_controls(context):
         guard.close()
     return outcomes
 
-def revision(page, value):
-    expect(page.get_by_text("QA shared-logo revision: "+str(value),exact=True)).to_be_visible()
-    expect(page.get_by_text("QA healthy logo unchanged: true",exact=True)).to_be_visible()
-    expect(page.get_by_text("QA original histories unchanged: true",exact=True)).to_be_visible()
+def validate_catalog_state(state, value, asset=None):
+    assert state['revision'] == value and state['healthy'] is True and state['history'] is True
+    if asset is not None:
+        assert state['asset'] == asset
+    return state
+
+
+def revision(page, value, asset=None):
+    # Revision, asset and invariants are one server-rendered node; do not read
+    # an old neighboring asset caption while a new revision is mounting.
+    receipt = page.get_by_text(re.compile(r"^QA catalog receipt: "))
+    expect(receipt).to_contain_text('"revision": ' + str(value) + '}')
+    expect(receipt).to_contain_text('"healthy": true')
+    expect(receipt).to_contain_text('"history": true')
+    if asset is not None:
+        expect(receipt).to_contain_text('"asset": "' + asset + '"')
+    idle(page)
+    state = json.loads(receipt.text_content().split("QA catalog receipt: ", 1)[1])
+    return validate_catalog_state(state, value, asset)
 
 
 def open_panel(page,label):
@@ -161,8 +177,8 @@ def exercise(engine,name,executable=None):
         actor=page.get_by_role("textbox",name="Logo editor name",exact=True)
         actor_value(page, "Synthetic browser reviewer")
         record["stage"]="restore readable history"
-        restore(page); revision(page,3)
-        baseline=page.get_by_text(re.compile(r"^QA selected logo asset: ")).text_content()
+        restore(page); baseline=revision(page,3)["asset"]
+        record["baseline_asset"] = baseline
         record["stage"]="review and invalidate changed actor"
         confirm=review(page,raw);approve_review(page)
         actor_value(page, "Changed synthetic reviewer")
@@ -187,10 +203,10 @@ def exercise(engine,name,executable=None):
         expect(save).to_be_enabled()
         page.screenshot(path=str(out/"before-save.png"),full_page=True)
         save.dblclick()
-        revision(page,4)
-        replacement=page.get_by_text(re.compile(r"^QA selected logo asset: ")).text_content()
-        assert replacement!=baseline
-        page.reload();revision(page,4)
+        replacement=revision(page,4)["asset"]
+        record["replacement_asset"] = replacement
+        assert replacement!=baseline, "Reviewed replacement did not change the original asset"
+        page.reload();revision(page,4, replacement)
         record["stage"]="stale second-tab save after another tab restores"
         stale=context.new_page();stale.set_default_timeout(30000);stale.goto(ROUTE);revision(stale,4)
         old_actor=stale.get_by_role("textbox",name="Logo editor name",exact=True)
@@ -198,17 +214,23 @@ def exercise(engine,name,executable=None):
         stale_confirm=review(stale,raw);approve_review(stale)
         old_save=stale.get_by_role("button",name="Replace selected logo",exact=True)
         expect(old_save).to_be_enabled()
-        restore(page);revision(page,5)
-        assert page.get_by_text(re.compile(r"^QA selected logo asset: ")).text_content()==baseline
-        old_save.click();revision(stale,5)
-        assert stale.get_by_text(re.compile(r"^QA selected logo asset: ")).text_content()==baseline
-        page.reload();revision(page,5)
-        assert page.get_by_text(re.compile(r"^QA selected logo asset: ")).text_content()==baseline
+        record["stage"]="restore original in first tab"
+        restore(page);revision(page,5,baseline)
+        record["stage"]="reject stale second-tab save"
+        old_save.click();revision(stale,5,baseline)
+        record["stage"]="verify restored asset after reload"
+        page.reload();revision(page,5,baseline)
         page.screenshot(path=str(out/"restored-after-stale-save.png"),full_page=True)
         assert not errors and not external
         record.update(result="passed",revision=5)
     except Exception as exc:
-        record.update(result="failed",error=type(exc).__name__+": "+str(exc)[:2000])
+        record.update(result="failed",error=type(exc).__name__+": "+str(exc)[:2000], traceback=traceback.format_exc())
+        record["catalog_receipts_at_failure"] = []
+        for open_page in context.pages:
+            try:
+                record["catalog_receipts_at_failure"].append(open_page.get_by_text(re.compile(r"^QA catalog receipt: ")).all_text_contents())
+            except Exception as diagnostic_error:
+                record["catalog_receipts_at_failure"].append(type(diagnostic_error).__name__)
         page.screenshot(path=str(out/"first-failure.png"),full_page=True)
         raise
     finally:
