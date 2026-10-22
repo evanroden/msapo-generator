@@ -96,7 +96,13 @@ if os.environ.get("EPC_MONTHLY_LOGO_ADMIN_TASK") == "1":
         if current:
             _, checks = check_sample()
             st.caption("QA shared-logo revision: " + str(current.revision))
-            st.caption("QA inspected logo: " + st.session_state.get("report_branding_preview_", ""))
+            from app.monthly_report_editor import _signature
+            inspected = st.session_state.get("report_branding_preview_", "")
+            st.caption("QA inspected logo: " + inspected)
+            st.caption("QA logo editor: " + st.session_state.get("report_branding_actor", ""))
+            st.caption("QA selected history: " + str(st.session_state.get("report_branding_history", "")))
+            note_key = "report_single_logo_" + _signature((inspected, current.revision)) + "_note"
+            st.caption("QA source note: " + st.session_state.get(note_key, ""))
             st.caption("QA selected logo asset: " + current.logos[0].asset)
             st.caption("QA healthy logo unchanged: " + str(checks["Healthy logo and mapping unchanged"]).lower())
             unchanged = checks["Original readable history unchanged"] and checks["Damaged collection history unchanged"]

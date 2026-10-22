@@ -16,6 +16,8 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_sidebar_navigation.py'
+      - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
@@ -158,6 +160,8 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_sidebar_navigation.py'
+      - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
@@ -440,6 +444,22 @@ jobs:
           node --test tests/preview_commit_gate_test.cjs
           python scripts/qa_adaptive_workspaces.py
           NATIVE_TEST
+      - name: Native sidebar visibility and pointer/keyboard navigation
+        if: ${{ !cancelled() }}
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_sidebar_navigation.py
+          NATIVE_TEST
+      - name: Upload native sidebar evidence immediately, including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-sidebar-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/sidebar-navigation/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
         timeout-minutes: 26
@@ -512,6 +532,15 @@ jobs:
           python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
           python scripts/qa_single_logo_admin.py
           NATIVE_TEST
+      - name: Upload shared-logo evidence immediately, including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-logo-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/single-logo-admin/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Water page management across desktop and narrow browser with actual output
         if: ${{ !cancelled() }}
         env:
@@ -560,6 +589,7 @@ jobs:
           name: adaptive-synthetic-browser-evidence
           path: |
             test-artifacts/adaptive-workspaces/
+            test-artifacts/sidebar-navigation/
             test-artifacts/expense-adaptive/
             test-artifacts/po-adaptive/
             test-artifacts/monthly-adaptive/
