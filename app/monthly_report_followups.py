@@ -456,8 +456,12 @@ def _capture_followup_controls(draft, prefix, category, options):
                 "source_labels": {ref: options[ref] for ref in revised.references if ref in options},
             }
         result.append(revised)
-    for key in sorted(k for k in st.session_state
-                      if k.startswith(prefix + "_rejected_" + category + "_receipt_")):
+    rejected = sorted(k for k in st.session_state
+                      if k.startswith(prefix + "_rejected_" + category + "_receipt_"))
+    if rejected:
+        st.warning("A proposal item changed before an earlier input could be applied. "
+                   "The current proposal was kept; review the recovered input below.")
+    for key in rejected:
         _render_rejected_followup_receipt(key, st.session_state[key])
     return replace(draft, follow_ups=tuple(result))
 
