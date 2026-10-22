@@ -90,7 +90,7 @@ with install():
 
 
 def submit(app):
-    return next(b for b in app.button if b.label.startswith('Confirm these'))
+    return next(b for b in app.button if b.label.startswith(('Confirm these', 'Confirm this')))
 
 
 def test_frontend_emulator_does_not_escape_each_apptest_rerun():
@@ -123,7 +123,7 @@ def test_server_receipts_for_21_pictures_take_four_emulated_submissions_not_21()
         submit(app).click().run()
     assert not app.exception
     assert not pending_asset_indexes(app.session_state.draft.blocks[0])
-    assert not any(b.label.startswith('Confirm these') for b in app.button)
+    assert not any(b.label.startswith(('Confirm these', 'Confirm this')) for b in app.button)
 
 
 def test_deferred_form_switch_has_no_approval_until_submit():
@@ -180,7 +180,7 @@ def test_truncated_raster_is_not_approvable_by_group_or_fallback():
     app.session_state.draft=draft;app.session_state.assets={ref:raw};app.run()
     assert not app.exception
     assert pending_asset_indexes(app.session_state.draft.blocks[0])==(0,)
-    assert not any(b.label.startswith('Confirm these') for b in app.button)
+    assert not any(b.label.startswith(('Confirm these', 'Confirm this')) for b in app.button)
     assert any(b.label.startswith('Remove picture') for b in app.button)
     assert any('cannot be safely displayed' in w.value for w in app.warning)
 
@@ -344,7 +344,7 @@ def test_unsafe_first_correction_can_be_skipped_without_consent_and_cycles(monke
     app.session_state.assets=assets
     app.run()
     assert not app.exception
-    assert not any(b.label.startswith('Confirm these') for b in app.button)
+    assert not any(b.label.startswith(('Confirm these', 'Confirm this')) for b in app.button)
     original_navigation=app.session_state['synthetic_picture_correction_active']
     next(b for b in app.button if b.label=='Next picture to correct').click().run()
     assert not app.exception
@@ -367,3 +367,20 @@ def test_unsafe_first_correction_can_be_skipped_without_consent_and_cycles(monke
     batch._queue_component('synthetic',visible,'old_component')
     assert 'synthetic_picture_batch_request' not in state
     assert 'synthetic_picture_remove_request' not in state
+
+
+@pytest.mark.parametrize('count',[1,2])
+def test_review_heading_and_button_use_singular_or_plural(count):
+    app=AppTest.from_string(APP.replace('sample(21)',f'sample({count})')).run()
+    assert not app.exception
+    expected='**Check this picture**' if count==1 else '**Check these 2 pictures**'
+    assert any(item.value==expected for item in app.markdown)
+    assert submit(app).label==('Confirm this picture is ready (unless left for correction)' if count==1 else
+                              'Confirm these 2 pictures are ready (except those left for correction)')
+
+
+@pytest.mark.parametrize('remaining',[1,2])
+def test_remaining_count_uses_singular_or_plural(remaining):
+    app=AppTest.from_string(APP.replace('sample(21)',f'sample({6+remaining})')).run()
+    expected=('1 other picture still needs review.' if remaining==1 else '2 other pictures still need review.')
+    assert any(item.value.startswith(expected) for item in app.caption)

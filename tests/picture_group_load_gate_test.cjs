@@ -43,3 +43,7 @@ test('old cleanup, decode and click cannot submit after rerender/reopen',async()
 });
 
 test('off-origin and malformed media never load or approve',()=>{for(const url of ['https://evil.invalid/media/'+ 'a'.repeat(32)+'.png','//evil.invalid/media/x.png','/other/path.png']){const c=setup(1);c.render({...c.component,data:{...c.component.data,pictures:[{title:'x',context:'x',url}]}});assert.equal(c.root.children.at(-1).disabled,true);assert.equal(c.root.children[0].children[2].src,undefined);}});
+
+test('confirmation labels use singular and plural without changing load guards',()=>{
+ for(const n of [1,2]){const c=setup(n);assert.equal(c.button.textContent,n===1?'Confirm this picture is ready (unless left for correction)':'Confirm these 2 pictures are ready (except those left for correction)');assert.equal(c.button.disabled,true);}
+});

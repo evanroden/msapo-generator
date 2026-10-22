@@ -273,7 +273,7 @@ def review_picture_batch(draft, assets, prefix, field, *, incarnation):
         if not active or active['identity'] != identity or active['entries'] != selected:
             active = {'identity': identity, 'entries': selected, 'nonce': uuid4().hex}
         st.session_state[active_key] = active
-        st.markdown(f'**Check these {len(selected)} pictures**')
+        st.markdown('**Check this picture**' if len(selected) == 1 else f'**Check these {len(selected)} pictures**')
         st.caption(f'{draft.profile.title} · {draft.period.label}')
         st.caption('Inspect every picture for the selected sites and for visible prices, private information, or legal-only, blank or signature-only pages. Leave doubtful pictures for correction.')
         from app.monthly_report_sections import readable_label
@@ -304,7 +304,9 @@ def review_picture_batch(draft, assets, prefix, field, *, incarnation):
         st.session_state.pop(remove_key, None)
     pending_count = sum(len(pending_asset_indexes(b)) for b in draft.blocks if b.key in used_block_keys(draft) and b.source != 'Omit')
     if pending_count > len(selected):
-        st.caption(f'{pending_count - len(selected)} other pictures still need review. The next group appears after confirmation.')
+        remaining = pending_count - len(selected)
+        noun = 'picture still needs' if remaining == 1 else 'pictures still need'
+        st.caption(f'{remaining} other {noun} review. The next group appears after confirmation.')
     elif not pending_count:
         st.caption('All included pictures are ready. Change pictures in their report sections if needed.')
     return draft
