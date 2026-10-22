@@ -2214,8 +2214,12 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     continue
                 rid, image = part.get_or_add_image(BytesIO(asset_loader(logo.asset_hashes[0])))
                 for node, attr in header_bindings[source_item.id]:
+                    original_bytes = part.related_parts[node.get(attr)].blob
                     node.set(attr, rid)
-                    if explicit_roles == {role}:
+                    # Replacement authority is already established here. Fit
+                    # changed catalog bytes too, but retain an unmapped native
+                    # crop when raw PNG bytes already match the chosen asset.
+                    if explicit_roles == {role} or original_bytes != image.blob:
                         header_logo_replacements.append((node, image.px_width, image.px_height))
                     # Current client artwork is authorized at this occurrence,
                     # not at every source location containing equal bytes.
