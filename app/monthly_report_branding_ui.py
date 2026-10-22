@@ -108,7 +108,7 @@ def offer_logo(block, contract, prefix, assets):
 
 def _replace_selected_logo(current, key, actor):
     """Optional administration only; ordinary report creation has no new choice."""
-    from datetime import date
+    from app.config import operator_today
     from app.monthly_report_branding_replace import (
         prepare_replacement, replace_selected_logo,
     )
@@ -138,11 +138,14 @@ def _replace_selected_logo(current, key, actor):
                 # from reading the current logo remain fail-closed above.
                 st.error(str(exc))
                 return
-        checked = st.date_input("Artwork reviewed on", value=date.today(), key=prefix + "_date")
+        checked = st.date_input("Artwork reviewed on", value=operator_today(st.context.timezone), key=prefix + "_date")
         note = st.text_area("Artwork source and approval", value="", max_chars=900,
                             placeholder="Describe the owner-provided file and approved variant.",
                             key=prefix + "_note")
         st.caption("The official brand link is retained as a reference; this upload is recorded as owner-provided artwork.")
+        if checked is None:
+            st.caption("Enter the date this artwork was reviewed.")
+            return
         try:
             review = prepare_replacement(logo, current.revision, raw, actor=actor,
                                          checked_on=checked.isoformat(), source_note=note)
