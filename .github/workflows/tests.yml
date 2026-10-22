@@ -27,7 +27,9 @@ jobs:
       # exercises what production actually runs instead of quietly stepping
       # over it.
       - name: Install document renderers
+        timeout-minutes: 20
         run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libreoffice-writer \
