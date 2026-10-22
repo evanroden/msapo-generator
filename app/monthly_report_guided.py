@@ -443,12 +443,27 @@ def complete_guided_sections(draft):
 
 def _review_carried_update(block, period, prefix):
     from app.monthly_report_setup import carried_period, confirm_current_period
+    # Observe omitted/empty/accepted states too: returning to equal picture
+    # content must not revive a confirmation from an earlier incarnation.
+    marker = prefix + "_current_period_observation_" + block.key
+    identity = (_rich_text_scope(prefix), period.key, block.fingerprint)
+    observed = st.session_state.get(marker)
+    if not isinstance(observed, dict) or observed.get("identity") != identity:
+        observed = {"identity": identity, "token": uuid4().hex}
+        st.session_state[marker] = observed
     previous = carried_period(block, period)
     if previous is None:
         return block
     st.info(f"This update was carried from {previous.label}. Check its wording and any charts for {period.label} before including it.")
-    if st.button(f"This update is correct for {period.label}", key=prefix + "_current_period_" + block.key + "_" + block.fingerprint):
-        return confirm_current_period(block, period)
+    # Equal content in a replacement editor is not the same acknowledgement.
+    # Include the scope in the native widget identity, not only its callback.
+    key = prefix + "_current_period_" + block.key + "_" + observed["token"]
+    if st.button(f"This update is correct for {period.label}", key=key):
+        confirmed = confirm_current_period(block, period)
+        st.session_state[marker] = {
+            "identity": (*identity[:-1], confirmed.fingerprint), "token": uuid4().hex,
+        }
+        return confirmed
     return block
 
 
@@ -900,6 +915,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                 st.markdown("**" + label + "**")
                 if block_key == "equipment_issues":
                     st.caption("These photos belong to the section. Supporting source links above belong to the named issue.")
+                block = _review_carried_update(block, period, prefix)
                 current_blocks[block_key] = _edit_content(specs[block_key], block, state,
                     prefix, assets, field, current, edit_text=False, inline_photo_intake=True)
             return replace(current, blocks=tuple(current_blocks.values()))
