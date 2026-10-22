@@ -311,7 +311,9 @@ jobs:
           if-no-files-found: warn
   synthetic-progress-photos:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # Package transfer time is not browser test time. Keep both separately
+    # bounded, including the original 15-minute ceiling for the two tests.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -320,6 +322,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.lock
       - name: Install locked app and native Progress photos harness
+        timeout-minutes: 20
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libreoffice-writer
@@ -327,14 +330,17 @@ jobs:
           python scripts/patch_streamlit_frontend.py
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
-      - name: Browser image decode, error, retry and keyboard consent gates
+      - name: Browser consent gates and actual Progress photos Word/PDF journey
+        timeout-minutes: 15
         env:
           EPC_REQUIRE_PICTURE_BROWSER: '1'
-        run: python -m pytest tests/test_picture_group_browser.py -q
-      - name: Actual Progress photos edits, order, reload and Word/PDF
-        run: python scripts/qa_progress_photo_journey.py
+        run: |
+          set -e
+          python -m pytest tests/test_picture_group_browser.py -q
+          python scripts/qa_progress_photo_journey.py
       - name: Upload synthetic Progress photos evidence, including first failures
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: progress-photo-browser-evidence
