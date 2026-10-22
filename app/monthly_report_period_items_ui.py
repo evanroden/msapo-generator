@@ -22,6 +22,8 @@ def render_period_items(block, period, sources, prefix, *, section_title, editor
     st.markdown('<span id="period-items-' + escape(block.key, quote=True) + '"></span>', unsafe_allow_html=True)
     if pending:
         st.caption(section_title + " · Check these dated items for " + period.label)
+        st.caption('Keep as history adds “Historical context:” to this wording. '
+                   'Leave out removes it from this report only; originals stay unchanged.')
     for item in pending:
         identity = prefix + "_period_item_" + block.key + "_" + block.fingerprint + "_" + str(item.index)
         with st.container(border=True):
@@ -31,11 +33,11 @@ def render_period_items(block, period, sources, prefix, *, section_title, editor
             if labels:
                 st.caption("Source: " + "; ".join(labels))
             else:
-                st.caption("Entered report wording; no exact linked source passage was established.")
-            st.markdown("[Correct this wording or date in its editor](#" + editor_anchor + ")")
+                st.caption("No exact source passage linked.")
+            st.markdown("[Edit text](#" + editor_anchor + ")")
             left, right = st.columns(2)
-            history = left.button("Retain as historical context", key=identity + "_history", disabled=not item.historical_allowed)
-            excluded = right.button("Exclude this item from this report", key=identity + "_exclude")
+            history = left.button("Keep as history", key=identity + "_history", disabled=not item.historical_allowed)
+            excluded = right.button("Leave out", key=identity + "_exclude")
             if history or excluded:
                 try:
                     return resolve_item(block, period, item.index, "historical" if history else "exclude",
