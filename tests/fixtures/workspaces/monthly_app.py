@@ -82,6 +82,12 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_LOGO_REFRESH_TASK") == "1":
+    from scripts.workspace_logo_refresh_observations import render as render_logo_refresh
+    with isolated(token):
+        render_logo_refresh(base, token, _field, _move)
+    st.stop()
+
 if os.environ.get("EPC_MONTHLY_LOGO_ADMIN_TASK") == "1":
     if (st.query_params.get("monthly_qa") != "logo-recovery"
             or st.query_params.get("monthly_admin") != "logos"):

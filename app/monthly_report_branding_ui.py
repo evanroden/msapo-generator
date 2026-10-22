@@ -80,29 +80,57 @@ def render_branding(field):
                     st.error(str(exc))
 
 
-def offer_logo(block, contract, prefix, assets):
+def offer_logo(block, contract, prefix, assets, *, scope=None):
     """Explicit replacement in one draft; old/shared assets remain preserved."""
-    logo = branding.find_logo(contract, brand=block.key == "brand_logo")
-    if not logo or block.asset_hashes == (logo.asset,):
+    from uuid import uuid4
+    cycle_key = prefix + "_shared_logo_cycle_" + block.key
+    try:
+        current = branding.load_branding()
+        logo = branding.find_logo(contract, brand=block.key == "brand_logo", state=current) if current else None
+        if not logo or (block.source != "Omit" and block.asset_hashes == (logo.asset,)):
+            st.session_state.pop(cycle_key, None)
+            return block
+        raw = branding.read_logo(logo)
+    except (ValueError, KeyError, TypeError):
+        st.session_state.pop(cycle_key, None)
+        st.caption("Shared logo unavailable. This report’s artwork stays unchanged.")
         return block
     from dataclasses import replace
+    identity = _signature((scope, contract, block.fingerprint, current.revision, logo))
+    cycle = st.session_state.get(cycle_key)
+    if not isinstance(cycle, dict) or cycle.get("identity") != identity:
+        cycle = {"identity": identity, "token": uuid4().hex}
+        st.session_state[cycle_key] = cycle
     with st.container(border=True):
         from app.monthly_report_branding_replace import OWNER_VARIANT_PREFIX
         review_label = ("owner-provided artwork reviewed" if logo.source_note.startswith(OWNER_VARIANT_PREFIX)
                         else "official source checked")
         st.caption(f"Available: {logo.title} · {review_label} {logo.checked_on}")
-        st.image(branding.read_logo(logo), width=240)
+        st.image(raw, width=240)
+        st.caption("Optional: changes this draft only. Saved reports and shared defaults stay unchanged.")
         label = "Use this logo in this report" if block.asset_hashes else "Add this logo to this report"
-        if st.button(label, key=prefix + "_official_" + block.key + "_" + logo.asset):
+        use = st.button(label, key=prefix + "_official_" + block.key + "_" + cycle["token"])
+        if use and st.session_state.get(cycle_key) == cycle:
+            try:
+                latest = branding.load_branding()
+            except (ValueError, KeyError, TypeError):
+                latest = None
+            if latest != current:
+                st.session_state.pop(cycle_key, None)
+                st.warning("The shared logos changed. Review the current logo again.")
+                return block
             from app.monthly_report_model import picture_replacement_references
-            assets[logo.asset] = branding.read_logo(logo)
-            block = replace(block, source="Replace once", asset_hashes=(logo.asset,), asset_captions=(),
+            block = replace(block, source="Replace once", pending_library_save=False,
+                            asset_hashes=(logo.asset,), asset_captions=(),
                             references=picture_replacement_references(block),
                             client_reviewed_fingerprint="", client_asset_reviews=(), asset_provenance=((logo.asset, ()),))
             # Selecting verified artwork from the reviewed shared collection
             # does not require another pricing/page review in this report.
             from app.monthly_report_asset_review import approve_all_assets
-            return approve_all_assets(block)
+            block = approve_all_assets(block)
+            assets[logo.asset] = raw
+            st.session_state.pop(cycle_key, None)
+            return block
     return block
 
 
