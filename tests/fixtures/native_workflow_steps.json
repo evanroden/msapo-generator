@@ -93,6 +93,9 @@
       "commands": "          python scripts/qa_sidebar_navigation.py\n"
     },
     {
+      "raw": "      - name: Upload native sidebar evidence immediately, including first failures\n        if: always()\n        uses: actions/upload-artifact@v4\n        with:\n          name: native-sidebar-browser-evidence-${{ github.run_attempt }}\n          path: test-artifacts/sidebar-navigation/\n          retention-days: 7\n          if-no-files-found: warn\n"
+    },
+    {
       "raw": "      - name: Actual Expense workflow with isolated synthetic inputs\n        if: ${{ !cancelled() }}\n        run: python scripts/qa_expense_adaptive.py\n",
       "before": "      - name: Actual Expense workflow with isolated synthetic inputs\n        if: ${{ !cancelled() }}\n",
       "commands": "          python scripts/qa_expense_adaptive.py\n"

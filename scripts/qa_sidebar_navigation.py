@@ -50,9 +50,30 @@ def inspect_opener(page):
         return {visibility: getComputedStyle(node).visibility,
             display: getComputedStyle(node).display, tag: node.tagName,
             rect: r.toJSON(), ownsHit: !!hit && node.contains(hit),
+            hit: hit ? {tag: hit.tagName, testid: hit.getAttribute('data-testid')} : null,
+            sidebar: (() => {
+                const sidebar = document.querySelector('[data-testid="stSidebar"]');
+                return {expanded: sidebar?.getAttribute('aria-expanded'),
+                    rect: sidebar?.getBoundingClientRect().toJSON()};
+            })(),
             inViewport: r.width > 0 && r.height > 0 && r.x >= 0 && r.y >= 0 &&
                 r.right <= innerWidth && r.bottom <= innerHeight};
     }""")
+
+
+def actionable_opener(page, record):
+    """Keep the hit-test gate, but allow the native sidebar transition to finish.
+
+    The retained 390px failure showed aria-expanded=false before the sidebar
+    stopped covering the opener. A trial click waits for ordinary visibility,
+    stability and event reception without dispatching a click or changing DOM.
+    """
+    record["before_actionability"] = inspect_opener(page)
+    opener = page.get_by_test_id("stExpandSidebarButton")
+    opener.click(trial=True, timeout=5000)
+    record["after_actionability"] = state = inspect_opener(page)
+    assert state["visibility"] == "visible" and state["inViewport"] and state["ownsHit"], state
+    return opener
 
 
 def require_quiet_chrome(page):
@@ -159,7 +180,10 @@ def journey(browser, width, output, record):
             sidebar.get_by_test_id("stSidebarCollapseButton").get_by_role("button").click()
         expect(sidebar).to_have_attribute("aria-expanded", "false")
         expect(opener).to_be_visible()
-        assert inspect_opener(page)["ownsHit"]
+        record["reload_opener"] = {}
+        actionable_opener(page, record["reload_opener"]).click()
+        expect(sidebar).to_have_attribute("aria-expanded", "true")
+        expect(sidebar.get_by_text("Administration", exact=True)).to_be_visible()
         require_quiet_chrome(page)
         assert not errors, errors
         assert not external, external

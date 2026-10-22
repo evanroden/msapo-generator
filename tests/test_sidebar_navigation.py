@@ -3,8 +3,10 @@ import re
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
+import pytest
 
 from app.web_ui import CUSTOM_CSS
+from scripts import qa_sidebar_navigation as navigation
 from scripts.qa_sidebar_navigation import FIXTURE
 
 
@@ -49,3 +51,57 @@ def test_native_browser_regression_remains_in_hosted_dom_job():
     assert "timeout-minutes: 26" in step
     assert "python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'" in step
     assert "          python scripts/qa_sidebar_navigation.py\n          NATIVE_TEST" in step
+
+
+@pytest.mark.parametrize("after_hit", [True, False])
+def test_actionability_wait_preserves_the_final_hit_assertion(monkeypatch, after_hit):
+    calls = []
+    class Opener:
+        def click(self, **options):
+            calls.append(options)
+    opener = Opener()
+    class Page:
+        def get_by_test_id(self, testid):
+            assert testid == "stExpandSidebarButton"
+            return opener
+    states = iter([{"ownsHit": False},
+                   {"visibility": "visible", "inViewport": True, "ownsHit": after_hit}])
+    monkeypatch.setattr(navigation, "inspect_opener", lambda page: next(states))
+    record = {}
+    if after_hit:
+        assert navigation.actionable_opener(Page(), record) is opener
+    else:
+        with pytest.raises(AssertionError):
+            navigation.actionable_opener(Page(), record)
+    assert calls == [{"trial": True, "timeout": 5000}]
+    assert record["before_actionability"]["ownsHit"] is False
+    assert record["after_actionability"]["ownsHit"] is after_hit
+
+
+def test_permanently_obstructed_opener_does_not_pass(monkeypatch):
+    calls = []
+    class Page:
+        def get_by_test_id(self, testid):
+            assert testid == "stExpandSidebarButton"
+            return self
+        def click(self, **options):
+            calls.append(options)
+            raise TimeoutError("Another element still intercepts pointer events")
+    monkeypatch.setattr(navigation, "inspect_opener", lambda page: {"ownsHit": False})
+    record = {}
+    with pytest.raises(TimeoutError, match="intercepts pointer events"):
+        navigation.actionable_opener(Page(), record)
+    assert calls == [{"trial": True, "timeout": 5000}]
+    assert record == {"before_actionability": {"ownsHit": False}}
+
+
+def test_sidebar_evidence_upload_is_immediate_even_on_failure():
+    workflow = (ROOT / ".github/workflows/adaptive-workspaces.yml").read_text()
+    journey = workflow.index("      - name: Native sidebar visibility and pointer/keyboard navigation\n")
+    upload = workflow.index("      - name: Upload native sidebar evidence immediately, including first failures\n")
+    following = workflow.index("      - name: Actual Expense workflow with isolated synthetic inputs\n")
+    assert journey < upload < following
+    step = workflow[upload:following]
+    assert "if: always()" in step and "timeout-minutes: 3" in step
+    assert "name: native-sidebar-browser-evidence-${{ github.run_attempt }}" in step
+    assert workflow.count("test-artifacts/sidebar-navigation/") == 2
