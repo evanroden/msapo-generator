@@ -888,6 +888,107 @@ def _native_photo_orientation_proved(node, document_part):
     return True
 
 
+def _contain_cover_logo(node, image_width, image_height, document_part, *, preserve_crop=False, defer=False):
+    """Fit one proved logo occurrence without stretching or changing its pixels.
+
+    Preserve already-proportional source crops. Unsupported transforms remain
+    untouched rather than borrowing an enclosing text box's dimensions. The
+    same conservative geometry/orientation boundary as cover photos applies.
+    """
+    if (not _unchanged_photo_geometry_supported(node)
+            or not _native_photo_orientation_proved(node, document_part)
+            or image_width <= 0 or image_height <= 0):
+        return
+    if node.tag == qn("a:blip"):
+        shared_frame = next(p for p in node.iterancestors() if p.tag in (qn("wp:inline"), qn("wp:anchor")))
+        peers = [p for p in shared_frame.iter(qn("a:blip"))
+                 if next((a for a in p.iterancestors() if a.tag in (qn("wp:inline"), qn("wp:anchor"))), None) is shared_frame]
+        crops = set()
+        for peer in peers:
+            crop = peer.getparent().find(qn("a:srcRect"))
+            crops.add(tuple(crop.get(k, "0") if crop is not None else "0" for k in ("l", "t", "r", "b")))
+        if len(crops) > 1:
+            # Different source crops sharing one outer frame cannot each be
+            # contained independently without invalidating the other's crop.
+            return
+    if node.tag == qn("a:blip"):
+        picture = next(node.iterancestors(qn("pic:pic")))
+        inner = picture.find("./" + qn("pic:spPr") + "/" + qn("a:xfrm") + "/" + qn("a:ext"))
+        frame = next(p for p in picture.iterancestors() if p.tag in (qn("wp:inline"), qn("wp:anchor")))
+        outer = frame.find(qn("wp:extent"))
+        width, height = float(outer.get("cx")), float(outer.get("cy"))
+        rectangle = node.getparent().find(qn("a:srcRect"))
+        crop = {key: rectangle.get(key, "0") if rectangle is not None else "0" for key in ("l", "t", "r", "b")}
+        divisor = 100000
+    else:
+        shape = node.getparent()
+        style = shape.get("style", "")
+        lengths = {}
+        for axis in ("width", "height"):
+            matches = list(re.finditer(r"(?:^|;)\s*" + axis + r"\s*:\s*(\d+(?:\.\d*)?|\.\d+)(pt|in|cm|mm|px)\s*(?=;|$)", style))
+            match = matches[-1] if matches else None
+            if match is None:
+                return
+            factor = {"pt": 1, "in": 72, "cm": 72 / 2.54, "mm": 72 / 25.4, "px": .75}[match[2]]
+            lengths[axis] = (match, factor, float(match[1]) * factor)
+        width, height = lengths["width"][2], lengths["height"][2]
+        crop = {key: node.get(name, "0") for key, name in {
+            "l": "cropleft", "r": "cropright", "t": "croptop", "b": "cropbottom"}.items()}
+        divisor = 1
+    ratio = image_width / image_height
+    if not math.isfinite(ratio) or ratio <= 0:
+        return
+    if preserve_crop:
+        try:
+            def fraction(value):
+                if value.endswith("%"):
+                    return float(value[:-1]) / 100
+                if divisor == 1 and value.endswith("f"):
+                    return float(value[:-1]) / 65536
+                return float(value) / divisor
+            values = {key: fraction(value) for key, value in crop.items()}
+            remaining_width = 1 - values["l"] - values["r"]
+            remaining_height = 1 - values["t"] - values["b"]
+            if (all(math.isfinite(v) for v in values.values()) and min(remaining_width, remaining_height) > 0
+                    and math.isclose(ratio * remaining_width / remaining_height, width / height, rel_tol=.001)):
+                return
+        except (ValueError, TypeError, OverflowError):
+            pass
+    scale = min(width / image_width, height / image_height)
+    new_width, new_height = image_width * scale, image_height * scale
+    if not all(math.isfinite(v) and v > 0 for v in (new_width, new_height)):
+        return
+    def apply():
+        if node.tag == qn("a:blip"):
+            if min(round(new_width), round(new_height)) <= 0:
+                return
+            for extent in (inner, outer):
+                extent.set("cx", str(round(new_width))); extent.set("cy", str(round(new_height)))
+            if rectangle is not None:
+                rectangle.getparent().remove(rectangle)
+        else:
+            new_style = style
+            for axis, target in (("width", new_width), ("height", new_height)):
+                units = {"pt": 1, "in": 72, "cm": 72 / 2.54, "mm": 72 / 25.4, "px": .75}
+                new_style = re.sub(r"(?P<prefix>(?:^|;)\s*" + axis + r"\s*:\s*)(\d+(?:\.\d*)?|\.\d+)(pt|in|cm|mm|px)\s*(?=;|$)",
+                               lambda m: m["prefix"] + f"{target / units[m[3]]:.8f}" + m[3], new_style)
+            shape.set("style", new_style)
+            for key in ("cropleft", "cropright", "croptop", "cropbottom"):
+                node.attrib.pop(key, None)
+    if defer:
+        return apply
+    apply()
+
+
+def _contain_unchanged_cover_logo(node, source_path, item, document_part, *, defer=False):
+    width, height = item.image_width, item.image_height
+    if width <= 0 or height <= 0:
+        from app.monthly_report_import import read_import_image
+        image = read_import_image(Path(source_path), item, line_art=True)
+        width, height = image.width, image.height
+    return _contain_cover_logo(node, width, height, document_part, preserve_crop=True, defer=defer)
+
+
 def _fit_unchanged_cover_photo(node, source_path, item, document_part):
     # Native renderers need not honor EXIF the same way as gallery
     # normalization. Without proving their display axes, retain all original
@@ -904,10 +1005,11 @@ def _fit_unchanged_cover_photo(node, source_path, item, document_part):
 
 
 @lru_cache(maxsize=128)
-def _source_image_digest(source_path, source_digest, item, line_art):
+def _source_image_digest(source_path, source_digest, item, line_art, preserve_transparency=None):
     # The verified immutable source hash is part of this bounded cache key.
     from app.monthly_report_import import read_import_image
-    normalized = read_import_image(Path(source_path), item, line_art=line_art)
+    options = {} if preserve_transparency is None else {"preserve_transparency": preserve_transparency}
+    normalized = read_import_image(Path(source_path), item, line_art=line_art, **options)
     return hashlib.sha256(normalized.data).hexdigest() + "." + normalized.extension
 
 
@@ -1087,6 +1189,15 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     source_digest = source_view.original_inspection.sha256 if source_view is not None else inspection.sha256
     original_path = original_path or source_path
     source_ref = lambda item: original_reference(inspection, item, source_view)
+    def image_matches(item, role, hashes):
+        if role not in ("brand_logo", "client_logo"):
+            return image_digest(str(source_path), image_cache_identity, item, role != "cover_photo") in hashes
+        # Current explicit logo mapping preserves transparency; older saved
+        # assets used the source suggestion's policy. Both fingerprints prove
+        # this exact source artwork, not a visually guessed brand identity.
+        return (image_digest(str(source_path), image_cache_identity, item, True, True) in hashes
+                or image_digest(str(source_path), image_cache_identity, item, True) in hashes)
+
     source_ref_by_id = {item.id: source_ref(item) for item in inspection.items}
     if any(item.note.startswith("Alternate Word representations") for item in inspection.items):
         raise NativeLayoutError(
@@ -1334,8 +1445,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 continue
             for role in ("brand_logo", "client_logo", "cover_photo"):
                 block = blocks.get(role)
-                if block and block.asset_hashes and image_digest(
-                        str(source_path), image_cache_identity, item, role != "cover_photo") in block.asset_hashes:
+                if block and block.asset_hashes and image_matches(item, role, block.asset_hashes):
                     cover_roles[item.image_part] = role
                     break
             if item.image_part not in cover_roles and item.image_height:
@@ -1351,7 +1461,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             block = blocks.get(role)
             return bool(block and block.source != "Omit" and block.asset_hashes and any(
                 cover_roles.get(item.image_part) == role
-                and image_digest(str(source_path), image_cache_identity, item, role != "cover_photo") in block.asset_hashes
+                and image_matches(item, role, block.asset_hashes)
                 for item in cover_items))
 
         unchanged_master_brand = unchanged_cover("brand_logo")
@@ -1359,6 +1469,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
 
     def cover_images(element, group):
         roles = cover_roles
+        logo_replacements = []
         for node in list(element.iter()):
             if node.tag not in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata"):
                 continue
@@ -1388,10 +1499,11 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     continue
                 if not block.asset_hashes:
                     raise NativeLayoutError("The exact native image replacement has no saved artwork.")
-                if image_digest(str(source_path), image_cache_identity, source_item,
-                                        role != "cover_photo") in block.asset_hashes:
+                if image_matches(source_item, role, block.asset_hashes):
                     if role == "cover_photo":
                         _fit_unchanged_cover_photo(node, source_path, source_item, document.part)
+                    elif role in ("brand_logo", "client_logo"):
+                        logo_replacements.append(_contain_unchanged_cover_logo(node, source_path, source_item, document.part, defer=True))
                     continue
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
@@ -1399,6 +1511,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 node.set(attr, new_rid)
                 if role == "cover_photo":
                     _fit_cover_photo(node, image.px_width, image.px_height)
+                elif role in ("brand_logo", "client_logo"):
+                    logo_replacements.append((node, image.px_width, image.px_height))
                 continue
             # Authorize this new repair by the exact selected occurrence,
             # before the legacy shared-media role heuristic can override it.
@@ -1411,7 +1525,28 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                         and image_digest(str(source_path), image_cache_identity, occurrence, False) in photo.asset_hashes):
                     _fit_unchanged_cover_photo(node, source_path, occurrence, document.part)
                     continue
-            role = roles.get(target)
+            if occurrence is not None:
+                reference = source_ref(occurrence)
+                mapped_roles = {block.key for block in draft.blocks if reference in block.references}
+                if len(mapped_roles) == 1 and next(iter(mapped_roles)) in ("brand_logo", "client_logo"):
+                    logo_role = next(iter(mapped_roles))
+                    logo = blocks[logo_role]
+                    if (logo.source != "Omit" and logo.asset_hashes
+                            and image_matches(occurrence, logo_role, logo.asset_hashes)):
+                        logo_replacements.append(_contain_unchanged_cover_logo(node, source_path, occurrence, document.part, defer=True))
+                        continue
+            # Explicit roles belong to occurrences, not shared relationship bytes.
+            # A replacement must not overwrite an unselected same-media sibling.
+            exact_roles = ({b.key for b in draft.blocks if source_ref(occurrence) in b.references}
+                           if occurrence is not None else set())
+            selected_logo_media = any(
+                item.image_part == target and any(source_ref(item) in b.references
+                    for b in draft.blocks if b.key in ("brand_logo", "client_logo"))
+                for item in cover_items)
+            cover_slots = {"brand_logo", "client_logo", "cover_photo"}
+            if len(exact_roles) > 1 or (selected_logo_media and not exact_roles & cover_slots):
+                continue
+            role = next(iter(exact_roles)) if len(exact_roles) == 1 and exact_roles <= cover_slots else roles.get(target)
             if role == "company_slogan":
                 continue  # Reviewed, immutable company furniture; never a client mark.
             block = blocks.get(role)
@@ -1420,8 +1555,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                         or (role == "brand_logo" and unchanged_master_brand)):
                     continue
                 supplied = next((item for item in group if item.kind == "image" and item.image_part == target), None)
-                if supplied is not None and image_digest(str(source_path), image_cache_identity, supplied,
-                                                                role != "cover_photo") in block.asset_hashes:
+                if supplied is not None and image_matches(supplied, role, block.asset_hashes):
                     continue  # Unselected/unproved occurrences retain their original geometry.
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
@@ -1433,9 +1567,21 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     layer.attrib.pop(qn("r:link"), None)
                 if role == "cover_photo":
                     _fit_cover_photo(node, image.px_width, image.px_height)
+                elif role in ("brand_logo", "client_logo"):
+                    # The existing replacement path has already authorized
+                    # these bytes; catalog defaults need proportional fit too.
+                    logo_replacements.append((node, image.px_width, image.px_height))
             elif role != "brand_logo" and (master or block is not None):
                 # A global master must never lend another client's logo/photo.
                 node.getparent().remove(node)
+
+        # All alternate representations must have their final relationships
+        # before orientation/atomic geometry guards inspect their peers.
+        plans = [(_contain_cover_logo(*entry, document.part, defer=True) if isinstance(entry, tuple) else entry)
+                 for entry in logo_replacements]
+        for plan in plans:
+            if plan is not None:
+                plan()
 
     if source_section_plan is not None:
         # This exact immutable-source plan also derives expected header closure
@@ -1997,6 +2143,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             continue
         header_occurrences = _header_image_occurrences(part, inspection)
         approved_header_nodes = set()
+        header_logo_replacements = []
         _clear_diagrams(part.element)
         _clear_hyperlinks(part.element)
         for paragraph in part.element.iter(qn("w:p")):
@@ -2051,15 +2198,25 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     # belongs to these nodes, not independent uses of equal bytes.
                     approved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
                     continue
-                if image_digest(str(source_path), image_cache_identity, source_item, True) in logo.asset_hashes:
+                if image_matches(source_item, role, logo.asset_hashes):
+                    if explicit_roles == {role}:
+                        for node, _ in header_bindings[source_item.id]:
+                            header_logo_replacements.append(_contain_unchanged_cover_logo(node, source_path, source_item, part, defer=True))
                     approved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
                     continue
-                rid, _ = part.get_or_add_image(BytesIO(asset_loader(logo.asset_hashes[0])))
+                rid, image = part.get_or_add_image(BytesIO(asset_loader(logo.asset_hashes[0])))
                 for node, attr in header_bindings[source_item.id]:
                     node.set(attr, rid)
+                    if explicit_roles == {role}:
+                        header_logo_replacements.append((node, image.px_width, image.px_height))
                     # Current client artwork is authorized at this occurrence,
                     # not at every source location containing equal bytes.
                     approved_header_nodes.add(node)
+        plans = [(_contain_cover_logo(*entry, part, defer=True) if isinstance(entry, tuple) else entry)
+                 for entry in header_logo_replacements]
+        for plan in plans:
+            if plan is not None:
+                plan()
         if master:
             approved = set()
             if brand and brand.source != "Omit" and brand.asset_hashes and asset_loader:
