@@ -123,6 +123,35 @@ def test_explicit_appendix_context_stays_immediately_before_its_retained_table(t
     assert document.tables[-1].cell(1, 1).text == "Synthetic western campus"
 
 
+@pytest.mark.parametrize("page_break", [False, True])
+def test_empty_source_paragraph_ends_table_context_adjacency(tmp_path, page_break):
+    path, draft = scenario(tmp_path)
+    document = Document(path)
+    boundary = OxmlElement("w:p")
+    if page_break:
+        properties = OxmlElement("w:pPr")
+        properties.append(OxmlElement("w:pageBreakBefore"))
+        boundary.append(properties)
+    document.tables[-1]._tbl.addprevious(boundary)
+    document.save(path)
+    original = path.read_bytes()
+    inspection = inspect_docx(path)
+    item = next(i for i in inspection.items if i.kind == "table" and i.section == "training")
+    proposals, training = draft.blocks
+    training = replace(training, extra_tables=(replace(training.extra_tables[0],
+        reference=f"docx:{inspection.sha256}:{item.id}"),))
+    result = Document(BytesIO(build_native_docx(replace(draft, blocks=(proposals, training)),
+                                               path, section_key="training")))
+    # Matching words before an empty source paragraph are not adjacent table
+    # context. Keep them together in the author's current narrative instead.
+    assert not any(_text(p) in (TITLE, SCOPE) for p in before(result.tables[-1]._tbl))
+    lines = [p.text for p in result.paragraphs if p.text.strip()]
+    start = lines.index(TRAINING)
+    assert tuple(lines[start:start + 3]) == (TRAINING, TITLE, SCOPE)
+    assert result.tables[-1].cell(1, 1).text == "Synthetic western campus"
+    assert path.read_bytes() == original
+
+
 @pytest.mark.parametrize("master", [False, True])
 def test_retaining_a_table_does_not_restore_unsupplied_source_context(tmp_path, master):
     path, draft = scenario(tmp_path, include_context=False)

@@ -84,6 +84,10 @@ def supplied_table_context(draft, original, items, section_by_pos, native_tables
                     # unproved paragraph words invalidate its partial proof.
                     unproved_context = element.tag == qn("w:p") and bool(_text(element).strip())
                     break
+                if not _text(element).strip():
+                    # Empty paragraphs, including pageBreakBefore boundaries,
+                    # separate earlier prose from this table's context.
+                    break
                 group = items[position]
                 text_items = [item for item in group if item.kind == "text"]
                 if len(group) == len(text_items) == 1:
