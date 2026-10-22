@@ -140,3 +140,66 @@ def test_missing_row_recovery_does_not_touch_other_proposals():
     assert len(app.session_state['draft'].follow_ups) == 29
     assert app.session_state['draft'].follow_ups == before.follow_ups[1:]
     assert 'Removed proposal earlier draft' in codes(app)
+
+
+@pytest.mark.parametrize('kind', ['text', 'source', 'exclude'])
+def test_raw_delivered_callback_from_removed_row_is_copyable_but_never_replayed(kind):
+    """The callback arrives before a pending row record can be created."""
+    app, before, source = workspace(1)
+    edit_first(app)
+    original = before.follow_ups[0]
+    if kind == 'text':
+        widget = next(w for w in app.text_area if w.label == 'Proposal scope')
+        earlier = 'Earlier raw proposal scope'
+        needle = earlier
+    elif kind == 'source':
+        widget = next(w for w in app.multiselect
+                      if w.label == 'Supporting source pages (optional)')
+        earlier = [source_reference(source, 2)]
+        needle = 'invented-review.txt'
+    else:
+        widget = next(w for w in app.checkbox
+                      if w.label == 'Leave this proposal out of the report')
+        earlier = True
+        needle = 'Excluded: True'
+    # Queue a native widget change but do not run the app yet. A concurrent
+    # canonical replacement removes this row before the callback is captured.
+    widget.set_value(earlier)
+    app.session_state['draft'] = replace(before, follow_ups=())
+    app.run()
+    assert not app.exception
+    assert app.session_state['draft'].follow_ups == ()
+    assert needle in codes(app)
+    assert not [key for key in app.session_state
+                if key.startswith('review_paged_proposals_follow_proposal-0_compact_')
+                and key.endswith(('_change', '_choice'))]
+    # Reappearance of the identical old row is not a new user action.
+    app.session_state['draft'] = before
+    app.run()
+    assert not app.exception
+    assert app.session_state['draft'].follow_ups[0] == original
+    assert needle in codes(app)
+
+
+@pytest.mark.parametrize('kind', ['text', 'source'])
+def test_raw_missing_row_receipt_cannot_mutate_remaining_page(kind):
+    app, before, source = workspace(30)
+    edit_first(app)
+    if kind == 'text':
+        widget = next(w for w in app.text_area if w.label == 'Proposal scope')
+        earlier = 'Removed-row raw text'
+        needle = earlier
+    else:
+        widget = next(w for w in app.multiselect
+                      if w.label == 'Supporting source pages (optional)')
+        earlier = [source_reference(source, 2)]
+        needle = 'invented-review.txt'
+    widget.set_value(earlier)
+    app.session_state['draft'] = replace(before, follow_ups=before.follow_ups[1:])
+    app.run()
+    assert not app.exception
+    assert app.session_state['draft'].follow_ups == before.follow_ups[1:]
+    assert needle in codes(app)
+    page(app).set_value(2).run()
+    assert not app.exception
+    assert app.session_state['draft'].follow_ups == before.follow_ups[1:]

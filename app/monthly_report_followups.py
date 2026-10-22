@@ -300,6 +300,47 @@ def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=N
         st.session_state.pop(key, None)
 
 
+
+def _recover_missing_proposal_receipts(prefix, items):
+    """Retire a delivered callback whose proposal vanished before first capture.
+
+    Unlike a pending row record, this receipt has no saved after item yet.
+    Keep its entered value copyable, never apply it when the old row returns.
+    """
+    import streamlit as st
+    active = tuple(prefix + "_follow_" + item.key + "_compact_"
+                   for item in items if item.category == "proposal")
+    for key in tuple(st.session_state):
+        if (not key.startswith(prefix + "_follow_")
+                or "_compact_" not in key
+                or not key.endswith(("_change", "_choice"))
+                or any(key.startswith(known) for known in active)):
+            continue
+        receipt = st.session_state.get(key)
+        if not isinstance(receipt, dict):
+            continue
+        suffix = "_change" if key.endswith("_change") else "_choice"
+        control = key.removesuffix(suffix)
+        delivered = receipt.get("value") == st.session_state.get(control)
+        if suffix == "_change":
+            registration = st.session_state.get(control + "_delivery", {})
+            delivered = (delivered and isinstance(receipt.get("token"), str)
+                         and receipt["token"] == registration.get("token"))
+        if delivered:
+            recovery_key = (prefix + "_rejected_proposal_receipt_" +
+                            _digest((key, receipt.get("identity"), receipt.get("value"))))
+            field = control.rsplit("_compact_", 1)[-1].split("_", 1)[0].capitalize()
+            st.session_state.setdefault(recovery_key, {
+                "field": field,
+                "value": receipt["value"],
+                "source_labels": receipt.get("source_labels", {}),
+            })
+        # Also retire the old registration so a later remount cannot authorize
+        # this callback if the same row/source identity becomes current again.
+        st.session_state.pop(key, None)
+        st.session_state.pop(control + "_delivery", None)
+
+
 def _capture_followup_controls(draft, prefix, category, options):
     """Capture delivered fields before an explicit page choice retires them.
 
@@ -309,6 +350,8 @@ def _capture_followup_controls(draft, prefix, category, options):
     """
     import streamlit as st
     result = []
+    if category == "proposal":
+        _recover_missing_proposal_receipts(prefix, draft.follow_ups)
     # A replaced/removed row cannot make its interrupted edit disappear.
     current_keys = {_pending_followup_key(prefix, item) for item in draft.follow_ups
                     if item.category == category}
