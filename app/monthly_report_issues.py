@@ -287,6 +287,20 @@ def _show_issue_delivery(key, pending):
                 language=None, wrap_lines=True)
 
 
+def _retire_interrupted_issue_receipts(pending):
+    """A rejected pending issue already preserves the entered edit for recovery.
+
+    Never leave its matching raw callbacks authorized if the old row returns.
+    A newer different callback stays available for independent validation.
+    """
+    import streamlit as st
+    for receipt_key, receipt in pending.get("receipts", {}).items():
+        if st.session_state.get(receipt_key) != receipt:
+            continue
+        st.session_state.pop(receipt_key, None)
+        st.session_state.pop(receipt_key.removesuffix("_change") + "_delivery", None)
+
+
 def _recover_rejected_source_deliveries(prefix, captured):
     """Keep a real delivered choice when its row changed before first capture.
 
@@ -381,8 +395,7 @@ def _capture_issue_controls(draft, prefix, options):
         if isinstance(pending, dict) and "after" in pending:
             pending = {**pending, "conflicted": True}
             st.session_state[key] = pending
-            captured.update(receipt_key for receipt_key, receipt in pending.get("receipts", {}).items()
-                            if st.session_state.get(receipt_key) == receipt)
+            _retire_interrupted_issue_receipts(pending)
             _show_issue_delivery(key + "_missing_row", pending)
     for original in draft.follow_ups:
         if original.category != "issue":
@@ -396,20 +409,21 @@ def _capture_issue_controls(draft, prefix, options):
         receipts, reapplied = {}, False
         identity = _issue_identity(draft, prefix, item)
         if isinstance(pending, dict):
-            captured.update(receipt_key for receipt_key, receipt in pending["receipts"].items()
-                            if st.session_state.get(receipt_key) == receipt)
             if not pending.get("conflicted") and pending["result"] == identity:
                 # The caller's INPUT now contains the edit, not merely a local
                 # renderer return. Never retire a newer callback with it.
                 _acknowledge_issue_delivery(key, pending)
                 pending = None
             elif not pending.get("conflicted") and pending["identity"] == identity:
+                captured.update(receipt_key for receipt_key, receipt in pending["receipts"].items()
+                                if st.session_state.get(receipt_key) == receipt)
                 item = pending["after"]
                 receipts = dict(pending["receipts"])
                 reapplied = True
             else:
                 pending = {**pending, "conflicted": True}
                 st.session_state[key] = pending
+                _retire_interrupted_issue_receipts(pending)
                 _show_issue_delivery(key + "_conflict", pending)
         identity = _issue_identity(draft, prefix, item)
         changes = {}

@@ -47,6 +47,38 @@ def test_carried_proposal_edit_never_reseeds_its_old_row(edited):
     assert tuple(item.key for item in again.follow_ups) == tuple(item.key for item in rows)
 
 
+@pytest.mark.parametrize("identical_rows", [False, True])
+def test_colliding_saved_proposals_do_not_reseed_legacy_table_rows(identical_rows):
+    prior = fixture(proposals=True)
+    if identical_rows:
+        block = prior.blocks[-1]
+        prior = replace(prior, blocks=(*prior.blocks[:-1],
+                                      replace(block, rows=(block.rows[0], block.rows[0]))))
+    original = seed_followups(prior)
+    assert len(original) == 2
+    # Both saved rows had the same legacy ID. Repairing that ID must not make
+    # the still-present legacy source rows appear new.
+    collided = tuple(replace(item, key="old-shared-key") for item in original)
+    current = new_month_draft(replace(prior, follow_ups=collided), ReportPeriod(2026, 12))
+    assert len(current.follow_ups) == 2
+    assert len({item.key for item in current.follow_ups}) == 2
+    assert tuple(item.text for item in current.follow_ups) == tuple(item.text for item in original)
+    again = new_month_draft(current, ReportPeriod(2027, 1))
+    assert tuple(item.key for item in again.follow_ups) == tuple(item.key for item in current.follow_ups)
+
+
+def test_saved_one_of_two_identical_source_rows_does_not_hide_missing_twin():
+    prior = fixture(proposals=True)
+    block = prior.blocks[-1]
+    prior = replace(prior, blocks=(*prior.blocks[:-1],
+                                  replace(block, rows=(block.rows[0], block.rows[0]))))
+    original = seed_followups(prior)
+    current = new_month_draft(replace(prior, follow_ups=(original[0],)), ReportPeriod(2026, 12))
+    assert len(current.follow_ups) == 2
+    assert len({item.key for item in current.follow_ups}) == 2
+    assert all(item.text == original[0].text for item in current.follow_ups)
+
+
 def test_equal_wording_does_not_erase_separately_identified_proposals():
     draft = fixture()
     text = "Separate inspection pending."

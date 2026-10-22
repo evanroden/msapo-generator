@@ -1,5 +1,6 @@
 """Explicit carry-forward decisions; a new reporting month never resolves work."""
 
+from collections import Counter
 from dataclasses import asdict, replace
 import hashlib
 import json
@@ -251,7 +252,8 @@ def _render_rejected_followup_receipt(key, record):
         st.code(record["field"] + ": " + detail, language=None, wrap_lines=True)
 
 
-def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=None):
+def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=None,
+                                       receipt_keys=None):
     """Retire off-page receipts that no longer match their exact input baseline.
 
     A rejected delivered value remains copyable, but never becomes a later
@@ -272,7 +274,7 @@ def _retire_rejected_followup_receipts(draft, prefix, item, options, protected=N
         p + "_excluded_choice": not item.included,
         p + "_remove_missing_" + _digest(missing) + "_choice": False,
     }
-    for key in tuple(st.session_state):
+    for key in (tuple(st.session_state) if receipt_keys is None else receipt_keys):
         if not key.startswith(p + "_") or not key.endswith(("_change", "_choice")):
             continue
         receipt = st.session_state.get(key)
@@ -308,13 +310,13 @@ def _recover_missing_proposal_receipts(prefix, items):
     Keep its entered value copyable, never apply it when the old row returns.
     """
     import streamlit as st
-    active = tuple(prefix + "_follow_" + item.key + "_compact_"
-                   for item in items if item.category == "proposal")
+    active = {prefix + "_follow_" + item.key
+              for item in items if item.category == "proposal"}
     for key in tuple(st.session_state):
         if (not key.startswith(prefix + "_follow_")
                 or "_compact_" not in key
                 or not key.endswith(("_change", "_choice"))
-                or any(key.startswith(known) for known in active)):
+                or key.rsplit("_compact_", 1)[0] in active):
             continue
         receipt = st.session_state.get(key)
         if not isinstance(receipt, dict):
@@ -369,13 +371,23 @@ def _capture_followup_controls(draft, prefix, category, options):
     # first, then recover only callbacks that arrived before a pending record.
     if category == "proposal":
         _recover_missing_proposal_receipts(prefix, draft.follow_ups)
+    receipt_index = {}
+    recovery_index = {}
+    for candidate in tuple(st.session_state):
+        if (candidate.startswith(prefix + "_follow_")
+                and "_compact_" in candidate
+                and candidate.endswith(("_change", "_choice"))):
+            control = candidate.rsplit("_compact_", 1)[0] + "_compact"
+            receipt_index.setdefault(control, []).append(candidate)
+        if candidate.startswith(pending_prefix) and "_recovery_" in candidate:
+            parent = candidate.rsplit("_recovery_", 1)[0]
+            recovery_index.setdefault(parent, []).append(candidate)
     for item in draft.follow_ups:
         if item.category != category:
             result.append(item)
             continue
         pending_key = _pending_followup_key(prefix, item)
-        for recovery_key in sorted(key for key in st.session_state
-                                   if key.startswith(pending_key + "_recovery_")):
+        for recovery_key in sorted(recovery_index.get(pending_key, ())):
             _render_followup_recovery(recovery_key, st.session_state[recovery_key])
         pending = st.session_state.get(pending_key)
         current_identity = _followup_choice_identity(draft, prefix, item)
@@ -396,8 +408,9 @@ def _capture_followup_controls(draft, prefix, category, options):
                 st.warning("An interrupted item edit belongs to an earlier row, report or source revision. "
                            "The current item is kept; the entered details below remain available to copy.")
                 _render_followup_recovery(pending_key + "_current_conflict", pending)
-        _retire_rejected_followup_receipts(draft, prefix, item, options, receipts)
         p = prefix + "_follow_" + item.key + "_compact"
+        _retire_rejected_followup_receipts(
+            draft, prefix, item, options, receipts, receipt_index.get(p, ()))
         changes = {}
         identity = _followup_choice_identity(draft, prefix, item)
         for attr, suffix in (("text", "text"), ("status", "status"),
@@ -481,6 +494,7 @@ def seed_followups(draft):
         or (item.category != "issue" and item.included)
     ]
     keys = {item.key for item in result}
+    represented = Counter((item.category, item.text.strip()) for item in result)
     occurrences = {}
     specs = {b.key: b for s in draft.sections for b in s.blocks}
     for block in draft.blocks:
@@ -519,7 +533,15 @@ def seed_followups(draft):
             occurrences[identity] = occurrences.get(identity, 0) + 1
             occurrence = occurrences[identity]
             key = "follow-" + _digest(identity if occurrence == 1 else (*identity, "occurrence", occurrence))[:20]
-            if not text or key in keys:
+            if not text:
+                continue
+            represented_identity = (category, text.strip())
+            # Existing source-derived keys also count as represented rows.
+            # Do not let one already-carried occurrence swallow its twin.
+            already_carried = represented[represented_identity] > 0
+            if already_carried:
+                represented[represented_identity] -= 1
+            if key in keys or already_carried:
                 continue
             keys.add(key)
             result.append(
