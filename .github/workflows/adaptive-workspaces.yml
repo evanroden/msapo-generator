@@ -63,6 +63,8 @@ on:
       - 'tests/picture_group_load_gate_test.cjs'
       - 'tests/test_picture_group_browser.py'
       - 'tests/test_picture_transport_workflow.py'
+      - 'scripts/ci_native_test_budget.py'
+      - 'tests/test_ci_native_test_budget.py'
       - 'scripts/ci_ubuntu_mirror_priority.py'
       - 'tests/test_ci_ubuntu_mirror_priority.py'
       - 'scripts/streamlit_frontend_manifest.json'
@@ -202,6 +204,8 @@ on:
       - 'tests/picture_group_load_gate_test.cjs'
       - 'tests/test_picture_group_browser.py'
       - 'tests/test_picture_transport_workflow.py'
+      - 'scripts/ci_native_test_budget.py'
+      - 'tests/test_ci_native_test_budget.py'
       - 'scripts/ci_ubuntu_mirror_priority.py'
       - 'tests/test_ci_ubuntu_mirror_priority.py'
       - 'scripts/streamlit_frontend_manifest.json'
@@ -289,7 +293,7 @@ concurrency:
 jobs:
   literal-labels:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -298,6 +302,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.lock
       - name: Install locked app and literal-label browser harness
+        timeout-minutes: 20
         run: |
           sudo python3 scripts/ci_ubuntu_mirror_priority.py
           python -m pip install -r requirements-dev.lock
@@ -305,9 +310,14 @@ jobs:
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
       - name: Literal imported labels have no automatic links or formatting
-        run: python scripts/qa_monthly_literal_labels.py
+        timeout-minutes: 11
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 10 <<'NATIVE_TEST'
+          python scripts/qa_monthly_literal_labels.py
+          NATIVE_TEST
       - name: Upload literal-label evidence immediately, including first failures
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: monthly-literal-label-browser-evidence
@@ -355,7 +365,7 @@ jobs:
           if-no-files-found: warn
   synthetic-history:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -364,6 +374,7 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.lock
       - name: Install locked app and history browser harness
+        timeout-minutes: 20
         run: |
           sudo python3 scripts/ci_ubuntu_mirror_priority.py
           sudo apt-get update -qq
@@ -373,9 +384,14 @@ jobs:
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
       - name: Actual isolated shared-history saves and read-only inspection
-        run: python scripts/qa_monthly_history.py
+        timeout-minutes: 16
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 15 <<'NATIVE_TEST'
+          python scripts/qa_monthly_history.py
+          NATIVE_TEST
       - name: Upload synthetic history evidence, including first failures
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: monthly-history-browser-evidence
@@ -384,7 +400,7 @@ jobs:
           if-no-files-found: warn
   synthetic-dom:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -398,6 +414,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install locked app and browser harness
+        timeout-minutes: 20
         run: |
           sudo python3 scripts/ci_ubuntu_mirror_priority.py
           sudo apt-get update -qq
@@ -407,27 +424,51 @@ jobs:
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
       - name: Apply exact locked scalar date compatibility repair
-        run: python scripts/patch_streamlit_date_input.py
-      - name: Pure geometry and real Streamlit DOM
+        timeout-minutes: 26
         run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/patch_streamlit_date_input.py
+          NATIVE_TEST
+      - name: Pure geometry and real Streamlit DOM
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
           node --test tests/workspace_geometry_test.cjs
           node --test tests/preview_view_lifecycle_test.cjs
           node --test tests/preview_commit_gate_test.cjs
           python scripts/qa_adaptive_workspaces.py
+          NATIVE_TEST
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
-        run: python scripts/qa_expense_adaptive.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_expense_adaptive.py
+          NATIVE_TEST
       - name: Actual Purchase order workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
-        run: python scripts/qa_po_adaptive.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_po_adaptive.py
+          NATIVE_TEST
       - name: Actual Monthly workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
-        run: python scripts/qa_browser_diagnostics.py qa_monthly_adaptive.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_browser_diagnostics.py qa_monthly_adaptive.py
+          NATIVE_TEST
       - name: Source correction links reach native controls and persist after reload
         if: ${{ !cancelled() }}
-        run: python scripts/qa_source_corrections.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_source_corrections.py
+          NATIVE_TEST
       - name: Upload source correction evidence immediately, including first failures
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: source-correction-browser-evidence-${{ github.run_attempt }}
@@ -436,38 +477,75 @@ jobs:
           if-no-files-found: warn
       - name: Fresh ordinary Monthly site pointer and keyboard from zero
         if: ${{ !cancelled() }}
-        run: python scripts/qa_monthly_site_pointer.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_monthly_site_pointer.py
+          NATIVE_TEST
       - name: Prepared-by correction link reaches the native field by pointer and keyboard
         if: ${{ !cancelled() }}
-        run: python scripts/qa_monthly_preparer_navigation.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_monthly_preparer_navigation.py
+          NATIVE_TEST
       - name: Native Training and issue text with real exports and deliberate clear/reentry
         if: ${{ !cancelled() }}
-        run: python scripts/qa_monthly_text_hydration.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_monthly_text_hydration.py
+          NATIVE_TEST
       - name: Shared fixture upload and actual Starting report workflow
         if: ${{ !cancelled() }}
-        run: python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py
+          NATIVE_TEST
       - name: Water page management across desktop and narrow browser with actual output
         if: ${{ !cancelled() }}
         env:
           EPC_MONTHLY_WATER_TASK: '1'
-        run: python scripts/qa_water_page_journey.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_water_page_journey.py
+          NATIVE_TEST
       - name: Native proposal and onsite row editing with actual output
         if: ${{ !cancelled() }}
         env:
           EPC_MONTHLY_ROW_TASK: '1'
-        run: python scripts/qa_report_row_cards.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_report_row_cards.py
+          NATIVE_TEST
       - name: Fresh ordinary Water page review from empty omitted state
         if: ${{ !cancelled() }}
-        run: python scripts/qa_water_fresh_page_journey.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_water_fresh_page_journey.py
+          NATIVE_TEST
       - name: Select explicitly requested one-shot native owner diagnostic
         id: native_owner_request
         if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.number == 249 && github.run_attempt == 1 }}
-        run: python scripts/qa_fresh_native_owner_diagnostic.py --emit-gate
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_fresh_native_owner_diagnostic.py --emit-gate
+          NATIVE_TEST
       - name: One separate diagnostic-only WebKit native observer owner capture
         if: ${{ !cancelled() && steps.native_owner_request.outputs.enabled == 'true' }}
-        run: python scripts/qa_fresh_native_owner_diagnostic.py
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_fresh_native_owner_diagnostic.py
+          NATIVE_TEST
       - name: Upload synthetic screenshots and geometry
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: adaptive-synthetic-browser-evidence
@@ -488,6 +566,7 @@ jobs:
           if-no-files-found: warn
       - name: Upload separate native owner diagnostic evidence
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: fresh-native-owner-diagnostic-evidence
@@ -497,7 +576,7 @@ jobs:
 
   training-date:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -509,6 +588,7 @@ jobs:
         with:
           node-version: '22'
       - name: Install locked app and browser harness
+        timeout-minutes: 20
         run: |
           sudo python3 scripts/ci_ubuntu_mirror_priority.py
           sudo apt-get update -qq
@@ -517,9 +597,14 @@ jobs:
           python -m pip install playwright==1.58.0
           python -m playwright install --with-deps chromium webkit
       - name: Native Training single date baseline, repair, session add/remove and actual output
-        run: python scripts/qa_monthly_training_date.py
+        timeout-minutes: 16
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 15 <<'NATIVE_TEST'
+          python scripts/qa_monthly_training_date.py
+          NATIVE_TEST
       - name: Upload synthetic Training date evidence
         if: always()
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: training-date-synthetic-browser-evidence
