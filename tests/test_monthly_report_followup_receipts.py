@@ -10,10 +10,14 @@ from app.monthly_report_model import ReportDraft, ReportFollowUp, ReportPeriod, 
 SCRIPT = '''
 import streamlit as st
 from app.monthly_report_followups import render_followups
+from app.monthly_report_issues import acknowledge_issue_controls
 from app.monthly_report_ui import _field, preserve_report_draft_state, restore_report_draft_state
 restore_report_draft_state()
 st.session_state['draft'] = render_followups(st.session_state['draft'], 'review_pages', _field,
     category=st.session_state['category'])
+# Issue receipts are retired only by the authoritative caller, as the
+# guided workspace does after assigning its canonical draft.
+acknowledge_issue_controls(st.session_state['draft'], 'review_pages')
 preserve_report_draft_state()
 '''
 

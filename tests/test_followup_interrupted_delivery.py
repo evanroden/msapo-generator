@@ -19,6 +19,7 @@ SCRIPT = '''
 import inspect
 import streamlit as st
 from app import monthly_report_followups as followups
+from app import monthly_report_issues as issues
 from app.monthly_report_ui import _field
 kwargs = {'category': st.session_state['category']}
 if 'defer_commit' in inspect.signature(followups.render_followups).parameters:
@@ -30,6 +31,8 @@ if st.session_state.pop('interrupt_once', False):
 st.session_state['draft'] = result
 if hasattr(followups, 'acknowledge_followup_controls'):
     followups.acknowledge_followup_controls(result, 'delivery')
+if hasattr(issues, 'acknowledge_issue_controls'):
+    issues.acknowledge_issue_controls(result, 'delivery')
 '''
 
 
