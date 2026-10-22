@@ -16,6 +16,8 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_sidebar_navigation.py'
+      - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
@@ -157,6 +159,8 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_sidebar_navigation.py'
+      - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
@@ -438,6 +442,13 @@ jobs:
           node --test tests/preview_commit_gate_test.cjs
           python scripts/qa_adaptive_workspaces.py
           NATIVE_TEST
+      - name: Native sidebar visibility and pointer/keyboard navigation
+        if: ${{ !cancelled() }}
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_sidebar_navigation.py
+          NATIVE_TEST
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
         timeout-minutes: 26
@@ -551,6 +562,7 @@ jobs:
           name: adaptive-synthetic-browser-evidence
           path: |
             test-artifacts/adaptive-workspaces/
+            test-artifacts/sidebar-navigation/
             test-artifacts/expense-adaptive/
             test-artifacts/po-adaptive/
             test-artifacts/monthly-adaptive/
