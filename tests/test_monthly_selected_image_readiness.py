@@ -44,7 +44,11 @@ position='2 / 5';status='Updating preview…';
 assert.equal(ready(wanted),false,'old decoded image with new output pending');
 status='Current · 5 pages';present=false;assert.equal(ready(wanted),false);
 present=true;selected=[];
-assert.equal(ready({...wanted,selected_page:null}),true,'unchanged generic readiness');
+assert.equal(ready({...wanted,selected_page:null}),true,'explicit null generic readiness');
+assert.equal(ready({...wanted,selected_page:undefined}),true,'undefined generic readiness');
+assert.equal(ready({selector:'.activity'}),true,'actual omitted optional key');
+divider=[];
+assert.equal(ready({selector:'.activity'}),false,'generic still requires decoded imagery');
 '''.replace('PREDICATE', predicate)
     subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True)
 
@@ -57,3 +61,28 @@ def test_initial_activity_capture_requires_selected_page_without_weakening_gates
     assert 'timeout=20000)\n    return pair' in source
     assert 'bool(activity["surface"]) and any(i["loaded"] for i in activity["images"])' in source
     assert 'activity["page"].startswith("2 /")' in source
+
+
+def test_current_image_argument_shape_preserves_all_callers():
+    from types import SimpleNamespace
+    import re
+    tree = ast.parse(SOURCE.read_text())
+    function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                    and n.name == 'current_image')
+    calls = []
+    image = SimpleNamespace(wait_for=lambda **kwargs: None)
+    pair = SimpleNamespace(locator=lambda selector: SimpleNamespace(first=image))
+    page = SimpleNamespace(locator=lambda selector: pair,
+                           wait_for_function=lambda expression, **kwargs: calls.append(kwargs))
+    assertion = SimpleNamespace(to_have_text=lambda *a, **kw: None,
+                                to_have_js_property=lambda *a, **kw: None)
+    namespace = {'expect': lambda target: assertion, 're': re,
+                 'DEEP': '', 'CURRENT_IMAGE_READY': ''}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(SOURCE), 'exec'), namespace)
+    for selector in ('.activity', '.water'):
+        namespace['current_image'](page, selector)
+        assert calls[-1] == {'arg': {'selector': selector}, 'timeout': 20000}
+        namespace['current_image'](page, selector, selected_page=None)
+        assert calls[-1] == {'arg': {'selector': selector}, 'timeout': 20000}
+    namespace['current_image'](page, '.activity', selected_page=2)
+    assert calls[-1] == {'arg': {'selector': '.activity', 'selected_page': 2}, 'timeout': 20000}

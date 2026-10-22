@@ -284,7 +284,7 @@ CURRENT_IMAGE_READY = r"""
  const pair=document.querySelector(wanted.selector);
  if (!pair) return false;
  let images=deep(pair,'.report-preview img');
- if (wanted.selected_page !== null) {
+ if (wanted.selected_page != null) {
    const status=deep(pair,'.report-preview-status')[0]?.textContent || '';
    const position=deep(pair,'.report-preview-position')[0]?.textContent || '';
    if (!/^Current · [1-9]\d* pages?$/.test(status) ||
@@ -305,9 +305,11 @@ def current_image(page, selector, *, selected_page=None):
     image = pair.locator(image_selector).first
     image.wait_for(state="visible", timeout=45000)
     expect(image).to_have_js_property("complete", True, timeout=20000)
+    wanted = {"selector": selector}
+    if selected_page is not None:
+        wanted["selected_page"] = selected_page
     page.wait_for_function("wanted => {" + DEEP + CURRENT_IMAGE_READY + "}",
-                           arg={"selector": selector, "selected_page": selected_page},
-                           timeout=20000)
+                           arg=wanted, timeout=20000)
     return pair
 
 
