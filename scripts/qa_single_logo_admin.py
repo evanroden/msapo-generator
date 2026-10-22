@@ -14,11 +14,11 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 import urllib.request
 
 from PIL import Image
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import expect, sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT/"test-artifacts"/"single-logo-admin"
@@ -26,6 +26,53 @@ URL="http://127.0.0.1:8520"
 ROUTE=URL+"/?workflow=monthly&monthly_qa=logo-recovery&monthly_admin=logos"
 REPORT={"synthetic_only":True,"physical_device":False,"browsers":{}}
 
+
+
+def idle(page):
+    expect(page.get_by_test_id("stApp")).to_have_attribute("data-test-script-state", "notRunning")
+
+
+def actor_value(page, value):
+    actor = page.get_by_role("textbox", name="Logo editor name", exact=True)
+    expect(actor).to_be_visible(); actor.fill(value); actor.press("Tab")
+    expect(page.get_by_text("QA logo editor: " + value, exact=True)).to_be_visible()
+    idle(page)
+
+
+def check_native(page, label, timeout=30000):
+    """Click the real visible native label, never its concealed input hitbox."""
+    checkbox = page.get_by_role("checkbox", name=label, exact=True)
+    expect(checkbox).to_be_visible(timeout=timeout)
+    expect(checkbox).to_be_enabled(timeout=timeout)
+    if not checkbox.is_checked():
+        target = checkbox.locator("xpath=ancestor::label[1]")
+        expect(target).to_be_visible(timeout=timeout)
+        target.click(timeout=timeout)
+    expect(checkbox).to_be_checked(timeout=timeout)
+
+
+def native_negative_controls(context):
+    # Separate data-document controls, never a mutation of the application DOM.
+    # An overlay and a disabled native control must still reject this pointer path.
+    guard = context.new_page()
+    outcomes = {}
+    try:
+        for kind in ("ordinary", "overlay", "disabled"):
+            disabled = " disabled" if kind == "disabled" else ""
+            overlay = '<div style="position:fixed;inset:0;z-index:99;background:#ddd">Blocked pointer</div>' if kind == "overlay" else ""
+            html = '<label style="display:block;padding:30px"><input type="checkbox" aria-label="Synthetic guard"' + disabled + '>Synthetic guard</label>' + overlay
+            guard.goto("data:text/html," + quote(html))
+            rejected = False
+            try:
+                check_native(guard, "Synthetic guard", timeout=1000)
+            except (AssertionError, PlaywrightTimeoutError):
+                rejected = True
+            assert rejected == (kind != "ordinary")
+            assert guard.get_by_role("checkbox", name="Synthetic guard").is_checked() == (kind == "ordinary")
+            outcomes[kind] = "passed"
+    finally:
+        guard.close()
+    return outcomes
 
 def revision(page, value):
     expect(page.get_by_text("QA shared-logo revision: "+str(value),exact=True)).to_be_visible()
@@ -44,6 +91,7 @@ def open_panel(page,label):
 
 def choose(page,label,value):
     control=page.get_by_role("combobox",name=label,exact=True)
+    idle(page)
     expect(control).to_be_visible(); control.click()
     page.get_by_role("option",name=value,exact=True).click()
 
@@ -57,6 +105,8 @@ def review(page,raw):
     expect(note).to_be_visible()
     note.fill("Synthetic owner-provided transparent variant approved for testing.")
     note.press("Tab")
+    expect(page.get_by_text("QA source note: Synthetic owner-provided transparent variant approved for testing.", exact=True)).to_be_visible()
+    idle(page)
     confirm=page.get_by_role("checkbox",name="I reviewed this replacement and approve this shared logo change",exact=True)
     expect(confirm).to_be_visible(); expect(confirm).not_to_be_checked()
     return confirm
@@ -66,13 +116,22 @@ def restore(page):
     actor=page.get_by_role("textbox",name="Logo editor name",exact=True)
     expect(actor).to_be_visible()
     if not actor.input_value():
-        actor.fill("Synthetic restore reviewer");actor.press("Tab")
+        actor_value(page, "Synthetic restore reviewer")
     panel=open_panel(page,"Logo history and restore")
     choose(page,"Saved collection","1")
+    expect(page.get_by_text("QA selected history: 1", exact=True)).to_be_visible()
+    idle(page)
     confirm=page.get_by_role("checkbox",name="Restore this collection as a new shared version",exact=True)
-    expect(confirm).to_be_visible(); confirm.check()
+    expect(confirm).to_be_visible(); check_native(page, "Restore this collection as a new shared version")
     button=page.get_by_role("button",name="Restore logo collection",exact=True)
     expect(button).to_be_enabled(); button.click()
+
+
+def approve_review(page):
+    check_native(page, "I reviewed this replacement and approve this shared logo change")
+    # Prove the server accepted this confirmation before testing invalidation.
+    expect(page.get_by_role("button", name="Replace selected logo", exact=True)).to_be_enabled()
+    idle(page)
 
 
 def exercise(engine,name,executable=None):
@@ -94,24 +153,27 @@ def exercise(engine,name,executable=None):
     out=OUT/name;out.mkdir(parents=True,exist_ok=True)
     stream=BytesIO(); Image.new("RGBA",(240,80),(20,70,40,80)).save(stream,"PNG");raw=stream.getvalue()
     try:
+        record["native_pointer_controls"] = native_negative_controls(context)
         page.goto(ROUTE)
         open_panel(page,"Stored-logo recovery sample (synthetic only)")
         page.get_by_role("button",name="Create stored-logo recovery sample",exact=True).click()
         revision(page,2)
         actor=page.get_by_role("textbox",name="Logo editor name",exact=True)
-        expect(actor).to_be_visible();actor.fill("Synthetic browser reviewer");actor.press("Tab")
+        actor_value(page, "Synthetic browser reviewer")
         record["stage"]="restore readable history"
         restore(page); revision(page,3)
         baseline=page.get_by_text(re.compile(r"^QA selected logo asset: ")).text_content()
         record["stage"]="review and invalidate changed actor"
-        confirm=review(page,raw);confirm.check()
-        actor.fill("Changed synthetic reviewer");actor.press("Tab")
+        confirm=review(page,raw);approve_review(page)
+        actor_value(page, "Changed synthetic reviewer")
         expect(confirm).not_to_be_checked()
-        confirm.check()
+        approve_review(page)
         note=page.get_by_role("textbox",name="Artwork source and approval",exact=True)
         note.fill("Changed synthetic approval note.");note.press("Tab")
+        expect(page.get_by_text("QA source note: Changed synthetic approval note.", exact=True)).to_be_visible()
+        idle(page)
         expect(confirm).not_to_be_checked()
-        confirm.check()
+        approve_review(page)
         record["stage"]="switch reviewed record"
         choose(page,"Logo to inspect","Synthetic healthy logo")
         expect(page.get_by_text("QA inspected logo: synthetic-control",exact=True)).to_be_visible()
@@ -120,7 +182,7 @@ def exercise(engine,name,executable=None):
         choose(page,"Logo to inspect","Synthetic recovery logo")
         expect(page.get_by_text("QA inspected logo: synthetic-recovery",exact=True)).to_be_visible()
         record["stage"]="review and save once despite duplicate click"
-        confirm=review(page,raw);confirm.check()
+        confirm=review(page,raw);approve_review(page)
         save=page.get_by_role("button",name="Replace selected logo",exact=True)
         expect(save).to_be_enabled()
         page.screenshot(path=str(out/"before-save.png"),full_page=True)
@@ -132,8 +194,8 @@ def exercise(engine,name,executable=None):
         record["stage"]="stale second-tab save after another tab restores"
         stale=context.new_page();stale.set_default_timeout(30000);stale.goto(ROUTE);revision(stale,4)
         old_actor=stale.get_by_role("textbox",name="Logo editor name",exact=True)
-        old_actor.fill("Stale synthetic reviewer");old_actor.press("Tab")
-        stale_confirm=review(stale,raw);stale_confirm.check()
+        actor_value(stale, "Stale synthetic reviewer")
+        stale_confirm=review(stale,raw);approve_review(stale)
         old_save=stale.get_by_role("button",name="Replace selected logo",exact=True)
         expect(old_save).to_be_enabled()
         restore(page);revision(page,5)
