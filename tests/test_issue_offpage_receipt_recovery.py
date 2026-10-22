@@ -62,7 +62,7 @@ def test_rejected_offpage_field_is_copyable_and_cannot_replay_on_aba(label, valu
     assert app.session_state["draft"].follow_ups == current.follow_ups
     copies = [w.proto.code_text for w in app.get("code") if str(value) in w.proto.code_text]
     assert len(copies) == 1
-    assert not [k for k in app.session_state
+    assert not [k for k in app.session_state.filtered_state
                 if k.startswith("offpage_issue_issue-0_") and k.endswith("_change")]
 
     # Restoration of the exact previous row is not consent to apply its callback.

@@ -115,7 +115,7 @@ def test_rejected_off_page_receipt_cannot_reapply_when_old_row_returns(kind):
     assert app.session_state['draft'].follow_ups[0] == newer
     earlier_text = earlier if isinstance(earlier, str) else 'invented-review.txt'
     assert earlier_text in codes(app)
-    stale = [key for key in app.session_state if key.startswith(
+    stale = [key for key in app.session_state.filtered_state if key.startswith(
         'review_paged_proposals_follow_proposal-0_compact_') and key.endswith('_change')]
     assert stale == [], 'Rejected off-page callback must be retired immediately.'
     # A later row restoration cannot turn an earlier rejected callback into
@@ -170,7 +170,7 @@ def test_raw_delivered_callback_from_removed_row_is_copyable_but_never_replayed(
     assert not app.exception
     assert app.session_state['draft'].follow_ups == ()
     assert needle in codes(app)
-    assert not [key for key in app.session_state
+    assert not [key for key in app.session_state.filtered_state
                 if key.startswith('review_paged_proposals_follow_proposal-0_compact_')
                 and key.endswith(('_change', '_choice'))]
     # Reappearance of the identical old row is not a new user action.
