@@ -415,18 +415,29 @@ def _retained_content(block):
                 any(filled(table.rows) for table in block.extra_tables), block.org_nodes, block.ai_paragraphs))
 
 
+def _include_left_out_key(prefix, key):
+    return prefix + "_edit_" + key + "_include_left_out"
+
+
+def included_left_out(prefix, key):
+    """True only in the run where this block's explicit Include was chosen."""
+    return st.session_state.get(_include_left_out_key(prefix, key)) is True
+
+
 def _include_left_out(spec, block, prefix):
     """Offer a left-out block back to this report exactly as it stands.
 
     Editing text or rows already includes a block again; attached pages and
-    photo grids may have nothing to edit. Source-linked wording, MBCx and
-    Water pages keep their own include controls.
+    photo grids may have nothing to edit. Source-linked wording and Water
+    pages keep their own include controls.
     """
-    if (block.source != "Omit" or block.ai_paragraphs or spec.key in ("mbcx_report", "water_reports")
+    if (block.source != "Omit" or block.ai_paragraphs or spec.key == "water_reports"
             or not _retained_content(block)):
         return block
     st.caption("Left out of this report. Its content is kept.")
-    if st.button("Include in this report", key=prefix + "_edit_" + spec.key + "_include_left_out"):
+    if spec.key == "mbcx_report" and block.text.strip():
+        st.caption("Including these pages also includes the retained page notes below; edit or clear them first if needed.")
+    if st.button("Include in this report", key=_include_left_out_key(prefix, spec.key)):
         return replace(block, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
     return block
 

@@ -235,8 +235,11 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         else:
             changed = edit_content(spec, block)
         # Some older editors mark their source just by being opened. Opening
-        # and closing an unchanged part must not invalidate its saved review.
-        updated[key] = block if replace(changed, source=block.source) == block else changed
+        # and closing an unchanged part must not invalidate its saved review;
+        # an explicit Include of a left-out part is a real change.
+        from app.monthly_report_guided import included_left_out
+        updated[key] = (changed if included_left_out(prefix, key)
+                        or replace(changed, source=block.source) != block else block)
     for key, title in ORGANIZATION_PARTS:
         if key not in WORKFLOW_KEYS:
             render_part(key, title)

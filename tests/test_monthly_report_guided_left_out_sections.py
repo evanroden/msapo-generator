@@ -233,12 +233,44 @@ def test_left_out_attached_pages_and_photos_can_be_included_without_uploading_ag
     app = AppTest.from_string(ATTACHED_APP, default_timeout=15).run()
     assert not app.exception
     include = [button.key for button in app.button if button.label == "Include in this report"]
-    assert len(include) == 2  # MBCx keeps its own control; an empty block has nothing to include
+    assert len(include) == 3  # an empty block has nothing to include
     for key in include:
         app.button(key).click().run()
     app.run()
     blocks = app.session_state["blocks"]
-    for key in ("vendor_reports", "improvements"):
+    for key in ("vendor_reports", "improvements", "mbcx_report"):
         assert blocks[key].source == "This month" and blocks[key].asset_hashes  # the retained pages, as they were
-    assert blocks["mbcx_report"].source == "Omit" and blocks["end_of_life"].source == "Omit"
+    assert blocks["end_of_life"].source == "Omit"
     assert not any(button.label == "Include in this report" for button in app.button)
+
+
+ORGANIZATION_APP = """
+import streamlit as st
+from dataclasses import replace
+from app.monthly_report_guided import _edit_content
+from app.monthly_report_model import ReportPeriod, ResolvedBlock, default_sections, synthetic_draft, synthetic_profiles
+from app.monthly_report_organization_ui import render_organization
+from app.monthly_report_ui import _field
+
+draft = replace(synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9)), prepared_by="Synthetic Reviewer")
+specs = {spec.key: spec for section in default_sections() if section.key == "organization" for spec in section.blocks}
+blocks = st.session_state.setdefault("blocks", {"business_hours_workflow": ResolvedBlock(
+    "business_hours_workflow", "Omit", asset_hashes=("synthetic-procedure.png",))})
+st.session_state["blocks"] = render_organization(
+    draft, blocks, specs, "qa_left_out_org", {}, _field,
+    lambda spec, block: _edit_content(spec, block, None, "qa_left_out_org", {}, _field, draft), show_preview=False)
+"""
+
+
+def test_an_explicit_include_survives_the_organization_workspace():
+    from streamlit.testing.v1 import AppTest
+    app = AppTest.from_string(ORGANIZATION_APP, default_timeout=15).run()
+    assert not app.exception
+    edit = [button for button in app.button if button.label.startswith("Edit")
+            and "business" in button.key]
+    edit[0].click().run()
+    app.button("qa_left_out_org_edit_business_hours_workflow_include_left_out").click().run()
+    app.run()
+    assert not app.exception
+    procedure = app.session_state["blocks"]["business_hours_workflow"]
+    assert procedure.source == "This month" and procedure.asset_hashes == ("synthetic-procedure.png",)
