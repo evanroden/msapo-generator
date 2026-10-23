@@ -407,6 +407,30 @@ def _initial_draft(state, period, prepared):
     return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
 
 
+def _retained_content(block):
+    """True when a block holds anything a report could print."""
+    def filled(rows):
+        return any(str(cell).strip() for row in rows for cell in row if cell is not None)
+    return any((block.text.strip(), filled(block.rows), block.asset_hashes,
+                any(filled(table.rows) for table in block.extra_tables), block.org_nodes, block.ai_paragraphs))
+
+
+def _include_left_out(spec, block, prefix):
+    """Offer a left-out block back to this report exactly as it stands.
+
+    Editing text or rows already includes a block again; attached pages and
+    photo grids may have nothing to edit. Source-linked wording, MBCx and
+    Water pages keep their own include controls.
+    """
+    if (block.source != "Omit" or block.ai_paragraphs or spec.key in ("mbcx_report", "water_reports")
+            or not _retained_content(block)):
+        return block
+    st.caption("Left out of this report. Its content is kept.")
+    if st.button("Include in this report", key=prefix + "_edit_" + spec.key + "_include_left_out"):
+        return replace(block, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
+    return block
+
+
 def complete_guided_sections(draft):
     """Keep every standard section, including intentionally blank sections.
 
@@ -434,9 +458,6 @@ def complete_guided_sections(draft):
     sections_out |= {key for key in draft.profile.excluded_sections if key not in present and key in standard_specs}
     left_out = {block.key for key in sections_out for block in (present.get(key) or standard_specs[key]).blocks}
 
-    def filled(rows):
-        return any(str(cell).strip() for row in rows for cell in row if cell is not None)
-
     def leave_out(item):
         left = replace(item, included=False)
         confirmed = item.reviewed_fingerprint and item.reviewed_fingerprint == confirmation(item, draft.period)
@@ -452,9 +473,7 @@ def complete_guided_sections(draft):
             pass
     draft = replace(draft, blocks=tuple(
         replace(block, source="Omit", pending_library_save=False)
-        if block.key in left_out and block.source != "Omit" and any(
-            (block.text.strip(), filled(block.rows), block.asset_hashes,
-             any(filled(table.rows) for table in block.extra_tables), block.org_nodes, block.ai_paragraphs)) else block
+        if block.key in left_out and block.source != "Omit" and _retained_content(block) else block
         for block in draft.blocks), follow_ups=tuple(
         leave_out(item)
         if item.included and ("issues" if item.category == "issue" else "proposals") in sections_out else item
@@ -563,6 +582,7 @@ def _has_request_rows(block):
 def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True,
                   manage_saved_pictures=True, inline_photo_intake=False, page_actions_open=True,
                   text_label=None, text_height=140):
+    block = _include_left_out(spec, block, prefix)
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -1019,6 +1039,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
             continue
         if spec.key in ("contact_matrix", "subcontractor_matrix"):
             from app.monthly_report_visual_ui import edit_contacts
+            block = _include_left_out(spec, block, prefix)
             block = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
         else:
             with writing if writing is not None and spec.key == "activity_summary" else nullcontext():

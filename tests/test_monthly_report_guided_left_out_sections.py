@@ -205,3 +205,40 @@ def test_an_explicit_row_edit_includes_a_left_out_imported_table_again(monkeypat
     result = app.session_state["result"]
     assert result.source == "This month"
     assert result.extra_tables[0].rows == (("Synthetic Vendor", "Synthetic boiler service"),)
+
+
+ATTACHED_APP = """
+import streamlit as st
+from app.monthly_report_guided import _edit_content
+from app.monthly_report_model import BlockSpec, ReportPeriod, ResolvedBlock, synthetic_draft, synthetic_profiles
+from app.monthly_report_ui import _field
+
+draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+blocks = st.session_state.setdefault("blocks", {
+    "vendor_reports": ResolvedBlock("vendor_reports", "Omit", asset_hashes=("synthetic-vendor-page.png",),
+                                    asset_captions=("Synthetic vendor page",)),
+    "improvements": ResolvedBlock("improvements", "Omit", asset_hashes=("synthetic-photo.png",),
+                                  asset_captions=("Synthetic improvement",)),
+    "mbcx_report": ResolvedBlock("mbcx_report", "Omit", asset_hashes=("synthetic-mbcx.png",)),
+    "end_of_life": ResolvedBlock("end_of_life", "Omit")})
+for key, kind in (("vendor_reports", "pdf_pages"), ("improvements", "image_grid"),
+                  ("mbcx_report", "pdf_pages"), ("end_of_life", "table")):
+    blocks[key] = _edit_content(BlockSpec(key, kind), blocks[key], None, "qa_left_out_pages", {}, _field,
+                                draft if kind == "image_grid" else None, manage_saved_pictures=False)
+"""
+
+
+def test_left_out_attached_pages_and_photos_can_be_included_without_uploading_again():
+    from streamlit.testing.v1 import AppTest
+    app = AppTest.from_string(ATTACHED_APP, default_timeout=15).run()
+    assert not app.exception
+    include = [button.key for button in app.button if button.label == "Include in this report"]
+    assert len(include) == 2  # MBCx keeps its own control; an empty block has nothing to include
+    for key in include:
+        app.button(key).click().run()
+    app.run()
+    blocks = app.session_state["blocks"]
+    for key in ("vendor_reports", "improvements"):
+        assert blocks[key].source == "This month" and blocks[key].asset_hashes  # the retained pages, as they were
+    assert blocks["mbcx_report"].source == "Omit" and blocks["end_of_life"].source == "Omit"
+    assert not any(button.label == "Include in this report" for button in app.button)
