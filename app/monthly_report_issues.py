@@ -1,6 +1,7 @@
 """One report-scoped issue list; omission is not resolution or history deletion."""
 
 from dataclasses import asdict, replace
+import threading
 from uuid import uuid4
 
 from app.monthly_report_content_policy import table_price_columns
@@ -121,14 +122,28 @@ def clear_issues(draft):
         for item in draft.follow_ups))
 
 
+_SCOPE_CACHE = threading.local()
+
+
 def _action_scope(draft, prefix):
-    """A delayed list action cannot cross a reset, source or report identity."""
+    """A delayed list action cannot cross a reset, source or report identity.
+
+    Every row's identity uses this report-level scope. Drafts are immutable,
+    so it is computed once per draft object and editor state, not once per
+    row, which kept large lists quadratic before pagination applied.
+    """
     import streamlit as st
     epoch = st.session_state.setdefault(prefix + "_rich_text_epoch", uuid4().hex)
-    return _digest((prefix, epoch, st.session_state.get("_monthly_qa_generation", ""),
-                    asdict(draft.profile), draft.period.key,
-                    tuple(source.fingerprint for source in draft.sources),
-                    tuple(item.key for item in draft.follow_ups if item.category == "issue")))
+    generation = st.session_state.get("_monthly_qa_generation", "")
+    cached = getattr(_SCOPE_CACHE, "entry", None)
+    if cached is not None and cached[0] is draft and cached[1:4] == (prefix, epoch, generation):
+        return cached[4]
+    scope = _digest((prefix, epoch, generation,
+                     asdict(draft.profile), draft.period.key,
+                     tuple(source.fingerprint for source in draft.sources),
+                     tuple(item.key for item in draft.follow_ups if item.category == "issue")))
+    _SCOPE_CACHE.entry = (draft, prefix, epoch, generation, scope)
+    return scope
 
 
 def _queue_issue_action(prefix, scope, action, expected=""):

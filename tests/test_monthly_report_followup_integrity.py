@@ -346,3 +346,29 @@ def test_late_proposal_choice_cannot_bind_to_changed_row_source_or_editor(change
     next(w for w in app.selectbox if w.label == "Proposal page").set_value(1).run()
     assert not next(w for w in app.checkbox if w.label == "Leave this proposal out of the report").value
     assert any("item changed" in w.value.lower() for w in app.warning)
+
+
+def test_row_identities_share_one_report_scope_computation(monkeypatch):
+    """Large paged lists stay linear: one report scope per draft, not per row."""
+    from dataclasses import replace
+    from app import monthly_report_issues as issues
+    from app.monthly_report_followups import _followup_choice_identity
+    from app.monthly_report_model import ReportFollowUp, ReportPeriod, synthetic_draft, synthetic_profiles
+    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    draft = replace(draft, follow_ups=tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Synthetic issue {n}", draft.period.key) for n in range(300)))
+    scopes, real = [], issues._digest
+
+    def counting(value):
+        if isinstance(value, tuple) and len(value) == 7 and value[0] == "scope_probe":
+            scopes.append(value)
+        return real(value)
+
+    monkeypatch.setattr(issues, "_digest", counting)
+    rows = [issues._issue_identity(draft, "scope_probe", item) for item in draft.follow_ups]
+    again = [_followup_choice_identity(draft, "scope_probe", item) for item in draft.follow_ups]
+    assert len(scopes) == 1
+    assert rows == again and len(set(rows)) == 300  # identities are unchanged and distinct
+    changed = replace(draft, follow_ups=draft.follow_ups[:-1])
+    issues._issue_identity(changed, "scope_probe", changed.follow_ups[0])
+    assert len(scopes) == 2  # a different report state is never served a stale scope
