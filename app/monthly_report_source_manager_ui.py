@@ -72,6 +72,7 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
         st.markdown('<span class="enfra-source-correction-owner" data-report-identity="' +
                     sha256(prefix.encode()).hexdigest()[:24] + '" aria-hidden="true"></span>',
                     unsafe_allow_html=True)
+        entry_sources = draft.sources
         before_sources = {source.id: source.fingerprint for source in draft.sources}
         before_sources.update((content.source.id, content.source.fingerprint)
                               for content in st.session_state.get(prefix + "_evidence", ()))
@@ -173,7 +174,41 @@ def render_guided_source_manager(draft, blocks, prefix, field, apply_prepared, k
             included_source_ids=used_source_ids(replace(draft, blocks=tuple(blocks.values()))),
             show_intake=not has_activity, selected_source_id=selected, visible=opened,
             shown_source_page=shown_page[0] if shown_page else None, section_page_owners=section_page_owners)
-        draft = replace(draft, sources=keep_missing(prefix, sources))
+        from app.monthly_report_page_captions import synchronize_source_captions
+        current_sources = keep_missing(prefix, sources)
+        # Compare with the sources this render opened with: caption corrections
+        # above and page decisions in the intake both reach included pages.
+        blocks, conflicts = synchronize_source_captions(blocks, entry_sources, current_sources,
+            decision=st.session_state.pop(prefix + "_evidence_page_decision", None))
+        draft = replace(draft, sources=current_sources)
+        for conflict in conflicts:
+            source = next(source for source in draft.sources if source.id == conflict.source_id)
+            block = blocks[conflict.block_key]
+            st.warning(f"{source.filename} · page {conflict.number}: the report and source have different captions. Choose which wording to keep, then review this page.")
+            st.caption("Report caption: " + (conflict.report_caption or "(blank)"))
+            st.caption("Source caption: " + (conflict.source_caption or "(blank)"))
+            stamp = prefix + "_caption_conflict_" + block.fingerprint + "_" + source.fingerprint + "_" + str(conflict.number)
+            use_source, keep_report = st.columns(2)
+            selected_caption = None
+            if use_source.button("Use source caption in report", key=stamp + "_source"):
+                selected_caption = conflict.source_caption
+            if keep_report.button("Keep report caption", key=stamp + "_report"):
+                selected_caption = conflict.report_caption
+            if selected_caption is not None:
+                from app.monthly_report_page_controls import revise_included_page
+                revised, source = revise_included_page(block, source, conflict.number, "caption",
+                    caption=selected_caption, all_sources=draft.sources)
+                source = replace(source, client_page_reviews=tuple((number, receipt)
+                    for number, receipt in source.client_page_reviews if number != conflict.number))
+                blocks[block.key] = revised
+                draft = replace(draft, sources=tuple(source if item.id == source.id else item for item in draft.sources))
+                evidence_key = prefix + "_evidence"
+                st.session_state[evidence_key] = tuple(replace(content, source=source)
+                    if content.source.id == source.id else content for content in st.session_state.get(evidence_key, ()))
+                forms = st.session_state.get("_monthly_source_detail_forms")
+                if isinstance(forms, dict):
+                    forms[source.id] = source
+                st.session_state[prefix + "_period_editor_refresh"] = True
         if before_sources != {source.id: source.fingerprint for source in draft.sources}:
             # Intake/read controls precede metadata and page controls. Finish
             # their delivered edits/defaults, then bind the displayed read

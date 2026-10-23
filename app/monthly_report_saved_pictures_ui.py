@@ -5,7 +5,7 @@ import hashlib
 
 import streamlit as st
 
-from app.monthly_report_asset_review import pending_asset_indexes, preserve_asset_reviews
+from app.monthly_report_asset_review import asset_context, pending_asset_indexes, preserve_asset_reviews
 
 
 def _move_page(key, delta, last):
@@ -20,14 +20,17 @@ def _set_editing(key, value):
     st.session_state[key] = value
 
 
+def _picture_identity(block):
+    return (block.asset_hashes, tuple(item.key for item in block.asset_instances))
+
+
 def remove_saved_picture(block, index):
     """Remove one picture without guessing which narrative evidence to discard."""
     block = preserve_asset_reviews(block, block)
     keep = tuple(n for n in range(len(block.asset_hashes)) if n != index)
     refs = block.references
-    contexts = dict(block.asset_provenance)
-    removed_context = {ref for ref in contexts.get(block.asset_hashes[index], ()) if ref in block.references}
-    retained_context = {ref for n in keep for ref in contexts.get(block.asset_hashes[n], ())}
+    removed_context = {ref for ref in asset_context(block, index) if ref in block.references}
+    retained_context = {ref for n in keep for ref in asset_context(block, n)}
     native_content = bool(block.text.strip() or block.rows or block.extra_tables or block.ai_paragraphs or block.org_nodes)
     # Shared source references and evidence used by native content stay intact.
     # Multiple references on a final unmapped page can describe native content
@@ -35,14 +38,16 @@ def remove_saved_picture(block, index):
     if not native_content and (keep or len(removed_context) <= 1):
         discarded = removed_context - retained_context
         refs = tuple(ref for ref in refs if ref not in discarded)
-    return preserve_asset_reviews(block, replace(
+    updated = replace(
         block,
         asset_hashes=tuple(block.asset_hashes[n] for n in keep),
         asset_captions=tuple(block.asset_captions[n] if n < len(block.asset_captions) else "" for n in keep),
         references=refs,
         client_reviewed_fingerprint="",
         reviewed_fingerprint="",
-    ))
+    )
+    from app.monthly_report_asset_instances import reindex_asset_instances, with_asset_instances
+    return preserve_asset_reviews(block, with_asset_instances(updated, reindex_asset_instances(block, keep)))
 
 
 def edit_saved_pictures(block, key, loader, *, show_preview=True):
@@ -54,7 +59,7 @@ def edit_saved_pictures(block, key, loader, *, show_preview=True):
     block = preserve_asset_reviews(block, block)
     pending_key = key + "_remove_request"
     pending = st.session_state.pop(pending_key, None)
-    if pending and pending[0] == block.asset_hashes and 0 <= pending[1] < len(block.asset_hashes):
+    if pending and pending[0] == _picture_identity(block) and 0 <= pending[1] < len(block.asset_hashes):
         block = remove_saved_picture(block, pending[1])
     count = len(block.asset_hashes)
     if not count:
@@ -89,7 +94,7 @@ def edit_saved_pictures(block, key, loader, *, show_preview=True):
                          on_click=_move_page, args=(page_key, 1, last))
     if block.source != "Omit":
         st.caption("These pictures are included in this report. Removing one changes this draft; saved originals remain available.")
-    version = hashlib.sha256(repr(block.asset_hashes).encode()).hexdigest()[:16]
+    version = hashlib.sha256(repr(_picture_identity(block)).encode()).hexdigest()[:16]
     for index in visible[page * 4:page * 4 + 4]:
         with st.container():
             caption = block.asset_captions[index] if index < len(block.asset_captions) else ""
@@ -102,5 +107,5 @@ def edit_saved_pictures(block, key, loader, *, show_preview=True):
                     st.warning("This picture could not be displayed. Replace it with a clear copy or remove it from this draft.")
             st.button("Remove this picture" if count == 1 else f"Remove picture {index + 1}",
                       key=key + f"_remove_{version}_{index}", on_click=_request_removal,
-                      args=(pending_key, block.asset_hashes, index))
+                      args=(pending_key, _picture_identity(block), index))
     return block

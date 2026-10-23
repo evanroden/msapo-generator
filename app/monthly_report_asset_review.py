@@ -26,7 +26,9 @@ def asset_context(block, index):
     """Return explicit provenance, or conservatively bind an unmapped image."""
     reference = block.asset_hashes[index]
     available = _references(block)
-    mapped = dict(block.asset_provenance).get(reference)
+    from app.monthly_report_asset_instances import valid_instances
+    mapped = (block.asset_instances[index].references if valid_instances(block)
+              else dict(block.asset_provenance).get(reference))
     # A removed/replaced source invalidates an inherited map. Never approve an
     # image under a provenance reference that the block no longer contains.
     if mapped is not None and all(value.startswith(_SOURCE_CONTEXT) or value in available for value in mapped):
@@ -64,7 +66,7 @@ def asset_fingerprint(block, index):
 def _legacy_reviewed(block):
     # Once migrated, a compatibility whole-block stamp can no longer approve
     # newly changed provenance (the historical digest predates that new field).
-    return (not block.client_asset_reviews and not block.asset_provenance
+    return (not block.client_asset_reviews and not block.asset_provenance and not block.asset_instances
             and block.client_reviewed_fingerprint == block.fingerprint)
 
 
@@ -129,6 +131,9 @@ def refresh_asset_source_context(block, sources):
     Missing source evidence gets an unapprovable current-context marker.
     """
     block = normalize_asset_reviews(block)
+    from app.monthly_report_asset_instances import valid_instances, with_asset_instances
+    individual = valid_instances(block)
+    instances = []
     source_index = {source.id: source for source in sources}
     contexts = {}
     trusted_migrations = set()
@@ -148,22 +153,26 @@ def refresh_asset_source_context(block, sources):
             if source is None or not 1 <= number <= len(source.page_texts):
                 current_markers.append(f"{_SOURCE_CONTEXT}{parts[0]}:{number}:missing")
                 trusted = False
-                unavailable.add(asset)
+                unavailable.add(index)
                 continue
             marker = _source_context_marker(source, number)
             current_markers.append(marker)
             if not markers and parts[2] != source.fingerprint:
                 trusted = False
-        contexts[asset] = tuple(sorted(set((*plain, *current_markers))))
+        context = tuple(sorted(set((*plain, *current_markers))))
+        contexts[asset] = tuple(sorted(set((*contexts.get(asset, ()), *context))))
+        if individual:
+            instances.append(replace(block.asset_instances[index], references=context))
         if current_markers and not markers and trusted and asset_reviewed(block, index):
             trusted_migrations.add(index)
-    updated = replace(block, asset_provenance=tuple(contexts.items()))
+    updated = (with_asset_instances(block, instances) if individual else
+               replace(block, asset_provenance=tuple(contexts.items())))
     reviews = set(block.client_asset_reviews)
     for index in trusted_migrations:
         reviews.add(asset_fingerprint(updated, index))
     return replace(updated, client_asset_reviews=tuple(dict.fromkeys(
         asset_fingerprint(updated, n) for n, asset in enumerate(updated.asset_hashes)
-        if asset not in unavailable and asset_fingerprint(updated, n) in reviews)))
+        if n not in unavailable and asset_fingerprint(updated, n) in reviews)))
 
 
 def normalize_asset_reviews(block):
@@ -171,9 +180,15 @@ def normalize_asset_reviews(block):
     fingerprints = tuple(asset_fingerprint(block, n) for n in range(len(block.asset_hashes)))
     reviews = (fingerprints if _legacy_reviewed(block)
                else tuple(value for value in fingerprints if value in block.client_asset_reviews))
+    from app.monthly_report_asset_instances import valid_instances, with_asset_instances
+    if valid_instances(block):
+        current = with_asset_instances(block, tuple(replace(item, references=asset_context(block, n))
+                                                   for n, item in enumerate(block.asset_instances)))
+        return replace(current, client_asset_reviews=tuple(dict.fromkeys(reviews)))
     provenance = tuple(dict.fromkeys((reference, asset_context(block, n))
                                     for n, reference in enumerate(block.asset_hashes)))
-    return replace(block, client_asset_reviews=tuple(dict.fromkeys(reviews)), asset_provenance=provenance)
+    return replace(block, client_asset_reviews=tuple(dict.fromkeys(reviews)), asset_provenance=provenance,
+                   asset_instances=())
 
 
 def preserve_asset_reviews(original, updated):
@@ -184,6 +199,14 @@ def preserve_asset_reviews(original, updated):
     falling back to the full block context when the caller cannot distinguish it.
     """
     original = normalize_asset_reviews(original)
+    if original.asset_instances or updated.asset_instances:
+        from app.monthly_report_asset_instances import reconcile_asset_instances
+        updated = reconcile_asset_instances(original, updated)
+        current = normalize_asset_reviews(updated)
+        reviews = set((*original.client_asset_reviews, *current.client_asset_reviews))
+        return replace(current, client_asset_reviews=tuple(dict.fromkeys(
+            asset_fingerprint(current, n) for n in range(len(current.asset_hashes))
+            if asset_fingerprint(current, n) in reviews)))
     original_context = dict(original.asset_provenance)
     updated_context = dict(updated.asset_provenance)
     added_references = tuple(r for r in _references(updated) if r not in _references(original))
