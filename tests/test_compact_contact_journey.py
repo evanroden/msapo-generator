@@ -93,6 +93,9 @@ def test_ci_runs_native_contact_journey_and_retains_first_failure_evidence():
     assert 'page.expect_download' in script
     assert 'force=True' not in script
     assert 'dispatchEvent' not in script
+    assert 'expected.every((v,i) => row[i]===v)' in script
+    assert 'expected_contact[index] = value' in script
+    assert "current['node'] == native['node']" in script
     assert 'trusted:e.isTrusted' in script
     assert "event['trusted'] is True" in script
     assert "record['pre_reload_native_events'] = native_events" in script

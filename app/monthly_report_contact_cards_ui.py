@@ -82,11 +82,13 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
             record.update(active=pending['active'], tables=tables)
             if pending['action'] in {'open', 'add'}:
                 record['field_scope'] = uuid4().hex
+                record['editor_slot'] = pending['active']
             record.pop('pending', None)
         elif tables == pending['result']:
             record.update(active=pending['active'], tables=tables)
             if pending['action'] in {'open', 'add'}:
                 record['field_scope'] = uuid4().hex
+                record['editor_slot'] = pending['active']
             record.pop('pending', None)
         else:
             record['epoch'] = uuid4().hex
@@ -142,18 +144,26 @@ def edit_contact_tables(tables, key, field, label, *, vendor=False, prepare=None
     for ti, table in enumerate(tables):
         if len(tables) > 1:
             st.write(f'Contact table {ti + 1}')
-        for ri, row in enumerate(table.rows):
-            with st.container(border=True):
-                st.write(label(table.columns, row, ri))
-                if active != (ti, ri):
+        entries = [(ri, row) for ri, row in enumerate(table.rows) if active != (ti, ri)]
+        if active is not None and active[0] == ti:
+            ri = active[1]
+            row = table.rows[ri] if ri < len(table.rows) else tuple('' for _ in table.columns)
+            # Preserve the opened/Add presentation slot until explicit closure.
+            # Directory grouping still updates canonical rows and action bindings;
+            # it must not move the native editor between positional parent blocks.
+            slot = record.get('editor_slot', active)[1]
+            entries.insert(min(slot, len(entries)), (ri, row))
+        for ri, row in entries:
+            editing = active == (ti, ri)
+            card_key = key + '_active_editor' if editing else key + f'_row_{ti}_{ri}'
+            with st.container(key=card_key, border=True):
+                if editing:
+                    st.write('Edit ' + noun)
+                    _fields(table, fields, field, args, vendor)
+                else:
+                    st.write(label(table.columns, row, ri))
                     st.button('Edit ' + noun, key=key + f'_open_{ti}_{ri}',
                               on_click=_queue, args=(*args, 'open', (ti, ri)))
-                else:
-                    _fields(table, fields, field, args, vendor)
-        if active == (ti, len(table.rows)):
-            with st.container(border=True):
-                st.write('New ' + noun)
-                _fields(table, fields, field, args, vendor)
         st.button('Add ' + noun, key=key + f'_add_{ti}',
                   on_click=_queue, args=(*args, 'add', ti))
     return tables, intermediate

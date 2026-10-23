@@ -61,11 +61,23 @@ def test_multisite_add_keeps_native_field_and_expected_rows_bound_after_shared_g
     app, profile, original, before = workspace(monkeypatch, tmp_path)
     press(app, 'Add contact')
     identity = field(app, 'Phone').proto.id
+    def field_path(node, path=()):
+        if getattr(node, 'type', '') == 'text_input' and node.proto.id == identity:
+            return path
+        for index, child in getattr(node, 'children', {}).items():
+            found = field_path(child, path + (index,))
+            if found is not None:
+                return found
+    path = field_path(app._tree)
+    assert path is not None
     for label,value in [('Facility',profile.facilities[0].title), ('Role','Engineer'),
                         ('Name','New Invented'), ('Phone','new-phone'), ('Email','new@example.invalid')]:
         field(app,label).set_value(value).run()
         assert not app.exception and not app.warning
         assert field(app,'Phone').proto.id == identity
+        assert field_path(app._tree) == path, 'The active editor must not move parents during directory regrouping.'
+        assert len([b for b in app.button if b.label == 'Edit contact']) == len(report(app).rows) - 1
+        assert len(app.text_input) == 5
     latest = directory.load_directory(profile.contract)
     assert latest.sites[0].contacts[-1].phone == 'new-phone'
     assert latest.sites[0].contacts[-1].email == 'new@example.invalid'

@@ -31,13 +31,18 @@ OBSERVER = r'''(() => {
 })();'''
 
 
-def receipt(page, *, after=0):
-    page.wait_for_function('''after => {
+def receipt(page, *, after=0, expected_contact=None, expected_write=None):
+    page.wait_for_function('''({after,expected,write}) => {
       const n=[...document.querySelectorAll('[data-enfra-contact-receipt]')].at(-1);
       if(!n)return false;const s=JSON.parse(n.dataset.enfraContactReceipt);
+      const root=document.querySelector('.st-key-epc_pair_monthly_organization');
+      if(expected && (!s.working.contacts.rows.some(row => row.length===expected.length && expected.every((v,i) => row[i]===v)) ||
+        root?.querySelectorAll('input[aria-label="Phone"]').length!==1))return false;
+      if(write && (s.attempts.length!==write.attempts || s.directory.revision!==write.revision ||
+        s.working.contacts.rows[0][3]!==write.phone || root?.querySelectorAll('input[aria-label="Phone"]').length!==0))return false;
       return s.sequence>after && JSON.stringify(s.working)===JSON.stringify(s.durable) &&
         document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
-    }''', arg=after, timeout=30000)
+    }''', arg={'after':after,'expected':expected_contact,'write':expected_write}, timeout=30000)
     return json.loads(page.locator(SELECTOR).last.get_attribute('data-enfra-contact-receipt'))
 
 
@@ -86,8 +91,8 @@ def browser_task(browser_type, name):
     page.set_default_timeout(20000)
     page.on('pageerror', lambda error: errors.append(str(error)))
     record = {'synthetic_only':True, 'steps':[], 'errors':errors, 'external':external}
-    def capture(stage, previous=None):
-        state = receipt(page, after=previous['sequence'] if previous else 0)
+    def capture(stage, previous=None, expected_contact=None, expected_write=None):
+        state = receipt(page, after=previous['sequence'] if previous else 0, expected_contact=expected_contact, expected_write=expected_write)
         assert state['saved_unchanged'] and state['original_unchanged']
         assert state['working']['vendors'] == baseline['working']['vendors']
         assert state['working']['unrelated'] == baseline['working']['unrelated']
@@ -133,13 +138,18 @@ def browser_task(browser_type, name):
         contacts = page.locator(CONTACTS)
         contacts.get_by_role('button',name='Edit contacts',exact=True).click()
         expect(contacts.get_by_role('textbox',name='Name',exact=True)).to_have_count(0)
+        state = capture('contacts-open',state)
         contacts.get_by_role('button',name='Add contact',exact=True).click()
+        expect(contacts.get_by_role('textbox',name='Phone',exact=True)).to_have_count(1)
+        state = capture('add-open',state)
         native = contacts.get_by_role('textbox',name='Phone',exact=True).evaluate('n=>window.ENFRAContactObservation.describe(n)')
-        for label,value in [('Facility','Demo North'),('Role','Engineer'),('Name','Synthetic Added North'),('Phone','202-555-0174')]:
+        expected_contact = ['', '', '', '', '']
+        for index,(label,value) in enumerate([('Facility','Demo North'),('Role','Engineer'),('Name','Synthetic Added North'),('Phone','202-555-0174')]):
             field = contacts.get_by_role('textbox',name=label,exact=True)
             field.fill(value)
             field.press('Tab')
-            state = capture('add-' + label.lower(), state)
+            expected_contact[index] = value
+            state = capture('add-' + label.lower(), state, expected_contact)
             current = contacts.get_by_role('textbox',name='Phone',exact=True).evaluate('n=>window.ENFRAContactObservation.describe(n)')
             assert current['node'] == native['node'] and current['visible'] and not current['disabled']
         assert state['directory']['sites'][0]['contacts'][-1]['phone'] == '202-555-0174'
@@ -163,7 +173,9 @@ def browser_task(browser_type, name):
             contacts.get_by_role('textbox',name='Phone',exact=True).fill(phone)
             prior = state
             contacts.get_by_role('button',name='Remove contact',exact=True).click()
-            state = capture('fault-' + fault,prior)
+            expected_write = {'attempts':len(prior['attempts']) + 1,
+                              'revision':prior['directory']['revision'] + (fault == 'after'), 'phone':phone}
+            state = capture('fault-' + fault,prior, expected_write=expected_write)
             assert len(state['working']['contacts']['rows']) == len(prior['working']['contacts']['rows'])
             assert len(state['attempts']) == len(prior['attempts']) + 1
             if fault == 'before':
@@ -171,7 +183,8 @@ def browser_task(browser_type, name):
                 assert any(ref.startswith('directory-pending-correction:') for ref in state['working']['contacts']['references'])
                 # Native repeated pointer activation, not a script callback replay.
                 contacts.get_by_role('button',name='Retry shared contact correction',exact=True).dblclick()
-                state = capture('explicit-retry-double-click',state)
+                expected_write.update(attempts=len(prior['attempts']) + 2, revision=prior['directory']['revision'] + 1)
+                state = capture('explicit-retry-double-click',state, expected_write=expected_write)
                 assert len(state['attempts']) == len(prior['attempts']) + 2
             assert state['directory']['revision'] == prior['directory']['revision'] + 1
             assert state['directory']['sites'][0]['contacts'][0]['phone'] == phone

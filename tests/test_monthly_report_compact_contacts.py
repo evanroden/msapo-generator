@@ -72,6 +72,22 @@ def test_retained_blank_rows_start_compact_and_view_is_exactly_immutable(vendor)
     assert block(app) == app.session_state['original']
     app.run()
     assert not app.text_input and block(app).extra_tables == (table,)
+    def card_path(node, suffix, path=()):
+        proto = getattr(node, 'proto', None)
+        if proto is not None and getattr(proto, 'id', '').endswith(suffix):
+            return path
+        for index, child in getattr(node, 'children', {}).items():
+            found = card_path(child, suffix, path + (index,))
+            if found is not None:
+                return found
+    original_slot = card_path(app._tree, '_row_0_51')
+    assert original_slot is not None
+    click(app, 'Edit', 51)
+    assert card_path(app._tree, '_active_editor') == original_slot  # No long-list jump.
+    assert len(buttons(app, 'Edit')) == 55 and len(app.text_input) == 3
+    assert block(app).extra_tables == (table,)
+    close(app)
+    assert len(buttons(app, 'Edit')) == 56 and block(app).extra_tables == (table,)
 
 
 def test_switch_between_tables_and_close_capture_pending_native_fields():
