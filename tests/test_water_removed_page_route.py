@@ -48,7 +48,7 @@ def test_removed_last_page_keeps_durable_water_route_over_classifier(monkeypatch
     next(w for w in app.radio if w.label=='Section').set_value('water_reports').run()
     assert not app.exception
     assert not app.session_state['test_blocks']['water_reports'].asset_hashes
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     assert not app.exception
     assert app.session_state['test_blocks']['water_reports'].asset_hashes==block.asset_hashes
     assert app.session_state['test_apply_count']==1

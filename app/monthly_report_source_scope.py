@@ -147,6 +147,62 @@ def source_uses(draft, source_id):
     return tuple(uses)
 
 
+def text_edit_references(block, text):
+    """Retire an exactly deleted accepted paragraph, never an edited claim.
+
+    The old and new paragraphs are known at the ordinary edit boundary. Only
+    whole-paragraph deletions qualify, and only a receipt that explicitly kept
+    independent wording can identify the source contribution being removed.
+    Ambiguous edits and mixed text/table/picture uses retain their safety gates.
+    This does not mutate a source, its original bytes or historical snapshots.
+    """
+    # A completely empty block already has no included use. Preserve its
+    # references for the existing explicit Clear/Undo action, which restores
+    # text into that exact block rather than inventing fresh provenance.
+    if not text.strip():
+        return block.references
+    before = Counter(part for part in block.text.split("\n\n") if part)
+    after = Counter(part for part in text.split("\n\n") if part)
+    if before == after or not after <= before:
+        return block.references
+    if (block.ai_written or block.ai_paragraphs or block.asset_hashes or block.org_nodes
+            or any(cell.strip() for row in block.rows for cell in row)
+            or any(cell.strip() for table in block.extra_tables for row in table.rows for cell in row)):
+        return block.references
+    records = {reference: _decode(reference[len(USE_PREFIX):])
+               for reference in block.references if reference.startswith(USE_PREFIX)}
+    retired = set()
+    for reference, record in records.items():
+        paragraph, origin = record.get("text"), record.get("reference")
+        if (record.get("version") == 1 and record.get("kind") == "text"
+                and record.get("key") == block.key
+                and record.get("allows_independent_text") is True
+                and isinstance(paragraph, str) and paragraph and before[paragraph]
+                and not after[paragraph] and _source_id(origin)
+                and origin in block.references):
+            retired.add(reference)
+    # Another receipt may still use this exact source/page reference. Keep it
+    # unless every receipt paired with it was removed by this exact edit.
+    origins = {records[reference]["reference"] for reference in retired}
+    origins = {origin for origin in origins if all(
+        reference in retired for reference, record in records.items()
+        if record.get("reference") == origin)}
+    return tuple(reference for reference in block.references
+                 if reference not in retired and reference not in origins)
+
+
+def contribution_dates_bound(draft, source):
+    """Every included use has current accepted row/totals reporting dates.
+
+    Wording review, site review and a receipt for just one of several uses do
+    not establish the date of the others. Original page/image uses stay on the
+    existing file-date path even when this source also supplied accepted rows.
+    """
+    uses = source_uses(draft, source.id)
+    return bool(uses) and all(use[0] in {"text", "rows"} and _covered_use(
+        use, source, draft.profile, draft.period, sources=draft.sources) for use in uses)
+
+
 def artwork_scope_keys(draft, source_id):
     uses = source_uses(draft, source_id)
     return tuple(dict.fromkeys(use[1] for use in uses)) if uses and all(use[0] == "artwork" for use in uses) else ()

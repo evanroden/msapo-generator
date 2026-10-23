@@ -11,13 +11,13 @@ import re
 from app.monthly_report_checks import stale_period_mentions
 from app.monthly_report_import import DocxInspection, ImportMapping, _heading
 from app.monthly_report_model import BlockSpec, ReportDraft, ReportPeriod, ResolvedBlock, default_sections, known_sections, layout_blocks
-from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews, preserve_asset_reviews
+from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_reviews, pending_asset_indexes, preserve_asset_reviews
 
 
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
                           "vendor_reports", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
 PAGE_BLOCKS = frozenset({"vendor_reports", "water_reports", "mbcx_report"})
-PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status"})
+PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status", "equipment_issues", "equipment_issues_evidence"})
 DECISIONS = ("Needs review", "Keep in report", "Save for reference", "Exclude from this draft")
 
 
@@ -161,44 +161,38 @@ def merge_blocks(existing: ResolvedBlock | None, incoming: ResolvedBlock) -> Res
     text = existing.text
     if incoming.text.strip() and incoming.text.strip() not in text:
         text = "\n\n".join(t for t in (text, incoming.text) if t)
-    images = list(existing.asset_hashes)
-    captions = list(existing.asset_captions) + [""] * (len(images) - len(existing.asset_captions))
-    for n, reference in enumerate(incoming.asset_hashes):
-        if reference not in images:
-            images.append(reference)
-            captions.append(incoming.asset_captions[n] if n < len(incoming.asset_captions) else "")
+    from app.monthly_report_asset_instances import merge_picture_occurrences, with_asset_instances
+    images, captions, instances = merge_picture_occurrences(existing, incoming)
     merged = replace(existing, source="This month", text=text,
                    rows=existing.rows + tuple(r for r in incoming.rows if r not in existing.rows),
-                   asset_hashes=tuple(images), asset_captions=tuple(captions),
+                   asset_hashes=images, asset_captions=captions,
                    references=tuple(dict.fromkeys((*existing.references, *incoming.references))),
                    extra_tables=existing.extra_tables + tuple(t for t in incoming.extra_tables if t not in existing.extra_tables),
                    org_nodes=existing.org_nodes or incoming.org_nodes,
                    photos_per_page=existing.photos_per_page if existing.asset_hashes else incoming.photos_per_page,
                    ai_written=existing.ai_written or incoming.ai_written, reviewed_fingerprint="", client_reviewed_fingerprint="")
+    # Each occurrence keeps only its own source/page context. The immutable
+    # bytes can be reused without transferring ownership of a human photograph.
+    merged = with_asset_instances(merged, instances)
+    merged = preserve_asset_reviews(existing, merged)
+    merged = preserve_asset_reviews(incoming, merged)
     # Empty placeholders and repeated imports must not demand another review of
     # an unchanged approved page. Transfer approval only for identical content,
     # allowing the internal carry-forward label to become "This month".
     # New references, text, captions or assets continue to invalidate approval.
+    # Stamp the final occurrence-bound fingerprint only after every retained
+    # picture's actual provenance and approval have been reconciled.
     for reviewed in (existing, incoming):
         reviewed_captions = reviewed.asset_captions + ("",) * (len(reviewed.asset_hashes) - len(reviewed.asset_captions))
         if (reviewed.client_reviewed_fingerprint == reviewed.fingerprint
-                and replace(merged, client_asset_reviews=(), asset_provenance=())
+                and not pending_asset_indexes(merged)
+                and replace(merged, client_asset_reviews=(), asset_provenance=(), asset_instances=())
                 == replace(reviewed, source=merged.source, asset_captions=reviewed_captions,
                            reviewed_fingerprint="", client_reviewed_fingerprint="",
-                           client_asset_reviews=(), asset_provenance=())):
+                           client_asset_reviews=(), asset_provenance=(), asset_instances=())):
             merged = replace(merged, client_reviewed_fingerprint=merged.fingerprint)
             break
-    # Each import names the provenance of its own pictures. Adding a different
-    # picture/table never broadens the context of previously reviewed pictures.
-    # The same bytes from a different source do acquire the combined provenance
-    # and must be checked again under that changed context.
-    contexts = {}
-    for block in (normalize_asset_reviews(existing), normalize_asset_reviews(incoming)):
-        for reference, context in block.asset_provenance:
-            contexts[reference] = tuple(sorted(set((*contexts.get(reference, ()), *context))))
-    merged = replace(merged, asset_provenance=tuple(contexts.items()))
-    merged = preserve_asset_reviews(existing, merged)
-    return preserve_asset_reviews(incoming, merged)
+    return merged
 
 
 def merge_report_block(existing: ResolvedBlock | None, incoming: ResolvedBlock,
@@ -358,7 +352,8 @@ def normalize_mbcx(draft: ReportDraft) -> ReportDraft:
 def carried_period(block: ResolvedBlock, current_period: ReportPeriod) -> ReportPeriod | None:
     """Return the last confirmed period of populated, carried monthly content."""
     if (block.key not in PERIOD_REVIEW_BLOCKS or block.source == "Omit"
-            or not (block.text.strip() or block.rows or block.asset_hashes or block.extra_tables or block.ai_paragraphs)):
+            or not (block.text.strip() or block.rows or block.asset_hashes
+                    or any(table.rows for table in block.extra_tables) or block.ai_paragraphs)):
         return None
     for reference in block.references:
         if reference.startswith("report-period:"):
@@ -381,7 +376,8 @@ def confirm_current_period(block: ResolvedBlock, period: ReportPeriod) -> Resolv
 
 def _carry_period_content(block: ResolvedBlock, period: ReportPeriod) -> ResolvedBlock:
     if block.key not in PERIOD_REVIEW_BLOCKS or not (
-            block.text.strip() or block.rows or block.asset_hashes or block.extra_tables or block.ai_paragraphs):
+            block.text.strip() or block.rows or block.asset_hashes
+            or any(table.rows for table in block.extra_tables) or block.ai_paragraphs):
         return block
     references = block.references
     if not any(r.startswith("report-period:") for r in references):
@@ -407,14 +403,16 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
         new_month_training(b) if b.key == "training_summary" else
         _carry_period_content(b, draft.period)
         if b.key == "equipment_issues" and (b.ai_written or b.ai_paragraphs) else
-        preserve_asset_reviews(b, ResolvedBlock(b.key, "This month", photos_per_page=b.photos_per_page,
+        _carry_period_content(preserve_asset_reviews(b, ResolvedBlock(
+                      b.key, "Omit" if b.key == "equipment_issues" and b.source == "Omit" else "This month",
+                      photos_per_page=b.photos_per_page,
                       asset_hashes=b.asset_hashes if b.key in carried_keys else (),
                       asset_captions=b.asset_captions if b.key in carried_keys else (),
                       references=(tuple(ref for ref in b.references
                                         if not ref.startswith("issue-statement-removed:"))
                                   if b.key == "equipment_issues" else
                                   b.references if b.key in carried_keys and b.asset_hashes else ()),
-                      extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables)))
+                      extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables))), draft.period)
         if b.key in MONTHLY_BLOCKS or b.key in carried_keys else _carry_period_content(b, draft.period) for b in draft.blocks)
     # Keep evidence backing carried content at its original date and hash;
     # removing all sources would strand reviewed wording and attached charts.

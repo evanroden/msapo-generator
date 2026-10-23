@@ -49,7 +49,9 @@ def _rich_text_scope(prefix):
 
 
 def _edited_rich_text(block, text):
+    from app.monthly_report_source_scope import text_edit_references
     return replace(block, source="This month", text=text,
+                   references=text_edit_references(block, text),
                    reviewed_fingerprint="", client_reviewed_fingerprint="")
 
 
@@ -313,7 +315,7 @@ def review_message(check, draft):
     from app.monthly_report_sections import readable_label
     key = check.block_key
     source = next((source for source in draft.sources if source.id == key), None)
-    if source is not None and check.code.startswith("source_"):
+    if source is not None and check.code in {"source_facility", "source_period", "source_date_unknown"}:
         target = "site" if check.code == "source_facility" else "date"
         label = "Correct site" if target == "site" else "Correct date"
         return check.message + f" [{label}](#source-details-{source.id}--{target})."
@@ -405,14 +407,91 @@ def _initial_draft(state, period, prepared):
     return ReportDraft(state.profile, period, prepared, profile_sections(state.profile), tuple(blocks))
 
 
+def _retained_content(block):
+    """True when a block holds anything a report could print."""
+    def filled(rows):
+        return any(str(cell).strip() for row in rows for cell in row if cell is not None)
+    return any((block.text.strip(), filled(block.rows), block.asset_hashes,
+                any(filled(table.rows) for table in block.extra_tables), block.org_nodes, block.ai_paragraphs))
+
+
+def _include_left_out_key(prefix, key):
+    return prefix + "_edit_" + key + "_include_left_out"
+
+
+def included_left_out(prefix, key):
+    """True only in the run where this block's explicit Include was chosen."""
+    return st.session_state.get(_include_left_out_key(prefix, key)) is True
+
+
+def _include_left_out(spec, block, prefix):
+    """Offer a left-out block back to this report exactly as it stands.
+
+    Editing text or rows already includes a block again; attached pages and
+    photo grids may have nothing to edit. Source-linked wording and Water
+    pages keep their own include controls.
+    """
+    if (block.source != "Omit" or block.ai_paragraphs or spec.key == "water_reports"
+            or not _retained_content(block)):
+        return block
+    st.caption("Left out of this report. Its content is kept.")
+    if spec.key == "mbcx_report" and block.text.strip():
+        st.caption("Including these pages also includes the retained page notes below; edit or clear them first if needed.")
+    if st.button("Include in this report", key=_include_left_out_key(prefix, spec.key)):
+        return replace(block, source="This month", reviewed_fingerprint="", client_reviewed_fingerprint="")
+    return block
+
+
 def complete_guided_sections(draft):
     """Keep every standard section, including intentionally blank sections.
 
     Existing order, titles, imported schemas and content remain authoritative.
     Older partial designs gain the missing sections and standard block slots;
     this guided working copy never requires content just to retain a heading.
+    A section the user left out keeps its content left out, so making it
+    present never republishes it: its blocks become Omit (content kept, a
+    pending library replacement cancelled) and its carried issues or
+    proposals are left out of this report; an explicit edit or include
+    restores them. Left out means excluded by the profile, or off although
+    normally on; an appendix that is merely off by default (RFI) is not a
+    user's choice. A profile-excluded section missing from an older draft
+    counts too, through its standard blocks; a confirmed proposal stays
+    confirmed as left out, and legacy issue prose becomes left-out issues.
     """
+    from app.monthly_report_followups import confirmation
     from app.monthly_report_model import default_sections, optional_sections
+    chosen = set(draft.profile.excluded_sections) | {
+        section.key for section in (*default_sections(), *optional_sections()) if section.included}
+    present = {section.key: section for section in draft.sections}
+    standard_specs = {section.key: section for order in ((), draft.profile.section_order)
+                      for section in profile_sections(replace(draft.profile, excluded_sections=(), section_order=order))}
+    sections_out = {section.key for section in draft.sections if not section.included and section.key in chosen}
+    sections_out |= {key for key in draft.profile.excluded_sections if key not in present and key in standard_specs}
+    # Both the slots a legacy section still lists and the standard slots
+    # restored below: a retained block in either stays left out.
+    left_out = {block.key for key in sections_out for section in (present.get(key), standard_specs.get(key))
+                if section is not None for block in section.blocks}
+
+    def leave_out(item):
+        left = replace(item, included=False)
+        confirmed = item.reviewed_fingerprint and item.reviewed_fingerprint == confirmation(item, draft.period)
+        return replace(left, reviewed_fingerprint=confirmation(left, draft.period)) if confirmed else left
+
+    if "issues" in sections_out:
+        # Legacy issue prose becomes issue items first, so each is left out
+        # and can be included again, rather than hidden in an omitted block.
+        from app.monthly_report_issues import canonical_issues
+        try:
+            draft = canonical_issues(draft)
+        except ValueError:
+            pass
+    draft = replace(draft, blocks=tuple(
+        replace(block, source="Omit", pending_library_save=False)
+        if block.key in left_out and block.source != "Omit" and _retained_content(block) else block
+        for block in draft.blocks), follow_ups=tuple(
+        leave_out(item)
+        if item.included and ("issues" if item.category == "issue" else "proposals") in sections_out else item
+        for item in draft.follow_ups))
     native_order = (draft.profile.section_order if draft.profile.template.startswith(
         ("enfra_native:", "enfra_master:")) else ())
     optional_keys = {"rfi", *(section.key for section in optional_sections())}
@@ -441,12 +520,27 @@ def complete_guided_sections(draft):
 
 def _review_carried_update(block, period, prefix):
     from app.monthly_report_setup import carried_period, confirm_current_period
+    # Observe omitted/empty/accepted states too: returning to equal picture
+    # content must not revive a confirmation from an earlier incarnation.
+    marker = prefix + "_current_period_observation_" + block.key
+    identity = (_rich_text_scope(prefix), period.key, block.fingerprint)
+    observed = st.session_state.get(marker)
+    if not isinstance(observed, dict) or observed.get("identity") != identity:
+        observed = {"identity": identity, "token": uuid4().hex}
+        st.session_state[marker] = observed
     previous = carried_period(block, period)
     if previous is None:
         return block
     st.info(f"This update was carried from {previous.label}. Check its wording and any charts for {period.label} before including it.")
-    if st.button(f"This update is correct for {period.label}", key=prefix + "_current_period_" + block.key + "_" + block.fingerprint):
-        return confirm_current_period(block, period)
+    # Equal content in a replacement editor is not the same acknowledgement.
+    # Include the scope in the native widget identity, not only its callback.
+    key = prefix + "_current_period_" + block.key + "_" + observed["token"]
+    if st.button(f"This update is correct for {period.label}", key=key):
+        confirmed = confirm_current_period(block, period)
+        st.session_state[marker] = {
+            "identity": (*identity[:-1], confirmed.fingerprint), "token": uuid4().hex,
+        }
+        return confirmed
     return block
 
 
@@ -488,7 +582,9 @@ def _record_period_editor_transition(prefix, canonical_before, before, after, pe
 def _refresh_period_editors_after_commit(prefix):
     # Business actions may change visible wording; refresh only after the whole
     # canonical draft and its recovery attempt completed, never mid-editor.
-    if st.session_state.pop(prefix + "_period_editor_refresh", False):
+    period_refresh = st.session_state.pop(prefix + "_period_editor_refresh", False)
+    grid_refresh = st.session_state.pop(prefix + "_work_order_grid_refresh", False)
+    if period_refresh or grid_refresh:
         st.rerun()
 
 
@@ -498,8 +594,9 @@ def _has_request_rows(block):
 
 
 def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit_text=True,
-                  manage_saved_pictures=True, inline_photo_intake=False,
+                  manage_saved_pictures=True, inline_photo_intake=False, page_actions_open=True,
                   text_label=None, text_height=140):
+    block = _include_left_out(spec, block, prefix)
     if draft is not None and spec.type == "image_grid":
         from app.monthly_report_visual_ui import edit_photos
         return edit_photos(draft, block, prefix, assets, field, show_preview=False)
@@ -536,6 +633,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     if block.extra_tables and edit_tables and not row_cards:
         from app.monthly_report_editor import _cell_text
         tables = []
+        rows_edited = False
         for n, table in enumerate(block.extra_tables):
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
@@ -546,32 +644,27 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                 seed = empty_text_seed(seed)
             grid_key = key + f"_imported_{n}_" + _signature(table.columns)
             if spec.key == "work_orders":
-                artificial_seed = st.session_state.setdefault(grid_key + "_artificial_seed", not table.rows)
+                from app.monthly_report_work_order_rows_ui import edit_imported_work_order_table
+                report_scope = ((draft.profile.contract, draft.profile.key, draft.period.key)
+                                if draft is not None else ())
+                scope = (_rich_text_scope(prefix), report_scope, block.references,
+                         tuple(item.reference for item in block.extra_tables))
+                tables.append(edit_imported_work_order_table(table, key + f"_imported_{n}", scope, prefix))
+                continue
             rows = _grid(grid_key, seed, num_rows="dynamic", hide_index=True)
+            rows_edited = rows_edited or rows != seed
             # Opening a blank imported frame must retain its original
             # structure/reference without pretending its editor slot is data.
             edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows
                                 if any(v is not None and (str(v).strip() if optional_table else v != "") for v in r.values()))
-            if spec.key == "work_orders":
-                # Imported blank rows are real table geometry. The native
-                # editor's visual add-row is not part of its returned values.
-                kept_rows = rows
-                deleted = st.session_state.get(grid_key, {}).get("deleted_rows", [])
-                if artificial_seed and (0 in deleted or rows and any(
-                        _cell_text(v) for v in rows[0].values())):
-                    # The artificial slot has become a real row or was
-                    # explicitly deleted. Keep that fact across widget unmounts.
-                    st.session_state[grid_key + "_artificial_seed"] = False
-                if (artificial_seed and 0 not in deleted
-                        and rows and not any(_cell_text(v) for v in rows[0].values())):
-                    # Only the synthetic slot for a truly empty table is not
-                    # content. Explicitly added/deleted rows remain authoritative.
-                    kept_rows = rows[1:]
-                edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns)
-                                    for r in kept_rows)
             tables.append(table if optional_table and (rows == seed or not edited_rows and not has_values(table.rows))
                           else replace(table, rows=edited_rows))
         if optional_table and tuple(tables) != block.extra_tables:
+            block = replace(block, source="This month", extra_tables=tuple(tables),
+                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+        elif not optional_table and rows_edited and block.source == "Omit" and spec.key != "mbcx_report":
+            # As with its notes, an explicit row edit includes a left-out
+            # imported table again; merely showing it changes nothing.
             block = replace(block, source="This month", extra_tables=tuple(tables),
                             reviewed_fingerprint="", client_reviewed_fingerprint="")
         else:
@@ -697,47 +790,55 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                         normalized = normalize_report_image(photo.getvalue(), Path(photo.name).suffix)
                         reference = library.asset_reference(normalized.data, normalized.extension)
                         assets[reference] = normalized.data
-                        if reference not in block.asset_hashes:
-                            captions = (*block.asset_captions, *("" for _ in range(len(block.asset_hashes) - len(block.asset_captions))), "")
-                            block = replace(block, source="This month", asset_hashes=(*block.asset_hashes, reference), asset_captions=captions,
-                                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+                        from app.monthly_report_asset_instances import append_human_asset
+                        block = append_human_asset(block, reference)
                     except (ValueError, OSError):
                         st.error("This photo could not be read. Choose another image; the existing section is retained.")
         return block
-    from app.monthly_report_sections import readable_label
-    if spec.type == "pdf_pages":
-        replacing_pages = bool(block.asset_hashes)
-        with st.expander("Replace this section’s attached pages" if replacing_pages else "Add report pages"):
-            if replacing_pages:
-                st.caption(f"Replaces {len(block.asset_hashes)} attached {'page' if len(block.asset_hashes) == 1 else 'pages'} in {readable_label(spec.key)} with one image. Other sections and saved originals stay unchanged.")
-            upload = st.file_uploader(("Replacement image for " if replacing_pages else "Image page for ") + readable_label(spec.key), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
-    else:
-        upload = st.file_uploader("Upload a new " + readable_label(spec.key).lower(), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
-    adding_page = spec.type == "pdf_pages" and not block.asset_hashes
-    if upload and st.button("Add page to this report" if adding_page else "Use this replacement in this report", key=key + "_replace"):
-        from pathlib import Path
-        image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix,
-                                       line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"),
-                                       preserve_transparency=spec.key in ("brand_logo", "client_logo"))
-        reference = library.asset_reference(image.data, image.extension)
-        assets[reference] = image.data
-        previous = block
-        block = replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(),
-                        references=picture_replacement_references(block))
-        if spec.key in ("brand_logo", "client_logo"):
-            block = replace(block, reviewed_fingerprint="", client_reviewed_fingerprint="",
-                            asset_provenance=((reference, ()),), client_asset_reviews=())
+    # Source-managed pages have one normal edit path. Keep this specialized
+    # replacement input mounted, but reveal it only with their Report pages
+    # task; its original bytes and revision-bound Undo remain available.
+    actions_key = key + "_page_replacement_actions"
+    st.markdown('<style>.st-key-' + actions_key + '{display:' +
+                ("block" if page_actions_open else "none") + ';}</style>', unsafe_allow_html=True)
+    with st.container(key=actions_key):
+        from app.monthly_report_sections import readable_label
         if spec.type == "pdf_pages":
-            st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
-        st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")
-    undo = st.session_state.get(key + "_replacement_undo") if spec.type == "pdf_pages" else None
-    if undo:
-        unchanged = block.fingerprint == undo[0]
-        if st.button("Undo attached-page replacement" if undo[1].asset_hashes else "Undo added page", key=key + "_undo_replacement_" + undo[0],
-                     disabled=not unchanged,
-                     help="Restores this section’s previous pages. Unavailable after another edit changes this section."):
-            block = undo[1]
-            st.session_state.pop(key + "_replacement_undo", None)
+            replacing_pages = bool(block.asset_hashes)
+            with st.expander("Replace this section’s attached pages" if replacing_pages else "Add report pages"):
+                if replacing_pages:
+                    st.caption(f"Replaces {len(block.asset_hashes)} attached {'page' if len(block.asset_hashes) == 1 else 'pages'} in {readable_label(spec.key)} with one image. Other sections and saved originals stay unchanged.")
+                upload = st.file_uploader(("Replacement image for " if replacing_pages else "Image page for ") + readable_label(spec.key), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
+        else:
+            upload = st.file_uploader("Upload a new " + readable_label(spec.key).lower(), type=["png", "jpg", "jpeg", "heic", "heif", "webp"], key=key + "_image")
+        adding_page = spec.type == "pdf_pages" and not block.asset_hashes
+        if upload and st.button("Add page to this report" if adding_page else "Use this replacement in this report", key=key + "_replace"):
+            from pathlib import Path
+            image = normalize_report_image(upload.getvalue(), Path(upload.name).suffix,
+                                           line_art=spec.key in ("org_chart", "contact_matrix", "business_hours_workflow", "after_hours_workflow"),
+                                           preserve_transparency=spec.key in ("brand_logo", "client_logo"))
+            reference = library.asset_reference(image.data, image.extension)
+            assets[reference] = image.data
+            previous = block
+            from app.monthly_report_asset_instances import new_asset_instance, with_asset_instances
+            block = with_asset_instances(replace(block, source="Replace once", asset_hashes=(reference,), asset_captions=(),
+                                                 references=picture_replacement_references(block), client_asset_reviews=(),
+                                                 reviewed_fingerprint="", client_reviewed_fingerprint=""),
+                                         (new_asset_instance(reference),))
+            if spec.key in ("brand_logo", "client_logo"):
+                block = replace(block, reviewed_fingerprint="", client_reviewed_fingerprint="",
+                                asset_provenance=((reference, ()),), client_asset_reviews=())
+            if spec.type == "pdf_pages":
+                st.session_state[key + "_replacement_undo"] = (block.fingerprint, previous)
+            st.image(image.data, width="stretch", caption="Added page in this report" if adding_page else "Updated image in this report")
+        undo = st.session_state.get(key + "_replacement_undo") if spec.type == "pdf_pages" else None
+        if undo:
+            unchanged = block.fingerprint == undo[0]
+            if st.button("Undo attached-page replacement" if undo[1].asset_hashes else "Undo added page", key=key + "_undo_replacement_" + undo[0],
+                         disabled=not unchanged,
+                         help="Restores this section’s previous pages. Unavailable after another edit changes this section."):
+                block = undo[1]
+                st.session_state.pop(key + "_replacement_undo", None)
     return block
 
 
@@ -828,7 +929,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
     draft = replace(draft, blocks=tuple(blocks.values()))
     profile, period = draft.profile, draft.period
     destination = {"activity": "activity_summary", "capital": "capital_renewal", "proposals": "proposals"}.get(section.key)
-    if destination:
+    if destination and section.key != "activity":
         from app.monthly_report_upload_ui import render_structured_uploads
         from app.monthly_report_structured_uploads import COLUMNS as STANDARD_COLUMNS
         native_spec = next((b for s in draft.sections for b in s.blocks if b.key == destination), None)
@@ -868,7 +969,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         # source and caption. The manager keeps the Activity destination and
         # its atomic, repeat-safe preparation path.
         draft, blocks = render_guided_source_manager(
-            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources)
+            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
         from app.monthly_report_ai_ui import render_drafting
         # One shared evidence workspace: rendering this once avoids duplicated
         # source/job widget identities when every report section is visible.
@@ -891,6 +992,7 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
                 st.markdown("**" + label + "**")
                 if block_key == "equipment_issues":
                     st.caption("These photos belong to the section. Supporting source links above belong to the named issue.")
+                block = _review_carried_update(block, period, prefix)
                 current_blocks[block_key] = _edit_content(specs[block_key], block, state,
                     prefix, assets, field, current, edit_text=False, inline_photo_intake=True)
             return replace(current, blocks=tuple(current_blocks.values()))
@@ -935,20 +1037,35 @@ def _render_ordered_section(draft, section, blocks, specs, state, prefix, assets
         if not page_managed and spec.key not in {"proposals", "rfi_matrix", "utility_analysis", "activity_summary"}:
             st.markdown("**" + readable_label(spec.key) + "**")
         if spec.key == "thermal_capacity":
-            from app.monthly_report_capacity_ui import render_capacity
+            from app.monthly_report_capacity_ui import render_capacity, render_capacity_scope
+            capacity_scope = st.container(key=prefix + "_capacity_scope")
+            # Capture the delivered report-table edit before any source action
+            # can refresh an unedited shared copy. Manual overrides stay local.
+            with st.container(key=prefix + "_capacity_report_table"):
+                block = _edit_content(spec, block, state, prefix, assets, field, draft)
             before = block
-            draft, block = render_capacity(draft, block, prefix, field)
+            draft, block = render_capacity(draft, block, prefix, field, show_scope=False)
             if block != before:
                 _forget_block_widgets(prefix, {spec.key})
-            spec = next((item for current in draft.sections for item in current.blocks if item.key == spec.key), spec)
-            specs[spec.key] = spec
+                st.session_state[prefix + "_period_editor_refresh"] = True
+            with capacity_scope:
+                render_capacity_scope(draft.profile, block)
+            blocks[spec.key] = block
+            continue
         if spec.key in ("contact_matrix", "subcontractor_matrix"):
             from app.monthly_report_visual_ui import edit_contacts
+            block = _include_left_out(spec, block, prefix)
             block = edit_contacts(draft, spec, block, prefix, assets, field, show_preview=False)
         else:
             with writing if writing is not None and spec.key == "activity_summary" else nullcontext():
+                from app.monthly_report_asset_review import pending_asset_indexes
+                page_prefix = prefix + "_evidence_section_water_reports"
+                selected_page_source = st.session_state.get(page_prefix + "_selected", "")
+                pages_open = (not page_managed or bool(pending_asset_indexes(block))
+                    or bool(st.session_state.get(page_prefix + "_" + selected_page_source + "_edit_page_reviews")))
                 block = _edit_content(spec, block, state, prefix, assets, field, draft,
-                                      manage_saved_pictures=not page_managed)
+                                      manage_saved_pictures=not page_managed,
+                                      page_actions_open=pages_open)
         if spec.key in MONTHLY_EDIT_KEYS:
             block = _review_carried_update(block, period, prefix)
         blocks[spec.key] = block
@@ -1032,6 +1149,7 @@ def _current_source_detail(source, contents):
 def render_guided_workflow(browser_token, browser_timezone, field, move):
     st.session_state["_monthly_source_detail_anchors"] = set()
     st.session_state["_monthly_source_detail_forms"] = {}
+    st.session_state["_monthly_source_details_managed"] = True
     last_contract, last_profile = remembered_report_preferences(browser_token)
     recovery_available = active_work.enabled(browser_token)
     with st.expander("Help"):
@@ -1274,61 +1392,6 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     source for source in missing if source.id != selected_missing.id)
                 st.session_state[draft_key] = draft
                 st.rerun()
-    # Source metadata can appear after the first upload. Keep its subtree at
-    # one fixed root position so native section controls below it retain their
-    # delta paths while that first source is committed and reviewed.
-    with st.container(key=prefix + "_source_metadata_corrections"):
-        # This stable sibling precedes the workspace so native widget paths
-        # do not move when a source appears. Bind navigation to the same
-        # hashed report identity used by workspace_layout.workspace.
-        from hashlib import sha256
-        st.markdown('<span class="enfra-source-correction-owner" data-report-identity="' +
-                    sha256(prefix.encode()).hexdigest()[:24] + '" aria-hidden="true"></span>',
-                    unsafe_allow_html=True)
-        if draft.sources:
-            from app.monthly_report_source_details import detail_problems
-            from app.monthly_report_upload_ui import render_source_details
-            from app.monthly_report_model import used_source_ids
-            # A resumed report needs an exact-item correction path, not every
-            # source form expanded above the report. Valid or unused reference-only
-            # sources remain available through Manage source files. Keep each unresolved
-            # source's anchor outside its quiet disclosure so review links land on
-            # a visible, named action. Opening it does not approve or change facts.
-            corrections = {}
-            included_sources = used_source_ids(draft)
-            resumed = st.session_state.get(prefix + "_source_details_on_resume")
-            for source in draft.sources:
-                source = _current_source_detail(source, st.session_state.get(prefix + "_evidence", ()))
-                in_report = source.id in included_sources
-                problems = detail_problems(source, profile, period, in_report=in_report, draft=draft)
-                if in_report and not source.facility:
-                    from app.monthly_report_source_scope import included_scope_valid
-                    if not included_scope_valid(draft, source) and not any("scope" in p or "site" in p for p in problems):
-                        problems = (*problems, "source scope needs review")
-                # Keep one quiet return location even when this exact correction
-                # removes its warning/form. The display adapter reveals it only
-                # during a deliberate trip from final review.
-                with st.container(key="monthly_source_correction_" + source.id):
-                    from html import escape
-                    st.markdown('<a class="enfra-source-review-return" data-source-id="' +
-                                escape(source.id, quote=True) + '" href="#report-review" hidden>Return to review</a>',
-                                unsafe_allow_html=True)
-                    if problems and (resumed or in_report):
-                        from app.monthly_report_source_scope import artwork_scope_keys
-                        corrections[source.id] = render_source_details(
-                            source, profile, prefix + "_resumed_" + source.id, field,
-                            compact_problems=problems, artwork_keys=artwork_scope_keys(draft, source.id))
-            if any(corrections.get(source.id, source) != source for source in draft.sources):
-                draft = replace(draft, sources=tuple(corrections.get(source.id, source) for source in draft.sources))
-                st.session_state[prefix + "_evidence"] = tuple(
-                    replace(content, source=corrections.get(content.source.id, content.source))
-                    for content in st.session_state.get(prefix + "_evidence", ()))
-                # A metadata correction does not restore missing original bytes.
-                # Keep the corrected record in that retained set as well, or the
-                # next source renderer would restore its pre-correction metadata.
-                st.session_state[prefix + "_unavailable_sources"] = tuple(
-                    corrections.get(source.id, source)
-                    for source in st.session_state.get(prefix + "_unavailable_sources", ()))
     from app.monthly_report_model import included_sections
     short_links = {
         "organization": "Contacts", "activity": "Activity", "scorecards": "Scorecards",
@@ -1371,6 +1434,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)
                     render_apply_master_design(replace(draft, blocks=tuple(blocks.values())), prefix)
+                    if not source_pending and "brand_logo" in blocks:
+                        from app.monthly_report_branding_ui import offer_logo
+                        blocks["brand_logo"] = offer_logo(
+                            blocks["brand_logo"], draft.profile.contract, prefix + "_company_logo", assets,
+                            scope=_rich_text_scope(prefix),
+                        )
             with preview_column:
                 with st.container(key="monthly_cover_preview_sticky"):
                     from app.monthly_report_section_ui import render_pending_cover_selection
@@ -1394,6 +1463,10 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                                    "[Enter Prepared by](#report-prepared-by) above to view them.")
                     else:
                         render_section_preview(replace(draft, blocks=tuple(blocks.values())), section.key, assets, prefix, deferred=True)
+    if not any(section.key == "activity" for section in draft.sections):
+        from app.monthly_report_source_manager_ui import render_guided_source_manager
+        draft, blocks = render_guided_source_manager(
+            draft, blocks, prefix, field, _apply_prepared, _keep_missing_sources, assets=assets)
     blocks = {key: refresh_asset_source_context(block, draft.sources) for key, block in blocks.items()}
     draft = complete_guided_sections(replace(draft, blocks=tuple(blocks.values())))
     footer = blocks.get("footer_text")
@@ -1570,9 +1643,22 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
         if checks:
             count = len(checks)
             st.markdown(f"**{count} {'item needs' if count == 1 else 'items need'} attention**")
-        from app.monthly_report_source_review_ui import render_source_check
         for check in checks:
-            if not render_source_check(check, draft, prefix):
+            source = next((source for source in draft.sources if source.id == check.block_key), None)
+            if source is not None and check.code in {"source_facility", "source_period", "source_date_unknown"}:
+                from html import escape
+                from hashlib import sha256
+                from app.monthly_report_source_manager_ui import open_source_review
+                target = "site" if check.code == "source_facility" else "date"
+                with st.container(key="monthly_source_warning_" + source.id + "_" + check.code):
+                    st.markdown('<span class="enfra-source-warning" data-source-id="' +
+                        escape(source.id, quote=True) + '" data-report-identity="' +
+                        sha256(prefix.encode()).hexdigest()[:24] + '"></span>', unsafe_allow_html=True)
+                    (st.error if check.blocking else st.warning)(check.message)
+                    st.button("Correct site" if target == "site" else "Correct date",
+                        key=prefix + "_correct_source_" + source.id + "_" + check.code,
+                        on_click=open_source_review, args=(prefix, source.id, target))
+            else:
                 (st.error if check.blocking else st.warning)(review_message(check, draft))
         warnings_ok = not any(not c.blocking for c in checks)
         if not warnings_ok:

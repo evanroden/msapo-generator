@@ -55,11 +55,11 @@ def app_for(monkeypatch, tmp_path):
 def test_final_native_review_returns_ready_controls_without_another_action(monkeypatch,tmp_path):
     app, original=app_for(monkeypatch,tmp_path)
     before=app.session_state['canonical']
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     start=app.session_state['renders']
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     assert not app.exception
-    assert any(b.label=='Edit pages' for b in app.button), 'Saved pages left the pre-commit review form visible'
+    assert any(b.label=='Report pages' for b in app.button), 'Saved pages left the pre-commit review form visible'
     assert app.session_state['refresh_requests']==1, 'Only one committed editor refresh is requested'
     end=app.session_state['renders']
     current=app.session_state['canonical']
@@ -82,9 +82,9 @@ def test_failed_merge_does_not_refresh_or_acknowledge_unapplied_pages(monkeypatc
     from app import monthly_report_guided as guided
     app,_=app_for(monkeypatch,tmp_path)
     monkeypatch.setattr(guided,'_apply_prepared',lambda draft,blocks,*args:(draft,blocks))
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     count=app.session_state['renders']
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     assert not app.exception
     assert app.session_state['refresh_requests']==0
     assert 'water_commit_evidence_section_water_reports_auto_include' in app.session_state.filtered_state

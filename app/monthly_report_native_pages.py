@@ -69,9 +69,12 @@ class NativePages:
             art_positions = [i for i in indices if _is_native_divider_background(original[i], _text(original[i]))]
             cuts = art_positions + [i for i in indices if i > start and i + 1 in headings
                                     and section_by_pos.get(i + 1) != section_by_pos.get(i)]
-            # Splitting source art is forbidden when any adjacent payload is
-            # being replayed at its source position. Fresh content is different.
-            boundaries = sorted(set([start, end + 1] + ([] if unchanged or cover else cuts)))
+            # A verified source-header scope pins the original physical Word
+            # sections, even where Water and the next divider share one section.
+            # Do not invent an extra header route when replacing old payload.
+            # Unscoped legacy layouts retain the prior reflow behavior.
+            preserve_section = unchanged or cover or source_header_scope is not None
+            boundaries = sorted(set([start, end + 1] + ([] if preserve_section else cuts)))
             for left, right in zip(boundaries, boundaries[1:]):
                 nodes = original[left:right]
                 logical = {section_by_pos.get(i + 1) for i in range(left, right) if original[i].tag != qn('w:sectPr')}

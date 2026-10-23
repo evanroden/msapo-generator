@@ -14,7 +14,7 @@ def test_native_done_keeps_the_caption_delivered_in_the_same_packet(monkeypatch,
     field = next(w for w in app.text_input if w.label == 'Page caption')
     original_id = field.proto.id
     field.set_value(caption)
-    button(app, 'Done reviewing pages').click().run()
+    button(app, 'Close report pages').click().run()
     app.run()  # Standalone caller has no guided post-commit refresh.
     assert not app.exception
     current = app.session_state['test_blocks']['water_reports']
@@ -31,14 +31,14 @@ def test_native_done_keeps_the_caption_delivered_in_the_same_packet(monkeypatch,
 
 def test_old_done_native_action_cannot_close_a_new_source_revision(monkeypatch, tmp_path):
     app = _included_editor(monkeypatch, tmp_path)
-    old_done = button(app, 'Done reviewing pages')
+    old_done = button(app, 'Close report pages')
     old_done.click()
     contents = app.session_state['synthetic_evidence']
     revised = replace(contents[0].source, vendor='Corrected source vendor')
     app.session_state['synthetic_evidence'] = (replace(contents[0], source=revised),)
     app.run()
     assert not app.exception
-    assert any(w.label == 'Done reviewing pages' for w in app.button)
+    assert any(w.label == 'Close report pages' for w in app.button)
     assert next(w for w in app.text_input if w.label == 'Vendor').value == 'Corrected source vendor'
     assert app.session_state['test_sources'][0] == revised
 
@@ -82,7 +82,7 @@ def loaded_water(monkeypatch, tmp_path):
     app = AppTest.from_file(ROOT/'run_web.py',default_timeout=20).run()
     app.segmented_control[0].set_value('Monthly report').run()
     choose_report(app,draft.profile.facilities[0].title)
-    assert not app.exception and any(w.label=='Edit pages' for w in app.button)
+    assert not app.exception and any(w.label=='Report pages' for w in app.button)
     return app
 
 
@@ -97,7 +97,7 @@ def assert_durable(app):
 def test_native_open_preserves_same_packet_activity_before_canonical_save(monkeypatch,tmp_path):
     app=loaded_water(monkeypatch,tmp_path)
     next(w for w in app.text_area if w.label=='Activity summary').set_value('Activity delivered while opening Water pages.')
-    button(app,'Edit pages').click().run()
+    button(app,'Report pages').click().run()
     assert not app.exception
     assert next(b for b in current(app).blocks if b.key=='activity_summary').text=='Activity delivered while opening Water pages.'
     assert any(w.label=='Page caption' for w in app.text_input)
@@ -110,15 +110,15 @@ def test_native_done_saves_all_edited_pages_metadata_and_same_packet_activity(mo
     from app.monthly_report_sources import source_bytes
     app=loaded_water(monkeypatch,tmp_path);before=current(app)
     original=source_bytes(before.profile,before.sources[0]);shared=library.load_snapshot(before.profile.contract,before.profile.key,before.period)
-    button(app,'Edit pages').click().run()
+    button(app,'Report pages').click().run()
     next(w for w in app.selectbox if w.label=='Page to review').set_value(2).run()
     next(w for w in app.text_input if w.label=='Page caption').set_value('Second page remains an entered note.').run()
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     next(w for w in app.selectbox if w.label=='Page to review').set_value(1).run()
     next(w for w in app.text_area if w.label=='Activity summary').set_value('Activity delivered with Done Water pages.')
     next(w for w in app.text_input if w.label=='Page caption').set_value('First page delivered with Done.')
     next(w for w in app.text_input if w.label=='Vendor').set_value('Corrected Synthetic Water Vendor')
-    button(app,'Done reviewing pages').click().run()
+    button(app,'Close report pages').click().run()
     assert not app.exception
     after=current(app);block=next(b for b in after.blocks if b.key=='water_reports')
     assert block.asset_captions==('First page delivered with Done.','Second page remains an entered note.')
@@ -135,22 +135,22 @@ def test_native_done_saves_all_edited_pages_metadata_and_same_packet_activity(mo
 def test_done_then_review_returns_to_summary_before_next_explicit_edit(monkeypatch,tmp_path):
     from app.monthly_report_asset_review import pending_asset_indexes
     app=loaded_water(monkeypatch,tmp_path)
-    button(app,'Edit pages').click().run()
+    button(app,'Report pages').click().run()
     # Match the browser's actual reviewed, nonempty source caption. This
     # fixture otherwise begins with an inherited caption absent on the source.
     next(w for w in app.text_input if w.label=='Page caption').set_value('Synthetic reviewed source caption.').run()
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     next(w for w in app.selectbox if w.label=='Page to review').set_value(1).run()
     next(w for w in app.text_input if w.label=='Page caption').set_value('')
-    button(app,'Done reviewing pages').click().run()
+    button(app,'Close report pages').click().run()
     assert not app.exception
     assert pending_asset_indexes(next(b for b in current(app).blocks if b.key=='water_reports'),current(app).sources)==(0,)
     assert_durable(app)
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     assert not app.exception
     assert not any(w.label=='Page to review' for w in app.selectbox)
     saved=assert_durable(app)
-    button(app,'Edit pages').click().run()
+    button(app,'Report pages').click().run()
     assert not app.exception and any(w.label=='Page to review' for w in app.selectbox)
     assert assert_durable(app)==saved
     assert next(w for w in app.text_input if w.label=='Page caption').value==''
@@ -159,13 +159,13 @@ def test_done_then_review_returns_to_summary_before_next_explicit_edit(monkeypat
 def test_done_save_failure_keeps_current_edit_and_honest_error_without_earlier_rerun(monkeypatch,tmp_path):
     from app import monthly_report_active_work as active
     app=loaded_water(monkeypatch,tmp_path)
-    button(app,'Edit pages').click().run();before=assert_durable(app)
+    button(app,'Report pages').click().run();before=assert_durable(app)
     next(w for w in app.text_input if w.label=='Page caption').set_value('Unsaved Water caption retained in browser.')
     next(w for w in app.text_area if w.label=='Activity summary').set_value('Unsaved Activity retained in browser.')
     original_save=active.save
     def fail(*args,**kwargs):raise OSError('Synthetic Water recovery-write failure')
     monkeypatch.setattr(active,'save',fail)
-    button(app,'Done reviewing pages').click().run()
+    button(app,'Close report pages').click().run()
     assert not app.exception
     draft=current(app);block=next(b for b in draft.blocks if b.key=='water_reports')
     assert block.asset_captions[0]=='Unsaved Water caption retained in browser.'
@@ -183,7 +183,7 @@ def test_old_done_packet_and_caption_cannot_change_replacement_context(monkeypat
     old_caption=next(w for w in app.text_input if w.label=='Page caption')
     old_id=old_caption.proto.id
     old_caption.set_value('Late caption from prior context.')
-    action=button(app,'Done reviewing pages')
+    action=button(app,'Close report pages')
     contents=app.session_state['synthetic_evidence']
     block=app.session_state['test_blocks']['water_reports']
     source=contents[0].source
@@ -214,7 +214,7 @@ def test_plain_caption_edits_and_review_keep_native_caption_identity(monkeypatch
     assert next(w for w in app.text_input if w.label=='Page caption').proto.id==native_id
     next(w for w in app.text_input if w.label=='Page caption').set_value('').run()
     assert next(w for w in app.text_input if w.label=='Page caption').proto.id==native_id
-    button(app,'Include page and continue').click().run()
+    button(app,'Include page').click().run()
     assert next(w for w in app.text_input if w.label=='Page caption').proto.id==native_id
     next(w for w in app.text_input if w.label=='Page caption').set_value('Reentered after clear.').run()
     assert next(w for w in app.text_input if w.label=='Page caption').proto.id==native_id
@@ -225,7 +225,7 @@ def test_old_included_page_omit_cannot_act_in_replaced_editor_scope(monkeypatch,
     app=_included_editor(monkeypatch,tmp_path)
     before=app.session_state['test_blocks']['water_reports']
     sources=app.session_state['test_sources']
-    old_omit=button(app,'Leave page out and continue')
+    old_omit=button(app,'Exclude page')
     if boundary=='incarnation':app.session_state['synthetic_rich_text_epoch']='new-scope'
     else:app.session_state['_monthly_qa_generation']='new-generation'
     old_omit.click().run()

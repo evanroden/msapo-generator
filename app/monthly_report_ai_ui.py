@@ -262,7 +262,17 @@ def edit_linked_paragraphs(draft, blocks, prefix, field, allowed_keys=None):
     for block in tuple(blocks.values()):
         if allowed_keys is not None and block.key not in allowed_keys:
             continue
-        if not block.ai_paragraphs or block.source == "Omit":
+        if not block.ai_paragraphs:
+            continue
+        if block.source == "Omit":
+            # Left-out source-linked wording keeps an explicit way back; it is
+            # reviewed again once included. MBCx has its own retained-notes control.
+            if block.key != "mbcx_report":
+                st.caption(LABELS.get(block.key, block.key.replace("_", " "))
+                           + " · left out of this report. Its wording and sources are kept.")
+                if st.button("Include in this report", key=prefix + "_linked_" + block.key + "_include"):
+                    blocks[block.key] = replace(block, source="This month", reviewed_fingerprint="",
+                                                client_reviewed_fingerprint="")
             continue
         with st.expander(
             LABELS.get(block.key, block.key.replace("_", " "))

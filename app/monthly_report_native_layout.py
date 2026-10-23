@@ -7,6 +7,7 @@ cleared before current values are written. Unsupported bindings fail explicitly.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 import tempfile
 from collections import defaultdict
@@ -481,10 +482,105 @@ def _replace_image(document, element, data, *, contain=False):
         _contain_replacement_picture(element, data)
 
 
-def _fit_cover_photo(node, image_width, image_height):
-    """Center a replacement photo inside its existing native picture frame."""
+def _zero_geometry_value(value):
+    try:
+        number = float(value[:-1] if value.endswith("%") else value)
+        return math.isfinite(number) and number == 0
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _ordinary_unchanged_photo_geometry(node):
+    if node.tag == qn("a:blip"):
+        fill = node.getparent()
+        picture = next((ancestor for ancestor in node.iterancestors() if ancestor.tag == qn("pic:pic")), None)
+        frame = next((ancestor for ancestor in node.iterancestors()
+                      if ancestor.tag in (qn("wp:inline"), qn("wp:anchor"))), None)
+        if picture is None or frame is None or fill.tag != qn("pic:blipFill"):
+            return False
+        properties = picture.find(qn("pic:spPr"))
+        transform = properties.find(qn("a:xfrm")) if properties is not None else None
+        inner = transform.find(qn("a:ext")) if transform is not None else None
+        outer = frame.find(qn("wp:extent"))
+        if inner is None or outer is None:
+            return False
+        preset = properties.find(qn("a:prstGeom"))
+        if (properties.find(qn("a:custGeom")) is not None
+                or preset is not None and preset.get("prst") != "rect"
+                or not _zero_geometry_value(transform.get("rot", "0"))
+                or any(transform.get(key, "0") not in ("0", "false", "off") for key in ("flipH", "flipV"))):
+            return False
+        try:
+            dimensions = [float(extent.get(axis, "0")) for extent in (inner, outer) for axis in ("cx", "cy")]
+            if not all(math.isfinite(value) and value > 0 for value in dimensions):
+                return False
+            ratios = (dimensions[0] / dimensions[1], dimensions[2] / dimensions[3])
+            if (not all(math.isfinite(value) and value > 0 for value in ratios)
+                    or not math.isclose(*ratios, rel_tol=1e-6)):
+                return False
+        except (TypeError, ValueError, OverflowError):
+            return False
+        stretch = fill.find(qn("a:stretch"))
+        rectangle = stretch.find(qn("a:fillRect")) if stretch is not None else None
+        return not (fill.find(qn("a:tile")) is not None
+                    or rectangle is not None and any(not _zero_geometry_value(value) for value in rectangle.attrib.values())
+                    or any(child.tag.rsplit("}", 1)[-1] == "grpSpPr"
+                           and child.find(qn("a:xfrm")) is not None
+                           for ancestor in node.iterancestors() for child in ancestor))
+    # Other valid VML shape subtypes have not had their effective geometry
+    # proved here. Preserve them instead of making the old identity shortcut
+    # newly fail or borrowing an enclosing shape's unrelated dimensions.
+    shape = node.getparent()
+    if shape.tag != "{urn:schemas-microsoft-com:vml}shape" or shape.get("type"):
+        return False  # Referenced shapetype geometry has not been proved.
+    style = dict((key.strip(), value.strip()) for entry in shape.get("style", "").split(";")
+                 if ":" in entry for key, value in [entry.split(":", 1)])
+    if any(key != key.casefold() for key in style if key.casefold() in ("width", "height", "rotation", "flip")):
+        return False
+    dimensions = []
+    for axis in ("width", "height"):
+        length = re.fullmatch(r"(\d+(?:\.\d*)?|\.\d+)(pt|in|cm|mm|px)", style.get(axis, ""))
+        if length is None:
+            return False
+        points = float(length[1]) * {"pt": 1, "in": 72, "cm": 72 / 2.54, "mm": 72 / 25.4, "px": .75}[length[2]]
+        if not math.isfinite(points) or points <= 0:
+            return False
+        dimensions.append(points)
+    ratio = dimensions[0] / dimensions[1]
+    if not math.isfinite(ratio) or ratio <= 0:
+        return False
+    return (not shape.get("path") and not shape.get("flip") and not style.get("flip")
+            and _zero_geometry_value(style.get("rotation", shape.get("rotation", "0")))
+            and shape.find("{urn:schemas-microsoft-com:vml}skew") is None
+            and shape.find("{urn:schemas-microsoft-com:vml}path") is None
+            and not any(ancestor.tag == "{urn:schemas-microsoft-com:vml}group"
+                        for ancestor in node.iterancestors()))
+
+
+def _unchanged_photo_geometry_supported(node):
+    if not _ordinary_unchanged_photo_geometry(node):
+        return False
+    # Modern/fallback representations are one logical picture. If any branch
+    # is outside the bounded repair, do not recrop another branch in isolation.
+    for alternate in node.iterancestors("{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"):
+        if any(not _ordinary_unchanged_photo_geometry(image) for image in alternate.iter()
+               if image.tag in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata")):
+            return False
+    return True
+
+
+def _fit_cover_photo(node, image_width, image_height, *, preserve_crop=False):
+    """Fit a photo in its frame, retaining valid unchanged source crops.
+
+    For unchanged DrawingML, this repair is deliberately limited to ordinary
+    full-frame fills. Group transforms and inset/tiled destination fills need
+    their effective geometry proved separately; do not introduce a new crop
+    based only on their local picture extent.
+    """
     if image_width <= 0 or image_height <= 0:
         raise NativeLayoutError("The cover photograph has no usable dimensions.")
+    if preserve_crop and not _unchanged_photo_geometry_supported(node):
+        return
     frame = None
     if node.tag == qn("a:blip"):
         for ancestor in node.iterancestors():
@@ -495,7 +591,10 @@ def _fit_cover_photo(node, image_width, image_height):
             ext = next((transform.find(qn("a:ext")) for transform in transforms
                         if transform.find(qn("a:ext")) is not None), None)
             if ext is not None:
-                frame = (float(ext.get("cx", "0")), float(ext.get("cy", "0")))
+                try:
+                    frame = (float(ext.get("cx", "0")), float(ext.get("cy", "0")))
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise NativeLayoutError("The cover photograph's native frame dimensions are unavailable.") from exc
                 break
     else:
         def dimensions(element):
@@ -518,10 +617,38 @@ def _fit_cover_photo(node, image_width, image_height):
                     width *= group_width / float(coordinates[0])
                     height *= group_height / float(coordinates[1])
             frame = width, height
-    if not frame or min(frame) <= 0:
+    if not frame or not all(math.isfinite(value) and value > 0 for value in frame):
         raise NativeLayoutError("The cover photograph's native frame dimensions are unavailable.")
     frame_ratio = frame[0] / frame[1]
     image_ratio = image_width / image_height
+    if preserve_crop:
+        # Matching bytes prove which photo this is, not that the old Word
+        # frame displayed it proportionally. Preserve an intentional source
+        # crop only when its remaining pixels actually fit that same frame.
+        # This also retains asymmetric crops instead of needlessly recentering.
+        try:
+            def fraction(value, divisor):
+                if value.endswith("%"):
+                    return float(value[:-1]) / 100
+                if divisor == 1 and value.endswith("f"):
+                    return float(value[:-1]) / 65536
+                return float(value) / divisor
+
+            if node.tag == qn("a:blip"):
+                rectangle = node.getparent().find(qn("a:srcRect"))
+                existing = {key: fraction(rectangle.get(key, "0"), 100000)
+                            if rectangle is not None else 0 for key in ("l", "t", "r", "b")}
+            else:
+                existing = {key: fraction(node.get(name, "0"), 1) for key, name in {
+                    "l": "cropleft", "r": "cropright", "t": "croptop", "b": "cropbottom"}.items()}
+            width = 1 - existing["l"] - existing["r"]
+            height = 1 - existing["t"] - existing["b"]
+            if (width > 0 and height > 0
+                    and all(math.isfinite(value) for value in existing.values())
+                    and math.isclose(image_ratio * width / height, frame_ratio, rel_tol=.001)):
+                return
+        except (TypeError, ValueError, OverflowError):
+            pass  # An unusable source crop cannot justify stretching a photo.
     horizontal = max(0, (1 - frame_ratio / image_ratio) / 2)
     vertical = max(0, (1 - image_ratio / frame_ratio) / 2)
     crop = {"l": horizontal, "r": horizontal, "t": vertical, "b": vertical}
@@ -740,11 +867,149 @@ def _cover(element, draft, *, preserve_issue_date=False):
             _set_text(paragraph, "")
 
 
+def _native_photo_orientation_proved(node, document_part):
+    from PIL import Image, UnidentifiedImageError
+
+    representations = [node]
+    for alternate in node.iterancestors("{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"):
+        representations.extend(image for image in alternate.iter()
+                               if image.tag in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata"))
+    for image in set(representations):
+        rid = image.get(qn("r:embed")) or image.get(qn("r:id"))
+        relation = document_part.rels.get(rid)
+        if relation is None or relation.is_external:
+            return False
+        try:
+            with Image.open(BytesIO(relation.target_part.blob)) as source:
+                if source.getexif().get(274, 1) != 1:
+                    return False
+        except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+            return False
+    return True
+
+
+def _contain_cover_logo(node, image_width, image_height, document_part, *, preserve_crop=False, defer=False):
+    """Fit one proved logo occurrence without stretching or changing its pixels.
+
+    Preserve already-proportional source crops. Unsupported transforms remain
+    untouched rather than borrowing an enclosing text box's dimensions. The
+    same conservative geometry/orientation boundary as cover photos applies.
+    """
+    if (not _unchanged_photo_geometry_supported(node)
+            or not _native_photo_orientation_proved(node, document_part)
+            or image_width <= 0 or image_height <= 0):
+        return
+    if node.tag == qn("a:blip"):
+        shared_frame = next(p for p in node.iterancestors() if p.tag in (qn("wp:inline"), qn("wp:anchor")))
+        peers = [p for p in shared_frame.iter(qn("a:blip"))
+                 if next((a for a in p.iterancestors() if a.tag in (qn("wp:inline"), qn("wp:anchor"))), None) is shared_frame]
+        crops = set()
+        for peer in peers:
+            crop = peer.getparent().find(qn("a:srcRect"))
+            crops.add(tuple(crop.get(k, "0") if crop is not None else "0" for k in ("l", "t", "r", "b")))
+        if len(crops) > 1:
+            # Different source crops sharing one outer frame cannot each be
+            # contained independently without invalidating the other's crop.
+            return
+    if node.tag == qn("a:blip"):
+        picture = next(node.iterancestors(qn("pic:pic")))
+        inner = picture.find("./" + qn("pic:spPr") + "/" + qn("a:xfrm") + "/" + qn("a:ext"))
+        frame = next(p for p in picture.iterancestors() if p.tag in (qn("wp:inline"), qn("wp:anchor")))
+        outer = frame.find(qn("wp:extent"))
+        width, height = float(outer.get("cx")), float(outer.get("cy"))
+        rectangle = node.getparent().find(qn("a:srcRect"))
+        crop = {key: rectangle.get(key, "0") if rectangle is not None else "0" for key in ("l", "t", "r", "b")}
+        divisor = 100000
+    else:
+        shape = node.getparent()
+        style = shape.get("style", "")
+        lengths = {}
+        for axis in ("width", "height"):
+            matches = list(re.finditer(r"(?:^|;)\s*" + axis + r"\s*:\s*(\d+(?:\.\d*)?|\.\d+)(pt|in|cm|mm|px)\s*(?=;|$)", style))
+            match = matches[-1] if matches else None
+            if match is None:
+                return
+            factor = {"pt": 1, "in": 72, "cm": 72 / 2.54, "mm": 72 / 25.4, "px": .75}[match[2]]
+            lengths[axis] = (match, factor, float(match[1]) * factor)
+        width, height = lengths["width"][2], lengths["height"][2]
+        crop = {key: node.get(name, "0") for key, name in {
+            "l": "cropleft", "r": "cropright", "t": "croptop", "b": "cropbottom"}.items()}
+        divisor = 1
+    ratio = image_width / image_height
+    if not math.isfinite(ratio) or ratio <= 0:
+        return
+    if preserve_crop:
+        try:
+            def fraction(value):
+                if value.endswith("%"):
+                    return float(value[:-1]) / 100
+                if divisor == 1 and value.endswith("f"):
+                    return float(value[:-1]) / 65536
+                return float(value) / divisor
+            values = {key: fraction(value) for key, value in crop.items()}
+            remaining_width = 1 - values["l"] - values["r"]
+            remaining_height = 1 - values["t"] - values["b"]
+            if (all(math.isfinite(v) for v in values.values()) and min(remaining_width, remaining_height) > 0
+                    and math.isclose(ratio * remaining_width / remaining_height, width / height, rel_tol=.001)):
+                return
+        except (ValueError, TypeError, OverflowError):
+            pass
+    scale = min(width / image_width, height / image_height)
+    new_width, new_height = image_width * scale, image_height * scale
+    if not all(math.isfinite(v) and v > 0 for v in (new_width, new_height)):
+        return
+    def apply():
+        if node.tag == qn("a:blip"):
+            if min(round(new_width), round(new_height)) <= 0:
+                return
+            for extent in (inner, outer):
+                extent.set("cx", str(round(new_width))); extent.set("cy", str(round(new_height)))
+            if rectangle is not None:
+                rectangle.getparent().remove(rectangle)
+        else:
+            new_style = style
+            for axis, target in (("width", new_width), ("height", new_height)):
+                units = {"pt": 1, "in": 72, "cm": 72 / 2.54, "mm": 72 / 25.4, "px": .75}
+                new_style = re.sub(r"(?P<prefix>(?:^|;)\s*" + axis + r"\s*:\s*)(\d+(?:\.\d*)?|\.\d+)(pt|in|cm|mm|px)\s*(?=;|$)",
+                               lambda m: m["prefix"] + f"{target / units[m[3]]:.8f}" + m[3], new_style)
+            shape.set("style", new_style)
+            for key in ("cropleft", "cropright", "croptop", "cropbottom"):
+                node.attrib.pop(key, None)
+    if defer:
+        return apply
+    apply()
+
+
+def _contain_unchanged_cover_logo(node, source_path, item, document_part, *, defer=False):
+    width, height = item.image_width, item.image_height
+    if width <= 0 or height <= 0:
+        from app.monthly_report_import import read_import_image
+        image = read_import_image(Path(source_path), item, line_art=True)
+        width, height = image.width, image.height
+    return _contain_cover_logo(node, width, height, document_part, preserve_crop=True, defer=defer)
+
+
+def _fit_unchanged_cover_photo(node, source_path, item, document_part):
+    # Native renderers need not honor EXIF the same way as gallery
+    # normalization. Without proving their display axes, retain all original
+    # representations/crops rather than fitting one against the wrong axes.
+    if (not _unchanged_photo_geometry_supported(node)
+            or not _native_photo_orientation_proved(node, document_part)):
+        return
+    width, height = item.image_width, item.image_height
+    if width <= 0 or height <= 0:
+        from app.monthly_report_import import read_import_image
+        normalized = read_import_image(Path(source_path), item, line_art=False)
+        width, height = normalized.width, normalized.height
+    _fit_cover_photo(node, width, height, preserve_crop=True)
+
+
 @lru_cache(maxsize=128)
-def _source_image_digest(source_path, source_digest, item, line_art):
+def _source_image_digest(source_path, source_digest, item, line_art, preserve_transparency=None):
     # The verified immutable source hash is part of this bounded cache key.
     from app.monthly_report_import import read_import_image
-    normalized = read_import_image(Path(source_path), item, line_art=line_art)
+    options = {} if preserve_transparency is None else {"preserve_transparency": preserve_transparency}
+    normalized = read_import_image(Path(source_path), item, line_art=line_art, **options)
     return hashlib.sha256(normalized.data).hexdigest() + "." + normalized.extension
 
 
@@ -924,6 +1189,15 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     source_digest = source_view.original_inspection.sha256 if source_view is not None else inspection.sha256
     original_path = original_path or source_path
     source_ref = lambda item: original_reference(inspection, item, source_view)
+    def image_matches(item, role, hashes):
+        if role not in ("brand_logo", "client_logo"):
+            return image_digest(str(source_path), image_cache_identity, item, role != "cover_photo") in hashes
+        # Current explicit logo mapping preserves transparency; older saved
+        # assets used the source suggestion's policy. Both fingerprints prove
+        # this exact source artwork, not a visually guessed brand identity.
+        return (image_digest(str(source_path), image_cache_identity, item, True, True) in hashes
+                or image_digest(str(source_path), image_cache_identity, item, True) in hashes)
+
     source_ref_by_id = {item.id: source_ref(item) for item in inspection.items}
     if any(item.note.startswith("Alternate Word representations") for item in inspection.items):
         raise NativeLayoutError(
@@ -1011,7 +1285,9 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             unchanged_items.update(item.id for item, _ in image_values)
     retained_images = defaultdict(set)
     document = Document(BytesIO(source_view.rendition_bytes if source_view is not None else passive_docx(source_path)))
-    exact_client_nodes, preserved_contents_nodes, source_node_items = set(), set(), {}
+    exact_client_nodes, preserved_contents_nodes = set(), set()
+    source_node_items = {node:item for node, attr, item in _header_image_occurrences(
+        document.part, inspection, elements=document.element.body)}
     if source_view is not None:
         from lxml import etree
         from app.monthly_report_compatibility_view import _path_node
@@ -1028,8 +1304,6 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 preserved_contents_nodes.add(found[0])
             else:
                 raise NativeLayoutError("A rendition resolution is outside native cover/contents scope.")
-        source_node_items = {node:item for node, attr, item in _header_image_occurrences(
-            document.part, inspection, elements=document.element.body)}
     _clear_source_drawing_metadata(document)
     if master:
         _remove_unapproved_master_watermark_text(document)
@@ -1171,8 +1445,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 continue
             for role in ("brand_logo", "client_logo", "cover_photo"):
                 block = blocks.get(role)
-                if block and block.asset_hashes and image_digest(
-                        str(source_path), image_cache_identity, item, role != "cover_photo") in block.asset_hashes:
+                if block and block.asset_hashes and image_matches(item, role, block.asset_hashes):
                     cover_roles[item.image_part] = role
                     break
             if item.image_part not in cover_roles and item.image_height:
@@ -1188,7 +1461,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             block = blocks.get(role)
             return bool(block and block.source != "Omit" and block.asset_hashes and any(
                 cover_roles.get(item.image_part) == role
-                and image_digest(str(source_path), image_cache_identity, item, role != "cover_photo") in block.asset_hashes
+                and image_matches(item, role, block.asset_hashes)
                 for item in cover_items))
 
         unchanged_master_brand = unchanged_cover("brand_logo")
@@ -1196,6 +1469,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
 
     def cover_images(element, group):
         roles = cover_roles
+        logo_replacements = []
         for node in list(element.iter()):
             if node.tag not in (qn("a:blip"), "{urn:schemas-microsoft-com:vml}imagedata"):
                 continue
@@ -1225,8 +1499,11 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     continue
                 if not block.asset_hashes:
                     raise NativeLayoutError("The exact native image replacement has no saved artwork.")
-                if image_digest(str(source_path), image_cache_identity, source_item,
-                                        role != "cover_photo") in block.asset_hashes:
+                if image_matches(source_item, role, block.asset_hashes):
+                    if role == "cover_photo":
+                        _fit_unchanged_cover_photo(node, source_path, source_item, document.part)
+                    elif role in ("brand_logo", "client_logo"):
+                        logo_replacements.append(_contain_unchanged_cover_logo(node, source_path, source_item, document.part, defer=True))
                     continue
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
@@ -1234,8 +1511,42 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 node.set(attr, new_rid)
                 if role == "cover_photo":
                     _fit_cover_photo(node, image.px_width, image.px_height)
+                elif role in ("brand_logo", "client_logo"):
+                    logo_replacements.append((node, image.px_width, image.px_height))
                 continue
-            role = roles.get(target)
+            # Authorize this new repair by the exact selected occurrence,
+            # before the legacy shared-media role heuristic can override it.
+            photo = blocks.get("cover_photo")
+            occurrence = source_node_items.get(node)
+            if photo and photo.source != "Omit" and photo.asset_hashes and occurrence is not None:
+                reference = source_ref(occurrence)
+                explicit = {block.key for block in draft.blocks if reference in block.references}
+                if (explicit == {"cover_photo"}
+                        and image_digest(str(source_path), image_cache_identity, occurrence, False) in photo.asset_hashes):
+                    _fit_unchanged_cover_photo(node, source_path, occurrence, document.part)
+                    continue
+            if occurrence is not None:
+                reference = source_ref(occurrence)
+                mapped_roles = {block.key for block in draft.blocks if reference in block.references}
+                if len(mapped_roles) == 1 and next(iter(mapped_roles)) in ("brand_logo", "client_logo"):
+                    logo_role = next(iter(mapped_roles))
+                    logo = blocks[logo_role]
+                    if (logo.source != "Omit" and logo.asset_hashes
+                            and image_matches(occurrence, logo_role, logo.asset_hashes)):
+                        logo_replacements.append(_contain_unchanged_cover_logo(node, source_path, occurrence, document.part, defer=True))
+                        continue
+            # Explicit roles belong to occurrences, not shared relationship bytes.
+            # A replacement must not overwrite an unselected same-media sibling.
+            exact_roles = ({b.key for b in draft.blocks if source_ref(occurrence) in b.references}
+                           if occurrence is not None else set())
+            selected_logo_media = any(
+                item.image_part == target and any(source_ref(item) in b.references
+                    for b in draft.blocks if b.key in ("brand_logo", "client_logo"))
+                for item in cover_items)
+            cover_slots = {"brand_logo", "client_logo", "cover_photo"}
+            if len(exact_roles) > 1 or (selected_logo_media and not exact_roles & cover_slots):
+                continue
+            role = next(iter(exact_roles)) if len(exact_roles) == 1 and exact_roles <= cover_slots else roles.get(target)
             if role == "company_slogan":
                 continue  # Reviewed, immutable company furniture; never a client mark.
             block = blocks.get(role)
@@ -1244,9 +1555,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                         or (role == "brand_logo" and unchanged_master_brand)):
                     continue
                 supplied = next((item for item in group if item.kind == "image" and item.image_part == target), None)
-                if supplied is not None and image_digest(str(source_path), image_cache_identity, supplied,
-                                                                role != "cover_photo") in block.asset_hashes:
-                    continue  # Explicit unchanged source art retains its native resolution/crop.
+                if supplied is not None and image_matches(supplied, role, block.asset_hashes):
+                    continue  # Unselected/unproved occurrences retain their original geometry.
                 if asset_loader is None:
                     raise NativeLayoutError("Cover images require the saved asset resolver.")
                 new_rid, image = document.part.get_or_add_image(BytesIO(asset_loader(block.asset_hashes[0])))
@@ -1257,9 +1567,21 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     layer.attrib.pop(qn("r:link"), None)
                 if role == "cover_photo":
                     _fit_cover_photo(node, image.px_width, image.px_height)
+                elif role in ("brand_logo", "client_logo"):
+                    # The existing replacement path has already authorized
+                    # these bytes; catalog defaults need proportional fit too.
+                    logo_replacements.append((node, image.px_width, image.px_height))
             elif role != "brand_logo" and (master or block is not None):
                 # A global master must never lend another client's logo/photo.
                 node.getparent().remove(node)
+
+        # All alternate representations must have their final relationships
+        # before orientation/atomic geometry guards inspect their peers.
+        plans = [(_contain_cover_logo(*entry, document.part, defer=True) if isinstance(entry, tuple) else entry)
+                 for entry in logo_replacements]
+        for plan in plans:
+            if plan is not None:
+                plan()
 
     if source_section_plan is not None:
         # This exact immutable-source plan also derives expected header closure
@@ -1297,6 +1619,26 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     divider_word_sections = {item.word_section for position in headings for item in items[position]}
     if section_key and section_key not in set(section_by_pos.values()):
         raise NativeLayoutError(f"The source layout does not contain the {section_key} section.")
+    from app.monthly_report_native_table_context import supplied_table_context
+    # Preserved placement also includes mixed picture tables edited in place.
+    # Only exact current cell values may authorize retaining adjacent context;
+    # leave the broader placement/redaction receipt unchanged.
+    context_table_refs = set(preserved_table_refs)
+    for block in draft.blocks:
+        if block.source == "Omit":
+            continue
+        for table in block.extra_tables:
+            if table.reference not in context_table_refs:
+                continue
+            expected, _ = table_without_prices(native_tables[table.reference])
+            if expected is None or (table.columns, table.rows) != (expected.columns, expected.rows):
+                context_table_refs.discard(table.reference)
+    table_context = {} if master else supplied_table_context(
+        draft, original, items, section_by_pos, native_tables, context_table_refs,
+        styles=document.styles.element)
+    unchanged_items.update(item.id for context, _ in table_context.values() for item in context)
+    context_anchors = {key: original[context[0].position - 1]
+                       for key, (context, _) in table_context.items()}
     from app.monthly_report_native_pages import NativePages
     unchanged_positions = {item.position for item in inspection.items
                            if item.part == "word/document.xml" and item.id in unchanged_items}
@@ -1305,6 +1647,14 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     from app.monthly_report_native_text import (narrative_prototype, write_narrative,
                                                  header_contains_label)
     narrative_styles = {style.style_id: style.element for style in document.styles}
+    # Freeze role boundaries before source text is cleared. Typography borrowing
+    # must never look across a native section or independently mapped block.
+    narrative_scopes = {
+        element: (section_by_pos[position], next((item.suggested_slot for item in items[position]
+            if item.suggested_slot and not item.suggested_slot.startswith('divider_')),
+            _DEFAULT_TEXT.get(section_by_pos[position])))
+        for position, element in enumerate(original, 1)
+    }
     text_prototypes = defaultdict(list)
     image_prototypes = defaultdict(list)
     table_prototypes = defaultdict(list)
@@ -1322,7 +1672,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
     global_text = [prototype for position, e in enumerate(original, 1)
                    if section_by_pos[position] != "cover" and position not in headings
                    and e.tag == qn("w:p")
-                   and (prototype := narrative_prototype(e, narrative_styles, _STATIC)) is not None]
+                   and (prototype := narrative_prototype(e, narrative_styles, _STATIC, scopes=narrative_scopes)) is not None]
     for position, element in enumerate(original, 1):
         sec = section_by_pos[position]
         if element.tag == qn('w:sectPr'):
@@ -1432,7 +1782,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 page_plan.support.add(element)
             else:
                 label = re.fullmatch(r"(Client Utility Rate Analysis)(?:\s+Author:.*)?", text, re.IGNORECASE)
-                prototype = None if label else narrative_prototype(element, narrative_styles, _STATIC)
+                prototype = None if label else narrative_prototype(element, narrative_styles, _STATIC, scopes=narrative_scopes)
                 if prototype is not None:
                     text_prototypes[slot].append((element, prototype))
                     section_text[sec].append(deepcopy(prototype))
@@ -1494,24 +1844,25 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     else:
                         _set_text(cell, "")
 
-    def append_native(sec, prototype):
+    def append_native(sec, prototype, *, before=None):
         clone = deepcopy(prototype)
         # A copied payload must not introduce another Word section boundary.
         for properties in list(clone.iter(qn("w:sectPr"))):
             properties.getparent().remove(properties)
         _clear_images(clone)
         _set_text(clone, "")
-        section_ends[sec].addprevious(clone)
-        page_plan.assigned(clone, section_ends[sec])
+        anchor = before if before is not None else section_ends[sec]
+        anchor.addprevious(clone)
+        page_plan.assigned(clone, anchor)
         return clone
 
-    def text_anchor(sec):
+    def text_anchor(sec, *, before=None):
         choices = section_text.get(sec) or global_text
         if choices:
             prototype = choices[0]
         else:
             prototype = OxmlElement("w:p")
-        return append_native(sec, prototype), prototype
+        return append_native(sec, prototype, before=before), prototype
 
     specs = {b.key: (s.key, b) for s in draft.sections for b in s.blocks}
     render_blocks = list(draft.blocks)
@@ -1536,6 +1887,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if sec not in section_ends:
             raise NativeLayoutError(f"The source has no native layout for {sec}.")
         text_value = "" if block.key in preserved_text else block.text
+        if text_value and block.key in table_context:
+            text_value = table_context[block.key][1]
         relocated_notes = []
         for identity, item in supplied_notes.items():
             kind, note_id = identity.split(":", 1)
@@ -1552,7 +1905,13 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                             node.getparent().remove(node)
         if text_value or relocated_notes:
             anchors = text_prototypes.get(block.key)
-            if not anchors:
+            context_anchor = context_anchors.get(block.key)
+            if context_anchor is not None and (not anchors or
+                    original.index(context_anchor) < original.index(anchors[0][0])):
+                # A newly added note still leads its section when the source's
+                # only prior prose is now retained beside its exact table.
+                anchors = [text_anchor(sec, before=context_anchor)]
+            elif not anchors:
                 anchors = [text_anchor(sec)]
             anchor, prototype = anchors[0]
             # Current prose is one flow, not one old canvas/page per new line.
@@ -1792,6 +2151,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             continue
         header_occurrences = _header_image_occurrences(part, inspection)
         approved_header_nodes = set()
+        header_logo_replacements = []
         _clear_diagrams(part.element)
         _clear_hyperlinks(part.element)
         for paragraph in part.element.iter(qn("w:p")):
@@ -1846,15 +2206,29 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                     # belongs to these nodes, not independent uses of equal bytes.
                     approved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
                     continue
-                if image_digest(str(source_path), image_cache_identity, source_item, True) in logo.asset_hashes:
+                if image_matches(source_item, role, logo.asset_hashes):
+                    if explicit_roles == {role}:
+                        for node, _ in header_bindings[source_item.id]:
+                            header_logo_replacements.append(_contain_unchanged_cover_logo(node, source_path, source_item, part, defer=True))
                     approved_header_nodes.update(node for node, _ in header_bindings[source_item.id])
                     continue
-                rid, _ = part.get_or_add_image(BytesIO(asset_loader(logo.asset_hashes[0])))
+                rid, image = part.get_or_add_image(BytesIO(asset_loader(logo.asset_hashes[0])))
                 for node, attr in header_bindings[source_item.id]:
+                    original_bytes = part.related_parts[node.get(attr)].blob
                     node.set(attr, rid)
+                    # Replacement authority is already established here. Fit
+                    # changed catalog bytes too, but retain an unmapped native
+                    # crop when raw PNG bytes already match the chosen asset.
+                    if explicit_roles == {role} or original_bytes != image.blob:
+                        header_logo_replacements.append((node, image.px_width, image.px_height))
                     # Current client artwork is authorized at this occurrence,
                     # not at every source location containing equal bytes.
                     approved_header_nodes.add(node)
+        plans = [(_contain_cover_logo(*entry, part, defer=True) if isinstance(entry, tuple) else entry)
+                 for entry in header_logo_replacements]
+        for plan in plans:
+            if plan is not None:
+                plan()
         if master:
             approved = set()
             if brand and brand.source != "Omit" and brand.asset_hashes and asset_loader:

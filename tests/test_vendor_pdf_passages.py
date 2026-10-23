@@ -191,6 +191,8 @@ def test_legacy_draft_fingerprint_and_saved_source_stay_unchanged(monkeypatch,tm
     old=asdict(draft)
     for source in old['sources']:
         source.pop('pdf_text_blocks'); source.pop('scope_review')
+    for block in old['blocks']:
+        block.pop('asset_instances')
     assert draft.fingerprint == sha256(json.dumps(old,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     saved=save_snapshot(draft,expected_revision=0,entered_editor=draft.prepared_by)
     before=load_snapshot(draft.profile.contract,draft.profile.key,draft.period)

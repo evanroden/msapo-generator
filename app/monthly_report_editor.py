@@ -70,7 +70,8 @@ def review_client_images(draft, assets, prefix, field):
     def state_key(block):
         # Content text and table edits must not send every picture back through
         # review. Keep removal decisions tied to this exact ordered picture set.
-        identity = tuple(asset_fingerprint(block, i) for i in range(len(block.asset_hashes)))
+        identity = (tuple(asset_fingerprint(block, i) for i in range(len(block.asset_hashes))),
+                    tuple(item.key for item in block.asset_instances))
         return prefix + "_client_" + block.key + "_" + _signature(identity)
 
     blocks = []
@@ -516,6 +517,41 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     retired = st.session_state.get(prefix + "_evidence_retired_contributions", {})
     previous = {key: retire_contributions(block, retired.get(key, ()))
                 for key, block in previous.items()}
+    from app.monthly_report_source_retirement import legacy_retirement_candidates, resolve_legacy_retirement
+    from app.monthly_report_sections import readable_label
+    for key, receipts in retired.items():
+        block = previous.get(key)
+        if block is None or block.source == "Omit":
+            continue
+        for receipt in receipts:
+            candidates = legacy_retirement_candidates(block, receipt)
+            if not candidates:
+                continue
+            resolution_key = prefix + "_legacy_removal_" + receipt.fingerprint
+            binding = (scope_context, block.fingerprint)
+            resolution = st.session_state.get(resolution_key)
+            if resolution and resolution[:2] == binding:
+                block = resolution[2]
+                continue
+            st.warning(f"Identify the old imported picture in {readable_label(key)} before removing it. "
+                       "Older saved provenance does not distinguish the matching pictures.")
+            labels = {n: f"Picture {n + 1}: " + (block.asset_captions[n]
+                if n < len(block.asset_captions) and block.asset_captions[n] else "No caption") for n in candidates}
+            chosen = st.selectbox("Picture to remove from this report", candidates, index=None,
+                format_func=lambda n, labels=labels: labels[n],
+                key=resolution_key + "_choice_" + _signature(binding))
+            if chosen is not None:
+                try:
+                    st.image(st.session_state.get(prefix + "_assets", {}).get(block.asset_hashes[chosen])
+                             or library.read_asset(contract, profile.key, block.asset_hashes[chosen]), width=500)
+                except (ValueError, OSError):
+                    st.error("This saved picture cannot be displayed. Restore a readable original before identifying it for removal.")
+                    chosen = None
+            st.caption("Remove only the chosen imported occurrence. Other matching pictures stay independent of this source-page removal and may need review. Originals and earlier versions remain saved.")
+            if st.button("Remove this imported occurrence", key=resolution_key + "_remove_" + _signature(binding), disabled=chosen is None):
+                block = resolve_legacy_retirement(block, receipt, chosen)
+                st.session_state[resolution_key] = (*binding, block)
+        previous[key] = block
     st.caption("Use the guided report to draft source-linked wording, review carried issues and edit people/photo pages. These controls manage detailed layout and shared assets.")
 
     st.subheader("5. Assemble the report")
@@ -570,6 +606,14 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     draft = ReportDraft(profile, period, prepared, tuple(sections), tuple(blocks),
                         address_line=footer.text if footer.source != "Omit" else "", sources=report_sources,
                         follow_ups=prior.draft.follow_ups if from_prior else ())
+    if from_prior:
+        from app.monthly_report_model import used_source_ids
+        retained_ids = used_source_ids(draft)
+        present_ids = {source.id for source in draft.sources}
+        # Intake deselection cannot discard an original still referenced by
+        # independently retained pictures or narrative. It grants no new review.
+        draft = replace(draft, sources=(*draft.sources, *(source for source in prior.draft.sources
+            if source.id in retained_ids and source.id not in present_ids)))
     loader = lambda ref: assets[ref] if ref in assets else library.read_asset(contract, profile.key, ref)
     with st.expander("Live outline"):
         for title, block_keys, pages in outline(draft):
@@ -583,9 +627,18 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
     estimated = estimate_bytes(draft, loader)
     st.caption(f"Estimated document size: {estimated / (1024 * 1024):.1f} MB. Target: under 15 MB.")
     checks = preflight(draft, estimated)
+    from app.monthly_report_source_retirement import retirement_pending
+    from app.monthly_report_checks import ReportCheck
+    from app.monthly_report_sections import readable_label
+    for block in draft.blocks:
+        if block.source != "Omit" and any(retirement_pending(block, receipt)
+                for receipt in retired.get(block.key, ())):
+            checks = (*checks, ReportCheck("source_removal_unresolved",
+                f"An older imported page in {readable_label(block.key)} cannot be matched safely for removal. "
+                "Use the picture selector above to identify that imported occurrence. Your other pictures and the original file are kept.",
+                True, block.key))
     pending_selection = bool(st.session_state.get(prefix + "_evidence_pending_acceptance"))
     if pending_selection:
-        from app.monthly_report_checks import ReportCheck
         checks = (*checks, ReportCheck("source_selection_pending",
             "Apply the pending file selection, or explicitly remove the last added selection, before creating files. The last added report content is kept.", True))
     for check in checks:
@@ -628,10 +681,15 @@ def render_profile_workflow(browser_token: str, browser_timezone: str, field, mo
             with st.spinner("Assembling DOCX and PDF…"):
                 package = generate_report(draft, acknowledged_fingerprint=draft.fingerprint, asset_loader=loader)
             st.session_state[prefix + "_package"] = package
-            saved = library.save_snapshot(draft, expected_revision=st.session_state[revision_key],
+            expected_revision = st.session_state[revision_key]
+            saved = library.save_snapshot(draft, expected_revision=expected_revision,
                                            open_issues=prior.open_issues if prior else (), pending_proposals=prior.pending_proposals if prior else (),
                                            assets=tuple(assets.items()), entered_editor=prepared)
             st.session_state[revision_key] = saved.revision
+            from app.monthly_report_source_retirement import acknowledge_retired_contributions
+            retired_key = prefix + "_evidence_retired_contributions"
+            st.session_state[retired_key] = acknowledge_retired_contributions(
+                st.session_state.get(retired_key, {}), retired, saved, draft, expected_revision)
             record_report_preparer(browser_token, contract, profile.key, prepared)
         except (ValueError, OSError) as exc:
             st.error(f"Report or snapshot could not be saved: {exc}")

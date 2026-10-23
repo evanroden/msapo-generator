@@ -230,6 +230,16 @@ def _report_table_from_dict(value: dict) -> ReportTable:
 def block_from_dict(value: dict) -> ResolvedBlock:
     try:
         from app.monthly_report_asset_review import normalize_asset_reviews
+        from app.monthly_report_model import AssetInstance
+        instance_values = value.get("asset_instances", ())
+        if (not isinstance(instance_values, (tuple, list)) or any(
+                not isinstance(item, dict) or not isinstance(item.get("key"), str) or not item["key"]
+                or not isinstance(item.get("asset"), str)
+                or not isinstance(item.get("references", ()), (tuple, list))
+                or any(not isinstance(ref, str) for ref in item.get("references", ()))
+                or (item.get("source_caption") is not None and not isinstance(item["source_caption"], str))
+                for item in instance_values)):
+            raise ValueError("Invalid saved picture occurrence.")
         block = ResolvedBlock(
             key=value["key"], source=value["source"], text=value.get("text", ""),
             rows=tuple(tuple(str(cell) for cell in row) for row in value.get("rows", ())),
@@ -245,6 +255,9 @@ def block_from_dict(value: dict) -> ResolvedBlock:
             photos_per_page=int(value.get("photos_per_page", 1)),
             client_asset_reviews=tuple(value.get("client_asset_reviews", ())),
             asset_provenance=tuple((reference, tuple(context)) for reference, context in value.get("asset_provenance", ())),
+            asset_instances=tuple(AssetInstance(
+                item["key"], item["asset"], tuple(item.get("references", ())), item.get("source_caption"))
+                for item in instance_values),
         )
         # Only migrate actual legacy approvals while their old content digest
         # is still exact. Unreviewed historical blocks stay unchanged on read.

@@ -53,7 +53,7 @@ def test_first_source_review_keeps_native_page_selector_path(monkeypatch, tmp_pa
     assert len(selectors) == 1 and selectors[0].value == 1
     before = selectors[0]
     before_path, before_id = _path(app._tree, before), before.id
-    include = [b for b in app.button if b.label == "Include page and continue"]
+    include = [b for b in app.button if b.label == "Include page"]
     assert len(include) == 1 and not include[0].disabled
     include[0].click().run()
     assert not app.exception
