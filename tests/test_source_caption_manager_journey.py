@@ -65,7 +65,7 @@ def test_one_include_updates_attached_caption_and_review_then_persists(monkeypat
     raw = sources.source_bytes(before.profile, before.sources[0])
     button(app, "Manage source files").click().run()
     next(widget for widget in app.text_input if widget.label == "Page caption").set_value(caption)
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     current = current_draft(app)
     assert page(current).asset_captions == (caption,), "The attached report page must agree after this one Include action."
@@ -95,7 +95,7 @@ def test_independent_report_caption_has_explicit_choice_review_and_reload(monkey
     app = reload_report(monkeypatch, fixture, "c" * 32)
     button(app, "Manage source files").click().run()
     next(widget for widget in app.text_input if widget.label == "Page caption").set_value(corrected)
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert page(current_draft(app)).asset_captions == (independent,)
     assert any("different captions" in warning.value for warning in app.warning)
@@ -108,7 +108,7 @@ def test_independent_report_caption_has_explicit_choice_review_and_reload(monkey
     assert dict(current.sources[0].captions)[1] == expected
     assert pending_asset_indexes(page(current), current.sources) == (0,), "A conflict choice is not page review."
     assert next(widget for widget in app.text_input if widget.label == "Page caption").value == expected
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert not pending_asset_indexes(page(current_draft(app)), current_draft(app).sources)
     button(app, "Done with source files").click().run()
@@ -125,7 +125,7 @@ def test_exclude_attached_page_commits_delivered_caption_and_readd_after_reload(
     raw = sources.source_bytes(before.profile, before.sources[0])
     button(app, "Manage source files").click().run()
     next(widget for widget in app.text_input if widget.label == "Page caption").set_value("Caption retained while excluded")
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert not app.exception
     current = current_draft(app)
     assert not page(current).asset_hashes, "Exclude page must remove exactly its attached occurrence."
@@ -135,7 +135,7 @@ def test_exclude_attached_page_commits_delivered_caption_and_readd_after_reload(
     fresh, saved = save_and_reload(monkeypatch, app, 1)
     assert sources.source_bytes(saved.draft.profile, saved.draft.sources[0]) == raw
     button(fresh, "Manage source files").click().run()
-    button(fresh, "Include page and continue").click().run()
+    button(fresh, "Include page").click().run()
     button(fresh, "Add selected pages and tables to report").click().run()
     assert not fresh.exception
     readded = current_draft(fresh)
