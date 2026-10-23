@@ -116,6 +116,11 @@ def test_absent_scope_record_preserves_legacy_source_and_report_fingerprints(sam
     source_record = asdict(draft.sources[0]); source_record.pop("scope_review")
     source_record.pop("pdf_text_blocks")  # Absent in the historical schema too.
     draft_record = asdict(draft)
+    # The historical report schema predates occurrence metadata as well as
+    # source-scope receipts. Current asdict() otherwise invents a new empty
+    # field in this independently reconstructed old-format record.
+    for block in draft_record["blocks"]:
+        block.pop("asset_instances")
     for source in draft_record["sources"]:
         source.pop("scope_review")
         source.pop("pdf_text_blocks")

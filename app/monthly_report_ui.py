@@ -35,6 +35,10 @@ def preserve_report_draft_state() -> None:
 
 def restore_report_draft_state() -> None:
     for key, value in st.session_state.get("report_draft_mirror", {}).items():
+        # Source-site widgets restore from this mirror as native defaults.
+        # Pre-seeding their keyed state would duplicate that initialization.
+        if key.endswith("_source_details_sites"):
+            continue
         st.session_state.setdefault(key, value)
 
 
