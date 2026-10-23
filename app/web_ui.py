@@ -1790,6 +1790,9 @@ def main() -> None:
     except (AttributeError, RuntimeError, ValueError):
         pass
     if workflow_mode != MONTHLY_REPORT_WORKFLOW:
+        # The early mirror captured this navigation's delivered report edits.
+        # Monthly is now definitively absent; retire only its native preparer IDs.
+        preserve_report_draft_state(finalize=True)
         if st.query_params.get("monthly_qa") in {"isolated", "fixtures"}:
             # Switching away from testing also exits the hidden route.
             del st.query_params["monthly_qa"]

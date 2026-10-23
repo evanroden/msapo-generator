@@ -188,3 +188,12 @@ choose_contract('', field)
     assert "monthly_admin=directory" in link.proto.url and "PRIVATE" not in link.proto.url
     if qa:
         assert "monthly_qa=" + qa in link.proto.url
+
+
+@pytest.mark.parametrize('actor', ['', 'Synthetic current attribution'])
+def test_details_existing_attribution_does_not_read_remembered_name(monkeypatch, tmp_path, actor):
+    def forbidden(*args):
+        raise AssertionError('Existing attribution, including a clear, must not read remembered identity.')
+    monkeypatch.setattr(guided, 'remembered_report_preparer', forbidden)
+    app, *_ = details_app(monkeypatch, tmp_path, actor=actor)
+    assert not app.exception

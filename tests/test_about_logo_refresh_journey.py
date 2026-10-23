@@ -337,3 +337,25 @@ def test_child_receipt_requires_one_executed_pass(tmp_path, tests, failures, err
     else:
         with pytest.raises(AssertionError):
             validate_child_receipt(receipt)
+
+
+@pytest.mark.parametrize('mode', ['imported', 'custom', 'omit'])
+def test_preparer_native_default_echo_preserves_exact_about_fixture(monkeypatch, tmp_path, mode, app_test_process):
+    if not app_test_process:
+        return
+    app = app_for(monkeypatch, tmp_path, mode)
+    before = receipt(app)
+    preparer = next(widget for widget in app.text_input if widget.label == 'Prepared by')
+    assert preparer.value == preparer.proto.default == 'Synthetic QA Operator'
+    assert not preparer.proto.set_value
+    states = app._tree.get_widget_states()
+    next(value for value in states.widgets if value.id == preparer.proto.id).string_value = preparer.proto.default
+    app._run(states)
+    assert not app.exception
+    after = receipt(app)
+    assert after['working'] == before['working']
+    assert after['durable'] == before['durable']
+    assert after['saved'] == before['saved']
+    assert after['saved_revision'] == before['saved_revision'] == 2
+    assert after['catalog_revision'] == before['catalog_revision'] == 1
+    assert after['original_unchanged']

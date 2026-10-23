@@ -161,6 +161,7 @@ def exercise(engine,name,executable=None):
         if parsed.scheme in {"data","blob"} or (parsed.hostname=="127.0.0.1" and parsed.port==8520): request.continue_()
         else: external.append(parsed.hostname); request.abort()
     context.route("**/*",route)
+    context.tracing.start(screenshots=True, snapshots=True, sources=True)
     page=context.new_page(); page.set_default_timeout(30000)
     page.on("pageerror",lambda error:errors.append(str(error)))
     record={"errors":errors,"external":external,"stage":"create sample"}
@@ -225,14 +226,21 @@ def exercise(engine,name,executable=None):
     except Exception as exc:
         record.update(result="failed",error=type(exc).__name__+": "+str(exc)[:2000], traceback=traceback.format_exc())
         record["catalog_receipts_at_failure"] = []
+        record["upload_receipts_at_failure"] = []
         for open_page in context.pages:
             try:
                 record["catalog_receipts_at_failure"].append(open_page.get_by_text(re.compile(r"^QA catalog receipt: ")).all_text_contents())
+                record["upload_receipts_at_failure"].append(open_page.get_by_text(re.compile(r"^QA upload receipt: ")).all_text_contents())
             except Exception as diagnostic_error:
                 record["catalog_receipts_at_failure"].append(type(diagnostic_error).__name__)
         page.screenshot(path=str(out/"first-failure.png"),full_page=True)
+        (out/"first-failure.html").write_text(page.content())
         raise
     finally:
+        try:
+            context.tracing.stop(path=str(out/"trace.zip"))
+        except Exception as diagnostic_error:
+            record["trace_error"] = type(diagnostic_error).__name__
         (out/"receipt.json").write_text(json.dumps(record,indent=2))
         context.close();browser.close()
 
