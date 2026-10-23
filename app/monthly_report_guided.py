@@ -505,7 +505,9 @@ def _record_period_editor_transition(prefix, canonical_before, before, after, pe
 def _refresh_period_editors_after_commit(prefix):
     # Business actions may change visible wording; refresh only after the whole
     # canonical draft and its recovery attempt completed, never mid-editor.
-    if st.session_state.pop(prefix + "_period_editor_refresh", False):
+    period_refresh = st.session_state.pop(prefix + "_period_editor_refresh", False)
+    grid_refresh = st.session_state.pop(prefix + "_work_order_grid_refresh", False)
+    if period_refresh or grid_refresh:
         st.rerun()
 
 
@@ -563,29 +565,18 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
                 seed = empty_text_seed(seed)
             grid_key = key + f"_imported_{n}_" + _signature(table.columns)
             if spec.key == "work_orders":
-                artificial_seed = st.session_state.setdefault(grid_key + "_artificial_seed", not table.rows)
+                from app.monthly_report_work_order_rows_ui import edit_imported_work_order_table
+                report_scope = ((draft.profile.contract, draft.profile.key, draft.period.key)
+                                if draft is not None else ())
+                scope = (_rich_text_scope(prefix), report_scope, block.references,
+                         tuple(item.reference for item in block.extra_tables))
+                tables.append(edit_imported_work_order_table(table, key + f"_imported_{n}", scope, prefix))
+                continue
             rows = _grid(grid_key, seed, num_rows="dynamic", hide_index=True)
             # Opening a blank imported frame must retain its original
             # structure/reference without pretending its editor slot is data.
             edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows
                                 if any(v is not None and (str(v).strip() if optional_table else v != "") for v in r.values()))
-            if spec.key == "work_orders":
-                # Imported blank rows are real table geometry. The native
-                # editor's visual add-row is not part of its returned values.
-                kept_rows = rows
-                deleted = st.session_state.get(grid_key, {}).get("deleted_rows", [])
-                if artificial_seed and (0 in deleted or rows and any(
-                        _cell_text(v) for v in rows[0].values())):
-                    # The artificial slot has become a real row or was
-                    # explicitly deleted. Keep that fact across widget unmounts.
-                    st.session_state[grid_key + "_artificial_seed"] = False
-                if (artificial_seed and 0 not in deleted
-                        and rows and not any(_cell_text(v) for v in rows[0].values())):
-                    # Only the synthetic slot for a truly empty table is not
-                    # content. Explicitly added/deleted rows remain authoritative.
-                    kept_rows = rows[1:]
-                edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns)
-                                    for r in kept_rows)
             tables.append(table if optional_table and (rows == seed or not edited_rows and not has_values(table.rows))
                           else replace(table, rows=edited_rows))
         if optional_table and tuple(tables) != block.extra_tables:
