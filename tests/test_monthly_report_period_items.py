@@ -169,13 +169,51 @@ def test_inline_controls_name_item_source_and_apply_only_clicked_choice():
     assert not app.exception and app.session_state["block"] == draft.blocks[0]
     assert any("Synthetic vendor report.txt · page/item 1" in c.value for c in app.caption)
     assert any("#report-block-activity_summary" in m.value for m in app.markdown)
-    next(button for button in app.button if button.label == "Retain as historical context").click().run()
+    next(button for button in app.button if button.label == "Keep as history").click().run()
     app.run()
     assert not app.exception
     assert app.session_state["block"].text == HISTORICAL + OLD + "\n" + SECOND
-    next(button for button in app.button if button.label == "Exclude this item from this report").click().run()
+    next(button for button in app.button if button.label == "Leave out").click().run()
     app.run()
     assert app.session_state["block"].text.strip() == HISTORICAL + OLD
     next(button for button in app.button if button.label == "Restore this wording").click().run()
     app.run()
     assert SECOND in app.session_state["block"].text
+
+
+def test_short_period_card_copy_explains_report_only_actions_once():
+    draft = sample(OLD + "\n" + SECOND)
+    block = replace(draft.blocks[0], references=())
+    app = AppTest.from_string(APP)
+    app.session_state["block"] = block
+    app.session_state["sources"] = draft.sources
+    app.run()
+    assert not app.exception and app.session_state["block"] == block
+    captions = [caption.value for caption in app.caption]
+    explanation = ('Keep as history adds “Historical context:” to this wording. '
+                   'Leave out removes it from this report only; originals stay unchanged.')
+    assert captions.count(explanation) == 1
+    assert captions.count("No exact source passage linked.") == 2
+    assert sum(markdown.value == "[Edit text](#report-block-activity_summary)"
+               for markdown in app.markdown) == 2
+    assert [button.label for button in app.button] == ["Keep as history", "Leave out"] * 2
+    assert app.session_state["sources"] == draft.sources
+
+
+@pytest.mark.parametrize("text", [
+    "September 16, 2026 work and October 2, 2026 work.",
+    "September 16, 2026 work. Planned follow-up November 1, 2026.",
+    "Completed synthetic work September 99, 2026.",
+    "September 16, 2026: synthetic replacement cost $240.",
+])
+def test_short_history_label_keeps_unsafe_history_action_disabled(text):
+    draft = sample(text)
+    app = AppTest.from_string(APP)
+    app.session_state["block"] = draft.blocks[0]
+    app.session_state["sources"] = draft.sources
+    app.run()
+    assert not app.exception
+    history = next(button for button in app.button if button.label == "Keep as history")
+    assert history.disabled
+    assert not next(button for button in app.button if button.label == "Leave out").disabled
+    assert app.session_state["block"] == draft.blocks[0]

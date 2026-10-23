@@ -190,6 +190,7 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                 "source_sha256": old.get("source_sha256", ""),
                 "source_site_relation": old.get("source_site_relation", ""),
                 "automatic_logo_skips": {role:list(ids) for role,ids in old.get("automatic_logo_skips", {}).items()},
+                "automatic_divider_skips": {role:list(ids) for role,ids in old.get("automatic_divider_skips", {}).items()},
                 "cover_photo_omitted": old.get("cover_photo_omitted", False),
                 "cover_photo_source_ids": tuple(old.get("cover_photo_source_ids", ())),
                 # A separate price/text question cannot erase an already
@@ -302,6 +303,14 @@ def _section_card(section, path, inspection, period, prefix, field, plans, first
                     plan["selected"].append(item.id)
             from app.monthly_report_picture_cards import review_pictures
             pictures = [i for i in items if i.kind == "image" and i.id not in kept_native]
+            if (old.get("automatic") and old.get("source_sha256") == inspection.sha256
+                    and old.get("source_site_relation") == "same"):
+                divider_roles = {"divider_" + section.key for section in known_sections()}
+                # Reopening an unrelated card must not reselect native-owned source dividers.
+                pictures = [item for item in pictures if not (
+                    item.suggested_slot in divider_roles
+                    and item.id in old.get("automatic_divider_skips", {}).get(item.suggested_slot, ())
+                    and item.id not in old.get("selected", ()))]
             if section.key == "cover":
                 fixed_logos = [i for i in pictures if old.get("destinations", {}).get(i.id, i.suggested_slot)
                                in {"brand_logo", "client_logo"}]
@@ -1010,11 +1019,16 @@ def render_section_setup(contract, period, prepared, field, *, state=None, ident
             contract, profile.key, period, inspection.sha256))
         previous, verified = library.starting_contribution(
             contract, profile.key, period, inspection.sha256, source_view=source_view) if replay_existing else (None, False)
-        from app.monthly_report_start_replay import retain_automatic_logo_contributions
+        from app.monthly_report_start_replay import (
+            retain_automatic_divider_contributions, retain_automatic_logo_contributions,
+        )
         incoming_keys = {block.key for block in draft.blocks}
         draft = retain_automatic_logo_contributions(
             draft, previous, verified=verified, inspection=inspection,
             plans=plans.values(), preferred_logos=preferred_logos)
+        draft = retain_automatic_divider_contributions(
+            draft, previous, verified=verified, inspection=inspection,
+            plans=plans.values(), native_design=native_design)
         consumed_logo_slots = {block.key for block in draft.blocks
                                if block.key in ("brand_logo", "client_logo") and block.key not in incoming_keys}
         current = library.load_snapshot(contract, profile.key, period) if state else None

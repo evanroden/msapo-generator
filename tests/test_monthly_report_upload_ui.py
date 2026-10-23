@@ -15,7 +15,8 @@ def app_with_library(monkeypatch, tmp_path):
 def open_source_manager(app):
     next(w for w in app.button if w.label == "Manage source files").click().run()
     assert not app.exception
-    assert any(w.label == "Read monthly files" for w in app.button)
+    assert any(w.label == "Add source files" for w in app.get("file_uploader"))
+    assert not any(w.label == "Read monthly files" for w in app.button)
     assert any(w.label == "Done with source files" for w in app.button)
     assert not any(w.label == "Add work-order spreadsheets" for w in app.checkbox)
 
@@ -48,7 +49,7 @@ def upload(monkeypatch, name, data):
     stream.name = name
     original = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
-                        [stream] if label == "Monthly source files" else original(label, *args, **kwargs))
+                        [stream] if label in ("Monthly source files", "Add source files") else original(label, *args, **kwargs))
 
 
 def test_one_batch_action_adds_reviewed_pages_once_and_preserves_them_on_neutral_reruns(monkeypatch, tmp_path):
@@ -56,13 +57,13 @@ def test_one_batch_action_adds_reviewed_pages_once_and_preserves_them_on_neutral
     assert not any(w.label == "Add reviewed vendor service pages" for w in app.checkbox)
     upload(monkeypatch, "synthetic.pdf", pdf_bytes(3))
     app.run()
-    button(app, "Read monthly files").click().run()
+    app.run()  # Upload performs the free native read.
     assert not app.exception
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 2, 3]
     select(app, "Classification").set_value("Vendor service").run()
     for page in (1, 2, 3):
         select(app, "Preview page / item").set_value(page).run()
-        button(app, "Include page and continue").click().run()
+        button(app, "Include page").click().run()
     assert not any(w.label in ("Prepare selected pages", "Add prepared pages and tables to this draft") for w in app.button)
     assert not any(b.key == "improvements" and b.asset_hashes for b in current_draft(app).blocks)
     button(app, "Add selected pages and tables to report").click().run()
@@ -86,9 +87,9 @@ def test_changed_caption_cannot_reuse_a_prepared_batch_or_partially_change_repor
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic.pdf", pdf_bytes(1))
     app.run()
-    button(app, "Read monthly files").click().run()
+    app.run()  # Upload performs the free native read.
     select(app, "Classification").set_value("Vendor service").run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     before = current_draft(app)
     next(w for w in app.text_input if w.label == "Page caption").set_value("Changed review caption").run()
     button(app, "Add selected pages and tables to report").click().run()
@@ -96,7 +97,7 @@ def test_changed_caption_cannot_reuse_a_prepared_batch_or_partially_change_repor
     assert any("Check page 1" in w.value for w in app.error)
     assert current_draft(app).blocks == before.blocks
     assert not any(key.endswith("_prepared_pages") for key in app.session_state.filtered_state)
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
     assert next(b for b in current_draft(app).blocks if b.key == "improvements").asset_captions == ("Changed review caption",)
@@ -106,7 +107,7 @@ def test_cmms_mapping_applies_real_schema_and_invalidates_on_change(monkeypatch,
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic.csv", b"Work order,Finished,Facility,Type\n001,2026-09-02,Demo North,PM\n")
     app.run()
-    button(app, "Read monthly files").click().run()
+    app.run()  # Upload performs the free native read.
     assert not app.exception
     assert select(app, "Classification").value == "CMMS export"
     for label, value in (("Finish date column", "Finished"), ("Work-order identity column", "Work order"),
@@ -140,16 +141,16 @@ def test_guided_page_review_keeps_omits_and_invalidates_caption(monkeypatch, tmp
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic.pdf", pdf_bytes(3))
     app.run()
-    button(app, "Read monthly files").click().run()
-    assert not button(app, "Include page and continue").disabled
+    app.run()  # Upload performs the free native read.
+    assert not button(app, "Include page").disabled
     assert not any(w.label.startswith("I checked this page:") for w in app.checkbox)
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert select(app, "Preview page / item").value == 2
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert select(app, "Preview page / item").value == 3
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 3]
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert button(app, "Next page needing review").disabled
     select(app, "Preview page / item").set_value(1).run()
     next(w for w in app.text_input if w.label == "Page caption").set_value("Changed caption").run()
@@ -160,7 +161,7 @@ def test_guided_page_review_keeps_omits_and_invalidates_caption(monkeypatch, tmp
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 3]
     assert not page_allowed(reviewed_source(app), 1)
     select(app, "Preview page / item").set_value(2).run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert select(app, "Preview page / item").value == 1
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == [1, 2, 3]
 
@@ -174,11 +175,11 @@ def test_priced_page_cannot_be_included_by_guided_action(monkeypatch, tmp_path):
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic-price.pdf", raw)
     app.run()
-    button(app, "Read monthly files").click().run()
+    app.run()  # Upload performs the free native read.
     assert not app.exception
-    assert button(app, "Include page and continue").disabled
+    assert button(app, "Include page").disabled
     assert not any(w.label.startswith("I checked this page:") for w in app.checkbox)
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert not app.exception
     assert next(w for w in app.multiselect if w.label == "Included pages / extracted items").value == []
 
@@ -187,16 +188,16 @@ def test_include_action_requires_visible_page_and_price_free_caption(monkeypatch
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic.pdf", pdf_bytes(1))
     app.run()
-    button(app, "Read monthly files").click().run()
-    assert not button(app, "Include page and continue").disabled
+    app.run()  # Upload performs the free native read.
+    assert not button(app, "Include page").disabled
     next(w for w in app.text_input if w.label == "Page caption").set_value("Invoice total: $500").run()
-    assert button(app, "Include page and continue").disabled
+    assert button(app, "Include page").disabled
     assert not page_allowed(reviewed_source(app), 1)
     next(w for w in app.text_input if w.label == "Page caption").set_value("Equipment inspection").run()
     def missing_preview(*args, **kwargs):
         raise OSError("Synthetic preview unavailable")
     monkeypatch.setattr(ui.sources, "page_image", missing_preview)
     app.run()
-    assert not app.exception and button(app, "Include page and continue").disabled
+    assert not app.exception and button(app, "Include page").disabled
     assert not page_allowed(reviewed_source(app), 1)
     assert any("Synthetic preview unavailable" in w.value for w in app.error)

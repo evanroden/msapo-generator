@@ -288,6 +288,10 @@ def automatic_section_plans(inspection, analysis, *, preferred_logos=(), native_
         for item in section.items:
             slot = item.suggested_slot
             if native_design and slot.startswith("divider_"):
+                # Record the exact source image consumed by the native design.
+                # Replaying it must not look like a new human omission.
+                if item.kind == "image" and analysis.site_relation == "same":
+                    plan.setdefault("automatic_divider_skips", {}).setdefault(slot, []).append(item.id)
                 continue  # The pinned native master owns its page art, not monthly content.
             design = slot in ("brand_logo", "client_logo") or slot.startswith("divider_")
             if analysis.site_relation != "same" and not design:

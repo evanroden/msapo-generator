@@ -30,13 +30,13 @@ def test_normal_fresh_guided_water_placeholder_accepts_only_explicit_reviewed_pa
                         [upload] if label == "Water-treatment files" else uploader(label, *a, **kw))
     app.run()
     assert not app.exception
-    assert not button(app, "Include page and continue").disabled
+    assert not button(app, "Include page").disabled
     assert next(block for block in current_draft(app).blocks if block.key == empty.key) == empty
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert next(block for block in current_draft(app).blocks if block.key == empty.key) == empty
     assert next(w for w in app.selectbox if w.label == "Page to review").value == 2
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert not app.exception
     after = current_draft(app)
     water = next(block for block in after.blocks if block.key == empty.key)
@@ -98,7 +98,7 @@ def test_new_file_cannot_replace_explicit_retained_omission(monkeypatch, tmp_pat
     app.session_state[request_key] = {"source_id": source.id, "fingerprint": source.fingerprint, "pages": (1,)}
     app.run()
     assert not app.exception
-    assert button(app, "Include page and continue").disabled
+    assert button(app, "Include page").disabled
     assert app.session_state["test_blocks"][block.key] == block
     assert app.session_state["test_additions"] == {}
     assert request_key not in app.session_state.filtered_state

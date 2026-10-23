@@ -20,7 +20,7 @@ def _water_app(monkeypatch, tmp_path, pages):
 
 def _open_page_review(app):
     if not any(w.label == "Page to review" for w in app.selectbox):
-        button(app, "Edit pages").click().run()
+        button(app, "Report pages").click().run()
     assert any(w.label == "Page to review" for w in app.selectbox)
 
 
@@ -45,8 +45,8 @@ def test_only_exact_explicit_pages_are_prepared_with_original_source_fingerprint
 def test_new_water_review_does_not_resurrect_prior_removed_page(
         monkeypatch, tmp_path):
     app = _water_app(monkeypatch, tmp_path, pages=2)
-    button(app, "Include page and continue").click().run()
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Include page").click().run()
+    button(app, "Exclude page").click().run()
     assert not app.exception
     included = app.session_state["test_blocks"]["water_reports"]
     assert tuple(page_identity(ref)[1] for ref in included.references) == (1,)
@@ -67,7 +67,7 @@ def test_new_water_review_does_not_resurrect_prior_removed_page(
     # Now explicitly include the *other* page, formerly excluded.
     _open_page_review(app)
     next(w for w in app.selectbox if w.label == "Page to review").set_value(2).run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     after = app.session_state["test_blocks"]["water_reports"]
     assert len(after.asset_hashes) == 1
@@ -80,7 +80,7 @@ def test_new_water_review_does_not_resurrect_prior_removed_page(
     # Page 1 comes back only after a *new* explicit Include click for page 1.
     _open_page_review(app)
     next(w for w in app.selectbox if w.label == "Page to review").set_value(1).run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     restored = app.session_state["test_blocks"]["water_reports"]
     assert len(restored.asset_hashes) == 2

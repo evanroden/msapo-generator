@@ -3,7 +3,7 @@
 // with its workspace; only a same-report reading anchor survives a full rerun.
 globalThis.ENFRASourceReviewNavigation = {
     install(app, state) {
-        let disposed = false, frame = null, controlsFrame = null, cancelPending = () => {};
+        let disposed = false, frame = null, controlsFrame = null, nativeToken = null, pageFrame = null, cancelPending = () => {};
         const loadingText = 'Loading correction controls…';
         const workspaceSelector = '[class*="st-key-epc_workspace_monthly"]';
         const reportIdentity = state.identity;
@@ -44,7 +44,7 @@ globalThis.ENFRASourceReviewNavigation = {
                 boundary.closest('[data-stale="true"]')) return null;
             const enclosing = boundary.closest(workspaceSelector);
             if (enclosing) return enclosing === workspace ? boundary : null;
-            const group = boundary.closest('[class*="_source_metadata_corrections"]');
+            const group = boundary.closest('[class*="_source_metadata_corrections"],[class*="_source_manager_panel"]');
             const owners = group?.querySelectorAll('.enfra-source-correction-owner');
             if (owners?.length !== 1 || !owners[0].isConnected ||
                 owners[0].dataset.reportIdentity !== reportIdentity ||
@@ -87,11 +87,13 @@ globalThis.ENFRASourceReviewNavigation = {
         }
         function controlsChanged() {
             if (disposed || controlsFrame !== null) return;
-            controlsFrame = requestAnimationFrame(() => {controlsFrame = null;syncControls();});
+            controlsFrame = requestAnimationFrame(() => {controlsFrame = null;syncControls();nativeRequests();});
         }
         function returnLinks() {
             app.querySelectorAll('.enfra-source-review-return').forEach(link => {
                 link.hidden = link.dataset.sourceId !== state.sourceReviewReturn?.source;
+                link.textContent = state.sourceReviewReturn?.target === 'report-section-water'
+                    ? 'Return to report pages' : 'Return to review';
             });
         }
         function owner(node) {
@@ -109,7 +111,8 @@ globalThis.ENFRASourceReviewNavigation = {
                 node => node.querySelector('label')?.textContent.trim() === 'Source date');
             return widget?.querySelector('input');
         }
-        function focusWhenReady(boundary, kind, source, workspace, link) {
+        function focusWhenReady(boundary, kind, source, workspace, link, focused = () => {},
+                                currentWorkspace = () => correctionWorkspace(link, source, kind)) {
             cancelPending();
             let active = true, waiting = false, deadline = null;
             const observer = new MutationObserver(schedule);
@@ -128,7 +131,7 @@ globalThis.ENFRASourceReviewNavigation = {
             }
             function attempt() {
                 if (!active || disposed) return;
-                if (correctionWorkspace(link, source, kind) !== workspace ||
+                if (currentWorkspace() !== workspace ||
                     sourceBoundary(source, workspace) !== boundary) {stop();return;}
                 const field = fieldFor(boundary, kind);
                 if (field?.closest('[data-stale="true"]')) {stop();return;}
@@ -150,6 +153,7 @@ globalThis.ENFRASourceReviewNavigation = {
                 stop();
                 field.focus({preventScroll:true});
                 field.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+                focused();
             }
             cancelPending = stop;
             observer.observe(boundary, {subtree:true, childList:true, attributes:true,
@@ -159,17 +163,94 @@ globalThis.ENFRASourceReviewNavigation = {
             deadline = setTimeout(stop, 5000);
             schedule();
         }
+        function openDisclosures(boundary) {
+            const parents=[];
+            for(let p=boundary.parentElement;p;p=p.parentElement) if(p.tagName==='DETAILS') parents.unshift(p);
+            [...parents,...boundary.querySelectorAll('details')].forEach(details => {
+                // During native closing animation open remains true while
+                // the direct Streamlit body is already inert. Reopen through
+                // that same native transition; never remove inert ourselves.
+                const body = details.querySelector(':scope > [data-testid="stExpanderDetails"]');
+                if (!details.open || body?.hasAttribute('inert'))
+                    details.querySelector(':scope > summary')?.click();
+            });
+        }
+        function requestWorkspace(request) {
+            if (!request?.isConnected || !app.contains(request) ||
+                request.closest('[data-stale="true"]') || state.identity !== reportIdentity) return null;
+            const enclosing = request.closest(workspaceSelector);
+            if (enclosing) return enclosing._epcWorkspace === state && enclosing.dataset.epcMode ? enclosing : null;
+            const group = request.closest('[class*="_source_manager_panel"]');
+            const owners = group?.querySelectorAll('.enfra-source-correction-owner');
+            if (owners?.length !== 1 || !owners[0].isConnected ||
+                owners[0].dataset.reportIdentity !== reportIdentity ||
+                owners[0].closest('[data-stale="true"]')) return null;
+            const workspaces = app.querySelectorAll(workspaceSelector);
+            return workspaces.length === 1 && workspaces[0]._epcWorkspace === state &&
+                workspaces[0].dataset.epcMode ? workspaces[0] : null;
+        }
+        function nativeRequests() {
+            const request = app.querySelector('.enfra-source-review-target');
+            const workspace = requestWorkspace(request);
+            const token = request?.dataset.token;
+            if (workspace && token && token !== state.sourceReviewFocusToken && token !== nativeToken &&
+                ['site', 'date'].includes(request.dataset.field)) {
+                const boundary = sourceBoundary(request.dataset.sourceId, workspace);
+                if (boundary) {
+                    nativeToken = token;
+                    openDisclosures(boundary);
+                    focusWhenReady(boundary, request.dataset.field, request.dataset.sourceId, workspace, request,
+                        () => {state.sourceReviewFocusToken = token;}, () => requestWorkspace(request));
+                }
+            }
+            const pageRequest = app.querySelector('.enfra-report-page-target');
+            const pageWorkspace = requestWorkspace(pageRequest);
+            const pageToken = pageRequest?.dataset.token;
+            const context = pageWorkspace && document.getElementById('source-page-context-' + pageRequest.dataset.sourceId);
+            const ownsPage = () => context?.isConnected && app.contains(context) &&
+                !context.closest('[data-stale="true"]') && context.closest(workspaceSelector) === pageWorkspace;
+            if (ownsPage() && pageToken && pageToken !== state.sourcePageFocusToken && pageFrame === null) {
+                pageFrame = requestAnimationFrame(() => {
+                    pageFrame = null;
+                    if (disposed || !ownsPage() || requestWorkspace(pageRequest) !== pageWorkspace ||
+                        document.getElementById('source-page-context-' + pageRequest.dataset.sourceId) !== context) return;
+                    state.sourcePageFocusToken = pageToken;
+                    context.setAttribute('tabindex', '-1');context.focus({preventScroll:true});
+                    context.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+                });
+            }
+        }
         function click(event) {
             if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+            const button=event.target?.closest?.('button');
+            const pageContext=button?.closest?.('[class*="st-key-monthly_source_page_correction_"]')?.querySelector?.('.enfra-source-page-correction');
+            if(pageContext?.dataset?.returnTarget==='report-section-water') {
+                const section=app.querySelector('#report-section-water');
+                if(section) {
+                    state.sourceReviewReturn={source:pageContext.dataset.sourceId,target:'report-section-water',
+                        anchor:'source-page-context-'+pageContext.dataset.sourceId,link:button,
+                        linkTop:button.getBoundingClientRect().top,reviewTop:section.getBoundingClientRect().top};
+                    returnLinks();return;
+                }
+            }
+            const warning=button?.closest?.('[class*="st-key-monthly_source_warning_"]')?.querySelector?.('.enfra-source-warning');
+            const reviewTarget=app.querySelector('#report-review');
+            if(warning&&reviewTarget) {
+                // Let the native callback select/open the source and commit
+                // any delivered edits. Only remember presentation context.
+                state.sourceReviewReturn={source:warning.dataset.sourceId,link:button,
+                    linkTop:button.getBoundingClientRect().top,reviewTop:reviewTarget.getBoundingClientRect().top};
+                returnLinks();return;
+            }
             const link = event.target?.closest?.('a');
             if (!link || !app.contains(link)) return;
             if (link.classList.contains('enfra-source-review-return')) {
                 const prior = state.sourceReviewReturn;
-                const review = app.querySelector('#report-review');
+                const review = app.querySelector('#'+(prior?.target || 'report-review'));
                 if (!prior || !review) return;
                 event.preventDefault();
                 cancelPending();
-                const original = prior.link?.isConnected ? prior.link : review;
+                const original = prior.link?.isConnected ? prior.link : (prior.anchor ? document.getElementById(prior.anchor) : null) || review;
                 const scroll = owner(original);
                 const top = original === review ? prior.reviewTop : prior.linkTop;
                 // Retire our own affordance before measuring the destination.
@@ -197,16 +278,7 @@ globalThis.ENFRASourceReviewNavigation = {
             // inert state as well as details.open. Setting open alone makes
             // the form visible while leaving its inputs unable to take focus.
             // Opening the disclosure never submits or accepts source details.
-            const parents=[];
-            for(let p=boundary.parentElement;p;p=p.parentElement) if(p.tagName==='DETAILS') parents.unshift(p);
-            [...parents,...boundary.querySelectorAll('details')].forEach(details => {
-                // During native closing animation open remains true while
-                // the direct Streamlit body is already inert. Reopen through
-                // that same native transition; never remove inert ourselves.
-                const body = details.querySelector(':scope > [data-testid="stExpanderDetails"]');
-                if (!details.open || body?.hasAttribute('inert'))
-                    details.querySelector(':scope > summary')?.click();
-            });
+            openDisclosures(boundary);
             returnLinks();
             // Cold native fields can still be skeletons at this point. Open
             // the real panel now and hand focus over once its input exists.
@@ -223,8 +295,10 @@ globalThis.ENFRASourceReviewNavigation = {
         // A valid correction can remove its warning and form. The keyed return
         // location stays mounted; reveal it again after that ordinary rerun.
         returnLinks();
+        nativeRequests();
         return () => {
             disposed=true;cancelPending();controlsObserver.disconnect();
+            if (pageFrame !== null) cancelAnimationFrame(pageFrame);
             if (controlsFrame !== null) cancelAnimationFrame(controlsFrame);
             syncControls(true);
             app.removeEventListener('click',click);

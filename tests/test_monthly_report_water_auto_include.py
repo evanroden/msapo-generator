@@ -20,13 +20,13 @@ def _water_app(monkeypatch, tmp_path, raw):
 
 def test_water_only_includes_after_final_page_decision(monkeypatch, tmp_path):
     app = _water_app(monkeypatch, tmp_path, pdf_bytes(2))
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert "water_reports" not in app.session_state["test_blocks"]
     assert next(w for w in app.selectbox if w.label == "Page to review").value == 2
 
     # Completing the final decision automatically adds only the page kept.
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert not app.exception
     included = app.session_state["test_blocks"]["water_reports"]
     source = app.session_state["test_sources"][0]
@@ -46,7 +46,7 @@ def test_water_only_includes_after_final_page_decision(monkeypatch, tmp_path):
 
 def test_removing_an_included_water_page_never_readds_it(monkeypatch, tmp_path):
     app = _water_app(monkeypatch, tmp_path, pdf_bytes(1))
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert app.session_state["test_apply_count"] == 1
     app.run()  # Ensure the exact accepted review receipt is consumed.
@@ -64,14 +64,14 @@ def test_removing_an_included_water_page_never_readds_it(monkeypatch, tmp_path):
     app.run()
     assert not app.session_state["test_blocks"]["water_reports"].asset_hashes
     assert app.session_state["test_apply_count"] == 1
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert len(app.session_state["test_blocks"]["water_reports"].asset_hashes) == 1
     assert app.session_state["test_apply_count"] == 2
 
 
 def test_changed_caption_requires_new_water_review_before_auto_add(monkeypatch, tmp_path):
     app = _water_app(monkeypatch, tmp_path, pdf_bytes(2))
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     pages = next(w for w in app.selectbox if w.label == "Page to review")
     pages.set_value(1).run()
     next(w for w in app.text_input if w.label == "Page caption").set_value(
@@ -81,13 +81,13 @@ def test_changed_caption_requires_new_water_review_before_auto_add(monkeypatch, 
 
     pages = next(w for w in app.selectbox if w.label == "Page to review")
     pages.set_value(2).run()
-    button(app, "Leave page out and continue").click().run()
+    button(app, "Exclude page").click().run()
     assert "water_reports" not in app.session_state["test_blocks"]
     assert app.session_state.filtered_state.get("test_apply_count", 0) == 0
 
     pages = next(w for w in app.selectbox if w.label == "Page to review")
     pages.set_value(1).run()
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert len(app.session_state["test_blocks"]["water_reports"].asset_hashes) == 1
     assert app.session_state["test_apply_count"] == 1
@@ -99,8 +99,8 @@ def test_rejected_price_page_never_auto_enters_water(monkeypatch, tmp_path):
         p.insert_text((48, 60), "Chemical service report, invoice amount $1,250.00.")
         priced = pdf.tobytes()
     app = _water_app(monkeypatch, tmp_path, priced)
-    assert button(app, "Include page and continue").disabled
-    button(app, "Leave page out and continue").click().run()
+    assert button(app, "Include page").disabled
+    button(app, "Exclude page").click().run()
     assert not app.exception
     assert "water_reports" not in app.session_state["test_blocks"]
     assert app.session_state.filtered_state.get("test_apply_count", 0) == 0
@@ -113,7 +113,7 @@ def test_preparation_failure_keeps_review_and_requires_explicit_retry(monkeypatc
         raise ValueError("Synthetic page preparation failure")
     monkeypatch.setattr(sources, "prepare_pages", fail)
 
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     assert not app.exception
     assert any("Synthetic page preparation failure" in w.value for w in app.error)
     assert "water_reports" not in app.session_state["test_blocks"]

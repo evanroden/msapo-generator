@@ -1,7 +1,8 @@
 """Cold server-rendered correction affordances, with real synthetic replay.
 
-AppTest cannot mount browser JavaScript. These cases assert the truthful server
-state before the handler exists; the separate native journey covers activation.
+AppTest cannot mount browser JavaScript. These cases assert the native server
+correction action remains usable without a display adapter; browser focus and
+Return are covered separately by the native journey.
 """
 import pytest
 from hashlib import sha256
@@ -36,7 +37,9 @@ def test_cold_source_warning_is_visible_without_an_inactive_link(monkeypatch, tm
         notices = app.warning
     warning, = [item.value for item in notices if item.value.startswith(start)]
     assert "(#source-details-" not in warning, "The cold warning cannot offer a link before its handler exists."
-    assert "Loading correction controls" in warning
+    correction = [item for item in app.button if item.label == ("Correct site" if kind == "site" else "Correct date")
+                  and source.id in item.key]
+    assert len(correction) == 1 and not correction[0].disabled
     assert start in warning
     assert next(item for item in app.button if item.label == "Create Word and PDF").disabled
     # The native correction fields are still the canonical form, not clones.
@@ -60,7 +63,7 @@ def test_loading_display_preserves_scope_block_originals_and_durable_draft(monke
         assert {source.id: source_bytes(before.profile, source) for source in before.sources} == originals
 
 
-def test_fixed_sibling_source_forms_identify_the_current_report_owner(monkeypatch, tmp_path):
+def test_single_source_manager_identifies_the_current_report_owner(monkeypatch, tmp_path):
     app, key = replay(monkeypatch, tmp_path)
     expected = sha256(key.removesuffix("_draft").encode()).hexdigest()[:24]
     owners = [item.value for item in app.markdown if 'class="enfra-source-correction-owner"' in item.value]
@@ -75,7 +78,7 @@ def test_fixed_sibling_source_forms_identify_the_current_report_owner(monkeypatc
     assert owners == [item.value for item in app.markdown if 'class="enfra-source-correction-owner"' in item.value]
 
 
-def test_real_warning_and_source_form_are_both_owned_siblings_outside_workspace(monkeypatch, tmp_path):
+def test_real_warning_targets_the_one_owned_source_form_inside_workspace(monkeypatch, tmp_path):
     app, key = replay(monkeypatch, tmp_path)
     identity = sha256(key.removesuffix("_draft").encode()).hexdigest()[:24]
     def walk(node, parents=()):
@@ -91,8 +94,8 @@ def test_real_warning_and_source_form_are_both_owned_siblings_outside_workspace(
             continue
         if 'id="source-details-' in node.value:
             source_markers.append(node)
-            assert all(parent is not workspaces[0] for parent in parents)
-        if 'class="enfra-source-correction"' in node.value:
+            assert any(parent is workspaces[0] for parent in parents)
+        if 'class="enfra-source-warning"' in node.value:
             warnings.append(node)
             assert all(parent is not workspaces[0] for parent in parents)
             assert 'data-report-identity="' + identity + '"' in node.value
