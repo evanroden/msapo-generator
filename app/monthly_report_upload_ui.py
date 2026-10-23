@@ -144,12 +144,17 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
         stored_scope = source_review(source)
         initial_sites = (list(stored_scope.get("facilities", ())) if initial_facility == MULTIPLE_FACILITIES
                          else [initial_facility] if initial_facility else [])
-        sites_key = field(p + "_sites", initial_sites)
+        # Let the native widget own its first initialization. Pre-seeding
+        # its state as well as its default produces a duplicate-default warning.
+        sites_key = p + "_sites"
+        mirrored_sites = st.session_state.get("report_draft_mirror", {}).get(sites_key, initial_sites)
+        pending_sites = st.session_state.get(sites_key, mirrored_sites)
         if changed_elsewhere:
             # Never apply a stale form over another source view's newer correction.
             st.session_state[date_key] = initial_date
             st.session_state[site_key] = initial_facility
             st.session_state[sites_key] = initial_sites
+            pending_sites = initial_sites
         st.session_state[p + "_baseline"] = baseline
         missing = (initial_date is None or initial_facility in ("", KEEP_FACILITY)
                    or bool(source.scope_review and reviewed_scope(source, profile) is None))
@@ -196,9 +201,17 @@ def render_source_details(source, profile, prefix, field, *, applied_caption="Co
                     multi_options = [v for v in options if v]
                     # Keep unresolved prior site choices visible without silently
                     # converting them to the report's first selected facility.
-                    multi_options.extend(v for v in st.session_state[sites_key] if v not in multi_options)
-                    chosen_sites = st.multiselect("Source sites", multi_options, key=sites_key,
+                    multi_options.extend(v for v in pending_sites if v not in multi_options)
+                    # The native first/late mount must receive the current pending
+                    # value as its default, including a deliberately cleared list.
+                    # An external correction instead uses native set_value for
+                    # this render; the following render retains its new default.
+                    chosen_sites = st.multiselect("Source sites", multi_options,
+                                                  default=None if changed_elsewhere else pending_sites, key=sites_key,
                                                   format_func=lambda v: labels.get(v, "Outside this report: " + v))
+                    # Register ownership after native initialization; field()'s
+                    # setdefault must not overwrite delivered or cleared values.
+                    field(sites_key, chosen_sites)
                     chosen_facility = (chosen_sites[0] if len(chosen_sites) == 1
                                        else MULTIPLE_FACILITIES if chosen_sites else "")
                 else:
