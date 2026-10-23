@@ -111,3 +111,20 @@ def test_omission_preserves_source_and_human_occurrences(monkeypatch, tmp_path):
     _, _, original = source_page(monkeypatch, tmp_path)
     omitted = replace(original, source="Omit")
     assert retire_contributions(omitted, (original,)) == omitted
+
+
+def test_an_equal_byte_photo_does_not_turn_an_attached_source_page_into_a_grid_photo(monkeypatch, tmp_path):
+    from app.monthly_report_asset_instances import append_human_asset
+    from app.monthly_report_asset_layout import document_page_indexes
+    _, content, imported = source_page(monkeypatch, tmp_path)
+    assert document_page_indexes(imported, (content.source,)) == {0}
+    combined = append_human_asset(imported, imported.asset_hashes[0], "Independent photograph")
+    assert combined.asset_hashes == imported.asset_hashes * 2
+    # The source page stays a standalone document page; the photo stays a photo.
+    assert document_page_indexes(combined, (content.source,)) == {0}
+    _, other_content, other = source_page(monkeypatch, tmp_path, variant="B")
+    assert other.asset_hashes == imported.asset_hashes and other_content.source.id != content.source.id
+    from app.monthly_report_setup import merge_report_block
+    both = merge_report_block(imported, other, None, None)
+    # Equal rasters from two different source files are two document pages.
+    assert document_page_indexes(both, (content.source, other_content.source)) == {0, 1}
