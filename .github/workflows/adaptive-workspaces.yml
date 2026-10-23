@@ -26,6 +26,9 @@ on:
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
       - 'scripts/qa_report_row_cards.py'
+      - 'scripts/qa_compact_contact_journey.py'
+      - 'scripts/workspace_contact_observations.py'
+      - 'tests/test_compact_contact_journey.py'
       - 'scripts/workspace_row_observations.py'
       - 'tests/test_report_row_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
@@ -173,6 +176,9 @@ on:
       - 'scripts/qa_widget_delivery.py'
       - 'scripts/qa_water_page_journey.py'
       - 'scripts/qa_report_row_cards.py'
+      - 'scripts/qa_compact_contact_journey.py'
+      - 'scripts/workspace_contact_observations.py'
+      - 'tests/test_compact_contact_journey.py'
       - 'scripts/workspace_row_observations.py'
       - 'tests/test_report_row_journey.py'
       - 'scripts/qa_water_fresh_page_journey.py'
@@ -581,6 +587,13 @@ jobs:
           python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
           python scripts/qa_report_row_cards.py
           NATIVE_TEST
+      - name: Compact contact native lifecycle, shared recovery and actual outputs
+        if: ${{ !cancelled() }}
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_compact_contact_journey.py
+          NATIVE_TEST
       - name: Fresh ordinary Water page review from empty omitted state
         if: ${{ !cancelled() }}
         timeout-minutes: 26
@@ -624,6 +637,7 @@ jobs:
             test-artifacts/about-logo-refresh/
             test-artifacts/water-page-journey/
             test-artifacts/report-row-cards/
+            test-artifacts/compact-contact-journey/
             test-artifacts/water-fresh-page-journey/
           retention-days: 7
           if-no-files-found: warn

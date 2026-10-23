@@ -210,17 +210,6 @@ def render_organization(draft, blocks, specs, prefix, assets, field, edit_conten
         if key == "contact_matrix":
             changed = edit_contacts(current_draft, spec, block, prefix, assets, field, show_preview=show_preview)
             changed = _edit_notes(changed, prefix, field, canonical_before=canonical_before)
-            if changed != canonical_before:
-                from app import monthly_report_directory as directory
-                try:
-                    shared = directory.automatically_keep_directory_contact_edits(
-                        draft.profile, canonical_before, changed, draft.prepared_by)
-                    if shared is not None:
-                        changed = shared
-                        st.caption("Updated site contacts are kept for future reports. Earlier completed reports are unchanged.")
-                except (ValueError, OSError):
-                    st.warning("The shared contact record could not be updated. "
-                               "Your current report edits remain available; review the latest site contacts.")
         elif key == "org_chart":
             if block.org_nodes:
                 changed = edit_org_chart(current_draft, block, prefix, assets, field, show_preview=show_preview)

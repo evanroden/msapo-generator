@@ -129,6 +129,7 @@ def test_editing_one_contact_retains_notes_and_other_parts():
     click(at, "Edit contacts")
     assert not at.exception
     assert at.session_state["blocks"] == at.session_state["original"]
+    click(at, "Edit contact")
     next(w for w in at.text_input if w.label == "Name").input("Updated Synthetic Person").run()
     blocks, original = at.session_state["blocks"], at.session_state["original"]
     contacts = blocks["contact_matrix"]

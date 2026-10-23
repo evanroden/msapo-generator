@@ -82,6 +82,12 @@ if (os.environ.get("EPC_MONTHLY_TRAINING_TASK") == "1"
         render_reference(base, _field)
     st.stop()
 
+if os.environ.get("EPC_MONTHLY_CONTACT_TASK") == "1":
+    from scripts.workspace_contact_observations import render as render_contacts
+    with isolated(token):
+        render_contacts(base, token, _field, _move)
+    st.stop()
+
 if os.environ.get("EPC_MONTHLY_LOGO_REFRESH_TASK") == "1":
     from scripts.workspace_logo_refresh_observations import render as render_logo_refresh
     with isolated(token):
