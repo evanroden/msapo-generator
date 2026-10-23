@@ -6,6 +6,8 @@ instead of returning to the report; empty blocks and included sections are
 unchanged. Synthetic values only.
 """
 from dataclasses import replace
+
+import pytest
 from io import BytesIO
 
 from docx import Document
@@ -248,32 +250,36 @@ ORGANIZATION_APP = """
 import streamlit as st
 from dataclasses import replace
 from app.monthly_report_guided import _edit_content
-from app.monthly_report_model import ReportPeriod, ResolvedBlock, default_sections, synthetic_draft, synthetic_profiles
+from app.monthly_report_model import (OrgChartNode, ReportPeriod, ResolvedBlock, default_sections, synthetic_draft,
+                                      synthetic_profiles)
 from app.monthly_report_organization_ui import render_organization
 from app.monthly_report_ui import _field
 
 draft = replace(synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9)), prepared_by="Synthetic Reviewer")
 specs = {spec.key: spec for section in default_sections() if section.key == "organization" for spec in section.blocks}
-blocks = st.session_state.setdefault("blocks", {"business_hours_workflow": ResolvedBlock(
-    "business_hours_workflow", "Omit", asset_hashes=("synthetic-procedure.png",))})
+blocks = st.session_state.setdefault("blocks", {
+    "business_hours_workflow": ResolvedBlock("business_hours_workflow", "Omit", asset_hashes=("synthetic-procedure.png",)),
+    "contact_matrix": ResolvedBlock("contact_matrix", "Omit", asset_hashes=("synthetic-contacts.png",)),
+    "org_chart": ResolvedBlock("org_chart", "Omit", org_nodes=(OrgChartNode("manager", "Synthetic Manager", "Manager"),))})
 st.session_state["blocks"] = render_organization(
     draft, blocks, specs, "qa_left_out_org", {}, _field,
     lambda spec, block: _edit_content(spec, block, None, "qa_left_out_org", {}, _field, draft), show_preview=False)
 """
 
 
-def test_an_explicit_include_survives_the_organization_workspace():
+@pytest.mark.parametrize("key", ("business_hours_workflow", "contact_matrix", "org_chart"))
+def test_an_explicit_include_survives_the_organization_workspace(key):
     from streamlit.testing.v1 import AppTest
     app = AppTest.from_string(ORGANIZATION_APP, default_timeout=15).run()
     assert not app.exception
-    edit = [button for button in app.button if button.label.startswith("Edit")
-            and "business" in button.key]
-    edit[0].click().run()
-    app.button("qa_left_out_org_edit_business_hours_workflow_include_left_out").click().run()
+    before = app.session_state["blocks"][key]
+    app.button("qa_left_out_org_organization_open_" + key).click().run()
+    app.button("qa_left_out_org_edit_" + key + "_include_left_out").click().run()
     app.run()
     assert not app.exception
-    procedure = app.session_state["blocks"]["business_hours_workflow"]
-    assert procedure.source == "This month" and procedure.asset_hashes == ("synthetic-procedure.png",)
+    part = app.session_state["blocks"][key]
+    assert part.source == "This month"  # the retained page or chart, unchanged
+    assert (part.asset_hashes, part.org_nodes) == (before.asset_hashes, before.org_nodes)
 
 
 def test_a_left_out_legacy_section_with_missing_slots_keeps_its_retained_block_left_out():
