@@ -74,8 +74,10 @@ _TECHNICAL_VALUE_SUFFIX = re.compile(
 _TECHNICAL_HEADING_DETAIL = re.compile(
     r"^(?:hours?|hrs?|days?|weeks?|months?|years?|kg|lb|lbs|g|gallons?|liters?|litres?|"
     r"gpm|cfm|psi|kPa|bar|V|(?-i:A)|F|C|kW|kWh|tons?|m3|L)\b", re.I)
+# Exact power-unit headings also occur in electrical-load reports.
+# Rates, energy units and extra financial words do not match this proof.
 _ENGINEERING_LOAD_ESTIMATE = re.compile(
-    r"(?:est\.?|estimates?)\s+peak\s*coincident\s*load\s*\(\s*(?:tons?|MBH)\s*\)", re.I)
+    r"(?:est\.?|estimates?)\s+peak\s*coincident\s*load\s*\(\s*(?:tons?|MBH|W|kW|MW)\s*\)", re.I)
 _LEGAL_TERMS = ("terms and conditions", "limitation of liability", "indemnif", "governing law", "entire agreement", "waiver", "arbitration", "force majeure", "consequential damages", "jurisdiction", "severability", "warranty disclaimer")
 
 

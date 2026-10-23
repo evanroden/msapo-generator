@@ -1347,6 +1347,12 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
                     from app.monthly_report_designs_ui import render_design_status, render_apply_master_design
                     render_design_status(draft)
                     render_apply_master_design(replace(draft, blocks=tuple(blocks.values())), prefix)
+                    if not source_pending and "brand_logo" in blocks:
+                        from app.monthly_report_branding_ui import offer_logo
+                        blocks["brand_logo"] = offer_logo(
+                            blocks["brand_logo"], draft.profile.contract, prefix + "_company_logo", assets,
+                            scope=_rich_text_scope(prefix),
+                        )
             with preview_column:
                 with st.container(key="monthly_cover_preview_sticky"):
                     from app.monthly_report_section_ui import render_pending_cover_selection

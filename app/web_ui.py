@@ -327,6 +327,13 @@ CUSTOM_CSS = """
     [data-testid="stHeader"] [data-testid="stExpandSidebarButton"] {
         visibility: visible;
     }
+    /* Native collapse moves the mounted sidebar off screen. Hide its whole
+       subtree from focus while closed, including descendants with their own
+       visibility rule; the separate native opener stays available. */
+    [data-testid="stSidebar"][aria-expanded="false"],
+    [data-testid="stSidebar"][aria-expanded="false"] * {
+        visibility: hidden;
+    }
     /* Below this width, the centered 1000px form can meet the native opener.
        Reserve the native header's height only there, without moving the form
        when its sidebar opens or changing wide/sidebarless workflow spacing. */
