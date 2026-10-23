@@ -197,7 +197,12 @@ def _table_headings(columns, rows):
         if any(re.search(r"\d", str(cell)) for cell in row):
             break
         header_rows.append(row)
-    return tuple(" ".join(row[i] for row in header_rows if i < len(row)) for i in range(len(columns)))
+    # A standalone missing-reading dash is data, not a heading continuation.
+    # Ignore it only in this inferred view; never rewrite the supplied cells
+    # or weaken explicit price headings, currency types or monetary values.
+    return tuple(" ".join(row[i] for n, row in enumerate(header_rows)
+                          if i < len(row) and (n == 0 or row[i].strip() not in {"-", "–", "—"}))
+                 for i in range(len(columns)))
 
 
 def ambiguous_price_columns(columns, rows=()):

@@ -137,8 +137,11 @@ def test_ui_confirmation_is_bound_to_every_displayed_review_input(catalog,monkey
     if change=="actor": app.text_input("report_branding_actor").set_value("Other reviewer").run()
     elif change=="note": next(x for x in app.text_area if x.label=="Artwork source and approval").set_value("Changed owner evidence").run()
     elif change=="date":
-        from datetime import date
-        next(x for x in app.date_input if x.label=="Artwork reviewed on").set_value(date(2026,10,23)).run()
+        from datetime import timedelta
+        reviewed_on=next(x for x in app.date_input if x.label=="Artwork reviewed on")
+        changed_date=reviewed_on.value-timedelta(days=1)
+        assert changed_date!=reviewed_on.value
+        reviewed_on.set_value(changed_date).run()
     elif change=="bytes": source["raw"]=image("blue"); app.run()
     else: app.selectbox("report_branding_preview_").set_value("client-a").run()
     assert not app.exception
