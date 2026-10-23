@@ -102,7 +102,12 @@ def test_exact_photo_role_is_not_overwritten_by_same_media_client_logo(tmp_path,
     before = list(Document(path).element.iter(qn('pic:pic')))
     result = build_native_docx(replace(draft, blocks=mapped.blocks), path, asset_loader=dict(mapped.assets).__getitem__)
     after = list(Document(BytesIO(result)).element.iter(qn('pic:pic')))
-    assert geometry(after[1-selected]) == geometry(before[1-selected])
+    # A separately selected logo now receives its own contain policy, never the photo crop.
+    logo_crop, _, logo_extent = geometry(after[1-selected])
+    if logo_crop is None:
+        assert int(logo_extent["cx"]) / int(logo_extent["cy"]) == pytest.approx(400 / 300)
+    else:
+        assert geometry(after[1-selected]) == geometry(before[1-selected])
     assert geometry(after[2]) == geometry(before[2])
     crop, _, extent = geometry(after[selected])
     ratio = 400*(1-sum(float(crop.get(k, 0))/100000 for k in ('l', 'r')))

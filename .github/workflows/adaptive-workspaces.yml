@@ -16,6 +16,8 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_sidebar_navigation.py'
+      - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
@@ -120,6 +122,10 @@ on:
       - 'tests/test_qa_training_form_observations.py'
       - 'scripts/qa_monthly_live.py'
       - 'scripts/qa_source_corrections.py'
+      - 'scripts/qa_single_logo_admin.py'
+      - 'scripts/qa_about_logo_refresh.py'
+      - 'scripts/workspace_logo_refresh_observations.py'
+      - 'tests/test_about_logo_refresh_journey.py'
       - 'scripts/qa_source_selection_delivery.py'
       - 'tests/test_qa_source_selection_delivery.py'
       - 'tests/source_review_navigation_test.cjs'
@@ -157,6 +163,8 @@ on:
       - 'tests/preview_view_lifecycle_test.cjs'
       - 'tests/preview_commit_gate_test.cjs'
       - 'scripts/qa_adaptive_workspaces.py'
+      - 'scripts/qa_sidebar_navigation.py'
+      - 'tests/test_sidebar_navigation.py'
       - 'scripts/qa_expense_adaptive.py'
       - 'scripts/qa_po_adaptive.py'
       - 'scripts/qa_monthly_adaptive.py'
@@ -261,6 +269,10 @@ on:
       - 'tests/test_qa_training_form_observations.py'
       - 'scripts/qa_monthly_live.py'
       - 'scripts/qa_source_corrections.py'
+      - 'scripts/qa_single_logo_admin.py'
+      - 'scripts/qa_about_logo_refresh.py'
+      - 'scripts/workspace_logo_refresh_observations.py'
+      - 'tests/test_about_logo_refresh_journey.py'
       - 'scripts/qa_source_selection_delivery.py'
       - 'tests/test_qa_source_selection_delivery.py'
       - 'tests/source_review_navigation_test.cjs'
@@ -438,6 +450,22 @@ jobs:
           node --test tests/preview_commit_gate_test.cjs
           python scripts/qa_adaptive_workspaces.py
           NATIVE_TEST
+      - name: Native sidebar visibility and pointer/keyboard navigation
+        if: ${{ !cancelled() }}
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_sidebar_navigation.py
+          NATIVE_TEST
+      - name: Upload native sidebar evidence immediately, including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-sidebar-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/sidebar-navigation/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Actual Expense workflow with isolated synthetic inputs
         if: ${{ !cancelled() }}
         timeout-minutes: 26
@@ -503,6 +531,38 @@ jobs:
           python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
           python scripts/qa_browser_diagnostics.py qa_shared_fixture_testing.py
           NATIVE_TEST
+      - name: Shared logo single-record replacement, stale review and restore
+        if: ${{ !cancelled() }}
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_single_logo_admin.py
+          NATIVE_TEST
+      - name: Upload shared-logo evidence immediately, including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: shared-logo-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/single-logo-admin/
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Optional About company-logo refresh and durable native outputs
+        if: ${{ !cancelled() }}
+        timeout-minutes: 26
+        run: |
+          python scripts/ci_native_test_budget.py --minutes 25 <<'NATIVE_TEST'
+          python scripts/qa_about_logo_refresh.py
+          NATIVE_TEST
+      - name: Upload About-logo evidence immediately, including first failures
+        if: always()
+        timeout-minutes: 3
+        uses: actions/upload-artifact@v4
+        with:
+          name: about-logo-browser-evidence-${{ github.run_attempt }}
+          path: test-artifacts/about-logo-refresh/
+          retention-days: 7
+          if-no-files-found: warn
       - name: Water page management across desktop and narrow browser with actual output
         if: ${{ !cancelled() }}
         env:
@@ -551,6 +611,7 @@ jobs:
           name: adaptive-synthetic-browser-evidence
           path: |
             test-artifacts/adaptive-workspaces/
+            test-artifacts/sidebar-navigation/
             test-artifacts/expense-adaptive/
             test-artifacts/po-adaptive/
             test-artifacts/monthly-adaptive/
@@ -559,6 +620,8 @@ jobs:
             test-artifacts/monthly-preparer-navigation/
             test-artifacts/monthly-text-hydration/
             test-artifacts/shared-fixture-testing/
+            test-artifacts/single-logo-admin/
+            test-artifacts/about-logo-refresh/
             test-artifacts/water-page-journey/
             test-artifacts/report-row-cards/
             test-artifacts/water-fresh-page-journey/

@@ -46,7 +46,7 @@ _DATE_RE = re.compile(r"\b(?:(\d{4})-(\d{1,2})-(\d{1,2})|(\d{1,2})/(\d{1,2})/(\d
 # Recognize MM/YYYY only as a complete token, never the middle of a full date,
 # part number, decimal, path, or hyphenated purchase-order identifier.
 _MONTH_YEAR_RE = re.compile(
-    r"(?<![\w/.-])(?P<month>\d{1,2})/(?P<year>(?:19|20|21)\d{2})(?![\w/-]|\.\d)"
+    r"(?<![\w/\\.-])(?P<month>\d{1,2})/(?P<year>(?:19|20|21)\d{2})(?![\w/\\-]|\.\d)"
 )
 
 

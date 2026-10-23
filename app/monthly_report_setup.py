@@ -46,7 +46,7 @@ def report_period_findings(inspection, period):
         rf"\b(?:{month}|{abbreviation}\.?)\s+{period.year}\b|"
         rf"\b{period.year}-{period.month:02d}-\d{{2}}\b|"
         rf"\b{numeric_month}/\d{{1,2}}/{period.year}\b|"
-        rf"(?<![\w/.-]){numeric_month}/{period.year}(?![\w/-]|\.\d)", re.I)
+        rf"(?<![\w/\\.-]){numeric_month}/{period.year}(?![\w/\\-]|\.\d)", re.I)
     current = older = images = 0
     for item in inspection.items:
         if item.section not in monthly_sections:
