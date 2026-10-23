@@ -146,3 +146,105 @@ def test_native_pdf_preserves_six_loads_and_missing_reading(tmp_path):
         assert row[3] in text
     assert '—' in text
     _assert_grid(raw, expected)
+
+
+def _saved_legacy_import(monkeypatch, tmp_path):
+    """Reproduce the old importer, then restore the real candidate policy."""
+    import re
+    from app import monthly_report_content_policy as policy
+    from app import monthly_report_library as library
+    from app.monthly_report_import import imported_draft
+    from app.monthly_report_sections import build_section_import
+    from app.monthly_report_setup import design_profile
+
+    monkeypatch.setenv('EPC_DATA_DIR', str(tmp_path / 'data'))
+    _, expected = _native_grid(tmp_path)
+    path = tmp_path / 'synthetic-steam.docx'
+    inspection = inspect_docx(path)
+    items = tuple(item for item in inspection.items if item.kind == 'table')
+    plans = ({'key': 'scorecards', 'target': 'scorecards', 'approved': True,
+              'selected': [item.id for item in items]},)
+    profile = ReportProfile('Synthetic replay contract', 'replay-demo', 'Demo Plant',
+                            (Facility('demo', 'Demo Plant'),))
+    period = ReportPeriod(2026, 10)
+
+    def ingest():
+        mapped, mappings = build_section_import(path, inspection, plans)
+        return imported_draft(design_profile(profile, inspection, mappings),
+                              period, 'Synthetic Editor', mapped)
+
+    def legacy_headings(columns, rows):
+        header_rows = [policy.logical_table_columns(columns)]
+        for row in rows[:3]:
+            if any(re.search(r'\d', str(cell)) for cell in row):
+                break
+            header_rows.append(row)
+        return tuple(' '.join(row[i] for row in header_rows if i < len(row))
+                     for i in range(len(columns)))
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(policy, '_table_headings', legacy_headings)
+        old = ingest()
+    library.save_report_setup(old.profile, old, path,
+        {'sha256': inspection.sha256, 'period': period.key}, assets=(),
+        expected_revision=0, actor='Synthetic Editor', confirmed=True,
+        source_draft=old)
+    note = ResolvedBlock('utility_analysis', 'This month',
+                         text='Invented current authored note must survive replay.')
+    current = replace(old, blocks=(*old.blocks, note))
+    saved = library.save_snapshot(current, expected_revision=0,
+                                  entered_editor='Synthetic Editor')
+    restored = library.load_snapshot(profile.contract, profile.key, period)
+    assert restored == saved
+    previous, verified = library.starting_contribution(
+        profile.contract, profile.key, period, inspection.sha256)
+    assert verified and previous == old
+    return path, expected, restored, previous, ingest(), note
+
+
+def test_saved_six_column_draft_requires_explicit_verified_source_replay(monkeypatch, tmp_path):
+    from app import monthly_report_library as library
+    from app.monthly_report_start_replay import merge_starting_drafts
+
+    path, expected, saved, previous, incoming, note = _saved_legacy_import(monkeypatch, tmp_path)
+    original = path.read_bytes()
+    before = asdict(saved)
+    old_block = next(b for b in saved.draft.blocks if b.key == 'thermal_capacity')
+    assert len(old_block.extra_tables[0].columns) == 6
+    # Policy changes must not fabricate missing saved cells from source data.
+    old_output = Document(BytesIO(build_native_docx(saved.draft, path)))
+    assert len(old_output.tables[0].columns) == 6
+    replayed = merge_starting_drafts(saved.draft, incoming, previous, verified=True)
+    assert note in replayed.blocks
+    _assert_grid(build_native_docx(replayed, path), expected)
+    assert merge_starting_drafts(replayed, incoming, incoming, verified=True) == replayed
+    updated = library.save_snapshot(replayed, expected_revision=saved.revision,
+                                    entered_editor='Synthetic Editor')
+    assert updated.revision == saved.revision + 1
+    assert library.load_snapshot_version(saved.draft.profile.contract,
+        saved.draft.profile.key, saved.draft.period, saved.revision) == saved
+    assert asdict(saved) == before and path.read_bytes() == original
+    assert library.imported_original(saved.draft.profile.contract,
+        saved.draft.profile.key).read_bytes() == original
+
+
+@pytest.mark.parametrize('conflict', ('manual_table_edit', 'unverified_contribution'))
+def test_missing_column_replay_does_not_override_manual_edits_or_unverified_source(
+        monkeypatch, tmp_path, conflict):
+    from app.monthly_report_start_replay import merge_starting_drafts
+
+    path, _, saved, previous, incoming, note = _saved_legacy_import(monkeypatch, tmp_path)
+    current = saved.draft
+    if conflict == 'manual_table_edit':
+        block = next(b for b in current.blocks if b.key == 'thermal_capacity')
+        table = block.extra_tables[0]
+        edited = replace(table, rows=(('Invented manual campus edit', *table.rows[0][1:]),
+                                      *table.rows[1:]))
+        current = replace(current, blocks=tuple(
+            replace(b, extra_tables=(edited,)) if b.key == block.key else b for b in current.blocks))
+    before, source_bytes = asdict(current), path.read_bytes()
+    with pytest.raises(ValueError, match='Thermal capacity differs'):
+        merge_starting_drafts(current, incoming, previous,
+                              verified=conflict != 'unverified_contribution')
+    assert asdict(current) == before and note in current.blocks
+    assert path.read_bytes() == source_bytes
