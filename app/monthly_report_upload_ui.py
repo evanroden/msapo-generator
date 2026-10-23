@@ -481,6 +481,12 @@ def render_uploads(profile: ReportProfile, period: ReportPeriod, prefix: str, fi
                 chosen = set(source.selected_pages)
                 exclusions = dict(source.client_page_exclusions)
                 if action == "keep":
+                    if page not in dict(source.captions) and page in caption_defaults:
+                        # Include confirms the caption shown, including one
+                        # inherited from the attached page; record it so the
+                        # page review and its attached occurrence agree.
+                        source = replace(source, captions=tuple(sorted({**dict(source.captions), page: caption}.items())))
+                        fingerprint = page_fingerprint(source, page)
                     chosen.add(page)
                     reviews[page] = fingerprint
                     exclusions.pop(page, None)

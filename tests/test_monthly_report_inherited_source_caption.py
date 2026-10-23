@@ -69,3 +69,23 @@ def test_external_default_change_preserves_same_event_native_input(monkeypatch, 
     accepted = app.session_state["returned"][0][0]
     assert accepted == replace(source, captions=((1, delivered),))
     assert app.session_state["blocks"][changed.key] == changed
+
+
+def test_include_reviews_an_inherited_caption_page_and_its_attached_occurrence(monkeypatch, tmp_path):
+    from app.monthly_report_asset_review import pending_asset_indexes
+    from app.monthly_report_page_captions import synchronize_source_captions
+    app, source, block = editor(monkeypatch, tmp_path)
+    # A source correction elsewhere has invalidated the attached page's review.
+    unreviewed = replace(block, client_asset_reviews=(), reviewed_fingerprint="", client_reviewed_fingerprint="")
+    app.session_state["blocks"] = {unreviewed.key: unreviewed}
+    app.run()
+    assert pending_asset_indexes(unreviewed, (source,))
+    next(button for button in app.button if button.label == "Include page").click().run()
+    assert not app.exception
+    included = app.session_state["source_test_evidence"][0].source
+    assert dict(included.captions) == {1: "First approved caption"}  # the caption the reviewer saw
+    decision = app.session_state["source_test_evidence_page_decision"]
+    blocks, conflicts = synchronize_source_captions({unreviewed.key: unreviewed}, (source,), (included,),
+                                                    decision=decision)
+    assert not conflicts and not pending_asset_indexes(blocks[unreviewed.key], (included,))
+    assert blocks[unreviewed.key].asset_captions == ("First approved caption",)
