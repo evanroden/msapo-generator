@@ -1,5 +1,6 @@
 """Optional, reviewed directory administration and report-scoped contact updates."""
 
+from collections import Counter
 from dataclasses import asdict, replace
 import re
 
@@ -7,21 +8,39 @@ import streamlit as st
 
 from app import contracts, monthly_report_directory as directory
 from app.monthly_report_editor import _grid, _preview, _signature
+from app.monthly_report_ui_text import literal
 
 
 def contract_choices():
     # The synthetic test workspace cannot select a live catalog contract.
     # Only explicitly installed QA directory identities are offered.
     from app.monthly_report_testing import scope
+    unavailable = []
+    saved = directory.directory_contracts(unavailable=unavailable)
+    _directory_warning(unavailable)
     if scope() is not None:
-        return list(directory.directory_contracts())
+        return list(saved)
     # The catalog's display spelling wins; case/spacing variants are one choice.
     # A legacy saved name must not create duplicate landing-page button IDs.
     choices = {}
-    for name in (*contracts.contract_names(), *directory.directory_contracts()):
+    for name in (*contracts.contract_names(), *saved):
         identity = " ".join(name.casefold().split())
         choices.setdefault(identity, name)
     return list(choices.values())
+
+
+def _directory_warning(unavailable, *, details=False):
+    if not unavailable:
+        return
+    st.warning(f"{len(unavailable)} saved contact director{'y' if len(unavailable) == 1 else 'ies'} could not be read. "
+               "Other saved directories remain available. Unreadable records and their history were kept unchanged.")
+    if details:
+        with st.expander("Unavailable directory records"):
+            for problem in unavailable:
+                st.text(problem.storage_key + ": " + problem.message)
+    else:
+        from app.monthly_report_admin_ui import admin_url
+        st.link_button("Review contract directory", admin_url("directory"))
 
 
 def _known_sites(contract, state):
@@ -88,7 +107,7 @@ def render_selected_directory(contract, facilities, actor, prefix):
             sites = selected_directory_sites(state, facilities)
             revision = state.revision if state else 0
             key = prefix + "_selected_directory_" + _signature((contract, tuple(s.key for s in sites), revision))
-            st.write(contract)
+            st.write(literal(contract))
             message = st.session_state.pop(prefix + "_directory_saved_message", "")
             if message:
                 st.success(message)
@@ -98,7 +117,7 @@ def render_selected_directory(contract, facilities, actor, prefix):
             addresses = {s.key: str(row.get("Address") or "").strip() for s, row in zip(sites, rows)}
             edited = []
             for site in sites:
-                st.write(site.title)
+                st.write(literal(site.title))
                 contacts = _edit_contacts(site, key)
                 edited.append(replace(site, address=addresses[site.key], contacts=contacts))
             contract_contacts = _edit_contract_contacts(state.contract_contacts if state else (), key)
@@ -118,23 +137,54 @@ def render_selected_directory(contract, facilities, actor, prefix):
                 st.session_state[prefix + "_directory_saved_message"] = "Directory contacts and this report's contact table were updated. A completed report version is retained when generated."
                 return report_contacts
         except (ValueError, OSError) as exc:
-            st.error(str(exc))
+            st.error(literal(exc))
             st.caption("No contacts were replaced. Reload the current directory before trying again.")
 
 
-def _site_editor(sites, existing, prefix, *, importing=False):
+def _suggested_site(site, existing, site_aliases=None, saved_keys=()):
+    """The suggested name and listed match for one workbook site column.
+
+    A reviewed alias suggests the same site name the batch import saves, and a
+    saved site wins over a catalog entry, as in batch import.
+    """
+    title = (site_aliases or {}).get(" ".join(site.title.casefold().split()), site.title)
+    names = directory.facility_names(site) | {" ".join(title.casefold().split())}
+    matches = [s for s in existing if names & directory.facility_names(s)]
+    matches = [s for s in matches if s.key in saved_keys] or matches
+    return title, matches[0] if len(matches) == 1 else None
+
+
+def _site_labels(existing, saved_keys=()):
+    """A unique choice label per listed site; same-titled sites stay distinct.
+
+    A saved site and a catalog entry may share a display title, so the title
+    alone cannot carry the chosen identity through the editor.
+    """
+    counts = Counter(s.title for s in existing)
+    labels = {}
+    for site in existing:
+        base = site.title if counts[site.title] == 1 else (
+            f"{site.title} (saved)" if site.key in saved_keys else f"{site.title} ({site.key})")
+        label, number = base, 2
+        while label in labels:  # a literal title can equal a generated label
+            label, number = f"{base} [{number}]", number + 1
+        labels[label] = site
+    return labels
+
+
+def _site_editor(sites, existing, prefix, *, importing=False, site_aliases=None, saved_keys=()):
     by_id = {s.key: s for s in sites}
-    existing_by_title = {s.title: s for s in existing}
+    existing_by_title = _site_labels(existing, saved_keys)
+    label_of = {id(site): label for label, site in existing_by_title.items()}
     records = []
     for site in sites:
-        matches = [s.title for s in existing if directory.facility_names(site) & directory.facility_names(s)]
-        matched = existing_by_title[matches[0]] if len(matches) == 1 else None
-        aliases = tuple(dict.fromkeys((*site.aliases, *((matched.title, *matched.aliases) if matched else ()))))
-        aliases = tuple(n for n in aliases if n.casefold() != site.title.casefold())
-        records.append({"Include": True, "Identity": site.key, "Site": site.title,
+        title, matched = _suggested_site(site, existing, site_aliases, saved_keys)
+        aliases = tuple(dict.fromkeys((*site.aliases, site.title, *((matched.title, *matched.aliases) if matched else ()))))
+        aliases = tuple(n for n in aliases if n.casefold() != title.casefold())
+        records.append({"Include": True, "Identity": site.key, "Site": title,
                         "Aliases": "; ".join(aliases),
                         "Address": site.address or (matched.address if matched else ""), "Active": matched.active if matched else site.active,
-                        "Existing site": matches[0] if len(matches) == 1 else "New site",
+                        "Existing site": label_of[id(matched)] if matched else "New site",
                         "Source": site.source.split(":", 1)[-1]})
     edited = _grid(prefix + "_sites", records, hide_index=True,
                    disabled=["Identity", "Source"], column_config={"Identity": None,
@@ -188,7 +238,7 @@ def render_directory(field):
     try:
         _render_directory(field)
     except (ValueError, OSError) as exc:
-        st.error(str(exc))
+        st.error(literal(exc))
         st.caption("Nothing was replaced. Correct the selection or reload the current version before trying again.")
 
 
@@ -208,16 +258,22 @@ def _render_directory(field):
         st.info("Enter your name before viewing or changing saved contact lists.")
         return
     mode = st.radio("Directory task", ["Import a workbook", "Import all contract contacts", "Review saved directory"], key=field("report_directory_mode", "Import a workbook"), horizontal=True)
+    unavailable = []
+    names = directory.directory_contracts(include_archived=True, unavailable=unavailable)
+    _directory_warning(unavailable, details=True)
+    if unavailable:
+        from app.monthly_report_directory_recovery_ui import render_recovery
+        render_recovery(unavailable, actor)
     contract_contacts = None
     if mode == "Review saved directory":
-        names = directory.directory_contracts(include_archived=True)
         if not names:
-            st.info("No directory has been saved yet. Import a workbook to begin.")
+            if not unavailable:
+                st.info("No directory has been saved yet. Import a workbook to begin.")
             return
         contract = st.selectbox("Saved contract directory", names, key="report_directory_existing")
         state = directory.load_directory(contract, include_archived=True)
         prefix = "report_directory_saved_" + _signature((contract, state.revision))
-        st.caption(f"Revision {state.revision} · entered editor: {state.actor} · {state.updated_at}")
+        st.caption(literal(f"Revision {state.revision} · entered editor: {state.actor} · {state.updated_at}"))
         if state.archived:
             st.info("This contact list is archived. It is no longer offered for new reports. Restore a saved version below to use it again.")
             _directory_history(contract, state, prefix, actor)
@@ -227,6 +283,8 @@ def _render_directory(field):
         raw, source_sha, sheet_name = None, state.source_sha256, state.source_sheet
     else:
         upload = st.file_uploader("Contract / site directory workbook", type=["xlsx"], max_upload_size=30, key="report_directory_upload")
+        st.caption("A confirmed import keeps the uploaded workbook file for 30 days for checking, then deletes it. "
+                   "The reviewed contacts and directory history stay.")
         if st.button("Read workbook", disabled=upload is None, key="report_directory_read"):
             raw = upload.getvalue()
             inspection = directory.inspect_workbook(raw)
@@ -241,7 +299,7 @@ def _render_directory(field):
             render_batch(inspection, raw, actor, "report_directory_batch_" + inspection.sha256[:16])
             return
         for notice in inspection.notices:
-            st.caption(notice)
+            st.caption(literal(notice))
         sheets = {s.name: s for s in inspection.sheets}
         recommended = next((s.name for s in inspection.sheets if not s.summary and not s.hidden), next(iter(sheets)))
         p = "report_directory_import_" + inspection.sha256[:16]
@@ -252,12 +310,15 @@ def _render_directory(field):
             st.warning("This looks like an index or cross-contract summary. Select a site-detail tab; importing a summary as one contract could assign the wrong sites.")
             return
         for notice in directory.sheet_findings(inspection, sheet):
-            st.warning(notice)
+            st.warning(literal(notice))
+        from app import monthly_report_directory_batch as batch
         contract_names = contract_choices()
         clean_title = re.sub(r"\s+Sites$", "", re.sub(r"^\d+\s*[-.]\s*", "", sheet.name), flags=re.I).strip()
-        default = next((n for n in contract_names if n.casefold() == clean_title.casefold()), "Add another contract")
+        # The same exact name or reviewed alias the batch import would use.
+        suggested = batch.worksheet_contract(sheet) or clean_title
+        default = next((n for n in contract_names if n.casefold() == suggested.casefold()), "Add another contract")
         selected_contract = st.selectbox("Save under contract", [*contract_names, "Add another contract"], key=field(p + "_contract_" + sheet.name, default))
-        contract = st.text_input("Contract name", key=field(p + "_name_" + sheet.name, clean_title)) if selected_contract == "Add another contract" else selected_contract
+        contract = st.text_input("Contract name", key=field(p + "_name_" + sheet.name, suggested)) if selected_contract == "Add another contract" else selected_contract
         if not contract.strip():
             return
         state = directory.load_directory(contract, include_archived=True)
@@ -277,7 +338,9 @@ def _render_directory(field):
         proposed = directory.matrix_sites(inspection, sheet, header, label, address, groups)
         edit_prefix = prefix + "_" + _signature([asdict(s) for s in proposed])
         st.subheader("Confirm sites, aliases and contacts")
-        incoming = _site_editor(proposed, _known_sites(contract, state), edit_prefix, importing=True)
+        incoming = _site_editor(proposed, _known_sites(contract, state), edit_prefix, importing=True,
+                                site_aliases=batch.site_alias_targets(contract),
+                                saved_keys={s.key for s in state.sites} if state else set())
         if not incoming:
             st.info("Select at least one site to save.")
             return
@@ -295,7 +358,7 @@ def _render_directory(field):
     if state:
         _directory_history(contract, state, prefix, actor)
         with st.expander("Remove this contact list from use"):
-            st.write(f"Archive the shared contact list for **{contract}**. It will stop supplying site and contact suggestions. Saved reports, source workbooks and directory history stay available.")
+            st.write(f"Archive the shared contact list for **{literal(contract)}**. It will stop supplying site and contact suggestions. Saved reports and directory history stay available; uploaded workbook files are deleted 30 days after their latest import.")
             confirmed_archive = st.checkbox("Archive this contract’s contact list", key=prefix + "_archive_ok_" + _signature(actor))
             if st.button("Archive contact list", key=prefix + "_archive", disabled=not confirmed_archive):
                 directory.archive_directory(contract, expected_revision=state.revision, actor=actor, confirmed=confirmed_archive)
@@ -307,7 +370,7 @@ def _directory_history(contract, state, prefix, actor):
     with st.expander("History and restoration", expanded=state.archived):
         number = int(st.number_input("Directory version to inspect", 1, state.revision, value=state.revision, key=prefix + "_history"))
         prior = directory.load_directory(contract, number)
-        st.caption(f"Version {number} · {prior.actor} · {prior.updated_at} · {prior.action}")
+        st.caption(literal(f"Version {number} · {prior.actor} · {prior.updated_at} · {prior.action}"))
         st.dataframe([{"Site": s.title, "Aliases": "; ".join(s.aliases), "Active": s.active, "Contacts": len(s.contacts)} for s in prior.sites], hide_index=True)
         if prior.contract_contacts:
             st.caption(f"{len(prior.contract_contacts)} contract-wide contacts in this version.")
@@ -359,15 +422,15 @@ def review_contacts(draft, prefix, field, assets):
             key = field(prefix + "_directory_link_" + facility.key, default if default in active else "")
             if st.session_state[key] not in ("", *active):
                 st.session_state[key] = ""
-            bindings[facility.key] = st.selectbox("Directory site for " + facility.title, ["", *active],
+            bindings[facility.key] = st.selectbox("Directory site for " + literal(facility.title), ["", *active],
                                                 format_func=lambda k: active[k].title if k else "Choose the matching site", key=key)
         try:
             candidate, missing = directory.contact_block(state, draft.profile.facilities, bindings)
         except ValueError as exc:
-            st.error(str(exc))
+            st.error(literal(exc))
             return draft
         if missing:
-            st.warning("Choose a directory match for: " + "; ".join(missing) + ". Report membership will not be changed.")
+            st.warning("Choose a directory match for: " + literal("; ".join(missing)) + ". Report membership will not be changed.")
         left, right = st.columns(2)
         with left:
             st.write("Contacts currently in this report")

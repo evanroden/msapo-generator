@@ -78,13 +78,13 @@ def test_utility_upload_has_readable_destination_and_prepared_pages(monkeypatch,
     app, _ = app_with_library(monkeypatch, tmp_path)
     upload(monkeypatch, "synthetic-utility.pdf", utility_pdf())
     app.run()
-    button(app, "Read monthly files").click().run()
+    app.run()  # Upload performs the free native read.
     assert not app.exception
     assert select(app, "Classification").value == "Utility results"
     destination = select(app, "Report section for synthetic-utility.pdf")
     assert destination.value == "utility_analysis"
     assert "Monthly scorecards — utility results and charts" in destination.options
-    button(app, "Include page and continue").click().run()
+    button(app, "Include page").click().run()
     button(app, "Add selected pages and tables to report").click().run()
     assert not app.exception
     from test_monthly_report_upload_ui import current_draft

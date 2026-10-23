@@ -34,7 +34,7 @@ def test_prior_source_thumbnail_stays_readable_after_next_page_retires_media(mon
     if route == "section":
         app = _water_app(monkeypatch, tmp_path, raw)
         first = captured[-1]
-        button(app, "Include page and continue").click().run()
+        button(app, "Include page").click().run()
         assert next(w for w in app.selectbox if w.label == "Page to review").value == 2
         assert "water_reports" not in app.session_state["test_blocks"]
     else:
@@ -42,7 +42,6 @@ def test_prior_source_thumbnail_stays_readable_after_next_page_retires_media(mon
         app, _ = app_with_library(monkeypatch, tmp_path)
         upload(monkeypatch, "synthetic.pdf", raw)
         app.run()
-        button(app, "Read monthly files").click().run()
         first = captured[-1]
         select(app, "Preview page / item").set_value(2).run()
     assert not app.exception
@@ -166,14 +165,13 @@ def test_large_docx_image_can_be_previewed_and_reviewed_in_each_source_panel(mon
         app, _ = app_with_library(monkeypatch, tmp_path)
         upload(monkeypatch, "synthetic-picture.docx", raw)
         app.run()
-        button(app, "Read monthly files").click().run()
     assert not app.exception
     assert captured and captured[-1].startswith("data:image/")
     with Image.open(BytesIO(b64decode(captured[-1].split(",", 1)[1], validate=True))) as image:
         image.load()
         assert image.width <= 384 and image.height <= 480
-    assert not button(app, "Include page and continue").disabled
-    button(app, "Include page and continue").click().run()
+    assert not button(app, "Include page").disabled
+    button(app, "Include page").click().run()
     assert not app.exception
     if route == "section":
         source, = app.session_state["test_sources"]

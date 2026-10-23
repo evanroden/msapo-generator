@@ -36,6 +36,80 @@ EXPECTED = {"Training notes": "Hospital staff completed a synthetic training exe
 READY = """() => Boolean(document.querySelector('.epc-workspace')?.dataset.epcFullRender) &&
  document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning'"""
 RECEIPT = '[data-enfra-text-receipt]'
+# Passive evidence only. A MutationObserver callback can first see removal and
+# acknowledgment together; its shared timestamp/observation never orders them.
+TEXT_EDIT_OBSERVER = """expected => {
+    window.__enfraTextEditCleanup?.();
+    const state={node:null,events:[],first_input:null,first_detachment:null,
+        first_matching_ack:null,transitions:[],transitions_truncated:false,
+        observations:0,receipt_parse_errors:0};
+    window.__enfraTextEdit=state;
+    let signature;
+    const sample=(source,at=performance.now())=>{
+        const nodes=document.querySelectorAll('[data-enfra-text-receipt]');
+        let receipt=null;
+        try {if(nodes.length) receipt=JSON.parse(nodes[nodes.length-1].dataset.enfraTextReceipt);}
+        catch {state.receipt_parse_errors++;}
+        const textHash=part=>expected.label==='Training notes' ? part?.training :
+            (Array.isArray(part?.issues) && part.issues.length===1 ? part.issues[0] : null);
+        const details={
+            script_state:document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')||null,
+            full_render:document.querySelector('.epc-workspace')?.dataset.epcFullRender||null,
+            active_id:document.activeElement?.id||null,
+            input_node_id:state.node?.id||null,
+            input_node_connected:state.node ? state.node.isConnected : null,
+            working_sha:textHash(receipt?.working)||null,
+            durable_sha:textHash(receipt?.durable)||null,
+            working_fingerprint:receipt?.working_fingerprint||null,
+            durable_fingerprint:receipt?.durable_fingerprint||null,
+            durable_revision:receipt?.durable_revision??null
+        };
+        const observed={at_ms:at,observation:++state.observations,source,...details};
+        if(state.node && !state.node.isConnected && !state.first_detachment)
+            state.first_detachment=observed;
+        if(state.node && !state.first_matching_ack && details.working_sha===expected.sha &&
+            details.durable_sha===expected.sha &&
+            receipt?.working_fingerprint===receipt?.durable_fingerprint &&
+            details.script_state==='notRunning') state.first_matching_ack=observed;
+        const nextSignature=JSON.stringify(details);
+        if(nextSignature!==signature) {
+            if(state.transitions.length<32) state.transitions.push(observed);
+            else state.transitions_truncated=true;
+            signature=nextSignature;
+        }
+        return observed;
+    };
+    state.sample=sample;
+    state.snapshot=()=>{
+        const detached=state.first_detachment, ack=state.first_matching_ack;
+        const ordering=!detached ? 'no_detachment_observed' : !ack ? 'detachment_without_matching_ack' :
+            detached.observation===ack.observation ? 'same_observation' :
+            detached.observation<ack.observation ? 'detachment_observed_before_ack' : 'ack_observed_before_detachment';
+        return {clock:'performance.now',time_origin_ms:performance.timeOrigin,label:expected.label,
+            first_input:state.first_input,first_detachment:detached,first_matching_ack:ack,ordering,
+            observations:state.observations,transitions:state.transitions,
+            transitions_truncated:state.transitions_truncated,receipt_parse_errors:state.receipt_parse_errors};
+    };
+    const observe=event=>{
+        const target=event.target;
+        if(target?.tagName!=='TEXTAREA' || target.getAttribute('aria-label')!==expected.label) return;
+        const at=performance.now(), first=event.type==='input' && state.node===null;
+        if(first) state.node=target;
+        const observed=sample('native:'+event.type,at);
+        if(first) state.first_input=observed;
+        if(state.events.length<16) state.events.push({kind:event.type,id:target.id,at_ms:at,
+            trusted:event.isTrusted,sameInputNode:state.node===target,script_state:observed.script_state});
+    };
+    const mutations=new MutationObserver(()=>sample('mutation'));
+    mutations.observe(document.documentElement,{childList:true,subtree:true,attributes:true,
+        attributeFilter:['data-enfra-text-receipt','data-test-script-state','data-epc-full-render']});
+    for(const kind of ['input','change','blur']) document.addEventListener(kind,observe,true);
+    window.__enfraTextEditCleanup=()=>{
+        mutations.disconnect();
+        for(const kind of ['input','change','blur']) document.removeEventListener(kind,observe,true);
+    };
+    sample('installed');
+}"""
 
 
 def phase(name):
@@ -56,6 +130,7 @@ def await_text(page, label, text):
         const state=JSON.parse(nodes[nodes.length-1].dataset.enfraTextReceipt);
         const matches = part => part && (expected.label==='Training notes'
             ? part.training===expected.sha : part.issues.length===1 && part.issues[0]===expected.sha);
+        window.__enfraTextEdit?.sample?.('await_text');
         return matches(state.working) && matches(state.durable) &&
             state.working_fingerprint===state.durable_fingerprint &&
             document.querySelector('[data-testid="stApp"]')?.getAttribute('data-test-script-state')==='notRunning';
@@ -79,39 +154,25 @@ def commit_text(page, label, text, *, expected_before):
     initial_id = field.get_attribute('id')
     # A locator sampled before its actionability wait may still refer to a
     # previous hydration mount. Capture the DOM node receiving the FIRST real
-    # input event and require that exact object to survive acknowledgment.
+    # input event and require that exact object at the post-acknowledgment check.
     # This observes native events only: no value writes, event injection, input
     # cloning or focus intervention. Keep the earlier ID for diagnosis too.
-    page.evaluate("""label => {
-        window.__enfraTextEditCleanup?.();
-        const state={node:null,events:[]};
-        window.__enfraTextEdit=state;
-        const observe=event=>{
-            const target=event.target;
-            if(target?.tagName!=='TEXTAREA' || target.getAttribute('aria-label')!==label) return;
-            if(event.type==='input' && state.node===null) state.node=target;
-            if(state.events.length<16) state.events.push({kind:event.type,id:target.id,
-                trusted:event.isTrusted,sameInputNode:state.node===target});
-        };
-        for(const kind of ['input','change','blur']) document.addEventListener(kind,observe,true);
-        window.__enfraTextEditCleanup=()=>{
-            for(const kind of ['input','change','blur']) document.removeEventListener(kind,observe,true);
-        };
-    }""", label)
+    page.evaluate(TEXT_EDIT_OBSERVER, {"label": label, "sha": sha256(text.encode()).hexdigest()})
     field.fill(text)
     field.press("Tab")
     await_text(page, label, text)
     continuity = field.evaluate("""current => {
         const state=window.__enfraTextEdit;
+        state?.sample?.('continuity');
         return {inputObserved:Boolean(state?.node),sameNode:state?.node===current,
             inputNodeConnected:Boolean(state?.node?.isConnected),currentId:current.id,
-            inputNodeId:state?.node?.id||null,events:state?.events||[]};
+            inputNodeId:state?.node?.id||null,events:state?.events||[],timing:state?.snapshot?.()||null};
     }""")
     continuity.update(label=label, phase=live.EVIDENCE["phase"], pre_action_id=initial_id)
     live.EVIDENCE.setdefault('node_continuity', []).append(continuity)
     page.evaluate("window.__enfraTextEditCleanup?.()")
     assert continuity['inputObserved'], "The editor test must observe an actual native input event."
-    assert continuity['sameNode'] and continuity['inputNodeConnected'], "The input-event node was replaced before acknowledgment."
+    assert continuity['sameNode'] and continuity['inputNodeConnected'], "The input-event node was replaced by the post-acknowledgment continuity check."
 
 
 def export_and_check(page, stage):
@@ -127,6 +188,30 @@ def export_and_check(page, stage):
         printed = "\n".join(page.get_text() for page in document)
     for label, text in EXPECTED.items():
         live.checkpoint(stage + " " + label + " present in actual Word/PDF", text in words and text in printed)
+
+
+def exercise_text_edits(page):
+    for label, wording in EXPECTED.items():
+        phase(label + ' clear and save')
+        commit_text(page, label, "", expected_before=wording)
+        phase(label + ' clear reload')
+        page.reload(wait_until="domcontentloaded")
+        await_text(page, label, "")
+        live.checkpoint(label + " deliberate clear survives reload", True)
+        phase(label + ' reentry and save')
+        commit_text(page, label, wording, expected_before="")
+        if label == 'Issue description':
+            # A reload or another business action can refresh a stale callback
+            # baseline. Keep these native edits consecutive in one session.
+            phase(label + ' consecutive clear and save')
+            commit_text(page, label, "", expected_before=wording)
+            phase(label + ' consecutive reentry and save')
+            commit_text(page, label, wording, expected_before="")
+            live.checkpoint(label + " consecutive clear and reentry without reload", True)
+        phase(label + ' reentry reload')
+        page.reload(wait_until="domcontentloaded")
+        await_text(page, label, wording)
+        live.checkpoint(label + " reentry survives reload", True)
 
 
 def exercise(browser_type, name):
@@ -165,19 +250,7 @@ def exercise(browser_type, name):
         expect(page.get_by_text("known-value prefill: 18/18 independent content/provenance checks.", exact=False)).to_be_visible(timeout=45000)
         export_and_check(page, "first-native-hydration")
         activity = page.get_by_role("textbox", name="Activity summary", exact=True).input_value()
-        for label, wording in EXPECTED.items():
-            phase(label + ' clear and save')
-            commit_text(page, label, "", expected_before=wording)
-            phase(label + ' clear reload')
-            page.reload(wait_until="domcontentloaded")
-            await_text(page, label, "")
-            live.checkpoint(label + " deliberate clear survives reload", True)
-            phase(label + ' reentry and save')
-            commit_text(page, label, wording, expected_before="")
-            phase(label + ' reentry reload')
-            page.reload(wait_until="domcontentloaded")
-            await_text(page, label, wording)
-            live.checkpoint(label + " reentry survives reload", True)
+        exercise_text_edits(page)
         expect(page.get_by_role("textbox", name="Activity summary", exact=True)).to_have_value(activity)
         export_and_check(page, "restored-native-text")
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
@@ -186,6 +259,7 @@ def exercise(browser_type, name):
     except Exception as exc:
         live.EVIDENCE["failure"] = {"type": type(exc).__name__, "message": str(exc)[:2000]}
         try:
+            live.EVIDENCE["native_timing"] = page.evaluate("window.__enfraTextEdit?.snapshot?.()||null")
             live.EVIDENCE["last_text_receipt"] = receipt(page)
             live.EVIDENCE["visible_text_hashes"] = {
                 label: sha256(page.get_by_role('textbox', name=label, exact=True).input_value().encode()).hexdigest()

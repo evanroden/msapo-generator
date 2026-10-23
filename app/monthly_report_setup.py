@@ -17,7 +17,7 @@ from app.monthly_report_asset_review import asset_fingerprint, normalize_asset_r
 MONTHLY_BLOCKS = frozenset({"work_orders", "activity_summary", "improvements", "mbcx_report", "service_calls",
                           "vendor_reports", "water_reports", "training_summary", "accounts_receivable", "accounts_receivable_notes"})
 PAGE_BLOCKS = frozenset({"vendor_reports", "water_reports", "mbcx_report"})
-PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status"})
+PERIOD_REVIEW_BLOCKS = frozenset({"utility_analysis", "mbcx_status", "equipment_issues", "equipment_issues_evidence"})
 DECISIONS = ("Needs review", "Keep in report", "Save for reference", "Exclude from this draft")
 
 
@@ -352,7 +352,8 @@ def normalize_mbcx(draft: ReportDraft) -> ReportDraft:
 def carried_period(block: ResolvedBlock, current_period: ReportPeriod) -> ReportPeriod | None:
     """Return the last confirmed period of populated, carried monthly content."""
     if (block.key not in PERIOD_REVIEW_BLOCKS or block.source == "Omit"
-            or not (block.text.strip() or block.rows or block.asset_hashes or block.extra_tables or block.ai_paragraphs)):
+            or not (block.text.strip() or block.rows or block.asset_hashes
+                    or any(table.rows for table in block.extra_tables) or block.ai_paragraphs)):
         return None
     for reference in block.references:
         if reference.startswith("report-period:"):
@@ -375,7 +376,8 @@ def confirm_current_period(block: ResolvedBlock, period: ReportPeriod) -> Resolv
 
 def _carry_period_content(block: ResolvedBlock, period: ReportPeriod) -> ResolvedBlock:
     if block.key not in PERIOD_REVIEW_BLOCKS or not (
-            block.text.strip() or block.rows or block.asset_hashes or block.extra_tables or block.ai_paragraphs):
+            block.text.strip() or block.rows or block.asset_hashes
+            or any(table.rows for table in block.extra_tables) or block.ai_paragraphs):
         return block
     references = block.references
     if not any(r.startswith("report-period:") for r in references):
@@ -396,17 +398,21 @@ def new_month_draft(draft: ReportDraft, period: ReportPeriod) -> ReportDraft:
     from app.monthly_report_followups import seed_followups
     follow_ups = seed_followups(draft)
     carried_keys = {"equipment_issues", "proposals"}
+    from app.monthly_report_training import new_month_training
     blocks = tuple(
+        new_month_training(b) if b.key == "training_summary" else
         _carry_period_content(b, draft.period)
         if b.key == "equipment_issues" and (b.ai_written or b.ai_paragraphs) else
-        preserve_asset_reviews(b, ResolvedBlock(b.key, "This month", photos_per_page=b.photos_per_page,
+        _carry_period_content(preserve_asset_reviews(b, ResolvedBlock(
+                      b.key, "Omit" if b.key == "equipment_issues" and b.source == "Omit" else "This month",
+                      photos_per_page=b.photos_per_page,
                       asset_hashes=b.asset_hashes if b.key in carried_keys else (),
                       asset_captions=b.asset_captions if b.key in carried_keys else (),
                       references=(tuple(ref for ref in b.references
                                         if not ref.startswith("issue-statement-removed:"))
                                   if b.key == "equipment_issues" else
                                   b.references if b.key in carried_keys and b.asset_hashes else ()),
-                      extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables)))
+                      extra_tables=tuple(replace(t, rows=(), reference="") for t in b.extra_tables))), draft.period)
         if b.key in MONTHLY_BLOCKS or b.key in carried_keys else _carry_period_content(b, draft.period) for b in draft.blocks)
     # Keep evidence backing carried content at its original date and hash;
     # removing all sources would strand reviewed wording and attached charts.

@@ -275,7 +275,8 @@ def correct_replay_source_scope(page):
     # The source text intentionally has no printed site. For this synthetic
     # journey the reviewer chooses Demo North explicitly; the original TXT
     # stays unchanged and the later 18/18 check still verifies its byte digest.
-    warning.get_by_role("link", name="Correct site", exact=True).click()
+    correction = page.locator('[class*="st-key-monthly_source_warning_"]').filter(has=warning)
+    correction.get_by_role("button", name="Correct site", exact=True).click()
     details = page.locator('[data-testid="stForm"]').filter(has=
         page.locator('[data-testid="stMultiSelect"]').filter(has_text="Source sites"))
     # The targeted link exposes exactly this source's existing form. Other
@@ -293,6 +294,24 @@ def correct_replay_source_scope(page):
     # aria-hidden until the picker closes; a role lookup there is premature.
     page.keyboard.press("Tab")
     expect(page.get_by_role("listbox")).to_have_count(0)
+    pending_input = combo.element_handle()
+    # A native file-selection click does not deliver a buffered form. Keep
+    # the exact input node and the unsubmitted site choice through both moves.
+    files = page.locator('[data-testid="stSelectbox"]').filter(has_text="File to review").get_by_role("combobox")
+    files.click()
+    choices = page.get_by_role("option")
+    expect(choices.first).to_be_visible()
+    names = choices.all_text_contents()
+    other = next(name for name in names if name.strip() != "synthetic-activity.txt")
+    page.get_by_role("option", name=other, exact=True).click()
+    expect(page.get_by_text("QA working report SHA256: " + before, exact=True)).to_be_visible()
+    expect(page.get_by_text("QA durable report SHA256: " + before, exact=True)).to_be_visible()
+    files.click()
+    page.get_by_role("option", name="synthetic-activity.txt", exact=True).click()
+    expect(sites.get_by_text("Demo North", exact=True)).to_be_visible()
+    checkpoint("source form buffer survives file selection",
+               combo.evaluate("(el, original) => el === original && el.isConnected", pending_input))
+    expect(page.get_by_text("QA working report SHA256: " + before, exact=True)).to_be_visible()
     details.get_by_role("button", name="Use these source details", exact=True).click()
     expect(warning).to_have_count(0, timeout=25000)
     changed = page.get_by_text(re.compile(r"^QA working report SHA256: (?!" + before + r"$)[0-9a-f]{64}$")).last
@@ -302,6 +321,10 @@ def correct_replay_source_scope(page):
     event("source_scope_correction_committed", source="synthetic-activity.txt",
           selected_site="Demo North", before=before[:12], after=after[:12])
     checkpoint("replay targeted source correction persisted", after != before)
+    back = page.get_by_role("link", name="Return to review", exact=True).filter(visible=True)
+    expect(back).to_have_count(1)
+    back.click()
+    expect(page.locator("#report-review")).to_be_focused()
     # The existing issue retains its old provenance until the reviewer picks
     # the current source. A site correction must not silently waive that gate.
     stale = page.get_by_text("A supporting source changed or is missing.", exact=True)

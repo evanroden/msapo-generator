@@ -1,5 +1,6 @@
 """A supported WO CSV produces editable metrics without overwriting manual text."""
 from io import BytesIO
+from dataclasses import replace
 import pytest
 
 from app import monthly_report_ai as ai, monthly_report_upload_ui as ui
@@ -16,7 +17,7 @@ def _upload(monkeypatch, raw=CSV):
     stream.name = "work_orders.csv"
     original = ui.st.file_uploader
     monkeypatch.setattr(ui.st, "file_uploader", lambda label, *args, **kwargs:
-                        [stream] if label == "Add activity files (optional)"
+                        [stream] if label == "Add source files"
                         else original(label, *args, **kwargs))
     monkeypatch.setattr(ai, "ANTHROPIC_API_KEY", "")
 
@@ -95,8 +96,8 @@ def test_detail_disclosure_contains_every_counted_row_without_changing_the_summa
     assert next(w for w in app.text_area if w.label == "Activity summary").value == before
 
 
-@pytest.mark.parametrize("manual", ["Manual correction entered before accepting totals.", ""])
-def test_totals_clicked_with_new_text_reject_stale_baseline_without_losing_edit(
+@pytest.mark.parametrize("manual", ["Manual correction entered before accepting totals.", "", "  Deliberate wording.\n\n"])
+def test_totals_clicked_with_delivered_text_keep_exact_edit_and_add_once(
         monkeypatch, tmp_path, manual):
     app = monthly(monkeypatch, tmp_path)
     _upload(monkeypatch)
@@ -104,12 +105,34 @@ def test_totals_clicked_with_new_text_reject_stale_baseline_without_losing_edit(
     next(w for w in app.text_area if w.label == "Activity summary").set_value(manual)
     next(b for b in app.button if b.label == "Add totals to summary").click().run()
     assert not app.exception
-    assert next(w for w in app.text_area if w.label == "Activity summary").value == manual
+    text = next(w for w in app.text_area if w.label == "Activity summary").value
+    assert text.startswith(manual + "\n\n" if manual else "September 2026")
+    assert "Synthetic initial activity." not in text
+    assert text.count("3 total, 2 completed, 1 open") == 1
+    assert not any("report changed after you reviewed" in w.value for w in app.warning)
+    assert not any(b.label == "Apply interrupted edit" for b in app.button)
+    app.run()
+    assert not app.exception
+    assert next(w for w in app.text_area if w.label == "Activity summary").value == text
+
+
+def test_totals_from_an_older_report_do_not_overwrite_an_unrelated_update(monkeypatch, tmp_path):
+    app = monthly(monkeypatch, tmp_path)
+    _upload(monkeypatch)
+    app.run()
+    accept = next(b for b in app.button if b.label == "Add totals to summary")
+    key, draft = next((k, v) for k, v in app.session_state.filtered_state.items()
+                      if k.endswith("_draft") and hasattr(v, "blocks"))
+    newer = "A separately recovered update must be reviewed first."
+    app.session_state[key] = replace(draft, blocks=tuple(
+        replace(block, text=newer) if block.key == "activity_summary" else block
+        for block in draft.blocks))
+    accept.click().run()
+    assert not app.exception
+    assert next(w.value for w in app.text_area if w.label == "Activity summary") == newer
     assert any("report changed after you reviewed" in w.value for w in app.warning)
-    # Re-reviewing the unchanged evidence against the now-current wording
-    # remains possible and adds the totals exactly once.
     next(b for b in app.button if b.label == "Add totals to summary").click().run()
     assert not app.exception
-    text = next(w for w in app.text_area if w.label == "Activity summary").value
-    assert manual in text
+    text = next(w.value for w in app.text_area if w.label == "Activity summary")
+    assert text.startswith(newer + "\n\n")
     assert text.count("3 total, 2 completed, 1 open") == 1

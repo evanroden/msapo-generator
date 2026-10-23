@@ -231,6 +231,8 @@ def test_resumed_foreign_source_keeps_one_native_correction_path(monkeypatch, tm
     panels = [w for w in app.expander if w.label.startswith("Correct source details · synthetic-foreign-source.txt")]
     assert len(panels) == 1 and "site does not match" in panels[0].label
     assert len([w for w in app.date_input if w.label == "Source date"]) == 1
+    next(w for w in app.button if w.label == "Correct site").click().run()
+    assert next(w for w in app.selectbox if w.label == "File to review").value == foreign.id
     next(w for w in app.selectbox if w.label == "Source facility").set_value(profile.facilities[0].key)
     next(w for w in app.button if w.label == "Use these source details").click().run()
     assert not app.exception
@@ -241,7 +243,7 @@ def test_resumed_foreign_source_keeps_one_native_correction_path(monkeypatch, tm
     assert next(b for b in corrected.blocks if b.key == "activity_summary").text == text
     assert source_bytes(profile, corrected.sources[0]) == raw
     assert library.load_snapshot(profile.contract, profile.key, period).draft.sources == (foreign,)
-    next(w for w in app.button if w.label == "Manage source files").click().run()
+    assert any(w.label == "Done with source files" for w in app.button)
     assert not app.exception
     remove = next(w for w in app.button if w.label == "Remove source from this draft")
     assert remove.disabled

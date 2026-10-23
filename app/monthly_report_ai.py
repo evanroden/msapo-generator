@@ -182,6 +182,55 @@ def extraction_request(source, pages):
     ]
 
 
+def _date_supported(text, event_date):
+    """Require a complete calendar date on this cited page, including its year.
+
+    A day prefix, source metadata date or year elsewhere is not support. The
+    ISO timestamp suffix is allowed only after an already complete date token.
+    """
+    try:
+        parsed = date.fromisoformat(event_date)
+    except (ValueError, TypeError):
+        return False
+    month = rf"0?{parsed.month}" if parsed.month < 10 else str(parsed.month)
+    day = rf"0?{parsed.day}" if parsed.day < 10 else str(parsed.day)
+    year = f"{parsed.year:04d}"
+    names = "|".join(re.escape(parsed.strftime(fmt)) for fmt in ("%B", "%b"))
+    patterns = (
+        rf"(?<![\w-]){re.escape(parsed.isoformat())}(?=$|[^\w-]|T\d{{2}}:\d{{2}})",
+        rf"(?<![\w/]){month}/{day}/{year}(?![\w/])",
+        rf"(?<!\w)(?:{names})\.?\s+{day}(?:st|nd|rd|th)?(?:,\s*|\s+){year}(?!\w)",
+    )
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
+
+
+def _unverified_fact_dates(facts, sources):
+    """Revalidate persisted date claims without rewriting accepted evidence."""
+    by_id = {source.id: source for source in sources}
+    problems = []
+    for fact in facts:
+        if not fact.date:
+            continue
+        source = by_id.get(fact.source_id)
+        if source is None:
+            continue  # Existing missing-source guards retain their own recovery.
+        if (type(fact.page) is int and 1 <= fact.page <= len(source.page_texts)
+                and _date_supported(source.page_texts[fact.page - 1], fact.date)):
+            continue
+        problems.append(
+            f"{source.filename} page {fact.page}: the saved date {fact.date} was not verified "
+            "on the cited page. Read this page again and choose Use these facts, then "
+            "correct and review the linked wording. Your saved evidence is unchanged.")
+    return tuple(dict.fromkeys(problems))
+
+
+def block_date_problems(block, sources):
+    """Only the facts cited by this block can block its current output."""
+    wanted = {identity for paragraph in block.ai_paragraphs for identity in paragraph.fact_ids}
+    return _unverified_fact_dates(
+        (fact for source in sources for fact in source.facts if fact.id in wanted), sources)
+
+
 def normalize_facts(value, source, pages, profile, period, vendors=()):
     raw = value.get("facts")
     if not isinstance(raw, list) or len(raw) > 100:
@@ -246,14 +295,7 @@ def normalize_facts(value, source, pages, profile, period, vendors=()):
             else:
                 if not period.start <= parsed <= period.end:
                     flags.append("Outside the reporting month")
-                variants = (
-                    parsed.isoformat(),
-                    f"{parsed.month}/{parsed.day}/{parsed.year}",
-                    parsed.strftime("%m/%d/%Y"),
-                    parsed.strftime("%B ") + str(parsed.day),
-                    parsed.strftime("%b ") + str(parsed.day),
-                )
-                if not any(v.casefold() in native for v in variants):
+                if not _date_supported(native, when):
                     flags.append("Date was not verified on the cited page")
                     when = ""
         site = clean_text(item.get("facility", ""))
@@ -333,6 +375,8 @@ def drafting_request(block_key, sources, period, vendors=(), tags=(), instructio
         raise ValueError(
             "No extracted facts for this section yet. Read sources or add Copilot notes first."
         )
+    if problems := _unverified_fact_dates(facts, sources):
+        raise ValueError(problems[0])
     payload = {
         "block": block_key,
         "period": period.key,
@@ -382,6 +426,8 @@ def normalize_draft(value, key, facts, sources):
             for f in cited
         ):
             raise ValueError("A draft cited a missing source or page.")
+        if problems := _unverified_fact_dates(cited, sources):
+            raise ValueError(problems[0])
         refs = tuple(
             dict.fromkeys(
                 source_reference(source_map[f.source_id], f.page) for f in cited
@@ -411,6 +457,8 @@ def normalize_draft(value, key, facts, sources):
 
 
 def reviewed_block(block, sources):
+    if problems := block_date_problems(block, sources):
+        raise ValueError(problems[0])
     if (
         not block.ai_evidence_fingerprint
         or block.ai_evidence_fingerprint
@@ -464,6 +512,8 @@ def refresh_evidence(block, sources):
             cited.append((source, fact))
         if not cited:
             raise ValueError("Each AI paragraph needs a real supporting fact.")
+        if problems := _unverified_fact_dates((fact for _, fact in cited), sources):
+            raise ValueError(problems[0])
         if contains_price(paragraph.text):
             raise ValueError("Remove pricing from the paragraph.")
         flags = tuple(

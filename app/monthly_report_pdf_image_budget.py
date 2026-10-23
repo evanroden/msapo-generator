@@ -1,8 +1,9 @@
 """Bound JPEG photos in a disposable Word-to-PDF conversion copy only.
 
-The original editable Word file and all its source-media bytes are unchanged.
-Only high-resolution JPEGs *identical to media in the pinned native design*
-may be reduced, never newly uploaded diagrams or customer photos. This avoids
+The editable Word file is unchanged by this PDF-only compaction.
+Only high-resolution JPEGs identical to media in the pinned native design,
+or to their exact metadata-sanitized copies, may be reduced, never unrelated
+uploaded diagrams or customer photos. This avoids
 the Word assembler's decoded-image heap overlapping a hungry LibreOffice
 converter on the 512 MiB single-instance production service.
 """
@@ -29,14 +30,24 @@ def _photograph(name: str) -> bool:
 
 @lru_cache(maxsize=8)
 def _original_jpeg_hashes(source_path: str) -> frozenset[str]:
-    """Immutable, already content-verified Word design; cache *hashes* only."""
+    """Cache hashes of pinned JPEGs and their exact sanitized export copies."""
+    from app.monthly_report_media_privacy import strip_image_metadata
+
     with ZipFile(source_path) as archive:
         names = [n for n in archive.namelist() if _photograph(n)]
         if len(names) > MAX_SOURCE_MEDIA:
             raise ValueError("The native design has too many photos to optimize safely.")
         # One compressed entry at a time; do not decode or retain old clients'
         # source photographs. Never inspect the unrelated current-report assets.
-        return frozenset(sha256(archive.read(name)).hexdigest() for name in names)
+        hashes = set()
+        for name in names:
+            data = archive.read(name)
+            hashes.add(sha256(data).hexdigest())
+            # Export privacy removes metadata before PDF conversion. Recognize
+            # only that exact derivative of a verified pinned image, keeping
+            # the same source allowlist without admitting unrelated uploads.
+            hashes.add(sha256(strip_image_metadata(data)).hexdigest())
+        return frozenset(hashes)
 
 
 def compact_native_photos_for_pdf(raw: bytes, *, pinned_source: Path,

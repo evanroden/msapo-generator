@@ -257,6 +257,68 @@ def _passive_markup(root):
             parent.remove(node)
 
 
+DRAWING = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+THEME_FAMILY = '{http://schemas.microsoft.com/office/thememl/2012/main}themeFamily'
+_STYLE_REFERENCES = {'pStyle', 'rStyle', 'tblStyle', 'numStyleLink', 'styleLink', 'defaultTableStyle',
+                     'clickAndTypeStyle'}
+
+
+def _neutral_design_names(output):
+    """Drop design names another client could recognize, without changing rendering.
+
+    Theme and scheme names are labels only; they take Word's standard names.
+    A custom style that nothing in the package uses, directly or through a
+    kept style's basedOn/link/next or nested style reference, is removed;
+    built-in, default and used styles stay, so every referenced style still
+    resolves.
+    """
+    for name in [n for n in output if n.startswith('word/theme/') and n.endswith('.xml')]:
+        root, renamed = _xml(output[name]), False
+        # Office 2013+ also records the applied theme's name in thm15:themeFamily.
+        for tag, neutral in (('{' + DRAWING + '}theme', 'Office Theme'), (THEME_FAMILY, 'Office Theme'),
+                             *(('{' + DRAWING + '}' + local, 'Office') for local in ('clrScheme', 'fontScheme', 'fmtScheme'))):
+            for node in root.iter(tag):
+                if node.get('name') not in (None, neutral):
+                    node.set('name', neutral)
+                    renamed = True
+        if renamed:
+            output[name] = XML.tostring(root, encoding='UTF-8', xml_declaration=True, standalone=True)
+    if 'word/styles.xml' not in output:
+        return
+    used = set()
+    tags = ['{' + W + '}' + local for local in _STYLE_REFERENCES]
+    for name, raw in output.items():
+        if name.startswith('word/') and name.endswith('.xml') and name != 'word/styles.xml':
+            # Every part here already passed the bounded parser in copy().
+            for _, node in XML.iterparse(BytesIO(raw), events=('start',), tag=tags, resolve_entities=False,
+                                         no_network=True, load_dtd=False):
+                used.add(node.get('{' + W + '}val'))
+    root = _xml(output['word/styles.xml'])
+    # Document-wide defaults live alongside individual style definitions.
+    # Their references are roots, just like references from document/settings.
+    for node in root:
+        if isinstance(node.tag, str) and _local(node) != 'style':
+            used.update(child.get('{' + W + '}val') for child in node.iter()
+                        if child.tag in tags)
+    styles = {node.get('{' + W + '}styleId'): node for node in root if isinstance(node.tag, str) and _local(node) == 'style'}
+    pending = [identity for identity, node in styles.items()
+               if identity in used or node.get('{' + W + '}customStyle') not in {'1', 'true', 'on'}
+               or node.get('{' + W + '}default') in {'1', 'true', 'on'}]
+    keep = set()
+    while pending:
+        identity = pending.pop()
+        if identity in keep or identity not in styles:
+            continue
+        keep.add(identity)
+        pending.extend(child.get('{' + W + '}val') for child in styles[identity].iter()
+                       if isinstance(child.tag, str) and _local(child) in _STYLE_REFERENCES | {'basedOn', 'link', 'next'})
+    removed = [node for identity, node in styles.items() if identity not in keep]
+    for node in removed:
+        root.remove(node)
+    if removed:
+        output['word/styles.xml'] = XML.tostring(root, encoding='UTF-8', xml_declaration=True, standalone=True)
+
+
 def passive_docx(path: Path) -> bytes:
     """Return a bounded native DOCX with only reachable passive dependencies.
 
@@ -427,6 +489,7 @@ def passive_docx(path: Path) -> bytes:
             visiting.remove(name)
 
         copy('word/document.xml', 'officeDocument')
+        _neutral_design_names(output)
         # LibreOffice selects Word drawing compatibility using the originating
         # application/version properties. Omitting these can silently hide native
         # grouped shapes and text boxes even when document.xml is unchanged.

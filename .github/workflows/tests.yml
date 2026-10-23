@@ -12,9 +12,9 @@ permissions:
 jobs:
   pytest:
     runs-on: ubuntu-24.04
-    # Renderer packages can exceed the old entire-job budget on a slow mirror.
-    # Keep the full rendering suite mandatory after installation completes.
-    timeout-minutes: 45
+    # Full source-view lifecycle and rendering tests can exceed 45 minutes.
+    # Keep every test mandatory and allow the complete suite to finish.
+    timeout-minutes: 90
     env:
       FONTCONFIG_FILE: ${{ github.workspace }}/runtime/fonts.conf
     steps:
@@ -27,7 +27,9 @@ jobs:
       # exercises what production actually runs instead of quietly stepping
       # over it.
       - name: Install document renderers
+        timeout-minutes: 20
         run: |
+          sudo python3 scripts/ci_ubuntu_mirror_priority.py
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libreoffice-writer \

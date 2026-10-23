@@ -91,6 +91,37 @@ def _source_context_marker(source, number):
     return f"{_SOURCE_CONTEXT}{source.id}:{number}:{digest}"
 
 
+
+def current_source_page_review_matches(block, index, source, number):
+    """Read-only current per-page evidence, not source/site admission or consent.
+
+    Whole-source fingerprints may change after a genuine caption review. The
+    original explicit page identity plus its exact current context and existing
+    asset/page receipts can establish that this occurrence was reviewed again.
+    Callers retain independent source identity, scope and output-byte checks.
+    """
+    from app.monthly_report_content_policy import page_allowed
+    if not 0 <= index < len(block.asset_hashes) or not 1 <= number <= len(source.page_texts):
+        return False
+    asset = block.asset_hashes[index]
+    if block.asset_hashes.count(asset) != 1:
+        return False
+    mappings = [references for ref, references in block.asset_provenance if ref == asset]
+    if len(mappings) != 1:
+        return False
+    references = mappings[0]
+    plain = [ref for ref in references if not ref.startswith(_SOURCE_CONTEXT)]
+    if len(plain) != 1 or plain[0] not in block.references:
+        return False
+    parts = plain[0].split(':')
+    if (len(parts) != 3 or parts[0] != source.id or not parts[1].isdigit()
+            or int(parts[1]) != number):
+        return False
+    markers = [ref for ref in references if ref.startswith(_SOURCE_CONTEXT)]
+    return (markers == [_source_context_marker(source, number)]
+            and asset_reviewed(block, index) and page_allowed(source, number))
+
+
 def refresh_asset_source_context(block, sources):
     """Bind reviews to relevant current source facts without broad invalidation.
 

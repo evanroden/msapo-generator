@@ -1,4 +1,4 @@
-"""One upload and one reviewed contract-wide capacity save."""
+"""One capacity source task with explicit report and reusable-site scope."""
 
 from dataclasses import asdict, replace
 import hashlib
@@ -113,7 +113,18 @@ def _capacity_file(prefix):
     )
 
 
-def render_capacity(draft, block, prefix, field):
+def render_capacity_scope(profile, block):
+    """Describe this exact report table; unrelated shared sites prove nothing."""
+    if _has_values(block):
+        reused = capacity.can_refresh_capacity(profile, block)
+        st.caption("Capacity · reused for these sites" if reused else "Capacity · this report only")
+        st.caption("Table edits apply to this report. Reusable-site corrections are below.")
+    else:
+        st.caption("Capacity · this report only")
+        st.caption("Enter report-only values, or add a capacity source for reuse below.")
+
+
+def render_capacity(draft, block, prefix, field, *, show_scope=True):
     """Automatically persist safe first-fill rows, preserving historical pins.
 
     Ambiguous site matches, existing authoritative values and unreadable
@@ -128,27 +139,32 @@ def render_capacity(draft, block, prefix, field):
             st.session_state.pop(prefix + "_capacity_" + suffix, None)
         st.session_state[prefix + "_capacity_context"] = context
     state = capacity.load_capacity(profile.contract)
+    scope_slot = st.container() if show_scope else None
+    with st.expander("Capacity source and reusable data", expanded=not _has_values(block),
+                     key=prefix + "_capacity_source_panel"):
+        result = _render_capacity_source(draft, block, prefix, field, context, state)
+    if scope_slot is not None:
+        with scope_slot:
+            render_capacity_scope(profile, result[1])
+    return result
+
+
+def _render_capacity_source(draft, block, prefix, field, context, state):
+    profile = draft.profile
+    st.caption("Clear site matches fill missing reusable capacity automatically. "
+               "Corrections affect future reports for the matched sites; report-only edits stay in this report.")
+    # Keep the uploader at one native delta path when a first fill creates a
+    # standing version. Only the contents of this reserved controls slot vary.
     changing_existing = False
-    if state:
-        sites = {key for table in state.tables for key in table.site_keys}
-        st.caption(f"Saved capacity for {len(sites)} contract site{'s' if len(sites) != 1 else ''}. New reports reuse their site's tables.")
-        # Most months the accepted standing table needs no upload or new
-        # decision. Keep replacement available, but outside ordinary editing.
-        with st.expander("Edit or replace shared capacity", expanded=False):
-            st.caption("Updates can change capacity for matched sites across future reports. Previously saved report versions stay unchanged.")
+    with st.container(key=prefix + "_capacity_shared_controls"):
+        if state:
             changing_existing = st.toggle(
-                "Update existing capacity values",
+                "Correct existing reusable capacity",
                 key=field(prefix + "_capacity_change", False),
+                help="Applies reviewed source corrections to matched sites for future reports. "
+                     "Previously saved report versions stay unchanged.",
             )
-            uploaded = _capacity_file(prefix)
-    elif _has_values(block):
-        st.caption("These capacity values are in this report only. Monthly utility results are separate.")
-        with st.expander("Add capacity for future reports", expanded=False):
-            st.caption("A reviewed file can supply matched sites' capacity to future reports. This report's edited values stay unchanged.")
-            uploaded = _capacity_file(prefix)
-    else:
-        st.caption("Add capacity data once for these sites; future reports reuse it.")
-        uploaded = _capacity_file(prefix)
+    uploaded = _capacity_file(prefix)
     if uploaded is None:
         _cancel_reading(prefix)
         for suffix in ("digest", "upload_identity", "inspection", "error", "read_request"):
@@ -226,8 +242,6 @@ def render_capacity(draft, block, prefix, field):
     names = {f.key: f.title for f in facilities}
     titles = {f.title: f.key for f in facilities}
     reviewed = []
-    st.write("Capacity rows with clear site matches are kept for future reports automatically. "
-             "Only uncertain or conflicting information needs your decision.")
     st.caption("Leave unknown capacity values blank or NR; never treat them as zero.")
     if inspection.used_reader:
         st.caption("Check every value and unit against the file. Unreadable cells must be corrected before saving.")
@@ -275,7 +289,7 @@ def render_capacity(draft, block, prefix, field):
     tables = tuple(reviewed)
     fingerprint = capacity.review_fingerprint(tables)
     if st.session_state.get(prefix + "_capacity_saved") == fingerprint:
-        st.success("Capacity is kept for the contract. New reports reuse the matched sites' values.")
+        st.caption("Reusable capacity is up to date for the matched sites.")
         return draft, block
     unresolved = any(not key for table in tables for key in table.site_keys)
     actor = draft.prepared_by.strip()
@@ -291,7 +305,10 @@ def render_capacity(draft, block, prefix, field):
                 actor=actor, reviewed_fingerprint=capacity.review_fingerprint(first_fill),
                 mode="merge")
             st.session_state[prefix + "_capacity_revision"] = saved.revision
-            st.session_state[prefix + "_capacity_saved"] = fingerprint
+            # Only the newly added rows were accepted. A mixed file may
+            # still contain a correction to an existing service; keep its
+            # explicit correction action reachable without another upload.
+            st.session_state[prefix + "_capacity_saved"] = capacity.review_fingerprint(first_fill)
             updated = capacity.capacity_block(profile, saved)
             if updated and capacity.can_refresh_capacity(profile, block):
                 content = tuple(updated if b.key == "thermal_capacity" else b for b in draft.blocks)
@@ -300,7 +317,7 @@ def render_capacity(draft, block, prefix, field):
                 draft, block = replace(draft, blocks=content), updated
             st.success("New site capacity is kept for the contract and will appear in future reports.")
             if state and sum(len(t.rows) for t in first_fill) < sum(len(t.rows) for t in tables):
-                st.info("Existing capacity values were not replaced. Use Update existing capacity values "
+                st.info("Existing capacity values were not replaced. Use Correct existing reusable capacity "
                         "only when a reviewed correction is needed.")
             return draft, block
         except library.RevisionConflict:
@@ -312,7 +329,7 @@ def render_capacity(draft, block, prefix, field):
                        "Your uploaded values remain here. Correct any uncertain cells or try again.")
     if state and not changing_existing and not first_fill:
         st.caption("Those sites already have saved capacity. To change existing values, "
-                   "open Update existing capacity values above.")
+                   "turn on Correct existing reusable capacity above.")
         _reload_conflict(prefix, profile)
         return draft, block
     mode = "merge"

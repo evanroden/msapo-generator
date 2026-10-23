@@ -59,12 +59,13 @@ def test_lowercase_saved_contract_does_not_crash_landing_page(monkeypatch, tmp_p
 
 
 def test_contract_cards_survive_display_slug_collisions(monkeypatch, tmp_path):
+    from app.monthly_report_ui_text import literal
     monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
     names = ["Synthetic A&B", "Synthetic A-B", "Synthetic " + "x" * 65 + "1", "Synthetic " + "x" * 65 + "2"]
     with patch("app.monthly_report_start_ui.contract_choices", return_value=names):
         app = AppTest.from_string(CONTRACT_APP).run()
         assert not app.exception
-        assert {b.label for b in app.button} == set(names)
+        assert {b.label for b in app.button} == {literal(name) for name in names}
         assert len({b.key for b in app.button}) == len(names)
 
 

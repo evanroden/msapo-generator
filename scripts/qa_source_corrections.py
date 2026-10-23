@@ -1,6 +1,6 @@
-"""Native source correction links in the existing isolated Monthly fixture.
+"""Native source correction controls in the existing isolated Monthly fixture.
 
-Both engines use actual source replay, pointer/keyboard links and normal form
+Both engines use actual source replay, pointer/keyboard controls and normal form
 submission. No injected report state, external reading, generation or sharing.
 """
 import json
@@ -45,21 +45,23 @@ def observe_correction_navigation(page):
         };
         for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'click', 'keydown', 'focusin'])
             document.addEventListener(type, event => {
-                const link = event.target.closest?.('a');
-                const owned = link && (link.getAttribute('href')?.startsWith('#source-details-') ||
-                    link.classList.contains('enfra-source-review-return'));
+                const link = event.target.closest?.('a,button');
+                const warning = link?.closest('[class*="st-key-monthly_source_warning_"]');
+                const marker = warning?.querySelector('.enfra-source-warning');
+                const owned = link && (Boolean(marker) || link.classList.contains('enfra-source-review-return'));
                 if (type === 'pointerdown') pressed = owned ? link : null;
                 const observed = owned ? link : (['pointerup', 'pointercancel', 'click'].includes(type) ? pressed : null);
                 if (!observed) return;
                 const rect = observed.getBoundingClientRect(), scroll = owner(observed);
-                const marker = observed.closest('[class*="st-key-source_correction_"]')
-                    ?.querySelector('.enfra-source-correction');
+                const observedMarker = observed.closest('[class*="st-key-monthly_source_warning_"]')
+                    ?.querySelector('.enfra-source-warning');
                 const candidates = [...document.querySelectorAll('[class*="st-key-epc_workspace_monthly"]')];
                 const workspace = observed.closest('[class*="st-key-epc_workspace_monthly"]') ||
-                    (candidates.length === 1 && candidates[0]._epcWorkspace?.identity === marker?.dataset.reportIdentity
+                    (candidates.length === 1 && candidates[0]._epcWorkspace?.identity === observedMarker?.dataset.reportIdentity
                         ? candidates[0] : null);
                 samples.push({type, time:performance.now(), key:event.key || '',
-                    node:id(observed), source:observed.getAttribute('href'),
+                    node:id(observed), source:observedMarker ? '#source-details-' + observedMarker.dataset.sourceId +
+                        (observed.textContent.includes('date') ? '--date' : '--site') : observed.getAttribute('href'),
                     eventTarget:id(event.target), targetIsOwnedLink:Boolean(owned),
                     connected:observed.isConnected,
                     handlerReady:Boolean(workspace?._epcWorkspace && workspace?.dataset.epcMode),
@@ -112,56 +114,75 @@ def browser_task(browser_type, name):
         observe_correction_navigation(page)
         date_warning = page.locator('[data-testid="stAlert"]').filter(has_text=
             "Confirm the reporting date for synthetic-activity.txt; no date has been established.")
-        date_link = date_warning.get_by_role("link", name="Correct date", exact=True)
-        expect(date_warning.get_by_text("Loading correction controls…", exact=True)).to_be_visible()
-        expect(date_link).to_have_count(0)
+        warning_group = page.locator('[class*="st-key-monthly_source_warning_"]').filter(has=date_warning)
+        date_link = warning_group.get_by_role("button", name="Correct date", exact=True)
+        expect(date_warning).to_be_visible()
+        expect(date_link).to_be_enabled()
+        expect(date_warning.get_by_role("link", name="Correct date", exact=True)).to_have_count(0)
         expect(page.get_by_role("button", name="Create Word and PDF", exact=True)).to_be_disabled()
         record["cold_navigation"] = {"held_requests": len(held), "warning_visible": True,
-            "inactive_link_count": date_link.count(), "before": before}
+            "inactive_link_count": 0, "before": before, "native_button_enabled": True}
         assert len(held) == 1, "Hold the one original BidiComponent module, not a replacement."
         record["cold_navigation"]["module"] = held[0].request.url.rsplit("/", 1)[-1]
-        # The real guided form intentionally precedes the workspace. Prove
-        # that topology and its report binding before releasing the adapter;
-        # nesting a fake form inside the workspace hid the readiness defect.
-        warning_group = page.locator('[class*="st-key-source_correction_"]').filter(has=date_warning)
-        source_id = warning_group.locator('.enfra-source-correction').get_attribute('data-source-id')
+        source_id = warning_group.locator('.enfra-source-warning').get_attribute('data-source-id')
         assert re.fullmatch(r"[0-9a-f]{64}", source_id)
         source_marker = 'source-details-' + source_id
         source_panel = page.locator('[class*="st-key-source_detail_editor_"]').filter(
             has=page.locator('[id="' + source_marker + '"]'))
         expect(source_panel).to_have_count(1)
         topology = source_panel.evaluate("""node => {
-            const group = node.closest('[class*="_source_metadata_corrections"]');
+            const group = node.closest('[class*="_source_manager_panel"]');
             const owners = group?.querySelectorAll('.enfra-source-correction-owner');
             return {insideWorkspace:Boolean(node.closest('[class*="st-key-epc_workspace_monthly"]')),
                 owners:owners?.length || 0, identity:owners?.[0]?.dataset.reportIdentity};
         }""")
-        assert not topology['insideWorkspace'] and topology['owners'] == 1
+        assert topology['insideWorkspace'] and topology['owners'] == 1
         assert re.fullmatch(r"[0-9a-f]{24}", topology['identity'])
         record['source_form_ownership'] = topology
         warning_topology = warning_group.evaluate("""node => ({
             insideWorkspace:Boolean(node.closest('[class*="st-key-epc_workspace_monthly"]')),
-            identity:node.querySelector('.enfra-source-correction')?.dataset.reportIdentity
+            identity:node.querySelector('.enfra-source-warning')?.dataset.reportIdentity
         })""")
         assert not warning_topology['insideWorkspace']
         assert warning_topology['identity'] == topology['identity']
         record['review_warning_ownership'] = warning_topology
+        # The native callback opens the one manager even before the display
+        # adapter exists. Its ordinary disclosure remains usable without that display adapter.
+        date_link.click()
+        expect(page.get_by_role("button", name="Done with source files", exact=True)).to_be_visible()
+        files = page.locator('[data-testid="stSelectbox"]').filter(has_text="File to review")
+        expect(files.get_by_role("combobox")).to_have_value("synthetic-activity.txt")
+        disclosure = source_panel.locator("details")
+        expect(disclosure).to_have_count(1)
+        disclosure.locator(":scope > summary").click()
+        cold_form = source_form(page)
+        expect(cold_form).to_have_count(1)
+        assert cold_form.get_by_test_id("stDateInput").locator("input").input_value() == ""
+        assert fingerprint(page) == before
+        expect(page.get_by_role("button", name="Create Word and PDF", exact=True)).to_be_disabled()
+        record["cold_navigation"]["native_form_usable_without_adapter"] = True
+        disclosure.locator(":scope > summary").click()
+        expect(disclosure).not_to_have_attribute("open", re.compile(r".*"))
+        page.get_by_role("button", name="Done with source files", exact=True).click()
+        expect(source_form(page)).to_have_count(0)
         held.pop().continue_()
         page.unroute(component_module)
         expect(date_link).to_be_visible()
-        assert date_link.get_attribute("href") == '#' + source_marker + '--date'
         workspace = page.locator('[class*="st-key-epc_workspace_monthly"]')
         expect(workspace).to_have_count(1)
+        expect(workspace).to_have_attribute('data-epc-mode', re.compile(r'.+'))
         assert workspace.evaluate("node => node._epcWorkspace?.identity") == topology['identity']
-        record["stage"] = "first date link and native focus"
+        record["stage"] = "first ready date button and native focus"
         date_link.scroll_into_view_if_needed()
         record["warning_before_pointer_action"] = date_link.bounding_box()
+        pointer_sample_start = len(page.evaluate("window.__sourceCorrectionNavigationObservations"))
         date_link.click()
         pointer_samples = page.evaluate("window.__sourceCorrectionNavigationObservations").copy()
+        pointer_samples = pointer_samples[pointer_sample_start:]
         pointer = next(sample for sample in reversed(pointer_samples)
                        if sample["type"] == "pointerdown" and sample["source"].endswith("--date"))
         record["warning_at_native_pointer_action"] = pointer
-        assert pointer["handlerReady"], "A displayed correction link needs its owned native handler."
+        assert pointer["handlerReady"], "The ready correction button needs its owned native focus handler."
         clicks = [sample for sample in pointer_samples if sample["type"] == "click" and
                   sample["source"] == pointer["source"]]
         releases = [sample for sample in pointer_samples if sample["type"] == "pointerup" and
@@ -217,9 +238,10 @@ def browser_task(browser_type, name):
         expect(page.get_by_text("QA durable report SHA256: " + corrected, exact=True)).to_have_count(1, timeout=30000)
         assert fingerprint(page) == corrected
         expect(page.get_by_text(re.compile(r"^Establish the site scope of synthetic-activity.txt"))).to_have_count(0)
-        date_link = page.locator('[data-testid="stAlert"]').filter(has_text=
-            "Confirm the reporting date for synthetic-activity.txt; no date has been established."
-        ).get_by_role("link", name="Correct date", exact=True)
+        narrow_warning = page.locator('[data-testid="stAlert"]').filter(has_text=
+            "Confirm the reporting date for synthetic-activity.txt; no date has been established.")
+        date_link = page.locator('[class*="st-key-monthly_source_warning_"]').filter(
+            has=narrow_warning).get_by_role("button", name="Correct date", exact=True)
         date_link.press("Enter")
         form = source_form(page)
         date_input = form.get_by_test_id("stDateInput").locator("input")
@@ -233,7 +255,7 @@ def browser_task(browser_type, name):
         expect(page.get_by_text("Monthly DOM blocked external attempts: 0", exact=True)).to_be_visible()
         assert not errors and not external
         record["result"] = "passed"
-        qa.check(name, "Source links reach native fields; deliberate correction survives narrow reload", True)
+        qa.check(name, "Source controls reach native fields; deliberate correction survives narrow reload", True)
     except Exception as exc:
         record.update(result="failed", failure={"type": type(exc).__name__, "message": str(exc)[:3000]})
         try:
@@ -246,12 +268,12 @@ def browser_task(browser_type, name):
                     workspaces:spaces.map(node=>({identity:node._epcWorkspace?.identity,
                         mode:node.dataset.epcMode,connected:node.isConnected,
                         stale:Boolean(node.closest('[data-stale="true"]'))})),
-                    warnings:[...document.querySelectorAll('.enfra-source-correction')].map(marker=>{
+                    warnings:[...document.querySelectorAll('.enfra-source-warning')].map(marker=>{
                         const app=marker.closest('[data-testid="stMainBlockContainer"]');
                         const anchors=[...app?.querySelectorAll('[id^="source-details-"]')||[]].filter(
                             node=>node.id==='source-details-'+marker.dataset.sourceId);
                         const boundary=anchors.length===1?anchors[0].closest('[class*="st-key-source_detail_editor_"]'):null;
-                        const group=boundary?.closest('[class*="_source_metadata_corrections"]');
+                        const group=boundary?.closest('[class*="_source_manager_panel"]');
                         const owners=[...group?.querySelectorAll('.enfra-source-correction-owner')||[]];
                         return {source:marker.dataset.sourceId,kind:marker.dataset.kind,
                             identity:marker.dataset.reportIdentity,insideWorkspace:Boolean(marker.closest(selector)),
@@ -289,10 +311,10 @@ def main():
     from scripts.qa_browser_diagnostics import observe
     qa.OUT = ROOT / "test-artifacts" / "source-corrections"
     qa.REPORT = {"synthetic_only": True, "physical_device": False,
-                 "actual_workflow": "native source correction links and form",
+                 "actual_workflow": "native source correction controls and form",
                  "browsers": {}, "checks": []}
     qa.exercise = browser_task
-    with observe(qa.OUT / "diagnostics", Browser, BrowserContext):
+    with observe(qa.OUT / "diagnostics", Browser, BrowserContext, source_selection=True):
         qa.main()
 
 
