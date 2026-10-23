@@ -47,6 +47,10 @@ def preserve_report_draft_state(*, finalize: bool = False) -> None:
 
 def restore_report_draft_state() -> None:
     for key, value in st.session_state.get("report_draft_mirror", {}).items():
+        # Source-site widgets restore from this mirror as native defaults.
+        # Pre-seeding their keyed state would duplicate that initialization.
+        if key.endswith("_source_details_sites"):
+            continue
         # Prepared by restores its pending text as a native default; pre-seeding
         # an obsolete native ID would prevent safe remount ownership.
         if "_prepared_native_" in key:
