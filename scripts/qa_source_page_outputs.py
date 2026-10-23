@@ -190,7 +190,7 @@ def export_source_page_outputs(output):
                                ("explicit-blank-caption", "")):
             button(app, "Manage source files").click().run()
             next(widget for widget in app.text_input if widget.label == "Page caption").set_value(caption)
-            button(app, "Include page and continue").click().run()
+            button(app, "Include page").click().run()
             assert page(current_draft(app)).asset_captions == (caption,)
             assert not pending_asset_indexes(page(current_draft(app)), current_draft(app).sources)
             button(app, "Done with source files").click().run()
