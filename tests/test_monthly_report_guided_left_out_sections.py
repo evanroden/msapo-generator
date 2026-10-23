@@ -163,3 +163,45 @@ def test_left_out_source_linked_wording_can_be_included_again():
     assert result["activity_summary"].source == "This month" and not result["activity_summary"].reviewed
     assert result["activity_summary"].ai_paragraphs[0].text == "Synthetic inspected chiller."
     assert result["mbcx_report"].source == "Omit"
+
+
+def test_legacy_issue_prose_of_a_left_out_section_becomes_left_out_issues():
+    from app.monthly_report_model import ReportDraft, default_sections
+    sections = tuple(replace(section, included=False) if section.key == "issues" else section
+                     for section in default_sections())
+    prose = ResolvedBlock("equipment_issues", "This month", text="- Synthetic chiller leak.\n- Synthetic belt noise.")
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 9), "Synthetic Operator", sections, (prose,),
+                        synthetic=True)
+    after = complete_guided_sections(draft)
+    issues = [item for item in after.follow_ups if item.category == "issue"]
+    assert [item.text for item in issues] == ["Synthetic chiller leak.", "Synthetic belt noise."]
+    assert not any(item.included for item in issues)  # left out, and each can be included again
+    assert "Synthetic" not in _blocks(after)["equipment_issues"].text
+    assert complete_guided_sections(after) == after
+
+
+TABLE_APP = """
+import streamlit as st
+from app.monthly_report_guided import _edit_content
+from app.monthly_report_model import BlockSpec, ReportTable, ResolvedBlock
+from app.monthly_report_ui import _field
+
+table = ReportTable(("Vendor", "Scope"), (("Synthetic Vendor", "Chiller service"),))
+block = ResolvedBlock("subcontractor_matrix", "Omit", extra_tables=(table,))
+st.session_state["result"] = _edit_content(BlockSpec("subcontractor_matrix", "table"), block, None,
+                                           "qa_left_out_table", {}, _field)
+"""
+
+
+def test_an_explicit_row_edit_includes_a_left_out_imported_table_again(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+    from app import monthly_report_guided as guided
+    app = AppTest.from_string(TABLE_APP, default_timeout=15).run()
+    assert not app.exception
+    assert app.session_state["result"].source == "Omit"  # showing it changes nothing
+    monkeypatch.setattr(guided, "_grid", lambda key, rows, **kwargs: [
+        dict(row, Scope="Synthetic boiler service") for row in rows])
+    app.run()
+    result = app.session_state["result"]
+    assert result.source == "This month"
+    assert result.extra_tables[0].rows == (("Synthetic Vendor", "Synthetic boiler service"),)

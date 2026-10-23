@@ -419,7 +419,7 @@ def complete_guided_sections(draft):
     normally on; an appendix that is merely off by default (RFI) is not a
     user's choice. A profile-excluded section missing from an older draft
     counts too, through its standard blocks; a confirmed proposal stays
-    confirmed as left out.
+    confirmed as left out, and legacy issue prose becomes left-out issues.
     """
     from app.monthly_report_followups import confirmation
     from app.monthly_report_model import default_sections, optional_sections
@@ -440,6 +440,14 @@ def complete_guided_sections(draft):
         confirmed = item.reviewed_fingerprint and item.reviewed_fingerprint == confirmation(item, draft.period)
         return replace(left, reviewed_fingerprint=confirmation(left, draft.period)) if confirmed else left
 
+    if "issues" in sections_out:
+        # Legacy issue prose becomes issue items first, so each is left out
+        # and can be included again, rather than hidden in an omitted block.
+        from app.monthly_report_issues import canonical_issues
+        try:
+            draft = canonical_issues(draft)
+        except ValueError:
+            pass
     draft = replace(draft, blocks=tuple(
         replace(block, source="Omit", pending_library_save=False)
         if block.key in left_out and block.source != "Omit" and any(
@@ -572,6 +580,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
     if block.extra_tables and edit_tables and not row_cards:
         from app.monthly_report_editor import _cell_text
         tables = []
+        rows_edited = False
         for n, table in enumerate(block.extra_tables):
             from app.monthly_report_table_review_ui import review_table_headings
             table = review_table_headings(table, key + f"_imported_{n}", field)
@@ -584,6 +593,7 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             if spec.key == "work_orders":
                 artificial_seed = st.session_state.setdefault(grid_key + "_artificial_seed", not table.rows)
             rows = _grid(grid_key, seed, num_rows="dynamic", hide_index=True)
+            rows_edited = rows_edited or rows != seed
             # Opening a blank imported frame must retain its original
             # structure/reference without pretending its editor slot is data.
             edited_rows = tuple(tuple(_cell_text(r.get(c)) for c in table.columns) for r in rows
@@ -608,6 +618,11 @@ def _edit_content(spec, block, state, prefix, assets, field, draft=None, *, edit
             tables.append(table if optional_table and (rows == seed or not edited_rows and not has_values(table.rows))
                           else replace(table, rows=edited_rows))
         if optional_table and tuple(tables) != block.extra_tables:
+            block = replace(block, source="This month", extra_tables=tuple(tables),
+                            reviewed_fingerprint="", client_reviewed_fingerprint="")
+        elif not optional_table and rows_edited and block.source == "Omit" and spec.key != "mbcx_report":
+            # As with its notes, an explicit row edit includes a left-out
+            # imported table again; merely showing it changes nothing.
             block = replace(block, source="This month", extra_tables=tuple(tables),
                             reviewed_fingerprint="", client_reviewed_fingerprint="")
         else:
