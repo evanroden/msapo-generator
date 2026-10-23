@@ -119,13 +119,18 @@ def test_rejected_off_page_receipt_cannot_reapply_when_old_row_returns(kind):
         'review_paged_proposals_follow_proposal-0_compact_') and key.endswith('_change')]
     assert stale == [], 'Rejected off-page callback must be retired immediately.'
     # A later row restoration cannot turn an earlier rejected callback into
-    # a new authorization, even if its pending recovery panel is dismissed.
-    app.session_state.pop('review_paged_proposals_pending_followup_proposal_proposal-0', None)
+    # a new authorization, even without its pending record. That record is the
+    # copyable recovery shown above; removing it here removes that copy too.
+    pending = 'review_paged_proposals_pending_followup_proposal_proposal-0'
+    if pending in app.session_state:  # AppTest's session state has no pop()
+        del app.session_state[pending]
     app.session_state['draft'] = before
     page(app).set_value(1).run()
     assert not app.exception
     assert app.session_state['draft'].follow_ups[0] == original
-    assert earlier_text in codes(app), 'Earlier entered data stays copyable.'
+    assert not [key for key in app.session_state.filtered_state if key.startswith(
+        'review_paged_proposals_follow_proposal-0_compact_') and key.endswith('_change')
+        and app.session_state[key].get('value') == earlier]
 
 
 def test_missing_row_recovery_does_not_touch_other_proposals():
