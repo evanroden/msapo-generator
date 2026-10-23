@@ -274,3 +274,48 @@ def test_an_explicit_include_survives_the_organization_workspace():
     assert not app.exception
     procedure = app.session_state["blocks"]["business_hours_workflow"]
     assert procedure.source == "This month" and procedure.asset_hashes == ("synthetic-procedure.png",)
+
+
+def test_a_left_out_legacy_section_with_missing_slots_keeps_its_retained_block_left_out():
+    from app.monthly_report_model import ReportDraft, default_sections
+    sections = tuple(replace(section, included=False, blocks=()) if section.key == "training" else section
+                     for section in default_sections())
+    retained = ResolvedBlock("training_summary", "This month", text="Synthetic excluded training notes.")
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 9), "Synthetic Operator", sections, (retained,),
+                        synthetic=True)
+    after = complete_guided_sections(draft)
+    assert any(section.key == "training" and section.blocks for section in after.sections)
+    assert _blocks(after)["training_summary"] == replace(retained, source="Omit")
+
+
+TRAINING_APP = """
+import streamlit as st
+from app.monthly_report_training_ui import render_training
+def field(key, value):
+    st.session_state.setdefault(key, value)
+    return key
+st.session_state["blocks"] = render_training(st.session_state["draft"], st.session_state["blocks"], "qa_left_out", field)
+"""
+
+
+def test_showing_a_left_out_training_section_does_not_include_it(monkeypatch, tmp_path):
+    from streamlit.testing.v1 import AppTest
+    from app import monthly_report_directory as directory
+    from app.monthly_report_model import Facility, ReportDraft, ReportProfile, ReportTable, default_sections
+    from app.monthly_report_training import MATRIX_REF, save_training
+    monkeypatch.setenv("EPC_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(directory, "load_directory", lambda *_: None)
+    profile = ReportProfile("Synthetic Left Out Training", "north", "Synthetic Facility", (Facility("north", "North"),))
+    save_training(profile, ReportTable(("Team member", "Site", "Fire Safety"), (("Person One", "North", "Pending"),),
+                                       MATRIX_REF), expected_revision=0, actor="Synthetic Editor")
+    notes = ResolvedBlock("training_summary", "Omit", text="Synthetic excluded training notes.")
+    app = AppTest.from_string(TRAINING_APP, default_timeout=15)
+    app.session_state["draft"] = ReportDraft(profile, ReportPeriod(2026, 9), "Synthetic Editor", default_sections(), (notes,))
+    app.session_state["blocks"] = {"training_summary": notes}
+    app.run()
+    assert not app.exception
+    shown = app.session_state["blocks"]["training_summary"]
+    assert shown.source == "Omit" and shown.text == notes.text
+    assert shown.extra_tables  # the shared requirements were seeded, and the section is still left out
+    app.button("qa_left_out_edit_training_summary_include_left_out").click().run()
+    assert not app.exception and app.session_state["blocks"]["training_summary"].source == "This month"

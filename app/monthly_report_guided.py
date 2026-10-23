@@ -467,7 +467,10 @@ def complete_guided_sections(draft):
                       for section in profile_sections(replace(draft.profile, excluded_sections=(), section_order=order))}
     sections_out = {section.key for section in draft.sections if not section.included and section.key in chosen}
     sections_out |= {key for key in draft.profile.excluded_sections if key not in present and key in standard_specs}
-    left_out = {block.key for key in sections_out for block in (present.get(key) or standard_specs[key]).blocks}
+    # Both the slots a legacy section still lists and the standard slots
+    # restored below: a retained block in either stays left out.
+    left_out = {block.key for key in sections_out for section in (present.get(key), standard_specs.get(key))
+                if section is not None for block in section.blocks}
 
     def leave_out(item):
         left = replace(item, included=False)
