@@ -40,10 +40,13 @@ def report_period_findings(inspection, period):
     """Describe body evidence without classifying a whole mixed report by its cover."""
     monthly_sections = {"activity", "maintenance", "water", "mbcx", "training"}
     month = calendar.month_name[period.month]
+    abbreviation = "Sep(?:t)?" if period.month == 9 else re.escape(month[:3])
+    numeric_month = f"0?{period.month}" if period.month < 10 else str(period.month)
     current_pattern = re.compile(
-        rf"\b(?:{month}|{month[:3]}\.?)\s+{period.year}\b|"
+        rf"\b(?:{month}|{abbreviation}\.?)\s+{period.year}\b|"
         rf"\b{period.year}-{period.month:02d}-\d{{2}}\b|"
-        rf"\b0?{period.month}/\d{{1,2}}/{period.year}\b", re.I)
+        rf"\b{numeric_month}/\d{{1,2}}/{period.year}\b|"
+        rf"(?<![\w/\\.-]){numeric_month}/{period.year}(?![\w/\\-]|\.\d)", re.I)
     current = older = images = 0
     for item in inspection.items:
         if item.section not in monthly_sections:
