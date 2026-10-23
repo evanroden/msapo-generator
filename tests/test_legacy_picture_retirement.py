@@ -92,3 +92,15 @@ def test_detailed_legacy_selector_removes_only_the_chosen_occurrence_and_saves(m
     assert next(block for block in saved.draft.blocks if block.key == combined.key).asset_hashes == (asset,)
     assert not app.session_state.filtered_state.get(retired_key)
     assert combined.asset_hashes == (asset, asset)
+
+
+def test_one_identified_legacy_receipt_never_asks_for_a_second_removal():
+    from app.monthly_report_source_retirement import legacy_retirement_candidates, retirement_pending
+    accepted, combined = legacy_pair()
+    independent = replace(combined, asset_captions=("Matching diagram", "Independent photograph"))
+    retired = retire_contributions(independent, (accepted,))
+    assert retired.asset_captions == ("Independent photograph",)  # only the receipt's own occurrence
+    assert legacy_retirement_candidates(retired, accepted) == ()
+    assert not retirement_pending(retired, accepted)
+    assert retire_contributions(retired, (accepted,)) == retired  # stable on every later render
+    assert retire_contributions(independent, (accepted,)) == retired

@@ -19,11 +19,13 @@ def retire_contributions(block, contributions):
         if contribution.key != block.key:
             continue
         owned = set(contribution.references)
-        from app.monthly_report_asset_instances import asset_instances, source_page_identity, valid_instances
-        from app.monthly_report_asset_review import asset_context
+        from app.monthly_report_asset_instances import (asset_instances, source_page_identity,
+                                                        valid_instances, with_asset_instances)
+        from app.monthly_report_asset_review import asset_context, preserve_asset_reviews
         current_instances = asset_instances(block)
         accepted_instances = asset_instances(contribution)
         remove = []
+        legacy_matched, legacy_unmatched = set(), False
         for n, accepted in enumerate(accepted_instances):
             if valid_instances(contribution) and not accepted.key.startswith("legacy:"):
                 matches = [index for index, item in enumerate(current_instances)
@@ -41,8 +43,22 @@ def retire_contributions(block, contributions):
                            and item.asset == accepted.asset
                            and owned.intersection(asset_context(block, index))
                            and (block.asset_captions[index] if index < len(block.asset_captions) else "") == caption]
+                if len(matches) == 1:
+                    legacy_matched.add(accepted.asset)
+                else:
+                    legacy_unmatched = True
             if len(matches) == 1:
                 remove.append(matches[0])
+        if legacy_matched and not legacy_unmatched:
+            # Every old occurrence this receipt owned was identified. Equal-byte
+            # neighbours share only the old hash-level link, so they become
+            # independent of this source, as after an explicit choice; one
+            # receipt never asks for a second removal.
+            block = preserve_asset_reviews(block, with_asset_instances(block, tuple(
+                _detached(item, owned, (block.key, contribution.fingerprint, item.key))
+                if (index not in remove and item.key.startswith("legacy:") and item.asset in legacy_matched
+                    and owned.intersection(asset_context(block, index))) else item
+                for index, item in enumerate(current_instances))))
         # Accepted order can differ from the current report-picture order.
         # Remove highest current positions first so earlier removals cannot
         # shift a later owned occurrence onto an independent neighbour.
@@ -60,6 +76,22 @@ def retire_contributions(block, contributions):
         if tables != block.extra_tables:
             block = replace(block, extra_tables=tables, reviewed_fingerprint="")
     return block
+
+
+def _detached(item, owned, token=None):
+    """An occurrence without the given source's links; other links stay."""
+    from app.monthly_report_asset_instances import new_asset_instance
+    references = tuple(ref for ref in item.references
+        if ref not in owned and not any(ref.startswith("asset-source-context:v1:" + value.split(":")[0] + ":")
+                                        for value in owned))
+    if token is None:
+        return new_asset_instance(item.asset, references)
+    # Retirement reruns on every render; the same receipt yields the same record.
+    from hashlib import sha256
+    import json
+    from app.monthly_report_model import AssetInstance
+    key = "detached:" + sha256(json.dumps(token, ensure_ascii=False).encode()).hexdigest()
+    return AssetInstance(key, item.asset, tuple(sorted(set(references))))
 
 
 def record_retired_contributions(retired, accepted, replacement):
@@ -105,7 +137,7 @@ def resolve_legacy_retirement(block, contribution, index):
     occurrences become independent of this removal, retaining any other source
     links. Their changed provenance requires its normal picture review.
     """
-    from app.monthly_report_asset_instances import asset_instances, new_asset_instance, with_asset_instances
+    from app.monthly_report_asset_instances import asset_instances, with_asset_instances
     from app.monthly_report_asset_review import preserve_asset_reviews
     candidates = legacy_retirement_candidates(block, contribution)
     if index not in candidates or block.source == "Omit":
@@ -113,9 +145,7 @@ def resolve_legacy_retirement(block, contribution, index):
     owned = set(contribution.references)
     instances = asset_instances(block)
     updated = with_asset_instances(block, tuple(
-        new_asset_instance(item.asset, tuple(ref for ref in item.references
-            if ref not in owned and not any(ref.startswith("asset-source-context:v1:" + value.split(":")[0] + ":")
-                                          for value in owned))) if n in candidates and n != index else item
+        _detached(item, owned) if n in candidates and n != index else item
         for n, item in enumerate(instances)))
     updated = remove_saved_picture(updated, index)
     native_content = bool(updated.text.strip() or updated.rows or updated.extra_tables
