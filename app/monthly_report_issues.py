@@ -567,18 +567,29 @@ def _issue_control(widget, label, key, value, field, *, identity, cycle, **kwarg
     return value
 
 
-def _offpage_unlink(item, prefix, options):
+def _record_issue_unlink(key, identity):
+    import streamlit as st
+    st.session_state[key + "_choice"] = {"identity": identity, "value": st.session_state.get(key)}
+
+
+def _offpage_unlink(draft, item, prefix, options):
     """Commit an unlink ticked in the same event that moved its card off-page.
 
     A visible card applies the checkbox itself and keeps it on screen. An
-    off-page card is not rendered, so its delivered choice is applied here.
+    off-page card is not rendered, so its delivered choice is applied here,
+    only for the exact row and report it was made on, and only once.
     """
     import streamlit as st
     missing = tuple(ref for ref in item.references if ref not in options)
     key = prefix + "_issue_" + item.key + "_remove_missing_" + _digest(missing)
-    if missing and st.session_state.get(key) is True:
-        return replace(item, references=tuple(ref for ref in item.references if ref in options))
-    return item
+    receipt = st.session_state.get(key + "_choice")
+    if not (missing and isinstance(receipt, dict) and receipt.get("value") is True
+            and st.session_state.get(key) is True):
+        return item
+    st.session_state.pop(key + "_choice", None)
+    if receipt.get("identity") != _issue_identity(draft, prefix, item):
+        return item  # The row or report changed after this choice was made.
+    return replace(item, references=tuple(ref for ref in item.references if ref in options))
 
 
 def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
@@ -598,8 +609,9 @@ def _render_issue_evidence(item, draft, options, p, field, prefix, cycle):
         missing = tuple(ref for ref in references if ref not in options)
         if missing:
             notice = st.empty()
-            if st.checkbox("Remove unavailable source links",
-                           key=field(p + "_remove_missing_" + _digest(missing), False)):
+            unlink = p + "_remove_missing_" + _digest(missing)
+            if st.checkbox("Remove unavailable source links", key=field(unlink, False),
+                           on_change=_record_issue_unlink, args=(unlink, identity)):
                 missing = ()
             else:
                 notice.warning("A supporting source changed or is missing.")
@@ -640,7 +652,7 @@ def render_issue_cards(draft, prefix, field, *, defer_actions=False, evidence_pa
     for original in draft.follow_ups:
         if original.category != "issue" or not original.included or original.key not in visible:
             if original.category == "issue" and original.included:
-                original = _offpage_unlink(original, prefix, options)
+                original = _offpage_unlink(draft, original, prefix, options)
             items.append(original)
             continue
         item = original

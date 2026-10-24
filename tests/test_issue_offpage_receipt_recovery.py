@@ -98,3 +98,25 @@ def test_unlink_choice_is_kept_when_the_page_changes_in_the_same_event():
     assert not app.exception
     assert app.session_state["draft"].follow_ups[0].references == ()
     assert app.session_state["draft"].follow_ups[1:] == rows[1:]
+
+
+def test_offpage_unlink_never_applies_to_an_independently_replaced_issue():
+    rows = tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Damper issue {n}", "2026-10",
+                       references=("removed-synthetic-source:1:digest",) if n == 0 else ())
+        for n in range(30)
+    )
+    draft = ReportDraft(synthetic_profiles()[0], ReportPeriod(2026, 10),
+                        "Synthetic operator", (), (), follow_ups=rows, synthetic=True)
+    app = AppTest.from_string(SCRIPT, default_timeout=30)
+    app.session_state["draft"] = draft
+    app.run()
+    assert not app.exception
+    next(w for w in app.checkbox if w.label == "Remove unavailable source links").check()
+    next(w for w in app.selectbox if w.label == "Issue page").set_value(2)
+    # The canonical issue is replaced independently before this delivery commits.
+    replaced = replace(rows[0], text="Independently saved damper wording")
+    app.session_state["draft"] = replace(draft, follow_ups=(replaced, *rows[1:]))
+    app.run()
+    assert not app.exception
+    assert app.session_state["draft"].follow_ups[0] == replaced  # its links are untouched
