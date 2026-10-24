@@ -5,6 +5,7 @@ explicit local convenience and reports only that engine. Never visits Render.
 """
 import argparse
 from io import BytesIO
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -127,6 +128,49 @@ def review(page,raw):
     return confirm
 
 
+def validate_upload_state(state, selected, revision, raw):
+    assert state["selected_key"] == selected
+    assert state["catalog_revision"] == revision
+    assert state["upload_present"] is (raw is not None)
+    assert state["upload_size"] == (len(raw) if raw is not None else 0)
+    assert state["upload_sha256"] == (sha256(raw).hexdigest() if raw is not None else "")
+    return state
+
+
+def upload_receipt(page, raw):
+    receipt = page.get_by_text(re.compile(r"^QA upload receipt: "))
+    expect(receipt).to_contain_text('"selected_key": "synthetic-recovery"')
+    expect(receipt).to_contain_text('"catalog_revision": 3')
+    expect(receipt).to_contain_text('"upload_sha256": "' + (sha256(raw).hexdigest() if raw is not None else "") + '"')
+    expect(receipt).to_contain_text('"upload_present": ' + ("true" if raw is not None else "false"))
+    state = json.loads(receipt.text_content().split("QA upload receipt: ", 1)[1])
+    return validate_upload_state(state, "synthetic-recovery", 3, raw)
+
+
+def fresh_switch_upload_cycles(page, record):
+    """Three distinct fresh uploads; no retry, repair, or wait in review's fast path."""
+    record["fresh_upload_cycles"] = []
+    for cycle in range(1, 4):
+        record["stage"] = "fresh switch/upload cycle " + str(cycle)
+        # Real visible remove control: old retained bytes cannot satisfy this cycle.
+        page.get_by_role("button", name="Remove synthetic-approved.png", exact=True).click()
+        upload_receipt(page, None)
+        expect(page.get_by_role("checkbox", name="I reviewed this replacement and approve this shared logo change", exact=True)).to_have_count(0)
+        choose(page, "Logo to inspect", "Synthetic healthy logo")
+        expect(page.get_by_text("QA inspected logo: synthetic-control", exact=True)).to_be_visible()
+        revision(page, 3)
+        choose(page, "Logo to inspect", "Synthetic recovery logo")
+        expect(page.get_by_text("QA inspected logo: synthetic-recovery", exact=True)).to_be_visible()
+        stream = BytesIO()
+        Image.new("RGBA", (240, 80), (40 + cycle * 30, 80, 100, 80)).save(stream, "PNG")
+        raw = stream.getvalue()
+        review(page, raw)  # Existing upload -> immediate note + Tab, unchanged.
+        state = upload_receipt(page, raw)
+        revision(page, 3)
+        approve_review(page)
+        record["fresh_upload_cycles"].append({"cycle": cycle, "receipt": state})
+
+
 def restore(page):
     actor=page.get_by_role("textbox",name="Logo editor name",exact=True)
     expect(actor).to_be_visible()
@@ -161,6 +205,7 @@ def exercise(engine,name,executable=None):
         if parsed.scheme in {"data","blob"} or (parsed.hostname=="127.0.0.1" and parsed.port==8520): request.continue_()
         else: external.append(parsed.hostname); request.abort()
     context.route("**/*",route)
+    context.tracing.start(screenshots=True, snapshots=True, sources=True)
     page=context.new_page(); page.set_default_timeout(30000)
     page.on("pageerror",lambda error:errors.append(str(error)))
     record={"errors":errors,"external":external,"stage":"create sample"}
@@ -198,6 +243,8 @@ def exercise(engine,name,executable=None):
         expect(page.get_by_text("QA inspected logo: synthetic-recovery",exact=True)).to_be_visible()
         record["stage"]="review and save once despite duplicate click"
         confirm=review(page,raw);approve_review(page)
+        fresh_switch_upload_cycles(page, record)
+        record["stage"]="review and save once despite duplicate click"
         save=page.get_by_role("button",name="Replace selected logo",exact=True)
         expect(save).to_be_enabled()
         page.screenshot(path=str(out/"before-save.png"),full_page=True)
@@ -225,14 +272,21 @@ def exercise(engine,name,executable=None):
     except Exception as exc:
         record.update(result="failed",error=type(exc).__name__+": "+str(exc)[:2000], traceback=traceback.format_exc())
         record["catalog_receipts_at_failure"] = []
+        record["upload_receipts_at_failure"] = []
         for open_page in context.pages:
             try:
                 record["catalog_receipts_at_failure"].append(open_page.get_by_text(re.compile(r"^QA catalog receipt: ")).all_text_contents())
+                record["upload_receipts_at_failure"].append(open_page.get_by_text(re.compile(r"^QA upload receipt: ")).all_text_contents())
             except Exception as diagnostic_error:
                 record["catalog_receipts_at_failure"].append(type(diagnostic_error).__name__)
         page.screenshot(path=str(out/"first-failure.png"),full_page=True)
+        (out/"first-failure.html").write_text(page.content())
         raise
     finally:
+        try:
+            context.tracing.stop(path=str(out/"trace.zip"))
+        except Exception as diagnostic_error:
+            record["trace_error"] = type(diagnostic_error).__name__
         (out/"receipt.json").write_text(json.dumps(record,indent=2))
         context.close();browser.close()
 

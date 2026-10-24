@@ -1087,9 +1087,11 @@ def _render_report_details_action(candidate, existing, period, browser_token):
         return
     contract, selected = existing.contract, existing.key
     prefix = "report_guided_" + _signature((contract, selected, period.key))
-    prepared_key = prefix + "_prepared"
-    actor = (st.session_state[prepared_key] if prepared_key in st.session_state else
-             remembered_report_preparer(browser_token, contract, selected))
+    from app.monthly_report_preparer_ui import pending_preparer
+    working = st.session_state.get(prefix + "_draft")
+    actor = pending_preparer(prefix, canonical=working.prepared_by if working else None)
+    if actor is None:
+        actor = remembered_report_preparer(browser_token, contract, selected)
     state = library.load_profile(contract, selected)
     if state.profile != existing:
         st.warning("These saved report details changed while you were editing. Reload the current details before saving; your report text has not been changed.")
@@ -1116,6 +1118,8 @@ def _render_report_details_action(candidate, existing, period, browser_token):
         if st.button("Continue with these report details", disabled=not actor.strip(),
                      key=prefix + f"_details_accept_{state.revision}"):
             st.session_state[baseline_key] = state.revision
+            from app.monthly_report_ui import preserve_report_draft_state
+            preserve_report_draft_state(finalize=True)
             st.rerun()
         return
     if st.button("Save report details", disabled=not actor.strip(),
@@ -1126,6 +1130,10 @@ def _render_report_details_action(candidate, existing, period, browser_token):
                 from app.monthly_report_start import refresh_profile_identity
                 st.session_state[prefix + "_draft"] = refresh_profile_identity(
                     st.session_state[prefix + "_draft"], candidate)
+            # This action precedes the native preparer editor. Keep a same-event
+            # name edit before the immediate rerun tears that widget down.
+            from app.monthly_report_ui import preserve_report_draft_state
+            preserve_report_draft_state(finalize=True)
             st.rerun()
         except (ValueError, OSError) as exc:
             st.error("Report details could not be saved: " + str(exc))
@@ -1320,8 +1328,8 @@ def render_guided_workflow(browser_token, browser_timezone, field, move):
     # only a generic instruction. This stable in-page anchor identifies the
     # actual native text input immediately below it (not a fake proxy field).
     st.markdown('<span id="report-prepared-by"></span>', unsafe_allow_html=True)
-    prepared = st.text_input("Prepared by", key=field(prefix + "_prepared", draft.prepared_by),
-                             help="Shown on this report; not a sign-in.")
+    from app.monthly_report_preparer_ui import render_preparer
+    prepared = render_preparer(prefix, draft.prepared_by, field)
     draft = replace(draft, prepared_by=prepared)
     if prepared.strip() and not st.session_state.get(prefix + "_directory_defaults_attempted"):
         from app.monthly_report_directory import apply_defaults
