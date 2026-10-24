@@ -428,8 +428,16 @@ def _capture_issue_controls(draft, prefix, options):
     import streamlit as st
     items, captured = [], set()
     current_keys = {_issue_pending_key(prefix, item) for item in draft.follow_ups if item.category == "issue"}
-    for key in sorted(k for k in st.session_state if k.startswith(prefix + "_pending_issue_delivery_")):
-        if key in current_keys or "_recovery_" in key:
+    # Index once: large lists must not rescan session state for every row.
+    pendings, recoveries = [], {}
+    for k in tuple(st.session_state):
+        if k.startswith(prefix + "_pending_issue_delivery_"):
+            if "_recovery_" in k:
+                recoveries.setdefault(k.rsplit("_recovery_", 1)[0], []).append(k)
+            else:
+                pendings.append(k)
+    for key in sorted(pendings):
+        if key in current_keys:
             continue
         pending = st.session_state[key]
         if isinstance(pending, dict) and "after" in pending:
@@ -443,7 +451,7 @@ def _capture_issue_controls(draft, prefix, options):
             continue
         item = original
         key = _issue_pending_key(prefix, item)
-        for recovery_key in sorted(k for k in st.session_state if k.startswith(key + "_recovery_")):
+        for recovery_key in sorted(recoveries.get(key, ())):
             _show_issue_delivery(recovery_key, st.session_state[recovery_key])
         pending = st.session_state.get(key)
         receipts, reapplied = {}, False

@@ -376,6 +376,29 @@ def test_row_identities_share_one_report_scope_computation(monkeypatch):
     assert len(scopes) == 2  # a different report state is never served a stale scope
 
 
+
+def test_issue_capture_scans_session_state_a_bounded_number_of_times(monkeypatch):
+    """A large list's capture indexes session keys once, not once per issue."""
+    import streamlit as st
+    from app import monthly_report_issues as issues
+    from app.monthly_report_model import ReportFollowUp, ReportPeriod, synthetic_draft, synthetic_profiles
+
+    class CountingState(dict):
+        scans = 0
+
+        def __iter__(self):
+            CountingState.scans += 1
+            return super().__iter__()
+
+    monkeypatch.setattr(st, "session_state", CountingState({f"unrelated_{n}": n for n in range(50)}))
+    draft = synthetic_draft(synthetic_profiles()[0], ReportPeriod(2026, 9))
+    draft = replace(draft, follow_ups=tuple(
+        ReportFollowUp(f"issue-{n}", "issue", f"Synthetic issue {n}", draft.period.key) for n in range(300)))
+    captured = issues._capture_issue_controls(draft, "scan_probe", {})
+    assert captured.follow_ups == draft.follow_ups
+    assert CountingState.scans <= 5
+
+
 def test_an_edited_saved_proposal_does_not_also_stand_for_another_source_row():
     draft = fixture(proposals=True)
     first, second = seed_followups(draft)
