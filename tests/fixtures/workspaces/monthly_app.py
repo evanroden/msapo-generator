@@ -109,6 +109,10 @@ if os.environ.get("EPC_MONTHLY_LOGO_ADMIN_TASK") == "1":
             st.caption("QA selected history: " + str(st.session_state.get("report_branding_history", "")))
             note_key = "report_single_logo_" + _signature((inspected, current.revision)) + "_note"
             st.caption("QA source note: " + st.session_state.get(note_key, ""))
+            from scripts.workspace_logo_upload_observations import upload_observation
+            import json
+            st.caption("QA upload receipt: " + json.dumps(
+                upload_observation(st.session_state, inspected, current.revision), sort_keys=True))
             st.caption("QA selected logo asset: " + current.logos[0].asset)
             st.caption("QA healthy logo unchanged: " + str(checks["Healthy logo and mapping unchanged"]).lower())
             unchanged = checks["Original readable history unchanged"] and checks["Damaged collection history unchanged"]

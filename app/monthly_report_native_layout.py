@@ -1655,6 +1655,13 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
             _DEFAULT_TEXT.get(section_by_pos[position])))
         for position, element in enumerate(original, 1)
     }
+    from app.monthly_report_narrative_table_roles import table_body_roles
+    narrative_exclusions, neutral_narrative_scopes = table_body_roles(
+        original, narrative_styles, document.styles.element, narrative_scopes, static_labels=_STATIC)
+    narrative_role_anchors = {}
+    for element in original:
+        if element in narrative_exclusions:
+            narrative_role_anchors.setdefault(narrative_scopes[element], element)
     text_prototypes = defaultdict(list)
     image_prototypes = defaultdict(list)
     table_prototypes = defaultdict(list)
@@ -1671,7 +1678,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                      and not any(ancestor.tag == qn("w:p") for ancestor in paragraph.iterancestors())]
     global_text = [prototype for position, e in enumerate(original, 1)
                    if section_by_pos[position] != "cover" and position not in headings
-                   and e.tag == qn("w:p")
+                   and e.tag == qn("w:p") and e not in narrative_exclusions
                    and (prototype := narrative_prototype(e, narrative_styles, _STATIC, scopes=narrative_scopes)) is not None]
     for position, element in enumerate(original, 1):
         sec = section_by_pos[position]
@@ -1782,7 +1789,7 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
                 page_plan.support.add(element)
             else:
                 label = re.fullmatch(r"(Client Utility Rate Analysis)(?:\s+Author:.*)?", text, re.IGNORECASE)
-                prototype = None if label else narrative_prototype(element, narrative_styles, _STATIC, scopes=narrative_scopes)
+                prototype = None if label or element in narrative_exclusions else narrative_prototype(element, narrative_styles, _STATIC, scopes=narrative_scopes)
                 if prototype is not None:
                     text_prototypes[slot].append((element, prototype))
                     section_text[sec].append(deepcopy(prototype))
@@ -1856,8 +1863,8 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         page_plan.assigned(clone, anchor)
         return clone
 
-    def text_anchor(sec, *, before=None):
-        choices = section_text.get(sec) or global_text
+    def text_anchor(sec, *, before=None, role=None):
+        choices = [] if (sec, role) in neutral_narrative_scopes else (section_text.get(sec) or global_text)
         if choices:
             prototype = choices[0]
         else:
@@ -1906,13 +1913,19 @@ def _build_native_docx(draft, source_path, *, asset_loader=None, section_key=Non
         if text_value or relocated_notes:
             anchors = text_prototypes.get(block.key)
             context_anchor = context_anchors.get(block.key)
+            role_anchor = narrative_role_anchors.get((sec, block.key))
             if context_anchor is not None and (not anchors or
                     original.index(context_anchor) < original.index(anchors[0][0])):
                 # A newly added note still leads its section when the source's
                 # only prior prose is now retained beside its exact table.
-                anchors = [text_anchor(sec, before=context_anchor)]
+                anchors = [text_anchor(sec, before=context_anchor, role=block.key)]
             elif not anchors:
-                anchors = [text_anchor(sec)]
+                anchors = [text_anchor(sec, before=role_anchor, role=block.key)]
+            elif role_anchor is not None and original.index(role_anchor) < original.index(anchors[0][0]):
+                # Borrow body typography without moving a leading note behind
+                # the table that established this source caption's role.
+                prototype = anchors[0][1]
+                anchors = [(append_native(sec, prototype, before=role_anchor), prototype)]
             anchor, prototype = anchors[0]
             # Current prose is one flow, not one old canvas/page per new line.
             # Unchanged, source-proved text has already bypassed this writer.
